@@ -1,0 +1,49 @@
+{
+  "name": "@aevonix/openclaw-colony",
+  "version": "0.0.1",
+  "description": "OpenClaw plugin that mounts Colony's intelligence (graph memory, autonomy loop, safety pipeline) via the colony-core /v1/host API.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "colony",
+    "colony-core",
+    "agent",
+    "memory",
+    "intelligence"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "peerDependencies": {
+    "openclaw": ">=0.1.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
