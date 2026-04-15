@@ -36,12 +36,15 @@ export interface OpenClawPluginApi {
 /**
  * `definePluginEntry` is the OpenClaw SDK helper. We re-import lazily so
  * test environments can stub it; production builds resolve it from the
- * peer-dependency `openclaw` package.
+ * peer-dependency `openclaw` package. See
+ * `openclaw/plugin-sdk/plugin-entry`'s `DefinePluginEntryOptions` for
+ * the authoritative shape — the fields listed here are a subset of
+ * those we actually use.
  */
 type DefinePluginEntry = (entry: {
   id: string;
   name: string;
-  version: string;
+  description: string;
   register: (api: OpenClawPluginApi) => void;
 }) => unknown;
 
@@ -57,7 +60,119 @@ async function loadDefinePluginEntry(): Promise<DefinePluginEntry> {
 
 const PLUGIN_ID = "colony";
 const PLUGIN_NAME = "Colony Intelligence";
+const PLUGIN_DESCRIPTION =
+  "Mount Colony's graph memory, autonomy loop, context assembly, and safety pipeline into OpenClaw via the colony-core /v1/host API.";
 const PLUGIN_VERSION = "0.0.1";
+
+// ---------------------------------------------------------------------------
+// Shared helpers used across adapters and exported so tests / future
+// adapter rewrites can reuse them. Adapter *shapes* are still the
+// scaffolded OpenClaw-pseudo-API; correcting them to match the real
+// OpenClaw SDK contracts is follow-up work (see the linked tracking
+// issue in README.md § Status).
+// ---------------------------------------------------------------------------
+
+/**
+ * Error thrown when the sidecar explicitly doesn't expose an embedder.
+ * Callers must decide whether to fall back to another provider — returning
+ * empty vectors would silently corrupt downstream similarity search, so
+ * the embedding adapter throws instead of returning a zero result.
+ */
+export class ColonyEmbedUnavailableError extends Error {
+  constructor(reason: string) {
+    super(`colony embedder unavailable: ${reason}`);
+    this.name = "ColonyEmbedUnavailableError";
+  }
+}
+
+/**
+ * Shared degradation policy for calls the plugin makes into colony-core.
+ *
+ * Colony-core responds with a structured ``{error: {code, ...}}`` envelope
+ * surfaced by ``ColonyApiError``. Adapters that want consistent
+ * degradation wrap their call with this helper:
+ *
+ *  * ``phase1_wiring_required`` / 501: endpoint is not wired on this
+ *    sidecar build. Return the caller-supplied fallback and log a
+ *    warning.
+ *  * 5xx: transient server failure. Return the fallback with a warn-log
+ *    so operators see the degradation without the host crashing.
+ *  * 4xx: structured contract error. Re-throw so callers can branch on
+ *    the machine-readable code.
+ *  * Everything else (network / timeout / unknown): treat as transient,
+ *    fall back with a warn-log.
+ */
+export async function withDegradation<T>(
+  opts: {
+    name: string;
+    logger?: { warn(m: string): void };
+  },
+  call: () => Promise<T>,
+  fallback: () => T,
+): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    if (err instanceof ColonyApiError) {
+      if (err.code === "phase1_wiring_required" || err.status === 501) {
+        opts.logger?.warn(
+          `[colony] ${opts.name}: sidecar returned ${err.code} — returning fallback`,
+        );
+        return fallback();
+      }
+      if (err.status >= 500 && err.status < 600) {
+        opts.logger?.warn(
+          `[colony] ${opts.name}: sidecar ${err.status} ${err.code} — returning fallback`,
+        );
+        return fallback();
+      }
+      // 4xx and other structured errors are contract violations — surface them.
+      throw err;
+    }
+    // Non-ColonyApiError (network, timeout, etc.) — treat as transient.
+    opts.logger?.warn(
+      `[colony] ${opts.name}: transport error — returning fallback (${String(err)})`,
+    );
+    return fallback();
+  }
+}
+
+/**
+ * Format a ``HostEvent`` into a single diagnostic log line. Used by the
+ * events lifecycle service so operators see a stream of the cognition
+ * events flowing from colony-core without dumping full payloads. The
+ * default case returns only ``event.type`` so unknown events don't leak
+ * their payloads.
+ */
+export function summarizeHostEvent(event: HostEvent): string {
+  const p = (event.payload ?? {}) as Record<string, unknown>;
+  switch (event.type) {
+    case "turn_synced": {
+      const session = typeof p.session_id === "string" ? p.session_id : "?";
+      const topics = Array.isArray(p.topics) ? p.topics.length : 0;
+      const entities = Array.isArray(p.entities) ? p.entities.length : 0;
+      const tools = Array.isArray(p.tools_used) ? p.tools_used.length : 0;
+      return `turn_synced session=${session} topics=${topics} entities=${entities} tools=${tools}`;
+    }
+    case "memory_consolidated": {
+      const exam = typeof p.pairs_examined === "number" ? p.pairs_examined : "?";
+      const merged = typeof p.pairs_merged === "number" ? p.pairs_merged : "?";
+      const conflicts =
+        typeof p.conflicts_detected === "number" ? p.conflicts_detected : "?";
+      return `memory_consolidated examined=${exam} merged=${merged} conflicts=${conflicts}`;
+    }
+    case "proactive_message": {
+      const target = typeof p.target === "string" ? p.target : "?";
+      return `proactive_message target=${target}`;
+    }
+    case "log": {
+      const msg = typeof p.message === "string" ? p.message : "(no message)";
+      return `log: ${msg}`;
+    }
+    default:
+      return `${event.type}`;
+  }
+}
 
 export interface ColonyPluginContext {
   config: ColonyPluginConfig;
@@ -237,14 +352,22 @@ function safetyHook(ctx: ColonyPluginContext) {
  */
 function capabilityProbe(ctx: ColonyPluginContext) {
   let capsPromise: Promise<ReadonlySet<string>> | null = null;
+  // Observation-safe: both ``has()`` and ``hasProbedSuccessfully()``
+  // await ``capsPromise`` before reading this flag, and the flag is
+  // set *inside* the promise body. They always agree at observation
+  // time, so no race between "capabilities available" and "probe
+  // succeeded" signals.
+  let lastProbeSucceeded = false;
 
   const load = async (): Promise<ReadonlySet<string>> => {
     try {
       const health = await ctx.client.health();
+      lastProbeSucceeded = true;
       return new Set(health.capabilities);
     } catch {
       // Don't cache failures — reset so the next call re-probes.
       capsPromise = null;
+      lastProbeSucceeded = false;
       return new Set<string>();
     }
   };
@@ -256,8 +379,23 @@ function capabilityProbe(ctx: ColonyPluginContext) {
       }
       return (await capsPromise).has(cap);
     },
+    /**
+     * Did the last probe complete without throwing? Lets callers
+     * distinguish "sidecar said this capability is off" (probe succeeded,
+     * set doesn't contain cap → skip) from "probe failed" (unknown
+     * state → let the real call surface the error so we don't silently
+     * no-op when the sidecar is just briefly unreachable).
+     */
+    async hasProbedSuccessfully(): Promise<boolean> {
+      if (capsPromise === null) {
+        capsPromise = load();
+      }
+      await capsPromise;
+      return lastProbeSucceeded;
+    },
     reset(): void {
       capsPromise = null;
+      lastProbeSucceeded = false;
     },
   };
 }
@@ -311,21 +449,47 @@ function postTurnHook(
   };
 }
 
-function eventsLifecycleService(ctx: ColonyPluginContext) {
+function eventsLifecycleService(
+  ctx: ColonyPluginContext,
+  logger?: OpenClawPluginApi["logger"],
+) {
   let subscription: { close: () => void } | null = null;
 
   return {
     id: "colony-events",
     async start() {
       if (!ctx.config.forwardProactiveDeliveries) {
+        logger?.info(
+          "[colony] events: forwardProactiveDeliveries=false — skipping subscription",
+        );
         return;
       }
-      subscription = ctx.client.openEvents((event: HostEvent) => {
-        // The actual reply_dispatch wiring is host-specific. We surface
-        // the event via OpenClaw's logger so it shows up in the plugin's
-        // diagnostics; the gateway-method bridge that turns these into
-        // channel posts is wired separately in Phase 1.
-      });
+      try {
+        subscription = ctx.client.openEvents((event: HostEvent) => {
+          // Surface the event via OpenClaw's logger so operators see
+          // the cognition stream in plugin diagnostics. The actual
+          // reply_dispatch wiring that turns proactive_message events
+          // into channel posts is host-side and wired separately once
+          // adapter contracts are corrected (see tracking issue).
+          // Individual event-formatting failures must not kill the
+          // subscription — wrap the body so one malformed frame can't
+          // take the stream down.
+          try {
+            logger?.info(`[colony.event] ${summarizeHostEvent(event)}`);
+          } catch (cbErr) {
+            logger?.warn(
+              `[colony] events: callback error on ${event.type} (${String(cbErr)})`,
+            );
+          }
+        });
+        logger?.info(
+          `[colony] events: subscribed to ${ctx.config.sidecarUrl}/v1/host/events`,
+        );
+      } catch (err) {
+        logger?.warn(
+          `[colony] events: subscription failed — proactive deliveries disabled until restart (${String(err)})`,
+        );
+      }
     },
     async stop() {
       subscription?.close();
@@ -344,12 +508,12 @@ export async function createColonyPlugin(): Promise<unknown> {
   return definePluginEntry({
     id: PLUGIN_ID,
     name: PLUGIN_NAME,
-    version: PLUGIN_VERSION,
+    description: PLUGIN_DESCRIPTION,
     register(api: OpenClawPluginApi) {
       const ctx = buildContext(api);
       const caps = capabilityProbe(ctx);
 
-      api.registerService(eventsLifecycleService(ctx));
+      api.registerService(eventsLifecycleService(ctx, api.logger));
       api.registerMemoryCapability(memoryCapability(ctx));
       api.registerMemoryEmbeddingProvider(memoryEmbeddingProvider(ctx));
       api.registerContextEngine("colony", contextEngineFactory(ctx));

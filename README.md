@@ -49,9 +49,36 @@ signals only.
 
 ## Status
 
-Pre-alpha. The endpoint contract is stable (additive `v1`); a few
-backing endpoints still return `501 phase1_wiring_required`. The plugin
-treats those as soft-fail and falls back to OpenClaw defaults.
+**Pre-alpha. Adapter shapes do not yet match the real OpenClaw SDK
+contracts.** The `registerMemoryCapability`, `registerMemoryEmbeddingProvider`,
+`registerContextEngine`, and `registerAgentHarness` objects this plugin
+returns are scaffold shapes, not the SDK-compliant shapes. OpenClaw's
+runtime will either silently no-op on the registration or crash on
+first invocation. The safety hook is wired via `registerHook` but the
+event shape also doesn't match `PluginHookMessageSendingEvent`.
+
+What IS correct and ready to build on:
+
+- `ColonySidecarClient` — typed one-method-per-endpoint HTTP/WS client
+  over `/v1/host/*`, including first-message auth handshake for the
+  events WebSocket.
+- Shared helpers: `withDegradation`, `capabilityProbe` (with
+  `hasProbedSuccessfully()` for distinguishing "sidecar says no" from
+  "probe failed"), `summarizeHostEvent`, and `ColonyEmbedUnavailableError`.
+- Unit test coverage of those helpers (see `tests/helpers.test.ts`).
+- `pnpm-lock.yaml` pinned for reproducible builds.
+- The endpoint contract itself is stable (additive `v1`); endpoints
+  that aren't wired return `501 phase1_wiring_required` and the
+  helpers above treat those as soft-fail.
+
+What's blocking a real release:
+
+- Rewire each adapter against the real SDK contracts in
+  `openclaw/plugin-sdk`. Tracking issue: see the colony-ai repo
+  issues labelled `plugin-adapters`.
+- Replace the structural `OpenClawPluginApi` stub in `src/plugin.ts`
+  with `import type { OpenClawPluginApi } from "openclaw/plugin-sdk/
+  plugin-entry"` so `tsc` enforces the contracts.
 
 See the full plan in the colony-ai repo at `docs/HOST_API.md` and
 `/root/.claude/plans/radiant-bubbling-dolphin.md`.
