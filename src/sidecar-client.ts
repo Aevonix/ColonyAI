@@ -124,21 +124,58 @@ export class ColonySidecarClient {
    * this client does not auto-reconnect because reconnect policy is a
    * host-side concern (registerService will be restarted by OpenClaw if
    * the lifecycle service throws).
+   *
+   * Authenticates via the first-message handshake colony-core enforces
+   * on /v1/host/events (mirroring /v1/ws): after the socket opens the
+   * client sends `{"type":"auth","token":"sk-colony-..."}` within 10
+   * seconds. The server replies with `{"type":"auth_ok",...}` on
+   * success or closes with code 4001 on failure. The Authorization
+   * header isn't read by colony-core — first-message auth is the
+   * supported path.
    */
   openEvents(onEvent: (event: HostEvent) => void): { close: () => void } {
     const url = this.base.replace(/^http/, "ws") + "/v1/host/events";
-    const ws = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${this.config.apiKey}` },
+    const ws = new WebSocket(url);
+
+    let authed = false;
+
+    ws.on("open", () => {
+      try {
+        ws.send(JSON.stringify({ type: "auth", token: this.config.apiKey }));
+      } catch {
+        // Socket closed mid-handshake; the close handler will fire.
+      }
     });
 
     ws.on("message", (raw) => {
+      let parsed: unknown;
       try {
-        const event = JSON.parse(raw.toString()) as HostEvent;
-        onEvent(event);
+        parsed = JSON.parse(raw.toString());
       } catch {
-        // Ignore malformed frames; the server should never emit them but
-        // we don't want a parse error to kill the subscriber.
+        return; // Ignore malformed frames.
       }
+
+      // Swallow the auth_ok / log:subscribed handshake frames so the
+      // consumer only sees real domain events.
+      if (!authed) {
+        const t = (parsed as { type?: string }).type;
+        if (t === "auth_ok") {
+          authed = true;
+          return;
+        }
+        if (t === "log") {
+          // The "subscribed" hello also arrives before any real event;
+          // pass it through so existing consumers that depend on the
+          // hello frame keep working.
+          authed = true;
+          onEvent(parsed as HostEvent);
+          return;
+        }
+        // Any other pre-auth-ok frame is unexpected; drop it.
+        return;
+      }
+
+      onEvent(parsed as HostEvent);
     });
 
     return {
