@@ -8,30 +8,19 @@ import type {
 } from "./types.js";
 
 /**
- * The OpenClaw `OpenClawPluginApi`. We declare a structural type rather
- * than `import type from "openclaw"` so the plugin builds without a hard
- * dependency on the host package — OpenClaw is a peerDependency.
+ * The real OpenClaw plugin API surface. Imported ``type``-only so the
+ * plugin can still be loaded in test contexts without OpenClaw
+ * installed at runtime — ``import type`` is erased by the TypeScript
+ * compiler.
  *
- * The methods we touch correspond to those documented at
- * https://docs.openclaw.ai/plugins/sdk-overview.md.
+ * Pulling the real type (instead of a structural stub) means ``tsc``
+ * enforces every ``register*`` / ``on`` shape against the SDK. This
+ * is what catches the adapter-contract drift tracked in the issue:
+ * aevonix/colony-ai#7 Phase 1.
  */
-export interface OpenClawPluginApi {
-  id: string;
-  name: string;
-  version?: string;
-  pluginConfig: unknown;
-  logger: { info(m: string): void; warn(m: string): void; error(m: string): void };
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 
-  registerService(service: unknown): void;
-  registerMemoryCapability(capability: unknown): void;
-  registerMemoryEmbeddingProvider(adapter: unknown): void;
-  registerContextEngine(id: string, factory: () => unknown): void;
-  registerAgentHarness(harness: unknown): void;
-  registerHook(events: string[], handler: (event: unknown) => unknown, opts?: unknown): void;
-  registerTool(tool: unknown, opts?: unknown): void;
-  registerCommand(def: unknown): void;
-  on(hookName: string, handler: (event: unknown) => unknown, opts?: unknown): void;
-}
+export type { OpenClawPluginApi };
 
 /**
  * `definePluginEntry` is the OpenClaw SDK helper. We re-import lazily so
@@ -514,16 +503,46 @@ export async function createColonyPlugin(): Promise<unknown> {
       const caps = capabilityProbe(ctx);
 
       api.registerService(eventsLifecycleService(ctx, api.logger));
+
+      // Adapter shape mismatches surfaced by the real SDK types —
+      // each @ts-expect-error is a placeholder for a follow-up phase
+      // of aevonix/colony-ai#7. Removing an error marker without
+      // fixing the adapter will break the build. The scaffolded
+      // values still run the sidecar client calls we need during
+      // development smoke-testing; OpenClaw's runtime will either
+      // silently no-op on these until the shapes are corrected.
+
+      // #7 Phase 2 — rewrite against MemoryPluginCapability
+      // ({ promptBuilder?, flushPlanResolver?, runtime?, publicArtifacts? })
+      // @ts-expect-error — scaffold shape, see issue #7 Phase 2
       api.registerMemoryCapability(memoryCapability(ctx));
+
+      // #7 Phase 3 — rewrite against MemoryEmbeddingProviderAdapter
+      // ({ id, create(opts) -> { provider: { embedQuery, embedBatch, ... } } })
+      // @ts-expect-error — scaffold shape, see issue #7 Phase 3
       api.registerMemoryEmbeddingProvider(memoryEmbeddingProvider(ctx));
+
+      // #7 Phase 4 — rewrite against ContextEngine
+      // ({ info, ingest, bootstrap?, maintain?, assemble(...) -> {messages, estimatedTokens}, compact })
+      // @ts-expect-error — scaffold shape, see issue #7 Phase 4
       api.registerContextEngine("colony", contextEngineFactory(ctx));
 
       if (ctx.config.ownReasoningLoop) {
+        // #7 Phase 5 — rewrite against AgentHarness
+        // ({ id, label, supports(ctx), runAttempt(EmbeddedRunAttemptParams) })
+        // @ts-expect-error — scaffold shape, see issue #7 Phase 5
         api.registerAgentHarness(agentHarness(ctx));
       }
 
-      api.registerHook(["message_sending"], safetyHook(ctx) as (event: unknown) => unknown);
-      api.on("reply_dispatch", postTurnHook(ctx, caps) as (event: unknown) => unknown);
+      // #7 Phase 6 — rewrite safety hook handler against the real
+      // InternalHookHandler / PluginHookMessageSendingEvent shapes.
+      // @ts-expect-error — bespoke event shape, see issue #7 Phase 6
+      api.registerHook(["message_sending"], safetyHook(ctx));
+
+      // #7 Phase 6 — rewrite reply_dispatch handler against
+      // PluginHookReplyDispatchEvent + PluginHookReplyDispatchContext.
+      // @ts-expect-error — bespoke event shape, see issue #7 Phase 6
+      api.on("reply_dispatch", postTurnHook(ctx, caps));
 
       api.logger.info(`[colony] plugin registered against ${ctx.config.sidecarUrl}`);
 
