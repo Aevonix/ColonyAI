@@ -157,6 +157,16 @@ export class ColonySidecarClient {
 
       // Swallow the auth_ok / log:subscribed handshake frames so the
       // consumer only sees real domain events.
+      //
+      // Server frame order on success (colony/api/routers/host.py:813-824):
+      //   1. {"type":"auth_ok","scopes":[...],"connected_at":...}
+      //   2. {"type":"log","payload":{"message":"subscribed"}, ...}
+      //   3+ real HostEvent frames (turn_synced, memory_consolidated, ...)
+      //
+      // The branch below tolerates either auth_ok-first or log-first to
+      // keep this client robust if the server ever reorders the
+      // handshake; if reordering does happen, update both sides
+      // together rather than relying on this leniency.
       if (!authed) {
         const t = (parsed as { type?: string }).type;
         if (t === "auth_ok") {
