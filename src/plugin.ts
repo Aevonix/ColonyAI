@@ -227,20 +227,87 @@ function safetyHook(ctx: ColonyPluginContext) {
   };
 }
 
-function postTurnHook(ctx: ColonyPluginContext) {
+/**
+ * Lazy, single-flight capability probe. We cache the sidecar's
+ * ``/v1/host/health.capabilities`` on first use so the post-turn hook
+ * knows whether to call ``/v1/host/turns/sync`` without paying an
+ * extra round trip on every reply. A failed probe leaves the cache
+ * empty so the next turn re-probes instead of silently skipping
+ * forever.
+ */
+function capabilityProbe(ctx: ColonyPluginContext) {
+  let capsPromise: Promise<ReadonlySet<string>> | null = null;
+
+  const load = async (): Promise<ReadonlySet<string>> => {
+    try {
+      const health = await ctx.client.health();
+      return new Set(health.capabilities);
+    } catch {
+      // Don't cache failures — reset so the next call re-probes.
+      capsPromise = null;
+      return new Set<string>();
+    }
+  };
+
+  return {
+    async has(cap: string): Promise<boolean> {
+      if (capsPromise === null) {
+        capsPromise = load();
+      }
+      return (await capsPromise).has(cap);
+    },
+    reset(): void {
+      capsPromise = null;
+    },
+  };
+}
+
+function postTurnHook(
+  ctx: ColonyPluginContext,
+  caps: ReturnType<typeof capabilityProbe>,
+) {
   return async (event: {
     context: HostTurnContext;
     incomingMessage?: HostMessage;
     outgoingMessage?: HostMessage;
     correction?: string;
+    topics?: string[];
+    entities?: string[];
+    pendingTasks?: string[];
+    toolsUsed?: string[];
+    summary?: string;
   }) => {
-    await ctx.client.signalsIngest({
+    const signals = ctx.client.signalsIngest({
       identity: ctx.identity(),
       context: event.context,
       incoming_message: event.incomingMessage,
       outgoing_message: event.outgoingMessage,
       correction: event.correction,
     });
+
+    const turnSyncIfSupported = caps.has("turn_sync").then(async (enabled) => {
+      if (!enabled) {
+        return;
+      }
+      await ctx.client.turnsSync({
+        identity: ctx.identity(),
+        context: event.context,
+        topics: event.topics,
+        entities: event.entities,
+        pending_tasks: event.pendingTasks,
+        tools_used: event.toolsUsed,
+        summary: event.summary,
+      });
+    });
+
+    // Fan out both calls concurrently; surface the first failure but
+    // let the other complete so partial state isn't lost.
+    const results = await Promise.allSettled([signals, turnSyncIfSupported]);
+    for (const r of results) {
+      if (r.status === "rejected") {
+        throw r.reason;
+      }
+    }
   };
 }
 
@@ -280,6 +347,7 @@ export async function createColonyPlugin(): Promise<unknown> {
     version: PLUGIN_VERSION,
     register(api: OpenClawPluginApi) {
       const ctx = buildContext(api);
+      const caps = capabilityProbe(ctx);
 
       api.registerService(eventsLifecycleService(ctx));
       api.registerMemoryCapability(memoryCapability(ctx));
@@ -291,7 +359,7 @@ export async function createColonyPlugin(): Promise<unknown> {
       }
 
       api.registerHook(["message_sending"], safetyHook(ctx) as (event: unknown) => unknown);
-      api.on("reply_dispatch", postTurnHook(ctx) as (event: unknown) => unknown);
+      api.on("reply_dispatch", postTurnHook(ctx, caps) as (event: unknown) => unknown);
 
       api.logger.info(`[colony] plugin registered against ${ctx.config.sidecarUrl}`);
 
@@ -321,5 +389,6 @@ export {
   agentHarness as __agentHarness,
   safetyHook as __safetyHook,
   postTurnHook as __postTurnHook,
+  capabilityProbe as __capabilityProbe,
   eventsLifecycleService as __eventsLifecycleService,
 };

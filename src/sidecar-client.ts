@@ -22,6 +22,8 @@ import type {
   SafetyCheckResponse,
   SignalIngestRequest,
   SignalIngestResponse,
+  TurnSyncRequest,
+  TurnSyncResponse,
 } from "./types.js";
 
 /**
@@ -100,6 +102,12 @@ export class ColonySidecarClient {
 
   signalsIngest(body: SignalIngestRequest): Promise<SignalIngestResponse> {
     return this.post<SignalIngestResponse>("/v1/host/signals/ingest", body);
+  }
+
+  // --- Turns (post-turn cognition sync) ------------------------------------
+
+  turnsSync(body: TurnSyncRequest): Promise<TurnSyncResponse> {
+    return this.post<TurnSyncResponse>("/v1/host/turns/sync", body);
   }
 
   // --- Safety --------------------------------------------------------------

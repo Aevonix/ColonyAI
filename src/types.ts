@@ -178,6 +178,25 @@ export interface SignalIngestResponse {
   signals_recorded: number;
 }
 
+// --- Turns (post-turn cognition sync) -------------------------------------
+
+export interface TurnSyncRequest {
+  identity: HostIdentity;
+  context: HostTurnContext;
+  topics?: string[];
+  entities?: string[];
+  pending_tasks?: string[];
+  tools_used?: string[];
+  summary?: string;
+}
+
+export interface TurnSyncResponse {
+  accepted: boolean;
+  continuity_updated: boolean;
+  skipped_reason?: string | null;
+  errors?: string[];
+}
+
 // --- Safety ----------------------------------------------------------------
 
 export interface SafetyCheckRequest {
@@ -207,6 +226,7 @@ export type HostEventType =
   | "anomaly"
   | "goal_update"
   | "memory_consolidated"
+  | "turn_synced"
   | "log";
 
 export interface HostEvent {
