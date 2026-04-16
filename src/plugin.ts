@@ -5,7 +5,6 @@ import type {
   HostEvent,
   HostHealthResponse,
   HostMessage,
-  HostTurnContext,
 } from "./types.js";
 
 /**
@@ -1241,28 +1240,238 @@ type UserMessageLike = {
   timestamp: number;
 };
 
-function safetyHook(ctx: ColonyPluginContext) {
-  return async (event: {
-    context: HostTurnContext;
-    responseText: string;
-    incomingMessageText?: string;
-    targetGateway?: string;
-    trustTier?: string;
-    mentionedEntities?: string[];
-  }) => {
-    const res = await ctx.client.safetyCheck({
-      identity: ctx.identity(),
-      context: event.context,
-      response_text: event.responseText,
-      incoming_message_text: event.incomingMessageText ?? "",
-      target_gateway: event.targetGateway,
-      trust_tier: event.trustTier,
-      mentioned_entities: event.mentionedEntities,
-    });
-    if (res.blocked) {
-      return { cancel: true, reason: res.reason ?? "blocked by colony safety pipeline" };
+/**
+ * Structural mirrors of the OpenClaw SDK lifecycle-hook event / context /
+ * result types this plugin consumes. These match the authoritative
+ * shapes declared in the SDK at
+ *
+ *  - ``openclaw/dist/plugin-sdk/src/plugins/hook-message.types.d.ts``
+ *    (``PluginHookMessageSendingEvent``, ``PluginHookMessageContext``,
+ *    ``PluginHookMessageSendingResult``)
+ *  - ``openclaw/dist/plugin-sdk/src/plugins/hook-types.d.ts``
+ *    (``PluginHookReplyDispatchEvent``,
+ *    ``PluginHookReplyDispatchContext``)
+ *  - ``openclaw/dist/plugin-sdk/src/auto-reply/templating.d.ts``
+ *    (``FinalizedMsgContext``, which is ``Omit<MsgContext,
+ *    "CommandAuthorized"> & { CommandAuthorized: boolean }``)
+ *
+ * Why a local mirror instead of an import: none of these types are
+ * re-exported from any subpath in the ``openclaw`` package's
+ * ``package.json`` ``exports`` map. ``plugin-sdk/plugin-entry``,
+ * ``plugin-sdk/core`` and ``plugin-sdk`` (the index) together expose
+ * ``OpenClawPluginApi`` and ``PluginHookReplyDispatch{Event,Context}``,
+ * but NOT the ``message_sending`` trio. Importing from
+ * ``openclaw/dist/plugin-sdk/src/plugins/*`` reaches into a private
+ * path that isn't part of the published surface.
+ *
+ * ``tsc`` still keeps us honest: ``api.on("message_sending", …)`` and
+ * ``api.on("reply_dispatch", …)`` are typed against the SDK's real
+ * ``PluginHookHandlerMap``, and if the mirrors drift from the SDK
+ * shapes the registration call sites will fail to compile. We relied on
+ * exactly that drift-check when rewriting these adapters.
+ *
+ * If a future ``openclaw`` release publishes these types under a stable
+ * subpath, collapse the mirrors down to re-exports.
+ */
+interface PluginHookMessageContextMirror {
+  channelId: string;
+  accountId?: string;
+  conversationId?: string;
+}
+
+interface PluginHookMessageSendingEventMirror {
+  to: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface PluginHookMessageSendingResultMirror {
+  content?: string;
+  cancel?: boolean;
+}
+
+/**
+ * Minimal slice of ``FinalizedMsgContext`` the post-turn adapter reads.
+ * The full type has dozens of optional fields; we pull only the ones
+ * we actually project onto a ``HostTurnContext``. All listed fields
+ * match the optionality declared in
+ * ``auto-reply/templating.d.ts::MsgContext``.
+ */
+interface FinalizedMsgContextSlice {
+  Body?: string;
+  BodyForAgent?: string;
+  RawBody?: string;
+  From?: string;
+  To?: string;
+  SessionKey?: string;
+  AccountId?: string;
+  SenderId?: string;
+  SenderName?: string;
+  Provider?: string;
+  Surface?: string;
+}
+
+interface PluginHookReplyDispatchEventMirror {
+  ctx: FinalizedMsgContextSlice;
+  runId?: string;
+  sessionKey?: string;
+  inboundAudio: boolean;
+  sessionTtsAuto?: string;
+  ttsChannel?: string;
+  suppressUserDelivery?: boolean;
+  shouldRouteToOriginating: boolean;
+  originatingChannel?: string;
+  originatingTo?: string;
+  shouldSendToolSummaries: boolean;
+  sendPolicy: "allow" | "deny";
+  isTailDispatch?: boolean;
+}
+
+/**
+ * Only the fields the adapter actually touches. The real SDK context
+ * carries ``cfg``, ``dispatcher``, ``abortSignal``, ``onReplyStart``,
+ * ``recordProcessed``, ``markIdle`` — all of which we ignore because
+ * we're observer-only. Using ``unknown`` for each keeps the mirror from
+ * pulling in the full OpenClaw config + dispatcher type graph.
+ */
+interface PluginHookReplyDispatchContextMirror {
+  cfg: unknown;
+  dispatcher: unknown;
+  abortSignal?: AbortSignal;
+  onReplyStart?: () => Promise<void> | void;
+  recordProcessed: (
+    outcome: "completed" | "skipped" | "error",
+    opts?: { reason?: string; error?: string },
+  ) => void;
+  markIdle: (reason: string) => void;
+}
+
+type MessageSendingEvent = PluginHookMessageSendingEventMirror;
+type MessageSendingContext = PluginHookMessageContextMirror;
+type MessageSendingResult = PluginHookMessageSendingResultMirror;
+type ReplyDispatchEvent = PluginHookReplyDispatchEventMirror;
+type ReplyDispatchContext = PluginHookReplyDispatchContextMirror;
+
+/**
+ * Safety hook — runs on every outbound ``message_sending`` event and
+ * decides whether to cancel the chunk. Priority 100 (set at registration
+ * time) ensures this runs before any other plugin's content-rewrite hook
+ * can mutate ``event.content``.
+ *
+ * Degradation policy is deliberately hand-rolled (not via
+ * ``withDegradation``): ``withDegradation`` defaults to *allow* on
+ * failure, which is the opposite of the fail-closed default safety
+ * requires. The handler also MUST NOT throw — OpenClaw treats
+ * hook-handler exceptions as pass-through, which would subvert
+ * ``failSafetyClosed=true``. Always translate to an explicit
+ * ``{ cancel: true }`` or ``undefined`` return.
+ *
+ * KNOWN GAPS (tracked as follow-ups under aevonix/colony-ai#7 Phase 7+):
+ *
+ *  - ``incoming_message_text`` is passed as ``""`` — the sending hook
+ *    has no access to the triggering inbound message. Wiring the
+ *    ``inbound_claim`` / ``message_received`` hook to cache per-session
+ *    inbound text is future work.
+ *  - ``session_id`` is a heuristic surrogate derived from
+ *    ``channelId:conversationId`` (or ``channelId:event.to`` when no
+ *    conversation id is available). OpenClaw's hook surface intentionally
+ *    does not carry a session key at message-send time.
+ *  - ``contact_id`` is chained through ``accountId → conversationId →
+ *    event.to → "unknown"`` — same reason.
+ *  - ``trust_tier`` is left ``undefined`` so the sidecar applies its
+ *    server-side default (REGULAR).
+ *  - ``mentioned_entities`` is always ``[]`` — we don't have an NLP
+ *    entity-extraction pass on the outbound content yet.
+ */
+function safetyHook(
+  ctx: ColonyPluginContext,
+  caps: ReturnType<typeof capabilityProbe>,
+  logger?: OpenClawPluginApi["logger"],
+) {
+  return async (
+    event: MessageSendingEvent,
+    hookCtx: MessageSendingContext,
+  ): Promise<MessageSendingResult | void> => {
+    // Capability short-circuit: when the sidecar probe succeeded AND
+    // it reported no ``safety`` capability, skip the call entirely. If
+    // the probe failed (state: unknown) we still call the endpoint so
+    // ``failSafetyClosed`` can make the right decision — silently
+    // no-oping when the sidecar is temporarily unreachable would
+    // subvert the fail-closed default.
+    const hasSafety = await caps.has("safety");
+    const probeOk = await caps.hasProbedSuccessfully();
+    if (!hasSafety && probeOk) {
+      return; // pass-through — sidecar affirmatively has no safety gate
     }
-    return undefined;
+
+    // Best-effort identity mapping for Colony. The hook surface only
+    // carries channel-level scope (``channelId``, optional ``accountId``
+    // and ``conversationId``); we synthesise a ``session_id`` from those
+    // so the sidecar has *some* stable routing key.
+    const session_id = hookCtx.conversationId
+      ? `${hookCtx.channelId}:${hookCtx.conversationId}`
+      : `${hookCtx.channelId}:${event.to}`;
+    const contact_id =
+      hookCtx.accountId ?? hookCtx.conversationId ?? event.to ?? "unknown";
+
+    try {
+      const res = await ctx.client.safetyCheck({
+        identity: ctx.identity(),
+        context: {
+          session_id,
+          contact_id,
+          channel_id: hookCtx.channelId,
+        },
+        response_text: event.content,
+        // TODO(#7 Phase 7+): cache the triggering inbound message from
+        // the ``inbound_claim`` / ``message_received`` hook so this has
+        // context. Left empty for now — the sidecar still runs response
+        // text checks without it.
+        incoming_message_text: "",
+        target_gateway: hookCtx.channelId,
+        // ``trust_tier`` intentionally undefined — server defaults to
+        // REGULAR. Populate here once OpenClaw exposes a trust-tier
+        // signal on the hook surface.
+        trust_tier: undefined,
+        mentioned_entities: [],
+      });
+
+      if (res.blocked || res.decision === "block") {
+        // Log the human-readable reason here — the SDK strips any
+        // ``reason`` field off ``PluginHookMessageSendingResult``, so we
+        // can only communicate the reason via logs.
+        logger?.warn(
+          `[colony.safety] blocked chunk to ${event.to}: ${res.reason ?? "<no reason>"}`,
+        );
+        return { cancel: true };
+      }
+
+      if (res.decision === "pending") {
+        // Colony has a "pending — hold for review" decision that doesn't
+        // map cleanly onto the SDK's immediate allow/cancel semantics.
+        // Treat pending as a block until a re-send queue lands; letting
+        // the chunk through would be the unsafe direction.
+        // TODO(#7 Phase 7+): wire a proper re-send path once colony-core
+        // supports deferred delivery back to the host.
+        logger?.warn(
+          `[colony.safety] pending decision treated as block for ${event.to}: ${res.reason ?? "<no reason>"}`,
+        );
+        return { cancel: true };
+      }
+
+      return; // pass: allow the chunk through
+    } catch (err) {
+      logger?.warn(`[colony.safety] safetyCheck errored: ${String(err)}`);
+      // ``ColonyApiError`` (including 501 / phase1_wiring_required) is
+      // handled the same as any other transport failure: honour
+      // ``failSafetyClosed``. This is deliberately asymmetric from
+      // ``withDegradation``'s allow-on-failure default — safety is the
+      // one place where the conservative direction is *cancel*.
+      if (ctx.config.failSafetyClosed) {
+        return { cancel: true };
+      }
+      return; // fail-open — operator has explicitly opted out
+    }
   };
 }
 
@@ -1359,52 +1568,129 @@ function capabilityProbe(ctx: ColonyPluginContext) {
   };
 }
 
+/**
+ * Post-turn hook — runs on ``reply_dispatch``. This is an observer-only
+ * adapter: we call ``/v1/host/signals/ingest`` and (conditionally)
+ * ``/v1/host/turns/sync`` to mirror the turn into Colony's cognition
+ * store, then return ``undefined`` so OpenClaw's default dispatcher
+ * runs. Returning a ``PluginHookReplyDispatchResult`` would take over
+ * dispatch — we deliberately don't.
+ *
+ * The SDK's ``PluginHookReplyDispatchEvent`` (see
+ * ``openclaw/dist/plugin-sdk/src/plugins/hook-types.d.ts``) carries the
+ * inbound ``FinalizedMsgContext`` but no outgoing assistant text. The
+ * previous scaffold pretended fields like ``outgoingMessage``,
+ * ``topics``, ``entities`` were on the event — they aren't. Phase 6
+ * ships with those fields empty/undefined on the outbound request; the
+ * real extraction is Phase 7+ work (see TODOs below).
+ *
+ * CRITICAL: this handler MUST NOT throw. OpenClaw propagates hook
+ * exceptions; the previous scaffold re-threw one rejected branch via
+ * ``throw r.reason`` which would abort the entire reply dispatch. We
+ * now log-and-swallow: ``Promise.allSettled`` collects both outcomes
+ * and the handler always resolves ``void``.
+ *
+ * KNOWN GAPS (tracked under aevonix/colony-ai#7 Phase 7+):
+ *
+ *  - ``outgoing_message`` is omitted — the reply-dispatch hook fires
+ *    *after* the model's text has already been handed to the dispatcher
+ *    but the event payload doesn't carry it back. Capturing the
+ *    assistant text requires an ``llm_output`` hook correlated by
+ *    ``runId``.
+ *  - ``topics`` / ``entities`` / ``pending_tasks`` / ``tools_used`` /
+ *    ``summary`` are empty / undefined — extractors not yet wired.
+ *  - ``channel_id`` falls through ``Provider → Surface →
+ *    originatingChannel`` to give the sidecar *some* stable channel
+ *    label; none of these are a perfect match for colony-core's
+ *    ``channel_id`` vocabulary.
+ */
 function postTurnHook(
   ctx: ColonyPluginContext,
   caps: ReturnType<typeof capabilityProbe>,
+  logger?: OpenClawPluginApi["logger"],
 ) {
-  return async (event: {
-    context: HostTurnContext;
-    incomingMessage?: HostMessage;
-    outgoingMessage?: HostMessage;
-    correction?: string;
-    topics?: string[];
-    entities?: string[];
-    pendingTasks?: string[];
-    toolsUsed?: string[];
-    summary?: string;
-  }) => {
-    const signals = ctx.client.signalsIngest({
-      identity: ctx.identity(),
-      context: event.context,
-      incoming_message: event.incomingMessage,
-      outgoing_message: event.outgoingMessage,
-      correction: event.correction,
-    });
+  return async (
+    event: ReplyDispatchEvent,
+    _hookCtx: ReplyDispatchContext,
+  ): Promise<void> => {
+    // Skip turns where the dispatcher has been told to deny, and skip
+    // ACP tail-dispatch turns — neither carries new cognition state to
+    // sync.
+    if (event.sendPolicy === "deny") return;
+    if (event.isTailDispatch === true) return;
 
-    const turnSyncIfSupported = caps.has("turn_sync").then(async (enabled) => {
-      if (!enabled) {
-        return;
-      }
-      await ctx.client.turnsSync({
-        identity: ctx.identity(),
-        context: event.context,
-        topics: event.topics,
-        entities: event.entities,
-        pending_tasks: event.pendingTasks,
-        tools_used: event.toolsUsed,
-        summary: event.summary,
-      });
-    });
+    const msgCtx = event.ctx;
+    const incomingText =
+      msgCtx.BodyForAgent ?? msgCtx.Body ?? msgCtx.RawBody ?? "";
 
-    // Fan out both calls concurrently; surface the first failure but
-    // let the other complete so partial state isn't lost.
-    const results = await Promise.allSettled([signals, turnSyncIfSupported]);
+    const turnCtx = {
+      session_id:
+        event.sessionKey ?? msgCtx.SessionKey ?? event.runId ?? "unknown",
+      contact_id:
+        msgCtx.SenderId ?? msgCtx.From ?? msgCtx.AccountId ?? "unknown",
+      channel_id:
+        msgCtx.Provider ?? msgCtx.Surface ?? event.originatingChannel,
+      turn_id: event.runId,
+      metadata: {
+        inbound_audio: event.inboundAudio,
+        send_policy: event.sendPolicy,
+        suppress_user_delivery: event.suppressUserDelivery ?? false,
+      },
+    };
+
+    const wantSignals = await caps.has("signals");
+    const wantTurnSync = await caps.has("turn_sync");
+    const probeFailed = !(await caps.hasProbedSuccessfully());
+
+    const calls: Array<Promise<unknown>> = [];
+
+    // Probe-failed state: call both endpoints best-effort so a
+    // momentarily-unreachable sidecar doesn't silently skip the turn
+    // forever. On success the capability check gates each call.
+    if (wantSignals || probeFailed) {
+      calls.push(
+        ctx.client.signalsIngest({
+          identity: ctx.identity(),
+          context: turnCtx,
+          incoming_message: incomingText
+            ? { role: "user", content: incomingText }
+            : undefined,
+          // TODO(#7 Phase 7+): ``outgoing_message`` requires an
+          // ``llm_output`` hook correlated by ``runId`` to capture the
+          // assistant text that was just dispatched. Left undefined
+          // until that correlation lands.
+        }),
+      );
+    }
+    if (wantTurnSync || probeFailed) {
+      calls.push(
+        ctx.client.turnsSync({
+          identity: ctx.identity(),
+          context: turnCtx,
+          // TODO(#7 Phase 7+): wire extractors for topics / entities /
+          // pending_tasks / tools_used / summary. Empty arrays are
+          // valid per colony-core's schema (they simply mean "nothing
+          // new this turn") so this is a degraded-but-correct state.
+          topics: [],
+          entities: [],
+          pending_tasks: [],
+          tools_used: [],
+          summary: undefined,
+        }),
+      );
+    }
+
+    // Fire-and-log: never throw out of an observer-only hook. Each
+    // rejection is logged so operators can diagnose, but the handler
+    // always resolves ``void`` — OpenClaw's default dispatcher must
+    // not see our bookkeeping failure as a dispatch failure.
+    const results = await Promise.allSettled(calls);
     for (const r of results) {
       if (r.status === "rejected") {
-        throw r.reason;
+        logger?.warn(`[colony.postTurn] call failed: ${String(r.reason)}`);
       }
     }
+    return;
   };
 }
 
@@ -1474,13 +1760,11 @@ export async function createColonyPlugin(): Promise<unknown> {
 
       api.registerService(eventsLifecycleService(ctx, api.logger));
 
-      // Adapter shape mismatches surfaced by the real SDK types —
-      // each @ts-expect-error is a placeholder for a follow-up phase
-      // of aevonix/colony-ai#7. Removing an error marker without
-      // fixing the adapter will break the build. The scaffolded
-      // values still run the sidecar client calls we need during
-      // development smoke-testing; OpenClaw's runtime will either
-      // silently no-op on these until the shapes are corrected.
+      // As of issue aevonix/colony-ai#7 Phase 6 all adapter shapes
+      // match their real OpenClaw SDK contracts — every Phase 1–6
+      // ``@ts-expect-error`` marker is gone. Follow-up work (Phase 7+)
+      // is all *content* (extractors, cross-hook state, identity
+      // surrogates), not adapter-shape wiring.
 
       if (ctx.config.ownMemoryCapability) {
         api.registerMemoryCapability(memoryCapability(ctx, caps));
@@ -1506,15 +1790,18 @@ export async function createColonyPlugin(): Promise<unknown> {
         api.registerAgentHarness(agentHarness(ctx, caps, api.logger));
       }
 
-      // #7 Phase 6 — rewrite safety hook handler against the real
-      // InternalHookHandler / PluginHookMessageSendingEvent shapes.
-      // @ts-expect-error — bespoke event shape, see issue #7 Phase 6
-      api.registerHook(["message_sending"], safetyHook(ctx));
-
-      // #7 Phase 6 — rewrite reply_dispatch handler against
-      // PluginHookReplyDispatchEvent + PluginHookReplyDispatchContext.
-      // @ts-expect-error — bespoke event shape, see issue #7 Phase 6
-      api.on("reply_dispatch", postTurnHook(ctx, caps));
+      // #7 Phase 6 — ``safetyHook`` and ``postTurnHook`` now match the
+      // real ``PluginHookHandlerMap[K]`` contract (see their doc
+      // comments). ``message_sending`` is wired via ``api.on(...)``
+      // rather than ``api.registerHook(...)`` — ``registerHook`` takes
+      // an ``InternalHookHandler`` for a different namespace
+      // (``InternalHookEvent``), not the lifecycle-hook map. Priority
+      // 100 on ``message_sending`` ensures the safety gate runs before
+      // any other plugin's content-rewrite hook can mutate the chunk.
+      api.on("message_sending", safetyHook(ctx, caps, api.logger), {
+        priority: 100,
+      });
+      api.on("reply_dispatch", postTurnHook(ctx, caps, api.logger));
 
       api.logger.info(`[colony] plugin registered against ${ctx.config.sidecarUrl}`);
 

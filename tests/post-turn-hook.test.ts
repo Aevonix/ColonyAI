@@ -13,7 +13,7 @@ import type {
  * can assert exactly which sidecar calls fire for a given set of
  * capabilities. Matches the shape the real ``buildContext`` produces.
  */
-function makeCtx(caps: string[]) {
+function makeCtx(caps: string[], opts?: { failSafetyClosed?: boolean }) {
   const signalsIngest = vi.fn().mockResolvedValue({
     accepted: true,
     signals_recorded: 0,
@@ -24,10 +24,7 @@ function makeCtx(caps: string[]) {
     skipped_reason: null,
     errors: [],
   });
-  const health = vi.fn<
-    [],
-    Promise<HostHealthResponse>
-  >().mockResolvedValue({
+  const health = vi.fn<[], Promise<HostHealthResponse>>().mockResolvedValue({
     status: "ok",
     api_version: "1",
     capabilities: caps,
@@ -40,7 +37,9 @@ function makeCtx(caps: string[]) {
       hostId: "host-test",
       requestTimeoutMs: 2_000,
       ownReasoningLoop: false,
+      ownMemoryCapability: false,
       forwardProactiveDeliveries: true,
+      failSafetyClosed: opts?.failSafetyClosed ?? true,
     } as unknown as ColonyPluginContext["config"],
     client: {
       signalsIngest,
@@ -53,19 +52,47 @@ function makeCtx(caps: string[]) {
   return { ctx, signalsIngest, turnsSync, health };
 }
 
-const event = {
-  context: {
-    session_id: "sess-1",
-    contact_id: "person-42",
-  },
-  incomingMessage: { role: "user" as const, content: "hi" },
-  outgoingMessage: { role: "assistant" as const, content: "hello back" },
-  topics: ["greeting"],
-  entities: ["Colony"],
-  pendingTasks: [],
-  toolsUsed: ["memory"],
-  summary: "A warm hello",
-};
+/**
+ * Build a ``PluginHookReplyDispatchEvent``-shaped mock. Matches the real
+ * SDK shape at ``openclaw/dist/plugin-sdk/src/plugins/hook-types.d.ts``
+ * lines 110-124.
+ */
+type ReplyEventMock = Parameters<
+  ReturnType<typeof __postTurnHook>
+>[0];
+
+type ReplyCtxMock = Parameters<ReturnType<typeof __postTurnHook>>[1];
+
+function makeEvent(overrides?: Partial<ReplyEventMock>): ReplyEventMock {
+  return {
+    ctx: {
+      BodyForAgent: "hi there",
+      Body: "hi",
+      SessionKey: "sess-1",
+      SenderId: "person-42",
+      Provider: "telegram",
+    },
+    runId: "run-1",
+    sessionKey: "sess-1",
+    inboundAudio: false,
+    shouldRouteToOriginating: false,
+    shouldSendToolSummaries: false,
+    sendPolicy: "allow",
+    ...(overrides ?? {}),
+  } as ReplyEventMock;
+}
+
+/**
+ * Observer-only: we never touch any of the dispatcher plumbing, so a
+ * stub with ``as unknown as ReplyCtxMock`` is enough for the tests that
+ * assert call shape.
+ */
+const ctxStub = {
+  cfg: undefined,
+  dispatcher: undefined,
+  recordProcessed: vi.fn(),
+  markIdle: vi.fn(),
+} as unknown as ReplyCtxMock;
 
 describe("capabilityProbe", () => {
   it("caches the health response across calls", async () => {
@@ -98,43 +125,182 @@ describe("postTurnHook", () => {
     vi.clearAllMocks();
   });
 
-  it("always calls signals/ingest and calls turns/sync when capability is present", async () => {
-    const { ctx, signalsIngest, turnsSync } = makeCtx(["turn_sync"]);
+  it("fires both signals/ingest and turns/sync when the sidecar advertises both", async () => {
+    const { ctx, signalsIngest, turnsSync } = makeCtx(["signals", "turn_sync"]);
     const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
 
-    await hook(event);
+    await hook(makeEvent(), ctxStub);
 
     expect(signalsIngest).toHaveBeenCalledTimes(1);
     const signalBody = signalsIngest.mock.calls[0][0] as SignalIngestRequest;
+    // Derived from event.sessionKey (or msgCtx.SessionKey / runId fallback).
     expect(signalBody.context.session_id).toBe("sess-1");
+    // Derived from msgCtx.SenderId (first in the fallback chain).
+    expect(signalBody.context.contact_id).toBe("person-42");
+    // Channel falls through msgCtx.Provider first.
+    expect(signalBody.context.channel_id).toBe("telegram");
+    expect(signalBody.context.turn_id).toBe("run-1");
+    // Phase 6 scope: we send the best-available inbound text.
+    expect(signalBody.incoming_message).toEqual({
+      role: "user",
+      content: "hi there",
+    });
 
     expect(turnsSync).toHaveBeenCalledTimes(1);
     const syncBody = turnsSync.mock.calls[0][0] as TurnSyncRequest;
-    expect(syncBody.topics).toEqual(["greeting"]);
-    expect(syncBody.tools_used).toEqual(["memory"]);
-    expect(syncBody.summary).toBe("A warm hello");
+    // Phase 6 gap: extractors not yet implemented, so empty arrays.
+    expect(syncBody.topics).toEqual([]);
+    expect(syncBody.entities).toEqual([]);
+    expect(syncBody.pending_tasks).toEqual([]);
+    expect(syncBody.tools_used).toEqual([]);
+    expect(syncBody.summary).toBeUndefined();
   });
 
-  it("skips turns/sync when the sidecar doesn't advertise the capability", async () => {
-    const { ctx, signalsIngest, turnsSync } = makeCtx(["memory", "events"]);
+  it("skips turns/sync when the sidecar doesn't advertise that capability", async () => {
+    const { ctx, signalsIngest, turnsSync } = makeCtx(["signals"]);
     const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
 
-    await hook(event);
+    await hook(makeEvent(), ctxStub);
 
     expect(signalsIngest).toHaveBeenCalledTimes(1);
     expect(turnsSync).not.toHaveBeenCalled();
   });
 
-  it("rethrows the first failure but lets the sibling call finish", async () => {
+  it("skips signals/ingest when the sidecar doesn't advertise that capability", async () => {
     const { ctx, signalsIngest, turnsSync } = makeCtx(["turn_sync"]);
-    (signalsIngest as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("signals offline"),
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+
+    await hook(makeEvent(), ctxStub);
+
+    expect(signalsIngest).not.toHaveBeenCalled();
+    expect(turnsSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips both when the probe succeeded and neither capability is advertised", async () => {
+    const { ctx, signalsIngest, turnsSync } = makeCtx(["memory"]);
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+
+    await hook(makeEvent(), ctxStub);
+
+    expect(signalsIngest).not.toHaveBeenCalled();
+    expect(turnsSync).not.toHaveBeenCalled();
+  });
+
+  it("fires both endpoints best-effort when the probe has failed", async () => {
+    const { ctx, signalsIngest, turnsSync, health } = makeCtx([]);
+    (health as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("network"),
     );
     const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
 
-    await expect(hook(event)).rejects.toThrow(/signals offline/);
-    // The other call still ran — we want at-least-once sync on partial
-    // failure, not silent loss.
+    await hook(makeEvent(), ctxStub);
+
+    expect(signalsIngest).toHaveBeenCalledTimes(1);
     expect(turnsSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("short-circuits when sendPolicy === 'deny'", async () => {
+    const { ctx, signalsIngest, turnsSync } = makeCtx(["signals", "turn_sync"]);
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+
+    await hook(makeEvent({ sendPolicy: "deny" }), ctxStub);
+
+    expect(signalsIngest).not.toHaveBeenCalled();
+    expect(turnsSync).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits when isTailDispatch === true", async () => {
+    const { ctx, signalsIngest, turnsSync } = makeCtx(["signals", "turn_sync"]);
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+
+    await hook(makeEvent({ isTailDispatch: true }), ctxStub);
+
+    expect(signalsIngest).not.toHaveBeenCalled();
+    expect(turnsSync).not.toHaveBeenCalled();
+  });
+
+  it("swallows a single rejection, logs it, and still awaits the sibling", async () => {
+    const { ctx, signalsIngest, turnsSync } = makeCtx(["signals", "turn_sync"]);
+    (signalsIngest as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("signals offline"),
+    );
+    const warn = vi.fn();
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), {
+      warn,
+      info: () => {},
+      error: () => {},
+      debug: () => {},
+    } as unknown as Parameters<typeof __postTurnHook>[2]);
+
+    // Must resolve cleanly — observer-only hook, never throws.
+    await expect(hook(makeEvent(), ctxStub)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls[0][0]).toMatch(/signals offline/);
+    expect(turnsSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows both rejections and logs each one", async () => {
+    const { ctx, signalsIngest, turnsSync } = makeCtx(["signals", "turn_sync"]);
+    (signalsIngest as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("signals offline"),
+    );
+    (turnsSync as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("turns offline"),
+    );
+    const warn = vi.fn();
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), {
+      warn,
+      info: () => {},
+      error: () => {},
+      debug: () => {},
+    } as unknown as Parameters<typeof __postTurnHook>[2]);
+
+    await expect(hook(makeEvent(), ctxStub)).resolves.toBeUndefined();
+    expect(warn.mock.calls.length).toBe(2);
+    expect(warn.mock.calls.some((c) => /signals offline/.test(c[0]))).toBe(
+      true,
+    );
+    expect(warn.mock.calls.some((c) => /turns offline/.test(c[0]))).toBe(true);
+  });
+
+  it("falls back through BodyForAgent → Body → RawBody → '' for incoming text", async () => {
+    const { ctx, signalsIngest } = makeCtx(["signals"]);
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+
+    // (1) BodyForAgent present
+    await hook(
+      makeEvent({ ctx: { BodyForAgent: "bfa" } }),
+      ctxStub,
+    );
+    expect(
+      (signalsIngest.mock.calls[0][0] as SignalIngestRequest).incoming_message,
+    ).toEqual({ role: "user", content: "bfa" });
+
+    // (2) Body only
+    signalsIngest.mockClear();
+    await hook(
+      makeEvent({ ctx: { Body: "body" } }),
+      ctxStub,
+    );
+    expect(
+      (signalsIngest.mock.calls[0][0] as SignalIngestRequest).incoming_message,
+    ).toEqual({ role: "user", content: "body" });
+
+    // (3) RawBody only
+    signalsIngest.mockClear();
+    await hook(
+      makeEvent({ ctx: { RawBody: "raw" } }),
+      ctxStub,
+    );
+    expect(
+      (signalsIngest.mock.calls[0][0] as SignalIngestRequest).incoming_message,
+    ).toEqual({ role: "user", content: "raw" });
+
+    // (4) None — incoming_message omitted entirely (empty string is falsy)
+    signalsIngest.mockClear();
+    await hook(makeEvent({ ctx: {} }), ctxStub);
+    expect(
+      (signalsIngest.mock.calls[0][0] as SignalIngestRequest).incoming_message,
+    ).toBeUndefined();
   });
 });

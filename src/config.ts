@@ -50,6 +50,15 @@ export const ColonyPluginConfigSchema = z.object({
    */
   forwardProactiveDeliveries: z.boolean().default(true),
 
+  /**
+   * If the safety sidecar errors or is unreachable, block the outbound
+   * message ("fail closed") rather than letting it pass. Defaults to
+   * ``true`` — safety-conscious by default. Operators running
+   * sidecar-less smoke tests can set this to ``false`` to let messages
+   * through when the sidecar is unavailable.
+   */
+  failSafetyClosed: z.boolean().default(true),
+
   /** Per-call HTTP timeout (ms). */
   requestTimeoutMs: z.number().int().positive().default(30_000),
 });
