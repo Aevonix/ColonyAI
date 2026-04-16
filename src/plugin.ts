@@ -18,9 +18,33 @@ import type {
  * is what catches the adapter-contract drift tracked in the issue:
  * aevonix/colony-ai#7 Phase 1.
  */
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import type {
+  OpenClawPluginApi,
+  PluginLogger,
+} from "openclaw/plugin-sdk/plugin-entry";
 
 export type { OpenClawPluginApi };
+
+/**
+ * ``MemoryEmbeddingProviderAdapter`` and friends aren't exposed through
+ * a public subpath of ``openclaw/plugin-sdk/*``, so we derive the shapes
+ * from the ``registerMemoryEmbeddingProvider`` signature on
+ * ``OpenClawPluginApi``. Using the derived types instead of redeclaring
+ * them locally keeps the adapter in lockstep with whatever the SDK
+ * ships.
+ */
+export type MemoryEmbeddingProviderAdapter = Parameters<
+  OpenClawPluginApi["registerMemoryEmbeddingProvider"]
+>[0];
+export type MemoryEmbeddingProviderCreateOptions = Parameters<
+  MemoryEmbeddingProviderAdapter["create"]
+>[0];
+export type MemoryEmbeddingProviderCreateResult = Awaited<
+  ReturnType<MemoryEmbeddingProviderAdapter["create"]>
+>;
+export type MemoryEmbeddingProvider = NonNullable<
+  MemoryEmbeddingProviderCreateResult["provider"]
+>;
 
 /**
  * `definePluginEntry` is the OpenClaw SDK helper. We re-import lazily so
@@ -167,6 +191,12 @@ export interface ColonyPluginContext {
   config: ColonyPluginConfig;
   client: ColonySidecarClient;
   identity: () => { host_id: string; plugin_version: string };
+  /**
+   * Plugin-scoped logger. Optional so ``buildContext`` can be stubbed in
+   * tests without requiring a logger; adapters that want to emit
+   * diagnostics should use the ``logger?.info(...)`` safe-access form.
+   */
+  logger?: PluginLogger;
 }
 
 function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
@@ -176,6 +206,7 @@ function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
     config,
     client,
     identity: () => ({ host_id: config.hostId, plugin_version: PLUGIN_VERSION }),
+    logger: api.logger,
   };
 }
 
@@ -388,16 +419,157 @@ class ColonyMemorySearchManager {
   }
 }
 
-function memoryEmbeddingProvider(ctx: ColonyPluginContext) {
+/**
+ * Sidecar batch limit for ``/v1/host/memory/embed``. Matches the
+ * ``max_length=64`` on ``MemoryEmbedRequest.inputs`` in
+ * ``colony/api/schemas/host.py`` — exceeding it triggers a 422 from the
+ * sidecar, so we chunk on the plugin side to keep callers ignorant of
+ * the transport-level limit.
+ */
+export const COLONY_EMBED_BATCH_CHUNK = 64;
+
+/**
+ * Build the ``MemoryEmbeddingProviderAdapter`` that routes embedding
+ * requests to the colony-core sidecar.
+ *
+ * The adapter intentionally degrades by **returning ``{provider: null}``
+ * from ``create()``** when the sidecar is unreachable or doesn't
+ * advertise the ``embed`` capability — OpenClaw treats a null provider
+ * as "this adapter has nothing to contribute" and moves on to the next
+ * registered provider. This is the correct fallback shape; returning
+ * zero-vectors from the embed methods would silently corrupt any
+ * downstream vector similarity search.
+ *
+ * Once the adapter is active (non-null provider returned), ``embedQuery``
+ * and ``embedBatch`` must **propagate errors as thrown** — OpenClaw
+ * retries/fallback logic is the right layer to decide what to do with a
+ * transient failure, not us.
+ *
+ * ``embedBatchInputs`` is deliberately omitted: Colony's sidecar does
+ * not support multimodal embeddings.
+ */
+function memoryEmbeddingProvider(
+  ctx: ColonyPluginContext,
+): MemoryEmbeddingProviderAdapter {
   return {
     id: "colony-embed",
-    async embed(inputs: string[], model?: string) {
-      const res = await ctx.client.memoryEmbed({
-        identity: ctx.identity(),
-        inputs,
+    // The sidecar resolves the actual model name from its wired embedder
+    // config; "default" is just a placeholder that callers can override
+    // via ``MemoryEmbeddingProviderCreateOptions.model``.
+    defaultModel: "default",
+    transport: "remote" as const,
+    // ``autoSelectPriority`` intentionally omitted — Colony embedder is
+    // only used when the user explicitly configures it as the memory
+    // embedding provider, not via OpenClaw's auto-selection fallback.
+
+    create: async (
+      options: MemoryEmbeddingProviderCreateOptions,
+    ): Promise<MemoryEmbeddingProviderCreateResult> => {
+      const model = options.model || "default";
+
+      // Probe sidecar health at create time. If the sidecar is
+      // unreachable, doesn't advertise the "embed" capability, or
+      // returns 501, return ``{ provider: null }`` so OpenClaw falls
+      // through to another registered adapter instead of installing a
+      // broken embedder.
+      try {
+        const health = await ctx.client.health();
+        if (!health.capabilities.includes("embed")) {
+          ctx.logger?.info(
+            "[colony] embed: sidecar did not advertise 'embed' capability — returning null provider",
+          );
+          return { provider: null };
+        }
+      } catch (err) {
+        if (
+          err instanceof ColonyApiError &&
+          (err.status === 501 || err.code === "phase1_wiring_required")
+        ) {
+          ctx.logger?.info(
+            `[colony] embed: sidecar returned ${err.code} — returning null provider`,
+          );
+        } else {
+          ctx.logger?.warn(
+            `[colony] embed: health probe failed — returning null provider (${String(err)})`,
+          );
+        }
+        return { provider: null };
+      }
+
+      const embedOnce = async (inputs: string[]): Promise<number[][]> => {
+        const res = await ctx.client.memoryEmbed({
+          identity: ctx.identity(),
+          inputs,
+          model,
+        });
+        return res.vectors;
+      };
+
+      const provider: MemoryEmbeddingProvider = {
+        id: "colony-embed",
         model,
-      });
-      return { model: res.model, vectors: res.vectors };
+        embedQuery: async (text: string): Promise<number[]> => {
+          const vectors = await embedOnce([text]);
+          const first = vectors[0];
+          if (!first) {
+            throw new Error(
+              "colony embed: sidecar returned empty vectors array",
+            );
+          }
+          return first;
+        },
+        embedBatch: async (texts: string[]): Promise<number[][]> => {
+          if (texts.length === 0) return [];
+          if (texts.length <= COLONY_EMBED_BATCH_CHUNK) {
+            return embedOnce(texts);
+          }
+          const all: number[][] = [];
+          for (let i = 0; i < texts.length; i += COLONY_EMBED_BATCH_CHUNK) {
+            const slice = texts.slice(i, i + COLONY_EMBED_BATCH_CHUNK);
+            const chunkVectors = await embedOnce(slice);
+            all.push(...chunkVectors);
+          }
+          return all;
+        },
+        // ``embedBatchInputs`` intentionally omitted — Colony sidecar
+        // doesn't support multimodal embedding inputs.
+      };
+
+      return {
+        provider,
+        runtime: {
+          id: "colony-embed",
+          cacheKeyData: {
+            provider: "colony",
+            sidecarUrl: ctx.config.sidecarUrl,
+            model,
+          },
+        },
+      };
+    },
+
+    formatSetupError: (err: unknown): string => {
+      if (err instanceof ColonyApiError) {
+        return `Colony sidecar (${err.status} ${err.code}): ${err.message}`;
+      }
+      if (err instanceof Error) {
+        return `Colony sidecar unreachable: ${err.message}`;
+      }
+      return `Colony sidecar unreachable: ${String(err)}`;
+    },
+
+    shouldContinueAutoSelection: (err: unknown): boolean => {
+      if (err instanceof ColonyApiError) {
+        // 501 or explicit ``embed_not_wired`` → Colony can't embed here;
+        // let auto-selection try the next provider. A 5xx/4xx from a
+        // wired endpoint (e.g. 503 sidecar overloaded) is a real
+        // failure the host should surface instead of silently swapping
+        // providers.
+        return err.status === 501 || err.code === "embed_not_wired";
+      }
+      // Transport-level errors (network, timeout, DNS, …) — let
+      // auto-selection try the next provider.
+      return true;
     },
   };
 }
@@ -662,9 +834,9 @@ export async function createColonyPlugin(): Promise<unknown> {
         api.registerMemoryCapability(memoryCapability(ctx, caps));
       }
 
-      // #7 Phase 3 — rewrite against MemoryEmbeddingProviderAdapter
-      // ({ id, create(opts) -> { provider: { embedQuery, embedBatch, ... } } })
-      // @ts-expect-error — scaffold shape, see issue #7 Phase 3
+      // #7 Phase 3 — ``memoryEmbeddingProvider`` returns the real
+      // ``MemoryEmbeddingProviderAdapter`` shape (see its doc comment),
+      // so no ``@ts-expect-error`` is needed here.
       api.registerMemoryEmbeddingProvider(memoryEmbeddingProvider(ctx));
 
       // #7 Phase 4 — rewrite against ContextEngine
