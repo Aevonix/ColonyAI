@@ -37,6 +37,14 @@ export const ColonyPluginConfigSchema = z.object({
   hostId: z.string().default("openclaw"),
 
   /**
+   * If true, register Colony as the active memory capability via
+   * ``api.registerMemoryCapability``. Off by default because this is
+   * an **exclusive slot** — enabling it claims memory from any other
+   * memory plugin the host may already use.
+   */
+  ownMemoryCapability: z.boolean().default(false),
+
+  /**
    * Whether to automatically connect to the events WebSocket and forward
    * proactive deliveries to OpenClaw via reply_dispatch.
    */

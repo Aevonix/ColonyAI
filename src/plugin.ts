@@ -185,61 +185,207 @@ function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
 // declarative manifest of what Colony provides.
 // ---------------------------------------------------------------------------
 
-function memoryCapability(ctx: ColonyPluginContext) {
-  return {
-    id: "colony-memory",
-    async read(args: { memoryId?: string; personId?: string; limit?: number }) {
-      const res = await ctx.client.memoryRead({
-        identity: ctx.identity(),
-        memory_id: args.memoryId,
-        person_id: args.personId,
-        limit: args.limit,
-      });
-      return res.entries;
+/**
+ * Build the ``MemoryPluginCapability`` object that matches the real
+ * OpenClaw SDK contract (``{ promptBuilder?, runtime? }``).
+ *
+ * We populate ``promptBuilder`` and ``runtime``; ``flushPlanResolver``
+ * and ``publicArtifacts`` are intentionally omitted — Colony doesn't
+ * need them.
+ */
+function memoryCapability(
+  ctx: ColonyPluginContext,
+  caps: ReturnType<typeof capabilityProbe>,
+) {
+  // -- promptBuilder --------------------------------------------------
+  const promptBuilder = (params: {
+    availableTools: Set<string>;
+    citationsMode?: string;
+  }): string[] => {
+    const lines: string[] = [
+      "Colony graph memory is available. Context is auto-injected via context assembly — no explicit memory tool call is needed.",
+    ];
+    if (params.citationsMode !== "off") {
+      lines.push(
+        "When referencing recalled memories, include the memory ID in parentheses as a citation.",
+      );
+    }
+    return lines;
+  };
+
+  // -- MemorySearchManager cache (one per agentId) --------------------
+  const managers = new Map<string, ColonyMemorySearchManager>();
+
+  // -- runtime --------------------------------------------------------
+  const runtime = {
+    async getMemorySearchManager(params: {
+      cfg: unknown;
+      agentId: string;
+      purpose?: "default" | "status";
+    }): Promise<{ manager: ColonyMemorySearchManager | null; error?: string }> {
+      const existing = managers.get(params.agentId);
+      if (existing) return { manager: existing };
+      const mgr = new ColonyMemorySearchManager(ctx, caps);
+      managers.set(params.agentId, mgr);
+      return { manager: mgr };
     },
-    async write(args: {
-      content: string;
-      type?: string;
-      personId?: string;
-      entities?: string[];
-      tags?: string[];
-      strength?: number;
-      context?: HostTurnContext;
-    }) {
-      return ctx.client.memoryWrite({
-        identity: ctx.identity(),
-        context: args.context,
-        content: args.content,
-        type: args.type,
-        person_id: args.personId,
-        entities: args.entities,
-        tags: args.tags,
-        strength: args.strength,
-      });
+
+    resolveMemoryBackendConfig(_params: {
+      cfg: unknown;
+      agentId: string;
+    }): { backend: "builtin" } {
+      return { backend: "builtin" };
     },
-    async search(args: {
-      query: string;
-      limit?: number;
-      minScore?: number;
-      personId?: string;
-      types?: string[];
-      tags?: string[];
-    }) {
-      const res = await ctx.client.memorySearch({
-        identity: ctx.identity(),
-        query: args.query,
-        limit: args.limit,
-        min_score: args.minScore,
-        person_id: args.personId,
-        types: args.types,
-        tags: args.tags,
-      });
-      return res.entries;
-    },
-    async flush(reason?: string) {
-      return ctx.client.memoryFlush({ identity: ctx.identity(), reason });
+
+    async closeAllMemorySearchManagers(): Promise<void> {
+      managers.clear();
     },
   };
+
+  return { promptBuilder, runtime };
+}
+
+/**
+ * A ``MemorySearchManager`` backed by the colony-core sidecar.
+ *
+ * Every method that hits the sidecar is wrapped in ``withDegradation``
+ * so transient / phase-1-wiring failures degrade gracefully.
+ */
+class ColonyMemorySearchManager {
+  private readonly statusSnapshot: {
+    backend: "builtin";
+    provider: string;
+    model: undefined;
+    workspaceDir: undefined;
+    sources: Array<"memory">;
+    cache: { enabled: false };
+    fts: { enabled: false; available: false };
+    vector: { enabled: false; available: false };
+  };
+
+  constructor(
+    private readonly ctx: ColonyPluginContext,
+    private readonly caps: ReturnType<typeof capabilityProbe>,
+  ) {
+    this.statusSnapshot = {
+      backend: "builtin",
+      provider: "colony",
+      model: undefined,
+      workspaceDir: undefined,
+      sources: ["memory"],
+      cache: { enabled: false },
+      fts: { enabled: false, available: false },
+      vector: { enabled: false, available: false },
+    };
+  }
+
+  async search(
+    query: string,
+    opts?: { maxResults?: number; minScore?: number },
+  ): Promise<
+    Array<{
+      path: string;
+      startLine: number;
+      endLine: number;
+      score: number;
+      snippet: string;
+      source: "memory";
+      citation: string;
+    }>
+  > {
+    return withDegradation(
+      { name: "memory.search" },
+      async () => {
+        const res = await this.ctx.client.memorySearch({
+          identity: this.ctx.identity(),
+          query,
+          limit: opts?.maxResults,
+          min_score: opts?.minScore,
+        });
+        return res.entries.map((entry) => ({
+          path: `memory://${entry.id}`,
+          startLine: 0,
+          endLine: 0,
+          score: entry.score ?? 0,
+          snippet: entry.content.slice(0, 300),
+          source: "memory" as const,
+          citation: `mem:${entry.id}`,
+        }));
+      },
+      () => [],
+    );
+  }
+
+  async readFile(params: {
+    relPath: string;
+    from?: number;
+    lines?: number;
+  }): Promise<{ text: string; path: string }> {
+    return withDegradation(
+      { name: "memory.readFile" },
+      async () => {
+        let memoryId: string | undefined;
+        if (params.relPath.startsWith("memory://")) {
+          memoryId = params.relPath.slice("memory://".length);
+        }
+        const res = await this.ctx.client.memoryRead({
+          identity: this.ctx.identity(),
+          memory_id: memoryId,
+        });
+        const entry = res.entries[0];
+        return { text: entry?.content ?? "", path: params.relPath };
+      },
+      () => ({ text: "", path: params.relPath }),
+    );
+  }
+
+  status() {
+    return this.statusSnapshot;
+  }
+
+  async sync(params?: {
+    reason?: string;
+    force?: boolean;
+    sessionFiles?: string[];
+    progress?: (update: {
+      completed: number;
+      total: number;
+      label?: string;
+    }) => void;
+  }): Promise<void> {
+    await withDegradation(
+      { name: "memory.sync" },
+      async () => {
+        await this.ctx.client.memoryFlush({
+          identity: this.ctx.identity(),
+          reason: params?.reason,
+        });
+        params?.progress?.({
+          completed: 1,
+          total: 1,
+          label: "colony.memory.flush",
+        });
+      },
+      () => undefined,
+    );
+  }
+
+  async probeEmbeddingAvailability(): Promise<{
+    ok: boolean;
+    error?: string;
+  }> {
+    const hasEmbed = await this.caps.has("embed");
+    if (hasEmbed) return { ok: true };
+    return { ok: false, error: "colony sidecar does not advertise embed capability" };
+  }
+
+  async probeVectorAvailability(): Promise<boolean> {
+    return false;
+  }
+
+  async close(): Promise<void> {
+    // No-op — the sidecar client is shared across managers.
+  }
 }
 
 function memoryEmbeddingProvider(ctx: ColonyPluginContext) {
@@ -512,10 +658,9 @@ export async function createColonyPlugin(): Promise<unknown> {
       // development smoke-testing; OpenClaw's runtime will either
       // silently no-op on these until the shapes are corrected.
 
-      // #7 Phase 2 — rewrite against MemoryPluginCapability
-      // ({ promptBuilder?, flushPlanResolver?, runtime?, publicArtifacts? })
-      // @ts-expect-error — scaffold shape, see issue #7 Phase 2
-      api.registerMemoryCapability(memoryCapability(ctx));
+      if (ctx.config.ownMemoryCapability) {
+        api.registerMemoryCapability(memoryCapability(ctx, caps));
+      }
 
       // #7 Phase 3 — rewrite against MemoryEmbeddingProviderAdapter
       // ({ id, create(opts) -> { provider: { embedQuery, embedBatch, ... } } })
