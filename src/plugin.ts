@@ -39,6 +39,14 @@ import type {
   IngestResult,
 } from "openclaw/plugin-sdk";
 import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
+import { normalizeUsage } from "openclaw/plugin-sdk/agent-harness";
+import type {
+  AgentHarness,
+  AgentHarnessAttemptParams,
+  AgentHarnessAttemptResult,
+  AgentHarnessSupport,
+  AgentHarnessSupportContext,
+} from "openclaw/plugin-sdk/agent-harness";
 
 export type { OpenClawPluginApi };
 
@@ -851,25 +859,387 @@ function estimateTokens(
   return Math.ceil(chars / 4);
 }
 
-function agentHarness(ctx: ColonyPluginContext) {
+// ---------------------------------------------------------------------------
+// AgentHarness
+// ---------------------------------------------------------------------------
+
+/**
+ * Safe defaults for ``EmbeddedRunAttemptResult``. Every result returned
+ * from ``runAttempt`` — success, shaped error, or abort — must fill all
+ * required fields. We centralise the zero-value shape here so each
+ * branch of ``runAttempt`` merges only what's relevant.
+ */
+function baseAttemptResult(
+  sessionId: string,
+): AgentHarnessAttemptResult {
   return {
-    id: "colony-harness",
-    async runTurn(args: {
-      context: HostTurnContext;
-      messages: HostMessage[];
-      availableTools?: string[];
-      modelOverride?: string;
-    }) {
-      return ctx.client.reasoningTurn({
-        identity: ctx.identity(),
-        context: args.context,
-        messages: args.messages,
-        available_tools: args.availableTools,
-        model_override: args.modelOverride,
-      });
+    aborted: false,
+    externalAbort: false,
+    timedOut: false,
+    idleTimedOut: false,
+    timedOutDuringCompaction: false,
+    promptError: null,
+    promptErrorSource: null,
+    sessionIdUsed: sessionId,
+    messagesSnapshot: [],
+    assistantTexts: [],
+    toolMetas: [],
+    lastAssistant: undefined,
+    didSendViaMessagingTool: false,
+    messagingToolSentTexts: [],
+    messagingToolSentMediaUrls: [],
+    messagingToolSentTargets: [],
+    cloudCodeAssistFormatError: false,
+    replayMetadata: {
+      hadPotentialSideEffects: false,
+      replaySafe: true,
+    },
+    itemLifecycle: {
+      startedCount: 0,
+      completedCount: 0,
+      activeCount: 0,
     },
   };
 }
+
+/**
+ * Zero-usage snapshot for the ``AssistantMessage.usage`` field. Colony's
+ * sidecar responds with a loose ``Record<string, unknown>`` usage bag we
+ * normalise via ``normalizeUsage`` at the OpenClaw-result level
+ * (``attemptUsage``); the ``AssistantMessage.usage`` shape pi-ai expects
+ * is stricter and we fill it with zeros since no per-message
+ * breakdown is available.
+ */
+function zeroAssistantUsage(): {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+} {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+/**
+ * Build the Colony ``AgentHarness`` adapter.
+ *
+ * Contract reference: ``openclaw/plugin-sdk/agent-harness`` — especially
+ * ``AgentHarness``, ``AgentHarnessSupport``, and
+ * ``EmbeddedRunAttemptResult`` (which ``AgentHarnessAttemptResult``
+ * aliases). See the Codex reference harness at
+ * ``openclaw/dist/harness-*.js`` (``buildResult``) for the canonical
+ * "safe defaults" shape of a result.
+ *
+ * Supports semantics:
+ *
+ *  - ``ownReasoningLoop=false`` → never supported.
+ *  - ``requestedRuntime`` must be ``"colony"`` or ``"auto"`` (we skip
+ *    ``"pi"``, ``"codex"``, any other explicit opt-in).
+ *  - Capability probe must have completed and advertised ``"reasoning"``.
+ *    The first ``supports`` call kicks the probe in the background so
+ *    subsequent turns see the resolved set; the *very first* call
+ *    returns ``{ supported: false }`` with the "not yet probed" reason.
+ *
+ * Priority is ``50`` — below Codex's ``100`` so Codex wins when both
+ * advertise support for ``codex/*`` model refs.
+ *
+ * ``runAttempt`` NEVER throws. Every failure mode is returned as a
+ * shaped ``EmbeddedRunAttemptResult`` with ``promptError`` set, which
+ * lets OpenClaw's fallback policy route to PI transparently.
+ *
+ * TODO(colony-core): ``colony/api/routers/host.py::supported_capabilities``
+ * does not currently advertise ``"reasoning"``. Append it to the list
+ * once the reasoning endpoint is fully wired so Colony's harness starts
+ * advertising support.
+ */
+function agentHarness(
+  ctx: ColonyPluginContext,
+  caps: ReturnType<typeof capabilityProbe>,
+  logger?: { warn(m: string): void; info?(m: string): void },
+): AgentHarness {
+  const supports = (sctx: AgentHarnessSupportContext): AgentHarnessSupport => {
+    if (!ctx.config.ownReasoningLoop) {
+      return {
+        supported: false,
+        reason: "colony: ownReasoningLoop=false",
+      };
+    }
+    const rt = sctx.requestedRuntime;
+    if (rt !== "colony" && rt !== "auto") {
+      return {
+        supported: false,
+        reason: `colony: requestedRuntime=${String(rt)}`,
+      };
+    }
+    const snap = caps.snapshot();
+    if (!snap.probed) {
+      // First-call miss: kick the probe in the background so the next
+      // turn sees the resolved capability set. ``kick()`` is reentrant.
+      void caps.kick().catch(() => {
+        /* capabilityProbe swallows errors internally */
+      });
+      return {
+        supported: false,
+        reason: "colony: capabilities not yet probed",
+      };
+    }
+    if (!snap.caps.has("reasoning")) {
+      return {
+        supported: false,
+        reason: "colony: sidecar does not advertise 'reasoning' capability",
+      };
+    }
+    return { supported: true, priority: 50 };
+  };
+
+  const runAttempt = async (
+    params: AgentHarnessAttemptParams,
+  ): Promise<AgentHarnessAttemptResult> => {
+    const sessionId = params.sessionId;
+
+    // Pre-check: honour a pre-aborted signal without making any call.
+    if (params.abortSignal?.aborted) {
+      return {
+        ...baseAttemptResult(sessionId),
+        aborted: true,
+        externalAbort: true,
+      };
+    }
+
+    // KNOWN GAP: Colony's ``HostTurnContext`` requires a single
+    // ``contact_id``; OpenClaw's attempt params carry several candidate
+    // identifiers but no canonical contact id. Prefer the most
+    // user-stable value available, falling back to the session id so the
+    // sidecar always has *some* stable routing key. Document this as
+    // a follow-up under aevonix/colony-ai#7.
+    const contactId =
+      params.senderId ??
+      params.senderUsername ??
+      params.agentAccountId ??
+      params.agentId ??
+      `openclaw:${sessionId}`;
+
+    const metadata: Record<string, unknown> = {
+      session_key: params.sessionKey,
+      agent_id: params.agentId,
+      think_level: params.thinkLevel,
+      reasoning_level: params.reasoningLevel,
+    };
+    for (const k of Object.keys(metadata)) {
+      if (metadata[k] === undefined) delete metadata[k];
+    }
+
+    const modelOverride = `${params.provider}/${params.modelId}`;
+    // ``ClientToolDefinition`` is the OpenResponses hosted-tools shape —
+    // the caller-facing name lives at ``function.name``.
+    const availableTools = (params.clientTools ?? []).map(
+      (t) => t.function.name,
+    );
+
+    let res;
+    try {
+      res = await ctx.client.reasoningTurn(
+        {
+          identity: ctx.identity(),
+          context: {
+            session_id: sessionId,
+            contact_id: contactId,
+            channel_id: params.messageChannel,
+            turn_id: params.runId,
+            metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+          },
+          messages: [{ role: "user", content: params.prompt }],
+          available_tools:
+            availableTools.length > 0 ? availableTools : undefined,
+          model_override: modelOverride,
+        },
+        { signal: params.abortSignal },
+      );
+    } catch (err) {
+      // Abort propagation: if the caller aborted mid-flight, prefer the
+      // "aborted" shape even when fetch surfaces a transport error.
+      if (params.abortSignal?.aborted) {
+        return {
+          ...baseAttemptResult(sessionId),
+          aborted: true,
+          externalAbort: true,
+        };
+      }
+
+      if (err instanceof ColonyApiError) {
+        // 501 / phase1_wiring_required — endpoint not wired on this
+        // sidecar build. Promote to promptError so OpenClaw's harness
+        // fallback can route to PI.
+        if (err.code === "phase1_wiring_required" || err.status === 501) {
+          logger?.warn(
+            `[colony] reasoning.turn: sidecar returned ${err.code} (${err.status}) — falling back`,
+          );
+          return {
+            ...baseAttemptResult(sessionId),
+            promptError: "colony: reasoning endpoint not wired (501)",
+            promptErrorSource: "prompt",
+          };
+        }
+        if (err.status >= 500 && err.status < 600) {
+          logger?.warn(
+            `[colony] reasoning.turn: sidecar ${err.status} ${err.code} — falling back`,
+          );
+          return {
+            ...baseAttemptResult(sessionId),
+            promptError: `colony: sidecar error (${err.status} ${err.code})`,
+            promptErrorSource: "prompt",
+          };
+        }
+        // 4xx — NOTE: this differs from context-engine's behaviour
+        // (which re-throws). For the harness, returning a shaped error
+        // lets OpenClaw's harness-selection fallback kick in; throwing
+        // would abort the entire turn instead of routing to PI.
+        logger?.warn(
+          `[colony] reasoning.turn: contract error ${err.status} ${err.code} — falling back`,
+        );
+        return {
+          ...baseAttemptResult(sessionId),
+          promptError: `colony: contract error (${err.status} ${err.code})`,
+          promptErrorSource: "prompt",
+        };
+      }
+      // Network / transport / timeout — treat as fallback.
+      logger?.warn(
+        `[colony] reasoning.turn: transport error — falling back (${String(err)})`,
+      );
+      return {
+        ...baseAttemptResult(sessionId),
+        promptError: `colony: transport error: ${String(err)}`,
+        promptErrorSource: "prompt",
+      };
+    }
+
+    // Success path: translate Colony's response into a fully-populated
+    // EmbeddedRunAttemptResult.
+    const text = res.message?.content ?? "";
+    const toolCalls = (res.tool_calls ?? []).map((tc) => ({
+      type: "toolCall" as const,
+      id: tc.id,
+      name: tc.name,
+      arguments: tc.arguments as Record<string, unknown>,
+    }));
+
+    const content: AssistantMessageContent[] = [];
+    if (text.length > 0) {
+      content.push({ type: "text", text });
+    }
+    for (const tc of toolCalls) {
+      content.push(tc);
+    }
+
+    const timestamp = Date.now();
+    // KNOWN GAP: ``api`` and ``provider`` below are best-effort — Colony
+    // does not report which API dialect it used, so we echo the caller's
+    // model metadata. OpenClaw treats this as a hint, not a promise.
+    const assistant: AssistantMessageLike = {
+      role: "assistant",
+      content,
+      api: params.model.api,
+      provider: params.model.provider,
+      model: params.modelId,
+      usage: zeroAssistantUsage(),
+      stopReason: toolCalls.length > 0 ? "toolUse" : "stop",
+      timestamp,
+    };
+
+    const userMsg: UserMessageLike = {
+      role: "user",
+      content: params.prompt,
+      timestamp,
+    };
+
+    const attemptUsage = normalizeUsage(
+      res.usage as Parameters<typeof normalizeUsage>[0],
+    );
+
+    return {
+      ...baseAttemptResult(sessionId),
+      messagesSnapshot: [userMsg, assistant] as AgentHarnessAttemptResult["messagesSnapshot"],
+      assistantTexts: text.length > 0 ? [text] : [],
+      lastAssistant: assistant as AgentHarnessAttemptResult["lastAssistant"],
+      currentAttemptAssistant:
+        assistant as AgentHarnessAttemptResult["lastAssistant"],
+      attemptUsage,
+    };
+  };
+
+  return {
+    id: "colony",
+    label: "Colony reasoning harness",
+    pluginId: PLUGIN_ID,
+    supports,
+    runAttempt,
+    // ``reset`` / ``dispose`` are no-ops today but are declared so
+    // forward-compat extensions (per-session sidecar bindings, shared
+    // fetch pools) can attach cleanup here without touching the
+    // registration call site.
+    reset: async (_params): Promise<void> => {
+      // intentional no-op — Colony does not bind per-session sidecar state
+    },
+    dispose: async (): Promise<void> => {
+      // intentional no-op — ``ColonySidecarClient`` has no shared handles
+    },
+    // ``compact`` deliberately omitted: Colony has no transcript-
+    // compaction endpoint. The harness registry checks ``compact?`` and
+    // skips when absent, so omitting is safe and correct.
+  };
+}
+
+/**
+ * Structural shape of ``AssistantMessage.content[n]``. Declared here to
+ * avoid pulling ``@mariozechner/pi-ai`` as a direct dependency just for
+ * one content-union type; fields match the pi-ai public type.
+ */
+type AssistantMessageContent =
+  | { type: "text"; text: string }
+  | {
+      type: "toolCall";
+      id: string;
+      name: string;
+      arguments: Record<string, unknown>;
+    };
+
+/**
+ * Structural shape of ``AssistantMessage``. We construct the value
+ * here and cast it at the boundary onto
+ * ``AgentHarnessAttemptResult["lastAssistant"]`` so the rest of the
+ * adapter stays free of external dependency imports.
+ */
+type AssistantMessageLike = {
+  role: "assistant";
+  content: AssistantMessageContent[];
+  api: string;
+  provider: string;
+  model: string;
+  usage: ReturnType<typeof zeroAssistantUsage>;
+  stopReason: "stop" | "toolUse";
+  timestamp: number;
+};
+
+type UserMessageLike = {
+  role: "user";
+  content: string;
+  timestamp: number;
+};
 
 function safetyHook(ctx: ColonyPluginContext) {
   return async (event: {
@@ -912,12 +1282,19 @@ function capabilityProbe(ctx: ColonyPluginContext) {
   // time, so no race between "capabilities available" and "probe
   // succeeded" signals.
   let lastProbeSucceeded = false;
+  // Cached result set, populated synchronously the moment ``load()``
+  // resolves. ``snapshot()`` reads this without awaiting so
+  // ``AgentHarness.supports()`` — which must be synchronous per the SDK
+  // contract — can still consult probe state.
+  let capsSnapshot: ReadonlySet<string> = new Set<string>();
 
   const load = async (): Promise<ReadonlySet<string>> => {
     try {
       const health = await ctx.client.health();
+      const set = new Set(health.capabilities);
+      capsSnapshot = set;
       lastProbeSucceeded = true;
-      return new Set(health.capabilities);
+      return set;
     } catch {
       // Don't cache failures — reset so the next call re-probes.
       capsPromise = null;
@@ -947,9 +1324,37 @@ function capabilityProbe(ctx: ColonyPluginContext) {
       await capsPromise;
       return lastProbeSucceeded;
     },
+    /**
+     * Synchronous view of the probe's current state. Returns
+     * ``probed: false`` with an empty ``caps`` set until a probe has
+     * completed successfully at least once; on success ``caps`` is the
+     * most recently observed ``/v1/host/health.capabilities`` set.
+     *
+     * The ``AgentHarness.supports`` contract forbids awaits, so
+     * ``supports()`` must kick off the probe in the background (via a
+     * discard-await on ``has()``) and rely on the next turn seeing the
+     * populated set.
+     */
+    snapshot(): { probed: boolean; caps: ReadonlySet<string> } {
+      return { probed: lastProbeSucceeded, caps: capsSnapshot };
+    },
+    /**
+     * Begin loading capabilities if no load is in-flight. Returns the
+     * in-flight (or freshly started) promise so callers that want to
+     * ``void``-await it from a synchronous context can still attach
+     * error handlers if needed. Reentrant — second call during a load
+     * returns the same promise.
+     */
+    kick(): Promise<ReadonlySet<string>> {
+      if (capsPromise === null) {
+        capsPromise = load();
+      }
+      return capsPromise;
+    },
     reset(): void {
       capsPromise = null;
       lastProbeSucceeded = false;
+      capsSnapshot = new Set<string>();
     },
   };
 }
@@ -1095,10 +1500,10 @@ export async function createColonyPlugin(): Promise<unknown> {
       );
 
       if (ctx.config.ownReasoningLoop) {
-        // #7 Phase 5 — rewrite against AgentHarness
-        // ({ id, label, supports(ctx), runAttempt(EmbeddedRunAttemptParams) })
-        // @ts-expect-error — scaffold shape, see issue #7 Phase 5
-        api.registerAgentHarness(agentHarness(ctx));
+        // #7 Phase 5 — ``agentHarness`` implements the real
+        // ``AgentHarness`` contract (see its doc comment), so no
+        // ``@ts-expect-error`` is needed here.
+        api.registerAgentHarness(agentHarness(ctx, caps, api.logger));
       }
 
       // #7 Phase 6 — rewrite safety hook handler against the real

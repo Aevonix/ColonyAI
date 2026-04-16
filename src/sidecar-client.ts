@@ -94,8 +94,24 @@ export class ColonySidecarClient {
 
   // --- Reasoning -----------------------------------------------------------
 
-  reasoningTurn(body: ReasoningTurnRequest): Promise<ReasoningTurnResponse> {
-    return this.post<ReasoningTurnResponse>("/v1/host/reasoning/turn", body);
+  /**
+   * Invoke the colony-core reasoning endpoint.
+   *
+   * Accepts an optional ``signal`` so callers (specifically the
+   * ``AgentHarness`` adapter) can propagate OpenClaw's
+   * ``EmbeddedRunAttemptParams.abortSignal`` into the HTTP request. When
+   * both ``signal`` and the internal per-request timeout fire, whichever
+   * trips first aborts the ``fetch`` — see ``request()`` for the merge.
+   */
+  reasoningTurn(
+    body: ReasoningTurnRequest,
+    opts?: { signal?: AbortSignal },
+  ): Promise<ReasoningTurnResponse> {
+    return this.post<ReasoningTurnResponse>(
+      "/v1/host/reasoning/turn",
+      body,
+      opts,
+    );
   }
 
   // --- Signals -------------------------------------------------------------
@@ -205,13 +221,40 @@ export class ColonySidecarClient {
     return this.request<T>("GET", path);
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
-    return this.request<T>("POST", path, body);
+  private async post<T>(
+    path: string,
+    body: unknown,
+    opts?: { signal?: AbortSignal },
+  ): Promise<T> {
+    return this.request<T>("POST", path, body, opts);
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    opts?: { signal?: AbortSignal },
+  ): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+
+    // Merge the internal timeout controller with the caller-supplied
+    // signal (if any): whichever fires first aborts the request. Prefer
+    // the native ``AbortSignal.any`` when available (Node 20.3+); fall
+    // back to a manual listener otherwise so this stays compatible with
+    // older runtimes.
+    const external = opts?.signal;
+    let unlistenExternal: (() => void) | undefined;
+    if (external) {
+      if (external.aborted) {
+        controller.abort();
+      } else {
+        const onAbort = () => controller.abort();
+        external.addEventListener("abort", onAbort, { once: true });
+        unlistenExternal = () =>
+          external.removeEventListener("abort", onAbort);
+      }
+    }
 
     try {
       const response = await fetch(this.base + path, {
@@ -248,6 +291,7 @@ export class ColonySidecarClient {
       return (await response.json()) as T;
     } finally {
       clearTimeout(timer);
+      unlistenExternal?.();
     }
   }
 }
