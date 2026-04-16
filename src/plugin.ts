@@ -1,6 +1,7 @@
 import { ColonyPluginConfigSchema, type ColonyPluginConfig } from "./config.js";
 import { ColonyApiError, ColonySidecarClient } from "./sidecar-client.js";
 import type {
+  ContextSection,
   HostEvent,
   HostHealthResponse,
   HostMessage,
@@ -23,7 +24,35 @@ import type {
   PluginLogger,
 } from "openclaw/plugin-sdk/plugin-entry";
 
+/**
+ * Context-engine contract surface pulled directly from the OpenClaw SDK.
+ * Re-exported through ``openclaw/plugin-sdk`` (the package index); the
+ * narrower ``openclaw/plugin-sdk/core`` subpath deliberately does not
+ * re-export the ``ContextEngine`` shapes.
+ */
+import type {
+  AssembleResult,
+  CompactResult,
+  ContextEngine,
+  ContextEngineFactory,
+  ContextEngineInfo,
+  IngestResult,
+} from "openclaw/plugin-sdk";
+import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
+
 export type { OpenClawPluginApi };
+
+/**
+ * ``AgentMessage`` is defined in ``@mariozechner/pi-agent-core`` but is
+ * only pulled into the plugin transitively through ``openclaw``. Rather
+ * than declaring the package as a direct dependency just to name the
+ * type, we derive it from the ``ContextEngine.assemble`` signature —
+ * this guarantees the adapter stays in lockstep with whatever shape the
+ * SDK actually accepts.
+ */
+export type AgentMessage = Parameters<
+  ContextEngine["assemble"]
+>[0]["messages"][number];
 
 /**
  * ``MemoryEmbeddingProviderAdapter`` and friends aren't exposed through
@@ -574,34 +603,252 @@ function memoryEmbeddingProvider(
   };
 }
 
-function contextEngineFactory(ctx: ColonyPluginContext) {
-  return () => ({
-    id: "colony-context",
-    async assemble(args: {
-      context: HostTurnContext;
-      incomingMessage: HostMessage;
-      availableTools?: string[];
-      citationsMode?: "off" | "inline" | "appendix";
-    }) {
-      try {
-        const res = await ctx.client.contextAssemble({
-          identity: ctx.identity(),
-          context: args.context,
-          incoming_message: args.incomingMessage,
-          available_tools: args.availableTools,
-          citations_mode: args.citationsMode,
-        });
-        return res;
-      } catch (err) {
-        if (err instanceof ColonyApiError && err.code === "phase1_wiring_required") {
-          // Phase 1 not landed yet — degrade gracefully so the host's
-          // default context assembly continues to work.
-          return { sections: [], notices: ["colony-context: phase1 wiring pending"] };
-        }
-        throw err;
-      }
+/**
+ * Build the ``ContextEngineFactory`` that plugs Colony's context-assembly
+ * sidecar into OpenClaw's ``ContextEngine`` contract.
+ *
+ * The engine is intentionally a *thin* adapter:
+ *
+ *  - ``ingest`` is a no-op. Colony derives its context freshly each turn
+ *    from its own server-side stores (memory graph, continuity, etc.),
+ *    so there is nothing to buffer on the plugin side. Post-turn
+ *    cognition sync is handled by the ``reply_dispatch`` hook wired
+ *    separately in Phase 6 — calling turn-sync here would double-fire.
+ *  - ``assemble`` calls ``/v1/host/context/assemble`` and converts the
+ *    returned ``sections`` + ``notices`` into a single
+ *    ``systemPromptAddition``. Messages are passed through unchanged —
+ *    Colony only augments the system prompt, it never rewrites the
+ *    transcript.
+ *  - ``compact`` delegates to OpenClaw's built-in runtime compaction.
+ *    Colony's ``MemoryConsolidator`` does *long-term episodic*
+ *    consolidation, not transcript compaction, so we deliberately don't
+ *    claim ``ownsCompaction``.
+ *
+ * Degradation policy follows the rest of the plugin: 501 /
+ * ``phase1_wiring_required`` and 5xx return a pass-through result with a
+ * warn-log, 4xx structured errors re-throw, transport errors warn and
+ * pass through. See ``withDegradation`` for the shared implementation.
+ */
+function contextEngineFactory(
+  ctx: ColonyPluginContext,
+  caps: ReturnType<typeof capabilityProbe>,
+  logger?: { warn(m: string): void; info?(m: string): void },
+): ContextEngineFactory {
+  const info: ContextEngineInfo = {
+    id: "colony",
+    name: "Colony Context Engine",
+    version: PLUGIN_VERSION,
+    // Colony augments the system prompt; compaction is delegated to the
+    // OpenClaw runtime (see ``compact`` below).
+    ownsCompaction: false,
+  };
+
+  const engine: ContextEngine = {
+    info,
+
+    async ingest(_params): Promise<IngestResult> {
+      // No-op: Colony derives context freshly each turn from its own
+      // server-side stores. The reply_dispatch hook (Phase 6) handles
+      // post-turn cognition sync separately — do not double-wire here.
+      return { ingested: true };
     },
-  });
+
+    async assemble(params): Promise<AssembleResult> {
+      const passThrough = (notice?: string): AssembleResult => {
+        const addition = notice ? toAddition([], [notice]) : undefined;
+        return {
+          messages: params.messages,
+          estimatedTokens: estimateTokens(params.messages, addition),
+          systemPromptAddition: addition,
+        };
+      };
+
+      // Capability gate: skip the sidecar call only when the probe
+      // *succeeded* and reported "context" is off. Unknown probe state
+      // (probe failed) still tries the call so operators see the real
+      // transport / contract error rather than a silent no-op.
+      if (
+        (await caps.hasProbedSuccessfully()) &&
+        !(await caps.has("context"))
+      ) {
+        return passThrough();
+      }
+
+      const incoming = buildIncomingMessage(params.messages, params.prompt);
+      if (!incoming) {
+        // No user message to prompt with — skip the sidecar call and pass
+        // through. Colony's assembler is keyed on a user turn.
+        return passThrough();
+      }
+
+      const res = await withDegradation(
+        { name: "context.assemble", logger },
+        () =>
+          ctx.client.contextAssemble({
+            identity: ctx.identity(),
+            context: {
+              session_id: params.sessionId,
+              // KNOWN GAP: OpenClaw's ``assemble`` params don't carry a
+              // person / contact id. Use ``sessionKey`` (or
+              // ``sessionId``) as a surrogate so the sidecar has *some*
+              // stable routing key; tracked as a follow-up under
+              // aevonix/colony-ai#7.
+              contact_id: params.sessionKey ?? params.sessionId,
+            },
+            incoming_message: incoming,
+            available_tools: params.availableTools
+              ? Array.from(params.availableTools)
+              : undefined,
+            citations_mode: mapCitations(params.citationsMode),
+          }),
+        () => ({ sections: [], notices: ["colony-context: degraded"] }),
+      );
+
+      const addition = toAddition(res.sections, res.notices);
+      return {
+        // Pass-through: Colony only augments the system prompt, it
+        // does not rewrite the transcript. Keep the array identity so
+        // callers that diff-by-reference see no change.
+        messages: params.messages,
+        estimatedTokens: estimateTokens(params.messages, addition),
+        systemPromptAddition: addition,
+      };
+    },
+
+    async compact(params): Promise<CompactResult> {
+      // Colony has no transcript-compaction of its own.
+      // ``MemoryConsolidator`` is long-term episodic consolidation — it
+      // is NOT transcript compaction. Delegate to OpenClaw's built-in
+      // runtime compaction path instead.
+      return delegateCompactionToRuntime(params);
+    },
+  };
+
+  return () => engine;
+}
+
+// ---------------------------------------------------------------------------
+// ContextEngine helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Pull a ``HostMessage`` to send as the sidecar's ``incoming_message``:
+ *
+ *  1. If ``prompt`` is set, prefer it verbatim — the SDK documents
+ *     ``prompt`` as "the incoming user prompt for this turn" and it's
+ *     the authoritative signal.
+ *  2. Otherwise walk ``messages`` backwards and return the most recent
+ *     user message, flattening content-part arrays down to their
+ *     ``text`` fields.
+ *
+ * Returns ``undefined`` when neither yields a user turn; the caller
+ * uses that as the signal to skip the sidecar call entirely.
+ */
+function buildIncomingMessage(
+  messages: AgentMessage[],
+  prompt: string | undefined,
+): HostMessage | undefined {
+  if (prompt !== undefined && prompt !== "") {
+    return { role: "user", content: prompt };
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: string; content?: unknown };
+    if (m.role === "user") {
+      const c = m.content;
+      const text =
+        typeof c === "string"
+          ? c
+          : Array.isArray(c)
+            ? c
+                .filter((p: unknown) => (p as { type?: string })?.type === "text")
+                .map((p: unknown) => (p as { text?: string }).text ?? "")
+                .join("\n")
+            : "";
+      return { role: "user", content: text };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Translate the SDK's ``citationsMode`` vocabulary
+ * (``"auto" | "on" | "off"``) into the Colony sidecar's
+ * ``"off" | "inline" | "appendix"`` vocabulary.
+ *
+ * This is a judgement-call mapping — the two vocabularies don't line up
+ * 1:1. We picked:
+ *
+ *  - ``"auto"`` → ``"inline"`` (low-friction default, matches Colony's
+ *    behavior when the host doesn't opt in to a specific rendering).
+ *  - ``"on"``   → ``"appendix"`` (explicit opt-in by the host → surface
+ *    citations visibly at end of the assembled context).
+ *  - ``"off"``  → ``"off"``     (straight mapping).
+ *  - ``undefined`` → ``undefined`` (omit from the wire so the sidecar
+ *    applies its own default).
+ *
+ * Revisit this mapping if either side's vocabulary grows.
+ */
+function mapCitations(
+  mode: "auto" | "on" | "off" | undefined,
+): "off" | "inline" | "appendix" | undefined {
+  if (mode === undefined) return undefined;
+  if (mode === "auto") return "inline";
+  if (mode === "on") return "appendix";
+  return "off";
+}
+
+/**
+ * Render ``sections`` + ``notices`` into a single
+ * ``systemPromptAddition`` string. Sections are sorted by priority
+ * descending (higher numbers go first) so the sidecar's ordering is
+ * preserved; missing ``priority`` counts as 0.
+ *
+ * Returns ``undefined`` when there's nothing to add — the SDK treats
+ * that as "no addition" rather than requiring an empty string.
+ */
+function toAddition(
+  sections: ContextSection[],
+  notices: string[] | undefined,
+): string | undefined {
+  const sorted = [...sections].sort(
+    (a, b) => (b.priority ?? 0) - (a.priority ?? 0),
+  );
+  const body = sorted
+    .map((s) => (s.title ? `## ${s.title}\n${s.body}` : s.body))
+    .filter(Boolean)
+    .join("\n\n");
+  const noticeBlock =
+    notices && notices.length > 0
+      ? "Notices:\n" + notices.map((n) => `- ${n}`).join("\n")
+      : "";
+  const combined = [noticeBlock, body].filter(Boolean).join("\n\n");
+  return combined.length > 0 ? combined : undefined;
+}
+
+/**
+ * Cheap token estimate (~4 chars/token) covering the pass-through
+ * ``messages`` array plus the ``systemPromptAddition``. This matches
+ * pi-agent-core's internal approximation closely enough for
+ * compaction-threshold decisions; the OpenClaw runtime does its own
+ * precise accounting before it actually invokes a provider.
+ */
+function estimateTokens(
+  messages: AgentMessage[],
+  addition: string | undefined,
+): number {
+  let chars = addition?.length ?? 0;
+  for (const m of messages) {
+    const c = (m as { content?: unknown }).content;
+    if (typeof c === "string") {
+      chars += c.length;
+    } else if (Array.isArray(c)) {
+      for (const p of c) {
+        const t = (p as { text?: unknown }).text;
+        if (typeof t === "string") chars += t.length;
+      }
+    }
+  }
+  return Math.ceil(chars / 4);
 }
 
 function agentHarness(ctx: ColonyPluginContext) {
@@ -839,10 +1086,13 @@ export async function createColonyPlugin(): Promise<unknown> {
       // so no ``@ts-expect-error`` is needed here.
       api.registerMemoryEmbeddingProvider(memoryEmbeddingProvider(ctx));
 
-      // #7 Phase 4 — rewrite against ContextEngine
-      // ({ info, ingest, bootstrap?, maintain?, assemble(...) -> {messages, estimatedTokens}, compact })
-      // @ts-expect-error — scaffold shape, see issue #7 Phase 4
-      api.registerContextEngine("colony", contextEngineFactory(ctx));
+      // #7 Phase 4 — ``contextEngineFactory`` implements the real
+      // ``ContextEngine`` contract (see its doc comment), so no
+      // ``@ts-expect-error`` is needed here.
+      api.registerContextEngine(
+        "colony",
+        contextEngineFactory(ctx, caps, api.logger),
+      );
 
       if (ctx.config.ownReasoningLoop) {
         // #7 Phase 5 — rewrite against AgentHarness
