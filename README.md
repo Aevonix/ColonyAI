@@ -1,84 +1,114 @@
 # @aevonix/openclaw-colony
 
-OpenClaw plugin that mounts [Colony](https://github.com/aevonix/colony-ai)'s
-intelligence — graph memory, the seven-layer safety pipeline, the
-17-phase autonomy loop, theory-of-mind signals — into any OpenClaw
-install.
-
-The plugin itself is a thin TypeScript shim. It speaks the
-`/v1/host/*` HTTP/WebSocket contract exposed by **`colony-core`** (the
-Python sidecar carved out of `colony-ai`'s intelligence stack) and
-forwards each call to the matching OpenClaw plugin extension slot.
+OpenClaw plugin that mounts **Colony's intelligence layer** — graph memory, autonomy loop, context assembly, safety pipeline — into any OpenClaw instance via the colony-core `/v1/host` API.
 
 ## What it registers
 
-| OpenClaw slot                       | Backed by                  |
-|-------------------------------------|----------------------------|
-| `registerMemoryCapability`          | colony-core graph memory   |
-| `registerMemoryEmbeddingProvider`   | colony-core embeddings     |
-| `registerContextEngine("colony")`   | colony-core context engine |
-| `registerAgentHarness` (opt-in)     | colony-core reasoning loop |
-| `registerHook(["message_sending"])` | seven-layer ResponseGate   |
-| `on("reply_dispatch")` (post-turn)  | SignalCollector            |
-| `registerService` (background)      | host events WebSocket      |
+| OpenClaw extension slot | Colony adapter | Status |
+|---|---|---|
+| `registerMemoryCapability` | `MemoryPluginCapability` with `promptBuilder` + `MemoryPluginRuntime` (search, read, flush, status, probe) | Working (gated by `ownMemoryCapability` config flag; exclusive slot) |
+| `registerMemoryEmbeddingProvider` | `MemoryEmbeddingProviderAdapter` with `create()` factory pattern | Working (returns `{provider: null}` when sidecar has no embedder) |
+| `registerContextEngine` | `ContextEngine` with `info`, `ingest` (no-op), `assemble`, `compact` (delegated) | Working |
+| `registerAgentHarness` | `AgentHarness` with `supports`, `runAttempt`, `reset`, `dispose` | Wired but reasoning endpoint is 501 until Stage B lands |
+| `api.on("message_sending")` | Safety gate with fail-closed policy | Working (fires per outbound chunk) |
+| `api.on("reply_dispatch")` | Post-turn cognition sync → `signals/ingest` + `turns/sync` | Working (fire-and-forget observer) |
+| `registerService` | Events lifecycle — WS subscriber with first-message auth + diagnostic logging | Working |
+
+All adapter shapes match the real OpenClaw SDK contracts. Zero `@ts-expect-error` markers.
 
 ## Configuration
 
-```json
+```jsonc
+// In your OpenClaw config:
 {
   "plugins": {
     "entries": {
       "colony": {
-        "module": "@aevonix/openclaw-colony",
         "config": {
-          "sidecarUrl": "http://127.0.0.1:7777",
-          "apiKey": "sk-colony-...",
-          "ownReasoningLoop": false,
-          "forwardProactiveDeliveries": true
+          "sidecarUrl": "http://127.0.0.1:7777",   // colony-core server
+          "apiKey": "sk-colony-...",                  // colony API key
+          "ownReasoningLoop": false,                  // opt-in: Colony drives reasoning
+          "ownMemoryCapability": false,               // opt-in: Colony owns the memory slot
+          "failSafetyClosed": true,                   // block outbound on safety errors
+          "forwardProactiveDeliveries": true,          // subscribe to events WS
+          "hostId": "openclaw",                        // identity for audit
+          "requestTimeoutMs": 30000                    // per-call HTTP timeout
         }
       }
+    },
+    "slots": {
+      "contextEngine": "colony"                       // activate Colony's context engine
     }
   }
 }
 ```
 
-`ownReasoningLoop` is off by default. Until Phase 1 of the colony-core
-plan lands the experimental `registerAgentHarness` path, OpenClaw
-should drive the reasoning loop and Colony provides memory + safety +
-signals only.
+### Config reference
 
-## Status
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `sidecarUrl` | `string` (URL) | `http://127.0.0.1:7777` | Colony-core sidecar base URL |
+| `apiKey` | `string` | (required) | Colony API key (`sk-colony-...`) |
+| `ownReasoningLoop` | `boolean` | `false` | Register Colony as the active agent harness (Stage B) |
+| `ownMemoryCapability` | `boolean` | `false` | Register Colony as the exclusive memory capability (claims the slot from memory-core) |
+| `failSafetyClosed` | `boolean` | `true` | Block outbound messages when safety sidecar is unreachable |
+| `forwardProactiveDeliveries` | `boolean` | `true` | Subscribe to `/v1/host/events` WebSocket for autonomy-loop events |
+| `hostId` | `string` | `"openclaw"` | Identity reported to colony-core for audit/scoping |
+| `requestTimeoutMs` | `number` | `30000` | Per-call HTTP timeout (ms) |
 
-**Pre-alpha. Adapter shapes do not yet match the real OpenClaw SDK
-contracts.** The `registerMemoryCapability`, `registerMemoryEmbeddingProvider`,
-`registerContextEngine`, and `registerAgentHarness` objects this plugin
-returns are scaffold shapes, not the SDK-compliant shapes. OpenClaw's
-runtime will either silently no-op on the registration or crash on
-first invocation. The safety hook is wired via `registerHook` but the
-event shape also doesn't match `PluginHookMessageSendingEvent`.
+## Quick start
 
-What IS correct and ready to build on:
+```bash
+# 1. Start colony-core
+cd colony-ai && python run_server.py
 
-- `ColonySidecarClient` — typed one-method-per-endpoint HTTP/WS client
-  over `/v1/host/*`, including first-message auth handshake for the
-  events WebSocket.
-- Shared helpers: `withDegradation`, `capabilityProbe` (with
-  `hasProbedSuccessfully()` for distinguishing "sidecar says no" from
-  "probe failed"), `summarizeHostEvent`, and `ColonyEmbedUnavailableError`.
-- Unit test coverage of those helpers (see `tests/helpers.test.ts`).
-- `pnpm-lock.yaml` pinned for reproducible builds.
-- The endpoint contract itself is stable (additive `v1`); endpoints
-  that aren't wired return `501 phase1_wiring_required` and the
-  helpers above treat those as soft-fail.
+# 2. Install the plugin into OpenClaw
+cd your-openclaw-instance
+pnpm add @aevonix/openclaw-colony
 
-What's blocking a real release:
+# 3. Add config (see above) to your OpenClaw config file
 
-- Rewire each adapter against the real SDK contracts in
-  `openclaw/plugin-sdk`. Tracking issue: see the colony-ai repo
-  issues labelled `plugin-adapters`.
-- Replace the structural `OpenClawPluginApi` stub in `src/plugin.ts`
-  with `import type { OpenClawPluginApi } from "openclaw/plugin-sdk/
-  plugin-entry"` so `tsc` enforces the contracts.
+# 4. Start OpenClaw — Colony adapter loads automatically
+```
 
-See the full plan in the colony-ai repo at `docs/HOST_API.md` and
-`/root/.claude/plans/radiant-bubbling-dolphin.md`.
+## Development
+
+```bash
+pnpm install
+pnpm test          # 116 unit tests
+pnpm typecheck     # zero errors
+
+# Integration tests (requires a running colony-core sidecar)
+COLONY_SMOKE_URL=http://127.0.0.1:17777 pnpm test:integration
+```
+
+## Architecture
+
+```
++----------------------------------------+        +-----------------------------+
+|  OpenClaw (Node/TS host)               |        |  colony-core (Python)       |
+|                                        |        |                             |
+|  +----------------------------------+  |  HTTP  |  + AutonomyLoop (17-phase)  |
+|  | @aevonix/openclaw-colony plugin  |<--------->|  + CognitionPipeline        |
+|  |  - MemoryPluginCapability        |  |  WS    |  + Graph memory (Neo4j)     |
+|  |  - MemoryEmbeddingProvider       |  |        |  + LanceDB vector store     |
+|  |  - ContextEngine                 |  |        |  + Mind model + signals     |
+|  |  - AgentHarness (opt-in)         |  |        |  + Relationship scorer      |
+|  |  - Safety hook (fail-closed)     |  |        |  + 7-layer ResponseGate     |
+|  |  - Reply-dispatch observer       |  |        |  + Goal/Initiative engine   |
+|  |  - Events lifecycle service      |  |        |  + Proactive delivery       |
+|  +----------------------------------+  |        |  + Skills registry/executor |
++----------------------------------------+        +-----------------------------+
+```
+
+## Known limitations
+
+- **Reasoning endpoint is 501** — Colony's `AIAgent.run_conversation` hasn't been extracted from the legacy `run_agent.py` yet (Stage B work). The harness adapter is wired and `supports()` gates correctly, but `runAttempt` always returns `promptError` until colony-core advertises the `"reasoning"` capability.
+- **Post-turn extraction fields are empty** — `PluginHookReplyDispatchEvent` doesn't carry assistant text, topics, entities, or tools used. Colony gets these eventually via its own signal ingestion, but the `turnsSync` call ships with empty extraction fields for now.
+- **Safety hook `incoming_message_text` is empty** — needs a companion `inbound_claim` hook to cache the incoming text per session. Currently sends `""`.
+- **Identity surrogate** — `contact_id` is derived from `sessionKey ?? sessionId ?? event.to` depending on the hook. Colony's cognition layer works best with a real person identifier; the surrogate is functional but degenerate for multi-person deployments.
+- **No multimodal embeddings** — `embedBatchInputs` is omitted; colony-core's embed endpoint accepts text only.
+
+## License
+
+MIT

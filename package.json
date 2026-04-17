@@ -1,6 +1,6 @@
 {
   "name": "@aevonix/openclaw-colony",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "OpenClaw plugin that mounts Colony's intelligence (graph memory, autonomy loop, safety pipeline) via the colony-core /v1/host API.",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,12 +13,15 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "vitest run tests/integration/",
+    "prepublishOnly": "pnpm run build"
   },
   "keywords": [
     "openclaw",
@@ -27,14 +30,30 @@
     "colony-core",
     "agent",
     "memory",
-    "intelligence"
+    "intelligence",
+    "context-engine",
+    "safety"
   ],
+  "author": "Aevonix <https://github.com/aevonix>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aevonix/openclaw-colony.git"
+  },
+  "homepage": "https://github.com/aevonix/openclaw-colony#readme",
+  "bugs": {
+    "url": "https://github.com/aevonix/openclaw-colony/issues"
+  },
   "engines": {
     "node": ">=22.16.0"
   },
   "peerDependencies": {
     "openclaw": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "dependencies": {
     "ws": "^8.18.0",
