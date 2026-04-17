@@ -1,6 +1,8 @@
-# @aevonix/openclaw-colony
+# @aevonix/colony-core
 
-OpenClaw plugin that mounts **Colony's intelligence layer** — graph memory, autonomy loop, context assembly, safety pipeline — into any OpenClaw instance via the colony-core `/v1/host` API.
+Colony's intelligence sidecar — **graph memory, autonomy loop, context assembly, safety pipeline** — mountable into any agent harness via the `/v1/host` API.
+
+Currently ships adapters for **OpenClaw** (first supported host). Future releases will add adapters for Hermes and other agent harnesses. The sidecar client and shared helpers are host-agnostic by design.
 
 ## What it registers
 
@@ -56,15 +58,15 @@ All adapter shapes match the real OpenClaw SDK contracts. Zero `@ts-expect-error
 | `hostId` | `string` | `"openclaw"` | Identity reported to colony-core for audit/scoping |
 | `requestTimeoutMs` | `number` | `30000` | Per-call HTTP timeout (ms) |
 
-## Quick start
+## Quick start (OpenClaw)
 
 ```bash
-# 1. Start colony-core
+# 1. Start colony-core sidecar
 cd colony-ai && python run_server.py
 
-# 2. Install the plugin into OpenClaw
+# 2. Install into OpenClaw
 cd your-openclaw-instance
-pnpm add @aevonix/openclaw-colony
+pnpm add @aevonix/colony-core
 
 # 3. Add config (see above) to your OpenClaw config file
 
@@ -89,7 +91,7 @@ COLONY_SMOKE_URL=http://127.0.0.1:17777 pnpm test:integration
 |  OpenClaw (Node/TS host)               |        |  colony-core (Python)       |
 |                                        |        |                             |
 |  +----------------------------------+  |  HTTP  |  + AutonomyLoop (17-phase)  |
-|  | @aevonix/openclaw-colony plugin  |<--------->|  + CognitionPipeline        |
+|  | @aevonix/colony-core             |<--------->|  + CognitionPipeline        |
 |  |  - MemoryPluginCapability        |  |  WS    |  + Graph memory (Neo4j)     |
 |  |  - MemoryEmbeddingProvider       |  |        |  + LanceDB vector store     |
 |  |  - ContextEngine                 |  |        |  + Mind model + signals     |

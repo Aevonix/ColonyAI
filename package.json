@@ -1,7 +1,7 @@
 {
-  "name": "@aevonix/openclaw-colony",
+  "name": "@aevonix/colony-core",
   "version": "0.1.0",
-  "description": "OpenClaw plugin that mounts Colony's intelligence (graph memory, autonomy loop, safety pipeline) via the colony-core /v1/host API.",
+  "description": "Colony's intelligence sidecar — graph memory, autonomy loop, context assembly, safety pipeline — mountable into OpenClaw, Hermes, and other agent harnesses via the /v1/host API.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,10 +24,11 @@
     "prepublishOnly": "pnpm run build"
   },
   "keywords": [
-    "openclaw",
-    "openclaw-plugin",
     "colony",
     "colony-core",
+    "sidecar",
+    "openclaw",
+    "hermes",
     "agent",
     "memory",
     "intelligence",
@@ -38,11 +39,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aevonix/openclaw-colony.git"
+    "url": "https://github.com/aevonix/colony-core.git"
   },
-  "homepage": "https://github.com/aevonix/openclaw-colony#readme",
+  "homepage": "https://github.com/aevonix/colony-core#readme",
   "bugs": {
-    "url": "https://github.com/aevonix/openclaw-colony/issues"
+    "url": "https://github.com/aevonix/colony-core/issues"
   },
   "engines": {
     "node": ">=22.16.0"
