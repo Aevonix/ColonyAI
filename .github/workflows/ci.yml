@@ -24,7 +24,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npm install openclaw@latest --no-save  # Install peer dep for typecheck
 
       - name: Typecheck
         run: npm run typecheck

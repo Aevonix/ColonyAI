@@ -24,4 +24,4 @@ EXPOSE 7777
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:7777/v1/host/health', timeout=3)" || exit 1
 
-CMD ["colony-sidecar", "start"]
+CMD ["colony", "start"]
