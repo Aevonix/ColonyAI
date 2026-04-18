@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "litellm>=1.40",
     "pydantic>=2.6",
+    "aiosqlite>=0.19",
 ]
 
 [project.optional-dependencies]
