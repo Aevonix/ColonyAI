@@ -35,19 +35,19 @@ docker compose up
 ```bash
 # Setup
 pip install -e "./sidecar[neo4j,lancedb]"
-colony-sidecar init
+colony init
 
 # Start
-colony-sidecar start
+colony start
 
 # Check
-colony-sidecar status
+colony status
 ```
 
 ### Non-interactive
 
 ```bash
-colony-sidecar init --non-interactive
+colony init --non-interactive
 ```
 
 ## Subsystems

@@ -1,4 +1,4 @@
-"""Colony sidecar CLI — ``colony-sidecar`` command."""
+"""Colony CLI — ``colony`` command."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="colony-sidecar",
+        prog="colony",
         description="Colony intelligence sidecar server",
     )
     sub = parser.add_subparsers(dest="command")
