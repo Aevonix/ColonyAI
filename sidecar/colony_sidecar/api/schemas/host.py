@@ -635,3 +635,17 @@ class SecretDeleteRequest(BaseModel):
 class SecretDeleteResponse(BaseModel):
     key: str
     deleted: bool
+
+
+# --- Autonomy ---------------------------------------------------------------
+
+class AutonomyStatusResponse(BaseModel):
+    running: bool = False
+    in_quiet_hours: bool = False
+    ticks: int = 0
+    events_processed: int = 0
+    goals_checked: int = 0
+    initiatives_generated: int = 0
+    actions_executed: int = 0
+    errors: int = 0
+    config: Optional[Dict[str, Any]] = None

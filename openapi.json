@@ -1748,10 +1748,131 @@
           }
         }
       }
+    },
+    "/v1/host/autonomy/status": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Autonomy Status",
+        "operationId": "autonomy_status_v1_host_autonomy_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomyStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/autonomy/start": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Autonomy Start",
+        "operationId": "autonomy_start_v1_host_autonomy_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomyStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/autonomy/stop": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Autonomy Stop",
+        "operationId": "autonomy_stop_v1_host_autonomy_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomyStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AutonomyStatusResponse": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running",
+            "default": false
+          },
+          "in_quiet_hours": {
+            "type": "boolean",
+            "title": "In Quiet Hours",
+            "default": false
+          },
+          "ticks": {
+            "type": "integer",
+            "title": "Ticks",
+            "default": 0
+          },
+          "events_processed": {
+            "type": "integer",
+            "title": "Events Processed",
+            "default": 0
+          },
+          "goals_checked": {
+            "type": "integer",
+            "title": "Goals Checked",
+            "default": 0
+          },
+          "initiatives_generated": {
+            "type": "integer",
+            "title": "Initiatives Generated",
+            "default": 0
+          },
+          "actions_executed": {
+            "type": "integer",
+            "title": "Actions Executed",
+            "default": 0
+          },
+          "errors": {
+            "type": "integer",
+            "title": "Errors",
+            "default": 0
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          }
+        },
+        "type": "object",
+        "title": "AutonomyStatusResponse"
+      },
       "BriefingListResponse": {
         "properties": {
           "briefings": {

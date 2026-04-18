@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from colony_sidecar.api.routers.host import (
     router as host_router,
+    set_autonomy_loop,
     set_chain_manager,
     set_reasoning_loop,
     set_graph,
@@ -219,6 +220,22 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("SecretsManager init failed: %s", exc)
 
+    # --- 19. Autonomy loop ---
+    try:
+        from colony_sidecar.autonomy.loop import AutonomyLoop
+        from colony_sidecar.autonomy.config import AutonomyConfig
+        from colony_sidecar.autonomy.registry import SubsystemRegistry
+        autonomy_config = AutonomyConfig.from_env()
+        registry = SubsystemRegistry()
+        autonomy_loop = AutonomyLoop(registry=registry, config=autonomy_config)
+        set_autonomy_loop(autonomy_loop)
+        logger.info(
+            "AutonomyLoop initialized (tick=%ds, not started — use /v1/host/autonomy/start)",
+            autonomy_config.tick_interval_secs,
+        )
+    except Exception as exc:
+        logger.warning("AutonomyLoop init failed: %s", exc)
+
     logger.info("Sidecar capabilities: %s", supported_capabilities())
     yield
 
@@ -245,6 +262,14 @@ async def lifespan(app: FastAPI):
     set_skills_registry(None)
     set_chain_manager(None)
     set_secrets_manager(None)
+    # Stop autonomy loop if running
+    try:
+        from colony_sidecar.api.routers.host import _autonomy_loop
+        if _autonomy_loop is not None and _autonomy_loop.is_running:
+            await _autonomy_loop.stop()
+    except Exception:
+        pass
+    set_autonomy_loop(None)
     logger.info("Sidecar shutdown complete")
 
 

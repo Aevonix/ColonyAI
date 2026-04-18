@@ -628,3 +628,55 @@ async def test_secrets_delete_no_manager(client):
     })
     assert resp.status_code == 200
     assert resp.json()["deleted"] is False
+
+
+# ---------------------------------------------------------------------------
+# Autonomy
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_autonomy_status_not_wired(client):
+    resp = await client.get("/v1/host/autonomy/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_autonomy_start_not_wired(client):
+    resp = await client.post("/v1/host/autonomy/start")
+    assert resp.status_code == 501
+
+
+@pytest.mark.asyncio
+async def test_autonomy_stop_not_wired(client):
+    resp = await client.post("/v1/host/autonomy/stop")
+    assert resp.status_code == 200
+
+
+def test_autonomy_config_from_env():
+    from colony_sidecar.autonomy.config import AutonomyConfig
+    config = AutonomyConfig.from_env()
+    assert config.tick_interval_secs > 0
+    assert config.max_actions_per_hour > 0
+
+
+def test_subsystem_registry():
+    from colony_sidecar.autonomy.registry import SubsystemRegistry
+    registry = SubsystemRegistry()
+    # All properties should return None or a value without error
+    assert registry.graph is None or registry.graph is not None
+    assert registry.goals is None or registry.goals is not None
+
+
+def test_autonomy_loop_instantiation():
+    from colony_sidecar.autonomy.loop import AutonomyLoop
+    from colony_sidecar.autonomy.config import AutonomyConfig
+    from colony_sidecar.autonomy.registry import SubsystemRegistry
+    config = AutonomyConfig(tick_interval_secs=60)
+    registry = SubsystemRegistry()
+    loop = AutonomyLoop(registry=registry, config=config)
+    assert not loop.is_running
+    s = loop.status()
+    assert s["running"] is False
+    assert s["config"]["tick_interval_secs"] == 60

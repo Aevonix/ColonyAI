@@ -710,10 +710,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/autonomy/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Autonomy Status */
+        get: operations["autonomy_status_v1_host_autonomy_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/autonomy/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Autonomy Start */
+        post: operations["autonomy_start_v1_host_autonomy_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/autonomy/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Autonomy Stop */
+        post: operations["autonomy_stop_v1_host_autonomy_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AutonomyStatusResponse */
+        AutonomyStatusResponse: {
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
+            /**
+             * In Quiet Hours
+             * @default false
+             */
+            in_quiet_hours: boolean;
+            /**
+             * Ticks
+             * @default 0
+             */
+            ticks: number;
+            /**
+             * Events Processed
+             * @default 0
+             */
+            events_processed: number;
+            /**
+             * Goals Checked
+             * @default 0
+             */
+            goals_checked: number;
+            /**
+             * Initiatives Generated
+             * @default 0
+             */
+            initiatives_generated: number;
+            /**
+             * Actions Executed
+             * @default 0
+             */
+            actions_executed: number;
+            /**
+             * Errors
+             * @default 0
+             */
+            errors: number;
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** BriefingListResponse */
         BriefingListResponse: {
             /**
@@ -2980,6 +3078,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    autonomy_status_v1_host_autonomy_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyStatusResponse"];
+                };
+            };
+        };
+    };
+    autonomy_start_v1_host_autonomy_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyStatusResponse"];
+                };
+            };
+        };
+    };
+    autonomy_stop_v1_host_autonomy_stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyStatusResponse"];
                 };
             };
         };

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 
 from colony_sidecar.api.schemas.host import (
+    AutonomyStatusResponse,
     BriefingListResponse,
     BriefingResponse,
     ChainVerifyRequest,
@@ -1245,3 +1246,73 @@ async def secrets_delete(body: SecretDeleteRequest) -> SecretDeleteResponse:
     except Exception as exc:
         logger.warning("secrets_delete failed: %s", exc)
         return SecretDeleteResponse(key=body.key, deleted=False)
+
+
+# ---------------------------------------------------------------------------
+# Autonomy
+# ---------------------------------------------------------------------------
+
+_autonomy_loop = None
+_autonomy_task = None
+
+def set_autonomy_loop(loop) -> None:
+    global _autonomy_loop
+    _autonomy_loop = loop
+
+
+@router.get("/autonomy/status", response_model=AutonomyStatusResponse)
+async def autonomy_status() -> AutonomyStatusResponse:
+    if _autonomy_loop is None:
+        return AutonomyStatusResponse()
+    try:
+        s = _autonomy_loop.status()
+        return AutonomyStatusResponse(
+            running=s.get("running", False),
+            in_quiet_hours=s.get("in_quiet_hours", False),
+            ticks=s.get("stats", {}).get("ticks", 0),
+            events_processed=s.get("stats", {}).get("events_processed", 0),
+            goals_checked=s.get("stats", {}).get("goals_checked", 0),
+            initiatives_generated=s.get("stats", {}).get("initiatives_generated", 0),
+            actions_executed=s.get("stats", {}).get("actions_executed", 0),
+            errors=s.get("stats", {}).get("errors", 0),
+            config=s.get("config"),
+        )
+    except Exception as exc:
+        logger.warning("autonomy_status failed: %s", exc)
+        return AutonomyStatusResponse()
+
+
+@router.post("/autonomy/start", response_model=AutonomyStatusResponse)
+async def autonomy_start() -> AutonomyStatusResponse:
+    global _autonomy_task
+    if _autonomy_loop is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    if _autonomy_loop.is_running:
+        return await autonomy_status()
+    try:
+        _autonomy_task = asyncio.create_task(_autonomy_loop.start())
+        # Give it a moment to start
+        await asyncio.sleep(0.1)
+        return await autonomy_status()
+    except Exception as exc:
+        logger.warning("autonomy_start failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/autonomy/stop", response_model=AutonomyStatusResponse)
+async def autonomy_stop() -> AutonomyStatusResponse:
+    global _autonomy_task
+    if _autonomy_loop is None:
+        return AutonomyStatusResponse()
+    try:
+        await _autonomy_loop.stop()
+        if _autonomy_task is not None:
+            try:
+                await asyncio.wait_for(_autonomy_task, timeout=5)
+            except asyncio.TimeoutError:
+                logger.warning("Autonomy loop did not stop within timeout")
+            _autonomy_task = None
+        return await autonomy_status()
+    except Exception as exc:
+        logger.warning("autonomy_stop failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
