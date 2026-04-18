@@ -311,3 +311,98 @@ class HostEvent(BaseModel):
     type: str
     occurred_at: str
     payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+# --- Goals ------------------------------------------------------------------
+
+class GoalCreateRequest(BaseModel):
+    identity: HostIdentity
+    context: Optional[HostTurnContext] = None
+    title: str
+    description: Optional[str] = None
+    priority: Optional[str] = "medium"
+    parent_goal_id: Optional[str] = None
+    person_id: Optional[str] = None
+
+
+class GoalUpdateRequest(BaseModel):
+    identity: HostIdentity
+    status: Optional[str] = None
+    progress: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class GoalResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    status: str = "active"
+    priority: str = "medium"
+    progress: float = 0.0
+    parent_goal_id: Optional[str] = None
+    person_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class GoalListResponse(BaseModel):
+    goals: List[GoalResponse] = []
+
+
+# --- Contacts ---------------------------------------------------------------
+
+class ContactResponse(BaseModel):
+    id: str
+    name: Optional[str] = None
+    trust_tier: Optional[str] = None
+    style_notes: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ContactListResponse(BaseModel):
+    contacts: List[ContactResponse] = []
+
+
+class ContactStyleRequest(BaseModel):
+    identity: HostIdentity
+    person_id: str
+
+
+class ContactStyleResponse(BaseModel):
+    person_id: str
+    formality: Optional[str] = None
+    tone: Optional[str] = None
+    notes: Optional[Dict[str, Any]] = None
+
+
+# --- Briefings --------------------------------------------------------------
+
+class BriefingResponse(BaseModel):
+    id: str
+    title: Optional[str] = None
+    body: str
+    briefing_type: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class BriefingListResponse(BaseModel):
+    briefings: List[BriefingResponse] = []
+
+
+# --- World Model ------------------------------------------------------------
+
+class EntityResponse(BaseModel):
+    id: str
+    entity_type: str
+    name: str
+    properties: Optional[Dict[str, Any]] = None
+
+
+class EntityListResponse(BaseModel):
+    entities: List[EntityResponse] = []
+
+
+class EntityQueryRequest(BaseModel):
+    identity: HostIdentity
+    query: str
+    limit: Optional[int] = 10

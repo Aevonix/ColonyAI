@@ -191,10 +191,213 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Goals */
+        get: operations["list_goals_v1_host_goals_get"];
+        put?: never;
+        /** Create Goal */
+        post: operations["create_goal_v1_host_goals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/goals/{goal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Goal */
+        get: operations["get_goal_v1_host_goals__goal_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Goal */
+        patch: operations["update_goal_v1_host_goals__goal_id__patch"];
+        trace?: never;
+    };
+    "/v1/host/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Contacts */
+        get: operations["list_contacts_v1_host_contacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/contacts/{contact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Contact */
+        get: operations["get_contact_v1_host_contacts__contact_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/contacts/{contact_id}/style": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get Contact Style */
+        post: operations["get_contact_style_v1_host_contacts__contact_id__style_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/briefings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Briefings */
+        get: operations["list_briefings_v1_host_briefings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/world/entities/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query Entities */
+        post: operations["query_entities_v1_host_world_entities_query_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/world/entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Entities */
+        get: operations["list_entities_v1_host_world_entities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BriefingListResponse */
+        BriefingListResponse: {
+            /**
+             * Briefings
+             * @default []
+             */
+            briefings: components["schemas"]["BriefingResponse"][];
+        };
+        /** BriefingResponse */
+        BriefingResponse: {
+            /** Id */
+            id: string;
+            /** Title */
+            title?: string | null;
+            /** Body */
+            body: string;
+            /** Briefing Type */
+            briefing_type?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /** ContactListResponse */
+        ContactListResponse: {
+            /**
+             * Contacts
+             * @default []
+             */
+            contacts: components["schemas"]["ContactResponse"][];
+        };
+        /** ContactResponse */
+        ContactResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name?: string | null;
+            /** Trust Tier */
+            trust_tier?: string | null;
+            /** Style Notes */
+            style_notes?: {
+                [key: string]: unknown;
+            } | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ContactStyleRequest */
+        ContactStyleRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Person Id */
+            person_id: string;
+        };
+        /** ContactStyleResponse */
+        ContactStyleResponse: {
+            /** Person Id */
+            person_id: string;
+            /** Formality */
+            formality?: string | null;
+            /** Tone */
+            tone?: string | null;
+            /** Notes */
+            notes?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** ContextAssembleRequest */
         ContextAssembleRequest: {
             identity: components["schemas"]["HostIdentity"];
@@ -229,6 +432,106 @@ export interface components {
             citations?: {
                 [key: string]: unknown;
             }[] | null;
+        };
+        /** EntityListResponse */
+        EntityListResponse: {
+            /**
+             * Entities
+             * @default []
+             */
+            entities: components["schemas"]["EntityResponse"][];
+        };
+        /** EntityQueryRequest */
+        EntityQueryRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Query */
+            query: string;
+            /**
+             * Limit
+             * @default 10
+             */
+            limit: number | null;
+        };
+        /** EntityResponse */
+        EntityResponse: {
+            /** Id */
+            id: string;
+            /** Entity Type */
+            entity_type: string;
+            /** Name */
+            name: string;
+            /** Properties */
+            properties?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** GoalCreateRequest */
+        GoalCreateRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            context?: components["schemas"]["HostTurnContext"] | null;
+            /** Title */
+            title: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Priority
+             * @default medium
+             */
+            priority: string | null;
+            /** Parent Goal Id */
+            parent_goal_id?: string | null;
+            /** Person Id */
+            person_id?: string | null;
+        };
+        /** GoalListResponse */
+        GoalListResponse: {
+            /**
+             * Goals
+             * @default []
+             */
+            goals: components["schemas"]["GoalResponse"][];
+        };
+        /** GoalResponse */
+        GoalResponse: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Status
+             * @default active
+             */
+            status: string;
+            /**
+             * Priority
+             * @default medium
+             */
+            priority: string;
+            /**
+             * Progress
+             * @default 0
+             */
+            progress: number;
+            /** Parent Goal Id */
+            parent_goal_id?: string | null;
+            /** Person Id */
+            person_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** GoalUpdateRequest */
+        GoalUpdateRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Status */
+            status?: string | null;
+            /** Progress */
+            progress?: number | null;
+            /** Notes */
+            notes?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -895,6 +1198,319 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SafetyCheckResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_goals_v1_host_goals_get: {
+        parameters: {
+            query?: {
+                person_id?: string | null;
+                status_filter?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_goal_v1_host_goals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_goal_v1_host_goals__goal_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_goal_v1_host_goals__goal_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_contacts_v1_host_contacts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactListResponse"];
+                };
+            };
+        };
+    };
+    get_contact_v1_host_contacts__contact_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                contact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_contact_style_v1_host_contacts__contact_id__style_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                contact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactStyleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactStyleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_briefings_v1_host_briefings_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefingListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_entities_v1_host_world_entities_query_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EntityQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_entities_v1_host_world_entities_get: {
+        parameters: {
+            query?: {
+                entity_type?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityListResponse"];
                 };
             };
             /** @description Validation Error */

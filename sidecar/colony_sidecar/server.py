@@ -19,6 +19,10 @@ from colony_sidecar.api.routers.host import (
     set_response_gate,
     set_signal_collector,
     set_embedder,
+    set_goals_engine,
+    set_contacts_store,
+    set_briefings_engine,
+    set_world_store,
     supported_capabilities,
 )
 
@@ -97,6 +101,44 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("EmbeddingPipeline init failed — memory/embed returns 501: %s", exc)
 
+    # --- 7. Goals engine ---
+    try:
+        from colony_sidecar.goals.engine import GoalEngine
+        from colony_sidecar.goals.store import GoalStore
+        goals_store = GoalStore()
+        goals_engine = GoalEngine(store=goals_store, llm_router=llm_router)
+        set_goals_engine(goals_engine)
+        logger.info("GoalEngine initialized")
+    except Exception as exc:
+        logger.warning("GoalEngine init failed: %s", exc)
+
+    # --- 8. Contacts ---
+    try:
+        from colony_sidecar.contacts.store import SQLiteContactStore
+        contacts_store = SQLiteContactStore(db_path=os.environ.get("COLONY_CONTACTS_DB", "contacts.db"))
+        set_contacts_store(contacts_store)
+        logger.info("ContactsStore initialized")
+    except Exception as exc:
+        logger.warning("ContactsStore init failed: %s", exc)
+
+    # --- 9. Briefings ---
+    try:
+        from colony_sidecar.briefings.engine import BriefingEngine
+        briefings = BriefingEngine(llm_router=llm_router, graph=graph)
+        set_briefings_engine(briefings)
+        logger.info("BriefingEngine initialized")
+    except Exception as exc:
+        logger.warning("BriefingEngine init failed: %s", exc)
+
+    # --- 10. World model ---
+    try:
+        from colony_sidecar.world_model.store import WorldModelStore
+        world_store = WorldModelStore(graph=graph)
+        set_world_store(world_store)
+        logger.info("WorldModelStore initialized")
+    except Exception as exc:
+        logger.warning("WorldModelStore init failed: %s", exc)
+
     logger.info("Sidecar capabilities: %s", supported_capabilities())
     yield
 
@@ -111,6 +153,10 @@ async def lifespan(app: FastAPI):
     set_response_gate(None)
     set_signal_collector(None)
     set_embedder(None)
+    set_goals_engine(None)
+    set_contacts_store(None)
+    set_briefings_engine(None)
+    set_world_store(None)
     logger.info("Sidecar shutdown complete")
 
 

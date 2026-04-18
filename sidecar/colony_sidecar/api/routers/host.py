@@ -18,9 +18,22 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 
 from colony_sidecar.api.schemas.host import (
+    BriefingListResponse,
+    BriefingResponse,
+    ContactListResponse,
+    ContactResponse,
+    ContactStyleRequest,
+    ContactStyleResponse,
     ContextAssembleRequest,
     ContextAssembleResponse,
     ContextSection,
+    EntityListResponse,
+    EntityQueryRequest,
+    EntityResponse,
+    GoalCreateRequest,
+    GoalListResponse,
+    GoalResponse,
+    GoalUpdateRequest,
     HostHealthResponse,
     HostMessage,
     MemoryEmbedRequest,
@@ -438,3 +451,181 @@ async def events_ws(ws: WebSocket) -> None:
             _event_subscribers.remove(q)
         except ValueError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Goals
+# ---------------------------------------------------------------------------
+
+_goals_store = None
+
+def set_goals_engine(engine) -> None:
+    global _goals_store
+    _goals_store = engine
+
+
+@router.post("/goals", response_model=GoalResponse)
+async def create_goal(body: GoalCreateRequest) -> GoalResponse:
+    if _goals_store is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    try:
+        goal = await _goals_store.create_goal(
+            title=body.title,
+            description=body.description,
+            priority=body.priority,
+            parent_goal_id=body.parent_goal_id,
+            person_id=body.person_id,
+        )
+        return GoalResponse(**goal)
+    except Exception as exc:
+        logger.warning("create_goal failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/goals", response_model=GoalListResponse)
+async def list_goals(person_id: Optional[str] = None, status_filter: Optional[str] = None) -> GoalListResponse:
+    if _goals_store is None:
+        return GoalListResponse(goals=[])
+    try:
+        goals = await _goals_store.list_goals(person_id=person_id, status=status_filter)
+        return GoalListResponse(goals=[GoalResponse(**g) for g in goals])
+    except Exception as exc:
+        logger.warning("list_goals failed: %s", exc)
+        return GoalListResponse(goals=[])
+
+
+@router.get("/goals/{goal_id}", response_model=GoalResponse)
+async def get_goal(goal_id: str) -> GoalResponse:
+    if _goals_store is None:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    try:
+        goal = await _goals_store.get_goal(goal_id)
+        if goal is None:
+            raise HTTPException(status_code=404, detail="Goal not found")
+        return GoalResponse(**goal)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("get_goal failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.patch("/goals/{goal_id}", response_model=GoalResponse)
+async def update_goal(goal_id: str, body: GoalUpdateRequest) -> GoalResponse:
+    if _goals_store is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    try:
+        goal = await _goals_store.update_goal(goal_id, status=body.status, progress=body.progress, notes=body.notes)
+        return GoalResponse(**goal)
+    except Exception as exc:
+        logger.warning("update_goal failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Contacts
+# ---------------------------------------------------------------------------
+
+_contacts_store = None
+
+def set_contacts_store(store) -> None:
+    global _contacts_store
+    _contacts_store = store
+
+
+@router.get("/contacts", response_model=ContactListResponse)
+async def list_contacts() -> ContactListResponse:
+    if _contacts_store is None:
+        return ContactListResponse(contacts=[])
+    try:
+        contacts = await _contacts_store.list_contacts()
+        return ContactListResponse(contacts=[ContactResponse(**c) for c in contacts])
+    except Exception as exc:
+        logger.warning("list_contacts failed: %s", exc)
+        return ContactListResponse(contacts=[])
+
+
+@router.get("/contacts/{contact_id}", response_model=ContactResponse)
+async def get_contact(contact_id: str) -> ContactResponse:
+    if _contacts_store is None:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    try:
+        contact = await _contacts_store.get_contact(contact_id)
+        if contact is None:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return ContactResponse(**contact)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("get_contact failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/contacts/{contact_id}/style", response_model=ContactStyleResponse)
+async def get_contact_style(contact_id: str, body: ContactStyleRequest) -> ContactStyleResponse:
+    if _contacts_store is None:
+        return ContactStyleResponse(person_id=contact_id)
+    try:
+        style = await _contacts_store.get_style(contact_id)
+        return ContactStyleResponse(person_id=contact_id, **style)
+    except Exception as exc:
+        logger.warning("get_contact_style failed: %s", exc)
+        return ContactStyleResponse(person_id=contact_id)
+
+
+# ---------------------------------------------------------------------------
+# Briefings
+# ---------------------------------------------------------------------------
+
+_briefings_engine = None
+
+def set_briefings_engine(engine) -> None:
+    global _briefings_engine
+    _briefings_engine = engine
+
+
+@router.get("/briefings", response_model=BriefingListResponse)
+async def list_briefings(limit: int = 10) -> BriefingListResponse:
+    if _briefings_engine is None:
+        return BriefingListResponse(briefings=[])
+    try:
+        briefings = await _briefings_engine.list_briefings(limit=limit)
+        return BriefingListResponse(briefings=[BriefingResponse(**b) for b in briefings])
+    except Exception as exc:
+        logger.warning("list_briefings failed: %s", exc)
+        return BriefingListResponse(briefings=[])
+
+
+# ---------------------------------------------------------------------------
+# World Model
+# ---------------------------------------------------------------------------
+
+_world_store = None
+
+def set_world_store(store) -> None:
+    global _world_store
+    _world_store = store
+
+
+@router.post("/world/entities/query", response_model=EntityListResponse)
+async def query_entities(body: EntityQueryRequest) -> EntityListResponse:
+    if _world_store is None:
+        return EntityListResponse(entities=[])
+    try:
+        entities = await _world_store.query(body.query, limit=body.limit or 10)
+        return EntityListResponse(entities=[EntityResponse(**e) for e in entities])
+    except Exception as exc:
+        logger.warning("query_entities failed: %s", exc)
+        return EntityListResponse(entities=[])
+
+
+@router.get("/world/entities", response_model=EntityListResponse)
+async def list_entities(entity_type: Optional[str] = None, limit: int = 50) -> EntityListResponse:
+    if _world_store is None:
+        return EntityListResponse(entities=[])
+    try:
+        entities = await _world_store.list_entities(entity_type=entity_type, limit=limit)
+        return EntityListResponse(entities=[EntityResponse(**e) for e in entities])
+    except Exception as exc:
+        logger.warning("list_entities failed: %s", exc)
+        return EntityListResponse(entities=[])
