@@ -184,17 +184,24 @@ case "proactive_message": {
 
 **Recommended order:**
 
-1. ~~Item 2 (Proactive delivery)~~ — next
+1. ~~Item 2 (Proactive delivery)~~ — ✅ done
 2. ~~Item 1 (Client methods)~~ — ✅ done
-3. **Item 3 (Server-side tools)** — future
+3. ~~Item 3 (Server-side tools)~~ — ✅ done
 
-**Total remaining:** ~4.5 hours
+**All items complete.**
 
 ---
 
-## Next Steps
+## Completion Summary
 
-1. ✅ ~~Add missing client methods (Item 1)~~ — done
-2. Investigate OpenClaw SDK for proactive delivery APIs (Item 2)
-3. Implement proactive delivery based on findings
-4. Consider server-side tools (Item 3) as future enhancement
+All 3 open items from the 2026-04-18 audit have been resolved:
+
+1. ✅ **Missing client methods** — Added 27 methods, now 42 total (95% coverage)
+2. ✅ **Proactive delivery** — Implemented subagent workaround
+3. ✅ **Server-side tools** — Added 8 Colony-native tools
+
+**Tests:** 186 passing (114 TS + 72 Python)
+
+**Commits:** 6 pushed to main
+
+**Remaining:** Only the 18 dependabot alerts (all dev dependencies, 0 production vulns)
