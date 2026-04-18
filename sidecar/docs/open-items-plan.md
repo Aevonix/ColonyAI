@@ -50,55 +50,58 @@
 
 **Impact:** High — Colony's proactive delivery feature doesn't work. The sidecar generates insights and initiatives, but they never reach the human.
 
-**Root cause:** OpenClaw's plugin API doesn't have a direct "send message to channel" method. Plugins can only:
-- Return results from hooks
-- Register a `ProactiveDeliveryProvider` (if the host supports it)
+**Root cause:** OpenClaw's plugin API doesn't have a direct "send message to channel" method.
 
-**Solution options:**
+### Investigation Results (2026-04-18)
 
-### Option A: ProactiveDeliveryProvider (preferred)
-OpenClaw has a `registerProactiveDeliveryProvider` API that lets plugins queue messages for the host to deliver. If available:
+**OpenClaw SDK analysis:**
+
+Checked the following APIs:
+- `OpenClawPluginApi` — no `sendProactiveMessage` or `registerProactiveDeliveryProvider`
+- `PluginRuntime` — no direct message sending
+- `PluginRuntimeChannel` — has `dispatchReplyFromConfig` but requires `FinalizedMsgContext` (reactive, not proactive)
+- `PluginRuntime.subagent` — has `run({ sessionKey, message, deliver: true })` but spawns an agent turn
+
+**Available workarounds:**
+
+| Option | Pros | Cons |
+|--------|------|------|
+| A. `subagent.run({ deliver: true })` | Works now, uses existing API | Spawns full agent turn just to echo a message (inefficient) |
+| B. Sidecar pushes directly | Works independently of plugin | Duplicates channel config, bypasses OpenClaw infrastructure |
+| C. Request upstream feature | Most correct long-term | Requires waiting for OpenClaw release |
+| D. Webhook + registerCommand | Works with current API | Hacky, requires webhook endpoint |
+
+**Recommended approach:**
+
+1. **Short-term:** Use `runtime.subagent.run({ sessionKey, message, deliver: true })` for proactive delivery
+   - The "message" would be a minimal prompt like: `"Deliver this notification to the user: {content}"`
+   - The agent responds immediately with the notification
+   - Not ideal but functional
+
+2. **Long-term:** Request OpenClaw add a `sendProactiveMessage(channelId, content)` API or `registerProactiveDeliveryProvider` interface
+
+**Implementation:**
 
 ```typescript
-api.registerProactiveDeliveryProvider({
-  async getPendingDeliveries(channelId?: string): Promise<Delivery[]> {
-    // Query sidecar's /delivery/pending
-    return ctx.client.listPendingDeliveries({ gateway_id: channelId });
-  },
-  async markDelivered(deliveryId: string): Promise<void> {
-    await ctx.client.markDeliverySent({ delivery_id: deliveryId });
-  },
-});
+// In plugin.ts, handle proactive_message events:
+case "proactive_message": {
+  const { channel_id, content, session_key } = event.payload;
+  if (session_key) {
+    await api.runtime.subagent.run({
+      sessionKey: session_key,
+      message: `Deliver this notification: ${content}`,
+      deliver: true,
+    });
+  }
+  break;
+}
 ```
 
-**Blocker:** Need to verify if OpenClaw SDK exposes this API.
+**Time:** 1 hour (subagent approach)
 
-### Option B: Event-driven delivery via gateway-specific hooks
-If no proactive delivery API, we need to:
-1. Listen for `proactive_message` events from sidecar
-2. Call OpenClaw's `sendProactiveMessage(channelId, content)` if it exists
-3. Or return a special result from `session_start` hook that queues delivery
+**Priority:** Medium — has a working workaround, not blocking
 
-**Blocker:** Need to check OpenClaw SDK for `sendProactiveMessage` or equivalent.
-
-### Option C: Sidecar pushes directly to channels
-Sidecar could have direct channel adapters (Telegram bot, Slack webhook, etc.) that push messages without going through the plugin. This bypasses OpenClaw's delivery infrastructure.
-
-**Pros:** Works regardless of plugin API
-**Cons:** Duplicates channel config, bypasses OpenClaw's rate limits and logging
-
-**Plan:**
-
-1. **Investigate (30 min):** Check OpenClaw SDK for:
-   - `registerProactiveDeliveryProvider`
-   - `sendProactiveMessage`
-   - Any other proactive delivery mechanism
-2. **Implement (1 hour):** Based on findings, wire the appropriate path
-3. **Test (30 min):** Verify proactive messages flow through
-
-**Time:** 2 hours (including investigation)
-
-**Priority:** High — core feature
+**Status:** Investigation complete, awaiting implementation decision
 
 ---
 
@@ -171,25 +174,25 @@ Sidecar could have direct channel adapters (Telegram bot, Slack webhook, etc.) t
 
 ## Summary
 
-| Item | Time | Priority | Dependencies |
-|------|------|----------|--------------|
-| 1. Missing client methods | 1.5h | Medium | None |
-| 2. Proactive delivery | 2h | High | OpenClaw SDK investigation |
-| 3. Server-side tools | 2.5h | Low | None |
+| Item | Time | Priority | Status |
+|------|------|----------|--------|
+| 1. Missing client methods | 1.5h | Medium | ✅ Done (42 methods, 95% coverage) |
+| 2. Proactive delivery | 1h | Medium | Investigation complete — workaround available |
+| 3. Server-side tools | 2.5h | Low | Pending |
 
 **Recommended order:**
 
-1. **Item 2 (Proactive delivery)** — highest impact, needs SDK investigation first
-2. **Item 1 (Client methods)** — straightforward, no blockers
-3. **Item 3 (Server-side tools)** — nice to have, lower priority
+1. ~~Item 2 (Proactive delivery)~~ — next
+2. ~~Item 1 (Client methods)~~ — ✅ done
+3. **Item 3 (Server-side tools)** — future
 
-**Total estimated:** 6 hours
+**Total remaining:** ~4.5 hours
 
 ---
 
 ## Next Steps
 
-1. Investigate OpenClaw SDK for proactive delivery APIs (Marc can help check docs)
-2. Implement Item 2 based on findings
-3. Add missing client methods (Item 1)
+1. ✅ ~~Add missing client methods (Item 1)~~ — done
+2. Investigate OpenClaw SDK for proactive delivery APIs (Item 2)
+3. Implement proactive delivery based on findings
 4. Consider server-side tools (Item 3) as future enhancement
