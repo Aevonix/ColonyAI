@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __capabilityProbe, __safetyHook } from "../src/plugin.js";
 import type { ColonyPluginContext } from "../src/plugin.js";
 import { ColonyApiError } from "../src/sidecar-client.js";
+import { SessionTextCache } from "../src/hooks/session-text-cache.js";
 import type {
   HostHealthResponse,
   SafetyCheckRequest,
@@ -102,7 +103,7 @@ describe("safetyHook", () => {
       caps: ["safety"],
       safetyResult: { decision: "pass", blocked: false },
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     const result = await hook(makeEvent(), makeHookCtx());
 
@@ -121,7 +122,7 @@ describe("safetyHook", () => {
         reason: "pii leak",
       },
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     const result = await hook(makeEvent(), makeHookCtx());
 
@@ -136,7 +137,7 @@ describe("safetyHook", () => {
 
   it("passes through without calling safetyCheck when the probe succeeded and didn't report 'safety'", async () => {
     const { ctx, safetyCheck, logger } = makeCtx({ caps: ["memory"] });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     const result = await hook(makeEvent(), makeHookCtx());
 
@@ -149,7 +150,7 @@ describe("safetyHook", () => {
       probeFails: true,
       safetyResult: { decision: "pass", blocked: false },
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     await hook(makeEvent(), makeHookCtx());
 
@@ -166,7 +167,7 @@ describe("safetyHook", () => {
       ),
       failSafetyClosed: true,
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     const result = await hook(makeEvent(), makeHookCtx());
 
@@ -184,7 +185,7 @@ describe("safetyHook", () => {
       ),
       failSafetyClosed: false,
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     const result = await hook(makeEvent(), makeHookCtx());
 
@@ -198,7 +199,7 @@ describe("safetyHook", () => {
       safetyResult: new ColonyApiError(503, "unavailable", "pool exhausted"),
       failSafetyClosed: true,
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     const result = await hook(makeEvent(), makeHookCtx());
 
@@ -211,7 +212,7 @@ describe("safetyHook", () => {
       safetyResult: new Error("ECONNREFUSED"),
       failSafetyClosed: true,
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     const result = await hook(makeEvent(), makeHookCtx());
 
@@ -224,7 +225,7 @@ describe("safetyHook", () => {
       safetyResult: new ColonyApiError(400, "bad_request", "missing field"),
       failSafetyClosed: true,
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     // The critical assertion is that the call resolves at all — hook
     // handlers must NEVER throw, per the SDK contract. Previous
@@ -235,7 +236,7 @@ describe("safetyHook", () => {
 
   it("builds a SafetyCheckRequest with the expected identity mapping", async () => {
     const { ctx, safetyCheck, logger } = makeCtx({ caps: ["safety"] });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     await hook(
       makeEvent({ to: "user-999", content: "hello" }),
@@ -294,7 +295,7 @@ describe("safetyHook", () => {
         reason: "awaiting human review",
       },
     });
-    const hook = __safetyHook(ctx, __capabilityProbe(ctx), logger);
+    const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     const result = await hook(makeEvent(), makeHookCtx());
 

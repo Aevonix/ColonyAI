@@ -17,16 +17,14 @@ import type {
 // module at test time so Phase 4's ``compact`` adapter can be exercised
 // in isolation without dragging in session-store plumbing.
 const delegateCompactionToRuntimeMock = vi.fn();
-vi.mock("openclaw/plugin-sdk", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("openclaw/plugin-sdk")
-  >();
-  return {
-    ...actual,
-    delegateCompactionToRuntime: (...args: unknown[]) =>
-      delegateCompactionToRuntimeMock(...args),
-  };
-});
+vi.mock("openclaw/plugin-sdk", () => ({
+  delegateCompactionToRuntime: (...args: unknown[]) =>
+    delegateCompactionToRuntimeMock(...args),
+}));
+
+vi.mock("openclaw/plugin-sdk/agent-harness", () => ({
+  normalizeUsage: (u: unknown) => u,
+}));
 
 /**
  * Builds a ``ColonyPluginContext`` backed by vitest mocks plus a

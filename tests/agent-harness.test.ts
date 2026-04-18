@@ -455,15 +455,9 @@ describe("agentHarness.runAttempt", () => {
  * callback so we can invoke it with a fake ``OpenClawPluginApi`` and
  * observe which ``register*`` methods are called.
  */
-vi.mock("openclaw/plugin-sdk/plugin-entry", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("openclaw/plugin-sdk/plugin-entry")
-  >();
-  return {
-    ...actual,
-    definePluginEntry: (entry: { register: (api: unknown) => void }) => entry,
-  };
-});
+vi.mock("openclaw/plugin-sdk/plugin-entry", () => ({
+  definePluginEntry: (entry: { register: (api: unknown) => void }) => entry,
+}));
 
 type FakeApi = {
   pluginConfig: Record<string, unknown>;

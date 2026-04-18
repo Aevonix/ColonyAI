@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { __capabilityProbe, __postTurnHook } from "../src/plugin.js";
+import { SessionTextCache } from "../src/hooks/session-text-cache.js";
+import { TurnExtractionPipeline } from "../src/extraction/pipeline.js";
 import type { ColonyPluginContext } from "../src/plugin.js";
 import type {
   HostHealthResponse,
@@ -127,7 +129,7 @@ describe("postTurnHook", () => {
 
   it("fires both signals/ingest and turns/sync when the sidecar advertises both", async () => {
     const { ctx, signalsIngest, turnsSync } = makeCtx(["signals", "turn_sync"]);
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline());
 
     await hook(makeEvent(), ctxStub);
 
@@ -158,7 +160,7 @@ describe("postTurnHook", () => {
 
   it("skips turns/sync when the sidecar doesn't advertise that capability", async () => {
     const { ctx, signalsIngest, turnsSync } = makeCtx(["signals"]);
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline());
 
     await hook(makeEvent(), ctxStub);
 
@@ -168,7 +170,7 @@ describe("postTurnHook", () => {
 
   it("skips signals/ingest when the sidecar doesn't advertise that capability", async () => {
     const { ctx, signalsIngest, turnsSync } = makeCtx(["turn_sync"]);
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline());
 
     await hook(makeEvent(), ctxStub);
 
@@ -178,7 +180,7 @@ describe("postTurnHook", () => {
 
   it("skips both when the probe succeeded and neither capability is advertised", async () => {
     const { ctx, signalsIngest, turnsSync } = makeCtx(["memory"]);
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline());
 
     await hook(makeEvent(), ctxStub);
 
@@ -191,7 +193,7 @@ describe("postTurnHook", () => {
     (health as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error("network"),
     );
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline());
 
     await hook(makeEvent(), ctxStub);
 
@@ -201,7 +203,7 @@ describe("postTurnHook", () => {
 
   it("short-circuits when sendPolicy === 'deny'", async () => {
     const { ctx, signalsIngest, turnsSync } = makeCtx(["signals", "turn_sync"]);
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline());
 
     await hook(makeEvent({ sendPolicy: "deny" }), ctxStub);
 
@@ -211,7 +213,7 @@ describe("postTurnHook", () => {
 
   it("short-circuits when isTailDispatch === true", async () => {
     const { ctx, signalsIngest, turnsSync } = makeCtx(["signals", "turn_sync"]);
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline());
 
     await hook(makeEvent({ isTailDispatch: true }), ctxStub);
 
@@ -225,12 +227,12 @@ describe("postTurnHook", () => {
       new Error("signals offline"),
     );
     const warn = vi.fn();
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), {
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline(), {
       warn,
       info: () => {},
       error: () => {},
       debug: () => {},
-    } as unknown as Parameters<typeof __postTurnHook>[2]);
+    } as unknown as Parameters<typeof __postTurnHook>[4]);
 
     // Must resolve cleanly — observer-only hook, never throws.
     await expect(hook(makeEvent(), ctxStub)).resolves.toBeUndefined();
@@ -248,12 +250,12 @@ describe("postTurnHook", () => {
       new Error("turns offline"),
     );
     const warn = vi.fn();
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), {
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline(), {
       warn,
       info: () => {},
       error: () => {},
       debug: () => {},
-    } as unknown as Parameters<typeof __postTurnHook>[2]);
+    } as unknown as Parameters<typeof __postTurnHook>[4]);
 
     await expect(hook(makeEvent(), ctxStub)).resolves.toBeUndefined();
     expect(warn.mock.calls.length).toBe(2);
@@ -265,7 +267,7 @@ describe("postTurnHook", () => {
 
   it("falls back through BodyForAgent → Body → RawBody → '' for incoming text", async () => {
     const { ctx, signalsIngest } = makeCtx(["signals"]);
-    const hook = __postTurnHook(ctx, __capabilityProbe(ctx));
+    const hook = __postTurnHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), new TurnExtractionPipeline());
 
     // (1) BodyForAgent present
     await hook(
