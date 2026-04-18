@@ -554,3 +554,77 @@ async def test_tool_executor_custom_handler():
 
 
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Chain / Identity
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_identity_status_not_initialized(client):
+    resp = await client.get("/v1/host/identity/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["initialized"] is False
+
+
+@pytest.mark.asyncio
+async def test_identity_init_not_wired(client):
+    resp = await client.post("/v1/host/identity/init", json={
+        "identity": {"host_id": "test"},
+    })
+    assert resp.status_code == 501
+
+
+@pytest.mark.asyncio
+async def test_chain_verify_no_chain(client):
+    resp = await client.post("/v1/host/chain/verify", json={
+        "identity": {"host_id": "test"},
+        "data": "hello",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["valid"] is False
+
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_secrets_list_empty(client):
+    resp = await client.post("/v1/host/secrets/list", json={
+        "identity": {"host_id": "test"},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["keys"] == []
+
+
+@pytest.mark.asyncio
+async def test_secrets_get_not_found(client):
+    resp = await client.post("/v1/host/secrets/get", json={
+        "identity": {"host_id": "test"},
+        "key": "nonexistent",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["exists"] is False
+
+
+@pytest.mark.asyncio
+async def test_secrets_set_no_manager(client):
+    resp = await client.post("/v1/host/secrets/set", json={
+        "identity": {"host_id": "test"},
+        "key": "test_key",
+        "value": "test_val",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["stored"] is False
+
+
+@pytest.mark.asyncio
+async def test_secrets_delete_no_manager(client):
+    resp = await client.post("/v1/host/secrets/delete", json={
+        "identity": {"host_id": "test"},
+        "key": "test_key",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] is False

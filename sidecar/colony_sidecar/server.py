@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from colony_sidecar.api.routers.host import (
     router as host_router,
+    set_chain_manager,
     set_reasoning_loop,
     set_graph,
     set_response_gate,
@@ -29,6 +30,7 @@ from colony_sidecar.api.routers.host import (
     set_connection_discoverer,
     set_learner,
     set_skills_registry,
+    set_secrets_manager,
     supported_capabilities,
 )
 
@@ -199,6 +201,24 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("SkillRegistry init failed: %s", exc)
 
+    # --- 17. Chain / Identity ---
+    try:
+        from colony_sidecar.chain.manager import ChainManager
+        chain = ChainManager()
+        set_chain_manager(chain)
+        logger.info("ChainManager initialized")
+    except Exception as exc:
+        logger.warning("ChainManager init failed: %s", exc)
+
+    # --- 18. Secrets ---
+    try:
+        from colony_sidecar.secrets.manager import SecretsManager
+        secrets = SecretsManager()
+        set_secrets_manager(secrets)
+        logger.info("SecretsManager initialized")
+    except Exception as exc:
+        logger.warning("SecretsManager init failed: %s", exc)
+
     logger.info("Sidecar capabilities: %s", supported_capabilities())
     yield
 
@@ -223,6 +243,8 @@ async def lifespan(app: FastAPI):
     set_connection_discoverer(None)
     set_learner(None)
     set_skills_registry(None)
+    set_chain_manager(None)
+    set_secrets_manager(None)
     logger.info("Sidecar shutdown complete")
 
 

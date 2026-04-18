@@ -1481,6 +1481,273 @@
           }
         }
       }
+    },
+    "/v1/host/identity/status": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Identity Status",
+        "operationId": "identity_status_v1_host_identity_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/identity/init": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Identity Init",
+        "operationId": "identity_init_v1_host_identity_init_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityInitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/chain/verify": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Chain Verify",
+        "operationId": "chain_verify_v1_host_chain_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChainVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainVerifyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/secrets/list": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Secrets List",
+        "operationId": "secrets_list_v1_host_secrets_list_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/secrets/get": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Secrets Get",
+        "operationId": "secrets_get_v1_host_secrets_get_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretGetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretGetResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/secrets/set": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Secrets Set",
+        "operationId": "secrets_set_v1_host_secrets_set_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretSetResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/secrets/delete": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Secrets Delete",
+        "operationId": "secrets_delete_v1_host_secrets_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretDeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1549,6 +1816,58 @@
           "body"
         ],
         "title": "BriefingResponse"
+      },
+      "ChainVerifyRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "data": {
+            "type": "string",
+            "title": "Data"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "data"
+        ],
+        "title": "ChainVerifyRequest"
+      },
+      "ChainVerifyResponse": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "colony_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colony Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "valid"
+        ],
+        "title": "ChainVerifyResponse"
       },
       "CognitionCycleRequest": {
         "properties": {
@@ -2581,6 +2900,56 @@
         ],
         "title": "HostTurnContext"
       },
+      "IdentityInitRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity"
+        ],
+        "title": "IdentityInitRequest"
+      },
+      "IdentityStatusResponse": {
+        "properties": {
+          "colony_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colony Id"
+          },
+          "public_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Key"
+          },
+          "initialized": {
+            "type": "boolean",
+            "title": "Initialized",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "IdentityStatusResponse"
+      },
       "InsightResponse": {
         "properties": {
           "id": {
@@ -3570,6 +3939,175 @@
           "blocked"
         ],
         "title": "SafetyCheckResponse"
+      },
+      "SecretDeleteRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "key"
+        ],
+        "title": "SecretDeleteRequest"
+      },
+      "SecretDeleteResponse": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "deleted"
+        ],
+        "title": "SecretDeleteResponse"
+      },
+      "SecretGetRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "key"
+        ],
+        "title": "SecretGetRequest"
+      },
+      "SecretGetResponse": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "exists": {
+            "type": "boolean",
+            "title": "Exists",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "SecretGetResponse"
+      },
+      "SecretListRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prefix"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity"
+        ],
+        "title": "SecretListRequest"
+      },
+      "SecretListResponse": {
+        "properties": {
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keys",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "SecretListResponse"
+      },
+      "SecretSetRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "secret_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "key",
+          "value"
+        ],
+        "title": "SecretSetRequest"
+      },
+      "SecretSetResponse": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "stored": {
+            "type": "boolean",
+            "title": "Stored"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "stored"
+        ],
+        "title": "SecretSetResponse"
       },
       "SignalIngestRequest": {
         "properties": {

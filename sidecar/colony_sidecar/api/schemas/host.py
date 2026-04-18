@@ -567,3 +567,71 @@ class EnrichedContextResponse(BaseModel):
     sections: List[ContextSection] = []
     contact_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+# --- Chain / Identity -------------------------------------------------------
+
+class IdentityStatusResponse(BaseModel):
+    colony_id: Optional[str] = None
+    public_key: Optional[str] = None
+    initialized: bool = False
+
+
+class IdentityInitRequest(BaseModel):
+    identity: HostIdentity
+    force: bool = False
+
+
+class ChainVerifyRequest(BaseModel):
+    identity: HostIdentity
+    data: str
+    signature: Optional[str] = None
+
+
+class ChainVerifyResponse(BaseModel):
+    valid: bool
+    colony_id: Optional[str] = None
+
+
+# --- Secrets ----------------------------------------------------------------
+
+class SecretListRequest(BaseModel):
+    identity: HostIdentity
+    prefix: Optional[str] = None
+
+
+class SecretListResponse(BaseModel):
+    keys: List[str] = []
+
+
+class SecretGetRequest(BaseModel):
+    identity: HostIdentity
+    key: str
+
+
+class SecretGetResponse(BaseModel):
+    key: str
+    value: Optional[str] = None
+    exists: bool = False
+
+
+class SecretSetRequest(BaseModel):
+    identity: HostIdentity
+    key: str
+    value: str
+    secret_type: Optional[str] = None
+
+
+class SecretSetResponse(BaseModel):
+    key: str
+    stored: bool
+
+
+class SecretDeleteRequest(BaseModel):
+    identity: HostIdentity
+    key: str
+
+
+class SecretDeleteResponse(BaseModel):
+    key: str
+    deleted: bool

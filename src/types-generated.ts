@@ -591,6 +591,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/identity/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Identity Status */
+        get: operations["identity_status_v1_host_identity_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/identity/init": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Identity Init */
+        post: operations["identity_init_v1_host_identity_init_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/chain/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Chain Verify */
+        post: operations["chain_verify_v1_host_chain_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/secrets/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Secrets List */
+        post: operations["secrets_list_v1_host_secrets_list_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/secrets/get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Secrets Get */
+        post: operations["secrets_get_v1_host_secrets_get_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/secrets/set": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Secrets Set */
+        post: operations["secrets_set_v1_host_secrets_set_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/secrets/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Secrets Delete */
+        post: operations["secrets_delete_v1_host_secrets_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -615,6 +734,21 @@ export interface components {
             briefing_type?: string | null;
             /** Created At */
             created_at?: string | null;
+        };
+        /** ChainVerifyRequest */
+        ChainVerifyRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Data */
+            data: string;
+            /** Signature */
+            signature?: string | null;
+        };
+        /** ChainVerifyResponse */
+        ChainVerifyResponse: {
+            /** Valid */
+            valid: boolean;
+            /** Colony Id */
+            colony_id?: string | null;
         };
         /** CognitionCycleRequest */
         CognitionCycleRequest: {
@@ -973,6 +1107,27 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** IdentityInitRequest */
+        IdentityInitRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
+        };
+        /** IdentityStatusResponse */
+        IdentityStatusResponse: {
+            /** Colony Id */
+            colony_id?: string | null;
+            /** Public Key */
+            public_key?: string | null;
+            /**
+             * Initialized
+             * @default false
+             */
+            initialized: boolean;
+        };
         /** InsightResponse */
         InsightResponse: {
             /** Id */
@@ -1276,6 +1431,68 @@ export interface components {
             layer_results?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** SecretDeleteRequest */
+        SecretDeleteRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Key */
+            key: string;
+        };
+        /** SecretDeleteResponse */
+        SecretDeleteResponse: {
+            /** Key */
+            key: string;
+            /** Deleted */
+            deleted: boolean;
+        };
+        /** SecretGetRequest */
+        SecretGetRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Key */
+            key: string;
+        };
+        /** SecretGetResponse */
+        SecretGetResponse: {
+            /** Key */
+            key: string;
+            /** Value */
+            value?: string | null;
+            /**
+             * Exists
+             * @default false
+             */
+            exists: boolean;
+        };
+        /** SecretListRequest */
+        SecretListRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Prefix */
+            prefix?: string | null;
+        };
+        /** SecretListResponse */
+        SecretListResponse: {
+            /**
+             * Keys
+             * @default []
+             */
+            keys: string[];
+        };
+        /** SecretSetRequest */
+        SecretSetRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Key */
+            key: string;
+            /** Value */
+            value: string;
+            /** Secret Type */
+            secret_type?: string | null;
+        };
+        /** SecretSetResponse */
+        SecretSetResponse: {
+            /** Key */
+            key: string;
+            /** Stored */
+            stored: boolean;
         };
         /** SignalIngestRequest */
         SignalIngestRequest: {
@@ -2536,6 +2753,224 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnrichedContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    identity_status_v1_host_identity_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityStatusResponse"];
+                };
+            };
+        };
+    };
+    identity_init_v1_host_identity_init_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityInitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chain_verify_v1_host_chain_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChainVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChainVerifyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    secrets_list_v1_host_secrets_list_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecretListRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    secrets_get_v1_host_secrets_get_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecretGetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretGetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    secrets_set_v1_host_secrets_set_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecretSetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretSetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    secrets_delete_v1_host_secrets_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecretDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretDeleteResponse"];
                 };
             };
             /** @description Validation Error */

@@ -20,6 +20,8 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, st
 from colony_sidecar.api.schemas.host import (
     BriefingListResponse,
     BriefingResponse,
+    ChainVerifyRequest,
+    ChainVerifyResponse,
     CognitionCycleRequest,
     CognitionCycleResponse,
     CognitionGap,
@@ -44,6 +46,8 @@ from colony_sidecar.api.schemas.host import (
     GoalUpdateRequest,
     HostHealthResponse,
     HostMessage,
+    IdentityInitRequest,
+    IdentityStatusResponse,
     InsightResponse,
     InsightsListResponse,
     LearningCorrectionRequest,
@@ -68,6 +72,14 @@ from colony_sidecar.api.schemas.host import (
     ResearchStartRequest,
     SafetyCheckRequest,
     SafetyCheckResponse,
+    SecretDeleteRequest,
+    SecretDeleteResponse,
+    SecretGetRequest,
+    SecretGetResponse,
+    SecretListRequest,
+    SecretListResponse,
+    SecretSetRequest,
+    SecretSetResponse,
     SignalIngestRequest,
     SignalIngestResponse,
     SkillDetailResponse,
@@ -1114,3 +1126,122 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
             sections.append(ContextSection(id="colony-insights", title="Recent Insights", body=body_text, priority=65))
 
     return EnrichedContextResponse(sections=sections, contact_id=contact_id)
+
+
+# ---------------------------------------------------------------------------
+# Chain / Identity
+# ---------------------------------------------------------------------------
+
+_chain_manager = None
+
+def set_chain_manager(manager) -> None:
+    global _chain_manager
+    _chain_manager = manager
+
+
+@router.get("/identity/status", response_model=IdentityStatusResponse)
+async def identity_status() -> IdentityStatusResponse:
+    if _chain_manager is None:
+        return IdentityStatusResponse(initialized=False)
+    try:
+        colony_id = getattr(_chain_manager, "colony_id", None)
+        pubkey = getattr(_chain_manager, "public_key_pem", None)
+        return IdentityStatusResponse(
+            colony_id=colony_id,
+            public_key=pubkey,
+            initialized=colony_id is not None,
+        )
+    except Exception as exc:
+        logger.warning("identity_status failed: %s", exc)
+        return IdentityStatusResponse(initialized=False)
+
+
+@router.post("/identity/init", response_model=IdentityStatusResponse)
+async def identity_init(body: IdentityInitRequest) -> IdentityStatusResponse:
+    if _chain_manager is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    try:
+        await _chain_manager.initialize(force=body.force)
+        colony_id = getattr(_chain_manager, "colony_id", None)
+        pubkey = getattr(_chain_manager, "public_key_pem", None)
+        return IdentityStatusResponse(
+            colony_id=colony_id,
+            public_key=pubkey,
+            initialized=True,
+        )
+    except Exception as exc:
+        logger.warning("identity_init failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/chain/verify", response_model=ChainVerifyResponse)
+async def chain_verify(body: ChainVerifyRequest) -> ChainVerifyResponse:
+    if _chain_manager is None:
+        return ChainVerifyResponse(valid=False)
+    try:
+        result = await _chain_manager.verify(data=body.data, signature=body.signature)
+        return ChainVerifyResponse(valid=result, colony_id=getattr(_chain_manager, "colony_id", None))
+    except Exception as exc:
+        logger.warning("chain_verify failed: %s", exc)
+        return ChainVerifyResponse(valid=False)
+
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+
+_secrets_manager = None
+
+def set_secrets_manager(manager) -> None:
+    global _secrets_manager
+    _secrets_manager = manager
+
+
+@router.post("/secrets/list", response_model=SecretListResponse)
+async def secrets_list(body: SecretListRequest) -> SecretListResponse:
+    if _secrets_manager is None:
+        return SecretListResponse(keys=[])
+    try:
+        keys = await _secrets_manager.list_keys(prefix=body.prefix)
+        return SecretListResponse(keys=keys)
+    except Exception as exc:
+        logger.warning("secrets_list failed: %s", exc)
+        return SecretListResponse(keys=[])
+
+
+@router.post("/secrets/get", response_model=SecretGetResponse)
+async def secrets_get(body: SecretGetRequest) -> SecretGetResponse:
+    if _secrets_manager is None:
+        return SecretGetResponse(key=body.key, exists=False)
+    try:
+        value = await _secrets_manager.get(body.key)
+        if value is None:
+            return SecretGetResponse(key=body.key, exists=False)
+        return SecretGetResponse(key=body.key, value=value, exists=True)
+    except Exception as exc:
+        logger.warning("secrets_get failed: %s", exc)
+        return SecretGetResponse(key=body.key, exists=False)
+
+
+@router.post("/secrets/set", response_model=SecretSetResponse)
+async def secrets_set(body: SecretSetRequest) -> SecretSetResponse:
+    if _secrets_manager is None:
+        return SecretSetResponse(key=body.key, stored=False)
+    try:
+        await _secrets_manager.set(body.key, body.value, secret_type=body.secret_type)
+        return SecretSetResponse(key=body.key, stored=True)
+    except Exception as exc:
+        logger.warning("secrets_set failed: %s", exc)
+        return SecretSetResponse(key=body.key, stored=False)
+
+
+@router.post("/secrets/delete", response_model=SecretDeleteResponse)
+async def secrets_delete(body: SecretDeleteRequest) -> SecretDeleteResponse:
+    if _secrets_manager is None:
+        return SecretDeleteResponse(key=body.key, deleted=False)
+    try:
+        await _secrets_manager.delete(body.key)
+        return SecretDeleteResponse(key=body.key, deleted=True)
+    except Exception as exc:
+        logger.warning("secrets_delete failed: %s", exc)
+        return SecretDeleteResponse(key=body.key, deleted=False)
