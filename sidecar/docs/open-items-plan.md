@@ -101,7 +101,7 @@ case "proactive_message": {
 
 **Priority:** Medium — has a working workaround, not blocking
 
-**Status:** Investigation complete, awaiting implementation decision
+**Status:** ✅ Done — implemented in plugin.ts
 
 ---
 
@@ -177,7 +177,7 @@ case "proactive_message": {
 | Item | Time | Priority | Status |
 |------|------|----------|--------|
 | 1. Missing client methods | 1.5h | Medium | ✅ Done (42 methods, 95% coverage) |
-| 2. Proactive delivery | 1h | Medium | Investigation complete — workaround available |
+| 2. Proactive delivery | 1h | Medium | ✅ Done (subagent workaround) |
 | 3. Server-side tools | 2.5h | Low | Pending |
 
 **Recommended order:**
