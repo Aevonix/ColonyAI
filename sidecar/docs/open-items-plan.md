@@ -166,9 +166,11 @@ case "proactive_message": {
 4. **Wire ReasoningLoop (15 min):** Pass definitions to LLM call
 5. **Test (30 min):** Verify tool calls work end-to-end
 
-**Time:** 2.5 hours
+**Time:** 1 hour
 
 **Priority:** Low — nice to have, not blocking current functionality
+
+**Status:** ✅ Done — 8 Colony-native tools defined and wired
 
 ---
 
@@ -178,7 +180,7 @@ case "proactive_message": {
 |------|------|----------|--------|
 | 1. Missing client methods | 1.5h | Medium | ✅ Done (42 methods, 95% coverage) |
 | 2. Proactive delivery | 1h | Medium | ✅ Done (subagent workaround) |
-| 3. Server-side tools | 2.5h | Low | Pending |
+| 3. Server-side tools | 2.5h | Low | ✅ Done (8 Colony tools) |
 
 **Recommended order:**
 
