@@ -6,6 +6,8 @@ import type {
   ContextAssembleResponse,
   HostEvent,
   HostHealthResponse,
+  HostIdentity,
+  HostTurnContext,
   MemoryEmbedRequest,
   MemoryEmbedResponse,
   MemoryFlushRequest,
@@ -130,6 +132,59 @@ export class ColonySidecarClient {
 
   safetyCheck(body: SafetyCheckRequest): Promise<SafetyCheckResponse> {
     return this.post<SafetyCheckResponse>("/v1/host/safety/check", body);
+  }
+
+  // --- Enriched Context ----------------------------------------------------
+
+  /**
+   * One-stop context assembly — queries all intelligence systems in
+   * parallel and returns assembled sections.
+   */
+  enrichedContext(body: {
+    identity: HostIdentity;
+    context: HostTurnContext;
+    message: string;
+    features?: Record<string, boolean>;
+  }): Promise<ContextAssembleResponse> {
+    return this.post<ContextAssembleResponse>("/v1/host/context/enriched", body);
+  }
+
+  // --- Goals ---------------------------------------------------------------
+
+  listGoals(params: {
+    person_id?: string;
+    status?: string;
+  }): Promise<{ goals: unknown[] }> {
+    const qs = new URLSearchParams();
+    if (params.person_id) qs.set("person_id", params.person_id);
+    if (params.status) qs.set("status_filter", params.status);
+    return this.get<{ goals: unknown[] }>(`/v1/host/goals?${qs}`);
+  }
+
+  // --- Skills --------------------------------------------------------------
+
+  listSkills(): Promise<{ skills: unknown[] }> {
+    return this.get<{ skills: unknown[] }>("/v1/host/skills/registry");
+  }
+
+  // --- Insights ------------------------------------------------------------
+
+  listInsights(params: { limit?: number }): Promise<{ insights: unknown[] }> {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set("limit", String(params.limit));
+    return this.get<{ insights: unknown[] }>(`/v1/host/insights?${qs}`);
+  }
+
+  // --- Cognition -----------------------------------------------------------
+
+  getCPI(): Promise<unknown> {
+    return this.get("/v1/host/cognition/cpi");
+  }
+
+  // --- Learning ------------------------------------------------------------
+
+  getLearningWeights(): Promise<unknown> {
+    return this.get("/v1/host/learning/weights");
   }
 
   // --- Events stream -------------------------------------------------------
