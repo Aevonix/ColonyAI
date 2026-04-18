@@ -329,6 +329,176 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/cognition/cycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cognition Cycle */
+        post: operations["cognition_cycle_v1_host_cognition_cycle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/cognition/cpi": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Cpi */
+        get: operations["get_cpi_v1_host_cognition_cpi_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/research/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Research */
+        post: operations["start_research_v1_host_research_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/research": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Research */
+        get: operations["list_research_v1_host_research_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/delivery/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Pending Deliveries */
+        get: operations["list_pending_deliveries_v1_host_delivery_pending_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/delivery/mark-sent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark Delivery Sent */
+        post: operations["mark_delivery_sent_v1_host_delivery_mark_sent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/synthesis/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover Connections */
+        post: operations["discover_connections_v1_host_synthesis_discover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/learning/correction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Correction */
+        post: operations["submit_correction_v1_host_learning_correction_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/learning/engagement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Engagement */
+        post: operations["submit_engagement_v1_host_learning_engagement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/learning/weights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Learning Weights */
+        get: operations["get_learning_weights_v1_host_learning_weights_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -353,6 +523,70 @@ export interface components {
             briefing_type?: string | null;
             /** Created At */
             created_at?: string | null;
+        };
+        /** CognitionCycleRequest */
+        CognitionCycleRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            context?: components["schemas"]["HostTurnContext"] | null;
+        };
+        /** CognitionCycleResponse */
+        CognitionCycleResponse: {
+            cpi?: components["schemas"]["CognitivePerformanceIndex"] | null;
+            /**
+             * Gaps
+             * @default []
+             */
+            gaps: components["schemas"]["CognitionGap"][];
+            /**
+             * Adjustments
+             * @default []
+             */
+            adjustments: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** CognitionGap */
+        CognitionGap: {
+            /** Gap Id */
+            gap_id: string;
+            /** Domain */
+            domain: string;
+            /** Severity */
+            severity: number;
+            /** Description */
+            description?: string | null;
+        };
+        /** CognitivePerformanceIndex */
+        CognitivePerformanceIndex: {
+            /**
+             * Overall
+             * @default 0
+             */
+            overall: number;
+            /**
+             * Memory
+             * @default 0
+             */
+            memory: number;
+            /**
+             * Reasoning
+             * @default 0
+             */
+            reasoning: number;
+            /**
+             * Social
+             * @default 0
+             */
+            social: number;
+            /**
+             * Autonomy
+             * @default 0
+             */
+            autonomy: number;
+            /** Domains */
+            domains?: {
+                [key: string]: number;
+            } | null;
         };
         /** ContactListResponse */
         ContactListResponse: {
@@ -432,6 +666,22 @@ export interface components {
             citations?: {
                 [key: string]: unknown;
             }[] | null;
+        };
+        /** DeliveryListResponse */
+        DeliveryListResponse: {
+            /**
+             * Pending
+             * @default []
+             */
+            pending: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** DeliveryMarkRequest */
+        DeliveryMarkRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Delivery Id */
+            delivery_id: string;
         };
         /** EntityListResponse */
         EntityListResponse: {
@@ -606,6 +856,44 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** LearningCorrectionRequest */
+        LearningCorrectionRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            context: components["schemas"]["HostTurnContext"];
+            /** Original */
+            original: string;
+            /** Correction */
+            correction: string;
+            /** Component */
+            component?: string | null;
+        };
+        /** LearningEngagementRequest */
+        LearningEngagementRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Briefing Id */
+            briefing_id: string;
+            /** Action */
+            action: string;
+            /** Dwell Seconds */
+            dwell_seconds?: number | null;
+        };
+        /** LearningWeightsResponse */
+        LearningWeightsResponse: {
+            /**
+             * Weights
+             * @default {}
+             */
+            weights: {
+                [key: string]: number;
+            };
+            /**
+             * Stats
+             * @default {}
+             */
+            stats: {
+                [key: string]: number;
+            };
+        };
         /** MemoryEmbedRequest */
         MemoryEmbedRequest: {
             identity: components["schemas"]["HostIdentity"];
@@ -760,6 +1048,47 @@ export interface components {
             /** Error */
             error?: string | null;
         };
+        /** ResearchListResponse */
+        ResearchListResponse: {
+            /**
+             * Runs
+             * @default []
+             */
+            runs: components["schemas"]["ResearchRunResponse"][];
+        };
+        /** ResearchRunResponse */
+        ResearchRunResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Topic */
+            topic: string;
+            /** Status */
+            status: string;
+            /**
+             * Stages Completed
+             * @default []
+             */
+            stages_completed: string[];
+            /** Artifact */
+            artifact?: {
+                [key: string]: unknown;
+            } | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /** ResearchStartRequest */
+        ResearchStartRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Topic */
+            topic: string;
+            /**
+             * Depth
+             * @default standard
+             */
+            depth: string | null;
+            /** Person Id */
+            person_id?: string | null;
+        };
         /** SafetyCheckRequest */
         SafetyCheckRequest: {
             identity: components["schemas"]["HostIdentity"];
@@ -812,6 +1141,45 @@ export interface components {
             accepted: boolean;
             /** Signals Recorded */
             signals_recorded: number;
+        };
+        /** SynthesisConnection */
+        SynthesisConnection: {
+            /** Id */
+            id: string;
+            /** Connection Type */
+            connection_type: string;
+            /**
+             * Entities
+             * @default []
+             */
+            entities: string[];
+            /**
+             * Novelty
+             * @default 0
+             */
+            novelty: number;
+            /** Description */
+            description?: string | null;
+        };
+        /** SynthesisDiscoverRequest */
+        SynthesisDiscoverRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            context?: components["schemas"]["HostTurnContext"] | null;
+            /** Person Id */
+            person_id?: string | null;
+            /**
+             * Min Novelty
+             * @default 0.3
+             */
+            min_novelty: number | null;
+        };
+        /** SynthesisDiscoverResponse */
+        SynthesisDiscoverResponse: {
+            /**
+             * Connections
+             * @default []
+             */
+            connections: components["schemas"]["SynthesisConnection"][];
         };
         /** TurnSyncRequest */
         TurnSyncRequest: {
@@ -1520,6 +1888,313 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cognition_cycle_v1_host_cognition_cycle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CognitionCycleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CognitionCycleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_cpi_v1_host_cognition_cpi_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CognitivePerformanceIndex"];
+                };
+            };
+        };
+    };
+    start_research_v1_host_research_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_research_v1_host_research_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pending_deliveries_v1_host_delivery_pending_get: {
+        parameters: {
+            query?: {
+                gateway_id?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_delivery_sent_v1_host_delivery_mark_sent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliveryMarkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_connections_v1_host_synthesis_discover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SynthesisDiscoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SynthesisDiscoverResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_correction_v1_host_learning_correction_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearningCorrectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_engagement_v1_host_learning_engagement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearningEngagementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_learning_weights_v1_host_learning_weights_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningWeightsResponse"];
                 };
             };
         };

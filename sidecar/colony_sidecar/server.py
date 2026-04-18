@@ -23,6 +23,11 @@ from colony_sidecar.api.routers.host import (
     set_contacts_store,
     set_briefings_engine,
     set_world_store,
+    set_metalearner,
+    set_research_pipeline,
+    set_delivery_bridge,
+    set_connection_discoverer,
+    set_learner,
     supported_capabilities,
 )
 
@@ -139,6 +144,51 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("WorldModelStore init failed: %s", exc)
 
+    # --- 11. Cognition (MetaLearner) ---
+    try:
+        from colony_sidecar.intelligence.cognition.metalearner import MetaLearner
+        metalearner = MetaLearner(llm_router=llm_router, graph=graph)
+        set_metalearner(metalearner)
+        logger.info("MetaLearner initialized")
+    except Exception as exc:
+        logger.warning("MetaLearner init failed: %s", exc)
+
+    # --- 12. Research pipeline ---
+    try:
+        from colony_sidecar.research.pipeline import ResearchPipeline
+        research = ResearchPipeline(llm_router=llm_router)
+        set_research_pipeline(research)
+        logger.info("ResearchPipeline initialized")
+    except Exception as exc:
+        logger.warning("ResearchPipeline init failed: %s", exc)
+
+    # --- 13. Delivery bridge ---
+    try:
+        from colony_sidecar.delivery.bridge import ProactiveDeliveryBridge
+        delivery = ProactiveDeliveryBridge()
+        set_delivery_bridge(delivery)
+        logger.info("ProactiveDeliveryBridge initialized")
+    except Exception as exc:
+        logger.warning("ProactiveDeliveryBridge init failed: %s", exc)
+
+    # --- 14. Synthesis (ConnectionDiscoverer) ---
+    try:
+        from colony_sidecar.intelligence.synthesis.connection_discoverer import ConnectionDiscoverer
+        discoverer = ConnectionDiscoverer(graph=graph)
+        set_connection_discoverer(discoverer)
+        logger.info("ConnectionDiscoverer initialized")
+    except Exception as exc:
+        logger.warning("ConnectionDiscoverer init failed: %s", exc)
+
+    # --- 15. Continuous learner ---
+    try:
+        from colony_sidecar.intelligence.learning.continuous_learner import ContinuousLearner
+        learner = ContinuousLearner()
+        set_learner(learner)
+        logger.info("ContinuousLearner initialized")
+    except Exception as exc:
+        logger.warning("ContinuousLearner init failed: %s", exc)
+
     logger.info("Sidecar capabilities: %s", supported_capabilities())
     yield
 
@@ -157,6 +207,11 @@ async def lifespan(app: FastAPI):
     set_contacts_store(None)
     set_briefings_engine(None)
     set_world_store(None)
+    set_metalearner(None)
+    set_research_pipeline(None)
+    set_delivery_bridge(None)
+    set_connection_discoverer(None)
+    set_learner(None)
     logger.info("Sidecar shutdown complete")
 
 

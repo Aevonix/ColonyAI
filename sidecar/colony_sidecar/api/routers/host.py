@@ -20,6 +20,10 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, st
 from colony_sidecar.api.schemas.host import (
     BriefingListResponse,
     BriefingResponse,
+    CognitionCycleRequest,
+    CognitionCycleResponse,
+    CognitionGap,
+    CognitivePerformanceIndex,
     ContactListResponse,
     ContactResponse,
     ContactStyleRequest,
@@ -27,6 +31,8 @@ from colony_sidecar.api.schemas.host import (
     ContextAssembleRequest,
     ContextAssembleResponse,
     ContextSection,
+    DeliveryListResponse,
+    DeliveryMarkRequest,
     EntityListResponse,
     EntityQueryRequest,
     EntityResponse,
@@ -36,6 +42,9 @@ from colony_sidecar.api.schemas.host import (
     GoalUpdateRequest,
     HostHealthResponse,
     HostMessage,
+    LearningCorrectionRequest,
+    LearningEngagementRequest,
+    LearningWeightsResponse,
     MemoryEmbedRequest,
     MemoryEmbedResponse,
     MemoryEntry,
@@ -50,10 +59,16 @@ from colony_sidecar.api.schemas.host import (
     ReasoningToolCall,
     ReasoningTurnRequest,
     ReasoningTurnResponse,
+    ResearchListResponse,
+    ResearchRunResponse,
+    ResearchStartRequest,
     SafetyCheckRequest,
     SafetyCheckResponse,
     SignalIngestRequest,
     SignalIngestResponse,
+    SynthesisConnection,
+    SynthesisDiscoverRequest,
+    SynthesisDiscoverResponse,
     TurnSyncRequest,
     TurnSyncResponse,
 )
@@ -637,3 +652,228 @@ async def list_entities(entity_type: Optional[str] = None, limit: int = 50) -> E
     except Exception as exc:
         logger.warning("list_entities failed: %s", exc)
         return EntityListResponse(entities=[])
+
+
+# ---------------------------------------------------------------------------
+# Cognition
+# ---------------------------------------------------------------------------
+
+_metalearner = None
+
+def set_metalearner(learner) -> None:
+    global _metalearner
+    _metalearner = learner
+
+
+@router.post("/cognition/cycle", response_model=CognitionCycleResponse)
+async def cognition_cycle(body: CognitionCycleRequest) -> CognitionCycleResponse:
+    if _metalearner is None:
+        return CognitionCycleResponse()
+    try:
+        result = await _metalearner.run_cycle()
+        cpi = None
+        if result and hasattr(result, "cpi") and result.cpi:
+            c = result.cpi
+            cpi = CognitivePerformanceIndex(
+                overall=getattr(c, "overall", 0.0),
+                memory=getattr(c, "memory", 0.0),
+                reasoning=getattr(c, "reasoning", 0.0),
+                social=getattr(c, "social", 0.0),
+                autonomy=getattr(c, "autonomy", 0.0),
+            )
+        gaps = []
+        if result and hasattr(result, "gaps"):
+            for g in result.gaps:
+                gaps.append(CognitionGap(
+                    gap_id=getattr(g, "id", str(uuid.uuid4())),
+                    domain=getattr(g, "domain", "general"),
+                    severity=getattr(g, "severity", 0.0),
+                    description=getattr(g, "description"),
+                ))
+        adjustments = []
+        if result and hasattr(result, "adjustments"):
+            for a in result.adjustments:
+                adjustments.append({"domain": getattr(a, "domain", ""), "action": getattr(a, "action", "")})
+        return CognitionCycleResponse(cpi=cpi, gaps=gaps, adjustments=adjustments)
+    except Exception as exc:
+        logger.warning("cognition_cycle failed: %s", exc)
+        return CognitionCycleResponse()
+
+
+@router.get("/cognition/cpi", response_model=CognitivePerformanceIndex)
+async def get_cpi() -> CognitivePerformanceIndex:
+    if _metalearner is None:
+        return CognitivePerformanceIndex()
+    try:
+        cpi = await _metalearner.evaluate()
+        return CognitivePerformanceIndex(
+            overall=getattr(cpi, "overall", 0.0),
+            memory=getattr(cpi, "memory", 0.0),
+            reasoning=getattr(cpi, "reasoning", 0.0),
+            social=getattr(cpi, "social", 0.0),
+            autonomy=getattr(cpi, "autonomy", 0.0),
+        )
+    except Exception as exc:
+        logger.warning("get_cpi failed: %s", exc)
+        return CognitivePerformanceIndex()
+
+
+# ---------------------------------------------------------------------------
+# Research
+# ---------------------------------------------------------------------------
+
+_research_pipeline = None
+
+def set_research_pipeline(pipeline) -> None:
+    global _research_pipeline
+    _research_pipeline = pipeline
+
+
+@router.post("/research/start", response_model=ResearchRunResponse)
+async def start_research(body: ResearchStartRequest) -> ResearchRunResponse:
+    if _research_pipeline is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    try:
+        run = await _research_pipeline.run(topic=body.topic, depth=body.depth)
+        return ResearchRunResponse(
+            run_id=run.run_id,
+            topic=run.topic,
+            status=run.status.value if hasattr(run.status, "value") else str(run.status),
+            stages_completed=[s.value if hasattr(s, "value") else str(s) for s in run.stages_completed],
+            artifact=run.artifact if hasattr(run, "artifact") else None,
+        )
+    except Exception as exc:
+        logger.warning("start_research failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/research", response_model=ResearchListResponse)
+async def list_research(limit: int = 20) -> ResearchListResponse:
+    return ResearchListResponse(runs=[])
+
+
+# ---------------------------------------------------------------------------
+# Delivery
+# ---------------------------------------------------------------------------
+
+_delivery_bridge = None
+
+def set_delivery_bridge(bridge) -> None:
+    global _delivery_bridge
+    _delivery_bridge = bridge
+
+
+@router.get("/delivery/pending", response_model=DeliveryListResponse)
+async def list_pending_deliveries(gateway_id: str = "", limit: int = 20) -> DeliveryListResponse:
+    if _delivery_bridge is None:
+        return DeliveryListResponse(pending=[])
+    try:
+        pending = _delivery_bridge.get_pending(gateway_id=gateway_id, limit=limit)
+        return DeliveryListResponse(pending=pending)
+    except Exception as exc:
+        logger.warning("list_pending_deliveries failed: %s", exc)
+        return DeliveryListResponse(pending=[])
+
+
+@router.post("/delivery/mark-sent")
+async def mark_delivery_sent(body: DeliveryMarkRequest) -> dict:
+    if _delivery_bridge is None:
+        return {"ok": False}
+    try:
+        ok = _delivery_bridge.mark_sent(body.delivery_id)
+        return {"ok": ok}
+    except Exception as exc:
+        logger.warning("mark_delivery_sent failed: %s", exc)
+        return {"ok": False}
+
+
+# ---------------------------------------------------------------------------
+# Synthesis
+# ---------------------------------------------------------------------------
+
+_connection_discoverer = None
+
+def set_connection_discoverer(discoverer) -> None:
+    global _connection_discoverer
+    _connection_discoverer = discoverer
+
+
+@router.post("/synthesis/discover", response_model=SynthesisDiscoverResponse)
+async def discover_connections(body: SynthesisDiscoverRequest) -> SynthesisDiscoverResponse:
+    if _connection_discoverer is None:
+        return SynthesisDiscoverResponse(connections=[])
+    try:
+        connections = await _connection_discoverer.discover_connections(
+            person_id=body.person_id,
+            min_novelty=body.min_novelty or 0.3,
+        )
+        results = []
+        for c in connections:
+            results.append(SynthesisConnection(
+                id=getattr(c, "id", str(uuid.uuid4())),
+                connection_type=getattr(c, "connection_type", "unknown"),
+                entities=getattr(c, "entities", []),
+                novelty=getattr(c, "novelty", 0.0),
+                description=getattr(c, "description"),
+            ))
+        return SynthesisDiscoverResponse(connections=results)
+    except Exception as exc:
+        logger.warning("discover_connections failed: %s", exc)
+        return SynthesisDiscoverResponse(connections=[])
+
+
+# ---------------------------------------------------------------------------
+# Learning
+# ---------------------------------------------------------------------------
+
+_learner = None
+
+def set_learner(learner) -> None:
+    global _learner
+    _learner = learner
+
+
+@router.post("/learning/correction")
+async def submit_correction(body: LearningCorrectionRequest) -> dict:
+    if _learner is None:
+        return {"accepted": False}
+    try:
+        await _learner.ingest_correction({
+            "original": body.original,
+            "correction": body.correction,
+            "component": body.component,
+            "sender_id": body.context.contact_id if body.context else "unknown",
+        })
+        return {"accepted": True}
+    except Exception as exc:
+        logger.warning("submit_correction failed: %s", exc)
+        return {"accepted": False}
+
+
+@router.post("/learning/engagement")
+async def submit_engagement(body: LearningEngagementRequest) -> dict:
+    if _learner is None:
+        return {"accepted": False}
+    try:
+        await _learner.ingest_engagement({
+            "briefing_id": body.briefing_id,
+            "action": body.action,
+            "dwell_seconds": body.dwell_seconds,
+        })
+        return {"accepted": True}
+    except Exception as exc:
+        logger.warning("submit_engagement failed: %s", exc)
+        return {"accepted": False}
+
+
+@router.get("/learning/weights", response_model=LearningWeightsResponse)
+async def get_learning_weights() -> LearningWeightsResponse:
+    if _learner is None:
+        return LearningWeightsResponse()
+    try:
+        weights = await _learner.get_component_weights()
+        stats = _learner.stats()
+        return LearningWeightsResponse(weights=weights, stats=stats)
+    except Exception as exc:
+        logger.warning("get_learning_weights failed: %s", exc)
+        return LearningWeightsResponse()

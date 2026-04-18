@@ -889,6 +889,396 @@
           }
         }
       }
+    },
+    "/v1/host/cognition/cycle": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Cognition Cycle",
+        "operationId": "cognition_cycle_v1_host_cognition_cycle_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CognitionCycleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CognitionCycleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/cognition/cpi": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Get Cpi",
+        "operationId": "get_cpi_v1_host_cognition_cpi_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CognitivePerformanceIndex"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/research/start": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Start Research",
+        "operationId": "start_research_v1_host_research_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/research": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "summary": "List Research",
+        "operationId": "list_research_v1_host_research_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/delivery/pending": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "summary": "List Pending Deliveries",
+        "operationId": "list_pending_deliveries_v1_host_delivery_pending_get",
+        "parameters": [
+          {
+            "name": "gateway_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Gateway Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/delivery/mark-sent": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Mark Delivery Sent",
+        "operationId": "mark_delivery_sent_v1_host_delivery_mark_sent_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeliveryMarkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Mark Delivery Sent V1 Host Delivery Mark Sent Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/synthesis/discover": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Discover Connections",
+        "operationId": "discover_connections_v1_host_synthesis_discover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SynthesisDiscoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SynthesisDiscoverResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/learning/correction": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Submit Correction",
+        "operationId": "submit_correction_v1_host_learning_correction_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningCorrectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Submit Correction V1 Host Learning Correction Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/learning/engagement": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Submit Engagement",
+        "operationId": "submit_engagement_v1_host_learning_engagement_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningEngagementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Submit Engagement V1 Host Learning Engagement Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/learning/weights": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "summary": "Get Learning Weights",
+        "operationId": "get_learning_weights_v1_host_learning_weights_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningWeightsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -957,6 +1347,140 @@
           "body"
         ],
         "title": "BriefingResponse"
+      },
+      "CognitionCycleRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostTurnContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity"
+        ],
+        "title": "CognitionCycleRequest"
+      },
+      "CognitionCycleResponse": {
+        "properties": {
+          "cpi": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CognitivePerformanceIndex"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/CognitionGap"
+            },
+            "type": "array",
+            "title": "Gaps",
+            "default": []
+          },
+          "adjustments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Adjustments",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "CognitionCycleResponse"
+      },
+      "CognitionGap": {
+        "properties": {
+          "gap_id": {
+            "type": "string",
+            "title": "Gap Id"
+          },
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "severity": {
+            "type": "number",
+            "title": "Severity"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gap_id",
+          "domain",
+          "severity"
+        ],
+        "title": "CognitionGap"
+      },
+      "CognitivePerformanceIndex": {
+        "properties": {
+          "overall": {
+            "type": "number",
+            "title": "Overall",
+            "default": 0.0
+          },
+          "memory": {
+            "type": "number",
+            "title": "Memory",
+            "default": 0.0
+          },
+          "reasoning": {
+            "type": "number",
+            "title": "Reasoning",
+            "default": 0.0
+          },
+          "social": {
+            "type": "number",
+            "title": "Social",
+            "default": 0.0
+          },
+          "autonomy": {
+            "type": "number",
+            "title": "Autonomy",
+            "default": 0.0
+          },
+          "domains": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domains"
+          }
+        },
+        "type": "object",
+        "title": "CognitivePerformanceIndex"
       },
       "ContactListResponse": {
         "properties": {
@@ -1227,6 +1751,38 @@
           "body"
         ],
         "title": "ContextSection"
+      },
+      "DeliveryListResponse": {
+        "properties": {
+          "pending": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Pending",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "DeliveryListResponse"
+      },
+      "DeliveryMarkRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "delivery_id": {
+            "type": "string",
+            "title": "Delivery Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "delivery_id"
+        ],
+        "title": "DeliveryMarkRequest"
       },
       "EntityListResponse": {
         "properties": {
@@ -1750,6 +2306,98 @@
           "contact_id"
         ],
         "title": "HostTurnContext"
+      },
+      "LearningCorrectionRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "context": {
+            "$ref": "#/components/schemas/HostTurnContext"
+          },
+          "original": {
+            "type": "string",
+            "title": "Original"
+          },
+          "correction": {
+            "type": "string",
+            "title": "Correction"
+          },
+          "component": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Component"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "context",
+          "original",
+          "correction"
+        ],
+        "title": "LearningCorrectionRequest"
+      },
+      "LearningEngagementRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "briefing_id": {
+            "type": "string",
+            "title": "Briefing Id"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "dwell_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dwell Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "briefing_id",
+          "action"
+        ],
+        "title": "LearningEngagementRequest"
+      },
+      "LearningWeightsResponse": {
+        "properties": {
+          "weights": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Weights",
+            "default": {}
+          },
+          "stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Stats",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "LearningWeightsResponse"
       },
       "MemoryEmbedRequest": {
         "properties": {
@@ -2328,6 +2976,114 @@
         ],
         "title": "ReasoningTurnResponse"
       },
+      "ResearchListResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchRunResponse"
+            },
+            "type": "array",
+            "title": "Runs",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "ResearchListResponse"
+      },
+      "ResearchRunResponse": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "topic": {
+            "type": "string",
+            "title": "Topic"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "stages_completed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Stages Completed",
+            "default": []
+          },
+          "artifact": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "topic",
+          "status"
+        ],
+        "title": "ResearchRunResponse"
+      },
+      "ResearchStartRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "topic": {
+            "type": "string",
+            "title": "Topic"
+          },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth",
+            "default": "standard"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity",
+          "topic"
+        ],
+        "title": "ResearchStartRequest"
+      },
       "SafetyCheckRequest": {
         "properties": {
           "identity": {
@@ -2535,6 +3291,107 @@
           "signals_recorded"
         ],
         "title": "SignalIngestResponse"
+      },
+      "SynthesisConnection": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "connection_type": {
+            "type": "string",
+            "title": "Connection Type"
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Entities",
+            "default": []
+          },
+          "novelty": {
+            "type": "number",
+            "title": "Novelty",
+            "default": 0.0
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "connection_type"
+        ],
+        "title": "SynthesisConnection"
+      },
+      "SynthesisDiscoverRequest": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/HostIdentity"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostTurnContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "min_novelty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Novelty",
+            "default": 0.3
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity"
+        ],
+        "title": "SynthesisDiscoverRequest"
+      },
+      "SynthesisDiscoverResponse": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/SynthesisConnection"
+            },
+            "type": "array",
+            "title": "Connections",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "SynthesisDiscoverResponse"
       },
       "TurnSyncRequest": {
         "properties": {

@@ -406,3 +406,108 @@ class EntityQueryRequest(BaseModel):
     identity: HostIdentity
     query: str
     limit: Optional[int] = 10
+
+
+# --- Cognition --------------------------------------------------------------
+
+class CognitionCycleRequest(BaseModel):
+    identity: HostIdentity
+    context: Optional[HostTurnContext] = None
+
+
+class CognitivePerformanceIndex(BaseModel):
+    overall: float = 0.0
+    memory: float = 0.0
+    reasoning: float = 0.0
+    social: float = 0.0
+    autonomy: float = 0.0
+    domains: Optional[Dict[str, float]] = None
+
+
+class CognitionGap(BaseModel):
+    gap_id: str
+    domain: str
+    severity: float
+    description: Optional[str] = None
+
+
+class CognitionCycleResponse(BaseModel):
+    cpi: Optional[CognitivePerformanceIndex] = None
+    gaps: List[CognitionGap] = []
+    adjustments: List[Dict[str, Any]] = []
+
+
+# --- Research ---------------------------------------------------------------
+
+class ResearchStartRequest(BaseModel):
+    identity: HostIdentity
+    topic: str
+    depth: Optional[str] = "standard"  # quick | standard | deep
+    person_id: Optional[str] = None
+
+
+class ResearchRunResponse(BaseModel):
+    run_id: str
+    topic: str
+    status: str
+    stages_completed: List[str] = []
+    artifact: Optional[Dict[str, Any]] = None
+    created_at: Optional[str] = None
+
+
+class ResearchListResponse(BaseModel):
+    runs: List[ResearchRunResponse] = []
+
+
+# --- Delivery ---------------------------------------------------------------
+
+class DeliveryListResponse(BaseModel):
+    pending: List[Dict[str, Any]] = []
+
+
+class DeliveryMarkRequest(BaseModel):
+    identity: HostIdentity
+    delivery_id: str
+
+
+# --- Synthesis --------------------------------------------------------------
+
+class SynthesisDiscoverRequest(BaseModel):
+    identity: HostIdentity
+    context: Optional[HostTurnContext] = None
+    person_id: Optional[str] = None
+    min_novelty: Optional[float] = 0.3
+
+
+class SynthesisConnection(BaseModel):
+    id: str
+    connection_type: str
+    entities: List[str] = []
+    novelty: float = 0.0
+    description: Optional[str] = None
+
+
+class SynthesisDiscoverResponse(BaseModel):
+    connections: List[SynthesisConnection] = []
+
+
+# --- Learning ---------------------------------------------------------------
+
+class LearningCorrectionRequest(BaseModel):
+    identity: HostIdentity
+    context: HostTurnContext
+    original: str
+    correction: str
+    component: Optional[str] = None
+
+
+class LearningEngagementRequest(BaseModel):
+    identity: HostIdentity
+    briefing_id: str
+    action: str  # opened | dismissed | clicked | saved
+    dwell_seconds: Optional[float] = None
+
+
+class LearningWeightsResponse(BaseModel):
+    weights: Dict[str, float] = {}
+    stats: Dict[str, int] = {}
