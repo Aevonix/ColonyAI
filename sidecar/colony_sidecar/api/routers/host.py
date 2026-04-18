@@ -110,6 +110,20 @@ _consolidator = None
 _event_subscribers: list[asyncio.Queue] = []
 
 
+def broadcast_event(event: dict) -> None:
+    """Push an event dict to all connected WebSocket subscribers.
+
+    Called by the autonomy loop, signal collector, and other subsystems
+    when state changes that the host should know about (proactive
+    messages, briefings, anomalies, etc.).
+    """
+    for q in _event_subscribers:
+        try:
+            q.put_nowait(event)
+        except Exception:
+            pass  # Queue full or closed — drop and continue
+
+
 def set_graph(graph) -> None:
     global _graph
     _graph = graph
@@ -189,6 +203,26 @@ async def health() -> HostHealthResponse:
         notes["reasoning"] = "ReasoningLoop wired (max_iterations=%d)" % _reasoning_loop._config.max_iterations
     else:
         notes["reasoning"] = "ReasoningLoop not wired — /reasoning/turn returns 501"
+    if _goals_store is not None:
+        notes["goals"] = "GoalEngine wired"
+    if _contacts_store is not None:
+        notes["contacts"] = "ContactsStore wired"
+    if _briefings_engine is not None:
+        notes["briefings"] = "BriefingEngine wired"
+    if _world_store is not None:
+        notes["world_model"] = "WorldModelStore wired"
+    if _metalearner is not None:
+        notes["cognition"] = "MetaLearner wired"
+    if _signal_collector is not None:
+        notes["signals"] = "SignalCollector wired"
+    if _embedder is not None:
+        notes["embed"] = "EmbeddingPipeline wired"
+    if _skills_registry is not None:
+        notes["skills"] = "SkillRegistry wired"
+    if _chain_manager is not None:
+        notes["identity"] = "ChainManager wired"
+    if _secrets_manager is not None:
+        notes["secrets"] = "SecretsManager wired"
     return HostHealthResponse(status="ok", capabilities=caps, notes=notes)
 
 
@@ -483,6 +517,27 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
 @router.websocket("/events")
 async def events_ws(ws: WebSocket) -> None:
     await ws.accept()
+
+    # Read auth message
+    try:
+        raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
+        import json as _json
+        msg = _json.loads(raw)
+        if msg.get("type") != "auth":
+            await ws.close(code=4001, reason="Expected auth message")
+            return
+        token = msg.get("token", "")
+        expected = os.environ.get("COLONY_API_KEY", "")
+        if expected and token != expected:
+            await ws.close(code=4003, reason="Invalid API key")
+            return
+    except asyncio.TimeoutError:
+        await ws.close(code=4001, reason="Auth timeout")
+        return
+    except Exception:
+        await ws.close(code=4001, reason="Invalid auth")
+        return
+
     q: asyncio.Queue = asyncio.Queue()
     _event_subscribers.append(q)
     try:

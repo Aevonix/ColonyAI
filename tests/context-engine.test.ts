@@ -38,14 +38,14 @@ function makeCtx(opts?: {
     body: ContextAssembleRequest,
   ) => Promise<ContextAssembleResponse>;
 }) {
-  const contextAssemble = vi.fn<
+  const enrichedContext = vi.fn<
     [ContextAssembleRequest],
     Promise<ContextAssembleResponse>
   >();
   if (opts?.assembleImpl) {
-    contextAssemble.mockImplementation(opts.assembleImpl);
+    enrichedContext.mockImplementation(opts.assembleImpl);
   } else {
-    contextAssemble.mockResolvedValue(
+    enrichedContext.mockResolvedValue(
       opts?.assembleResponse ?? { sections: [], notices: [] },
     );
   }
@@ -79,7 +79,7 @@ function makeCtx(opts?: {
       forwardProactiveDeliveries: true,
     } as unknown as ColonyPluginContext["config"],
     client: {
-      contextAssemble,
+      enrichedContext,
       health,
     } as unknown as ColonyPluginContext["client"],
     identity: () => ({ host_id: "host-test", plugin_version: "0.0.1" }),
@@ -87,7 +87,7 @@ function makeCtx(opts?: {
   };
 
   const caps = __capabilityProbe(ctx);
-  return { ctx, caps, contextAssemble, health, logger };
+  return { ctx, caps, enrichedContext, health, logger };
 }
 
 function userMessage(text: string): AgentMessage {
@@ -115,14 +115,14 @@ describe("contextEngineFactory — info", () => {
 
 describe("contextEngineFactory — ingest", () => {
   it("returns { ingested: true } and performs zero sidecar calls", async () => {
-    const { ctx, caps, contextAssemble } = makeCtx();
+    const { ctx, caps, enrichedContext } = makeCtx();
     const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
     const res = await engine.ingest({
       sessionId: "sess-1",
       message: userMessage("hi"),
     });
     expect(res.ingested).toBe(true);
-    expect(contextAssemble).not.toHaveBeenCalled();
+    expect(enrichedContext).not.toHaveBeenCalled();
   });
 });
 
@@ -198,21 +198,20 @@ describe("contextEngineFactory — assemble prompt / message walk", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("uses params.prompt verbatim when provided and ignores the messages walk", async () => {
-    const { ctx, caps, contextAssemble } = makeCtx();
+    const { ctx, caps, enrichedContext } = makeCtx();
     const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
     await engine.assemble({
       ...BASE_ASSEMBLE_PARAMS,
       messages: [userMessage("OLD user message")],
       prompt: "NEW prompt from caller",
     });
-    expect(contextAssemble).toHaveBeenCalledTimes(1);
-    const body = contextAssemble.mock.calls[0]![0];
-    expect(body.incoming_message.role).toBe("user");
-    expect(body.incoming_message.content).toBe("NEW prompt from caller");
+    expect(enrichedContext).toHaveBeenCalledTimes(1);
+    const body = enrichedContext.mock.calls[0]![0];
+    expect(body.message).toBe("NEW prompt from caller");
   });
 
   it("walks messages backwards to find the latest user turn", async () => {
-    const { ctx, caps, contextAssemble } = makeCtx();
+    const { ctx, caps, enrichedContext } = makeCtx();
     const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
     await engine.assemble({
       ...BASE_ASSEMBLE_PARAMS,
@@ -223,19 +222,19 @@ describe("contextEngineFactory — assemble prompt / message walk", () => {
         assistantMessage("another reply"),
       ],
     });
-    const body = contextAssemble.mock.calls[0]![0];
-    expect(body.incoming_message.content).toBe("second");
+    const body = enrichedContext.mock.calls[0]![0];
+    expect(body.message).toBe("second");
   });
 
   it("passes through without calling the sidecar when no prompt and no user message", async () => {
-    const { ctx, caps, contextAssemble } = makeCtx();
+    const { ctx, caps, enrichedContext } = makeCtx();
     const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
     const messages = [assistantMessage("only assistant")];
     const res = await engine.assemble({
       ...BASE_ASSEMBLE_PARAMS,
       messages,
     });
-    expect(contextAssemble).not.toHaveBeenCalled();
+    expect(enrichedContext).not.toHaveBeenCalled();
     expect(res.messages).toBe(messages);
     expect(res.systemPromptAddition).toBeUndefined();
   });
@@ -322,7 +321,7 @@ describe("contextEngineFactory — capability gate", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("skips sidecar when probe succeeded and 'context' is not advertised", async () => {
-    const { ctx, caps, contextAssemble } = makeCtx({
+    const { ctx, caps, enrichedContext } = makeCtx({
       capabilities: ["memory"], // no "context"
     });
     const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
@@ -331,13 +330,13 @@ describe("contextEngineFactory — capability gate", () => {
       ...BASE_ASSEMBLE_PARAMS,
       messages,
     });
-    expect(contextAssemble).not.toHaveBeenCalled();
+    expect(enrichedContext).not.toHaveBeenCalled();
     expect(res.messages).toBe(messages);
     expect(res.systemPromptAddition).toBeUndefined();
   });
 
   it("still calls the sidecar when the probe failed (unknown state)", async () => {
-    const { ctx, caps, contextAssemble } = makeCtx({
+    const { ctx, caps, enrichedContext } = makeCtx({
       healthFails: true,
     });
     const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
@@ -345,58 +344,32 @@ describe("contextEngineFactory — capability gate", () => {
       ...BASE_ASSEMBLE_PARAMS,
       messages: [userMessage("hello")],
     });
-    expect(contextAssemble).toHaveBeenCalledTimes(1);
+    expect(enrichedContext).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("contextEngineFactory — assemble wire params", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("translates citationsMode values", async () => {
-    const cases: Array<{
-      input: "auto" | "on" | "off" | undefined;
-      expected: "inline" | "appendix" | "off" | undefined;
-    }> = [
-      { input: "auto", expected: "inline" },
-      { input: "on", expected: "appendix" },
-      { input: "off", expected: "off" },
-      { input: undefined, expected: undefined },
-    ];
-    for (const c of cases) {
-      const { ctx, caps, contextAssemble } = makeCtx();
-      const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
-      await engine.assemble({
-        ...BASE_ASSEMBLE_PARAMS,
-        messages: [userMessage("hi")],
-        citationsMode: c.input,
-      });
-      const body = contextAssemble.mock.calls[0]![0];
-      expect(body.citations_mode).toBe(c.expected);
-    }
-  });
-
-  it("converts availableTools Set<string> to array on the wire", async () => {
-    const { ctx, caps, contextAssemble } = makeCtx();
-    const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
-    await engine.assemble({
-      ...BASE_ASSEMBLE_PARAMS,
-      messages: [userMessage("hi")],
-      availableTools: new Set(["a", "b"]),
-    });
-    const body = contextAssemble.mock.calls[0]![0];
-    expect(Array.isArray(body.available_tools)).toBe(true);
-    expect([...(body.available_tools ?? [])].sort()).toEqual(["a", "b"]);
-  });
-
-  it("omits available_tools when the Set is not provided", async () => {
-    const { ctx, caps, contextAssemble } = makeCtx();
+  it("passes identity, context, message, and features to enrichedContext", async () => {
+    const { ctx, caps, enrichedContext } = makeCtx();
     const engine = __contextEngineFactory(ctx, caps, ctx.logger)();
     await engine.assemble({
       ...BASE_ASSEMBLE_PARAMS,
       messages: [userMessage("hi")],
     });
-    const body = contextAssemble.mock.calls[0]![0];
-    expect(body.available_tools).toBeUndefined();
+    const body = enrichedContext.mock.calls[0]![0];
+    expect(body.identity).toBeDefined();
+    expect(body.context).toBeDefined();
+    expect(body.message).toBe("hi");
+    expect(body.features).toEqual({
+      memory: true,
+      relationships: true,
+      style: true,
+      goals: true,
+      worldModel: true,
+      insights: true,
+    });
   });
 });
 

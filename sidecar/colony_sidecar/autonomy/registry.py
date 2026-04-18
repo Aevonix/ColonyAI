@@ -37,8 +37,9 @@ class SubsystemRegistry:
     @property
     def anomalies(self) -> Any:
         from colony_sidecar.intelligence.components.anomaly_detector import AnomalyDetector
-        # AnomalyDetector doesn't need wiring — it's stateless
-        return AnomalyDetector()
+        if not hasattr(self, '_anomaly_detector'):
+            self._anomaly_detector = AnomalyDetector()
+        return self._anomaly_detector
 
     @property
     def queue(self) -> Any:

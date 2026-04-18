@@ -25,6 +25,21 @@ from colony_sidecar.autonomy.registry import SubsystemRegistry
 from colony_sidecar.events.bus import EventBus
 from colony_sidecar.events.types import Event
 
+# Lazy import to avoid circular dependency — broadcast_event is defined
+# in the host router which imports from this module.
+_broadcast = None
+
+
+def _get_broadcast():
+    global _broadcast
+    if _broadcast is None:
+        try:
+            from colony_sidecar.api.routers.host import broadcast_event
+            _broadcast = broadcast_event
+        except ImportError:
+            _broadcast = lambda e: None
+    return _broadcast
+
 logger = logging.getLogger(__name__)
 
 
@@ -304,6 +319,11 @@ class AutonomyLoop:
 
             if recent_anomalies:
                 logger.info("Phase anomalies: %d above threshold", len(recent_anomalies))
+                _get_broadcast()({
+                    "type": "anomaly",
+                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    "payload": {"count": len(recent_anomalies)},
+                })
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase anomalies error: %s", exc, exc_info=True)
@@ -322,6 +342,8 @@ class AutonomyLoop:
             if self._in_quiet_hours():
                 initiatives = [i for i in initiatives if getattr(i, "priority", 0) >= 0.9]
 
+            if initiatives:
+                logger.info("Phase initiative: %d new proposals", len(initiatives))
             self._pending_initiatives = initiatives
             self.stats.initiatives_generated += len(initiatives)
         except Exception as exc:
@@ -342,6 +364,11 @@ class AutonomyLoop:
                     logger.info("Executing initiative: %s", getattr(initiative, "id", "?"))
                     self.stats.actions_executed += 1
                     self.stats.actions_this_hour += 1
+                    _get_broadcast()({
+                        "type": "action_executed",
+                        "occurred_at": datetime.now(timezone.utc).isoformat(),
+                        "payload": {"action_hint": action_hint, "initiative_id": getattr(initiative, "id", "?")},
+                    })
                 except Exception as exc:
                     logger.error("Failed to execute initiative: %s", exc)
             elif self._registry.delivery is not None:
@@ -491,6 +518,11 @@ class AutonomyLoop:
             connections = await discoverer.discover_connections()
             if connections:
                 logger.info("Phase synthesis: %d new connections", len(connections))
+                _get_broadcast()({
+                    "type": "insight",
+                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    "payload": {"new_connections": len(connections)},
+                })
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase synthesis error: %s", exc, exc_info=True)

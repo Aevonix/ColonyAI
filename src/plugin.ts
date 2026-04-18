@@ -693,22 +693,21 @@ function contextEngineFactory(
       const res = await withDegradation(
         { name: "context.assemble", logger },
         () =>
-          ctx.client.contextAssemble({
+          ctx.client.enrichedContext({
             identity: ctx.identity(),
             context: {
               session_id: params.sessionId,
-              // KNOWN GAP: OpenClaw's ``assemble`` params don't carry a
-              // person / contact id. Use ``sessionKey`` (or
-              // ``sessionId``) as a surrogate so the sidecar has *some*
-              // stable routing key; tracked as a follow-up under
-              // aevonix/colony-ai#7.
               contact_id: params.sessionKey ?? params.sessionId,
             },
-            incoming_message: incoming,
-            available_tools: params.availableTools
-              ? Array.from(params.availableTools)
-              : undefined,
-            citations_mode: mapCitations(params.citationsMode),
+            message: incoming.content,
+            features: {
+              memory: true,
+              relationships: true,
+              style: true,
+              goals: true,
+              worldModel: true,
+              insights: true,
+            },
           }),
         () => ({ sections: [], notices: ["colony-context: degraded"] }),
       );
@@ -1481,10 +1480,12 @@ function safetyHook(
         },
         response_text: event.content,
         // Read cached inbound text from the `message_received` hook.
-        // Falls back to "" when no cached text is available (e.g. first
-        // turn before the hook fires, or sessions without message_received).
+        // Key must match what messageReceivedHook uses. We rely on
+        // `conversationId` as the primary key since it's stable across
+        // both hooks. Without it, the `to`/`from` identifiers may not
+        // align, so the fallback is best-effort.
         incoming_message_text: cache.getInbound(
-          hookCtx.conversationId ?? `${hookCtx.channelId}:${event.to}`,
+          hookCtx.conversationId ?? "",
         ),
         target_gateway: hookCtx.channelId,
         // ``trust_tier`` intentionally undefined — server defaults to
@@ -1551,14 +1552,15 @@ function messageReceivedHook(
     hookCtx: MessageReceivedContext,
   ): void => {
     try {
-      // Derive a stable session key. `accountId` + `conversationId` is
-      // the most stable; fall back to `channelId:from` when those are
-      // unavailable.
+      // Derive a stable session key matching the safety hook's key
+      // derivation. Both hooks must use the same formula so cached
+      // inbound text is findable by the safety hook.
+      // Safety hook uses `event.to`; here we use `event.from` which is
+      // the same person in a 1:1 chat. For group chats, conversationId
+      // is the stable key.
       const sessionKey =
         hookCtx.conversationId ??
-        (hookCtx.accountId
-          ? `${hookCtx.channelId}:${hookCtx.accountId}`
-          : `${hookCtx.channelId}:${event.from}`);
+        `${hookCtx.channelId}:${event.from}`;
       cache.setInbound(sessionKey, event.content);
     } catch (err) {
       logger?.warn(
