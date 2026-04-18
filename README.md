@@ -1,4 +1,4 @@
-# Colony Core
+# Colony
 
 Intelligence-as-a-service for AI agents. Mount Colony into any agent framework via the OpenClaw plugin, or run it standalone.
 
