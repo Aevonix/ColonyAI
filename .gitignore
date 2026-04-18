@@ -2,3 +2,16 @@ dist/
 node_modules/
 *.tsbuildinfo
 .vitest-cache/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+*.db
+.env
+.venv/
+venv/
+
+# Sidecar data
+openapi.json
