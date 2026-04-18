@@ -225,6 +225,68 @@ export function summarizeHostEvent(event: HostEvent): string {
   }
 }
 
+/**
+ * Handle proactive_message events by spawning a subagent turn to deliver
+ * the message. This is a workaround until OpenClaw provides a direct
+ * `sendProactiveMessage(channelId, content)` API.
+ *
+ * The subagent approach works because:
+ * 1. Sidecar pushes `proactive_message` event via WebSocket
+ * 2. Plugin calls `subagent.run({ sessionKey, message, deliver: true })`
+ * 3. Subagent spawns minimal agent turn with the notification
+ * 4. OpenClaw routes the agent's response to the channel
+ *
+ * Trade-off: Spawns a full LLM turn just to echo a message (adds latency,
+ * burns tokens) but works with zero infrastructure changes.
+ */
+async function handleProactiveMessage(
+  event: HostEvent,
+  api: OpenClawPluginApi,
+  logger: PluginLogger | undefined,
+): Promise<void> {
+  const p = event.payload ?? {};
+  const sessionKey = typeof p.session_key === "string" ? p.session_key : undefined;
+  const content = typeof p.content === "string" ? p.content : undefined;
+
+  if (!sessionKey) {
+    logger?.warn("[colony] proactive_message missing session_key — cannot deliver");
+    return;
+  }
+
+  if (!content) {
+    logger?.warn("[colony] proactive_message missing content — nothing to deliver");
+    return;
+  }
+
+  // Check if runtime API is available
+  const runtime = (api as unknown as { runtime?: { subagent?: { run: unknown } } }).runtime;
+  if (!runtime?.subagent?.run) {
+    logger?.warn("[colony] runtime.subagent.run not available — cannot deliver proactive message");
+    return;
+  }
+
+  const subagentRun = runtime.subagent.run as (params: {
+    sessionKey: string;
+    message: string;
+    deliver?: boolean;
+  }) => Promise<{ runId: string }>;
+
+  try {
+    logger?.info(`[colony] delivering proactive message to session=${sessionKey}`);
+
+    const result = await subagentRun({
+      sessionKey,
+      message: `Deliver this notification to the user: ${content}`,
+      deliver: true,
+    });
+
+    logger?.info(`[colony] proactive delivery started runId=${result.runId}`);
+  } catch (err) {
+    logger?.error(`[colony] proactive delivery failed: ${String(err)}`);
+    throw err;
+  }
+}
+
 export interface ColonyPluginContext {
   config: ColonyPluginConfig;
   client: ColonySidecarClient;
@@ -1852,6 +1914,7 @@ function postTurnHook(
 
 function eventsLifecycleService(
   ctx: ColonyPluginContext,
+  api: OpenClawPluginApi,
   logger?: OpenClawPluginApi["logger"],
 ) {
   let subscription: { close: () => void } | null = null;
@@ -1868,19 +1931,22 @@ function eventsLifecycleService(
       try {
         subscription = ctx.client.openEvents((event: HostEvent) => {
           // Surface the event via OpenClaw's logger so operators see
-          // the cognition stream in plugin diagnostics. The actual
-          // reply_dispatch wiring that turns proactive_message events
-          // into channel posts is host-side and wired separately once
-          // adapter contracts are corrected (see tracking issue).
-          // Individual event-formatting failures must not kill the
-          // subscription — wrap the body so one malformed frame can't
-          // take the stream down.
+          // the cognition stream in plugin diagnostics.
           try {
             logger?.info(`[colony.event] ${summarizeHostEvent(event)}`);
           } catch (cbErr) {
             logger?.warn(
               `[colony] events: callback error on ${event.type} (${String(cbErr)})`,
             );
+          }
+
+          // Handle proactive_message events by spawning a subagent turn
+          // to deliver the message. This is a workaround until OpenClaw
+          // provides a direct sendProactiveMessage API.
+          if (event.type === "proactive_message") {
+            handleProactiveMessage(event, api, logger).catch((err) => {
+              logger?.warn(`[colony] proactive delivery failed: ${String(err)}`);
+            });
           }
         });
         logger?.info(
@@ -1916,7 +1982,7 @@ export async function createColonyPlugin(): Promise<unknown> {
       const cache = new SessionTextCache();
       const extraction = new TurnExtractionPipeline();
 
-      api.registerService(eventsLifecycleService(ctx, api.logger));
+      api.registerService(eventsLifecycleService(ctx, api, api.logger));
 
       // As of issue aevonix/colony-ai#7 Phase 6 all adapter shapes
       // match their real OpenClaw SDK contracts — every Phase 1–6
