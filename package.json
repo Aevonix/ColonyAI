@@ -50,7 +50,7 @@
     "node": ">=22.16.0"
   },
   "peerDependencies": {
-    "openclaw": ">=0.1.0"
+    "openclaw": "2026.4.15"
   },
   "peerDependenciesMeta": {
     "openclaw": {
