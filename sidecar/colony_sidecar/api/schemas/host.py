@@ -511,3 +511,59 @@ class LearningEngagementRequest(BaseModel):
 class LearningWeightsResponse(BaseModel):
     weights: Dict[str, float] = {}
     stats: Dict[str, int] = {}
+
+
+# --- Skills -----------------------------------------------------------------
+
+class SkillSummary(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    version: Optional[str] = None
+    triggers: List[str] = []
+
+
+class SkillDetailResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    version: Optional[str] = None
+    triggers: List[str] = []
+    input_schema: Optional[Dict[str, Any]] = None
+    permissions: Optional[Dict[str, Any]] = None
+
+
+class SkillsListResponse(BaseModel):
+    skills: List[SkillSummary] = []
+
+
+# --- Insights ---------------------------------------------------------------
+
+class InsightResponse(BaseModel):
+    id: str
+    title: str
+    body: str
+    insight_type: Optional[str] = None
+    novelty: float = 0.0
+    entities: List[str] = []
+    created_at: Optional[str] = None
+    dismissed: bool = False
+
+
+class InsightsListResponse(BaseModel):
+    insights: List[InsightResponse] = []
+
+
+# --- Enriched Context -------------------------------------------------------
+
+class EnrichedContextRequest(BaseModel):
+    identity: HostIdentity
+    context: HostTurnContext
+    message: str
+    features: Optional[Dict[str, bool]] = None
+
+
+class EnrichedContextResponse(BaseModel):
+    sections: List[ContextSection] = []
+    contact_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None

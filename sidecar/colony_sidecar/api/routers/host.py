@@ -33,6 +33,8 @@ from colony_sidecar.api.schemas.host import (
     ContextSection,
     DeliveryListResponse,
     DeliveryMarkRequest,
+    EnrichedContextRequest,
+    EnrichedContextResponse,
     EntityListResponse,
     EntityQueryRequest,
     EntityResponse,
@@ -42,6 +44,8 @@ from colony_sidecar.api.schemas.host import (
     GoalUpdateRequest,
     HostHealthResponse,
     HostMessage,
+    InsightResponse,
+    InsightsListResponse,
     LearningCorrectionRequest,
     LearningEngagementRequest,
     LearningWeightsResponse,
@@ -66,6 +70,9 @@ from colony_sidecar.api.schemas.host import (
     SafetyCheckResponse,
     SignalIngestRequest,
     SignalIngestResponse,
+    SkillDetailResponse,
+    SkillSummary,
+    SkillsListResponse,
     SynthesisConnection,
     SynthesisDiscoverRequest,
     SynthesisDiscoverResponse,
@@ -143,6 +150,8 @@ def supported_capabilities() -> List[str]:
         caps.append("briefings")
     if _world_store is not None:
         caps.append("world_model")
+    if _skills_registry is not None:
+        caps.append("skills")
     caps.append("events")
     return caps
 
@@ -877,3 +886,231 @@ async def get_learning_weights() -> LearningWeightsResponse:
     except Exception as exc:
         logger.warning("get_learning_weights failed: %s", exc)
         return LearningWeightsResponse()
+
+
+# ---------------------------------------------------------------------------
+# Skills
+# ---------------------------------------------------------------------------
+
+_skills_registry = None
+
+def set_skills_registry(registry) -> None:
+    global _skills_registry
+    _skills_registry = registry
+
+
+@router.get("/skills/registry", response_model=SkillsListResponse)
+async def list_skills() -> SkillsListResponse:
+    if _skills_registry is None:
+        return SkillsListResponse(skills=[])
+    try:
+        skills = await _skills_registry.list_skills()
+        return SkillsListResponse(skills=[
+            SkillSummary(
+                id=s.get("id", ""),
+                name=s.get("name", ""),
+                description=s.get("description"),
+                version=s.get("version"),
+                triggers=s.get("triggers", []),
+            ) for s in skills
+        ])
+    except Exception as exc:
+        logger.warning("list_skills failed: %s", exc)
+        return SkillsListResponse(skills=[])
+
+
+@router.get("/skills/registry/{skill_id}", response_model=SkillDetailResponse)
+async def get_skill(skill_id: str) -> SkillDetailResponse:
+    if _skills_registry is None:
+        raise HTTPException(status_code=404, detail="Skills not available")
+    try:
+        skill = await _skills_registry.get_skill(skill_id)
+        if skill is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return SkillDetailResponse(
+            id=skill.get("id", skill_id),
+            name=skill.get("name", ""),
+            description=skill.get("description"),
+            version=skill.get("version"),
+            triggers=skill.get("triggers", []),
+            input_schema=skill.get("input_schema"),
+            permissions=skill.get("permissions"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("get_skill failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Insights
+# ---------------------------------------------------------------------------
+
+@router.get("/insights", response_model=InsightsListResponse)
+async def list_insights(limit: int = 10, dismissed: bool = False) -> InsightsListResponse:
+    # Insights come from the synthesis module's connection discoveries
+    if _connection_discoverer is None:
+        return InsightsListResponse(insights=[])
+    try:
+        connections = await _connection_discoverer.discover_connections(min_novelty=0.3)
+        insights = []
+        for c in connections[:limit]:
+            insights.append(InsightResponse(
+                id=getattr(c, "id", str(uuid.uuid4())),
+                title=getattr(c, "connection_type", "Connection"),
+                body=getattr(c, "description", "") or f"Connection between {', '.join(getattr(c, 'entities', []))}",
+                insight_type=getattr(c, "connection_type", "unknown"),
+                novelty=getattr(c, "novelty", 0.0),
+                entities=getattr(c, "entities", []),
+                dismissed=False,
+            ))
+        return InsightsListResponse(insights=insights)
+    except Exception as exc:
+        logger.warning("list_insights failed: %s", exc)
+        return InsightsListResponse(insights=[])
+
+
+@router.post("/insights/{insight_id}/dismiss")
+async def dismiss_insight(insight_id: str) -> dict:
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Enriched Context (all-systems assembly)
+# ---------------------------------------------------------------------------
+
+@router.post("/context/enriched", response_model=EnrichedContextResponse)
+async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextResponse:
+    """Pull from all intelligence systems to build enriched context.
+
+    This is the one-stop endpoint for context assembly — it queries
+    memory, relationships, goals, world model, insights, and style
+    in parallel and returns assembled sections.
+    """
+    import asyncio
+
+    sections: list[ContextSection] = []
+    contact_id = body.context.contact_id if body.context else None
+    features = body.features or {}
+    msg = body.message
+
+    # Collect context from all available systems in parallel
+    tasks: dict[str, Any] = {}
+
+    # 1. Memory search
+    if _graph is not None:
+        async def _mem():
+            try:
+                results = await _graph.search_memories(query=msg, person_id=contact_id, limit=5)
+                return ("memory", results)
+            except Exception:
+                return ("memory", [])
+        tasks["memory"] = _mem()
+
+    # 2. Contact / relationship
+    if _contacts_store is not None and contact_id and features.get("relationships", True):
+        async def _contact():
+            try:
+                c = await _contacts_store.get_contact(contact_id)
+                return ("contact", c)
+            except Exception:
+                return ("contact", None)
+        tasks["contact"] = _contact()
+
+    # 3. Contact style
+    if _contacts_store is not None and contact_id and features.get("style", True):
+        async def _style():
+            try:
+                s = await _contacts_store.get_style(contact_id)
+                return ("style", s)
+            except Exception:
+                return ("style", None)
+        tasks["style"] = _style()
+
+    # 4. Active goals
+    if _goals_store is not None and features.get("goals", True):
+        async def _goals():
+            try:
+                g = await _goals_store.list_goals(person_id=contact_id, status="active")
+                return ("goals", g)
+            except Exception:
+                return ("goals", [])
+        tasks["goals"] = _goals()
+
+    # 5. World model entities
+    if _world_store is not None and features.get("worldModel", True):
+        async def _world():
+            try:
+                e = await _world_store.query(msg, limit=5)
+                return ("world", e)
+            except Exception:
+                return ("world", [])
+        tasks["world"] = _world()
+
+    # 6. Recent insights
+    if _connection_discoverer is not None and features.get("insights", True):
+        async def _insights():
+            try:
+                c = await _connection_discoverer.discover_connections(person_id=contact_id, min_novelty=0.3)
+                return ("insights", c[:3])
+            except Exception:
+                return ("insights", [])
+        tasks["insights"] = _insights()
+
+    # Run all tasks in parallel
+    results = {}
+    if tasks:
+        task_items = list(tasks.items())
+        gathered = await asyncio.gather(*[t[1]() for t in task_items], return_exceptions=True)
+        for (name, _), result in zip(task_items, gathered):
+            if isinstance(result, Exception):
+                logger.debug("enriched_context %s failed: %s", name, result)
+            elif isinstance(result, tuple):
+                results[result[0]] = result[1]
+
+    # Build sections from results
+    if results.get("memory"):
+        body_text = "\n".join(
+            f"- [{r.get('score', 0):.2f}] {r.get('content', '')}"
+            for r in results["memory"]
+        )
+        sections.append(ContextSection(id="colony-memory", title="Relevant Memories", body=body_text, priority=90))
+
+    if results.get("contact"):
+        c = results["contact"]
+        sections.append(ContextSection(
+            id="colony-relationship",
+            title="Relationship",
+            body=f"Trust tier: {c.get('trust_tier', 'unknown')}\n{c.get('style_notes', '')}",
+            priority=85,
+        ))
+
+    if results.get("style"):
+        s = results["style"]
+        lines = [f"{k}: {v}" for k, v in s.items() if v]
+        if lines:
+            sections.append(ContextSection(id="colony-style", title="Communication Style", body="\n".join(lines), priority=80))
+
+    if results.get("goals"):
+        goals = results["goals"]
+        if goals:
+            body_text = "\n".join(f"- {g.get('title', '?')} [{g.get('status', '?')}] {g.get('progress', 0):.0%}" for g in goals)
+            sections.append(ContextSection(id="colony-goals", title="Active Goals", body=body_text, priority=75))
+
+    if results.get("world"):
+        entities = results["world"]
+        if entities:
+            body_text = "\n".join(f"- {e.get('name', '?')} ({e.get('entity_type', '?')})" for e in entities)
+            sections.append(ContextSection(id="colony-world", title="Known Entities", body=body_text, priority=70))
+
+    if results.get("insights"):
+        connections = results["insights"]
+        if connections:
+            body_text = "\n".join(
+                f"- [{getattr(c, 'novelty', 0):.2f}] {getattr(c, 'description', '') or getattr(c, 'connection_type', '')}"
+                for c in connections
+            )
+            sections.append(ContextSection(id="colony-insights", title="Recent Insights", body=body_text, priority=65))
+
+    return EnrichedContextResponse(sections=sections, contact_id=contact_id)

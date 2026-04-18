@@ -28,6 +28,7 @@ from colony_sidecar.api.routers.host import (
     set_delivery_bridge,
     set_connection_discoverer,
     set_learner,
+    set_skills_registry,
     supported_capabilities,
 )
 
@@ -189,6 +190,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("ContinuousLearner init failed: %s", exc)
 
+    # --- 16. Skills registry ---
+    try:
+        from colony_sidecar.skills.registry import SkillRegistry
+        skills = SkillRegistry()
+        set_skills_registry(skills)
+        logger.info("SkillRegistry initialized")
+    except Exception as exc:
+        logger.warning("SkillRegistry init failed: %s", exc)
+
     logger.info("Sidecar capabilities: %s", supported_capabilities())
     yield
 
@@ -212,6 +222,7 @@ async def lifespan(app: FastAPI):
     set_delivery_bridge(None)
     set_connection_discoverer(None)
     set_learner(None)
+    set_skills_registry(None)
     logger.info("Sidecar shutdown complete")
 
 

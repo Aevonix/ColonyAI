@@ -499,6 +499,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/skills/registry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Skills */
+        get: operations["list_skills_v1_host_skills_registry_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/skills/registry/{skill_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Skill */
+        get: operations["get_skill_v1_host_skills_registry__skill_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Insights */
+        get: operations["list_insights_v1_host_insights_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/insights/{insight_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss Insight */
+        post: operations["dismiss_insight_v1_host_insights__insight_id__dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/context/enriched": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enriched Context
+         * @description Pull from all intelligence systems to build enriched context.
+         *
+         *     This is the one-stop endpoint for context assembly — it queries
+         *     memory, relationships, goals, world model, insights, and style
+         *     in parallel and returns assembled sections.
+         */
+        post: operations["enriched_context_v1_host_context_enriched_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -683,6 +775,31 @@ export interface components {
             /** Delivery Id */
             delivery_id: string;
         };
+        /** EnrichedContextRequest */
+        EnrichedContextRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            context: components["schemas"]["HostTurnContext"];
+            /** Message */
+            message: string;
+            /** Features */
+            features?: {
+                [key: string]: boolean;
+            } | null;
+        };
+        /** EnrichedContextResponse */
+        EnrichedContextResponse: {
+            /**
+             * Sections
+             * @default []
+             */
+            sections: components["schemas"]["ContextSection"][];
+            /** Contact Id */
+            contact_id?: string | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** EntityListResponse */
         EntityListResponse: {
             /**
@@ -855,6 +972,42 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** InsightResponse */
+        InsightResponse: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Body */
+            body: string;
+            /** Insight Type */
+            insight_type?: string | null;
+            /**
+             * Novelty
+             * @default 0
+             */
+            novelty: number;
+            /**
+             * Entities
+             * @default []
+             */
+            entities: string[];
+            /** Created At */
+            created_at?: string | null;
+            /**
+             * Dismissed
+             * @default false
+             */
+            dismissed: boolean;
+        };
+        /** InsightsListResponse */
+        InsightsListResponse: {
+            /**
+             * Insights
+             * @default []
+             */
+            insights: components["schemas"]["InsightResponse"][];
         };
         /** LearningCorrectionRequest */
         LearningCorrectionRequest: {
@@ -1141,6 +1294,54 @@ export interface components {
             accepted: boolean;
             /** Signals Recorded */
             signals_recorded: number;
+        };
+        /** SkillDetailResponse */
+        SkillDetailResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Version */
+            version?: string | null;
+            /**
+             * Triggers
+             * @default []
+             */
+            triggers: string[];
+            /** Input Schema */
+            input_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Permissions */
+            permissions?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** SkillSummary */
+        SkillSummary: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Version */
+            version?: string | null;
+            /**
+             * Triggers
+             * @default []
+             */
+            triggers: string[];
+        };
+        /** SkillsListResponse */
+        SkillsListResponse: {
+            /**
+             * Skills
+             * @default []
+             */
+            skills: components["schemas"]["SkillSummary"][];
         };
         /** SynthesisConnection */
         SynthesisConnection: {
@@ -2195,6 +2396,155 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LearningWeightsResponse"];
+                };
+            };
+        };
+    };
+    list_skills_v1_host_skills_registry_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsListResponse"];
+                };
+            };
+        };
+    };
+    get_skill_v1_host_skills_registry__skill_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_insights_v1_host_insights_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                dismissed?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsightsListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_insight_v1_host_insights__insight_id__dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                insight_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enriched_context_v1_host_context_enriched_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnrichedContextRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrichedContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
