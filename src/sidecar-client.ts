@@ -94,6 +94,19 @@ export class ColonySidecarClient {
     return this.post<ContextAssembleResponse>("/v1/host/context/assemble", body);
   }
 
+  /**
+   * One-stop context assembly — queries all intelligence systems in
+   * parallel and returns assembled sections.
+   */
+  enrichedContext(body: {
+    identity: HostIdentity;
+    context: HostTurnContext;
+    message: string;
+    features?: Record<string, boolean>;
+  }): Promise<ContextAssembleResponse> {
+    return this.post<ContextAssembleResponse>("/v1/host/context/enriched", body);
+  }
+
   // --- Reasoning -----------------------------------------------------------
 
   /**
@@ -134,31 +147,22 @@ export class ColonySidecarClient {
     return this.post<SafetyCheckResponse>("/v1/host/safety/check", body);
   }
 
-  // --- Enriched Context ----------------------------------------------------
+  // --- Goals --------------------------------------------------------------
 
-  /**
-   * One-stop context assembly — queries all intelligence systems in
-   * parallel and returns assembled sections.
-   */
-  enrichedContext(body: {
-    identity: HostIdentity;
-    context: HostTurnContext;
-    message: string;
-    features?: Record<string, boolean>;
-  }): Promise<ContextAssembleResponse> {
-    return this.post<ContextAssembleResponse>("/v1/host/context/enriched", body);
+  listGoals(params?: { person_id?: string; status?: string }): Promise<unknown> {
+    const qs = new URLSearchParams();
+    if (params?.person_id) qs.set("person_id", params.person_id);
+    if (params?.status) qs.set("status_filter", params.status);
+    const query = qs.toString();
+    return this.get(`/v1/host/goals${query ? `?${query}` : ""}`);
   }
 
-  // --- Goals ---------------------------------------------------------------
+  getGoal(goalId: string): Promise<unknown> {
+    return this.get(`/v1/host/goals/${goalId}`);
+  }
 
-  listGoals(params: {
-    person_id?: string;
-    status?: string;
-  }): Promise<{ goals: unknown[] }> {
-    const qs = new URLSearchParams();
-    if (params.person_id) qs.set("person_id", params.person_id);
-    if (params.status) qs.set("status_filter", params.status);
-    return this.get<{ goals: unknown[] }>(`/v1/host/goals?${qs}`);
+  updateGoal(goalId: string, body: { status?: string; progress?: number; notes?: string }): Promise<unknown> {
+    return this.request("PATCH", `/v1/host/goals/${goalId}`, body);
   }
 
   // --- Skills --------------------------------------------------------------
@@ -167,12 +171,22 @@ export class ColonySidecarClient {
     return this.get<{ skills: unknown[] }>("/v1/host/skills/registry");
   }
 
+  getSkill(skillId: string): Promise<unknown> {
+    return this.get(`/v1/host/skills/registry/${skillId}`);
+  }
+
   // --- Insights ------------------------------------------------------------
 
-  listInsights(params: { limit?: number }): Promise<{ insights: unknown[] }> {
+  listInsights(params?: { limit?: number; dismissed?: boolean }): Promise<unknown> {
     const qs = new URLSearchParams();
-    if (params.limit) qs.set("limit", String(params.limit));
-    return this.get<{ insights: unknown[] }>(`/v1/host/insights?${qs}`);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.dismissed !== undefined) qs.set("dismissed", String(params.dismissed));
+    const query = qs.toString();
+    return this.get(`/v1/host/insights${query ? `?${query}` : ""}`);
+  }
+
+  dismissInsight(insightId: string): Promise<unknown> {
+    return this.post(`/v1/host/insights/${insightId}/dismiss`, {});
   }
 
   // --- Cognition -----------------------------------------------------------
@@ -181,10 +195,185 @@ export class ColonySidecarClient {
     return this.get("/v1/host/cognition/cpi");
   }
 
+  cognitionCycle(): Promise<unknown> {
+    return this.post("/v1/host/cognition/cycle", {
+      identity: { host_id: "colony-plugin" },
+    });
+  }
+
   // --- Learning ------------------------------------------------------------
 
   getLearningWeights(): Promise<unknown> {
     return this.get("/v1/host/learning/weights");
+  }
+
+  submitCorrection(params: {
+    context: { session_id: string; contact_id: string };
+    original: string;
+    correction: string;
+    component?: string;
+  }): Promise<unknown> {
+    return this.post("/v1/host/learning/correction", {
+      identity: { host_id: "colony-plugin" },
+      ...params,
+    });
+  }
+
+  submitEngagement(briefingId: string, action: string, dwellSeconds?: number): Promise<unknown> {
+    return this.post("/v1/host/learning/engagement", {
+      identity: { host_id: "colony-plugin" },
+      briefing_id: briefingId,
+      action,
+      dwell_seconds: dwellSeconds,
+    });
+  }
+
+  // --- Autonomy ------------------------------------------------------------
+
+  autonomyStatus(): Promise<unknown> {
+    return this.get("/v1/host/autonomy/status");
+  }
+
+  autonomyStart(): Promise<unknown> {
+    return this.post("/v1/host/autonomy/start", {});
+  }
+
+  autonomyStop(): Promise<unknown> {
+    return this.post("/v1/host/autonomy/stop", {});
+  }
+
+  // --- Contacts ------------------------------------------------------------
+
+  listContacts(): Promise<unknown> {
+    return this.get("/v1/host/contacts");
+  }
+
+  getContact(contactId: string): Promise<unknown> {
+    return this.get(`/v1/host/contacts/${contactId}`);
+  }
+
+  getContactStyle(contactId: string): Promise<unknown> {
+    return this.post("/v1/host/contacts/" + contactId + "/style", {
+      identity: { host_id: "colony-plugin" },
+      person_id: contactId,
+    });
+  }
+
+  // --- Briefings -----------------------------------------------------------
+
+  listBriefings(limit = 10): Promise<unknown> {
+    return this.get(`/v1/host/briefings?limit=${limit}`);
+  }
+
+  // --- World Model ---------------------------------------------------------
+
+  listEntities(params?: { entity_type?: string; limit?: number }): Promise<unknown> {
+    const qs = new URLSearchParams();
+    if (params?.entity_type) qs.set("entity_type", params.entity_type);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const query = qs.toString();
+    return this.get(`/v1/host/world/entities${query ? `?${query}` : ""}`);
+  }
+
+  queryEntities(query: string, limit = 10): Promise<unknown> {
+    return this.post("/v1/host/world/entities/query", {
+      identity: { host_id: "colony-plugin" },
+      query,
+      limit,
+    });
+  }
+
+  // --- Research ------------------------------------------------------------
+
+  startResearch(topic: string, depth = "standard"): Promise<unknown> {
+    return this.post("/v1/host/research/start", {
+      identity: { host_id: "colony-plugin" },
+      topic,
+      depth,
+    });
+  }
+
+  listResearch(limit = 20): Promise<unknown> {
+    return this.get(`/v1/host/research?limit=${limit}`);
+  }
+
+  // --- Delivery ------------------------------------------------------------
+
+  listPendingDeliveries(gatewayId?: string, limit = 20): Promise<unknown> {
+    const qs = new URLSearchParams();
+    if (gatewayId) qs.set("gateway_id", gatewayId);
+    qs.set("limit", String(limit));
+    return this.get(`/v1/host/delivery/pending?${qs}`);
+  }
+
+  markDeliverySent(deliveryId: string): Promise<unknown> {
+    return this.post("/v1/host/delivery/mark-sent", {
+      identity: { host_id: "colony-plugin" },
+      delivery_id: deliveryId,
+    });
+  }
+
+  // --- Synthesis -----------------------------------------------------------
+
+  discoverConnections(personId?: string, minNovelty = 0.3): Promise<unknown> {
+    return this.post("/v1/host/synthesis/discover", {
+      identity: { host_id: "colony-plugin" },
+      person_id: personId,
+      min_novelty: minNovelty,
+    });
+  }
+
+  // --- Identity / Chain ----------------------------------------------------
+
+  identityStatus(): Promise<unknown> {
+    return this.get("/v1/host/identity/status");
+  }
+
+  identityInit(force = false): Promise<unknown> {
+    return this.post("/v1/host/identity/init", {
+      identity: { host_id: "colony-plugin" },
+      force,
+    });
+  }
+
+  chainVerify(data: string, signature?: string): Promise<unknown> {
+    return this.post("/v1/host/chain/verify", {
+      identity: { host_id: "colony-plugin" },
+      data,
+      signature,
+    });
+  }
+
+  // --- Secrets -------------------------------------------------------------
+
+  listSecrets(prefix?: string): Promise<unknown> {
+    return this.post("/v1/host/secrets/list", {
+      identity: { host_id: "colony-plugin" },
+      prefix,
+    });
+  }
+
+  getSecret(key: string): Promise<unknown> {
+    return this.post("/v1/host/secrets/get", {
+      identity: { host_id: "colony-plugin" },
+      key,
+    });
+  }
+
+  setSecret(key: string, value: string, secretType?: string): Promise<unknown> {
+    return this.post("/v1/host/secrets/set", {
+      identity: { host_id: "colony-plugin" },
+      key,
+      value,
+      secret_type: secretType,
+    });
+  }
+
+  deleteSecret(key: string): Promise<unknown> {
+    return this.post("/v1/host/secrets/delete", {
+      identity: { host_id: "colony-plugin" },
+      key,
+    });
   }
 
   // --- Events stream -------------------------------------------------------
