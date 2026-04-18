@@ -6,6 +6,8 @@ import type {
   HostHealthResponse,
   HostMessage,
 } from "./types.js";
+import { SessionTextCache } from "./hooks/session-text-cache.js";
+import { TurnExtractionPipeline } from "./extraction/pipeline.js";
 
 /**
  * The real OpenClaw plugin API surface. Imported ``type``-only so the
@@ -960,10 +962,10 @@ function zeroAssistantUsage(): {
  * shaped ``EmbeddedRunAttemptResult`` with ``promptError`` set, which
  * lets OpenClaw's fallback policy route to PI transparently.
  *
- * TODO(colony-core): ``colony/api/routers/host.py::supported_capabilities``
- * does not currently advertise ``"reasoning"``. Append it to the list
- * once the reasoning endpoint is fully wired so Colony's harness starts
- * advertising support.
+ * TODO(colony-core): The reasoning capability is now advertised by the
+ * sidecar when ``ReasoningLoop`` is wired. The harness will start
+ * advertising support automatically via the capability probe once
+ * the sidecar reports ``"reasoning"`` in its capabilities list.
  */
 function agentHarness(
   ctx: ColonyPluginContext,
@@ -1328,6 +1330,56 @@ interface PluginHookReplyDispatchEventMirror {
 }
 
 /**
+ * Structural mirror of `PluginHookLlmOutputEvent` from the OpenClaw SDK.
+ * See `openclaw/dist/plugin-sdk/src/plugins/hook-types.d.ts` for the
+ * authoritative shape. Imported locally because the type is not
+ * re-exported from any stable subpath.
+ */
+interface PluginHookLlmOutputEventMirror {
+  runId: string;
+  sessionId: string;
+  provider: string;
+  model: string;
+  assistantTexts: string[];
+  lastAssistant?: unknown;
+  usage?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    total?: number;
+  };
+}
+
+/**
+ * Structural mirror of `PluginHookAgentContext` from the OpenClaw SDK.
+ */
+interface PluginHookAgentContextMirror {
+  runId?: string;
+  agentId?: string;
+  sessionKey?: string;
+  sessionId?: string;
+  workspaceDir?: string;
+  modelProviderId?: string;
+  modelId?: string;
+  messageProvider?: string;
+  trigger?: string;
+  channelId?: string;
+}
+
+/**
+ * Structural mirror of `PluginHookMessageReceivedEvent` from the
+ * OpenClaw SDK. See `hook-message.types.d.ts` for the authoritative
+ * shape.
+ */
+interface PluginHookMessageReceivedEventMirror {
+  from: string;
+  content: string;
+  timestamp?: number;
+  metadata?: Record<string, unknown>;
+}
+
+/**
  * Only the fields the adapter actually touches. The real SDK context
  * carries ``cfg``, ``dispatcher``, ``abortSignal``, ``onReplyStart``,
  * ``recordProcessed``, ``markIdle`` — all of which we ignore because
@@ -1351,6 +1403,10 @@ type MessageSendingContext = PluginHookMessageContextMirror;
 type MessageSendingResult = PluginHookMessageSendingResultMirror;
 type ReplyDispatchEvent = PluginHookReplyDispatchEventMirror;
 type ReplyDispatchContext = PluginHookReplyDispatchContextMirror;
+type LlmOutputEvent = PluginHookLlmOutputEventMirror;
+type LlmOutputContext = PluginHookAgentContextMirror;
+type MessageReceivedEvent = PluginHookMessageReceivedEventMirror;
+type MessageReceivedContext = PluginHookMessageContextMirror;
 
 /**
  * Safety hook — runs on every outbound ``message_sending`` event and
@@ -1386,6 +1442,7 @@ type ReplyDispatchContext = PluginHookReplyDispatchContextMirror;
 function safetyHook(
   ctx: ColonyPluginContext,
   caps: ReturnType<typeof capabilityProbe>,
+  cache: SessionTextCache,
   logger?: OpenClawPluginApi["logger"],
 ) {
   return async (
@@ -1423,11 +1480,12 @@ function safetyHook(
           channel_id: hookCtx.channelId,
         },
         response_text: event.content,
-        // TODO(#7 Phase 7+): cache the triggering inbound message from
-        // the ``inbound_claim`` / ``message_received`` hook so this has
-        // context. Left empty for now — the sidecar still runs response
-        // text checks without it.
-        incoming_message_text: "",
+        // Read cached inbound text from the `message_received` hook.
+        // Falls back to "" when no cached text is available (e.g. first
+        // turn before the hook fires, or sessions without message_received).
+        incoming_message_text: cache.getInbound(
+          hookCtx.conversationId ?? `${hookCtx.channelId}:${event.to}`,
+        ),
         target_gateway: hookCtx.channelId,
         // ``trust_tier`` intentionally undefined — server defaults to
         // REGULAR. Populate here once OpenClaw exposes a trust-tier
@@ -1471,6 +1529,100 @@ function safetyHook(
         return { cancel: true };
       }
       return; // fail-open — operator has explicitly opted out
+    }
+  };
+}
+
+/**
+ * `message_received` hook — caches inbound text per session so the
+ * safety hook can read the triggering user message instead of passing
+ * an empty string.
+ *
+ * This is an observer-only handler: it never returns a result that
+ * could modify or cancel the inbound message. Errors are logged and
+ * swallowed so they don't disrupt message delivery.
+ */
+function messageReceivedHook(
+  cache: SessionTextCache,
+  logger?: OpenClawPluginApi["logger"],
+) {
+  return (
+    event: MessageReceivedEvent,
+    hookCtx: MessageReceivedContext,
+  ): void => {
+    try {
+      // Derive a stable session key. `accountId` + `conversationId` is
+      // the most stable; fall back to `channelId:from` when those are
+      // unavailable.
+      const sessionKey =
+        hookCtx.conversationId ??
+        (hookCtx.accountId
+          ? `${hookCtx.channelId}:${hookCtx.accountId}`
+          : `${hookCtx.channelId}:${event.from}`);
+      cache.setInbound(sessionKey, event.content);
+    } catch (err) {
+      logger?.warn(
+        `[colony.messageReceived] error caching inbound text: ${String(err)}`,
+      );
+    }
+  };
+}
+
+/**
+ * `llm_output` hook — caches assistant text per session so the
+ * post-turn hook can extract topics/entities/summary from the full
+ * turn context, and so the signals ingest includes the outgoing
+ * message.
+ *
+ * This is an observer-only handler: it never returns a result that
+ * could modify or cancel the output. Errors are logged and swallowed.
+ */
+function llmOutputHook(
+  cache: SessionTextCache,
+  ctx: ColonyPluginContext,
+  caps: ReturnType<typeof capabilityProbe>,
+  logger?: OpenClawPluginApi["logger"],
+) {
+  return async (
+    event: LlmOutputEvent,
+    hookCtx: LlmOutputContext,
+  ): Promise<void> => {
+    try {
+      const sessionKey =
+        hookCtx.sessionKey ?? hookCtx.sessionId ?? event.sessionId ?? "unknown";
+
+      // Cache assistant texts for the extraction pipeline to read.
+      if (event.assistantTexts.length > 0) {
+        cache.setAssistant(sessionKey, event.assistantTexts);
+      }
+
+      // Send the assistant output to Colony's signal ingestion so the
+      // cognition pipeline has the full turn (inbound + outbound).
+      const wantSignals = await caps.has("signals");
+      if (wantSignals || !(await caps.hasProbedSuccessfully())) {
+        await withDegradation(
+          { name: "llm_output.signalsIngest", logger },
+          () =>
+            ctx.client.signalsIngest({
+              identity: ctx.identity(),
+              context: {
+                session_id: sessionKey,
+                contact_id: "unknown", // best-effort; no contact info on llm_output
+                channel_id: hookCtx.channelId,
+                turn_id: event.runId,
+              },
+              outgoing_message: {
+                role: "assistant",
+                content: event.assistantTexts.join("\n"),
+              },
+            }),
+          () => undefined,
+        );
+      }
+    } catch (err) {
+      logger?.warn(
+        `[colony.llmOutput] error in hook: ${String(err)}`,
+      );
     }
   };
 }
@@ -1607,6 +1759,8 @@ function capabilityProbe(ctx: ColonyPluginContext) {
 function postTurnHook(
   ctx: ColonyPluginContext,
   caps: ReturnType<typeof capabilityProbe>,
+  cache: SessionTextCache,
+  extraction: TurnExtractionPipeline,
   logger?: OpenClawPluginApi["logger"],
 ) {
   return async (
@@ -1620,12 +1774,17 @@ function postTurnHook(
     if (event.isTailDispatch === true) return;
 
     const msgCtx = event.ctx;
-    const incomingText =
-      msgCtx.BodyForAgent ?? msgCtx.Body ?? msgCtx.RawBody ?? "";
+    const sessionKey =
+      event.sessionKey ?? msgCtx.SessionKey ?? event.runId ?? "unknown";
+
+    // Run extraction on the cached turn text.
+    const inboundText =
+      msgCtx.BodyForAgent ?? msgCtx.Body ?? msgCtx.RawBody ?? cache.getInbound(sessionKey);
+    const assistantText = cache.getCombinedAssistant(sessionKey);
+    const extracted = extraction.extract(inboundText, assistantText);
 
     const turnCtx = {
-      session_id:
-        event.sessionKey ?? msgCtx.SessionKey ?? event.runId ?? "unknown",
+      session_id: sessionKey,
       contact_id:
         msgCtx.SenderId ?? msgCtx.From ?? msgCtx.AccountId ?? "unknown",
       channel_id:
@@ -1652,13 +1811,12 @@ function postTurnHook(
         ctx.client.signalsIngest({
           identity: ctx.identity(),
           context: turnCtx,
-          incoming_message: incomingText
-            ? { role: "user", content: incomingText }
+          incoming_message: inboundText
+            ? { role: "user", content: inboundText }
             : undefined,
-          // TODO(#7 Phase 7+): ``outgoing_message`` requires an
-          // ``llm_output`` hook correlated by ``runId`` to capture the
-          // assistant text that was just dispatched. Left undefined
-          // until that correlation lands.
+          outgoing_message: assistantText
+            ? { role: "assistant", content: assistantText }
+            : undefined,
         }),
       );
     }
@@ -1667,15 +1825,11 @@ function postTurnHook(
         ctx.client.turnsSync({
           identity: ctx.identity(),
           context: turnCtx,
-          // TODO(#7 Phase 7+): wire extractors for topics / entities /
-          // pending_tasks / tools_used / summary. Empty arrays are
-          // valid per colony-core's schema (they simply mean "nothing
-          // new this turn") so this is a degraded-but-correct state.
-          topics: [],
-          entities: [],
+          topics: extracted.topics,
+          entities: extracted.entities,
           pending_tasks: [],
-          tools_used: [],
-          summary: undefined,
+          tools_used: extracted.tools_used,
+          summary: extracted.summary || undefined,
         }),
       );
     }
@@ -1757,6 +1911,8 @@ export async function createColonyPlugin(): Promise<unknown> {
     register(api: OpenClawPluginApi) {
       const ctx = buildContext(api);
       const caps = capabilityProbe(ctx);
+      const cache = new SessionTextCache();
+      const extraction = new TurnExtractionPipeline();
 
       api.registerService(eventsLifecycleService(ctx, api.logger));
 
@@ -1775,13 +1931,15 @@ export async function createColonyPlugin(): Promise<unknown> {
       // so no ``@ts-expect-error`` is needed here.
       api.registerMemoryEmbeddingProvider(memoryEmbeddingProvider(ctx));
 
-      // #7 Phase 4 — ``contextEngineFactory`` implements the real
-      // ``ContextEngine`` contract (see its doc comment), so no
-      // ``@ts-expect-error`` is needed here.
-      api.registerContextEngine(
-        "colony",
-        contextEngineFactory(ctx, caps, api.logger),
-      );
+      if (ctx.config.ownContextEngine) {
+        // #7 Phase 4 — ``contextEngineFactory`` implements the real
+        // ``ContextEngine`` contract (see its doc comment), so no
+        // ``@ts-expect-error`` is needed here.
+        api.registerContextEngine(
+          "colony",
+          contextEngineFactory(ctx, caps, api.logger),
+        );
+      }
 
       if (ctx.config.ownReasoningLoop) {
         // #7 Phase 5 — ``agentHarness`` implements the real
@@ -1798,10 +1956,16 @@ export async function createColonyPlugin(): Promise<unknown> {
       // (``InternalHookEvent``), not the lifecycle-hook map. Priority
       // 100 on ``message_sending`` ensures the safety gate runs before
       // any other plugin's content-rewrite hook can mutate the chunk.
-      api.on("message_sending", safetyHook(ctx, caps, api.logger), {
+      api.on("message_sending", safetyHook(ctx, caps, cache, api.logger), {
         priority: 100,
       });
-      api.on("reply_dispatch", postTurnHook(ctx, caps, api.logger));
+      api.on("reply_dispatch", postTurnHook(ctx, caps, cache, extraction, api.logger));
+
+      // #7 Phase 6 — ``message_received`` caches inbound text for the
+      // safety hook and extraction pipeline. ``llm_output`` caches
+      // assistant text and forwards it to Colony's signal ingestion.
+      api.on("message_received", messageReceivedHook(cache, api.logger));
+      api.on("llm_output", llmOutputHook(cache, ctx, caps, api.logger));
 
       api.logger.info(`[colony] plugin registered against ${ctx.config.sidecarUrl}`);
 
@@ -1833,4 +1997,6 @@ export {
   postTurnHook as __postTurnHook,
   capabilityProbe as __capabilityProbe,
   eventsLifecycleService as __eventsLifecycleService,
+  messageReceivedHook as __messageReceivedHook,
+  llmOutputHook as __llmOutputHook,
 };

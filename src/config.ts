@@ -45,6 +45,14 @@ export const ColonyPluginConfigSchema = z.object({
   ownMemoryCapability: z.boolean().default(false),
 
   /**
+   * If true, register Colony as the active context engine via
+   * ``api.registerContextEngine``. Off by default because this is
+   * an **exclusive slot** — enabling it claims context assembly from
+   * any other context engine plugin the host may already use.
+   */
+  ownContextEngine: z.boolean().default(false),
+
+  /**
    * Whether to automatically connect to the events WebSocket and forward
    * proactive deliveries to OpenClaw via reply_dispatch.
    */
