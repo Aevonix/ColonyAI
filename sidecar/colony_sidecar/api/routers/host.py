@@ -120,6 +120,14 @@ def supported_capabilities() -> List[str]:
         caps.append("consolidate")
     if _reasoning_loop is not None:
         caps.append("reasoning")
+    if _goals_store is not None:
+        caps.append("goals")
+    if _contacts_store is not None:
+        caps.append("contacts")
+    if _briefings_engine is not None:
+        caps.append("briefings")
+    if _world_store is not None:
+        caps.append("world_model")
     caps.append("events")
     return caps
 
