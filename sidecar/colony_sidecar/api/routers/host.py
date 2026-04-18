@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
+from pydantic import BaseModel
 
 from colony_sidecar.api.schemas.host import (
     AutonomyStatusResponse,
@@ -1371,3 +1372,41 @@ async def autonomy_stop() -> AutonomyStatusResponse:
     except Exception as exc:
         logger.warning("autonomy_stop failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Self-Knowledge Seeding
+# ---------------------------------------------------------------------------
+
+
+class SeedResponse(BaseModel):
+    memories: int = 0
+    entities: int = 0
+    skills: int = 0
+    insights: int = 0
+    errors: list[str] = []
+
+
+@router.post("/seed", response_model=SeedResponse)
+async def seed_self_knowledge_endpoint() -> SeedResponse:
+    """Seed Colony with self-knowledge via API.
+    
+    This endpoint triggers the self-knowledge seeding process that populates
+    Colony's memory, world model, and skills registry with deep understanding
+    of its own architecture and capabilities.
+    """
+    from colony_sidecar.seed import seed_self_knowledge
+    
+    results = await seed_self_knowledge(
+        graph=_graph,
+        world_store=_world_store,
+        skills_registry=_skills_registry,
+    )
+    
+    return SeedResponse(
+        memories=results.get("memories", 0),
+        entities=results.get("entities", 0),
+        skills=results.get("skills", 0),
+        insights=results.get("insights", 0),
+        errors=results.get("errors", []),
+    )

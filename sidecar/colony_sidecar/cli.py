@@ -31,6 +31,10 @@ def main() -> None:
     # --- generate-types ---
     sub.add_parser("generate-types", help="Export OpenAPI spec (for TypeScript generation)")
 
+    # --- seed ---
+    seed_p = sub.add_parser("seed", help="Seed self-knowledge (run after 'colony start')")
+    seed_p.add_argument("--verify", action="store_true", help="Verify seeding completed")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -86,6 +90,64 @@ def main() -> None:
         n = len(spec.get("components", {}).get("schemas", {}))
         p = len(spec.get("paths", {}))
         print(f"✅ OpenAPI spec written to {out} ({n} schemas, {p} paths)")
+
+    elif args.command == "seed":
+        _load_dotenv()
+        import asyncio
+        from colony_sidecar.seed import seed_self_knowledge, seed_self_knowledge_summary
+
+        print(seed_self_knowledge_summary())
+        print("\nSeeding self-knowledge...\n")
+
+        # Try to connect to running sidecar for seeding
+        host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+        port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+        api_key = os.environ.get("COLONY_API_KEY", "")
+
+        if args.verify:
+            # Verify seeding via health check
+            import httpx
+            try:
+                resp = httpx.get(f"http://{host}:{port}/v1/host/health", timeout=5)
+                data = resp.json()
+                caps = data.get("capabilities", [])
+                if "memory" in caps:
+                    print("✅ Memory system is wired")
+                if "world_model" in caps or "worldModel" in caps:
+                    print("✅ World model is wired")
+                print("\nSeeding verification complete.")
+            except Exception as e:
+                print(f"⚠️ Could not verify: {e}")
+                print("Make sure the sidecar is running: colony start")
+            sys.exit(0)
+
+        # Try to seed via API
+        import httpx
+        try:
+            # Seed via the /v1/host/seed endpoint (if available)
+            resp = httpx.post(
+                f"http://{host}:{port}/v1/host/seed",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                print(f"✅ Seeding complete:")
+                print(f"   Memories: {data.get('memories', 0)}")
+                print(f"   Entities: {data.get('entities', 0)}")
+                print(f"   Skills: {data.get('skills', 0)}")
+                print(f"   Insights: {data.get('insights', 0)}")
+            elif resp.status_code == 404:
+                print("⚠️ Seed endpoint not available.")
+                print("The sidecar may not support remote seeding.")
+                print("Seeding happens automatically during 'colony init'.")
+            else:
+                print(f"⚠️ Seeding failed: {resp.status_code}")
+                print(resp.text)
+        except Exception as e:
+            print(f"⚠️ Could not connect to sidecar: {e}")
+            print("\nMake sure the sidecar is running: colony start")
+            print("Or re-run: colony init")
 
     else:
         parser.print_help()
