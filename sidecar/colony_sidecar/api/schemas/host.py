@@ -128,6 +128,103 @@ class ContextAssembleResponse(BaseModel):
     notices: Optional[List[str]] = None
 
 
+class MemoryEntry(BaseModel):
+    id: str
+    content: str
+    type: Optional[str] = None
+    strength: Optional[float] = None
+    person_id: Optional[str] = None
+    entities: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    created_at: Optional[str] = None
+    score: Optional[float] = None
+
+
+class MemoryReadRequest(BaseModel):
+    identity: HostIdentity
+    memory_id: Optional[str] = None
+    person_id: Optional[str] = None
+    limit: Optional[int] = None
+
+
+class MemoryReadResponse(BaseModel):
+    entries: List[MemoryEntry] = []
+
+
+class MemoryWriteRequest(BaseModel):
+    identity: HostIdentity
+    context: Optional[HostTurnContext] = None
+    content: str
+    type: Optional[str] = None
+    person_id: Optional[str] = None
+    entities: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    strength: Optional[float] = None
+
+
+class MemoryWriteResponse(BaseModel):
+    id: str
+    accepted: bool
+
+
+class MemorySearchRequest(BaseModel):
+    identity: HostIdentity
+    query: str
+    limit: Optional[int] = None
+    min_score: Optional[float] = None
+    person_id: Optional[str] = None
+    types: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+
+
+class MemorySearchResponse(BaseModel):
+    entries: List[MemoryEntry] = []
+
+
+class MemoryFlushRequest(BaseModel):
+    identity: HostIdentity
+    reason: Optional[str] = None
+
+
+class MemoryFlushResponse(BaseModel):
+    accepted: bool
+    job_id: Optional[str] = None
+
+
+class MemoryEmbedRequest(BaseModel):
+    identity: HostIdentity
+    inputs: List[str]
+    model: Optional[str] = None
+
+
+class MemoryEmbedResponse(BaseModel):
+    model: str
+    vectors: List[List[float]]
+
+
+# --- Context ----------------------------------------------------------------
+
+class ContextAssembleRequest(BaseModel):
+    identity: HostIdentity
+    context: HostTurnContext
+    incoming_message: HostMessage
+    available_tools: Optional[List[str]] = None
+    citations_mode: Optional[Literal["off", "inline", "appendix"]] = None
+
+
+class ContextSection(BaseModel):
+    id: str
+    title: Optional[str] = None
+    body: str
+    priority: Optional[int] = None
+    citations: Optional[List[Dict[str, Any]]] = None
+
+
+class ContextAssembleResponse(BaseModel):
+    sections: List[ContextSection] = []
+    notices: Optional[List[str]] = None
+
+
 # --- Reasoning --------------------------------------------------------------
 
 class ReasoningTurnRequest(BaseModel):

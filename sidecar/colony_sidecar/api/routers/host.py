@@ -13,8 +13,19 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, status
 
 from colony_sidecar.api.schemas.host import (
+    ContextAssembleRequest,
+    ContextAssembleResponse,
     HostHealthResponse,
-    HostIdentity,
+    MemoryEmbedRequest,
+    MemoryEmbedResponse,
+    MemoryFlushRequest,
+    MemoryFlushResponse,
+    MemoryReadRequest,
+    MemoryReadResponse,
+    MemorySearchRequest,
+    MemorySearchResponse,
+    MemoryWriteRequest,
+    MemoryWriteResponse,
     ReasoningToolCall,
     ReasoningTurnRequest,
     ReasoningTurnResponse,
@@ -79,6 +90,47 @@ async def health() -> HostHealthResponse:
         capabilities=caps,
         notes=notes,
     )
+
+
+# ---------------------------------------------------------------------------
+# Memory (stubs — return 501 until backend is wired)
+# ---------------------------------------------------------------------------
+
+_MEMORY_NOT_WIRED = {"error": {"code": "not_wired", "message": "Memory backend not yet configured"}}
+
+
+@router.post("/memory/read", response_model=MemoryReadResponse)
+async def memory_read(body: MemoryReadRequest) -> MemoryReadResponse:
+    return MemoryReadResponse(entries=[])
+
+
+@router.post("/memory/write", response_model=MemoryWriteResponse)
+async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
+    return MemoryWriteResponse(id="stub", accepted=False)
+
+
+@router.post("/memory/search", response_model=MemorySearchResponse)
+async def memory_search(body: MemorySearchRequest) -> MemorySearchResponse:
+    return MemorySearchResponse(entries=[])
+
+
+@router.post("/memory/flush", response_model=MemoryFlushResponse)
+async def memory_flush(body: MemoryFlushRequest) -> MemoryFlushResponse:
+    return MemoryFlushResponse(accepted=False)
+
+
+@router.post("/memory/embed", response_model=MemoryEmbedResponse)
+async def memory_embed(body: MemoryEmbedRequest) -> MemoryEmbedResponse:
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_MEMORY_NOT_WIRED)
+
+
+# ---------------------------------------------------------------------------
+# Context (stub — returns empty sections)
+# ---------------------------------------------------------------------------
+
+@router.post("/context/assemble", response_model=ContextAssembleResponse)
+async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleResponse:
+    return ContextAssembleResponse(sections=[])
 
 
 # ---------------------------------------------------------------------------

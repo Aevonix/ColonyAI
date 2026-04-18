@@ -817,7 +817,7 @@ function mapCitations(
  */
 function toAddition(
   sections: ContextSection[],
-  notices: string[] | undefined,
+  notices: string[] | null | undefined,
 ): string | undefined {
   const sorted = [...sections].sort(
     (a, b) => (b.priority ?? 0) - (a.priority ?? 0),

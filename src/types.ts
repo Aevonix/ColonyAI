@@ -1,224 +1,72 @@
 /**
- * TypeScript mirror of the schemas defined in
- * `colony/api/schemas/host.py`. Keep these in lockstep — the colony-core
- * server is the source of truth.
+ * TypeScript types for the Colony sidecar Host API.
+ *
+ * AUTO-GENERATED from the Python sidecar's OpenAPI spec.
+ * Do NOT edit manually — run `npm run generate-types` to regenerate.
+ *
+ * The Python Pydantic schemas in `sidecar/colony_sidecar/api/schemas/host.py`
+ * are the single source of truth.
  */
 
-export interface HostIdentity {
-  host_id: string;
-  host_version?: string;
-  plugin_version?: string;
-  instance_id?: string;
-}
+import type { components } from "./types-generated.js";
 
-export interface HostTurnContext {
-  session_id: string;
-  contact_id: string;
-  channel_id?: string;
-  turn_id?: string;
-  locale?: string;
-  metadata?: Record<string, unknown>;
-}
+// --- Identity ---------------------------------------------------------------
 
-export type HostMessageRole = "user" | "assistant" | "system" | "tool";
+export type HostIdentity = components["schemas"]["HostIdentity"];
+export type HostTurnContext = components["schemas"]["HostTurnContext"];
 
-export interface HostMessage {
-  role: HostMessageRole;
-  content: string;
-  name?: string;
-  tool_call_id?: string;
-  metadata?: Record<string, unknown>;
-}
+// --- Messages ---------------------------------------------------------------
+
+export type HostMessageRole = components["schemas"]["HostMessage"]["role"];
+export type HostMessage = components["schemas"]["HostMessage"];
 
 // --- Health -----------------------------------------------------------------
 
-export interface HostHealthResponse {
-  status: "ok" | "degraded" | "starting" | "stopping";
-  api_version: string;
-  capabilities: string[];
-  notes?: Record<string, string>;
-}
+export type HostHealthResponse = components["schemas"]["HostHealthResponse"];
 
-// --- Memory ----------------------------------------------------------------
+// --- Memory -----------------------------------------------------------------
 
-export interface MemoryEntry {
-  id: string;
-  content: string;
-  type?: string;
-  strength?: number;
-  person_id?: string | null;
-  entities?: string[];
-  tags?: string[];
-  created_at?: string | null;
-  score?: number | null;
-}
+export type MemoryEntry = components["schemas"]["MemoryEntry"];
+export type MemoryReadRequest = components["schemas"]["MemoryReadRequest"];
+export type MemoryReadResponse = components["schemas"]["MemoryReadResponse"];
+export type MemoryWriteRequest = components["schemas"]["MemoryWriteRequest"];
+export type MemoryWriteResponse = components["schemas"]["MemoryWriteResponse"];
+export type MemorySearchRequest = components["schemas"]["MemorySearchRequest"];
+export type MemorySearchResponse = components["schemas"]["MemorySearchResponse"];
 
-export interface MemoryReadRequest {
-  identity: HostIdentity;
-  memory_id?: string;
-  person_id?: string;
-  limit?: number;
-}
+export type MemoryFlushRequest = components["schemas"]["MemoryFlushRequest"];
+export type MemoryFlushResponse = components["schemas"]["MemoryFlushResponse"];
+export type MemoryEmbedRequest = components["schemas"]["MemoryEmbedRequest"];
+export type MemoryEmbedResponse = components["schemas"]["MemoryEmbedResponse"];
 
-export interface MemoryReadResponse {
-  entries: MemoryEntry[];
-}
+// --- Context ----------------------------------------------------------------
 
-export interface MemoryWriteRequest {
-  identity: HostIdentity;
-  context?: HostTurnContext;
-  content: string;
-  type?: string;
-  person_id?: string;
-  entities?: string[];
-  tags?: string[];
-  strength?: number;
-}
+export type ContextAssembleRequest = components["schemas"]["ContextAssembleRequest"];
+export type ContextSection = components["schemas"]["ContextSection"];
+export type ContextAssembleResponse = components["schemas"]["ContextAssembleResponse"];
 
-export interface MemoryWriteResponse {
-  id: string;
-  accepted: boolean;
-}
+// --- Reasoning --------------------------------------------------------------
 
-export interface MemorySearchRequest {
-  identity: HostIdentity;
-  query: string;
-  limit?: number;
-  min_score?: number;
-  person_id?: string;
-  types?: string[];
-  tags?: string[];
-}
+export type ReasoningTurnRequest = components["schemas"]["ReasoningTurnRequest"];
+export type ReasoningToolCall = components["schemas"]["ReasoningToolCall"];
+export type ReasoningTurnResponse = components["schemas"]["ReasoningTurnResponse"];
 
-export interface MemorySearchResponse {
-  entries: MemoryEntry[];
-}
+// --- Signals ----------------------------------------------------------------
 
-export interface MemoryFlushRequest {
-  identity: HostIdentity;
-  reason?: string;
-}
+export type SignalIngestRequest = components["schemas"]["SignalIngestRequest"];
+export type SignalIngestResponse = components["schemas"]["SignalIngestResponse"];
 
-export interface MemoryFlushResponse {
-  accepted: boolean;
-  job_id?: string | null;
-}
+// --- Turns ------------------------------------------------------------------
 
-export interface MemoryEmbedRequest {
-  identity: HostIdentity;
-  inputs: string[];
-  model?: string;
-}
+export type TurnSyncRequest = components["schemas"]["TurnSyncRequest"];
+export type TurnSyncResponse = components["schemas"]["TurnSyncResponse"];
 
-export interface MemoryEmbedResponse {
-  model: string;
-  vectors: number[][];
-}
+// --- Safety -----------------------------------------------------------------
 
-// --- Context ---------------------------------------------------------------
+export type SafetyCheckRequest = components["schemas"]["SafetyCheckRequest"];
+export type SafetyCheckResponse = components["schemas"]["SafetyCheckResponse"];
 
-export interface ContextAssembleRequest {
-  identity: HostIdentity;
-  context: HostTurnContext;
-  incoming_message: HostMessage;
-  available_tools?: string[];
-  citations_mode?: "off" | "inline" | "appendix";
-}
-
-export interface ContextSection {
-  id: string;
-  title?: string;
-  body: string;
-  priority?: number;
-  citations?: Array<Record<string, unknown>>;
-}
-
-export interface ContextAssembleResponse {
-  sections: ContextSection[];
-  notices?: string[];
-}
-
-// --- Reasoning -------------------------------------------------------------
-
-export interface ReasoningTurnRequest {
-  identity: HostIdentity;
-  context: HostTurnContext;
-  messages: HostMessage[];
-  available_tools?: string[];
-  model_override?: string;
-}
-
-export interface ReasoningToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-export interface ReasoningTurnResponse {
-  status: "completed" | "needs_tool" | "error";
-  message?: HostMessage;
-  tool_calls: ReasoningToolCall[];
-  usage?: Record<string, unknown>;
-  error?: string;
-}
-
-// --- Signals ---------------------------------------------------------------
-
-export interface SignalIngestRequest {
-  identity: HostIdentity;
-  context: HostTurnContext;
-  incoming_message?: HostMessage;
-  outgoing_message?: HostMessage;
-  tool_calls?: ReasoningToolCall[];
-  correction?: string;
-}
-
-export interface SignalIngestResponse {
-  accepted: boolean;
-  signals_recorded: number;
-}
-
-// --- Turns (post-turn cognition sync) -------------------------------------
-
-export interface TurnSyncRequest {
-  identity: HostIdentity;
-  context: HostTurnContext;
-  topics?: string[];
-  entities?: string[];
-  pending_tasks?: string[];
-  tools_used?: string[];
-  summary?: string;
-}
-
-export interface TurnSyncResponse {
-  accepted: boolean;
-  continuity_updated: boolean;
-  skipped_reason?: string | null;
-  errors?: string[];
-}
-
-// --- Safety ----------------------------------------------------------------
-
-export interface SafetyCheckRequest {
-  identity: HostIdentity;
-  context: HostTurnContext;
-  response_text: string;
-  incoming_message_text?: string;
-  target_gateway?: string;
-  trust_tier?: string;
-  mentioned_entities?: string[];
-}
-
-export interface SafetyCheckResponse {
-  decision: "pass" | "block" | "pending";
-  blocked: boolean;
-  blocking_layer?: number | null;
-  reason?: string | null;
-  flagged_excerpt?: string | null;
-  layer_results?: Record<string, unknown>;
-}
-
-// --- Events ----------------------------------------------------------------
+// --- Events -----------------------------------------------------------------
 
 export type HostEventType =
   | "proactive_message"
