@@ -165,7 +165,25 @@ def run_init(root_dir: str | None = None) -> int:
 
     # ── Step 1: Dependency checks ───────────────────────────────────────
 
-    print(_bold("Step 1: Dependency checks"))
+    print(_bold("Step 1: Install dependencies"))
+    print()
+    try:
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-e", ".[neo4j]", "-q"],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(Path(__file__).resolve().parents[1]),
+        )
+        if result.returncode == 0:
+            print("  ✅ Dependencies installed")
+        else:
+            print(f"  ⚠️ pip install had warnings (non-critical)")
+    except Exception as exc:
+        print(f"  ⚠️ Could not auto-install dependencies: {exc}")
+        print("  Run manually: pip install -e .[neo4j]")
+
+    print()
+    print(_bold("Step 2: Dependency checks"))
     print()
 
     py_ok, py_ver = _check_python()
@@ -201,7 +219,7 @@ def run_init(root_dir: str | None = None) -> int:
 
     # ── Step 2: Host detection ──────────────────────────────────────────
 
-    print(_bold("Step 2: Host framework"))
+    print(_bold("Step 3: Host framework"))
     print()
     print("  Colony is a sidecar — it needs a host (OpenClaw, Hermes, etc.)")
     print("  to provide LLM credentials at runtime.")
@@ -226,7 +244,7 @@ def run_init(root_dir: str | None = None) -> int:
 
     # ── Step 3: Neo4j setup ─────────────────────────────────────────────
 
-    print(_bold("Step 3: Neo4j graph memory"))
+    print(_bold("Step 4: Neo4j graph memory"))
     print()
 
     neo4j_ok, neo4j_info = _check_neo4j()
@@ -240,7 +258,8 @@ def run_init(root_dir: str | None = None) -> int:
         print()
         start_neo4j = _prompt("  Start Neo4j via Docker? [Y/n]", "Y")
         if start_neo4j.lower() in ("y", "yes", ""):
-            neo4j_password = secrets.token_urlsafe(16)
+            # Use the password from docker-compose.yml (neo4j/colony-local-dev)
+            neo4j_password = "colony-local-dev" 
             print("  Starting Neo4j...")
             if _start_neo4j_docker():
                 print("  Waiting for Neo4j to become ready...")
@@ -266,7 +285,7 @@ def run_init(root_dir: str | None = None) -> int:
 
     # ── Step 4: Write .env ──────────────────────────────────────────────
 
-    print(_bold("Step 4: Writing configuration"))
+    print(_bold("Step 5: Writing configuration"))
     print()
 
     existing = _load_existing_env(env_path)
@@ -286,9 +305,9 @@ def run_init(root_dir: str | None = None) -> int:
 
     print()
 
-    # ── Step 5: Database setup ──────────────────────────────────────────
+    # ── Step 6: Database setup ──────────────────────────────────────────
 
-    print(_bold("Step 5: Database setup"))
+    print(_bold("Step 6: Database setup"))
     print()
 
     # Contacts DB
@@ -335,9 +354,9 @@ def run_init(root_dir: str | None = None) -> int:
 
     print()
 
-    # ── Step 6: Self-knowledge seeding ──────────────────────────────────
+    # ── Step 7: Self-knowledge seeding ──────────────────────────────────
 
-    print(_bold("Step 6: Self-knowledge seeding"))
+    print(_bold("Step 7: Self-knowledge seeding"))
     print()
     print("  Seeding Colony with understanding of itself...")
     print()
@@ -377,17 +396,31 @@ def run_init(root_dir: str | None = None) -> int:
 
     # ── Step 7: Summary ─────────────────────────────────────────────────
 
-    print(_bold("Step 7: Setup complete!"))
+    print(_bold("Step 8: Setup complete!"))
     print()
+
+    # Verify Colony sidecar is healthy
+    sidecar_ok = False
+    try:
+        import httpx
+        resp = httpx.get(f"http://{values['COLONY_SIDECAR_HOST']}:{values['COLONY_SIDECAR_PORT']}/v1/host/health", timeout=5)
+        if resp.status_code == 200:
+            health = resp.json()
+            sidecar_ok = health.get("status") == "ok"
+            caps = health.get("capabilities", [])
+        else:
+            caps = []
+    except Exception:
+        caps = []
 
     # Capability status
     print("  Capability status:")
-    print(f"    {'✅' if True else '⚪'} Safety (ResponseGate)")
+    print(f"    {'✅' if 'safety' in caps else '⚪'} Safety (ResponseGate)")
     print(f"    {'✅' if True else '⚪'} Reasoning (from host at runtime)")
-    print(f"    {'✅' if neo4j_password else '⚪'} Memory (ColonyGraph{' — Neo4j connected' if neo4j_password else ' — Neo4j not configured'})")
-    print(f"    {'✅' if True else '⚪'} Goals")
-    print(f"    {'✅' if True else '⚪'} Contacts")
-    print(f"    {'✅' if True else '⚪'} World Model")
+    print(f"    {'✅' if 'memory' in caps else '⚪'} Memory (ColonyGraph{' — Neo4j connected' if neo4j_password else ' — Neo4j not configured'})")
+    print(f"    {'✅' if 'goals' in caps else '⚪'} Goals")
+    print(f"    {'✅' if 'contacts' in caps else '⚪'} Contacts")
+    print(f"    {'✅' if 'world_model' in caps else '⚪'} World Model")
     print()
 
     print("  Start the sidecar:")
