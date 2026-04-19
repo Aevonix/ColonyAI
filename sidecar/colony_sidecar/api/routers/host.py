@@ -98,6 +98,17 @@ from colony_sidecar.api.schemas.host import (
 
 logger = logging.getLogger(__name__)
 
+
+def _to_dict(obj):
+    """Convert Pydantic models or other objects to plain dicts."""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "__dict__"):
+        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+    if isinstance(obj, dict):
+        return obj
+    return {}
+
 router = APIRouter(prefix="/v1/host", tags=["host"])
 
 # ---------------------------------------------------------------------------
@@ -789,7 +800,7 @@ async def query_entities(body: EntityQueryRequest) -> EntityListResponse:
         return EntityListResponse(entities=[])
     try:
         entities = await _world_store.query(body.query, limit=body.limit or 10)
-        return EntityListResponse(entities=[EntityResponse(**e) for e in entities])
+        return EntityListResponse(entities=[EntityResponse(**_to_dict(e)) for e in entities])
     except Exception as exc:
         logger.warning("query_entities failed: %s", exc)
         return EntityListResponse(entities=[])
@@ -800,10 +811,10 @@ async def list_entities(entity_type: Optional[str] = None, limit: int = 50) -> E
     if _world_store is None:
         return EntityListResponse(entities=[])
     try:
-        entities = await _world_store.list_entities(entity_type=entity_type, limit=limit)
-        return EntityListResponse(entities=[EntityResponse(**e) for e in entities])
+        entities = await _world_store.find_entities(query="", entity_type=entity_type, limit=limit)
+        return EntityListResponse(entities=[EntityResponse(**_to_dict(e)) for e in entities])
     except Exception as exc:
-        logger.warning("list_entities failed: %s", exc)
+        logger.warning("find_entities failed: %s", exc)
         return EntityListResponse(entities=[])
 
 
@@ -1048,18 +1059,17 @@ async def list_skills() -> SkillsListResponse:
     if _skills_registry is None:
         return SkillsListResponse(skills=[])
     try:
-        skills = await _skills_registry.list_skills()
-        return SkillsListResponse(skills=[
-            SkillSummary(
-                id=s.get("id", ""),
-                name=s.get("name", ""),
-                description=s.get("description"),
-                version=s.get("version"),
-                triggers=s.get("triggers", []),
-            ) for s in skills
-        ])
+        skills = await _skills_registry.list_all()
+        result = []
+        for s in skills:
+            d = _to_dict(s)
+            d.setdefault("id", d.pop("skill_id", ""))
+            for skip in ("created_at", "updated_at", "author_colony_id", "status", "input_schema", "tags", "trigger_patterns"):
+                d.pop(skip, None)
+            result.append(SkillSummary(**{k: v for k, v in d.items() if k in SkillSummary.model_fields}))
+        return SkillsListResponse(skills=result)
     except Exception as exc:
-        logger.warning("list_skills failed: %s", exc)
+        logger.warning("list_all failed: %s", exc)
         return SkillsListResponse(skills=[])
 
 
@@ -1072,8 +1082,8 @@ async def get_skill(skill_id: str) -> SkillDetailResponse:
         if skill is None:
             raise HTTPException(status_code=404, detail="Skill not found")
         return SkillDetailResponse(
-            id=skill.get("id", skill_id),
-            name=skill.get("name", ""),
+            id=_to_dict(skill).get("skill_id", _to_dict(skill).get("id", skill_id)),
+            name=_to_dict(skill).get("name", ""),
             description=skill.get("description"),
             version=skill.get("version"),
             triggers=skill.get("triggers", []),
