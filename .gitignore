@@ -15,3 +15,6 @@ venv/
 
 # Sidecar data
 openapi.json
+*.db-shm
+*.db-wal
+.colony-llm-config.json

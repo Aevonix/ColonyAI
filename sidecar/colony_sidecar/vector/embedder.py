@@ -232,11 +232,17 @@ class MLXEmbeddingProvider(EmbeddingProvider):
 # ---------------------------------------------------------------------------
 
 def make_provider(config: EmbeddingConfig) -> EmbeddingProvider:
-    """Instantiate the correct provider for the given config."""
+    """Instantiate the correct provider for the given config.
+
+    Supported providers: cuda, cpu, mlx, openai_api.
+    """
+    from colony_sidecar.vector.openai_provider import OpenAIAPIEmbeddingProvider
+
     providers = {
         "cuda": CUDAEmbeddingProvider,
         "cpu": CPUEmbeddingProvider,
         "mlx": MLXEmbeddingProvider,
+        "openai_api": OpenAIAPIEmbeddingProvider,
     }
     provider_cls = providers.get(config.provider)
     if provider_cls is None:

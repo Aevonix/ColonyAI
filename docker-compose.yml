@@ -1,4 +1,4 @@
-version: "3.9"
+version: "3.8"
 
 services:
   neo4j:
@@ -7,32 +7,56 @@ services:
       - "7474:7474"
       - "7687:7687"
     environment:
-      NEO4J_AUTH: neo4j/colony-local-dev
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-colony-local-dev}
       NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_server_memory_pagecache_size: 256M
+      NEO4J_server_memory_heap_initial__size: 512M
+      NEO4J_server_memory_heap_max__size: 1G
     volumes:
       - neo4j-data:/data
+      - neo4j-logs:/logs
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "colony-local-dev", "RETURN 1"]
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:-colony-local-dev} 'RETURN 1' || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
+      start_period: 30s
 
-  sidecar:
-    build: .
+  colony:
+    build:
+      context: ./sidecar
+      dockerfile: Dockerfile
     ports:
-      - "7777:7777"
+      - "${COLONY_SIDECAR_PORT:-7777}:7777"
     environment:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: colony-local-dev
-      COLONY_API_KEY: ${COLONY_API_KEY:-dev-key-local}
-      LOG_LEVEL: debug
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-colony-local-dev}
+      NEO4J_DATABASE: neo4j
+      COLONY_SIDECAR_HOST: 0.0.0.0
+      COLONY_SIDECAR_PORT: "7777"
+      COLONY_API_KEY: ${COLONY_API_KEY:-}
+      COLONY_STATE_DIR: /var/lib/colony
+      COLONY_EMBED_PROVIDER: ${COLONY_EMBED_PROVIDER:-cpu}
+      COLONY_EMBED_MODEL: ${COLONY_EMBED_MODEL:-}
+      COLONY_EMBED_DIMS: ${COLONY_EMBED_DIMS:-}
+      COLONY_RERANKER_MODEL: ${COLONY_RERANKER_MODEL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - colony-state:/var/lib/colony
+      - model-cache:/root/.cache/huggingface
     depends_on:
       neo4j:
         condition: service_healthy
-    volumes:
-      - sidecar-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7777/v1/host/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
 volumes:
   neo4j-data:
-  sidecar-data:
+  neo4j-logs:
+  colony-state:
+  model-cache:

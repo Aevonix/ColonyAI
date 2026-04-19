@@ -56,6 +56,10 @@ class OpenAIAPIEmbeddingProvider(EmbeddingProvider):
         results = await self.embed_batch([text])
         return results[0]
 
+    async def close(self) -> None:
+        """No resources to release for API provider."""
+        pass
+
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch of texts via the API."""
         if not texts:
