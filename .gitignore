@@ -1,20 +1,12 @@
-dist/
-node_modules/
-*.tsbuildinfo
-.vitest-cache/
-
-# Python
 __pycache__/
 *.pyc
-*.egg-info/
-.eggs/
-*.db
-.env
-.venv/
-venv/
-
-# Sidecar data
-openapi.json
 *.db-shm
 *.db-wal
 .colony-llm-config.json
+openapi.json
+node_modules/
+dist/
+.env
+*.egg-info/
+.venv/
+.pytest_cache/

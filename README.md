@@ -264,6 +264,14 @@ colony start --port 8080        # Override listen port
 colony start --detach           # Run in background
 ```
 
+#### `colony seed`
+
+Seed Colony's self-knowledge (memories, entities, skills, insights). Run after `colony init` if you skipped seeding, or to re-seed after clearing the graph.
+
+```bash
+colony seed
+```
+
 #### `colony status`
 
 Check sidecar health and capabilities.

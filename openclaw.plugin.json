@@ -15,11 +15,38 @@
     "properties": {
       "sidecarUrl": {
         "type": "string",
-        "description": "URL for the Colony sidecar API (default: http://localhost:8100)"
+        "description": "URL for the Colony sidecar API (default: http://localhost:7777)"
       },
       "timeout": {
         "type": "number",
         "description": "Request timeout in milliseconds (default: 30000)"
+      },
+      "llmConfig": {
+        "type": "object",
+        "description": "LLM provider config to send to sidecar (auto-detected from OpenClaw config if omitted)",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "LLM provider: anthropic, openai, zai, or local"
+          },
+          "apiKey": {
+            "type": "string",
+            "description": "API key for the LLM provider"
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Custom base URL for OpenAI-compatible providers"
+          },
+          "models": {
+            "type": "object",
+            "description": "Model IDs per tier: { small, medium, large }",
+            "properties": {
+              "small": { "type": "string" },
+              "medium": { "type": "string" },
+              "large": { "type": "string" }
+            }
+          }
+        }
       }
     }
   }

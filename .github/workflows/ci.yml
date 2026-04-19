@@ -7,219 +7,39 @@ on:
     branches: [main]
 
 jobs:
-  # ── TypeScript Plugin ──────────────────────────────────────────────
-  plugin:
-    name: Plugin (TypeScript)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-
-      - name: Generate types (verify OpenAPI → TS pipeline)
-        run: |
-          pip3 install fastapi pydantic uvicorn
-          cd sidecar && PYTHONPATH=. python3 -c "
-          import sys,json
-          sys.path.insert(0,'.')
-          from colony_sidecar.server import create_app
-          spec=create_app().openapi()
-          open('../openapi.json','w').write(json.dumps(spec,indent=2))
-          "
-          cd ..
-          npx openapi-typescript openapi.json -o src/types-generated.ts
-
-      - name: Lint
-        run: npx tsc --noEmit || true  # pre-existing SDK errors are expected
-
-  # ── Python Sidecar ─────────────────────────────────────────────────
-  sidecar:
-    name: Sidecar (Python)
+  python:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: sidecar
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-
       - name: Install dependencies
-        run: |
-          pip install -e ".[dev]"
-          pip install -e ".[neo4j,lancedb]" || true
-
-      - name: Import check (all subsystems)
-        run: |
-          python3 -c "
-          from colony_sidecar.server import create_app
-          from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
-          from colony_sidecar.gate.pipeline import ResponseGate
-          from colony_sidecar.intelligence.graph.client import ColonyGraph
-          from colony_sidecar.intelligence.cognition.metalearner import MetaLearner
-          from colony_sidecar.intelligence.synthesis.connection_discoverer import ConnectionDiscoverer
-          from colony_sidecar.intelligence.learning.continuous_learner import ContinuousLearner
-          from colony_sidecar.goals.engine import GoalEngine
-          from colony_sidecar.briefings.engine import BriefingEngine
-          from colony_sidecar.delivery.bridge import ProactiveDeliveryBridge
-          from colony_sidecar.research.pipeline import ResearchPipeline
-          from colony_sidecar.contacts.store import ContactStore
-          from colony_sidecar.world_model.store import WorldModelStore
-          from colony_sidecar.vector.embedder import EmbeddingPipeline
-          from colony_sidecar.router.router import LLMRouter
-          print('✅ All 15 subsystems import OK')
-          "
-
-      - name: OpenAPI spec export
-        run: |
-          python3 -c "
-          import sys,json
-          from colony_sidecar.server import create_app
-          spec=create_app().openapi()
-          open('../openapi.json','w').write(json.dumps(spec,indent=2))
-          n=len(spec.get('components',{}).get('schemas',{}))
-          p=len(spec.get('paths',{}))
-          print(f'{n} schemas, {p} paths')
-          "
-
-      - name: Setup wizard (non-interactive)
-        run: |
-          python3 -c "
-          import tempfile
-          from colony_sidecar.setup import run_noninteractive
-          with tempfile.TemporaryDirectory() as td:
-              code = run_noninteractive(root_dir=td)
-              assert code == 0
-          print('✅ Setup wizard OK')
-          "
-
+        run: pip install -e ".[dev]"
       - name: Run tests
-        run: |
-          python3 -m pytest -x -q 2>/dev/null || echo "No tests found yet — OK"
+        run: pytest tests/ -v
 
-  # ── Docker ─────────────────────────────────────────────────────────
-  docker:
-    name: Docker Build
+  typescript:
     runs-on: ubuntu-latest
-    needs: [sidecar]
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: docker build -t colony-sidecar:ci .
-
-      - name: Verify image starts
-        run: |
-          docker run -d --name sidecar-test -p 7777:7777 \
-            -e NEO4J_PASSWORD=skip \
-            colony-sidecar:ci
-          sleep 5
-          docker logs sidecar-test || true
-          docker stop sidecar-test || true
-
-  # ── Publish ────────────────────────────────────────────────────────
-  publish-npm:
-    name: Publish Plugin (npm)
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    needs: [plugin]
-
-    steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-          registry-url: https://registry.npmjs.org
-
+          node-version: "20"
       - run: npm ci
       - run: npm run build
+      - run: npm test
 
-      - name: Publish (dry-run on PR, real on main)
-        run: npm publish --access public --tag next
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        continue-on-error: true
-
-  publish-pypi:
-    name: Publish Sidecar (PyPI)
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  docker:
     runs-on: ubuntu-latest
-    needs: [sidecar]
-
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Build package
-        run: |
-          pip install build
-          cd sidecar && python3 -m build
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: sidecar/dist/
-          password: ${{ secrets.PYPI_API_TOKEN }}
-        continue-on-error: true
-
-  publish-docker:
-    name: Publish Docker Image
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    needs: [docker]
-    permissions:
-      packages: write
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
+      - name: Build sidecar image
+        uses: docker/build-push-action@v5
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/colony
-          tags: |
-            type=raw,value=latest
-            type=sha
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          context: ./sidecar
+          push: false
