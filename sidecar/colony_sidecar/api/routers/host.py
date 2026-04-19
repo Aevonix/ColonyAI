@@ -199,8 +199,24 @@ def supported_capabilities() -> List[str]:
         caps.append("briefings")
     if _world_store is not None:
         caps.append("world_model")
+    if _metalearner is not None:
+        caps.append("cognition")
+    if _research_pipeline is not None:
+        caps.append("research")
+    if _delivery_bridge is not None:
+        caps.append("delivery")
+    if _connection_discoverer is not None:
+        caps.append("synthesis")
+    if _learner is not None:
+        caps.append("learning")
     if _skills_registry is not None:
         caps.append("skills")
+    if _chain_manager is not None:
+        caps.append("identity")
+    if _secrets_manager is not None:
+        caps.append("secrets")
+    if _autonomy_loop is not None:
+        caps.append("autonomy")
     caps.append("events")
     return caps
 
@@ -310,6 +326,16 @@ async def health() -> HostHealthResponse:
         notes["identity"] = "ChainManager wired"
     if _secrets_manager is not None:
         notes["secrets"] = "SecretsManager wired"
+    if _research_pipeline is not None:
+        notes["research"] = "ResearchPipeline wired"
+    if _delivery_bridge is not None:
+        notes["delivery"] = "ProactiveDeliveryBridge wired"
+    if _connection_discoverer is not None:
+        notes["synthesis"] = "ConnectionDiscoverer wired"
+    if _learner is not None:
+        notes["learning"] = "ContinuousLearner wired"
+    if _autonomy_loop is not None:
+        notes["autonomy"] = "AutonomyLoop wired (not started)"
     return HostHealthResponse(status="ok", capabilities=caps, notes=notes)
 
 
