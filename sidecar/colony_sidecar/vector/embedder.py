@@ -15,7 +15,7 @@ import functools
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 from colony_sidecar.vector.config import EmbeddingConfig
 
@@ -279,6 +279,45 @@ class EmbeddingPipeline:
     async def warmup(self) -> None:
         """Delegate warmup to the underlying provider."""
         await self._provider.warmup()
+
+    async def health_check(self) -> dict[str, Any]:
+        """Verify the embedder is loaded and producing valid output.
+
+        Returns a dict with keys:
+          provider, model, dims, latency_ms, status ("ok"|"error"),
+          and optionally error (str) if status is "error".
+        """
+        import math
+
+        model_id = ""
+        provider_name = ""
+        dims = 0
+        if hasattr(self._provider, "_config"):
+            model_id = self._provider._config.model_id
+            provider_name = self._provider._config.provider
+            dims = self._provider._config.dimensions
+
+        try:
+            if self._provider is None:
+                return {"provider": provider_name, "model": model_id, "dims": dims, "latency_ms": 0, "status": "error", "error": "provider not initialized"}
+
+            t0 = time.monotonic()
+            vector = await self._provider.embed("colony health check")
+            elapsed_ms = (time.monotonic() - t0) * 1000
+
+            # Validate vector
+            if not vector:
+                return {"provider": provider_name, "model": model_id, "dims": dims, "latency_ms": elapsed_ms, "status": "error", "error": "empty vector returned"}
+            if len(vector) != dims:
+                return {"provider": provider_name, "model": model_id, "dims": dims, "latency_ms": elapsed_ms, "status": "error", "error": f"dimension mismatch: expected {dims}, got {len(vector)}"}
+            if any(math.isnan(v) or math.isinf(v) for v in vector):
+                return {"provider": provider_name, "model": model_id, "dims": dims, "latency_ms": elapsed_ms, "status": "error", "error": "vector contains NaN or Inf"}
+            if all(v == 0.0 for v in vector):
+                return {"provider": provider_name, "model": model_id, "dims": dims, "latency_ms": elapsed_ms, "status": "error", "error": "vector is all zeros"}
+
+            return {"provider": provider_name, "model": model_id, "dims": dims, "latency_ms": round(elapsed_ms, 1), "status": "ok"}
+        except Exception as exc:
+            return {"provider": provider_name, "model": model_id, "dims": dims, "latency_ms": 0, "status": "error", "error": str(exc)}
 
     async def embed(self, text: str) -> list[float]:
         """Single embed with LRU caching and latency monitoring."""

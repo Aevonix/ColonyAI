@@ -193,13 +193,67 @@ class MemoryFlushResponse(BaseModel):
 
 class MemoryEmbedRequest(BaseModel):
     identity: HostIdentity
-    inputs: List[str]
+    inputs: List[str]  # Kept for backward compat — use texts instead
+    texts: Optional[List[str]] = None  # Preferred: list of texts to embed
     model: Optional[str] = None
 
 
 class MemoryEmbedResponse(BaseModel):
     model: str
     vectors: List[List[float]]
+
+
+class EmbedHealthResponse(BaseModel):
+    provider: str = ""
+    model: str = ""
+    dims: int = 0
+    latency_ms: float = 0.0
+    status: str = "unknown"
+    error: Optional[str] = None
+
+
+class BackfillRequest(BaseModel):
+    identity: HostIdentity
+    collection: Optional[str] = None
+    batch_size: int = 64
+
+
+class BackfillResponse(BaseModel):
+    task_id: str = ""
+    status: str = "started"  # started | completed | failed
+    total: int = 0
+    processed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    duration_s: float = 0.0
+    errors: List[str] = []
+
+
+class MigrateRequest(BaseModel):
+    identity: HostIdentity
+    old_model_id: Optional[str] = None
+    batch_size: int = 64
+
+
+class MigrateResponse(BaseModel):
+    task_id: str = ""
+    status: str = "started"  # started | completed | failed
+    collections_migrated: int = 0
+    vectors_migrated: int = 0
+    vectors_failed: int = 0
+    duration_s: float = 0.0
+    errors: List[str] = []
+
+
+class IndexRequest(BaseModel):
+    identity: HostIdentity
+    items: List[dict]  # [{text, collection, id, metadata?}]
+
+
+class IndexResponse(BaseModel):
+    indexed: int = 0
+    failed: int = 0
+    model: str = ""
 
 
 # --- Context ----------------------------------------------------------------

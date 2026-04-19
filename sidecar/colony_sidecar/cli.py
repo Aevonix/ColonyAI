@@ -34,6 +34,16 @@ def main() -> None:
     seed_p = sub.add_parser("seed", help="Seed self-knowledge (run after 'colony start')")
     seed_p.add_argument("--verify", action="store_true", help="Verify seeding completed")
 
+    # --- backfill ---
+    backfill_p = sub.add_parser("backfill", help="Re-embed all vectors with current model")
+    backfill_p.add_argument("--collection", default=None, help="Specific collection to backfill (default: all)")
+    backfill_p.add_argument("--batch-size", type=int, default=64, help="Batch size for embedding")
+
+    # --- migrate-tier ---
+    migrate_p = sub.add_parser("migrate-tier", help="Migrate vectors from old model to current")
+    migrate_p.add_argument("--old-model", default=None, help="Old model ID to migrate from (default: all)")
+    migrate_p.add_argument("--batch-size", type=int, default=64, help="Batch size for embedding")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -144,6 +154,86 @@ def main() -> None:
             print(f"⚠️ Could not connect to sidecar: {e}")
             print("\nMake sure the sidecar is running: colony start")
             print("Or re-run: colony init")
+
+    elif args.command == "backfill":
+        _load_dotenv()
+        import httpx
+        host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+        port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+        api_key = os.environ.get("COLONY_API_KEY", "")
+        try:
+            resp = httpx.post(
+                f"http://{host}:{port}/v1/host/memory/backfill",
+                json={"identity": {"gateway_id": "cli"}, "collection": args.collection, "batch_size": args.batch_size},
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                task_id = data.get("task_id", "")
+                print(f"Backfill started (task_id={task_id})")
+                import time
+                while True:
+                    time.sleep(2)
+                    status_resp = httpx.get(
+                        f"http://{host}:{port}/v1/host/memory/backfill/{task_id}",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=10,
+                    )
+                    if status_resp.status_code == 200:
+                        sd = status_resp.json()
+                        if sd.get("status") == "completed":
+                            print(f"Backfill complete: {sd.get('processed', 0)} processed, {sd.get('skipped', 0)} skipped, {sd.get('failed', 0)} failed")
+                            break
+                        elif sd.get("status") == "failed":
+                            print(f"Backfill failed: {sd.get('errors', [])}")
+                            break
+                        else:
+                            print(f"  ... {sd.get('processed', 0)} processed so far")
+            else:
+                print(f"Backfill failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            print(f"Could not connect to sidecar: {e}")
+
+    elif args.command == "migrate-tier":
+        _load_dotenv()
+        import httpx
+        host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+        port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+        api_key = os.environ.get("COLONY_API_KEY", "")
+        try:
+            resp = httpx.post(
+                f"http://{host}:{port}/v1/host/memory/migrate",
+                json={"identity": {"gateway_id": "cli"}, "old_model_id": args.old_model, "batch_size": args.batch_size},
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                task_id = data.get("task_id", "")
+                print(f"Migration started (task_id={task_id})")
+                import time
+                while True:
+                    time.sleep(2)
+                    status_resp = httpx.get(
+                        f"http://{host}:{port}/v1/host/memory/migrate/{task_id}",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=10,
+                    )
+                    if status_resp.status_code == 200:
+                        sd = status_resp.json()
+                        if sd.get("status") == "completed":
+                            print(f"Migration complete: {sd.get('vectors_migrated', 0)} vectors migrated, {sd.get('collections_migrated', 0)} collections")
+                            break
+                        elif sd.get("status") == "failed":
+                            print(f"Migration failed: {sd.get('errors', [])}")
+                            break
+                        else:
+                            print(f"  ... {sd.get('vectors_migrated', 0)} vectors migrated so far")
+            else:
+                print(f"Migration failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            print(f"Could not connect to sidecar: {e}")
 
     else:
         parser.print_help()

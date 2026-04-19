@@ -145,12 +145,15 @@ class VectorStore:
     ) -> None:
         """Add a single vector entry."""
         now = time.time()
+        meta = metadata or {}
+        # Ensure model_id and embedded_at are set
+        meta.setdefault("embedded_at", now)
         table = await self._db.open_table(collection.value)
         await table.add([{
             "id": id,
             "text": text,
             "vector": vector,
-            "metadata": json.dumps(metadata or {}),
+            "metadata": json.dumps(meta),
             "created_at": now,
             "updated_at": now,
         }])
@@ -165,17 +168,18 @@ class VectorStore:
             return
         now = time.time()
         table = await self._db.open_table(collection.value)
-        rows = [
-            {
+        rows = []
+        for item in items:
+            meta = item.metadata or {}
+            meta.setdefault("embedded_at", now)
+            rows.append({
                 "id": item.id,
                 "text": item.text,
                 "vector": item.vector,
-                "metadata": json.dumps(item.metadata),
+                "metadata": json.dumps(meta),
                 "created_at": now,
                 "updated_at": now,
-            }
-            for item in items
-        ]
+            })
         await table.add(rows)
 
     async def search(
@@ -266,6 +270,33 @@ class VectorStore:
         """Return the number of entries in a collection."""
         table = await self._db.open_table(collection.value)
         return await table.count_rows()
+
+    async def scan_all(self, collection: Collection) -> list[dict[str, Any]]:
+        """Return all rows from a collection as raw dicts."""
+        table = await self._db.open_table(collection.value)
+        df = await table.to_pandas()
+        if df.empty:
+            return []
+        return df.to_dict(orient="records")
+
+    async def get_stored_models(self) -> list[str]:
+        """Return unique model_id values across all collections."""
+        models: set[str] = set()
+        for col in Collection:
+            try:
+                rows = await self.scan_all(col)
+                for row in rows:
+                    meta_str = row.get("metadata", "{}")
+                    try:
+                        meta = json.loads(meta_str) if isinstance(meta_str, str) else (meta_str or {})
+                    except (json.JSONDecodeError, TypeError):
+                        meta = {}
+                    model_id = meta.get("model_id", "")
+                    if model_id:
+                        models.add(model_id)
+            except Exception:
+                pass
+        return sorted(models)
 
     async def close(self) -> None:
         """Release database resources."""

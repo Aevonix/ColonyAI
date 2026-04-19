@@ -22,6 +22,8 @@ from colony_sidecar.api.schemas.host import (
     HostConfigureRequest,
     HostConfigureResponse,
     AutonomyStatusResponse,
+    BackfillRequest,
+    BackfillResponse,
     BriefingListResponse,
     BriefingResponse,
     ChainVerifyRequest,
@@ -39,6 +41,7 @@ from colony_sidecar.api.schemas.host import (
     ContextSection,
     DeliveryListResponse,
     DeliveryMarkRequest,
+    EmbedHealthResponse,
     EnrichedContextRequest,
     EnrichedContextResponse,
     EntityListResponse,
@@ -52,6 +55,8 @@ from colony_sidecar.api.schemas.host import (
     HostMessage,
     IdentityInitRequest,
     IdentityStatusResponse,
+    IndexRequest,
+    IndexResponse,
     InsightResponse,
     InsightsListResponse,
     LearningCorrectionRequest,
@@ -68,6 +73,8 @@ from colony_sidecar.api.schemas.host import (
     MemorySearchResponse,
     MemoryWriteRequest,
     MemoryWriteResponse,
+    MigrateRequest,
+    MigrateResponse,
     ReasoningToolCall,
     ReasoningTurnRequest,
     ReasoningTurnResponse,
@@ -298,6 +305,10 @@ async def configure_host(body: HostConfigureRequest) -> HostConfigureResponse:
 async def health() -> HostHealthResponse:
     caps = supported_capabilities()
     notes: dict[str, str] = {}
+    embed_model = ""
+    stored_models: list[str] = []
+    model_mismatch = False
+
     if _graph is not None:
         notes["memory"] = "ColonyGraph wired"
     else:
@@ -323,7 +334,38 @@ async def health() -> HostHealthResponse:
     if _signal_collector is not None:
         notes["signals"] = "SignalCollector wired"
     if _embedder is not None:
-        notes["embed"] = "EmbeddingPipeline wired"
+        # Get embed model info
+        if hasattr(_embedder, "_provider") and hasattr(_embedder._provider, "_config"):
+            embed_model = _embedder._provider._config.model_id
+        embed_note = f"EmbeddingPipeline wired (model={embed_model})"
+
+        # Check for model mismatch
+        try:
+            from colony_sidecar.vector import get_store
+            store = get_store()
+            if store is not None:
+                stored_models = await store.get_stored_models()
+                if stored_models and embed_model and embed_model not in stored_models:
+                    model_mismatch = True
+                    embed_note += f" [WARNING: stored models {stored_models} differ from current {embed_model}]"
+                elif len(stored_models) > 1:
+                    model_mismatch = True
+                    embed_note += f" [WARNING: multiple stored models: {stored_models}]"
+        except Exception:
+            pass
+
+        # Check embedder health
+        try:
+            hc = await _embedder.health_check()
+            if hc.get("status") != "ok":
+                embed_note += f" [health: {hc.get('status', 'unknown')}"
+                if hc.get("error"):
+                    embed_note += f": {hc['error']}"
+                embed_note += "]"
+        except Exception:
+            pass
+
+        notes["embed"] = embed_note
     if _skills_registry is not None:
         notes["skills"] = "SkillRegistry wired"
     if _chain_manager is not None:
@@ -344,11 +386,16 @@ async def health() -> HostHealthResponse:
         notes["sessions"] = "InMemorySessionStore wired"
     if _task_queue is not None:
         notes["task_queue"] = "TaskQueueManager wired"
-    if _session_store is not None:
-        notes["sessions"] = "InMemorySessionStore wired"
-    if _task_queue is not None:
-        notes["task_queue"] = "TaskQueueManager wired" 
-    return HostHealthResponse(status="ok", capabilities=caps, notes=notes)
+
+    health_status = "ok"
+    if model_mismatch:
+        health_status = "degraded"
+
+    return HostHealthResponse(
+        status=health_status,
+        capabilities=caps,
+        notes=notes,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -460,20 +507,193 @@ async def memory_embed(body: MemoryEmbedRequest) -> MemoryEmbedResponse:
     if _embedder is None:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
     try:
-        vectors = await _embedder.embed_batch(body.inputs)
+        # Support both old `inputs` field and new `texts` field
+        texts = body.texts or body.inputs
+        if not texts:
+            raise HTTPException(status_code=400, detail="No texts provided")
+        if len(texts) > 128:
+            raise HTTPException(status_code=400, detail=f"Batch size {len(texts)} exceeds limit of 128")
+        vectors = await _embedder.embed_batch(texts)
         # Determine model_id from the underlying provider config
         model_id = ""
         if hasattr(_embedder, "_provider") and hasattr(_embedder._provider, "_config"):
             model_id = _embedder._provider._config.model_id
         return MemoryEmbedResponse(model=model_id or body.model or "unknown", vectors=vectors)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.warning("memory_embed failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ---------------------------------------------------------------------------
-# Context
-# ---------------------------------------------------------------------------
+@router.get("/embed/health", response_model=EmbedHealthResponse)
+async def embed_health() -> EmbedHealthResponse:
+    """Check embedder health — verify model is loaded and producing valid output."""
+    if _embedder is None:
+        return EmbedHealthResponse(status="error", error="embedder not initialized")
+    try:
+        result = await _embedder.health_check()
+        return EmbedHealthResponse(**result)
+    except Exception as exc:
+        return EmbedHealthResponse(status="error", error=str(exc))
+
+
+@router.post("/memory/backfill", response_model=BackfillResponse)
+async def memory_backfill(body: BackfillRequest) -> BackfillResponse:
+    """Re-embed all vectors using the current embedding pipeline.
+
+    Returns a task_id immediately; backfill runs in the background.
+    """
+    if _embedder is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
+
+    from colony_sidecar.vector import get_store
+    store = get_store()
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="VectorStore not initialized")
+
+    task_id = str(uuid.uuid4())
+
+    async def _run():
+        from colony_sidecar.vector.backfill import backfill
+        try:
+            result = await backfill(store, _embedder, collection=body.collection, batch_size=body.batch_size)
+            # Store result in app state for polling
+            _backfill_results[task_id] = result
+        except Exception as exc:
+            logger.error("Backfill failed: %s", exc)
+
+    _backfill_results: dict = getattr(router, "_backfill_results", {})
+    router._backfill_results = _backfill_results
+
+    asyncio.create_task(_run())
+    return BackfillResponse(task_id=task_id, status="started")
+
+
+@router.get("/memory/backfill/{task_id}", response_model=BackfillResponse)
+async def backfill_status(task_id: str) -> BackfillResponse:
+    """Check the status of a running backfill task."""
+    _backfill_results: dict = getattr(router, "_backfill_results", {})
+    result = _backfill_results.get(task_id)
+    if result is None:
+        return BackfillResponse(task_id=task_id, status="running")
+    return BackfillResponse(
+        task_id=task_id,
+        status="completed",
+        total=result.total,
+        processed=result.processed,
+        failed=result.failed,
+        skipped=result.skipped,
+        duration_s=round(result.duration_s, 2),
+        errors=result.errors,
+    )
+
+
+@router.post("/memory/migrate", response_model=MigrateResponse)
+async def memory_migrate(body: MigrateRequest) -> MigrateResponse:
+    """Migrate all vectors from an old model to the current embedding model."""
+    if _embedder is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
+
+    from colony_sidecar.vector import get_store
+    store = get_store()
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="VectorStore not initialized")
+
+    task_id = str(uuid.uuid4())
+
+    async def _run():
+        from colony_sidecar.vector.migrate import migrate_tier
+        try:
+            result = await migrate_tier(store, _embedder, old_model_id=body.old_model_id, batch_size=body.batch_size)
+            _migrate_results[task_id] = result
+        except Exception as exc:
+            logger.error("Migration failed: %s", exc)
+
+    _migrate_results: dict = getattr(router, "_migrate_results", {})
+    router._migrate_results = _migrate_results
+
+    asyncio.create_task(_run())
+    return MigrateResponse(task_id=task_id, status="started")
+
+
+@router.get("/memory/migrate/{task_id}", response_model=MigrateResponse)
+async def migrate_status(task_id: str) -> MigrateResponse:
+    """Check the status of a running migration task."""
+    _migrate_results: dict = getattr(router, "_migrate_results", {})
+    result = _migrate_results.get(task_id)
+    if result is None:
+        return MigrateResponse(task_id=task_id, status="running")
+    return MigrateResponse(
+        task_id=task_id,
+        status="completed",
+        collections_migrated=result.collections_migrated,
+        vectors_migrated=result.vectors_migrated,
+        vectors_failed=result.vectors_failed,
+        duration_s=round(result.duration_s, 2),
+        errors=result.errors,
+    )
+
+
+@router.post("/memory/index", response_model=IndexResponse)
+async def memory_index(body: IndexRequest) -> IndexResponse:
+    """Embed and store items in one call."""
+    if _embedder is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
+
+    from colony_sidecar.vector import get_store
+    store = get_store()
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="VectorStore not initialized")
+
+    if not body.items:
+        return IndexResponse(model="unknown", indexed=0, failed=0)
+    if len(body.items) > 128:
+        raise HTTPException(status_code=400, detail=f"Batch size {len(body.items)} exceeds limit of 128")
+
+    try:
+        from colony_sidecar.vector.collections import Collection
+        from colony_sidecar.vector.query import VectorItem
+
+        # Determine current model_id
+        model_id = ""
+        if hasattr(_embedder, "_provider") and hasattr(_embedder._provider, "_config"):
+            model_id = _embedder._provider._config.model_id
+
+        # Embed all texts
+        texts = [item.get("text", "") for item in body.items]
+        vectors = await _embedder.embed_batch(texts)
+
+        # Store each item
+        indexed = 0
+        failed = 0
+        for item, vector in zip(body.items, vectors):
+            try:
+                col_name = item.get("collection", "memories")
+                try:
+                    col = Collection(col_name)
+                except ValueError:
+                    col = Collection.MEMORIES
+
+                meta = item.get("metadata", {})
+                meta["model_id"] = model_id
+
+                vi = VectorItem(
+                    id=item.get("id", str(uuid.uuid4())),
+                    text=item.get("text", ""),
+                    vector=vector,
+                    metadata=meta,
+                )
+                await store.add_batch(col, [vi])
+                indexed += 1
+            except Exception as exc:
+                logger.warning("index item failed: %s", exc)
+                failed += 1
+
+        return IndexResponse(model=model_id or "unknown", indexed=indexed, failed=failed)
+    except Exception as exc:
+        logger.warning("memory_index failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @router.post("/context/assemble", response_model=ContextAssembleResponse)
 async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleResponse:

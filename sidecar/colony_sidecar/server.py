@@ -183,6 +183,16 @@ async def lifespan(app: FastAPI):
         await pipeline.warmup()
         set_embedder(pipeline)
         logger.info("EmbeddingPipeline initialized (provider=%s model=%s)", embed_provider, embed_model)
+
+        # Health check + model mismatch detection
+        try:
+            hc = await pipeline.health_check()
+            if hc.get("status") != "ok":
+                logger.warning("Embedder health check failed: %s", hc.get("error", "unknown"))
+            else:
+                logger.info("Embedder health check passed (latency=%.1fms)", hc.get("latency_ms", 0))
+        except Exception as exc:
+            logger.warning("Embedder health check exception: %s", exc)
     except Exception as exc:
         logger.warning("EmbeddingPipeline init failed: %s", exc)
 
