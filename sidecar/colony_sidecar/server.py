@@ -130,19 +130,67 @@ async def lifespan(app: FastAPI):
     logger.info("SignalCollector skipped — requires host-provided BaselineStore")
 
     # --- 6. Embedding pipeline ---
+    embed_provider = os.environ.get("COLONY_EMBED_PROVIDER", "")
+    embed_model = os.environ.get("COLONY_EMBED_MODEL", "")
+    embed_dims = os.environ.get("COLONY_EMBED_DIMS", "")
+    reranker_model = os.environ.get("COLONY_RERANKER_MODEL", "")
+
+    # Auto-detect tier if not explicitly configured
+    if not embed_provider or not embed_model:
+        try:
+            from colony_sidecar.vector.scanner import scan
+            from colony_sidecar.vector.tiers import get_tier_by_memory
+            hw = scan()
+            tier = get_tier_by_memory(hw.vram_gb, hw.ram_gb)
+            spec = tier.text_embedder
+            if spec:
+                embed_provider = embed_provider or ("cuda" if hw.gpu_type == "cuda" else "cpu")
+                embed_model = embed_model or spec.model_id
+                embed_dims = embed_dims or str(spec.dims)
+                reranker_model = reranker_model or (tier.text_reranker.model_id if tier.text_reranker else "")
+                logger.info(
+                    "Auto-detected embedding tier: %s (GPU=%s %dGB, RAM=%dGB) -> %s",
+                    tier.label, hw.gpu_name, hw.vram_gb, hw.ram_gb, spec.model_id,
+                )
+        except Exception as exc:
+            logger.warning("Hardware scan failed, using defaults: %s", exc)
+            embed_provider = embed_provider or "cpu"
+            embed_model = embed_model or "sentence-transformers/all-MiniLM-L6-v2"
+            embed_dims = embed_dims or "384"
+
     try:
         from colony_sidecar.vector.embedder import EmbeddingPipeline
         from colony_sidecar.vector.config import EmbeddingConfig
         embed_config = EmbeddingConfig(
-            provider=os.environ.get("COLONY_EMBED_PROVIDER", "openai"),
-            model_id=os.environ.get("COLONY_EMBED_MODEL", "text-embedding-3-small"),
-            dimensions=int(os.environ.get("COLONY_EMBED_DIMS", "1536")),
+            provider=embed_provider,
+            model_id=embed_model,
+            dimensions=int(embed_dims) if embed_dims else 384,
         )
         pipeline = EmbeddingPipeline(embed_config)
         set_embedder(pipeline)
-        logger.info("EmbeddingPipeline initialized (model=%s)", embed_config.model_id)
+        logger.info("EmbeddingPipeline initialized (provider=%s model=%s)", embed_provider, embed_model)
     except Exception as exc:
         logger.warning("EmbeddingPipeline init failed: %s", exc)
+
+    # --- 6b. Reranker pipeline ---
+    if reranker_model:
+        try:
+            from colony_sidecar.vector.reranker import make_reranker_provider
+            from colony_sidecar.vector.scanner import scan
+            hw = scan()
+            reranker_provider = make_reranker_provider(
+                spec=None,  # We only have the model_id, not the full spec
+                gpu_type=hw.gpu_type,
+            )
+            # Override model_id since we only stored the string
+            if reranker_provider:
+                reranker_provider._model_id = reranker_model
+                set_reranker(reranker_provider)
+                logger.info("Reranker initialized (model=%s)", reranker_model)
+        except Exception as exc:
+            logger.warning("Reranker init failed: %s", exc)
+    else:
+        logger.info("No reranker configured for this tier")
 
     # --- 7. Goals engine ---
     try:

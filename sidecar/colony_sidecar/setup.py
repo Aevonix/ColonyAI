@@ -460,6 +460,40 @@ def run_init(root_dir: str | None = None) -> int:
     print()
 
     existing = _load_existing_env(env_path)
+    # Auto-detect embedding tier
+    embed_provider = existing.get("COLONY_EMBED_PROVIDER", "")
+    embed_model = existing.get("COLONY_EMBED_MODEL", "")
+    embed_dims = existing.get("COLONY_EMBED_DIMS", "")
+    reranker_model = existing.get("COLONY_RERANKER_MODEL", "")
+
+    if not embed_provider or not embed_model:
+        try:
+            from colony_sidecar.vector.scanner import scan
+            from colony_sidecar.vector.tiers import get_tier_by_memory
+            hw = scan()
+            tier = get_tier_by_memory(hw.vram_gb, hw.ram_gb)
+            spec = tier.text_embedder
+            if spec:
+                embed_provider = "cuda" if hw.gpu_type == "cuda" else "cpu"
+                embed_model = spec.model_id
+                embed_dims = str(spec.dims)
+                if tier.text_reranker:
+                    reranker_model = tier.text_reranker.model_id
+                print(f"  Auto-detected embedding tier: {tier.label}")
+                print(f"  GPU: {hw.gpu_name} ({hw.vram_gb}GB) | RAM: {hw.ram_gb}GB")
+                print(f"  Embedder: {spec.model_id} ({spec.params})")
+                if tier.text_reranker:
+                    print(f"  Reranker: {tier.text_reranker.model_id} ({tier.text_reranker.params})")
+            else:
+                embed_provider = "cpu"
+                embed_model = "sentence-transformers/all-MiniLM-L6-v2"
+                embed_dims = "384"
+        except Exception as exc:
+            print(f"  ⚠️ Hardware scan failed: {exc}")
+            embed_provider = "cpu"
+            embed_model = "sentence-transformers/all-MiniLM-L6-v2"
+            embed_dims = "384"
+
     values: dict[str, str] = {
         "COLONY_SIDECAR_PORT": existing.get("COLONY_SIDECAR_PORT", "7777"),
         "COLONY_SIDECAR_HOST": existing.get("COLONY_SIDECAR_HOST", "127.0.0.1"),
@@ -469,6 +503,10 @@ def run_init(root_dir: str | None = None) -> int:
         "NEO4J_DATABASE": existing.get("NEO4J_DATABASE", "neo4j"),
         "COLONY_API_KEY": existing.get("COLONY_API_KEY", secrets.token_urlsafe(32)),
         "COLONY_CONTACTS_DB": existing.get("COLONY_CONTACTS_DB", "colony-contacts.db"),
+        "COLONY_EMBED_PROVIDER": embed_provider,
+        "COLONY_EMBED_MODEL": embed_model,
+        "COLONY_EMBED_DIMS": embed_dims,
+        "COLONY_RERANKER_MODEL": reranker_model,
         "LOG_LEVEL": existing.get("LOG_LEVEL", "info"),
     }
 
