@@ -214,3 +214,35 @@ ON CREATE SET p.name = $name,
 MERGE (o)-[:KNOWS]->(p)
 RETURN p {.*} AS person
 """
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Baseline queries (GraphBaselineStore)
+# ──────────────────────────────────────────────────────────────────────
+
+GET_BASELINE = """\
+MATCH (p:Person {id: $person_id})
+RETURN p.baseline_msg_count AS msg_count,
+       p.baseline_length_mean AS length_mean,
+       p.baseline_length_m2 AS length_m2,
+       p.baseline_length_std AS length_std,
+       p.baseline_hour_histogram AS hour_histogram
+"""
+
+UPDATE_BASELINE = """\
+MERGE (p:Person {id: $person_id})
+ON CREATE SET p.baseline_msg_count = 0,
+              p.baseline_length_mean = 0.0,
+              p.baseline_length_m2 = 0.0,
+              p.baseline_length_std = 0.0,
+              p.baseline_hour_histogram = '[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]',
+              p.baseline_updated_at = datetime(),
+              p.created_at = datetime()
+SET p.baseline_msg_count = $msg_count,
+    p.baseline_length_mean = $length_mean,
+    p.baseline_length_m2 = $length_m2,
+    p.baseline_length_std = $length_std,
+    p.baseline_hour_histogram = $hour_histogram,
+    p.baseline_updated_at = datetime()
+RETURN p.id AS id
+"""

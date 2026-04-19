@@ -612,6 +612,48 @@ class ColonyGraph:
                 async for record in result
             ]
 
+
+    # ------------------------------------------------------------------
+    # Baseline methods (GraphBaselineStore)
+    # ------------------------------------------------------------------
+
+    async def _run_get_baseline(self, person_id: str) -> dict | None:
+        """Read baseline properties from a Person node. Returns None if not found."""
+        try:
+            async with self.driver.session(database=self.database) as session:
+                result = await session.run(GET_BASELINE, person_id=person_id)
+                record = await result.single()
+                if record is None:
+                    return None
+                return dict(record)
+        except Exception as exc:
+            logger.debug("_run_get_baseline failed for %s: %s", person_id, exc)
+            return None
+
+    async def _run_update_baseline(
+        self,
+        person_id: str,
+        msg_count: int,
+        length_mean: float,
+        length_m2: float,
+        length_std: float,
+        hour_histogram: str,
+    ) -> None:
+        """Write updated baseline properties to a Person node."""
+        try:
+            async with self.driver.session(database=self.database) as session:
+                await session.run(
+                    UPDATE_BASELINE,
+                    person_id=person_id,
+                    msg_count=msg_count,
+                    length_mean=length_mean,
+                    length_m2=length_m2,
+                    length_std=length_std,
+                    hour_histogram=hour_histogram,
+                )
+        except Exception as exc:
+            logger.debug("_run_update_baseline failed for %s: %s", person_id, exc)
+
     async def list_person_ids(self) -> List[str]:
         """Return all person IDs that have a Person node in the graph."""
         query = "MATCH (p:Person) RETURN p.id AS id"
@@ -630,7 +672,7 @@ class ColonyGraph:
 
         Creates a :Signal node linked to the :Person via [:EXHIBITED].
         """
-        from colony_sidecar.intelligence.graph.queries import STORE_SIGNAL
+        from colony_sidecar.intelligence.graph.queries import STORE_SIGNAL, GET_BASELINE, UPDATE_BASELINE
 
         t0 = time.monotonic()
         try:

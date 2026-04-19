@@ -127,9 +127,19 @@ async def lifespan(app: FastAPI):
         logger.warning("ResponseGate init failed — safety checks will pass-through: %s", exc)
 
     # --- 5. Signal Collector ---
-    # BaselineStore is a Protocol — needs a concrete implementation from
-    # the host. Can be wired later via /v1/host/configure.
-    logger.info("SignalCollector skipped — requires host-provided BaselineStore")
+    signal_collector = None
+    if graph is not None:
+        try:
+            from colony_sidecar.intelligence.mind_model.graph_baseline import GraphBaselineStore
+            from colony_sidecar.intelligence.mind_model.signal_collector import SignalCollector
+            baseline_store = GraphBaselineStore(graph)
+            signal_collector = SignalCollector(baseline_store=baseline_store, graph=graph)
+            set_signal_collector(signal_collector)
+            logger.info("SignalCollector initialized (GraphBaselineStore backed by Neo4j)")
+        except Exception as exc:
+            logger.warning("SignalCollector init failed: %s", exc)
+    else:
+        logger.warning("SignalCollector skipped — ColonyGraph not available")
 
     # --- 6. Embedding pipeline ---
     embed_provider = os.environ.get("COLONY_EMBED_PROVIDER", "")
