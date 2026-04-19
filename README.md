@@ -133,7 +133,7 @@ Think of it as a "brain service" for your agents. The TypeScript plugin loads in
 | Component | Language | Purpose |
 |-----------|----------|---------|
 | **Plugin** (`src/`) | TypeScript | Loads into host process (OpenClaw). Registers hooks, context engine, agent harness adapters. Thin — just HTTP client + type mappings. |
-| **Sidecar** (`sidecar/`) | Python | FastAPI server with all 20 intelligence subsystems. Stateful, owns Neo4j/SQLite/LiteLLM connections. |
+| **Sidecar** (`sidecar/`) | Python | FastAPI server with all 21 intelligence subsystems. Stateful, owns Neo4j/SQLite/LiteLLM connections. |
 
 ### Communication
 
@@ -201,32 +201,11 @@ pip install -e ".[dev,neo4j,lancedb]"
 # 2. Run setup wizard
 colony init
 
-# This will:
-# - Check dependencies (Python, Neo4j, etc.)
-# - Prompt for configuration values
-# - Generate .env file with API key
-# - Initialize SQLite databases
-# - Validate Neo4j connection
-
 # 3. Start the sidecar
 colony start
 
 # 4. Verify it's running
 colony status
-```
-
-### Verify Installation
-
-```bash
-# Health check
-curl http://localhost:7777/v1/host/health
-
-# Expected response:
-# {
-#   "status": "healthy",
-#   "capabilities": ["memory", "safety", "context", ...],
-#   "notes": { "memory": "ColonyGraph wired", ... }
-# }
 ```
 
 ---
@@ -247,14 +226,14 @@ colony init --dir /path        # Use custom config directory
 ```
 
 **What it does:**
-1. Checks Python version (requires 3.11+)
-2. Verifies critical dependencies (fastapi, uvicorn, pydantic)
-3. Checks optional dependencies (neo4j, litellm, lancedb)
-4. Tests Neo4j connectivity
-5. Prompts for configuration values
-6. Generates `.env` file with secure API key
-7. Initializes SQLite databases (contacts, goals)
-8. Validates Neo4j configuration
+1. Installs Python dependencies
+2. Detects host framework (OpenClaw, etc.)
+3. Installs Docker if missing, starts Neo4j
+4. Scans hardware (GPU, VRAM, RAM) and recommends embedding tier
+5. Pre-downloads embedding + reranker models
+6. Configures OpenClaw plugin if detected
+7. Seeds self-knowledge (memories, entities, skills)
+8. Writes `.env` with all configuration
 
 #### `colony start`
 
@@ -294,7 +273,7 @@ colony generate-types
 
 ## Subsystems
 
-Colony provides 20 intelligence subsystems, each exposed via the HTTP API.
+Colony provides 21 intelligence subsystems, each exposed via the HTTP API.
 
 ### Memory (Graph Store)
 

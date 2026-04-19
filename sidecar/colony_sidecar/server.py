@@ -178,7 +178,9 @@ async def lifespan(app: FastAPI):
             model_id=embed_model,
             dimensions=int(embed_dims) if embed_dims else 384,
         )
-        pipeline = EmbeddingPipeline(embed_config)
+        from colony_sidecar.vector.embedder import make_provider
+        pipeline = EmbeddingPipeline(make_provider(embed_config))
+        await pipeline.warmup()
         set_embedder(pipeline)
         logger.info("EmbeddingPipeline initialized (provider=%s model=%s)", embed_provider, embed_model)
     except Exception as exc:

@@ -460,8 +460,12 @@ async def memory_embed(body: MemoryEmbedRequest) -> MemoryEmbedResponse:
     if _embedder is None:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
     try:
-        model_id, vectors = await _embedder.embed(body.inputs, model=body.model)
-        return MemoryEmbedResponse(model=model_id, vectors=vectors)
+        vectors = await _embedder.embed_batch(body.inputs)
+        # Determine model_id from the underlying provider config
+        model_id = ""
+        if hasattr(_embedder, "_provider") and hasattr(_embedder._provider, "_config"):
+            model_id = _embedder._provider._config.model_id
+        return MemoryEmbedResponse(model=model_id or body.model or "unknown", vectors=vectors)
     except Exception as exc:
         logger.warning("memory_embed failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
