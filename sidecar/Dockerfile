@@ -7,7 +7,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl gcc && \
     rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml ./
 COPY colony_sidecar/ ./colony_sidecar/
 
 RUN pip install --no-cache-dir -e .

@@ -19,15 +19,20 @@ from colony_sidecar.vector.embedder import (
     make_provider,
 )
 from colony_sidecar.vector.query import HybridQuery, VectorItem, VectorQuery, VectorResult
-from colony_sidecar.vector.store import VectorStore
 
-# Singleton instances — set by server startup, accessed by subsystems
-from typing import Optional
-_store: Optional[VectorStore] = None
+# Lazy import — VectorStore depends on pyarrow/lancedb which may not be installed
+from typing import Any, Optional
+_store: Any = None
 _pipeline: Optional[EmbeddingPipeline] = None
 
 
-def set_store(store: VectorStore) -> None:
+def _VectorStore():
+    """Lazy import for VectorStore."""
+    from colony_sidecar.vector.store import VectorStore
+    return VectorStore
+
+
+def set_store(store: Any) -> None:
     global _store
     _store = store
 
@@ -37,7 +42,7 @@ def set_pipeline(pipeline: EmbeddingPipeline) -> None:
     _pipeline = pipeline
 
 
-def get_store() -> Optional[VectorStore]:
+def get_store() -> Any:
     """Retrieve the singleton VectorStore, or None if not configured."""
     return _store
 
