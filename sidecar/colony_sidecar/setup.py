@@ -279,6 +279,20 @@ def _write_env(env_path: Path, values: dict[str, str]) -> None:
         lines.append(f"{key}={val}")
     env_path.write_text("\n".join(lines) + "\n")
 
+def _estimate_model_gb(spec) -> float:
+    """Rough memory estimate for a model based on param count string.
+    FP16 = 2 bytes/param + 20% overhead for tokenizer/buffers.
+    """
+    try:
+        params_str = spec.params.lower().replace("b", "").replace("m", "")
+        if "m" in spec.params.lower():
+            return float(params_str) * 2 / 1024 * 1.2  # MB to GB
+        else:
+            return float(params_str) * 2 * 1.2  # billions * 2 bytes + overhead
+    except Exception:
+        return 2.0  # Safe default
+
+
 def _load_existing_env(env_path: Path) -> dict[str, str]:
     if not env_path.exists():
         return {}
@@ -460,7 +474,7 @@ def run_init(root_dir: str | None = None) -> int:
     print()
 
     existing = _load_existing_env(env_path)
-    # Auto-detect embedding tier
+    # Auto-detect embedding tier and let user confirm or step down
     embed_provider = existing.get("COLONY_EMBED_PROVIDER", "")
     embed_model = existing.get("COLONY_EMBED_MODEL", "")
     embed_dims = existing.get("COLONY_EMBED_DIMS", "")
@@ -469,9 +483,42 @@ def run_init(root_dir: str | None = None) -> int:
     if not embed_provider or not embed_model:
         try:
             from colony_sidecar.vector.scanner import scan
-            from colony_sidecar.vector.tiers import get_tier_by_memory
+            from colony_sidecar.vector.tiers import get_tier_by_memory, TIERS
             hw = scan()
-            tier = get_tier_by_memory(hw.vram_gb, hw.ram_gb)
+            detected_tier = get_tier_by_memory(hw.vram_gb, hw.ram_gb)
+            detected_index = TIERS.index(detected_tier)
+
+            print()
+            print(_bold("  Embedding + Reranker Tier Selection"))
+            print()
+            print(f"  Detected: {hw.gpu_name} ({hw.vram_gb}GB VRAM, {hw.ram_gb}GB RAM)")
+            print(f"  Recommended tier: {detected_tier.label}")
+            print()
+            print("  Available tiers (lower = less memory, faster startup):")
+            print()
+
+            for i, t in enumerate(TIERS):
+                marker = " ← recommended" if i == detected_index else ""
+                emb = f"{t.text_embedder.model_id} ({t.text_embedder.params})" if t.text_embedder else "none"
+                rnk = f"{t.text_reranker.model_id} ({t.text_reranker.params})" if t.text_reranker else "none"
+                # Rough memory estimates (params * 2 bytes for FP16 + overhead)
+                emb_mem = _estimate_model_gb(t.text_embedder) if t.text_embedder else 0
+                rnk_mem = _estimate_model_gb(t.text_reranker) if t.text_reranker else 0
+                total_mem = emb_mem + rnk_mem
+                mem_str = f"~{total_mem:.1f}GB" if total_mem > 0 else "~0.5GB"
+                print(f"    [{i}] {t.memory_range}: {t.label}{marker}")
+                print(f"        Embedder: {emb} | Reranker: {rnk}")
+                print(f"        Estimated memory: {mem_str}")
+            print()
+
+            choice = _prompt(f"  Select tier [0-{len(TIERS)-1}]", str(detected_index))
+            try:
+                tier_index = int(choice)
+                tier_index = max(0, min(tier_index, len(TIERS) - 1))
+            except ValueError:
+                tier_index = detected_index
+
+            tier = TIERS[tier_index]
             spec = tier.text_embedder
             if spec:
                 embed_provider = "cuda" if hw.gpu_type == "cuda" else "cpu"
@@ -479,11 +526,18 @@ def run_init(root_dir: str | None = None) -> int:
                 embed_dims = str(spec.dims)
                 if tier.text_reranker:
                     reranker_model = tier.text_reranker.model_id
-                print(f"  Auto-detected embedding tier: {tier.label}")
-                print(f"  GPU: {hw.gpu_name} ({hw.vram_gb}GB) | RAM: {hw.ram_gb}GB")
+                print()
+                print(f"  ✅ Selected tier {tier_index}: {tier.label}")
                 print(f"  Embedder: {spec.model_id} ({spec.params})")
                 if tier.text_reranker:
                     print(f"  Reranker: {tier.text_reranker.model_id} ({tier.text_reranker.params})")
+                else:
+                    print(f"  Reranker: none")
+                embed_mode = _prompt("  Use API embeddings instead? (no model download needed) [y/N]", "N")
+                if embed_mode.lower() in ("y", "yes"):
+                    embed_provider = "openai_api"
+                    reranker_model = ""
+                    print(f"  ✅ Using API embeddings (inherits host LLM key)")
             else:
                 embed_provider = "cpu"
                 embed_model = "sentence-transformers/all-MiniLM-L6-v2"
