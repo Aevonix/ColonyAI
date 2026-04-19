@@ -19,6 +19,8 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, st
 from pydantic import BaseModel
 
 from colony_sidecar.api.schemas.host import (
+    HostConfigureRequest,
+    HostConfigureResponse,
     AutonomyStatusResponse,
     BriefingListResponse,
     BriefingResponse,
@@ -155,6 +157,14 @@ def set_consolidator(consolidator) -> None:
     _consolidator = consolidator
 
 
+_llm_router = None
+
+
+def set_llm_router(router) -> None:
+    global _llm_router
+    _llm_router = router
+
+
 def supported_capabilities() -> List[str]:
     """Return the list of capabilities this sidecar advertises."""
     caps: list[str] = []
@@ -182,6 +192,71 @@ def supported_capabilities() -> List[str]:
         caps.append("skills")
     caps.append("events")
     return caps
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Host Configuration (LLM from host)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/configure", response_model=HostConfigureResponse)
+async def configure_host(body: HostConfigureRequest) -> HostConfigureResponse:
+    """Receive LLM configuration from the host.
+
+    The host (OpenClaw, Hermes, etc.) calls this on startup to provide
+    its LLM provider credentials and model assignments. Colony does not
+    manage its own LLM keys — it inherits them from the host.
+
+    This rebuilds the LLMRouter with the new tiers and updates the
+    ReasoningLoop to use the reconfigured router.
+    """
+    global _reasoning_loop
+
+    if body.llm is None:
+        return HostConfigureResponse(configured=False)
+
+    from colony_sidecar.router.tiers import build_tiers_from_host
+    from colony_sidecar.router.router import LLMRouter
+    from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
+
+    try:
+        tiers = build_tiers_from_host(body.llm)
+
+        new_router = LLMRouter(tiers=tiers)
+        set_llm_router(new_router)
+
+        # Re-wire the reasoning loop with the new router
+        if _reasoning_loop is not None:
+            _reasoning_loop = ReasoningLoop(model=new_router, tools=ToolExecutor())
+
+            set_reasoning_loop(_reasoning_loop)
+            logger.info(
+                "ReasoningLoop re-wired with host LLM config (provider=%s)",
+                body.llm.get("provider", "unknown"),
+            )
+
+        # Persist config for restarts
+        try:
+            import json
+            from pathlib import Path
+            config_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-llm-config.json"
+            config_path.write_text(json.dumps(body.llm, indent=2))
+            logger.info("LLM config persisted to %s", config_path)
+        except Exception as exc:
+            logger.warning("Failed to persist LLM config: %s", exc)
+
+        models_info = body.llm.get("models", {})
+        return HostConfigureResponse(
+            configured=True,
+            provider=body.llm.get("provider"),
+            models=models_info,
+        )
+    except Exception as exc:
+        logger.error("configure_host failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------

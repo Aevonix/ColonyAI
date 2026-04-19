@@ -23,8 +23,8 @@ export const ColonyPluginConfigSchema = z.object({
   /** Base URL of the colony-core sidecar (the FastAPI server). */
   sidecarUrl: z.string().url().default("http://127.0.0.1:7777"),
 
-  /** Colony API key (sk-colony-...) — used as Authorization: Bearer. */
-  apiKey: z.string().min(1),
+  /** Colony API key (sk-colony-...) — used as Authorization: Bearer. Optional for local dev. */
+  apiKey: z.string().min(1).optional(),
 
   /**
    * If true, register Colony as the active agent harness. Off by default

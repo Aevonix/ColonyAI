@@ -649,3 +649,23 @@ class AutonomyStatusResponse(BaseModel):
     actions_executed: int = 0
     errors: int = 0
     config: Optional[Dict[str, Any]] = None
+
+
+
+# --- Configure (Host LLM Config) -------------------------------------------
+
+class LLMModelsConfig(BaseModel):
+    small: Optional[str] = None
+    medium: Optional[str] = None
+    large: Optional[str] = None
+
+
+class HostConfigureRequest(BaseModel):
+    identity: HostIdentity
+    llm: Optional[Dict[str, Any]] = Field(None, description="LLM provider config from host")
+
+
+class HostConfigureResponse(BaseModel):
+    configured: bool = True
+    provider: Optional[str] = None
+    models: Optional[Dict[str, str]] = None

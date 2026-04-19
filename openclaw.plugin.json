@@ -1,0 +1,26 @@
+{
+  "id": "colony",
+  "name": "@aevonix/colony",
+  "kind": "extension",
+  "enabledByDefault": true,
+  "description": "Colony intelligence sidecar - graph memory, autonomy loop, context assembly, safety pipeline",
+  "contracts": {
+    "contextEngines": ["colony"],
+    "memoryCapabilities": ["colony"],
+    "memoryEmbeddingProviders": ["colony"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sidecarUrl": {
+        "type": "string",
+        "description": "URL for the Colony sidecar API (default: http://localhost:8100)"
+      },
+      "timeout": {
+        "type": "number",
+        "description": "Request timeout in milliseconds (default: 30000)"
+      }
+    }
+  }
+}

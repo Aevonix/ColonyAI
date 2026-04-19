@@ -13,9 +13,6 @@ import { createColonyPlugin } from "./plugin.js";
 
 /**
  * Default export: the OpenClaw plugin entry. The OpenClaw loader looks
- * for a default export shaped by `definePluginEntry`, so we resolve and
- * re-export the promise here so users can simply do
- *
- *   "plugins": { "entries": { "colony": { "module": "@aevonix/openclaw-colony" } } }
+ * for a default export shaped by `definePluginEntry`.
  */
-export default await createColonyPlugin();
+export default createColonyPlugin();

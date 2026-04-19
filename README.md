@@ -15,7 +15,6 @@ Think of it as a "brain service" for your agents. The TypeScript plugin loads in
 - [Quick Start](#quick-start)
   - [Prerequisites](#prerequisites)
   - [Docker (Recommended)](#docker-recommended)
-  - [Manual Setup](#manual-setup)
   - [Verify Installation](#verify-installation)
 - [The Colony CLI](#the-colony-cli)
 - [Subsystems](#subsystems)
@@ -67,7 +66,7 @@ Think of it as a "brain service" for your agents. The TypeScript plugin loads in
 **Use Cases:**
 
 - Mount into OpenClaw for a personal AI assistant with long-term memory
-- Run standalone as an intelligence service for any agent framework
+- Mount into any agent framework that supports the Colony plugin API
 - Deploy as a shared backend for multiple agent instances
 
 ---
@@ -177,7 +176,6 @@ cp .env.example .env
 # At minimum, set:
 # - NEO4J_PASSWORD=your-secure-password
 # - COLONY_API_KEY=your-api-key
-# - LITELLM_MODEL=gpt-4o (or your preferred model)
 nano .env
 
 # Start everything (Neo4j + Colony sidecar)
@@ -191,7 +189,7 @@ This starts:
 - Neo4j on `bolt://localhost:7687` (web UI: http://localhost:7474)
 - Colony sidecar on `http://localhost:7777`
 
-### Manual Setup
+### Development Setup
 
 For development or custom deployments:
 
@@ -216,16 +214,6 @@ colony start
 # 4. Verify it's running
 colony status
 ```
-
-### Non-interactive Setup
-
-For CI/CD or scripted deployments:
-
-```bash
-colony init --non-interactive
-```
-
-Generates `.env` with sensible defaults (auto-generated API key, localhost, port 7777).
 
 ### Verify Installation
 
@@ -254,8 +242,7 @@ The `colony` command is your primary interface for managing the sidecar.
 Interactive setup wizard. Guides you through first-time configuration.
 
 ```bash
-colony init                    # Interactive mode
-colony init --non-interactive  # Generate defaults without prompts
+colony init                    # Interactive setup wizard
 colony init --dir /path        # Use custom config directory
 ```
 
@@ -724,7 +711,6 @@ curl http://localhost:7777/openapi.json
 | `COLONY_API_KEY` | (auto-generated) | API key for host auth |
 | `COLONY_CONTACTS_DB` | `colony-contacts.db` | SQLite contacts path |
 | `COLONY_GOALS_DB` | `colony-goals.db` | SQLite goals path |
-| `LITELLM_MODEL` | (empty) | Default LLM model |
 | `LOG_LEVEL` | `info` | Logging level |
 
 ### .env File
@@ -744,12 +730,13 @@ NEO4J_PASSWORD=your-secure-password
 # API Authentication
 COLONY_API_KEY=sk-your-api-key-here
 
+# NOTE: Colony does NOT need LLM keys here.
+# The host (OpenClaw, Hermes, etc.) provides LLM credentials
+# at runtime via POST /v1/host/configure.
+
 # Database Paths
 COLONY_CONTACTS_DB=colony-contacts.db
 COLONY_GOALS_DB=colony-goals.db
-
-# LLM Configuration
-LITELLM_MODEL=gpt-4o
 
 # Logging
 LOG_LEVEL=info
@@ -932,23 +919,22 @@ volumes:
   neo4j-data:
 ```
 
-### Systemd (Linux)
+### Process Management
 
-```ini
-[Unit]
-Description=Colony Sidecar
-After=network.target
+Colony is a sidecar — it runs alongside its host (OpenClaw, Hermes, etc.).
+The host manages Colony's lifecycle via the plugin system.
 
-[Service]
-Type=simple
-User=colony
-WorkingDirectory=/opt/colony
-EnvironmentFile=/opt/colony/.env
-ExecStart=/usr/local/bin/colony start
-Restart=always
+For manual operation:
 
-[Install]
-WantedBy=multi-user.target
+```bash
+# Foreground (useful for debugging)
+colony start
+
+# Background via nohup
+nohup colony start > colony.log 2>&1 &
+
+# Or via Docker Compose (includes Neo4j)
+docker compose up -d
 ```
 
 ---

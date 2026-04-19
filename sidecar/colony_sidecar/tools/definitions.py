@@ -211,6 +211,19 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
 COLONY_TOOLS: list[dict[str, Any]] = COLONY_CORE_TOOLS + COLONY_EXTENDED_TOOLS
 
 
+def _wrap_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a raw tool definition in OpenAI function-calling format.
+
+    Raw format:  {"name": ..., "description": ..., "parameters": ...}
+    OpenAI format: {"type": "function", "function": {"name": ..., ...}}
+
+    If the tool already has a "type" key, it is returned unchanged.
+    """
+    if "type" in tool:
+        return tool
+    return {"type": "function", "function": tool}
+
+
 def get_tool_definitions(
     include_extended: bool = True,
     tool_names: list[str] | None = None,
@@ -234,4 +247,4 @@ def get_tool_definitions(
         name_set = set(tool_names)
         tools = [t for t in tools if t["name"] in name_set]
 
-    return tools
+    return [_wrap_openai_tool(t) for t in tools]

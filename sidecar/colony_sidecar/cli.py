@@ -16,7 +16,6 @@ def main() -> None:
 
     # --- init ---
     init_p = sub.add_parser("init", help="Interactive setup wizard")
-    init_p.add_argument("--non-interactive", action="store_true", help="Generate defaults without prompts")
     init_p.add_argument("--dir", default=".", help="Root directory for config files")
 
     # --- start ---
@@ -38,11 +37,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "init":
-        from colony_sidecar.setup import run_init, run_noninteractive
-        if args.non_interactive:
-            code = run_noninteractive(root_dir=args.dir)
-        else:
-            code = run_init(root_dir=args.dir)
+        from colony_sidecar.setup import run_init
+        code = run_init(root_dir=args.dir)
         sys.exit(code)
 
     elif args.command == "start":

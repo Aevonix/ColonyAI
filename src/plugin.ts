@@ -24,6 +24,7 @@ import type {
   OpenClawPluginApi,
   PluginLogger,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 /**
  * Context-engine contract surface pulled directly from the OpenClaw SDK.
@@ -85,29 +86,11 @@ export type MemoryEmbeddingProvider = NonNullable<
 >;
 
 /**
- * `definePluginEntry` is the OpenClaw SDK helper. We re-import lazily so
- * test environments can stub it; production builds resolve it from the
- * peer-dependency `openclaw` package. See
- * `openclaw/plugin-sdk/plugin-entry`'s `DefinePluginEntryOptions` for
+ * `definePluginEntry` is imported directly from the OpenClaw SDK.
+ * See `openclaw/plugin-sdk/plugin-entry`'s `DefinePluginEntryOptions` for
  * the authoritative shape — the fields listed here are a subset of
  * those we actually use.
  */
-type DefinePluginEntry = (entry: {
-  id: string;
-  name: string;
-  description: string;
-  register: (api: OpenClawPluginApi) => void;
-}) => unknown;
-
-async function loadDefinePluginEntry(): Promise<DefinePluginEntry> {
-  // Dynamic import keeps the plugin loadable in test contexts where
-  // OpenClaw is not installed; we replace this with a static import once
-  // OpenClaw publishes the SDK as a discoverable npm package.
-  const mod = (await import(
-    /* @vite-ignore */ "openclaw/plugin-sdk/plugin-entry"
-  )) as { definePluginEntry: DefinePluginEntry };
-  return mod.definePluginEntry;
-}
 
 const PLUGIN_ID = "colony";
 const PLUGIN_NAME = "Colony Intelligence";
@@ -1969,9 +1952,7 @@ function eventsLifecycleService(
 // Entry point
 // ---------------------------------------------------------------------------
 
-export async function createColonyPlugin(): Promise<unknown> {
-  const definePluginEntry = await loadDefinePluginEntry();
-
+export function createColonyPlugin(): unknown {
   return definePluginEntry({
     id: PLUGIN_ID,
     name: PLUGIN_NAME,

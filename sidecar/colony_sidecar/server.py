@@ -1,6 +1,6 @@
 """Colony sidecar FastAPI server.
 
-Standalone intelligence server that hosts (OpenClaw, future shims) mount
+Intelligence sidecar server mounted by (OpenClaw, future shims) mount
 as a plugin via the ``/v1/host`` API surface.
 """
 
@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from colony_sidecar.api.routers.host import (
     router as host_router,
+    set_llm_router,
     set_autonomy_loop,
     set_chain_manager,
     set_reasoning_loop,
@@ -41,14 +42,39 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize subsystems on startup, tear down on shutdown."""
+    state_dir = os.environ.get("COLONY_STATE_DIR", ".")
+
     # --- 1. LLM Router ---
     llm_router = None
     try:
         from colony_sidecar.router.router import LLMRouter
-        llm_router = LLMRouter()
-        logger.info("LLMRouter initialized")
+        from colony_sidecar.router.tiers import build_tiers_from_host
+        import json as _json
+        from pathlib import Path as _Path
+
+        config_path = _Path(state_dir) / ".colony-llm-config.json"
+        if config_path.exists():
+            try:
+                host_llm_config = _json.loads(config_path.read_text())
+                tiers = build_tiers_from_host(host_llm_config)
+                llm_router = LLMRouter(tiers=tiers)
+                logger.info(
+                    "LLMRouter initialized from persisted host config (provider=%s)",
+                    host_llm_config.get("provider", "unknown"),
+                )
+            except Exception as cfg_exc:
+                logger.warning("Failed to load persisted LLM config, using defaults: %s", cfg_exc)
+                llm_router = LLMRouter()
+                logger.info("LLMRouter initialized with default tiers")
+        else:
+            llm_router = LLMRouter()
+            logger.info("LLMRouter initialized with default tiers (no host config yet)")
     except Exception as exc:
         logger.warning("LLMRouter init failed — reasoning will not be available: %s", exc)
+
+    # Register LLM router with the host router for /configure endpoint
+    if llm_router is not None:
+        set_llm_router(llm_router)
 
     # --- 2. Reasoning loop ---
     if llm_router is not None:
@@ -93,9 +119,9 @@ async def lifespan(app: FastAPI):
     # --- 5. Signal Collector ---
     try:
         from colony_sidecar.intelligence.mind_model.signal_collector import SignalCollector
-        collector = SignalCollector()
-        set_signal_collector(collector)
-        logger.info("SignalCollector initialized")
+        # BaselineStore is a Protocol — needs a concrete implementation from the host.
+        # Skip for now; can be wired later via /v1/host/configure.
+        logger.info("SignalCollector skipped — requires host-provided BaselineStore")
     except Exception as exc:
         logger.warning("SignalCollector init failed: %s", exc)
 
@@ -103,19 +129,21 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.vector.embedder import EmbeddingPipeline
         from colony_sidecar.vector.config import EmbeddingConfig
-        embed_config = EmbeddingConfig()
+        embed_config = EmbeddingConfig(
+            provider=os.environ.get("COLONY_EMBED_PROVIDER", "openai"),
+            model_id=os.environ.get("COLONY_EMBED_MODEL", "text-embedding-3-small"),
+            dimensions=int(os.environ.get("COLONY_EMBED_DIMS", "1536")),
+        )
         pipeline = EmbeddingPipeline(embed_config)
         set_embedder(pipeline)
-        logger.info("EmbeddingPipeline initialized (model=%s)", embed_config.model_name)
+        logger.info("EmbeddingPipeline initialized (model=%s)", embed_config.model_id)
     except Exception as exc:
         logger.warning("EmbeddingPipeline init failed — memory/embed returns 501: %s", exc)
 
     # --- 7. Goals engine ---
     try:
         from colony_sidecar.goals.engine import GoalEngine
-        from colony_sidecar.goals.store import GoalStore
-        goals_store = GoalStore()
-        goals_engine = GoalEngine(store=goals_store, llm_router=llm_router)
+        goals_engine = GoalEngine()
         set_goals_engine(goals_engine)
         logger.info("GoalEngine initialized")
     except Exception as exc:
@@ -124,7 +152,7 @@ async def lifespan(app: FastAPI):
     # --- 8. Contacts ---
     try:
         from colony_sidecar.contacts.store import SQLiteContactStore
-        contacts_store = SQLiteContactStore(db_path=os.environ.get("COLONY_CONTACTS_DB", "contacts.db"))
+        contacts_store = SQLiteContactStore()
         set_contacts_store(contacts_store)
         logger.info("ContactsStore initialized")
     except Exception as exc:
@@ -133,7 +161,7 @@ async def lifespan(app: FastAPI):
     # --- 9. Briefings ---
     try:
         from colony_sidecar.briefings.engine import BriefingEngine
-        briefings = BriefingEngine(llm_router=llm_router, graph=graph)
+        briefings = BriefingEngine()
         set_briefings_engine(briefings)
         logger.info("BriefingEngine initialized")
     except Exception as exc:
@@ -142,7 +170,7 @@ async def lifespan(app: FastAPI):
     # --- 10. World model ---
     try:
         from colony_sidecar.world_model.store import WorldModelStore
-        world_store = WorldModelStore(graph=graph)
+        world_store = WorldModelStore()
         set_world_store(world_store)
         logger.info("WorldModelStore initialized")
     except Exception as exc:
@@ -151,16 +179,19 @@ async def lifespan(app: FastAPI):
     # --- 11. Cognition (MetaLearner) ---
     try:
         from colony_sidecar.intelligence.cognition.metalearner import MetaLearner
-        metalearner = MetaLearner(llm_router=llm_router, graph=graph)
-        set_metalearner(metalearner)
-        logger.info("MetaLearner initialized")
+        if graph is not None:
+            metalearner = MetaLearner(graph=graph)
+            set_metalearner(metalearner)
+            logger.info("MetaLearner initialized")
+        else:
+            logger.warning("MetaLearner skipped — ColonyGraph not available")
     except Exception as exc:
         logger.warning("MetaLearner init failed: %s", exc)
 
     # --- 12. Research pipeline ---
     try:
         from colony_sidecar.research.pipeline import ResearchPipeline
-        research = ResearchPipeline(llm_router=llm_router)
+        research = ResearchPipeline()
         set_research_pipeline(research)
         logger.info("ResearchPipeline initialized")
     except Exception as exc:
@@ -178,9 +209,12 @@ async def lifespan(app: FastAPI):
     # --- 14. Synthesis (ConnectionDiscoverer) ---
     try:
         from colony_sidecar.intelligence.synthesis.connection_discoverer import ConnectionDiscoverer
-        discoverer = ConnectionDiscoverer(graph=graph)
-        set_connection_discoverer(discoverer)
-        logger.info("ConnectionDiscoverer initialized")
+        if graph is not None:
+            discoverer = ConnectionDiscoverer(graph_client=graph)
+            set_connection_discoverer(discoverer)
+            logger.info("ConnectionDiscoverer initialized")
+        else:
+            logger.warning("ConnectionDiscoverer skipped — ColonyGraph not available")
     except Exception as exc:
         logger.warning("ConnectionDiscoverer init failed: %s", exc)
 
@@ -196,7 +230,8 @@ async def lifespan(app: FastAPI):
     # --- 16. Skills registry ---
     try:
         from colony_sidecar.skills.registry import SkillRegistry
-        skills = SkillRegistry()
+        from pathlib import Path
+        skills = SkillRegistry(db_path=Path(state_dir) / "skills.db")
         set_skills_registry(skills)
         logger.info("SkillRegistry initialized")
     except Exception as exc:
@@ -205,7 +240,11 @@ async def lifespan(app: FastAPI):
     # --- 17. Chain / Identity ---
     try:
         from colony_sidecar.chain.manager import ChainManager
-        chain = ChainManager()
+        from pathlib import Path
+        chain = ChainManager(
+            db_path=Path(state_dir) / "chain.db",
+            colony_id=os.environ.get("COLONY_ID", "colony-default"),
+        )
         set_chain_manager(chain)
         logger.info("ChainManager initialized")
     except Exception as exc:
@@ -245,6 +284,7 @@ async def lifespan(app: FastAPI):
             await graph.close()
         except Exception:
             pass
+    set_llm_router(None)
     set_reasoning_loop(None)
     set_graph(None)
     set_response_gate(None)

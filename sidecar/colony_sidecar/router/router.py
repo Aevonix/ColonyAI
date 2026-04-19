@@ -261,6 +261,12 @@ class LLMRouter:
 
         choice = raw.choices[0]
         content = choice.message.content or ""
+
+        # Reasoning models (e.g. GLM-5.1, DeepSeek-R1) may put thinking in
+        # reasoning_content and leave content empty. Fall back to reasoning
+        # content when the final answer is blank but reasoning exists.
+        if not content and hasattr(choice.message, "reasoning_content") and choice.message.reasoning_content:
+            content = choice.message.reasoning_content
         usage = {
             "prompt_tokens": raw.usage.prompt_tokens if raw.usage else 0,
             "completion_tokens": raw.usage.completion_tokens if raw.usage else 0,
