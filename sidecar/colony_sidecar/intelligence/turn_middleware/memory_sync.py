@@ -9,7 +9,7 @@ responsible for emitting any host events.
 Two sink shapes are supported via duck-typing so the endpoint works
 whether the server wires the in-process
 ``colony.intelligence.components.session_continuity.SessionContinuity``
-(expected when colony-core runs in-process — no HTTP loopback) or the
+(expected when colony runs in-process — no HTTP loopback) or the
 HTTP-client ``agent.memory_bridge.AgentMemoryBridge`` (useful for
 standalone runs where the agent and API are in different processes).
 

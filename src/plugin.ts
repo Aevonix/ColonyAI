@@ -95,7 +95,7 @@ export type MemoryEmbeddingProvider = NonNullable<
 const PLUGIN_ID = "colony";
 const PLUGIN_NAME = "Colony Intelligence";
 const PLUGIN_DESCRIPTION =
-  "Mount Colony's graph memory, autonomy loop, context assembly, and safety pipeline into OpenClaw via the colony-core /v1/host API.";
+  "Mount Colony's graph memory, autonomy loop, context assembly, and safety pipeline into OpenClaw via the colony /v1/host API.";
 const PLUGIN_VERSION = "0.0.1";
 
 // ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ export class ColonyEmbedUnavailableError extends Error {
 }
 
 /**
- * Shared degradation policy for calls the plugin makes into colony-core.
+ * Shared degradation policy for calls the plugin makes into colony.
  *
  * Colony-core responds with a structured ``{error: {code, ...}}`` envelope
  * surfaced by ``ColonyApiError``. Adapters that want consistent
@@ -174,7 +174,7 @@ export async function withDegradation<T>(
 /**
  * Format a ``HostEvent`` into a single diagnostic log line. Used by the
  * events lifecycle service so operators see a stream of the cognition
- * events flowing from colony-core without dumping full payloads. The
+ * events flowing from colony without dumping full payloads. The
  * default case returns only ``event.type`` so unknown events don't leak
  * their payloads.
  */
@@ -360,7 +360,7 @@ function memoryCapability(
 }
 
 /**
- * A ``MemorySearchManager`` backed by the colony-core sidecar.
+ * A ``MemorySearchManager`` backed by the colony sidecar.
  *
  * Every method that hits the sidecar is wrapped in ``withDegradation``
  * so transient / phase-1-wiring failures degrade gracefully.
@@ -513,7 +513,7 @@ export const COLONY_EMBED_BATCH_CHUNK = 64;
 
 /**
  * Build the ``MemoryEmbeddingProviderAdapter`` that routes embedding
- * requests to the colony-core sidecar.
+ * requests to the colony sidecar.
  *
  * The adapter intentionally degrades by **returning ``{provider: null}``
  * from ``create()``** when the sidecar is unreachable or doesn't
@@ -1006,7 +1006,7 @@ function zeroAssistantUsage(): {
  * shaped ``EmbeddedRunAttemptResult`` with ``promptError`` set, which
  * lets OpenClaw's fallback policy route to PI transparently.
  *
- * TODO(colony-core): The reasoning capability is now advertised by the
+ * TODO(colony): The reasoning capability is now advertised by the
  * sidecar when ``ReasoningLoop`` is wired. The harness will start
  * advertising support automatically via the capability probe once
  * the sidecar reports ``"reasoning"`` in its capabilities list.
@@ -1555,7 +1555,7 @@ function safetyHook(
         // map cleanly onto the SDK's immediate allow/cancel semantics.
         // Treat pending as a block until a re-send queue lands; letting
         // the chunk through would be the unsafe direction.
-        // TODO(#7 Phase 7+): wire a proper re-send path once colony-core
+        // TODO(#7 Phase 7+): wire a proper re-send path once colony
         // supports deferred delivery back to the host.
         logger?.warn(
           `[colony.safety] pending decision treated as block for ${event.to}: ${res.reason ?? "<no reason>"}`,
@@ -1800,7 +1800,7 @@ function capabilityProbe(ctx: ColonyPluginContext) {
  *    ``summary`` are empty / undefined — extractors not yet wired.
  *  - ``channel_id`` falls through ``Provider → Surface →
  *    originatingChannel`` to give the sidecar *some* stable channel
- *    label; none of these are a perfect match for colony-core's
+ *    label; none of these are a perfect match for colony's
  *    ``channel_id`` vocabulary.
  */
 function postTurnHook(

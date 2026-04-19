@@ -647,9 +647,9 @@ WORLD_MODEL_ENTITIES = [
     {"name": "Hermes", "type": "framework", "attributes": {"type": "agent framework", "status": "deprecated", "superseded_by": "Colony"}},
     
     # Projects
-    {"name": "Colony", "type": "project", "attributes": {"description": "Intelligence infrastructure for AI agents", "repo": "Aevonix/colony-core"}},
-    {"name": "colony-core", "type": "project", "attributes": {"description": "Colony monorepo (plugin + sidecar)", "status": "active"}},
-    {"name": "colony-ai", "type": "project", "attributes": {"description": "Original Hermes fork monolith", "status": "deprecated", "superseded_by": "colony-core"}},
+    {"name": "Colony", "type": "project", "attributes": {"description": "Intelligence infrastructure for AI agents", "repo": "Aevonix/colony"}},
+    {"name": "colony", "type": "project", "attributes": {"description": "Colony monorepo (plugin + sidecar)", "status": "active"}},
+    {"name": "colony-ai", "type": "project", "attributes": {"description": "Original Hermes fork monolith", "status": "deprecated", "superseded_by": "colony"}},
     
     # Concepts
     {"name": "memory", "type": "concept", "attributes": {"description": "Persistent storage of conversations and knowledge"}},
@@ -1014,7 +1014,7 @@ Memories ({len(ARCHITECTURE_MEMORIES)}):
 World Model Entities ({len(WORLD_MODEL_ENTITIES)}):
   - Technologies: TypeScript, Python, Neo4j, SQLite, FastAPI, LiteLLM, etc.
   - Frameworks: OpenClaw, Hermes
-  - Projects: Colony, colony-core, colony-ai
+  - Projects: Colony, colony, colony-ai
   - Concepts: memory, context, safety, reasoning, autonomy, etc.
   - Organizations: Aevonix
 

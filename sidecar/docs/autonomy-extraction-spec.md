@@ -8,7 +8,7 @@ the "brainstem" that keeps Colony running autonomously between human
 interactions.
 
 Current state: lives in `colony-ai/colony/autonomy/` (~1800 lines).
-Target: `colony-core/sidecar/colony_sidecar/autonomy/`.
+Target: `colony/sidecar/colony_sidecar/autonomy/`.
 
 ## Architecture
 
@@ -26,7 +26,7 @@ AutonomyLoop.__init__(
 
 18 constructor args. Tightly coupled to colony-ai's object graph.
 
-### Proposed (colony-core sidecar)
+### Proposed (colony sidecar)
 
 ```
 AutonomyLoop(registry: SubsystemRegistry, config: AutonomyConfig)

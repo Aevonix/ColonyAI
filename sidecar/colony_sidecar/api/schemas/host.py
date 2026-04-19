@@ -1,6 +1,6 @@
 """Host API schemas — Pydantic models for the /v1/host surface.
 
-Mirrors the TypeScript types in colony-core's src/types.ts.
+Mirrors the TypeScript types in colony's src/types.ts.
 The sidecar is the source of truth for these schemas.
 """
 

@@ -29,7 +29,7 @@ import type {
 } from "./types.js";
 
 /**
- * Error returned by the colony-core sidecar. Carries the structured
+ * Error returned by the colony sidecar. Carries the structured
  * `{error: {code, message, ...}}` envelope so callers can branch on
  * machine-readable codes (e.g. `phase1_wiring_required`).
  */
@@ -46,7 +46,7 @@ export class ColonyApiError extends Error {
 }
 
 /**
- * Thin HTTP/WS client for the colony-core /v1/host API.
+ * Thin HTTP/WS client for the colony /v1/host API.
  *
  * Each public method maps 1:1 to a host endpoint defined in
  * `colony/api/routers/host.py`. The plugin entry point (see
@@ -110,7 +110,7 @@ export class ColonySidecarClient {
   // --- Reasoning -----------------------------------------------------------
 
   /**
-   * Invoke the colony-core reasoning endpoint.
+   * Invoke the colony reasoning endpoint.
    *
    * Accepts an optional ``signal`` so callers (specifically the
    * ``AgentHarness`` adapter) can propagate OpenClaw's
@@ -385,12 +385,12 @@ export class ColonySidecarClient {
    * host-side concern (registerService will be restarted by OpenClaw if
    * the lifecycle service throws).
    *
-   * Authenticates via the first-message handshake colony-core enforces
+   * Authenticates via the first-message handshake colony enforces
    * on /v1/host/events (mirroring /v1/ws): after the socket opens the
    * client sends `{"type":"auth","token":"sk-colony-..."}` within 10
    * seconds. The server replies with `{"type":"auth_ok",...}` on
    * success or closes with code 4001 on failure. The Authorization
-   * header isn't read by colony-core — first-message auth is the
+   * header isn't read by colony — first-message auth is the
    * supported path.
    */
   openEvents(onEvent: (event: HostEvent) => void): { close: () => void } {

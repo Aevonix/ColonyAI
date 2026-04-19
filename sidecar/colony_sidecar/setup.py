@@ -313,7 +313,7 @@ def run_init(root_dir: str | None = None) -> int:
     """Run the interactive setup wizard. Returns exit code."""
     base = Path(root_dir) if root_dir else Path(".")
     env_path = base / ".env"
-    colony_root = Path(__file__).resolve().parents[2]  # colony-core/
+    colony_root = Path(__file__).resolve().parents[2]  # colony/
 
     print()
     print(_bold("🔧 Colony Sidecar Setup Wizard"))

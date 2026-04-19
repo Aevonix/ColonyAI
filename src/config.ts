@@ -20,7 +20,7 @@ import { z } from "zod";
  *   }
  */
 export const ColonyPluginConfigSchema = z.object({
-  /** Base URL of the colony-core sidecar (the FastAPI server). */
+  /** Base URL of the colony sidecar (the FastAPI server). */
   sidecarUrl: z.string().url().default("http://127.0.0.1:7777"),
 
   /** Colony API key (sk-colony-...) — used as Authorization: Bearer. Optional for local dev. */
@@ -33,7 +33,7 @@ export const ColonyPluginConfigSchema = z.object({
    */
   ownReasoningLoop: z.boolean().default(false),
 
-  /** Identity reported back to colony-core for audit/scoping. */
+  /** Identity reported back to colony for audit/scoping. */
   hostId: z.string().default("openclaw"),
 
   /**

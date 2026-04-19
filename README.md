@@ -840,7 +840,7 @@ This:
 ### Project Structure
 
 ```
-colony-core/
+colony/
 ├── src/                      # TypeScript plugin
 │   ├── index.ts              # Plugin entry point
 │   ├── plugin.ts             # Main plugin logic
