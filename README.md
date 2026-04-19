@@ -166,8 +166,8 @@ The fastest way to get Colony running with all dependencies:
 
 ```bash
 # Clone the repo
-git clone https://github.com/Aevonix/colony-core.git
-cd colony-core
+git clone https://github.com/Aevonix/colony.git
+cd colony
 
 # Copy environment template
 cp .env.example .env
@@ -801,8 +801,8 @@ The plugin registers these capabilities with OpenClaw:
 
 ```bash
 # Clone and install
-git clone https://github.com/Aevonix/colony-core.git
-cd colony-core
+git clone https://github.com/Aevonix/colony.git
+cd colony
 
 # TypeScript plugin
 npm install
