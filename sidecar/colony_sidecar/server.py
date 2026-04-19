@@ -34,6 +34,8 @@ from colony_sidecar.api.routers.host import (
     set_learner,
     set_skills_registry,
     set_secrets_manager,
+    set_session_store,
+    set_task_queue,
     supported_capabilities,
 )
 
@@ -321,7 +323,27 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("SecretsManager init failed: %s", exc)
 
-    # --- 19. Autonomy loop ---
+    # --- 19. Session store ---
+    try:
+        from colony_sidecar.sessions.store import InMemorySessionStore
+        session_store = InMemorySessionStore()
+        set_session_store(session_store)
+        logger.info("InMemorySessionStore initialized")
+    except Exception as exc:
+        logger.warning("SessionStore init failed: %s", exc)
+
+    # --- 20. Task queue ---
+    try:
+        from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+        task_queue = await TaskQueueManager.initialize(
+            db_path=state_dir / "task_queue.db",
+        )
+        set_task_queue(task_queue)
+        logger.info("TaskQueueManager initialized")
+    except Exception as exc:
+        logger.warning("TaskQueueManager init failed: %s", exc)
+
+    # --- 21. Autonomy loop ---
     try:
         from colony_sidecar.autonomy.loop import AutonomyLoop
         from colony_sidecar.autonomy.config import AutonomyConfig
@@ -374,6 +396,15 @@ async def lifespan(app: FastAPI):
     set_skills_registry(None)
     set_chain_manager(None)
     set_secrets_manager(None)
+    set_session_store(None)
+    # Stop task queue
+    try:
+        from colony_sidecar.api.routers.host import _task_queue
+        if _task_queue is not None:
+            await _task_queue.queue.stop()
+    except Exception:
+        pass
+    set_task_queue(None)
     # Stop autonomy loop if running
     try:
         from colony_sidecar.api.routers.host import _autonomy_loop
@@ -382,6 +413,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     set_autonomy_loop(None)
+    set_session_store(None)
+    set_task_queue(None)
     logger.info("Sidecar shutdown complete")
 
 

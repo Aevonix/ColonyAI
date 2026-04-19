@@ -217,6 +217,10 @@ def supported_capabilities() -> List[str]:
         caps.append("secrets")
     if _autonomy_loop is not None:
         caps.append("autonomy")
+    if _session_store is not None:
+        caps.append("sessions")
+    if _task_queue is not None:
+        caps.append("task_queue")
     caps.append("events")
     return caps
 
@@ -336,6 +340,14 @@ async def health() -> HostHealthResponse:
         notes["learning"] = "ContinuousLearner wired"
     if _autonomy_loop is not None:
         notes["autonomy"] = "AutonomyLoop wired (not started)"
+    if _session_store is not None:
+        notes["sessions"] = "InMemorySessionStore wired"
+    if _task_queue is not None:
+        notes["task_queue"] = "TaskQueueManager wired"
+    if _session_store is not None:
+        notes["sessions"] = "InMemorySessionStore wired"
+    if _task_queue is not None:
+        notes["task_queue"] = "TaskQueueManager wired" 
     return HostHealthResponse(status="ok", capabilities=caps, notes=notes)
 
 
@@ -1365,6 +1377,21 @@ def set_secrets_manager(manager) -> None:
     _secrets_manager = manager
 
 
+def set_reranker(reranker) -> None:
+    global _reranker
+    _reranker = reranker
+
+
+def set_session_store(store) -> None:
+    global _session_store
+    _session_store = store
+
+
+def set_task_queue(queue) -> None:
+    global _task_queue
+    _task_queue = queue
+
+
 @router.post("/secrets/list", response_model=SecretListResponse)
 async def secrets_list(body: SecretListRequest) -> SecretListResponse:
     if _secrets_manager is None:
@@ -1421,6 +1448,9 @@ async def secrets_delete(body: SecretDeleteRequest) -> SecretDeleteResponse:
 
 _autonomy_loop = None
 _autonomy_task = None
+_reranker = None
+_session_store = None
+_task_queue = None
 
 def set_autonomy_loop(loop) -> None:
     global _autonomy_loop
