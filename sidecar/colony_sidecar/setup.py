@@ -520,7 +520,36 @@ def run_init(root_dir: str | None = None) -> int:
 
     print()
 
-    # ── Step 7: Database setup ──────────────────────────────────────────
+    # ── Step 7: Download embedding + reranker models
+    if embed_provider in ("cuda", "cpu", "mlx") and embed_model:
+        print(_bold("Step 7: Download embedding model"))
+        print()
+        print(f"  Downloading {embed_model}...")
+        print(f"  (This may take a while on first run — models are cached by HuggingFace)")
+        try:
+            from sentence_transformers import SentenceTransformer
+            SentenceTransformer(embed_model)
+            print(f"  ✅ Embedding model downloaded and cached")
+        except Exception as exc:
+            print(f"  ⚠️ Model download failed: {exc}")
+            print(f"  The model will download on first start instead.")
+
+        if reranker_model:
+            print(f"  Downloading reranker {reranker_model}...")
+            try:
+                from sentence_transformers import CrossEncoder
+                CrossEncoder(reranker_model)
+                print(f"  ✅ Reranker model downloaded and cached")
+            except Exception as exc:
+                print(f"  ⚠️ Reranker download failed: {exc}")
+                print(f"  The model will download on first start instead.")
+    else:
+        print(_bold("Step 7: Embedding model (API mode — no download needed)"))
+        print()
+
+    print()
+
+    # ── Step 8: Database setup ──────────────────────────────────────────
 
     print(_bold("Step 7: Database setup"))
     print()
@@ -567,9 +596,9 @@ def run_init(root_dir: str | None = None) -> int:
 
     print()
 
-    # ── Step 8: Self-knowledge seeding ──────────────────────────────────
+    # ── Step 9: Self-knowledge seeding ──────────────────────────────────
 
-    print(_bold("Step 8: Self-knowledge seeding"))
+    print(_bold("Step 9: Self-knowledge seeding"))
     print()
     print("  Seeding Colony with understanding of itself...")
     print("  (Full seeding happens on first 'colony start' via the /v1/host/seed endpoint)")
@@ -627,7 +656,7 @@ def run_init(root_dir: str | None = None) -> int:
 
     # ── Step 9: Summary ─────────────────────────────────────────────────
 
-    print(_bold("Step 9: Setup complete!"))
+    print(_bold("Step 10: Setup complete!"))
     print()
 
     print("  Capability status:")
