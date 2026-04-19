@@ -1,7 +1,7 @@
 """Colony sidecar FastAPI server.
 
-Intelligence sidecar server mounted by (OpenClaw, future shims) mount
-as a plugin via the ``/v1/host`` API surface.
+Intelligence sidecar server mounted by agent frameworks (OpenClaw, Hermes,
+etc.) as a plugin via the ``/v1/host`` API surface.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -39,10 +40,15 @@ from colony_sidecar.api.routers.host import (
 logger = logging.getLogger(__name__)
 
 
+def _state_dir() -> Path:
+    """Resolve the Colony state directory."""
+    return Path(os.environ.get("COLONY_STATE_DIR", ".")).resolve()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize subsystems on startup, tear down on shutdown."""
-    state_dir = os.environ.get("COLONY_STATE_DIR", ".")
+    state_dir = _state_dir()
 
     # --- 1. LLM Router ---
     llm_router = None
@@ -50,9 +56,8 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.router.router import LLMRouter
         from colony_sidecar.router.tiers import build_tiers_from_host
         import json as _json
-        from pathlib import Path as _Path
 
-        config_path = _Path(state_dir) / ".colony-llm-config.json"
+        config_path = state_dir / ".colony-llm-config.json"
         if config_path.exists():
             try:
                 host_llm_config = _json.loads(config_path.read_text())
@@ -72,7 +77,6 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("LLMRouter init failed — reasoning will not be available: %s", exc)
 
-    # Register LLM router with the host router for /configure endpoint
     if llm_router is not None:
         set_llm_router(llm_router)
 
@@ -82,7 +86,7 @@ async def lifespan(app: FastAPI):
             from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
             reasoning_loop = ReasoningLoop(model=llm_router, tools=ToolExecutor())
             set_reasoning_loop(reasoning_loop)
-            logger.info("ReasoningLoop initialized (max_iterations=%d)", reasoning_loop._config.max_iterations)
+            logger.info("ReasoningLoop initialized")
         except Exception as exc:
             logger.warning("ReasoningLoop init failed: %s", exc)
 
@@ -94,13 +98,17 @@ async def lifespan(app: FastAPI):
         neo4j_uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
         neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
         neo4j_pass = os.environ.get("NEO4J_PASSWORD", "")
+        # Neo4j Community Edition only has the "neo4j" database.
+        # Enterprise users can override via NEO4J_DATABASE.
+        neo4j_db = os.environ.get("NEO4J_DATABASE", "neo4j")
         graph_config = GraphConfig(
             uri=neo4j_uri,
             auth=(neo4j_user, SecretStr(neo4j_pass)) if neo4j_pass else None,
+            database=neo4j_db,
         )
         graph = ColonyGraph(graph_config)
         set_graph(graph)
-        logger.info("ColonyGraph initialized (uri=%s)", neo4j_uri)
+        logger.info("ColonyGraph initialized (uri=%s db=%s)", neo4j_uri, neo4j_db)
     except Exception as exc:
         logger.warning("ColonyGraph init failed — memory endpoints will be degraded: %s", exc)
 
@@ -112,18 +120,14 @@ async def lifespan(app: FastAPI):
         gate_audit = InMemoryAuditLog()
         gate = ResponseGate(gate_config, session_store=None, audit_log=gate_audit)
         set_response_gate(gate)
-        logger.info("ResponseGate initialized (sensitivity=%s)", gate_config.sensitivity)
+        logger.info("ResponseGate initialized")
     except Exception as exc:
         logger.warning("ResponseGate init failed — safety checks will pass-through: %s", exc)
 
     # --- 5. Signal Collector ---
-    try:
-        from colony_sidecar.intelligence.mind_model.signal_collector import SignalCollector
-        # BaselineStore is a Protocol — needs a concrete implementation from the host.
-        # Skip for now; can be wired later via /v1/host/configure.
-        logger.info("SignalCollector skipped — requires host-provided BaselineStore")
-    except Exception as exc:
-        logger.warning("SignalCollector init failed: %s", exc)
+    # BaselineStore is a Protocol — needs a concrete implementation from
+    # the host. Can be wired later via /v1/host/configure.
+    logger.info("SignalCollector skipped — requires host-provided BaselineStore")
 
     # --- 6. Embedding pipeline ---
     try:
@@ -138,7 +142,7 @@ async def lifespan(app: FastAPI):
         set_embedder(pipeline)
         logger.info("EmbeddingPipeline initialized (model=%s)", embed_config.model_id)
     except Exception as exc:
-        logger.warning("EmbeddingPipeline init failed — memory/embed returns 501: %s", exc)
+        logger.warning("EmbeddingPipeline init failed: %s", exc)
 
     # --- 7. Goals engine ---
     try:
@@ -168,13 +172,22 @@ async def lifespan(app: FastAPI):
         logger.warning("BriefingEngine init failed: %s", exc)
 
     # --- 10. World model ---
+    world_store = None
     try:
         from colony_sidecar.world_model.store import WorldModelStore
         world_store = WorldModelStore()
+        await world_store.connect()
         set_world_store(world_store)
-        logger.info("WorldModelStore initialized")
+        logger.info("WorldModelStore initialized and connected")
     except Exception as exc:
         logger.warning("WorldModelStore init failed: %s", exc)
+        # Try without connect() — some operations work without it
+        try:
+            world_store = WorldModelStore()
+            set_world_store(world_store)
+            logger.info("WorldModelStore initialized (without connect)")
+        except Exception:
+            pass
 
     # --- 11. Cognition (MetaLearner) ---
     try:
@@ -228,21 +241,22 @@ async def lifespan(app: FastAPI):
         logger.warning("ContinuousLearner init failed: %s", exc)
 
     # --- 16. Skills registry ---
+    skills_registry = None
     try:
         from colony_sidecar.skills.registry import SkillRegistry
-        from pathlib import Path
-        skills = SkillRegistry(db_path=Path(state_dir) / "skills.db")
-        set_skills_registry(skills)
-        logger.info("SkillRegistry initialized")
+        skills_db_path = state_dir / "skills.db"
+        skills_registry = SkillRegistry(db_path=skills_db_path)
+        skills_registry.open()
+        set_skills_registry(skills_registry)
+        logger.info("SkillRegistry initialized (db=%s)", skills_db_path)
     except Exception as exc:
         logger.warning("SkillRegistry init failed: %s", exc)
 
     # --- 17. Chain / Identity ---
     try:
         from colony_sidecar.chain.manager import ChainManager
-        from pathlib import Path
         chain = ChainManager(
-            db_path=Path(state_dir) / "chain.db",
+            db_path=state_dir / "chain.db",
             colony_id=os.environ.get("COLONY_ID", "colony-default"),
         )
         set_chain_manager(chain)
@@ -282,6 +296,16 @@ async def lifespan(app: FastAPI):
     if graph is not None:
         try:
             await graph.close()
+        except Exception:
+            pass
+    if world_store is not None:
+        try:
+            await world_store.close()
+        except Exception:
+            pass
+    if skills_registry is not None:
+        try:
+            skills_registry.close()
         except Exception:
             pass
     set_llm_router(None)

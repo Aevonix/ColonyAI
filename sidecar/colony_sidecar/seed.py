@@ -844,6 +844,24 @@ INSIGHTS = [
 # SEEDING FUNCTION
 # =============================================================================
 
+
+
+
+# =============================================================================
+# SEEDING FUNCTION
+# =============================================================================
+
+# Map seed entity types to allowed SQLite types
+_ENTITY_TYPE_MAP = {
+    "technology": "concept",
+    "organization": "company",
+    "framework": "concept",
+    "project": "project",
+    "person": "person",
+    "concept": "concept",
+}
+
+
 async def seed_self_knowledge(
     graph: "ColonyGraph | None" = None,
     contacts_store: "ContactStore | None" = None,
@@ -852,12 +870,16 @@ async def seed_self_knowledge(
     skills_registry: "SkillRegistry | None" = None,
 ) -> dict:
     """Seed Colony with comprehensive self-knowledge.
-    
+
     This gives every new Colony instance a deep understanding of what it is,
     how it works, and what it can do — its "birth memory."
-    
+
     Returns a dict with counts of what was seeded.
     """
+    from datetime import datetime, timezone
+    from colony_sidecar.world_model.entities import BaseEntity
+    from colony_sidecar.skills.registry import SkillManifest, SkillStatus
+
     results = {
         "memories": 0,
         "entities": 0,
@@ -865,76 +887,98 @@ async def seed_self_knowledge(
         "insights": 0,
         "errors": [],
     }
-    
+
+    now = datetime.now(timezone.utc)
+
     # Seed memories to graph
     if graph is not None:
         try:
             for mem in ARCHITECTURE_MEMORIES:
-                await graph.write_memory(
+                await graph.store_memory(
                     content=mem["content"],
+                    memory_type="architecture",
+                    entities=mem.get("entities", []),
                     metadata={
                         "topics": mem["topics"],
                         "importance": mem["importance"],
                         "source": "colony_self_knowledge",
                     },
+                    importance=mem.get("importance", 0.8),
+                    session_id="colony-init",
                 )
                 results["memories"] += 1
             logger.info("Seeded %d architecture memories", results["memories"])
         except Exception as e:
             results["errors"].append(f"memory_seed: {e}")
             logger.warning("Failed to seed memories: %s", e)
-    
+
     # Seed world model entities
     if world_store is not None:
         try:
-            for entity in WORLD_MODEL_ENTITIES:
-                await world_store.upsert_entity(
-                    name=entity["name"],
-                    entity_type=entity["type"],
-                    attributes=entity.get("attributes", {}),
+            for entity_data in WORLD_MODEL_ENTITIES:
+                entity_obj = BaseEntity(
+                    id=f"seed-{entity_data['type']}-{entity_data['name'].lower().replace(' ', '-')}",
+                    name=entity_data["name"],
+                    entity_type=_ENTITY_TYPE_MAP.get(entity_data["type"], "concept"),
+                    properties=entity_data.get("attributes", {}),
+                    confidence=1.0,
+                    first_seen=now,
+                    last_seen=now,
+                    created_at=now,
+                    updated_at=now,
                 )
+                await world_store.upsert_entity(entity_obj)
                 results["entities"] += 1
             logger.info("Seeded %d world model entities", results["entities"])
         except Exception as e:
             results["errors"].append(f"entity_seed: {e}")
             logger.warning("Failed to seed entities: %s", e)
-    
+
     # Seed skills registry
     if skills_registry is not None:
         try:
             for skill in COLONY_NATIVE_SKILLS:
-                await skills_registry.register_skill(
+                manifest = SkillManifest(
                     skill_id=skill["id"],
                     name=skill["name"],
+                    version="0.1.0",
                     description=skill["description"],
-                    parameters=skill["parameters"],
-                    examples=skill["examples"],
+                    author_colony_id="colony-init",
+                    created_at=now,
+                    updated_at=now,
+                    status=SkillStatus.ACTIVE,
+                    input_schema=skill.get("parameters", {}),
+                    trigger_patterns=[skill["id"]],
                 )
+                await skills_registry.register(manifest=manifest, skill_dir=None)
                 results["skills"] += 1
             logger.info("Seeded %d skills", results["skills"])
         except Exception as e:
             results["errors"].append(f"skill_seed: {e}")
             logger.warning("Failed to seed skills: %s", e)
-    
+
     # Seed insights
     if graph is not None:
         try:
             for insight in INSIGHTS:
-                await graph.write_memory(
+                await graph.store_memory(
                     content=f"INSIGHT: {insight['insight']}",
+                    memory_type="insight",
+                    entities=insight.get("entities", []),
                     metadata={
                         "type": "insight",
-                        "entities": insight["entities"],
                         "novelty": insight["novelty"],
                         "source": "colony_self_knowledge",
                     },
+                    importance=insight.get("novelty", 0.5),
+                    session_id="colony-init",
                 )
                 results["insights"] += 1
             logger.info("Seeded %d insights", results["insights"])
         except Exception as e:
             results["errors"].append(f"insight_seed: {e}")
             logger.warning("Failed to seed insights: %s", e)
-    
+
     return results
 
 

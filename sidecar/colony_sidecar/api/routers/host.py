@@ -1471,11 +1471,27 @@ async def seed_self_knowledge_endpoint() -> SeedResponse:
     of its own architecture and capabilities.
     """
     from colony_sidecar.seed import seed_self_knowledge
-    
+
+    # Ensure world store is connected
+    ws = _world_store
+    if ws is not None and hasattr(ws, "connect") and getattr(ws, "_backend", None) is None:
+        try:
+            await ws.connect()
+        except Exception:
+            pass
+
+    # Ensure skills registry is opened
+    sr = _skills_registry
+    if sr is not None and hasattr(sr, "open"):
+        try:
+            sr.open()
+        except Exception:
+            pass
+
     results = await seed_self_knowledge(
         graph=_graph,
-        world_store=_world_store,
-        skills_registry=_skills_registry,
+        world_store=ws,
+        skills_registry=sr,
     )
     
     return SeedResponse(
