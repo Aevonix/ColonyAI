@@ -682,6 +682,7 @@ class IdentityStatusResponse(BaseModel):
     public_key: Optional[str] = None
     initialized: bool = False
     keys_configured: bool = False
+    is_genesis: bool = False
 
 
 class IdentityInitRequest(BaseModel):

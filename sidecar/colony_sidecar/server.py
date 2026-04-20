@@ -402,13 +402,39 @@ async def lifespan(app: FastAPI):
 
     # --- 17. Chain / Identity ---
     try:
+        from colony_sidecar.chain.identity import get_or_create_colony_id, load_genesis_manifest
+        colony_id = get_or_create_colony_id(state_dir)
+
+        # Load Genesis manifest if it exists
+        genesis_path = Path(state_dir) / "genesis.json"
+        load_genesis_manifest(genesis_path)
+
         from colony_sidecar.chain.manager import ChainManager
         chain = ChainManager(
             db_path=state_dir / "chain.db",
-            colony_id=os.environ.get("COLONY_ID", "colony-default"),
+            colony_id=colony_id,
         )
         set_chain_manager(chain)
-        logger.info("ChainManager initialized")
+        logger.info("ChainManager initialized (colony_id=%s)", colony_id)
+
+        # Wire local key manager
+        try:
+            from colony_sidecar.chain.local_keys import LocalKeyManager
+            keys_dir = state_dir / "colony-keys"
+            key_passphrase = os.environ.get("COLONY_KEY_PASSPHRASE", "")
+            passphrase = key_passphrase.encode() if key_passphrase else None
+
+            if (keys_dir / "private.pem").exists():
+                key_mgr = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase)
+                logger.info("LocalKeyManager loaded (public_key=%s...)", key_mgr.public_key_hex()[:16])
+            else:
+                key_mgr = LocalKeyManager.generate(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase)
+                logger.info("LocalKeyManager generated new keypair for colony %s", colony_id)
+
+            chain._key_manager = key_mgr  # Attach to chain for access
+        except Exception as kexc:
+            logger.warning("LocalKeyManager init skipped: %s", kexc)
+
     except Exception as exc:
         logger.warning("ChainManager init failed: %s", exc)
 

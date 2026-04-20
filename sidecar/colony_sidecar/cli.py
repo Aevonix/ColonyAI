@@ -56,6 +56,17 @@ def main() -> None:
     doc_p.add_argument("--url", default=None, help="Sidecar URL (default: from .env)")
     doc_p.add_argument("--api-key", default=None, help="API key (default: from .env)")
     doc_p.add_argument("--verbose", "-v", action="store_true", help="Show detailed results")
+
+    # --- key ---
+    key_p = sub.add_parser("key", help="Manage Colony cryptographic identity")
+    key_sub = key_p.add_subparsers(dest="key_command")
+    key_sub.add_parser("info", help="Show colony_id and public key")
+    key_sub.add_parser("generate", help="Generate a new keypair (replaces existing)")
+    key_gen = key_sub.add_parser("set-passphrase", help="Encrypt private key with a passphrase")
+    key_gen.add_argument("--passphrase", default=None, help="New passphrase (prompted if not given)")
+    key_sub.add_parser("manifest", help="Create a colony manifest (shareable public identity)")
+    key_genesis = key_sub.add_parser("claim-genesis", help="Claim Genesis status for this Colony (first Colony only)")
+    key_genesis.add_argument("--force", action="store_true", help="Overwrite existing Genesis manifest")
     mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
     mm_p.add_argument("--skip-download", action="store_true", help="Skip model download")
 
@@ -348,8 +359,105 @@ def main() -> None:
     elif args.command == "doctor":
         _cmd_doctor(args)
 
+    elif args.command == "key":
+        _cmd_key(args)
+
     else:
         parser.print_help()
+
+
+def _cmd_key(args) -> None:
+    """Manage Colony cryptographic identity."""
+    _load_dotenv()
+    state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
+
+    if args.key_command == "info":
+        from colony_sidecar.chain.identity import get_or_create_colony_id, get_genesis_manifest
+        colony_id = get_or_create_colony_id(state_dir)
+        keys_dir = os.path.join(state_dir, "colony-keys")
+        try:
+            from colony_sidecar.chain.local_keys import LocalKeyManager
+            km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id)
+            pubkey = km.public_key_hex()
+            print(f"  Colony ID:  {colony_id}")
+            print(f"  Public Key: {pubkey}")
+            manifest = get_genesis_manifest()
+            if manifest and manifest.get("colony_id") == colony_id:
+                print(f"  Genesis:    YES (trust anchor)")
+            else:
+                print(f"  Genesis:    no")
+        except FileNotFoundError:
+            print(f"  Colony ID:  {colony_id}")
+            print(f"  Public Key: (no keypair — run 'colony key generate')")
+
+    elif args.key_command == "generate":
+        from colony_sidecar.chain.identity import get_or_create_colony_id
+        colony_id = get_or_create_colony_id(state_dir)
+        keys_dir = os.path.join(state_dir, "colony-keys")
+        passphrase = os.environ.get("COLONY_KEY_PASSPHRASE", "")
+        passphrase_bytes = passphrase.encode() if passphrase else None
+        from colony_sidecar.chain.local_keys import LocalKeyManager
+        km = LocalKeyManager.generate(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase_bytes)
+        print(f"  Generated new Ed25519 keypair for colony {colony_id}")
+        print(f"  Public Key: {km.public_key_hex()}")
+
+    elif args.key_command == "set-passphrase":
+        from colony_sidecar.chain.identity import get_or_create_colony_id
+        colony_id = get_or_create_colony_id(state_dir)
+        keys_dir = os.path.join(state_dir, "colony-keys")
+        passphrase = args.passphrase
+        if not passphrase:
+            import getpass
+            passphrase = getpass.getpass("New passphrase: ")
+        from colony_sidecar.chain.local_keys import LocalKeyManager
+        km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id)
+        km.set_passphrase(passphrase.encode())
+        print(f"  Passphrase set for colony {colony_id}")
+
+    elif args.key_command == "manifest":
+        from colony_sidecar.chain.identity import get_or_create_colony_id, create_colony_manifest
+        colony_id = get_or_create_colony_id(state_dir)
+        keys_dir = os.path.join(state_dir, "colony-keys")
+        from colony_sidecar.chain.local_keys import LocalKeyManager
+        km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id)
+        manifest_path = os.path.join(state_dir, "colony-manifest.json")
+        manifest = create_colony_manifest(colony_id, km.public_key_hex(), manifest_path)
+        print(f"  Manifest saved to {manifest_path}")
+        print(f"  Share this file with other Colonies to establish trust.")
+
+    elif args.key_command == "claim-genesis":
+        from colony_sidecar.chain.identity import get_or_create_colony_id, create_genesis_manifest, get_genesis_manifest
+        colony_id = get_or_create_colony_id(state_dir)
+
+        existing = get_genesis_manifest()
+        if existing and not args.force:
+            print("  Genesis manifest already exists.")
+            print(f"  Existing Genesis colony_id: {existing.get('colony_id')}")
+            print("  Use --force to overwrite (NOT recommended if other Colonies trust this manifest)")
+            return
+
+        keys_dir = os.path.join(state_dir, "colony-keys")
+        from colony_sidecar.chain.local_keys import LocalKeyManager
+        try:
+            km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id)
+            pubkey = km.public_key_hex()
+        except FileNotFoundError:
+            # Generate keypair first
+            km = LocalKeyManager.generate(keys_dir=keys_dir, colony_id=colony_id)
+            pubkey = km.public_key_hex()
+
+        genesis_path = os.path.join(state_dir, "genesis.json")
+        manifest = create_genesis_manifest(colony_id, pubkey, genesis_path)
+        print(f"  ⚡ Genesis claimed for colony {colony_id}")
+        print(f"  Public Key: {pubkey}")
+        print(f"  Manifest saved to {genesis_path}")
+        print(f"")
+        print(f"  IMPORTANT: Commit genesis.json to the Colony repo so other")
+        print(f"  Colonies can recognize you as the trust anchor.")
+        print(f"  Your private key never leaves this machine.")
+
+    else:
+        print("  Usage: colony key {info|generate|set-passphrase|manifest|claim-genesis}")
 
 
 def _cmd_doctor(args) -> None:

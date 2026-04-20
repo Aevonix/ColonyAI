@@ -1995,21 +1995,28 @@ async def identity_status() -> IdentityStatusResponse:
         return IdentityStatusResponse(initialized=False)
     try:
         colony_id = _chain_manager.colony_id
-        # Try to get public key from chain state
         pubkey = None
-        try:
-            state = await _chain_manager.get_state()
-            if hasattr(state, "public_key_hex") and state.public_key_hex:
-                pubkey = state.public_key_hex
-        except Exception:
-            pass
-        # Check if key manager is wired for signing
-        has_keys = hasattr(_chain_manager, "key_manager") and _chain_manager.key_manager is not None
+        keys_configured = False
+        is_genesis = False
+
+        # Try to get public key from key manager
+        key_mgr = getattr(_chain_manager, "_key_manager", None)
+        if key_mgr is not None:
+            try:
+                pubkey = key_mgr.public_key_hex()
+                keys_configured = True
+                # Check if this is Genesis
+                from colony_sidecar.chain.identity import is_genesis as check_genesis
+                is_genesis = check_genesis(colony_id, pubkey)
+            except Exception:
+                pass
+
         return IdentityStatusResponse(
             colony_id=colony_id,
             public_key=pubkey,
             initialized=colony_id is not None,
-            keys_configured=has_keys,
+            keys_configured=keys_configured,
+            is_genesis=is_genesis,
         )
     except Exception as exc:
         logger.warning("identity_status failed: %s", exc)
