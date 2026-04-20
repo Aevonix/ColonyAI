@@ -83,6 +83,7 @@ function makeCtx(opts?: {
       health,
     } as unknown as ColonyPluginContext["client"],
     identity: () => ({ host_id: "host-test", plugin_version: "0.0.1" }),
+    refreshIdentity: async () => ({}),
     logger,
   };
 
@@ -369,6 +370,10 @@ describe("contextEngineFactory — assemble wire params", () => {
       goals: true,
       worldModel: true,
       insights: true,
+      identity: true,
+      briefings: true,
+      contactsList: true,
+      cognition: true,
     });
   });
 });

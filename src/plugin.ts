@@ -4,6 +4,7 @@ import type {
   ContextSection,
   HostEvent,
   HostHealthResponse,
+  HostIdentity,
   HostMessage,
 } from "./types.js";
 import { SessionTextCache } from "./hooks/session-text-cache.js";
@@ -270,10 +271,30 @@ async function handleProactiveMessage(
   }
 }
 
+/**
+ * Snapshot of colony / node identity fields resolved from the sidecar's
+ * ``/v1/host/identity/status`` at plugin registration time. Cached on the
+ * context so ``identity()`` can produce a full ``HostIdentity`` without
+ * re-hitting the sidecar each turn.
+ */
+export interface IdentitySnapshot {
+  colony_id?: string;
+  node_id?: string;
+  node_cert_fingerprint?: string;
+  trust_tier?: "REGULAR" | "TRUSTED" | "PRIVILEGED" | "GENESIS";
+}
+
 export interface ColonyPluginContext {
   config: ColonyPluginConfig;
   client: ColonySidecarClient;
-  identity: () => { host_id: string; plugin_version: string };
+  identity: () => HostIdentity;
+  /**
+   * Resolve identity fields (colony_id, node_id, trust_tier) from the
+   * sidecar and cache them on the context. Safe to call multiple times;
+   * returns the current snapshot. Never throws — failures log and return
+   * the existing (possibly empty) snapshot.
+   */
+  refreshIdentity: () => Promise<IdentitySnapshot>;
   /**
    * Plugin-scoped logger. Optional so ``buildContext`` can be stubbed in
    * tests without requiring a logger; adapters that want to emit
@@ -285,10 +306,45 @@ export interface ColonyPluginContext {
 function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
   const config = ColonyPluginConfigSchema.parse(api.pluginConfig ?? {});
   const client = new ColonySidecarClient(config);
+  const snapshot: IdentitySnapshot = {};
+
+  const identity = (): HostIdentity => ({
+    host_id: config.hostId,
+    plugin_version: PLUGIN_VERSION,
+    ...(snapshot.colony_id ? { colony_id: snapshot.colony_id } : {}),
+    ...(snapshot.node_id ? { node_id: snapshot.node_id } : {}),
+    ...(snapshot.node_cert_fingerprint
+      ? { node_cert_fingerprint: snapshot.node_cert_fingerprint }
+      : {}),
+    ...(snapshot.trust_tier ? { trust_tier: snapshot.trust_tier } : {}),
+  });
+
+  const refreshIdentity = async (): Promise<IdentitySnapshot> => {
+    try {
+      const status = (await client.identityStatus()) as {
+        colony_id?: string | null;
+        node_id?: string | null;
+        node_cert_fingerprint?: string | null;
+        trust_tier?: IdentitySnapshot["trust_tier"] | null;
+      };
+      if (status?.colony_id) snapshot.colony_id = status.colony_id;
+      if (status?.node_id) snapshot.node_id = status.node_id;
+      if (status?.node_cert_fingerprint)
+        snapshot.node_cert_fingerprint = status.node_cert_fingerprint;
+      if (status?.trust_tier) snapshot.trust_tier = status.trust_tier;
+    } catch (err) {
+      api.logger?.warn(
+        `[colony] identity bootstrap failed: ${String(err)}`,
+      );
+    }
+    return { ...snapshot };
+  };
+
   return {
     config,
     client,
-    identity: () => ({ host_id: config.hostId, plugin_version: PLUGIN_VERSION }),
+    identity,
+    refreshIdentity,
     logger: api.logger,
   };
 }
@@ -752,6 +808,10 @@ function contextEngineFactory(
               goals: true,
               worldModel: true,
               insights: true,
+              identity: true,
+              briefings: true,
+              contactsList: true,
+              cognition: true,
             },
           }),
         () => ({ sections: [], notices: ["colony-context: degraded"] }),
@@ -2028,6 +2088,22 @@ export function createColonyPlugin(): unknown {
         .catch((err: unknown) =>
           api.logger.warn(`[colony] sidecar health check failed: ${String(err)}`),
         );
+
+      // Bootstrap identity so ctx.identity() returns colony_id / node_id /
+      // trust_tier once resolved. Fire-and-forget — the first few turns
+      // may see a partial identity until the sidecar responds.
+      ctx
+        .refreshIdentity()
+        .then((snap) => {
+          if (snap.colony_id || snap.node_id) {
+            api.logger.info(
+              `[colony] identity resolved colony_id=${snap.colony_id ?? "?"} node_id=${snap.node_id ?? "?"} tier=${snap.trust_tier ?? "unset"}`,
+            );
+          }
+        })
+        .catch(() => {
+          /* refreshIdentity never throws — belt-and-braces */
+        });
     },
   });
 }
@@ -2036,6 +2112,7 @@ export function createColonyPlugin(): unknown {
 export { ColonySidecarClient, ColonyApiError } from "./sidecar-client.js";
 export type { ColonyPluginConfig } from "./config.js";
 export {
+  buildContext as __buildContext,
   memoryCapability as __memoryCapability,
   memoryEmbeddingProvider as __memoryEmbeddingProvider,
   contextEngineFactory as __contextEngineFactory,
