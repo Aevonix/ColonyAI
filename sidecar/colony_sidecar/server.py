@@ -20,6 +20,7 @@ from colony_sidecar.api.routers.host import (
     set_chain_manager,
     set_reasoning_loop,
     set_graph,
+    set_consolidator,
     set_response_gate,
     set_signal_collector,
     set_embedder,
@@ -111,6 +112,15 @@ async def lifespan(app: FastAPI):
         graph = ColonyGraph(graph_config)
         set_graph(graph)
         logger.info("ColonyGraph initialized (uri=%s db=%s)", neo4j_uri, neo4j_db)
+
+        # Wire consolidator
+        try:
+            from colony_sidecar.intelligence.graph.consolidator import MemoryConsolidator
+            consolidator = MemoryConsolidator(graph)
+            set_consolidator(consolidator)
+            logger.info("MemoryConsolidator initialized")
+        except Exception as cexc:
+            logger.warning("MemoryConsolidator init skipped: %s", cexc)
     except Exception as exc:
         logger.warning("ColonyGraph init failed — memory endpoints will be degraded: %s", exc)
 
