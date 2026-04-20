@@ -639,6 +639,115 @@ async def memory_embed_image_batch(body: ImageBatchEmbedRequest) -> ImageBatchEm
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.post("/memory/embed/async")
+async def memory_embed_async(body: dict) -> dict:
+    """Async embedding for large collections — returns task_id immediately.
+
+    Accepts the same format as /memory/embed, /memory/embed/image/batch,
+    or /memory/index but runs in the background.
+    Poll GET /memory/embed/async/{task_id} for status.
+    """
+    if _embedder is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
+
+    from colony_sidecar.vector import get_store
+    store = get_store()
+
+    task_id = str(uuid.uuid4())
+    _async_embed_tasks: dict = getattr(router, "_async_embed_tasks", {})
+    router._async_embed_tasks = _async_embed_tasks
+
+    embed_type = body.get("type", "texts")  # texts | images | index
+
+    async def _run():
+        try:
+            _async_embed_tasks[task_id] = {"status": "running", "processed": 0, "failed": 0}
+
+            if embed_type == "texts":
+                texts = body.get("texts", body.get("inputs", []))
+                if len(texts) > 1024:
+                    _async_embed_tasks[task_id] = {"status": "failed", "error": f"Batch size {len(texts)} exceeds 1024"}
+                    return
+                vectors = await _embedder.embed_batch(texts)
+                _async_embed_tasks[task_id] = {"status": "completed", "processed": len(vectors), "failed": 0}
+
+            elif embed_type == "images":
+                images = body.get("images", [])
+                if len(images) > 128:
+                    _async_embed_tasks[task_id] = {"status": "failed", "error": f"Batch size {len(images)} exceeds 128"}
+                    return
+                results = []
+                failed = 0
+                for img_item in images:
+                    try:
+                        source = img_item.get("image") or img_item.get("image_url") or img_item.get("image_path")
+                        if not source:
+                            failed += 1
+                            continue
+                        vector, meta = await _embedder.embed_image(
+                            source, mime_type=img_item.get("mime_type", ""),
+                            caption=img_item.get("caption", ""),
+                        )
+                        results.append({"vector": vector, **meta})
+                    except Exception:
+                        failed += 1
+                _async_embed_tasks[task_id] = {"status": "completed", "processed": len(results), "failed": failed}
+
+            elif embed_type == "index":
+                if store is None:
+                    _async_embed_tasks[task_id] = {"status": "failed", "error": "VectorStore not initialized"}
+                    return
+                items = body.get("items", [])
+                indexed = 0
+                failed = 0
+                for item in items:
+                    try:
+                        from colony_sidecar.vector.collections import Collection
+                        from colony_sidecar.vector.query import VectorItem
+
+                        if item.get("image") or item.get("image_url") or item.get("image_path"):
+                            source = item.get("image") or item.get("image_url") or item.get("image_path")
+                            vector, meta = await _embedder.embed_image(
+                                source, mime_type=item.get("mime_type", ""),
+                                caption=item.get("caption", ""),
+                            )
+                            col_name = item.get("collection", "memories")
+                            try: col = Collection(col_name)
+                            except ValueError: col = Collection.MEMORIES
+                            vi = VectorItem(id=item.get("id", str(uuid.uuid4())), text=meta.get("caption", ""), vector=vector, metadata=meta)
+                        else:
+                            text = item.get("text", "")
+                            vector = await _embedder.embed(text)
+                            col_name = item.get("collection", "memories")
+                            try: col = Collection(col_name)
+                            except ValueError: col = Collection.MEMORIES
+                            meta = item.get("metadata", {})
+                            meta["model_id"] = _embedder._provider._config.model_id if hasattr(_embedder, "_provider") else ""
+                            vi = VectorItem(id=item.get("id", str(uuid.uuid4())), text=text, vector=vector, metadata=meta)
+
+                        await store.add_batch(col, [vi])
+                        indexed += 1
+                    except Exception:
+                        failed += 1
+                _async_embed_tasks[task_id] = {"status": "completed", "indexed": indexed, "failed": failed}
+
+        except Exception as exc:
+            _async_embed_tasks[task_id] = {"status": "failed", "error": str(exc)}
+
+    asyncio.create_task(_run())
+    return {"task_id": task_id, "status": "started"}
+
+
+@router.get("/memory/embed/async/{task_id}")
+async def async_embed_status(task_id: str) -> dict:
+    """Poll status of an async embed task."""
+    _async_embed_tasks: dict = getattr(router, "_async_embed_tasks", {})
+    result = _async_embed_tasks.get(task_id)
+    if result is None:
+        return {"task_id": task_id, "status": "running"}
+    return {"task_id": task_id, **result}
+
+
 @router.post("/memory/search/multimodal", response_model=MultimodalSearchResponse)
 async def memory_search_multimodal(body: MultimodalSearchRequest) -> MultimodalSearchResponse:
     """Cross-modal search — text query finds images, image query finds text."""

@@ -12,13 +12,15 @@ from enum import Enum
 class Collection(str, Enum):
     """Named vector collections — each becomes a LanceDB table."""
 
-    MEMORIES = "memories"
-    SKILLS = "skills"
-    ENTITIES = "entities"
-    DOCUMENTS = "documents"
-    CONTACTS = "contacts"
-    COGNITION = "cognition"
-    IDENTITY = "identity"
+    MEMORIES = "memories"          # Text + images mixed
+    SKILLS = "skills"              # Text only
+    ENTITIES = "entities"          # Text only
+    DOCUMENTS = "documents"        # Text + scanned images
+    CONTACTS = "contacts"          # Text only
+    COGNITION = "cognition"        # Text only
+    IDENTITY = "identity"          # Text only
+    CONVERSATIONS = "conversations" # Text + images (shared photos)
+    MEDIA = "media"                # Images primarily, with captions
 
 
 # Per-collection metadata key documentation (informational; stored as JSON)
