@@ -474,15 +474,15 @@ async def memory_search(body: MemorySearchRequest) -> MemorySearchResponse:
         )
         entries = [
             MemoryEntry(
-                id=e.get("id", str(uuid.uuid4())),
-                content=e.get("content", ""),
+                id=str(e.get("id", "")),
+                content=str(e.get("content", "")),
                 type=e.get("type"),
-                strength=e.get("strength"),
+                strength=float(e["strength"]) if "strength" in e and e["strength"] is not None else None,
                 person_id=e.get("person_id"),
                 entities=e.get("entities"),
                 tags=e.get("tags"),
-                created_at=e.get("created_at"),
-                score=e.get("relevance", e.get("score")),
+                created_at=str(e["created_at"]) if "created_at" in e and e["created_at"] is not None else None,
+                score=float(e["relevance"]) if "relevance" in e and e["relevance"] is not None else e.get("score"),
             )
             for e in results
         ]
