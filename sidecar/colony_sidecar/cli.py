@@ -67,6 +67,17 @@ def main() -> None:
     key_sub.add_parser("manifest", help="Create a colony manifest (shareable public identity)")
     key_genesis = key_sub.add_parser("claim-genesis", help="Claim Genesis status for this Colony (first Colony only)")
     key_genesis.add_argument("--force", action="store_true", help="Overwrite existing Genesis manifest")
+
+    # --- backup ---
+    backup_p = sub.add_parser("backup", help="Export Colony identity as a portable backup")
+    backup_p.add_argument("--output", "-o", default=None, help="Output file path (default: stdout)")
+    backup_p.add_argument("--passphrase", default=None, help="Encrypt private key with this passphrase (prompted if --encrypt)")
+    backup_p.add_argument("--encrypt", action="store_true", help="Encrypt private key (prompts for passphrase)")
+
+    # --- restore ---
+    restore_p = sub.add_parser("restore", help="Restore Colony from a backup")
+    restore_p.add_argument("--input", "-i", default=None, help="Input backup file path (default: stdin)")
+    restore_p.add_argument("--passphrase", default=None, help="Passphrase to decrypt private key")
     mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
     mm_p.add_argument("--skip-download", action="store_true", help="Skip model download")
 
@@ -362,8 +373,92 @@ def main() -> None:
     elif args.command == "key":
         _cmd_key(args)
 
+    elif args.command == "backup":
+        _cmd_backup(args)
+
+    elif args.command == "restore":
+        _cmd_restore(args)
+
     else:
         parser.print_help()
+
+
+def _cmd_backup(args) -> None:
+    """Export Colony identity as a portable, optionally encrypted backup."""
+    _load_dotenv()
+    state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
+
+    passphrase = None
+    if args.encrypt:
+        import getpass
+        passphrase = getpass.getpass("Backup passphrase: ").encode()
+    elif args.passphrase:
+        passphrase = args.passphrase.encode()
+
+    try:
+        from colony_sidecar.chain.identity import backup_colony
+        backup = backup_colony(state_dir, passphrase=passphrase)
+        backup_json = json.dumps(backup, indent=2) + "\n"
+
+        if args.output:
+            Path(args.output).write_text(backup_json)
+            print(f"  Backup saved to {args.output}")
+        else:
+            print(backup_json)
+    except FileNotFoundError as e:
+        print(f"  Error: {e}")
+        print("  Run 'colony init' first to create an identity.")
+        raise SystemExit(1)
+
+
+def _cmd_restore(args) -> None:
+    """Restore Colony from a backup."""
+    _load_dotenv()
+    state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
+
+    # Check if identity already exists
+    id_path = Path(state_dir) / "colony-id"
+    if id_path.exists():
+        print("  Warning: A Colony identity already exists in this state directory.")
+        existing_id = id_path.read_text().strip()
+        print(f"  Existing colony_id: {existing_id}")
+        confirm = input("  Overwrite? [y/N] ").strip().lower()
+        if confirm != "y":
+            print("  Restore cancelled.")
+            return
+
+    # Read backup
+    if args.input:
+        backup_text = Path(args.input).read_text()
+    else:
+        import sys
+        print("  Paste backup JSON (Ctrl+D to end):")
+        backup_text = sys.stdin.read()
+
+    try:
+        backup_data = json.loads(backup_text)
+    except json.JSONDecodeError:
+        print("  Error: Invalid backup JSON")
+        raise SystemExit(1)
+
+    passphrase = None
+    if backup_data.get("encrypted"):
+        if args.passphrase:
+            passphrase = args.passphrase.encode()
+        else:
+            import getpass
+            passphrase = getpass.getpass("Backup passphrase: ").encode()
+
+    try:
+        from colony_sidecar.chain.identity import restore_colony
+        colony_id = restore_colony(state_dir, backup_data, passphrase=passphrase)
+        print(f"  ✅ Colony restored: {colony_id}")
+        if backup_data.get("genesis"):
+            print(f"  ⚡ Genesis status restored")
+        print(f"\n  Run 'colony start' to bring the Colony online.")
+    except ValueError as e:
+        print(f"  Error: {e}")
+        raise SystemExit(1)
 
 
 def _cmd_key(args) -> None:
