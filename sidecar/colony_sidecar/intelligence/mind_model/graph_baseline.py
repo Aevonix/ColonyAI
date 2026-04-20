@@ -112,6 +112,13 @@ class GraphBaselineStore:
         except Exception as exc:
             logger.debug("GraphBaselineStore.record_message failed for %s: %s", person_id, exc)
 
+    async def store_signal(self, signal: "Signal") -> None:
+        """Persist a signal to the graph. Best-effort — logs on failure."""
+        try:
+            await self._graph.store_signal(signal)
+        except Exception as exc:
+            logger.debug("GraphBaselineStore.store_signal failed: %s", exc)
+
     @staticmethod
     def _preferred_hours(histogram_json: Optional[str]) -> List[int]:
         """Hours above the median activity level."""

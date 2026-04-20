@@ -100,6 +100,10 @@ class SignalCollector:
             await self.baselines.store_signal(sig)
         except Exception as e:
             logger.warning("ingest_raw failed: %s", e)
+
+    async def collect(self, message: Message) -> List[Signal]:
+        """Extract all signals from a single message in Colony's interaction stream."""
+        t0 = time.monotonic()
         signals = []
         person_id = message.sender_id
 
