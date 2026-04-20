@@ -59,6 +59,8 @@ v1.0 is the intelligence system. 22 wired subsystems. Everything below works now
 
 **Types stay in sync.** Python Pydantic schemas export an OpenAPI spec. TypeScript types generate from the spec. No client/server drift.
 
+**Authenticated by default.** When `COLONY_API_KEY` is set, all API endpoints require Bearer token authentication. Without it, the API runs in open dev mode.
+
 -----
 
 ## Table of Contents
@@ -115,6 +117,23 @@ docker compose up -d    # Neo4j + Colony sidecar
 ```bash
 curl http://localhost:7777/v1/host/health
 # Expected: {"status":"ok","capabilities":[...22 subsystems...]}
+```
+
+### Full Health Check
+
+After the sidecar is running, use `colony doctor` to verify all subsystems:
+
+```bash
+COLONY_API_KEY=your-key colony doctor
+```
+
+This checks health, auth, memory, response gate, goals, identity, secrets, embeddings, context assembly, skills, world model, signals, and autonomy — 15 subsystem checks. Exit code 0 if healthy, 1 if any check fails.
+
+For the full integration test suite (68 tests):
+
+```bash
+pip install pytest httpx
+COLONY_URL=http://localhost:7777 COLONY_API_KEY=your-key pytest tests/integration/ -v
 ```
 
 -----
@@ -209,6 +228,7 @@ Full configuration reference in `docs/configuration.md`.
 | `colony backfill` | Re-embed all vectors with current model |
 | `colony migrate-tier` | Migrate vectors from old embedding model to current |
 | `colony activate-multimodal` | Enable multimodal embeddings and reranking |
+| `colony doctor` | Run integration health check against running sidecar (`--url`, `--api-key`, `-v`) |
 
 -----
 
@@ -216,7 +236,7 @@ Full configuration reference in `docs/configuration.md`.
 
 Base URL: `http://localhost:7777/v1/host`
 
-All endpoints require Bearer authentication (`Authorization: Bearer $COLONY_API_KEY`).
+All endpoints require Bearer authentication (`Authorization: Bearer $COLONY_API_KEY`). Unauthenticated requests receive 401. The health endpoint (`/v1/host/health`) and OpenAPI spec (`/openapi.json`) are accessible without auth.
 
 Full OpenAPI spec:
 
