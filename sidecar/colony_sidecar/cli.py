@@ -792,7 +792,7 @@ def _cmd_doctor(args) -> None:
         # 16. Contacts
         def _contacts():
             r = c.get("/v1/host/contacts")
-            return r.status_code == 200 and isinstance(r.json(), list)
+            return r.status_code == 200 and isinstance(r.json(), dict)
         check("Contacts", _contacts)
 
         # 17. Briefings
@@ -801,54 +801,49 @@ def _cmd_doctor(args) -> None:
             return r.status_code == 200
         check("Briefings", _briefings)
 
-        # 18. Consolidate
-        def _consolidate():
-            r = c.post("/v1/host/consolidate", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}})
-            return r.status_code == 200
-        check("Consolidate", _consolidate)
-
-        # 19. Sessions
-        def _sessions():
-            r = c.post("/v1/host/sessions", json={"identity": {"host_id": "doctor"}, "context": {"session_id": f"dr-{uuid.uuid4().hex[:6]}", "contact_id": "c"}})
-            return r.status_code == 200
-        check("Sessions", _sessions)
-
-        # 20. Delivery
-        def _delivery():
-            r = c.get("/v1/host/delivery/status")
-            return r.status_code == 200
-        check("Delivery", _delivery)
-
-        # 21. Cognition
+        # 18. Cognition
         def _cognition():
-            r = c.get("/v1/host/cognition/metrics")
+            r = c.get("/v1/host/cognition/cpi")
             return r.status_code == 200
         check("Cognition", _cognition)
 
+        # 19. Delivery
+        def _delivery():
+            r = c.get("/v1/host/delivery/pending")
+            return r.status_code == 200
+        check("Delivery", _delivery)
+
+        # 20. Reasoning (lightweight - just check endpoint exists)
+        def _reasoning():
+            r = c.get("/v1/host/reasoning/turn")
+            return r.status_code == 200 or r.status_code == 405  # 405 = method not allowed, endpoint exists
+        check("Reasoning endpoint", _reasoning)
+
+        # 21. Research
+        def _research():
+            r = c.get("/v1/host/research")
+            return r.status_code == 200
+        check("Research endpoint", _research)
+
         # --- Full checks (heavier, require LLM or async) ---
         if args.full:
-            # 22. Reasoning
-            def _reasoning():
-                r = c.post("/v1/host/reasoning", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "What is 2+2?", "max_iterations": 1}, timeout=30)
+            # Reasoning with LLM inference
+            def _reasoning_full():
+                r = c.post("/v1/host/reasoning/turn", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "What is 2+2?", "max_iterations": 1}, timeout=30)
                 return r.status_code == 200
-            check("Reasoning (LLM)", _reasoning)
+            check("Reasoning (LLM inference)", _reasoning_full)
 
-            # 23. Research
-            def _research():
-                r = c.post("/v1/host/research", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "test", "depth": 1}, timeout=30)
+            # Research with actual task
+            def _research_full():
+                r = c.post("/v1/host/research/start", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "test", "depth": 1}, timeout=30)
                 return r.status_code == 200
-            check("Research (async)", _research)
+            check("Research (async task)", _research_full)
 
-            # 24. Events (WebSocket)
-            def _events():
-                try:
-                    with httpx.Client(timeout=5) as ws_client:
-                        r = ws_client.get(f"{url}/v1/host/events", headers=headers)
-                        # WebSocket endpoint may return 426 (upgrade required) which means it exists
-                        return r.status_code in (200, 426, 403)
-                except Exception:
-                    return False
-            check("Events (WebSocket)", _events)
+            # Cognition cycle
+            def _cognition_full():
+                r = c.post("/v1/host/cognition/cycle", json={"identity": {"host_id": "doctor"}})
+                return r.status_code == 200
+            check("Cognition cycle", _cognition_full)
 
     # Summary
     passed = sum(1 for _, v in checks if v)
