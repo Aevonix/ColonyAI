@@ -181,7 +181,7 @@ class TestMemoryIntegration:
         time.sleep(2)
 
         # Search
-        r = colony.post("/v1/host/memory/recall", json={
+        r = colony.post("/v1/host/memory/search", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "query": "quantum flux capacitor",
@@ -204,7 +204,7 @@ class TestMemoryIntegration:
         time.sleep(2)
 
         # Search immediately
-        r1 = colony.post("/v1/host/memory/recall", json={
+        r1 = colony.post("/v1/host/memory/search", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "query": "magnetoresistance",
@@ -213,7 +213,7 @@ class TestMemoryIntegration:
 
         # Search again after a delay
         time.sleep(1)
-        r2 = colony.post("/v1/host/memory/recall", json={
+        r2 = colony.post("/v1/host/memory/search", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "query": "magnetoresistance",
@@ -233,8 +233,8 @@ class TestResponseGate:
         r = colony.post("/v1/host/response-gate/check", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
-            "content": "Hello, how are you doing today?",
-            "outgoing": True,
+            "response_text": "Hello, how are you doing today?",
+            "incoming_message": "Hi there",
         })
         assert r.status_code == 200
         data = r.json()
@@ -246,8 +246,8 @@ class TestResponseGate:
         r = colony.post("/v1/host/response-gate/check", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
-            "content": "My SSN is 123-45-6789 and my credit card is 4111-1111-1111-1111",
-            "outgoing": True,
+            "response_text": "My SSN is 123-45-6789 and my credit card is 4111-1111-1111-1111",
+            "incoming_message": "What is your SSN?",
         })
         assert r.status_code == 200
         data = r.json()
@@ -300,7 +300,7 @@ class TestGoalsIntegration:
         goal_text = f"e2e-goal-{uuid.uuid4().hex[:8]}: Deploy the quantum stabilizer"
         r = colony.post("/v1/host/goals", json={
             "identity": {"host_id": "e2e-test"},
-            "context": {"session_id": "e2e", "contact_id": "e2e"},
+            "title": goal_text,
             "description": goal_text,
             "priority": "high",
         })
@@ -351,6 +351,7 @@ class TestContextAssembly:
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e-context", "contact_id": "e2e"},
             "query": "test context assembly",
+            "incoming_message": "test context assembly",
         })
         assert r.status_code == 200
         data = r.json()
@@ -535,7 +536,7 @@ class TestFullSystemHealth:
         """All 22 Colony capabilities should be present."""
         expected = {
             "memory", "consolidate", "response_gate", "signals", "embed",
-            "context_engine", "reasoning", "goals", "contacts", "briefings",
+            "reasoning", "goals", "contacts", "briefings",
             "world_model", "cognition", "research", "delivery", "synthesis",
             "learning", "skills", "identity", "secrets", "autonomy",
             "sessions", "task_queue", "events",
