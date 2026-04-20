@@ -1208,13 +1208,13 @@ async def create_goal(body: GoalCreateRequest) -> GoalResponse:
     if _goals_store is None:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
-        goal = await _goals_store.propose_goal(
+        goal = _goals_store.propose_goal(
             title=body.title,
             description=body.description or "",
         )
         # Auto-accept goals created via API
-        goal = await _goals_store.accept_goal(goal.goal_id)
-        goal = await _goals_store.activate_goal(goal.goal_id)
+        goal = _goals_store.accept_goal(goal.goal_id)
+        goal = _goals_store.activate_goal(goal.goal_id)
         return GoalResponse(
             id=goal.goal_id,
             title=goal.title,
@@ -1244,7 +1244,7 @@ async def list_goals(person_id: Optional[str] = None, status_filter: Optional[st
                 status_enum = GoalStatus(status_filter)
             except ValueError:
                 pass
-        goals = await _goals_store.list_goals(status=status_enum)
+        goals = _goals_store.list_goals(status=status_enum)
         return GoalListResponse(goals=[
             GoalResponse(
                 id=g.goal_id,
@@ -1269,7 +1269,7 @@ async def get_goal(goal_id: str) -> GoalResponse:
     if _goals_store is None:
         raise HTTPException(status_code=404, detail="Goal not found")
     try:
-        goal = await _goals_store.get_goal(goal_id)
+        goal = _goals_store.get_goal(goal_id)
         if goal is None:
             raise HTTPException(status_code=404, detail="Goal not found")
         return GoalResponse(
@@ -1300,17 +1300,17 @@ async def update_goal(goal_id: str, body: GoalUpdateRequest) -> GoalResponse:
         if body.status:
             status_lower = body.status.lower()
             if status_lower in ("completed", "done"):
-                goal = await _goals_store.accept_goal(goal_id)  # must be accepted first if not already
+                goal = _goals_store.accept_goal(goal_id)  # must be accepted first if not already
             elif status_lower == "blocked":
-                goal = await _goals_store.block_goal(goal_id, reason=body.notes or "Blocked via API")
+                goal = _goals_store.block_goal(goal_id, reason=body.notes or "Blocked via API")
             elif status_lower == "unblocked":
-                goal = await _goals_store.unblock_goal(goal_id)
+                goal = _goals_store.unblock_goal(goal_id)
             elif status_lower == "abandoned":
-                goal = await _goals_store.abandon_goal(goal_id, reason=body.notes or "Abandoned via API")
+                goal = _goals_store.abandon_goal(goal_id, reason=body.notes or "Abandoned via API")
             else:
-                goal = await _goals_store.get_goal(goal_id)
+                goal = _goals_store.get_goal(goal_id)
         else:
-            goal = await _goals_store.get_goal(goal_id)
+            goal = _goals_store.get_goal(goal_id)
         if goal is None:
             raise HTTPException(status_code=404, detail="Goal not found")
         return GoalResponse(
@@ -1397,7 +1397,7 @@ async def list_briefings(limit: int = 10) -> BriefingListResponse:
     if _briefings_engine is None:
         return BriefingListResponse(briefings=[])
     try:
-        briefings = await _briefings_engine.get_recent(limit=limit)
+        briefings = _briefings_engine.get_recent(limit=limit)
         return BriefingListResponse(briefings=[BriefingResponse(**b) for b in briefings])
     except Exception as exc:
         logger.warning("list_briefings failed: %s", exc)
@@ -1807,7 +1807,7 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     if _goals_store is not None and features.get("goals", True):
         async def _goals():
             try:
-                g = await _goals_store.list_goals(person_id=contact_id, status="active")
+                g = _goals_store.list_goals(person_id=contact_id, status="active")
                 return ("goals", g)
             except Exception:
                 return ("goals", [])
@@ -1926,7 +1926,7 @@ async def identity_init(body: IdentityInitRequest) -> IdentityStatusResponse:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
         # ChainManager initializes at construction time — just return status
-        status = await _chain_manager.get_status()
+        status = _chain_manager.get_status()
         colony_id = _chain_manager.colony_id
         pubkey = status.get("public_key") or getattr(_chain_manager, "public_key_pem", None)
         return IdentityStatusResponse(
@@ -1985,7 +1985,7 @@ async def secrets_list(body: SecretListRequest) -> SecretListResponse:
     if _secrets_manager is None:
         return SecretListResponse(keys=[])
     try:
-        all_keys = await _secrets_manager.list()
+        all_keys = _secrets_manager.list()
         if body.prefix:
             keys = [k for k in all_keys if k.startswith(body.prefix)]
         else:
@@ -2001,7 +2001,7 @@ async def secrets_get(body: SecretGetRequest) -> SecretGetResponse:
     if _secrets_manager is None:
         return SecretGetResponse(key=body.key, exists=False)
     try:
-        value = await _secrets_manager.get(body.key)
+        value = _secrets_manager.get(body.key)
         if value is None:
             return SecretGetResponse(key=body.key, exists=False)
         return SecretGetResponse(key=body.key, value=value, exists=True)
@@ -2015,7 +2015,7 @@ async def secrets_set(body: SecretSetRequest) -> SecretSetResponse:
     if _secrets_manager is None:
         return SecretSetResponse(key=body.key, stored=False)
     try:
-        await _secrets_manager.set(body.key, body.value, secret_type=body.secret_type)
+        _secrets_manager.set(body.key, body.value, secret_type=body.secret_type)
         return SecretSetResponse(key=body.key, stored=True)
     except Exception as exc:
         logger.warning("secrets_set failed: %s", exc)
@@ -2027,7 +2027,7 @@ async def secrets_delete(body: SecretDeleteRequest) -> SecretDeleteResponse:
     if _secrets_manager is None:
         return SecretDeleteResponse(key=body.key, deleted=False)
     try:
-        await _secrets_manager.delete(body.key)
+        _secrets_manager.delete(body.key)
         return SecretDeleteResponse(key=body.key, deleted=True)
     except Exception as exc:
         logger.warning("secrets_delete failed: %s", exc)
