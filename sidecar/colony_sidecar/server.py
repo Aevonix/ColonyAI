@@ -232,6 +232,18 @@ async def lifespan(app: FastAPI):
         set_embedder(pipeline)
         logger.info("EmbeddingPipeline initialized (provider=%s model=%s)", embed_provider, embed_model)
 
+        # Wire embedding pipeline into ColonyGraph for vector-backed recall
+        if _graph is not None:
+            try:
+                _graph.set_embed_fn(pipeline.embed)
+                from colony_sidecar.vector.store import VectorStore
+                vector_db_path = os.path.join(state_dir, "lancedb")
+                vs = VectorStore(data_dir=vector_db_path)
+                _graph.set_vector_store(vs)
+                logger.info("ColonyGraph wired to vector store (path=%s)", vector_db_path)
+            except Exception as vexc:
+                logger.warning("Vector store wiring failed (recall will use keyword fallback): %s", vexc)
+
         # Pass LLM config to pipeline for auto-captioning
         llm_config_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-llm-config.json"
         if llm_config_path.exists() and hasattr(pipeline, "set_llm_config"):
