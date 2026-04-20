@@ -28,6 +28,7 @@ from colony_sidecar.api.routers.host import (
     set_contacts_store,
     set_briefings_engine,
     set_world_store,
+    set_extraction_pipeline,
     set_metalearner,
     set_research_pipeline,
     set_delivery_bridge,
@@ -327,6 +328,24 @@ async def lifespan(app: FastAPI):
         await world_store.connect()
         set_world_store(world_store)
         logger.info("WorldModelStore initialized and connected")
+
+        # Wire extraction pipeline
+        try:
+            from colony_sidecar.world_model.extraction.pipeline import ExtractionPipeline
+            from colony_sidecar.world_model.extraction.formats import (
+                TextExtractor, JSONExtractor, CSVExtractor,
+                PDFExtractor, HTMLExtractor,
+            )
+            extractors = [TextExtractor(), JSONExtractor(), CSVExtractor()]
+            if PDFExtractor:
+                extractors.append(PDFExtractor())
+            if HTMLExtractor:
+                extractors.append(HTMLExtractor())
+            pipeline = ExtractionPipeline(extractors=extractors)
+            set_extraction_pipeline(pipeline)
+            logger.info("Extraction pipeline initialized (%d format extractors)", len(extractors))
+        except Exception as eexc:
+            logger.warning("Extraction pipeline init skipped: %s", eexc)
     except Exception as exc:
         logger.warning("WorldModelStore init failed: %s", exc)
         # Try without connect() — some operations work without it

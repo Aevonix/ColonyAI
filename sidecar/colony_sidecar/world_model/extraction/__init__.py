@@ -1,13 +1,7 @@
-"""World Model extraction layer."""
-from .conversation_extractor import ConversationExtractor, ExtractionCandidate, ExtractionResult
-from .document_extractor import DocumentExtractor, DocumentType
-from .structured_importer import StructuredImporter
+"""World model entity extraction from multiple document formats."""
 
-__all__ = [
-    "ConversationExtractor",
-    "ExtractionCandidate",
-    "ExtractionResult",
-    "DocumentExtractor",
-    "DocumentType",
-    "StructuredImporter",
-]
+from colony_sidecar.world_model.extraction.base import FormatExtractor
+from colony_sidecar.world_model.extraction.detector import FormatDetector
+from colony_sidecar.world_model.extraction.pipeline import ExtractionPipeline
+
+__all__ = ["FormatExtractor", "FormatDetector", "ExtractionPipeline"]

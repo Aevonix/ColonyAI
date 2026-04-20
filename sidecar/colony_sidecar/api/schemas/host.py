@@ -514,6 +514,27 @@ class EntityQueryRequest(BaseModel):
     limit: Optional[int] = 10
 
 
+class ExtractionRequest(BaseModel):
+    identity: HostIdentity
+    content: str  # Base64-encoded document content
+    filename: Optional[str] = None
+    mime_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ExtractedEntityResponse(BaseModel):
+    name: str
+    entity_type: str
+    attributes: Optional[Dict[str, Any]] = None
+    confidence: float = 1.0
+
+
+class ExtractionResponse(BaseModel):
+    format_detected: str
+    entities: List[ExtractedEntityResponse] = []
+    text_length: int = 0
+
+
 # --- Cognition --------------------------------------------------------------
 
 class CognitionCycleRequest(BaseModel):

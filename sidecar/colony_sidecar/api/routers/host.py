@@ -49,6 +49,9 @@ from colony_sidecar.api.schemas.host import (
     EntityListResponse,
     EntityQueryRequest,
     EntityResponse,
+    ExtractionRequest,
+    ExtractionResponse,
+    ExtractedEntityResponse,
     GoalCreateRequest,
     GoalListResponse,
     GoalResponse,
@@ -1523,6 +1526,49 @@ async def list_entities(entity_type: Optional[str] = None, limit: int = 50) -> E
     except Exception as exc:
         logger.warning("find_entities failed: %s", exc)
         return EntityListResponse(entities=[])
+
+
+# ---------------------------------------------------------------------------
+# Extraction
+# ---------------------------------------------------------------------------
+
+_extraction_pipeline = None
+
+
+def set_extraction_pipeline(pipeline) -> None:
+    global _extraction_pipeline
+    _extraction_pipeline = pipeline
+
+
+@router.post("/world/extract", response_model=ExtractionResponse)
+async def extract_entities(body: ExtractionRequest) -> ExtractionResponse:
+    if _extraction_pipeline is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    try:
+        import base64
+        content = base64.b64decode(body.content)
+        entities = await _extraction_pipeline.extract(
+            content=content,
+            filename=body.filename or "",
+            mime_type=body.mime_type or "",
+            metadata=body.metadata or {},
+        )
+        return ExtractionResponse(
+            format_detected="detected",
+            entities=[
+                ExtractedEntityResponse(
+                    name=e.name,
+                    entity_type=e.entity_type,
+                    attributes=e.attributes,
+                    confidence=e.confidence,
+                )
+                for e in entities
+            ],
+            text_length=len(content),
+        )
+    except Exception as exc:
+        logger.warning("extract_entities failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------
