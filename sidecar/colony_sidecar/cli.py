@@ -392,11 +392,11 @@ def _cmd_backup(args) -> None:
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
 
     passphrase = None
-    if args.encrypt:
+    if args.passphrase:
+        passphrase = args.passphrase.encode()
+    elif args.encrypt:
         import getpass
         passphrase = getpass.getpass("Backup passphrase: ").encode()
-    elif args.passphrase:
-        passphrase = args.passphrase.encode()
 
     try:
         from colony_sidecar.chain.identity import backup_colony
