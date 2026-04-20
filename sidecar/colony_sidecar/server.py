@@ -125,6 +125,9 @@ async def lifespan(app: FastAPI):
         logger.warning("ColonyGraph init failed — memory endpoints will be degraded: %s", exc)
 
     # --- 4. Response Gate (safety pipeline) ---
+    _gate_ref = None
+    _gate_config = None
+    _gate_audit = None
     try:
         from colony_sidecar.gate import ResponseGate, GateConfig
         from colony_sidecar.gate.audit import InMemoryAuditLog
@@ -132,7 +135,13 @@ async def lifespan(app: FastAPI):
         gate_audit = InMemoryAuditLog()
         gate = ResponseGate(gate_config, session_store=None, audit_log=gate_audit)
         set_response_gate(gate)
+        # Stash refs for re-wiring after session store is available
+        _gate_ref = gate
+        _gate_config = gate_config
+        _gate_audit = gate_audit
         logger.info("ResponseGate initialized")
+
+        # Re-wire ResponseGate with session store once available
     except Exception as exc:
         logger.warning("ResponseGate init failed — safety checks will pass-through: %s", exc)
 
@@ -401,6 +410,13 @@ async def lifespan(app: FastAPI):
         session_store = InMemorySessionStore()
         set_session_store(session_store)
         logger.info("InMemorySessionStore initialized")
+
+        # Re-wire ResponseGate now that session store is available
+        if _gate_ref is not None:
+            from colony_sidecar.gate import ResponseGate
+            new_gate = ResponseGate(_gate_config, session_store=session_store, audit_log=_gate_audit)
+            set_response_gate(new_gate)
+            logger.info("ResponseGate re-wired with SessionStore")
     except Exception as exc:
         logger.warning("SessionStore init failed: %s", exc)
 
