@@ -1796,8 +1796,6 @@ function capabilityProbe(ctx: ColonyPluginContext) {
  *    but the event payload doesn't carry it back. Capturing the
  *    assistant text requires an ``llm_output`` hook correlated by
  *    ``runId``.
- *  - ``topics`` / ``entities`` / ``pending_tasks`` / ``tools_used`` /
- *    ``summary`` are empty / undefined — extractors not yet wired.
  *  - ``channel_id`` falls through ``Provider → Surface →
  *    originatingChannel`` to give the sidecar *some* stable channel
  *    label; none of these are a perfect match for colony's
@@ -1874,7 +1872,7 @@ function postTurnHook(
           context: turnCtx,
           topics: extracted.topics,
           entities: extracted.entities,
-          pending_tasks: [],
+          pending_tasks: extracted.pending_tasks,
           tools_used: extracted.tools_used,
           summary: extracted.summary || undefined,
         }),
