@@ -463,7 +463,7 @@ Synthesis operations:
 - /synthesis/discover — Discover new connections
 
 Example insights:
-- "Marc often discusses 'API design' after 'performance issues'"
+- "the user often discusses 'API design' after 'performance issues'"
 - "'TypeScript' and 'safety' frequently co-occur in your conversations"
 - "You mentioned 'vLLM' more often after 'cluster setup' was completed"
 
@@ -734,7 +734,7 @@ COLONY_NATIVE_SKILLS = [
             "required": ["contact_id"],
         },
         "examples": [
-            {"contact_id": "marc"},
+            {"contact_id": "example_user"},
         ],
     },
     {
@@ -764,7 +764,7 @@ COLONY_NATIVE_SKILLS = [
             "required": ["contact_id"],
         },
         "examples": [
-            {"contact_id": "marc"},
+            {"contact_id": "example_user"},
         ],
     },
     {
@@ -797,7 +797,7 @@ COLONY_NATIVE_SKILLS = [
         },
         "examples": [
             {"query": "database"},
-            {"query": "Marc", "type": "person"},
+            {"query": "the user", "type": "person"},
         ],
     },
     {

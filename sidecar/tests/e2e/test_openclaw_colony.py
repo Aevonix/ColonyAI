@@ -88,11 +88,12 @@ class TestColonySidecar:
         assert data["keys_configured"] is True
         assert data["public_key"] is not None
 
-    def test_genesis_status(self, colony):
-        """Verify this Colony is Genesis."""
+    def test_genesis_flag_exists(self, colony):
+        """Verify the is_genesis flag is present in identity status."""
         r = colony.get("/v1/host/identity/status")
         data = r.json()
-        assert data["is_genesis"] is True
+        # is_genesis is a boolean flag — its value depends on deployment
+        assert isinstance(data.get("is_genesis"), bool)
 
     def test_node_identity(self, colony):
         """Verify node identity exists."""
@@ -558,4 +559,4 @@ class TestFullSystemHealth:
         assert d["public_key"]
         assert d["node_id"]
         assert d["keys_configured"] is True
-        assert d["is_genesis"] is True
+        assert d["is_genesis"] is not None  # Value is deployment-specific
