@@ -3,6 +3,7 @@
   "public_key_ed25519": "341065fd6cd26ca501c5786ed1517eedc448fec60aeaea8d047d07bf1a9cc351",
   "alias": "genesis",
   "genesis_version": 1,
-  "signed_at": "2026-04-20T16:09:57.450903+00:00",
-  "description": "The original Colony — trust anchor for the network"
+  "signed_at": "2026-04-20T17:04:26.242399+00:00",
+  "description": "The original Colony — trust anchor for the network",
+  "signature": "f695be354a0f8534ea178c1c8cd01d335f0cfb6ce72ed4d5db2a5b5f812e9546ccde8edd17683c8b5b55bf263d29a9b77bc8ac7b34b88642f4278022ec7da803"
 }

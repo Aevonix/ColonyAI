@@ -7,14 +7,17 @@ Colony identity is decoupled from the signing keypair:
 
 Genesis:
     The first Colony — Marc's Colony — is the trust anchor for the network.
-    Its colony_id and public_key are hardcoded so any Colony can recognize it.
-    This is like SSH known_hosts or a CA root cert: the public key is safe to
-    share (that's what public keys are for), and other Colonies use it to
-    verify that a message actually came from Genesis.
+    The Genesis manifest is self-signed: it contains a signature created with
+    Marc's private key that verifies against a HARDCODED public key in this
+    source file. This makes Genesis unforgeable even locally:
 
-    Only one Colony can ever claim Genesis — the one whose colony_id and
-    public_key match the hardcoded manifest. No other Colony can impersonate
-    it because they don't have the private key.
+    - Editing genesis.json → signature fails verification → is_genesis: false
+    - Editing the hardcoded key in source → creates a different trust anchor,
+      other Colonies running the official release won't recognize it
+    - Only Marc's Colony can produce a valid signature (requires private key)
+
+    This is the same model as CA root certificates in browsers, or the
+    Bitcoin genesis block hash — open, verifiable, unfakeable.
 """
 
 from __future__ import annotations
@@ -29,35 +32,68 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Genesis manifest — the trust anchor for the entire Colony network
+# Genesis trust anchor — HARDCODED public key (Marc's Colony)
 # ---------------------------------------------------------------------------
-# This will be populated when Marc's Colony is first initialized.
-# The public_key here is safe to hardcode — it's public. The private key
-# never leaves Marc's machine.
+# This is the root of trust. The private key never leaves Marc's machine.
+# This public key is used to VERIFY the Genesis manifest signature.
+# It cannot be used to CREATE signatures — that requires the private key.
 #
-# Format: { colony_id, public_key_ed25519, alias, genesis_version, signed_at }
+# Even if someone edits their local genesis.json, the signature won't
+# verify against this key. Even if they edit this source file, it only
+# affects their own Colony — other Colonies run the official release.
 # ---------------------------------------------------------------------------
 
-_GENESIS_MANIFEST: Optional[dict] = None  # Set after Marc's first init
+GENESIS_TRUST_PUBLIC_KEY = "341065fd6cd26ca501c5786ed1517eedc448fec60aeaea8d047d07bf1a9cc351"
+
+
+def _verify_ed25519_signature(public_key_hex: str, message: bytes, signature_hex: str) -> bool:
+    """Verify an Ed25519 signature against a public key."""
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        pub_bytes = bytes.fromhex(public_key_hex)
+        pub_key = Ed25519PublicKey.from_public_bytes(pub_bytes)
+        sig_bytes = bytes.fromhex(signature_hex)
+        pub_key.verify(sig_bytes, message)
+        return True
+    except Exception:
+        return False
+
+
+def _sign_with_key(private_key_pem: str | bytes, message: bytes, passphrase: Optional[bytes] = None) -> str:
+    """Sign a message with an Ed25519 private key, returning hex signature."""
+    from cryptography.hazmat.primitives import serialization
+    key = serialization.load_pem_private_key(
+        private_key_pem.encode() if isinstance(private_key_pem, str) else private_key_pem,
+        password=passphrase,
+    )
+    signature = key.sign(message)
+    return signature.hex()
+
+
+# ---------------------------------------------------------------------------
+# Genesis manifest
+# ---------------------------------------------------------------------------
+
+_GENESIS_MANIFEST: Optional[dict] = None
 
 
 def set_genesis_manifest(manifest: dict) -> None:
-    """Set the Genesis manifest (called after Marc's Colony is initialized)."""
+    """Set the Genesis manifest (called after verification)."""
     global _GENESIS_MANIFEST
     _GENESIS_MANIFEST = manifest
 
 
 def get_genesis_manifest() -> Optional[dict]:
-    """Get the Genesis manifest, if configured."""
+    """Get the Genesis manifest, if configured and verified."""
     return _GENESIS_MANIFEST
 
 
 def is_genesis(colony_id: str, public_key_hex: str) -> bool:
-    """Check if a colony_id + public_key combination matches Genesis.
+    """Check if a colony_id + public_key combination matches the verified Genesis manifest.
 
-    Both must match — you can't claim Genesis with just the colony_id
-    or just the public key. The private key is required to actually
-    sign anything as Genesis, which only Marc has.
+    The manifest must have been loaded with a valid signature against the
+    hardcoded GENESIS_TRUST_PUBLIC_KEY. Simply matching fields is not enough —
+    the signature proves it was created by Marc's private key.
     """
     if _GENESIS_MANIFEST is None:
         return False
@@ -67,19 +103,57 @@ def is_genesis(colony_id: str, public_key_hex: str) -> bool:
     )
 
 
+def _manifest_signing_payload(manifest: dict) -> bytes:
+    """Create the canonical signing payload from a manifest dict.
+
+    This is the JSON-serialized content excluding the signature field itself,
+    with sorted keys for deterministic ordering.
+    """
+    payload = {k: v for k, v in manifest.items() if k != "signature"}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_genesis_manifest(manifest: dict) -> bool:
+    """Verify a Genesis manifest's signature against the hardcoded trust key.
+
+    Returns True if the signature is valid, False otherwise.
+    A manifest without a signature is automatically invalid.
+    """
+    signature = manifest.get("signature")
+    if not signature:
+        logger.warning("Genesis manifest has no signature — cannot verify")
+        return False
+
+    payload = _manifest_signing_payload(manifest)
+    return _verify_ed25519_signature(GENESIS_TRUST_PUBLIC_KEY, payload, signature)
+
+
 def load_genesis_manifest(path: str | Path) -> Optional[dict]:
-    """Load a Genesis manifest from a JSON file."""
+    """Load and verify a Genesis manifest from a JSON file.
+
+    Only accepts the manifest if its signature verifies against the
+    hardcoded GENESIS_TRUST_PUBLIC_KEY. An unsigned or tampered manifest
+    is rejected.
+    """
     p = Path(path)
     if not p.exists():
         return None
     try:
         data = json.loads(p.read_text())
         # Validate required fields
-        required = {"colony_id", "public_key_ed25519", "alias", "genesis_version"}
+        required = {"colony_id", "public_key_ed25519", "alias", "genesis_version", "signature"}
         if not required.issubset(set(data.keys())):
-            logger.warning("Genesis manifest missing fields: %s", required - set(data.keys()))
+            missing = required - set(data.keys())
+            logger.warning("Genesis manifest missing fields: %s", missing)
             return None
+
+        # Verify signature against hardcoded trust key
+        if not verify_genesis_manifest(data):
+            logger.warning("Genesis manifest signature INVALID — rejecting (tampered or unsigned)")
+            return None
+
         set_genesis_manifest(data)
+        logger.info("Genesis manifest verified and loaded")
         return data
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Failed to load Genesis manifest: %s", e)
@@ -118,12 +192,16 @@ def create_genesis_manifest(
     colony_id: str,
     public_key_hex: str,
     output_path: str | Path,
+    private_key_pem: Optional[str | bytes] = None,
+    passphrase: Optional[bytes] = None,
 ) -> dict:
-    """Create a Genesis manifest for Marc's Colony.
+    """Create a signed Genesis manifest for Marc's Colony.
+
+    The manifest is signed with Marc's private key so that all Colonies
+    can verify it against the hardcoded GENESIS_TRUST_PUBLIC_KEY.
 
     This should only be called once — when Marc's Colony is first initialized.
-    The manifest is saved to disk and should be committed to the repo so all
-    Colonies can recognize Genesis.
+    The manifest is saved to disk and should be committed to the repo.
     """
     manifest = {
         "colony_id": colony_id,
@@ -133,6 +211,16 @@ def create_genesis_manifest(
         "signed_at": datetime.now(timezone.utc).isoformat(),
         "description": "The original Colony — trust anchor for the network",
     }
+
+    # Sign the manifest with the private key
+    if private_key_pem:
+        payload = _manifest_signing_payload(manifest)
+        signature = _sign_with_key(private_key_pem, payload, passphrase=passphrase)
+        manifest["signature"] = signature
+        logger.info("Genesis manifest signed")
+    else:
+        raise ValueError("Cannot create Genesis manifest without a private key — signing is required")
+
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(json.dumps(manifest, indent=2) + "\n")
     logger.info("Genesis manifest created at %s", output_path)
@@ -198,8 +286,7 @@ def backup_colony(state_dir: str | Path, passphrase: Optional[bytes] = None) -> 
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-        # Load the key (may or may not be encrypted already)
-        existing_pass = None  # We read raw PEM; let the caller handle decryption first
+        existing_pass = None
         key_obj = serialization.load_pem_private_key(private_pem, password=existing_pass)
         private_pem = key_obj.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -211,7 +298,6 @@ def backup_colony(state_dir: str | Path, passphrase: Optional[bytes] = None) -> 
     pub_path = keys_dir / "public.pem"
     public_key_hex = ""
     if pub_path.exists():
-        # Derive hex from PEM
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
         pub_pem = pub_path.read_bytes()
@@ -248,19 +334,9 @@ def restore_colony(
 
     Writes colony-id, private key, public key, and optionally genesis manifest.
     Returns the restored colony_id.
-
-    Parameters
-    ----------
-    state_dir : path
-        Target state directory.
-    backup_data : dict
-        Backup data from backup_colony().
-    passphrase : bytes, optional
-        Passphrase to decrypt the private key in the backup.
     """
     state_dir = Path(state_dir)
 
-    # Validate backup
     if backup_data.get("backup_version") != 1:
         raise ValueError(f"Unsupported backup version: {backup_data.get('backup_version')}")
 
@@ -268,11 +344,8 @@ def restore_colony(
     private_pem = backup_data["private_key_pem"]
     is_encrypted = backup_data.get("encrypted", False)
 
-    # If backup is encrypted and no passphrase given, try loading with None
-    # (it might be encrypted with empty passphrase)
     load_password = passphrase if is_encrypted else None
 
-    # Verify the private key loads
     from cryptography.hazmat.primitives import serialization
     try:
         key_obj = serialization.load_pem_private_key(
@@ -282,30 +355,25 @@ def restore_colony(
     except (ValueError, TypeError) as e:
         raise ValueError(f"Failed to decrypt private key — wrong passphrase? {e}") from e
 
-    # Write colony-id
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / COLONY_ID_FILE).write_text(colony_id)
 
-    # Write keypair
     keys_dir = state_dir / "colony-keys"
     keys_dir.mkdir(parents=True, exist_ok=True)
     priv_path = keys_dir / "private.pem"
     pub_path = keys_dir / "public.pem"
 
-    # Store private key as-is (already encrypted if passphrase was given)
     pem_bytes = private_pem.encode() if isinstance(private_pem, str) else private_pem
     priv_path.write_bytes(pem_bytes)
     import os
     os.chmod(priv_path, 0o600)
 
-    # Write public key PEM
     pub_pem = key_obj.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     pub_path.write_bytes(pub_pem)
 
-    # Restore Genesis manifest if present
     genesis_data = backup_data.get("genesis")
     if genesis_data:
         genesis_path = state_dir / "genesis.json"

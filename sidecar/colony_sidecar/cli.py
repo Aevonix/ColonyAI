@@ -548,18 +548,26 @@ def _cmd_key(args) -> None:
             km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase_bytes)
             pubkey = km.public_key_hex()
         except FileNotFoundError:
-            # Generate keypair first
             km = LocalKeyManager.generate(keys_dir=keys_dir, colony_id=colony_id)
             pubkey = km.public_key_hex()
 
+        # Read private key PEM for signing
+        priv_path = os.path.join(keys_dir, "private.pem")
+        private_pem = Path(priv_path).read_bytes()
+
         genesis_path = os.path.join(state_dir, "genesis.json")
-        manifest = create_genesis_manifest(colony_id, pubkey, genesis_path)
+        manifest = create_genesis_manifest(
+            colony_id, pubkey, genesis_path,
+            private_key_pem=private_pem,
+            passphrase=passphrase_bytes,
+        )
         print(f"  ⚡ Genesis claimed for colony {colony_id}")
         print(f"  Public Key: {pubkey}")
-        print(f"  Manifest saved to {genesis_path}")
+        print(f"  Manifest signed with your private key and saved to {genesis_path}")
         print(f"")
         print(f"  IMPORTANT: Commit genesis.json to the Colony repo so other")
         print(f"  Colonies can recognize you as the trust anchor.")
+        print(f"  The manifest is cryptographically signed — it cannot be forged.")
         print(f"  Your private key never leaves this machine.")
 
     else:
