@@ -463,16 +463,10 @@ async def memory_status():
 
     if _graph is not None:
         try:
-            _graph.client.verify_connectivity()
+            await _graph.driver.verify_connectivity()
             neo4j_connected = True
         except Exception:
-            # verify_connectivity may not work with all driver versions
-            # Fallback: try a simple query
-            try:
-                _graph.client.execute_query("RETURN 1")
-                neo4j_connected = True
-            except Exception:
-                pass
+            pass
         embeddings_ready = _graph._embed_fn is not None
         vector_store_ready = _graph._vector_store is not None
 
