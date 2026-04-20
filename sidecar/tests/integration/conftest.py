@@ -1,0 +1,1 @@
+# Colony integration test configuration

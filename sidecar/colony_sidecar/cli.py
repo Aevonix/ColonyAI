@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
+import uuid
 
 
 def main() -> None:
@@ -48,6 +50,12 @@ def main() -> None:
     mm_p = sub.add_parser("activate-multimodal", help="Enable multimodal embeddings and rerank")
     mm_p.add_argument("--model", default=None, help="Multimodal model ID (default: auto-detect from tier)")
     mm_p.add_argument("--storage", default="local", choices=["local", "embed_only"], help="Image storage mode")
+
+    # --- doctor ---
+    doc_p = sub.add_parser("doctor", help="Run integration health check against running sidecar")
+    doc_p.add_argument("--url", default=None, help="Sidecar URL (default: from .env)")
+    doc_p.add_argument("--api-key", default=None, help="API key (default: from .env)")
+    doc_p.add_argument("--verbose", "-v", action="store_true", help="Show detailed results")
     mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
     mm_p.add_argument("--skip-download", action="store_true", help="Skip model download")
 
@@ -337,8 +345,144 @@ def main() -> None:
         print("Restart the sidecar to activate multimodal: colony start")
         print("If you have existing text vectors, run: colony migrate-tier")
 
+    elif command == "doctor":
+        _cmd_doctor(args)
+
     else:
         parser.print_help()
+
+
+def _cmd_doctor(args) -> None:
+    """Run integration health check against the running sidecar."""
+    import httpx
+
+    _load_dotenv()
+    url = args.url or os.environ.get("COLONY_SIDECAR_URL", f"http://{os.environ.get('COLONY_SIDECAR_HOST', '127.0.0.1')}:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}")
+    api_key = args.api_key or os.environ.get("COLONY_API_KEY", "")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    verbose = args.verbose
+
+    print(f"\n🩺 Colony Doctor — checking {url}\n")
+
+    checks = []
+
+    def check(name, func):
+        try:
+            result = func()
+            status = "✅" if result else "❌"
+            checks.append((name, result))
+            if verbose or not result:
+                print(f"  {status} {name}")
+        except Exception as e:
+            checks.append((name, False))
+            print(f"  ❌ {name}: {e}")
+
+    with httpx.Client(base_url=url, headers=headers, timeout=10) as c:
+        # 1. Health
+        def _health():
+            r = c.get("/v1/host/health")
+            d = r.json()
+            return d.get("status") == "ok" and len(d.get("capabilities", [])) >= 20
+        check("Health endpoint", _health)
+
+        # 2. Auth
+        def _auth():
+            if not api_key:
+                return True  # No auth configured, skip
+            r = httpx.post(f"{url}/v1/host/memory/search", json={"identity": {"host_id": "t"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "t"}, timeout=5)
+            return r.status_code == 401
+        check("Auth enforcement", _auth)
+
+        # 3. Memory write
+        def _mem_write():
+            r = c.post("/v1/host/memory/write", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "content": f"Doctor check {uuid.uuid4().hex[:6]}", "type": "episodic", "strength": 0.5})
+            return r.json().get("accepted", False)
+        check("Memory write", _mem_write)
+
+        # 4. Memory search
+        time.sleep(1)
+        def _mem_search():
+            r = c.post("/v1/host/memory/search", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "colony", "limit": 1})
+            return r.status_code == 200 and "entries" in r.json()
+        check("Memory search", _mem_search)
+
+        # 5. Response gate (clean)
+        def _gate_pass():
+            r = c.post("/v1/host/safety/check", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "response_text": "Hello", "turn_id": "d1"})
+            return r.json().get("blocked") is False
+        check("Response gate (pass)", _gate_pass)
+
+        # 6. Response gate (PII block)
+        def _gate_block():
+            r = c.post("/v1/host/safety/check", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "response_text": "SSN: 078-05-1120", "turn_id": "d2"})
+            d = r.json()
+            return d.get("blocked") is True and d.get("blocking_layer") == 2
+        check("Response gate (PII block)", _gate_block)
+
+        # 7. Goals
+        def _goals():
+            r = c.get("/v1/host/goals")
+            return r.status_code == 200
+        check("Goals", _goals)
+
+        # 8. Identity
+        def _identity():
+            r = c.get("/v1/host/identity/status")
+            return r.status_code == 200
+        check("Identity", _identity)
+
+        # 9. Secrets
+        def _secrets():
+            r = c.post("/v1/host/secrets/set", json={"identity": {"host_id": "doctor"}, "key": f"_dr_{uuid.uuid4().hex[:6]}", "value": "x"})
+            return r.json().get("stored", False)
+        check("Secrets vault", _secrets)
+
+        # 10. Embedding
+        def _embed():
+            r = c.get("/v1/host/embed/health")
+            d = r.json()
+            return d.get("status") == "ok" and d.get("dims", 0) > 0
+        check("Embedding pipeline", _embed)
+
+        # 11. Context assembly
+        def _context():
+            r = c.post("/v1/host/context/assemble", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "incoming_message": {"content": "test", "role": "user"}})
+            return len(r.json().get("sections", [])) > 0
+        check("Context assembly", _context)
+
+        # 12. Skills
+        def _skills():
+            r = c.get("/v1/host/skills/registry")
+            return len(r.json().get("skills", [])) > 0
+        check("Skills registry", _skills)
+
+        # 13. World model
+        def _world():
+            r = c.post("/v1/host/world/entities/query", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "Colony", "limit": 3})
+            return r.status_code == 200
+        check("World model", _world)
+
+        # 14. Signals
+        def _signals():
+            r = c.post("/v1/host/signals/ingest", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "signals": [{"type": "engagement_depth", "source": "doctor", "value": 0.5}]})
+            return r.json().get("accepted", False)
+        check("Signal ingestion", _signals)
+
+        # 15. Autonomy
+        def _autonomy():
+            r = c.post("/v1/host/autonomy/cycle", json={"identity": {"host_id": "doctor"}})
+            return r.json().get("completed", False)
+        check("Autonomy cycle", _autonomy)
+
+    # Summary
+    passed = sum(1 for _, v in checks if v)
+    total = len(checks)
+    print(f"\n  {passed}/{total} checks passed")
+    if passed == total:
+        print("  🟢 All systems healthy\n")
+    else:
+        print("  🔴 Some systems unhealthy — check logs above\n")
+        raise SystemExit(1)
 
 
 def _load_dotenv() -> None:
