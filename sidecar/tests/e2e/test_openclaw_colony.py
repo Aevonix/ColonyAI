@@ -353,7 +353,7 @@ class TestContextAssembly:
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e-context", "contact_id": "e2e"},
             "query": "test context assembly",
-            "incoming_message": {"text": "test context assembly", "sender": "e2e-test"},
+            "incoming_message": {"role": "user", "content": "test context assembly"},
         })
         assert r.status_code == 200
         data = r.json()
