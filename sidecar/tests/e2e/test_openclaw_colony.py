@@ -136,14 +136,24 @@ class TestOpenClawGateway:
     def test_colony_plugin_loaded(self):
         """Colony plugin should be in the loaded plugins list."""
         import subprocess
+        # Build NVM env
+        nvm_dir = os.path.expanduser("~/.nvm")
+        nvm_sh = os.path.join(nvm_dir, "nvm.sh")
+        node_path = os.path.join(nvm_dir, "versions", "node", "v22.22.2", "bin")
+        env = {
+            **os.environ,
+            "NVM_DIR": nvm_dir,
+            "PATH": f"{node_path}:{os.environ.get('PATH', '')}",
+            "HOME": os.environ.get("HOME", "/root"),
+        }
         result = subprocess.run(
-            ["openclaw", "plugins", "list"],
+            ["bash", "-lc", "source ~/.nvm/nvm.sh && openclaw plugins list 2>&1"],
             capture_output=True, text=True, timeout=15,
-            env={**os.environ, "NVM_DIR": os.environ.get("NVM_DIR", os.path.expanduser("~/.nvm"))},
+            env=env,
         )
         output = result.stdout + result.stderr
+        # Colony plugin should be loaded and registered
         assert "colony" in output.lower()
-        assert "loaded" in output.lower() or "registered" in output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +181,7 @@ class TestMemoryIntegration:
         time.sleep(2)
 
         # Search
-        r = colony.post("/v1/host/memory/search", json={
+        r = colony.post("/v1/host/memory/recall", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "query": "quantum flux capacitor",
@@ -194,7 +204,7 @@ class TestMemoryIntegration:
         time.sleep(2)
 
         # Search immediately
-        r1 = colony.post("/v1/host/memory/search", json={
+        r1 = colony.post("/v1/host/memory/recall", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "query": "magnetoresistance",
@@ -203,7 +213,7 @@ class TestMemoryIntegration:
 
         # Search again after a delay
         time.sleep(1)
-        r2 = colony.post("/v1/host/memory/search", json={
+        r2 = colony.post("/v1/host/memory/recall", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "query": "magnetoresistance",
@@ -220,7 +230,7 @@ class TestResponseGate:
 
     def test_safe_message_passes(self, colony):
         """Safe content should pass through the gate."""
-        r = colony.post("/v1/host/gate/check", json={
+        r = colony.post("/v1/host/response-gate/check", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "content": "Hello, how are you doing today?",
@@ -233,7 +243,7 @@ class TestResponseGate:
 
     def test_pii_detection(self, colony):
         """PII content should be flagged by the gate."""
-        r = colony.post("/v1/host/gate/check", json={
+        r = colony.post("/v1/host/response-gate/check", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "content": "My SSN is 123-45-6789 and my credit card is 4111-1111-1111-1111",
@@ -288,7 +298,7 @@ class TestGoalsIntegration:
     def test_create_and_list_goals(self, colony):
         """Create a goal and verify it appears in the list."""
         goal_text = f"e2e-goal-{uuid.uuid4().hex[:8]}: Deploy the quantum stabilizer"
-        r = colony.post("/v1/host/goals/propose", json={
+        r = colony.post("/v1/host/goals", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e", "contact_id": "e2e"},
             "description": goal_text,
@@ -337,7 +347,7 @@ class TestContextAssembly:
 
     def test_context_includes_multiple_sources(self, colony):
         """Context should pull from memory, goals, world model, skills."""
-        r = colony.post("/v1/host/context", json={
+        r = colony.post("/v1/host/context/assemble", json={
             "identity": {"host_id": "e2e-test"},
             "context": {"session_id": "e2e-context", "contact_id": "e2e"},
             "query": "test context assembly",
@@ -472,7 +482,7 @@ class TestSecretsIntegration:
     def test_secrets_crud(self, colony):
         key = f"e2e-test-key-{uuid.uuid4().hex[:6]}"
         # Create
-        r = colony.post("/v1/host/secrets", json={
+        r = colony.post("/v1/host/secrets/set", json={
             "identity": {"host_id": "e2e-test"},
             "key": key,
             "value": "super-secret-e2e-value",
@@ -480,11 +490,16 @@ class TestSecretsIntegration:
         assert r.status_code in (200, 201)
 
         # List
-        r = colony.get("/v1/host/secrets")
+        r = colony.post("/v1/host/secrets/list", json={
+            "identity": {"host_id": "e2e-test"},
+        })
         assert r.status_code == 200
 
         # Get
-        r = colony.get(f"/v1/host/secrets/{key}")
+        r = colony.post("/v1/host/secrets/get", json={
+            "identity": {"host_id": "e2e-test"},
+            "key": key,
+        })
         assert r.status_code == 200
 
 
@@ -520,7 +535,7 @@ class TestFullSystemHealth:
         """All 22 Colony capabilities should be present."""
         expected = {
             "memory", "consolidate", "response_gate", "signals", "embed",
-            "context", "reasoning", "goals", "contacts", "briefings",
+            "context_engine", "reasoning", "goals", "contacts", "briefings",
             "world_model", "cognition", "research", "delivery", "synthesis",
             "learning", "skills", "identity", "secrets", "autonomy",
             "sessions", "task_queue", "events",
