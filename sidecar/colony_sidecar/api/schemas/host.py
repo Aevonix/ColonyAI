@@ -20,6 +20,10 @@ class HostIdentity(BaseModel):
     host_version: Optional[str] = None
     plugin_version: Optional[str] = None
     instance_id: Optional[str] = None
+    colony_id: Optional[str] = None
+    node_id: Optional[str] = None
+    node_cert_fingerprint: Optional[str] = None
+    trust_tier: Optional[Literal["REGULAR", "TRUSTED", "PRIVILEGED", "GENESIS"]] = None
 
 
 class HostTurnContext(BaseModel):
@@ -703,9 +707,12 @@ class IdentityStatusResponse(BaseModel):
     public_key: Optional[str] = None
     node_id: Optional[str] = None
     node_public_key: Optional[str] = None
+    node_cert_fingerprint: Optional[str] = None
     initialized: bool = False
     keys_configured: bool = False
     is_genesis: bool = False
+    trust_tier: Optional[Literal["REGULAR", "TRUSTED", "PRIVILEGED", "GENESIS"]] = None
+    trust_anchor_verified: bool = False
 
 
 class IdentityInitRequest(BaseModel):

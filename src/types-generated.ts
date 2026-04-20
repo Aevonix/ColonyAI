@@ -4,6 +4,33 @@
  */
 
 export interface paths {
+    "/v1/host/configure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Configure Host
+         * @description Receive LLM configuration from the host.
+         *
+         *     The host (OpenClaw, Hermes, etc.) calls this on startup to provide
+         *     its LLM provider credentials and model assignments. Colony does not
+         *     manage its own LLM keys — it inherits them from the host.
+         *
+         *     This rebuilds the LLMRouter with the new tiers and updates the
+         *     ReasoningLoop to use the reconfigured router.
+         */
+        post: operations["configure_host_v1_host_configure_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/host/health": {
         parameters: {
             query?: never;
@@ -32,6 +59,26 @@ export interface paths {
         put?: never;
         /** Memory Read */
         post: operations["memory_read_v1_host_memory_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Memory Status
+         * @description Diagnostic for memory subsystem wiring.
+         */
+        get: operations["memory_status_v1_host_memory_status_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -100,6 +147,232 @@ export interface paths {
         put?: never;
         /** Memory Embed */
         post: operations["memory_embed_v1_host_memory_embed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/embed/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Embed Health
+         * @description Check embedder health — verify model is loaded and producing valid output.
+         */
+        get: operations["embed_health_v1_host_embed_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/embed/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Memory Embed Image
+         * @description Embed a single image and optionally store it.
+         */
+        post: operations["memory_embed_image_v1_host_memory_embed_image_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/embed/image/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Memory Embed Image Batch
+         * @description Embed multiple images.
+         */
+        post: operations["memory_embed_image_batch_v1_host_memory_embed_image_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/embed/async": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Memory Embed Async
+         * @description Async embedding for large collections — returns task_id immediately.
+         *
+         *     Accepts the same format as /memory/embed, /memory/embed/image/batch,
+         *     or /memory/index but runs in the background.
+         *     Poll GET /memory/embed/async/{task_id} for status.
+         */
+        post: operations["memory_embed_async_v1_host_memory_embed_async_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/embed/async/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Async Embed Status
+         * @description Poll status of an async embed task.
+         */
+        get: operations["async_embed_status_v1_host_memory_embed_async__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/search/multimodal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Memory Search Multimodal
+         * @description Cross-modal search — text query finds images, image query finds text.
+         */
+        post: operations["memory_search_multimodal_v1_host_memory_search_multimodal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Memory Backfill
+         * @description Re-embed all vectors using the current embedding pipeline.
+         *
+         *     Returns a task_id immediately; backfill runs in the background.
+         */
+        post: operations["memory_backfill_v1_host_memory_backfill_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/backfill/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Backfill Status
+         * @description Check the status of a running backfill task.
+         */
+        get: operations["backfill_status_v1_host_memory_backfill__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/migrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Memory Migrate
+         * @description Migrate all vectors from an old model to the current embedding model.
+         */
+        post: operations["memory_migrate_v1_host_memory_migrate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/migrate/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Migrate Status
+         * @description Check the status of a running migration task.
+         */
+        get: operations["migrate_status_v1_host_memory_migrate__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/memory/index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Memory Index
+         * @description Embed and store items in one call.
+         */
+        post: operations["memory_index_v1_host_memory_index_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -329,6 +602,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/world/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Extract Entities */
+        post: operations["extract_entities_v1_host_world_extract_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/host/cognition/cycle": {
         parameters: {
             query?: never;
@@ -357,6 +647,40 @@ export interface paths {
         get: operations["get_cpi_v1_host_cognition_cpi_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/search/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Search Providers */
+        get: operations["list_search_providers_v1_host_search_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search */
+        post: operations["search_v1_host_search_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -510,6 +834,66 @@ export interface paths {
         get: operations["list_skills_v1_host_skills_registry_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/skills/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Skill Drafts
+         * @description List skills in DRAFT status awaiting approval.
+         */
+        get: operations["list_skill_drafts_v1_host_skills_drafts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/skills/{skill_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Skill
+         * @description Move a DRAFT skill to ACTIVE.
+         */
+        post: operations["approve_skill_v1_host_skills__skill_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/skills/{skill_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject Skill
+         * @description Reject a DRAFT skill by archiving it.
+         */
+        post: operations["reject_skill_v1_host_skills__skill_id__reject_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -710,6 +1094,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/autonomy/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Schedules */
+        get: operations["list_schedules_v1_host_autonomy_schedule_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/autonomy/schedule/{schedule_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable Schedule */
+        post: operations["enable_schedule_v1_host_autonomy_schedule__schedule_id__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/autonomy/schedule/{schedule_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable Schedule */
+        post: operations["disable_schedule_v1_host_autonomy_schedule__schedule_id__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/host/autonomy/status": {
         parameters: {
             query?: never;
@@ -755,6 +1190,50 @@ export interface paths {
         put?: never;
         /** Autonomy Stop */
         post: operations["autonomy_stop_v1_host_autonomy_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/autonomy/cycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Autonomy Cycle
+         * @description Trigger a single autonomy cycle for testing.
+         */
+        post: operations["autonomy_cycle_v1_host_autonomy_cycle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/seed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Seed Self Knowledge Endpoint
+         * @description Seed Colony with self-knowledge via API.
+         *
+         *     This endpoint triggers the self-knowledge seeding process that populates
+         *     Colony's memory, world model, and skills registry with deep understanding
+         *     of its own architecture and capabilities.
+         */
+        post: operations["seed_self_knowledge_endpoint_v1_host_seed_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -811,6 +1290,60 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** BackfillRequest */
+        BackfillRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Collection */
+            collection?: string | null;
+            /**
+             * Batch Size
+             * @default 64
+             */
+            batch_size: number;
+        };
+        /** BackfillResponse */
+        BackfillResponse: {
+            /**
+             * Task Id
+             * @default
+             */
+            task_id: string;
+            /**
+             * Status
+             * @default started
+             */
+            status: string;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Processed
+             * @default 0
+             */
+            processed: number;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /**
+             * Duration S
+             * @default 0
+             */
+            duration_s: number;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
         };
         /** BriefingListResponse */
         BriefingListResponse: {
@@ -1007,6 +1540,48 @@ export interface components {
             /** Delivery Id */
             delivery_id: string;
         };
+        /** EmbedHealthResponse */
+        EmbedHealthResponse: {
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Dims
+             * @default 0
+             */
+            dims: number;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+            /**
+             * Status
+             * @default unknown
+             */
+            status: string;
+            /** Error */
+            error?: string | null;
+            /**
+             * Modalities
+             * @default [
+             *       "text"
+             *     ]
+             */
+            modalities: string[];
+            /**
+             * Multimodal Enabled
+             * @default false
+             */
+            multimodal_enabled: boolean;
+        };
         /** EnrichedContextRequest */
         EnrichedContextRequest: {
             identity: components["schemas"]["HostIdentity"];
@@ -1063,6 +1638,51 @@ export interface components {
             properties?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** ExtractedEntityResponse */
+        ExtractedEntityResponse: {
+            /** Name */
+            name: string;
+            /** Entity Type */
+            entity_type: string;
+            /** Attributes */
+            attributes?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Confidence
+             * @default 1
+             */
+            confidence: number;
+        };
+        /** ExtractionRequest */
+        ExtractionRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Content */
+            content: string;
+            /** Filename */
+            filename?: string | null;
+            /** Mime Type */
+            mime_type?: string | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ExtractionResponse */
+        ExtractionResponse: {
+            /** Format Detected */
+            format_detected: string;
+            /**
+             * Entities
+             * @default []
+             */
+            entities: components["schemas"]["ExtractedEntityResponse"][];
+            /**
+             * Text Length
+             * @default 0
+             */
+            text_length: number;
         };
         /** GoalCreateRequest */
         GoalCreateRequest: {
@@ -1137,6 +1757,31 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HostConfigureRequest */
+        HostConfigureRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /**
+             * Llm
+             * @description LLM provider config from host
+             */
+            llm?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** HostConfigureResponse */
+        HostConfigureResponse: {
+            /**
+             * Configured
+             * @default true
+             */
+            configured: boolean;
+            /** Provider */
+            provider?: string | null;
+            /** Models */
+            models?: {
+                [key: string]: string;
+            } | null;
+        };
         /** HostHealthResponse */
         HostHealthResponse: {
             /**
@@ -1169,6 +1814,14 @@ export interface components {
             plugin_version?: string | null;
             /** Instance Id */
             instance_id?: string | null;
+            /** Colony Id */
+            colony_id?: string | null;
+            /** Node Id */
+            node_id?: string | null;
+            /** Node Cert Fingerprint */
+            node_cert_fingerprint?: string | null;
+            /** Trust Tier */
+            trust_tier?: ("REGULAR" | "TRUSTED" | "PRIVILEGED" | "GENESIS") | null;
         };
         /** HostMessage */
         HostMessage: {
@@ -1220,11 +1873,139 @@ export interface components {
             colony_id?: string | null;
             /** Public Key */
             public_key?: string | null;
+            /** Node Id */
+            node_id?: string | null;
+            /** Node Public Key */
+            node_public_key?: string | null;
+            /** Node Cert Fingerprint */
+            node_cert_fingerprint?: string | null;
             /**
              * Initialized
              * @default false
              */
             initialized: boolean;
+            /**
+             * Keys Configured
+             * @default false
+             */
+            keys_configured: boolean;
+            /**
+             * Is Genesis
+             * @default false
+             */
+            is_genesis: boolean;
+            /** Trust Tier */
+            trust_tier?: ("REGULAR" | "TRUSTED" | "PRIVILEGED" | "GENESIS") | null;
+            /**
+             * Trust Anchor Verified
+             * @default false
+             */
+            trust_anchor_verified: boolean;
+        };
+        /** ImageBatchEmbedRequest */
+        ImageBatchEmbedRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Images */
+            images: {
+                [key: string]: unknown;
+            }[];
+            /** Collection */
+            collection?: string | null;
+        };
+        /** ImageBatchEmbedResponse */
+        ImageBatchEmbedResponse: {
+            /** Model */
+            model: string;
+            /** Results */
+            results: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** ImageEmbedRequest */
+        ImageEmbedRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Image */
+            image?: string | null;
+            /** Image Url */
+            image_url?: string | null;
+            /** Image Path */
+            image_path?: string | null;
+            /** Mime Type */
+            mime_type?: string | null;
+            /** Caption */
+            caption?: string | null;
+            /** Collection */
+            collection?: string | null;
+            /** Id */
+            id?: string | null;
+        };
+        /** ImageEmbedResponse */
+        ImageEmbedResponse: {
+            /** Model */
+            model: string;
+            /** Vector */
+            vector: number[];
+            /**
+             * Image Hash
+             * @default
+             */
+            image_hash: string;
+            /**
+             * Image Ref
+             * @default
+             */
+            image_ref: string;
+            /**
+             * Thumbnail Ref
+             * @default
+             */
+            thumbnail_ref: string;
+            /**
+             * Caption
+             * @default
+             */
+            caption: string;
+            /**
+             * Width
+             * @default 0
+             */
+            width: number;
+            /**
+             * Height
+             * @default 0
+             */
+            height: number;
+            /**
+             * Modality
+             * @default image
+             */
+            modality: string;
+        };
+        /** IndexRequest */
+        IndexRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Items */
+            items: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** IndexResponse */
+        IndexResponse: {
+            /**
+             * Indexed
+             * @default 0
+             */
+            indexed: number;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
         };
         /** InsightResponse */
         InsightResponse: {
@@ -1305,6 +2086,8 @@ export interface components {
             identity: components["schemas"]["HostIdentity"];
             /** Inputs */
             inputs: string[];
+            /** Texts */
+            texts?: string[] | null;
             /** Model */
             model?: string | null;
         };
@@ -1414,6 +2197,89 @@ export interface components {
             id: string;
             /** Accepted */
             accepted: boolean;
+        };
+        /** MigrateRequest */
+        MigrateRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Old Model Id */
+            old_model_id?: string | null;
+            /**
+             * Batch Size
+             * @default 64
+             */
+            batch_size: number;
+        };
+        /** MigrateResponse */
+        MigrateResponse: {
+            /**
+             * Task Id
+             * @default
+             */
+            task_id: string;
+            /**
+             * Status
+             * @default started
+             */
+            status: string;
+            /**
+             * Collections Migrated
+             * @default 0
+             */
+            collections_migrated: number;
+            /**
+             * Vectors Migrated
+             * @default 0
+             */
+            vectors_migrated: number;
+            /**
+             * Vectors Failed
+             * @default 0
+             */
+            vectors_failed: number;
+            /**
+             * Duration S
+             * @default 0
+             */
+            duration_s: number;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+        };
+        /** MultimodalSearchRequest */
+        MultimodalSearchRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Query */
+            query?: string | null;
+            /** Query Image */
+            query_image?: string | null;
+            /** Collection */
+            collection?: string | null;
+            /** Filter Modality */
+            filter_modality?: string | null;
+            /**
+             * Limit
+             * @default 10
+             */
+            limit: number;
+            /**
+             * Min Score
+             * @default 0
+             */
+            min_score: number;
+        };
+        /** MultimodalSearchResponse */
+        MultimodalSearchResponse: {
+            /** Results */
+            results: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Model
+             * @default
+             */
+            model: string;
         };
         /** ReasoningToolCall */
         ReasoningToolCall: {
@@ -1592,6 +2458,34 @@ export interface components {
             /** Stored */
             stored: boolean;
         };
+        /** SeedResponse */
+        SeedResponse: {
+            /**
+             * Memories
+             * @default 0
+             */
+            memories: number;
+            /**
+             * Entities
+             * @default 0
+             */
+            entities: number;
+            /**
+             * Skills
+             * @default 0
+             */
+            skills: number;
+            /**
+             * Insights
+             * @default 0
+             */
+            insights: number;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+        };
         /** SignalIngestRequest */
         SignalIngestRequest: {
             identity: components["schemas"]["HostIdentity"];
@@ -1602,6 +2496,10 @@ export interface components {
             tool_calls?: components["schemas"]["ReasoningToolCall"][];
             /** Correction */
             correction?: string | null;
+            /** Signals */
+            signals?: {
+                [key: string]: unknown;
+            }[];
         };
         /** SignalIngestResponse */
         SignalIngestResponse: {
@@ -1745,6 +2643,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    configure_host_v1_host_configure_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostConfigureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostConfigureResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_v1_host_health_get: {
         parameters: {
             query?: never;
@@ -1794,6 +2725,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_status_v1_host_memory_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -1917,6 +2868,356 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryEmbedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    embed_health_v1_host_embed_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedHealthResponse"];
+                };
+            };
+        };
+    };
+    memory_embed_image_v1_host_memory_embed_image_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImageEmbedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageEmbedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_embed_image_batch_v1_host_memory_embed_image_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImageBatchEmbedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageBatchEmbedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_embed_async_v1_host_memory_embed_async_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    async_embed_status_v1_host_memory_embed_async__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_search_multimodal_v1_host_memory_search_multimodal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MultimodalSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultimodalSearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_backfill_v1_host_memory_backfill_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackfillRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    backfill_status_v1_host_memory_backfill__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_migrate_v1_host_memory_migrate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MigrateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    migrate_status_v1_host_memory_migrate__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_index_v1_host_memory_index_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IndexRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2408,6 +3709,39 @@ export interface operations {
             };
         };
     };
+    extract_entities_v1_host_world_extract_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtractionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtractionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cognition_cycle_v1_host_cognition_cycle_post: {
         parameters: {
             query?: never;
@@ -2457,6 +3791,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CognitivePerformanceIndex"];
+                };
+            };
+        };
+    };
+    list_search_providers_v1_host_search_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    search_v1_host_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2731,6 +4120,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillsListResponse"];
+                };
+            };
+        };
+    };
+    list_skill_drafts_v1_host_skills_drafts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    approve_skill_v1_host_skills__skill_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_skill_v1_host_skills__skill_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3082,6 +4559,88 @@ export interface operations {
             };
         };
     };
+    list_schedules_v1_host_autonomy_schedule_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    enable_schedule_v1_host_autonomy_schedule__schedule_id__enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disable_schedule_v1_host_autonomy_schedule__schedule_id__disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     autonomy_status_v1_host_autonomy_status_get: {
         parameters: {
             query?: never;
@@ -3138,6 +4697,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AutonomyStatusResponse"];
+                };
+            };
+        };
+    };
+    autonomy_cycle_v1_host_autonomy_cycle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    seed_self_knowledge_endpoint_v1_host_seed_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeedResponse"];
                 };
             };
         };
