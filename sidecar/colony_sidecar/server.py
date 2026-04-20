@@ -406,9 +406,13 @@ async def lifespan(app: FastAPI):
         set_search_orchestrator(search_orchestrator)
 
         # Register native tools with the ToolExecutor
-        if _tool_executor is not None:
+        try:
+            from colony_sidecar.api.routers.host import _tool_executor as te
+        except ImportError:
+            te = None
+        if te is not None:
             sandbox_dir = os.environ.get("COLONY_SANDBOX_DIR", str(state_dir / "sandbox"))
-            _tool_executor.register_native_tools(
+            te.register_native_tools(
                 search_orchestrator=search_orchestrator,
                 sandbox_dir=sandbox_dir,
             )
