@@ -12,6 +12,11 @@ class RecipientVerifier:
         self._sessions = session_store
 
     async def check(self, payload) -> LayerResult:
+        # Pass through when no session store configured or empty session_id
+        # (direct API calls without an established session)
+        if self._sessions is None or not payload.session_id:
+            return LayerResult(blocked=False, code="pass", reason="no session context")
+
         session = await self._sessions.get(payload.session_id)
 
         if session is None:

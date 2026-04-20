@@ -277,9 +277,12 @@ async def lifespan(app: FastAPI):
     # --- 7. Goals engine ---
     try:
         from colony_sidecar.goals.engine import GoalEngine
-        goals_engine = GoalEngine()
+        from colony_sidecar.goals.store import GoalStore
+        goals_db = os.path.join(state_dir, "colony-goals.db")
+        goals_store = GoalStore(db_path=goals_db)
+        goals_engine = GoalEngine(store=goals_store)
         set_goals_engine(goals_engine)
-        logger.info("GoalEngine initialized")
+        logger.info("GoalEngine initialized (db=%s)", goals_db)
     except Exception as exc:
         logger.warning("GoalEngine init failed: %s", exc)
 
