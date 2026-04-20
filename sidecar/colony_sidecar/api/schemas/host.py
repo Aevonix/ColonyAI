@@ -363,6 +363,7 @@ class SignalIngestRequest(BaseModel):
     outgoing_message: Optional[HostMessage] = None
     tool_calls: List[ReasoningToolCall] = Field(default_factory=list)
     correction: Optional[str] = None
+    signals: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class SignalIngestResponse(BaseModel):
@@ -680,6 +681,7 @@ class IdentityStatusResponse(BaseModel):
     colony_id: Optional[str] = None
     public_key: Optional[str] = None
     initialized: bool = False
+    keys_configured: bool = False
 
 
 class IdentityInitRequest(BaseModel):

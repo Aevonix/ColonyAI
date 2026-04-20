@@ -983,13 +983,15 @@ async def memory_index(body: IndexRequest) -> IndexResponse:
 
 @router.post("/context/assemble", response_model=ContextAssembleResponse)
 async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleResponse:
-    # Context assembly pulls from memory search + available subsystems
+    # Context assembly pulls from memory + goals + contacts + world model + skills
     sections: list[ContextSection] = []
+    query_text = body.incoming_message.content if body.incoming_message else ""
 
-    if _graph is not None and body.incoming_message.content:
+    # --- Memory ---
+    if _graph is not None and query_text:
         try:
             results = await _graph.recall(
-                query=body.incoming_message.content,
+                query=query_text,
                 limit=5,
             )
             if results:
@@ -1005,6 +1007,73 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
                 ))
         except Exception as exc:
             logger.warning("context_assemble memory search failed: %s", exc)
+
+    # --- Active Goals ---
+    if _goals_store is not None:
+        try:
+            from colony_sidecar.goals.models import GoalStatus
+            goals = _goals_store.list_goals(status=GoalStatus.ACTIVE)
+            if goals:
+                body_text = "\n".join(
+                    f"- [{g.priority.name.lower()}] {g.title}: {g.description} (progress: {g.progress_pct:.0%})"
+                    for g in goals[:5]
+                )
+                sections.append(ContextSection(
+                    id="colony-goals",
+                    title="Active Goals",
+                    body=body_text,
+                    priority=80,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble goals failed: %s", exc)
+
+    # --- Contact Briefing ---
+    if _briefings_engine is not None and body.context and body.context.contact_id:
+        try:
+            briefings = _briefings_engine.get_recent(limit=3)
+            if briefings:
+                body_text = "\n".join(f"- {b}" for b in briefings) if isinstance(briefings, list) else str(briefings)
+                sections.append(ContextSection(
+                    id="colony-briefing",
+                    title="Contact Briefing",
+                    body=body_text,
+                    priority=85,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble briefings failed: %s", exc)
+
+    # --- World Model Entities ---
+    if _world_store is not None and query_text:
+        try:
+            entities = await _world_store.find_entities(query=query_text, limit=5)
+            if entities:
+                body_text = "\n".join(
+                    f"- [{e.entity_type}] {e.name}" if hasattr(e, 'entity_type') else f"- {e}"
+                    for e in entities
+                )
+                sections.append(ContextSection(
+                    id="colony-world-model",
+                    title="Related Entities",
+                    body=body_text,
+                    priority=70,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble world model failed: %s", exc)
+
+    # --- Available Skills ---
+    if _skills_registry is not None:
+        try:
+            skills = await _skills_registry.list_all()
+            if skills:
+                body_text = "\n".join(f"- {s.name}: {s.description}" for s in skills[:8])
+                sections.append(ContextSection(
+                    id="colony-skills",
+                    title="Available Skills",
+                    body=body_text,
+                    priority=50,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble skills failed: %s", exc)
 
     return ContextAssembleResponse(sections=sections)
 
@@ -1087,6 +1156,15 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
         except Exception as exc:
             logger.warning("signals_ingest collect(outgoing) failed: %s", exc)
 
+    # Raw signals from external sources
+    if body.signals:
+        try:
+            for sig in body.signals:
+                await _signal_collector.ingest_raw(sig)
+            recorded += len(body.signals)
+        except Exception as exc:
+            logger.warning("signals_ingest raw signals failed: %s", exc)
+
     return SignalIngestResponse(accepted=True, signals_recorded=recorded)
 
 
@@ -1141,8 +1219,10 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
         return SafetyCheckResponse(
             decision="block" if result.blocked else "pass",
             blocked=result.blocked,
-            blocking_layer=result.blocking_layer if hasattr(result, "blocking_layer") else None,
-            reason=result.reason if hasattr(result, "reason") else None,
+            blocking_layer=result.blocking_layer,
+            reason=getattr(result, "block_reason", None),
+            flagged_excerpt=getattr(result, "flagged_excerpt", None),
+            layer_results=getattr(result, "layer_results", None),
         )
     except Exception as exc:
         logger.warning("safety_check failed — passing through: %s", exc)
@@ -1416,6 +1496,7 @@ def set_world_store(store) -> None:
 
 
 @router.post("/world/entities/query", response_model=EntityListResponse)
+@router.post("/world-model/entities", response_model=EntityListResponse, include_in_schema=False)
 async def query_entities(body: EntityQueryRequest) -> EntityListResponse:
     if _world_store is None:
         return EntityListResponse(entities=[])
@@ -1428,6 +1509,7 @@ async def query_entities(body: EntityQueryRequest) -> EntityListResponse:
 
 
 @router.get("/world/entities", response_model=EntityListResponse)
+@router.get("/world-model/entities", response_model=EntityListResponse, include_in_schema=False)
 async def list_entities(entity_type: Optional[str] = None, limit: int = 50) -> EntityListResponse:
     if _world_store is None:
         return EntityListResponse(entities=[])
@@ -1908,12 +1990,22 @@ async def identity_status() -> IdentityStatusResponse:
     if _chain_manager is None:
         return IdentityStatusResponse(initialized=False)
     try:
-        colony_id = getattr(_chain_manager, "colony_id", None)
-        pubkey = getattr(_chain_manager, "public_key_pem", None)
+        colony_id = _chain_manager.colony_id
+        # Try to get public key from chain state
+        pubkey = None
+        try:
+            state = await _chain_manager.get_state()
+            if hasattr(state, "public_key_hex") and state.public_key_hex:
+                pubkey = state.public_key_hex
+        except Exception:
+            pass
+        # Check if key manager is wired for signing
+        has_keys = hasattr(_chain_manager, "key_manager") and _chain_manager.key_manager is not None
         return IdentityStatusResponse(
             colony_id=colony_id,
             public_key=pubkey,
             initialized=colony_id is not None,
+            keys_configured=has_keys,
         )
     except Exception as exc:
         logger.warning("identity_status failed: %s", exc)
@@ -2090,6 +2182,18 @@ async def autonomy_start() -> AutonomyStatusResponse:
 
 @router.post("/autonomy/stop", response_model=AutonomyStatusResponse)
 async def autonomy_stop() -> AutonomyStatusResponse:
+
+@router.post("/autonomy/cycle", response_model=dict)
+async def autonomy_cycle() -> dict:
+    """Trigger a single autonomy cycle for testing."""
+    if _autonomy_loop is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    try:
+        result = await _autonomy_loop.run_single_cycle()
+        return {"completed": True, "result": result}
+    except Exception as exc:
+        logger.warning("autonomy_cycle failed: %s", exc)
+        return {"completed": False, "error": str(exc)}
     global _autonomy_task
     if _autonomy_loop is None:
         return AutonomyStatusResponse()

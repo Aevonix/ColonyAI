@@ -78,6 +78,23 @@ class SignalCollector:
     async def collect(self, message: Message) -> List[Signal]:
         """Extract all signals from a single message in Colony's interaction stream."""
         t0 = time.monotonic()
+
+    async def ingest_raw(self, signal_data: dict) -> None:
+        """Ingest a pre-computed signal from an external source.
+
+        The signal_data dict should contain: type, source, person_id (optional),
+        and any additional data fields.
+        """
+        try:
+            sig = Signal(
+                signal_type=signal_data.get("type", "external"),
+                source=signal_data.get("source", "api"),
+                person_id=signal_data.get("person_id", ""),
+                data=signal_data.get("data", {}),
+            )
+            await self.baselines.store_signal(sig)
+        except Exception as e:
+            logger.warning("ingest_raw failed: %s", e)
         signals = []
         person_id = message.sender_id
 

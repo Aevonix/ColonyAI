@@ -240,6 +240,7 @@ async def lifespan(app: FastAPI):
             vs = VectorStore(data_dir=vector_db_path)
             embed_dims = int(os.environ.get("COLONY_EMBED_DIMS", pipeline.dimensions or 384))
             await vs.connect(dimensions=embed_dims)
+            await vs.ensure_collections(dimensions=embed_dims)
             graph.set_vector_store(vs)
             logger.info("ColonyGraph wired to vector store (path=%s)", vector_db_path)
         except Exception as vexc:
