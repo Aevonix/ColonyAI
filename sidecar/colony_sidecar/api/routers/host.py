@@ -1605,10 +1605,12 @@ async def start_research(body: ResearchStartRequest) -> ResearchRunResponse:
     if _research_pipeline is None:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
-        run = await _research_pipeline.run(topic=body.topic, depth=body.depth)
+        depth_map = {"quick": 1, "standard": 3, "deep": 5}
+        max_stages = depth_map.get(body.depth or "standard", 3)
+        run = await _research_pipeline.run(goal=body.topic, metadata={"depth": body.depth, "person_id": body.person_id})
         return ResearchRunResponse(
             run_id=run.run_id,
-            topic=run.topic,
+            topic=body.topic,
             status=run.status.value if hasattr(run.status, "value") else str(run.status),
             stages_completed=[s.value if hasattr(s, "value") else str(s) for s in run.stages_completed],
             artifact=run.artifact if hasattr(run, "artifact") else None,
