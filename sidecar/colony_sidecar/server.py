@@ -405,8 +405,13 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.chain.identity import get_or_create_colony_id, load_genesis_manifest
         colony_id = get_or_create_colony_id(state_dir)
 
-        # Load Genesis manifest if it exists
+        # Load Genesis manifest
         genesis_path = Path(state_dir) / "genesis.json"
+        if not genesis_path.exists():
+            # Also check package directory (bundled manifest)
+            pkg_genesis = Path(__file__).parent / "genesis.json"
+            if pkg_genesis.exists():
+                genesis_path = pkg_genesis
         load_genesis_manifest(genesis_path)
 
         from colony_sidecar.chain.manager import ChainManager

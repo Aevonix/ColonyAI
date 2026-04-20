@@ -1,0 +1,8 @@
+{
+  "colony_id": "31a441ea-0191-4bfb-a87f-98a6703a6db3",
+  "public_key_ed25519": "341065fd6cd26ca501c5786ed1517eedc448fec60aeaea8d047d07bf1a9cc351",
+  "alias": "genesis",
+  "genesis_version": 1,
+  "signed_at": "2026-04-20T16:09:57.450903+00:00",
+  "description": "The original Colony — trust anchor for the network"
+}
