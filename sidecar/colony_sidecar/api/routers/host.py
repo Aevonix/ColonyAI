@@ -181,6 +181,14 @@ def set_reasoning_loop(loop) -> None:
     _reasoning_loop = loop
 
 
+_tool_executor = None
+
+
+def set_tool_executor(executor) -> None:
+    global _tool_executor
+    _tool_executor = executor
+
+
 def set_consolidator(consolidator) -> None:
     global _consolidator
     _consolidator = consolidator

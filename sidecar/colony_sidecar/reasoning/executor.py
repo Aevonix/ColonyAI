@@ -63,6 +63,31 @@ class ToolExecutor:
         """Register a tool handler."""
         self._handlers[name] = handler
 
+    def register_native_tools(self, search_orchestrator=None, sandbox_dir: str = "") -> None:
+        """Register Colony-native tools that run inside the sidecar."""
+        try:
+            from colony_sidecar.reasoning.native_tools.calculate import CalculateTool
+            self.register("calculate", CalculateTool())
+        except Exception:
+            pass
+
+        if search_orchestrator and search_orchestrator.has_providers:
+            try:
+                from colony_sidecar.reasoning.native_tools.web_search import WebSearchTool
+                self.register("web_search", WebSearchTool(search_orchestrator))
+            except Exception:
+                pass
+
+        if sandbox_dir:
+            try:
+                from colony_sidecar.reasoning.native_tools.file_ops import ReadFileTool, WriteFileTool, ListDirectoryTool
+                self.register("read_file", ReadFileTool(sandbox_dir))
+                self.register("write_file", WriteFileTool(sandbox_dir))
+                self.register("list_directory", ListDirectoryTool(sandbox_dir))
+            except Exception:
+                pass
+        self._handlers[name] = handler
+
     def unregister(self, name: str) -> None:
         """Remove a tool handler."""
         self._handlers.pop(name, None)

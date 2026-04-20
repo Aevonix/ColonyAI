@@ -20,6 +20,7 @@ from colony_sidecar.api.routers.host import (
     set_scheduler,
     set_chain_manager,
     set_reasoning_loop,
+    set_tool_executor,
     set_graph,
     set_consolidator,
     set_response_gate,
@@ -90,8 +91,11 @@ async def lifespan(app: FastAPI):
     if llm_router is not None:
         try:
             from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
-            reasoning_loop = ReasoningLoop(model=llm_router, tools=ToolExecutor())
+            tool_executor = ToolExecutor()
+            reasoning_loop = ReasoningLoop(model=llm_router, tools=tool_executor)
             set_reasoning_loop(reasoning_loop)
+            # Native tools will be registered after search orchestrator is wired
+            set_tool_executor(tool_executor)
             logger.info("ReasoningLoop initialized")
         except Exception as exc:
             logger.warning("ReasoningLoop init failed: %s", exc)
@@ -400,6 +404,15 @@ async def lifespan(app: FastAPI):
             logger.info("No search provider configured — web search unavailable")
 
         set_search_orchestrator(search_orchestrator)
+
+        # Register native tools with the ToolExecutor
+        if _tool_executor is not None:
+            sandbox_dir = os.environ.get("COLONY_SANDBOX_DIR", str(state_dir / "sandbox"))
+            _tool_executor.register_native_tools(
+                search_orchestrator=search_orchestrator,
+                sandbox_dir=sandbox_dir,
+            )
+            logger.info("Native tools registered (calculate, web_search, file_ops)")
 
         research = ResearchPipeline()
         set_research_pipeline(research)
