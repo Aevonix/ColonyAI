@@ -99,6 +99,9 @@ def _base_schema(dims: int) -> pa.Schema:
         pa.field("metadata", pa.utf8()),
         pa.field("modality", pa.utf8()),
         pa.field("image_hash", pa.utf8()),
+        pa.field("image_ref", pa.utf8()),
+        pa.field("thumbnail_ref", pa.utf8()),
+        pa.field("caption", pa.utf8()),
         pa.field("created_at", pa.float64()),
         pa.field("updated_at", pa.float64()),
     ])
