@@ -195,7 +195,7 @@ def supported_capabilities() -> List[str]:
     if _graph is not None:
         caps.append("memory")
     if _response_gate is not None:
-        caps.append("safety")
+        caps.append("response_gate")
     if _signal_collector is not None:
         caps.append("signals")
     if _embedder is not None:
@@ -320,9 +320,9 @@ async def health() -> HostHealthResponse:
     else:
         notes["memory"] = "ColonyGraph not wired — memory endpoints return stubs"
     if _response_gate is not None:
-        notes["safety"] = "ResponseGate wired"
+        notes["response_gate"] = "ResponseGate wired"
     else:
-        notes["safety"] = "ResponseGate not wired — safety/check passes everything"
+        notes["response_gate"] = "ResponseGate not wired — gate/check passes everything"
     if _reasoning_loop is not None:
         notes["reasoning"] = "ReasoningLoop wired (max_iterations=%d)" % _reasoning_loop._config.max_iterations
     else:

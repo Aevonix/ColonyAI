@@ -18,12 +18,13 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ## What Colony Is Today
 
-v1.0 is the intelligence system. Everything below works now.
+v1.0 is the intelligence system. 22 wired subsystems. Everything below works now.
 
-### 21 Wired Subsystems
+### 22 Wired Subsystems
 
 | Subsystem | Purpose |
 |---|---|
+| Consolidate | Memory deduplication and merge for near-duplicate graph entries |
 | Memory | Neo4j-backed graph storage for conversations, entities, relationships, insights |
 | Response Gate | 7-layer response inspection (recipient verification, PII scanning, cross-context isolation, trust tiers, injection detection, secondary review, send delay) |
 | Signals | Behavioral signal ingestion for profiling and pattern detection |
@@ -60,6 +61,26 @@ v1.0 is the intelligence system. Everything below works now.
 
 -----
 
+## Table of Contents
+
+- [Why Colony](#why-colony)
+- [What Colony Is Today](#what-colony-is-today)
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [API Reference](#api-reference)
+- [What Colony Is Not](#what-colony-is-not)
+- [Roadmap](#roadmap)
+- [Installation Profiles](#installation-profiles)
+- [CLI Reference](#cli-reference)
+- [Development](#development)
+- [OpenClaw Integration](#openclaw-integration)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
+-----
+
 ## Quick Start
 
 ### Prerequisites
@@ -93,7 +114,7 @@ docker compose up -d    # Neo4j + Colony sidecar
 
 ```bash
 curl http://localhost:7777/v1/host/health
-# Expected: {"status":"ok","capabilities":[...21 subsystems...]}
+# Expected: {"status":"ok","capabilities":[...22 subsystems...]}
 ```
 
 -----
@@ -121,7 +142,7 @@ Two deployable units. A thin TypeScript plugin that loads into your host process
 │  │ FastAPI Server                                      │            │
 │  └──────────────────────────┬──────────────────────────┘            │
 │  ┌──────────────────────────▼──────────────────────────┐            │
-│  │ SubsystemRegistry (21 subsystems)                   │            │
+│  │ SubsystemRegistry (22 subsystems)                   │            │
 │  └─────────────────────────────────────────────────────┘            │
 └──────────────────────────┬───────────────────────────────────────────┘
                            │
@@ -173,6 +194,21 @@ LOG_LEVEL=info
 ```
 
 Full configuration reference in `docs/configuration.md`.
+
+-----
+
+## CLI Reference
+
+| Command | Description |
+|---|---|
+| `colony init` | Interactive setup wizard: deps, Neo4j, hardware scan, model pre-download |
+| `colony start` | Start the sidecar server (`--host`, `--port`, `--detach`) |
+| `colony status` | Check sidecar health and subsystem wiring |
+| `colony seed` | Seed self-knowledge (run after `colony init` if skipped) |
+| `colony generate-types` | Export OpenAPI spec and generate TypeScript types |
+| `colony backfill` | Re-embed all vectors with current model |
+| `colony migrate-tier` | Migrate vectors from old embedding model to current |
+| `colony activate-multimodal` | Enable multimodal embeddings and reranking |
 
 -----
 
@@ -364,15 +400,27 @@ colony/
 │   └── colony_sidecar/
 │       ├── api/              # FastAPI routers + schemas
 │       ├── autonomy/         # Autonomy loop
+│       ├── briefings/        # Proactive briefing engine
 │       ├── chain/            # Cryptographic identity
-│       ├── secrets/          # Encrypted vault
-│       ├── intelligence/     # Graph, cognition, synthesis, learning
-│       ├── reasoning/        # ReasoningLoop + ToolExecutor
-│       ├── skills/           # Skills registry
+│       ├── contacts/         # Relationship store
+│       ├── delivery/         # Proactive message bridge
+│       ├── events/           # WebSocket event stream
 │       ├── gate/             # 7-layer response gate
-│       ├── vector/           # Embedding pipeline
+│       ├── goals/            # DAG goal engine
+│       ├── identity_bootstrap/ # Self-knowledge seeding
+│       ├── intelligence/     # Graph, cognition, synthesis, learning
+│       ├── models/           # Shared Pydantic models
+│       ├── reasoning/        # ReasoningLoop + ToolExecutor
+│       ├── redact/           # Content redaction
+│       ├── research/         # Background research pipeline
 │       ├── router/           # LLMRouter
-│       └── tools/            # Colony-native tool definitions
+│       ├── secrets/          # Encrypted vault
+│       ├── sessions/         # Session management
+│       ├── skills/           # Skills registry
+│       ├── task_queue/       # Task queue + scheduler + workers
+│       ├── tools/            # Colony-native tool definitions
+│       ├── vector/           # Embedding pipeline
+│       └── world_model/      # Entity graph
 ├── Dockerfile
 ├── docker-compose.yml
 └── package.json
@@ -405,7 +453,7 @@ npm install @aevonix/colony
 }
 ```
 
-The plugin registers 21 capabilities (memory, signals, embed, context, reasoning, response_gate, goals, contacts, briefings, world_model, cognition, research, delivery, synthesis, learning, skills, identity, secrets, autonomy, sessions, task_queue) and 5 hooks (message_received, message_sending, llm_output, session_start, session_end).
+The plugin registers 22 capabilities (memory, consolidate, signals, embed, context, reasoning, response_gate, goals, contacts, briefings, world_model, cognition, research, delivery, synthesis, learning, skills, identity, secrets, autonomy, sessions, task_queue, events) and 5 hooks (message_received, message_sending, llm_output, session_start, session_end).
 
 -----
 
@@ -450,15 +498,15 @@ Includes Neo4j (APOC, memory tuning, health check) and the Colony sidecar (Huggi
 
 ## License
 
-MIT. See <LICENSE>.
+[MIT](LICENSE) — Copyright © 2026 Aevonix
 
 -----
 
 ## Status
 
-**Current release:** v1.0, Intelligence System (Phase 1 + Phase 2 multimodal)
+**Current release:** v0.1.0, Intelligence System (Phase 1 + Phase 2 multimodal)
 
-**Subsystems wired:** 21 of 21
+**Subsystems wired:** 22 of 22
 
 **Endpoints:** 44+
 

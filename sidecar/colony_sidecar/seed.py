@@ -654,7 +654,7 @@ WORLD_MODEL_ENTITIES = [
     # Concepts
     {"name": "memory", "type": "concept", "attributes": {"description": "Persistent storage of conversations and knowledge"}},
     {"name": "context assembly", "type": "concept", "attributes": {"description": "Gathering relevant context before LLM turn"}},
-    {"name": "safety", "type": "concept", "attributes": {"description": "Content filtering and policy enforcement"}},
+    {"name": "response_gate", "type": "concept", "attributes": {"description": "Response inspection and data leakage prevention"}},
     {"name": "reasoning", "type": "concept", "attributes": {"description": "LLM iteration with tool calling"}},
     {"name": "autonomy", "type": "concept", "attributes": {"description": "Background proactive intelligence"}},
     {"name": "embedding", "type": "concept", "attributes": {"description": "Vector representation of text for semantic search"}},

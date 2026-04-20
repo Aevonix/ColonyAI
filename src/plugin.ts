@@ -95,7 +95,7 @@ export type MemoryEmbeddingProvider = NonNullable<
 const PLUGIN_ID = "colony";
 const PLUGIN_NAME = "Colony Intelligence";
 const PLUGIN_DESCRIPTION =
-  "Mount Colony's graph memory, autonomy loop, context assembly, and safety pipeline into OpenClaw via the colony /v1/host API.";
+  "Mount Colony's graph memory, autonomy loop, context assembly, and response gate into OpenClaw via the colony /v1/host API.";
 const PLUGIN_VERSION = "0.0.1";
 
 // ---------------------------------------------------------------------------
@@ -1494,15 +1494,15 @@ function safetyHook(
     hookCtx: MessageSendingContext,
   ): Promise<MessageSendingResult | void> => {
     // Capability short-circuit: when the sidecar probe succeeded AND
-    // it reported no ``safety`` capability, skip the call entirely. If
+    // it reported no ``response_gate`` capability, skip the call entirely. If
     // the probe failed (state: unknown) we still call the endpoint so
     // ``failSafetyClosed`` can make the right decision — silently
     // no-oping when the sidecar is temporarily unreachable would
     // subvert the fail-closed default.
-    const hasSafety = await caps.has("safety");
+    const hasGate = await caps.has("response_gate");
     const probeOk = await caps.hasProbedSuccessfully();
-    if (!hasSafety && probeOk) {
-      return; // pass-through — sidecar affirmatively has no safety gate
+    if (!hasGate && probeOk) {
+      return; // pass-through — sidecar affirmatively has no response gate
     }
 
     // Best-effort identity mapping for Colony. The hook surface only
