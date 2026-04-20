@@ -41,7 +41,7 @@ v1.0 is the intelligence system. 22 wired subsystems. Everything below works now
 | Synthesis | Connection discovery between entities and topics |
 | Learning | Continuous learning from corrections and engagement |
 | Skills | Tool registry with metadata |
-| Identity | Ed25519 cryptographic identity chain |
+| Identity | Ed25519 cryptographic identity with Colony + Node layers, Genesis trust anchor, backup/restore |
 | Secrets | Encrypted vault for sensitive configuration |
 | Autonomy | Background loop for anomaly detection, initiative generation, synthesis |
 | Sessions | Isolated session management |
@@ -218,17 +218,58 @@ Full configuration reference in `docs/configuration.md`.
 
 ## CLI Reference
 
+### Setup & Operations
+
 | Command | Description |
 |---|---|
-| `colony init` | Interactive setup wizard: deps, Neo4j, hardware scan, model pre-download |
+| `colony init` | Interactive setup: deps, Neo4j, hardware scan, model pre-download, Colony identity creation |
 | `colony start` | Start the sidecar server (`--host`, `--port`, `--detach`) |
 | `colony status` | Check sidecar health and subsystem wiring |
 | `colony seed` | Seed self-knowledge (run after `colony init` if skipped) |
+| `colony doctor` | Run integration health check against running sidecar (`--url`, `--api-key`, `-v`) |
 | `colony generate-types` | Export OpenAPI spec and generate TypeScript types |
 | `colony backfill` | Re-embed all vectors with current model |
 | `colony migrate-tier` | Migrate vectors from old embedding model to current |
 | `colony activate-multimodal` | Enable multimodal embeddings and reranking |
-| `colony doctor` | Run integration health check against running sidecar (`--url`, `--api-key`, `-v`) |
+
+### Identity & Keys
+
+| Command | Description |
+|---|---|
+| `colony key info` | Show colony_id, public key, and Genesis status |
+| `colony key generate` | Rotate Colony keypair (colony_id stays the same) |
+| `colony key set-passphrase` | Encrypt Colony private key with a passphrase |
+| `colony key manifest` | Create a shareable colony manifest (public identity) |
+| `colony key claim-genesis` | Claim Genesis status (first Colony only, one-time) |
+| `colony node info` | Show this device's node_id, public key, certificate status |
+| `colony backup` | Export Colony identity as encrypted backup (`-o` file, `--passphrase`) |
+| `colony restore` | Restore Colony from backup (interactive: file + passphrase) |
+
+### Cryptographic Identity
+
+Colony uses a two-layer identity model:
+
+- **Colony** — the logical identity. A permanent UUID (`colony_id`) paired with an Ed25519 keypair. One Colony, one owner, persists forever. Can run on multiple devices.
+- **Node** — a physical device running that Colony. Each device gets a unique `node_id` and its own Ed25519 keypair, certified by the Colony's private key.
+
+This means you can restore your Colony onto any number of machines — each gets its own node identity while sharing the same Colony identity. Networking, clustering, and federation build on this foundation.
+
+**Genesis.** The first Colony (Marc's) is the trust anchor for the entire network. Its manifest is self-signed with Ed25519 and committed to the repo. A hardcoded public key in the source verifies the signature. Genesis status is cryptographically unforgeable — editing the manifest locally doesn't work because the signature won't verify against the hardcoded key.
+
+**Backup & restore.** `colony backup` exports your entire Colony identity (colony_id, encrypted private key, Genesis manifest) as a single encrypted JSON file. `colony restore` brings it back on any machine. Store the backup file and passphrase in your password manager.
+
+```bash
+# First setup
+colony init                          # Creates Colony identity + keypair
+colony start                         # Starts sidecar, generates node identity
+
+# Adding a second machine
+colony restore -i backup.json        # Restores Colony identity
+colony start                         # New node for this device
+
+# Disaster recovery
+colony restore                       # Interactive: file + passphrase
+```
 
 -----
 
