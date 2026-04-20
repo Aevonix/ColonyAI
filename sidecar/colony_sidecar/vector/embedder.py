@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
@@ -258,7 +259,11 @@ def make_provider(config: EmbeddingConfig) -> EmbeddingProvider:
 # ---------------------------------------------------------------------------
 
 class EmbeddingPipeline:
-    """Wraps an EmbeddingProvider with LRU caching and latency monitoring."""
+    """Wraps an EmbeddingProvider with LRU caching and latency monitoring.
+
+    Supports both text-only and multimodal embedding. When multimodal is
+    enabled, the pipeline holds both a text provider and a multimodal provider.
+    """
 
     LATENCY_WARN_MS = 500.0  # Raised for Qwen3-Embedding-8B on CUDA
 
@@ -266,11 +271,28 @@ class EmbeddingPipeline:
         self,
         provider: EmbeddingProvider,
         cache_size: int = 4096,
+        multimodal_provider: Any = None,  # MultimodalEmbeddingProvider
+        image_store: Any = None,  # LocalImageStore or EmbedOnlyStore
     ) -> None:
         self._provider = provider
+        self._multimodal_provider = multimodal_provider
+        self._image_store = image_store
         self._cache: dict[str, list[float]] = {}
         self._cache_order: list[str] = []
         self._cache_size = cache_size
+        self._multimodal_enabled = multimodal_provider is not None
+
+    @property
+    def is_multimodal(self) -> bool:
+        """True when multimodal embedding is active."""
+        return self._multimodal_enabled
+
+    @property
+    def modalities(self) -> list[str]:
+        """Supported modalities."""
+        if self._multimodal_enabled and self._multimodal_provider:
+            return self._multimodal_provider.modalities
+        return ["text"]
 
     @property
     def dimensions(self) -> int:
@@ -367,6 +389,155 @@ class EmbeddingPipeline:
 
         return results  # type: ignore[return-value]
 
+    # ------------------------------------------------------------------
+    # Multimodal methods
+    # ------------------------------------------------------------------
+
+    async def embed_image(self, source: str | bytes, mime_type: str = "", caption: str = "") -> tuple[list[float], dict[str, Any]]:
+        """Embed a single image. Returns (vector, metadata).
+
+        Parameters
+        ----------
+        source : str | bytes
+            File path, URL, base64 string, or raw bytes.
+        mime_type : str
+            Optional MIME type hint.
+        caption : str
+            Optional user-provided caption.
+
+        Returns
+        -------
+        tuple[list[float], dict]
+            Vector and metadata dict with image_hash, image_ref, caption,
+            thumbnail_ref, width, height, exif.
+        """
+        if not self._multimodal_enabled or not self._multimodal_provider:
+            raise ValueError("Multimodal not enabled. Set COLONY_MULTIMODAL=true and restart.")
+
+        from colony_sidecar.vector.multimodal_types import EmbedInput, Modality
+        from colony_sidecar.vector.image_preprocess import (
+            compute_image_hash, extract_exif, load_image, resize_image,
+            strip_gps_exif, validate_image,
+        )
+        from colony_sidecar.vector.safety_image import check_image_safety, ImageSafetyLevel
+
+        # Load image
+        data, detected_mime = await load_image(source, mime_type)
+        mime = detected_mime or "image/jpeg"
+
+        # Validate
+        errors = validate_image(data)
+        if errors:
+            raise ValueError(f"Invalid image: {'; '.join(errors)}")
+
+        # Safety check
+        safety_level = ImageSafetyLevel(os.environ.get("COLONY_IMAGE_SAFETY", "basic"))
+        safety = await check_image_safety(data, mime, level=safety_level)
+        if not safety.safe:
+            raise ValueError(f"Image rejected by safety check: {safety.reason}")
+
+        # Resize if needed
+        data, width, height = resize_image(data)
+
+        # Strip GPS from stored image if configured
+        strip_gps = os.environ.get("COLONY_STRIP_EXIF_GPS", "true").lower() == "true"
+        stored_data = strip_gps_exif(data) if strip_gps else data
+
+        # Extract EXIF before stripping
+        exif = extract_exif(data)
+
+        # Compute hash
+        img_hash = compute_image_hash(data)
+
+        # Build ImageInput
+        from colony_sidecar.vector.multimodal_types import ImageInput
+        image_input = ImageInput(
+            data=data, mime_type=mime, width=width, height=height,
+            original_path=source if isinstance(source, str) and not source.startswith("data:") else "",
+            image_hash=img_hash, exif=exif, caption=caption,
+        )
+
+        # Store image
+        image_ref = ""
+        thumbnail_ref = ""
+        if self._image_store:
+            stored = await self._image_store.store(image_input)
+            image_ref = stored.path
+            thumbnail_ref = stored.thumbnail_path
+
+        # Auto-caption if no caption provided
+        if not caption:
+            from colony_sidecar.vector.caption import caption_image
+            llm_cfg = getattr(self, "_llm_config", None)
+            caption = await caption_image(image_input, llm_config=llm_cfg)
+
+        # Embed
+        vector = await self._multimodal_provider.embed_image(image_input)
+
+        metadata = {
+            "modality": "image",
+            "image_hash": img_hash,
+            "image_ref": image_ref,
+            "thumbnail_ref": thumbnail_ref,
+            "caption": caption,
+            "width": width,
+            "height": height,
+            "model_id": self._multimodal_provider.model_id,
+            "embedded_at": time.time(),
+        }
+        # Add EXIF data
+        if exif.get("captured_at"):
+            metadata["captured_at"] = exif["captured_at"]
+        if exif.get("gps_lat") and exif.get("gps_lon"):
+            metadata["gps_lat"] = exif["gps_lat"]
+            metadata["gps_lon"] = exif["gps_lon"]
+
+        return vector, metadata
+
+    async def embed_images(
+        self,
+        sources: list[str | bytes],
+        mime_types: list[str] | None = None,
+        captions: list[str] | None = None,
+    ) -> list[tuple[list[float], dict[str, Any]]]:
+        """Embed multiple images. Returns list of (vector, metadata) tuples."""
+        mimes = mime_types or [""] * len(sources)
+        caps = captions or [""] * len(sources)
+        results = []
+        for src, mime, cap in zip(sources, mimes, caps):
+            vec, meta = await self.embed_image(src, mime_type=mime, caption=cap)
+            results.append((vec, meta))
+        return results
+
+    async def embed_mixed(self, items: list[dict]) -> list[tuple[list[float], dict[str, Any]]]:
+        """Embed a mix of text and image inputs.
+
+        Each item: {"type": "text", "content": "..."} or
+                    {"type": "image", "content": "<path/url/base64>", "mime_type": "...", "caption": "..."}
+        """
+        results = []
+        for item in items:
+            item_type = item.get("type", "text")
+            content = item.get("content", "")
+            if item_type == "text":
+                vec = await self.embed(content)
+                meta = {"modality": "text", "model_id": self._provider._config.model_id, "embedded_at": time.time()}
+                results.append((vec, meta))
+            elif item_type == "image":
+                vec, meta = await self.embed_image(
+                    content,
+                    mime_type=item.get("mime_type", ""),
+                    caption=item.get("caption", ""),
+                )
+                results.append((vec, meta))
+            else:
+                raise ValueError(f"Unsupported input type: {item_type}")
+        return results
+
+    def set_llm_config(self, config: dict[str, Any]) -> None:
+        """Set LLM config for auto-captioning."""
+        self._llm_config = config
+
     @property
     def embed_fn(self):
         """Drop-in callable for ColonyGraph.set_embed_fn()."""
@@ -375,6 +546,8 @@ class EmbeddingPipeline:
     async def close(self) -> None:
         """Release underlying provider resources."""
         await self._provider.close()
+        if self._multimodal_provider:
+            await self._multimodal_provider.close()
         self._cache.clear()
         self._cache_order.clear()
 

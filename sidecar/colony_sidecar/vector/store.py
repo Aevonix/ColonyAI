@@ -146,14 +146,27 @@ class VectorStore:
         """Add a single vector entry."""
         now = time.time()
         meta = metadata or {}
-        # Ensure model_id and embedded_at are set
         meta.setdefault("embedded_at", now)
+        meta.setdefault("modality", "text")
+
+        # Dimension validation
+        if self._dims and len(vector) != self._dims:
+            raise ValueError(
+                f"Vector dimension mismatch: table expects {self._dims}, got {len(vector)}. "
+                "Run 'colony migrate-tier' to re-embed with the current model."
+            )
+
         table = await self._db.open_table(collection.value)
         await table.add([{
             "id": id,
             "text": text,
             "vector": vector,
             "metadata": json.dumps(meta),
+            "modality": meta.get("modality", "text"),
+            "image_hash": meta.get("image_hash", ""),
+            "image_ref": meta.get("image_ref", ""),
+            "thumbnail_ref": meta.get("thumbnail_ref", ""),
+            "caption": meta.get("caption", ""),
             "created_at": now,
             "updated_at": now,
         }])
@@ -167,16 +180,30 @@ class VectorStore:
         if not items:
             return
         now = time.time()
+
+        # Dimension validation on first item
+        if self._dims and items and len(items[0].vector) != self._dims:
+            raise ValueError(
+                f"Vector dimension mismatch: table expects {self._dims}, got {len(items[0].vector)}. "
+                "Run 'colony migrate-tier' to re-embed with the current model."
+            )
+
         table = await self._db.open_table(collection.value)
         rows = []
         for item in items:
             meta = item.metadata or {}
             meta.setdefault("embedded_at", now)
+            meta.setdefault("modality", "text")
             rows.append({
                 "id": item.id,
                 "text": item.text,
                 "vector": item.vector,
                 "metadata": json.dumps(meta),
+                "modality": meta.get("modality", "text"),
+                "image_hash": meta.get("image_hash", ""),
+                "image_ref": meta.get("image_ref", ""),
+                "thumbnail_ref": meta.get("thumbnail_ref", ""),
+                "caption": meta.get("caption", ""),
                 "created_at": now,
                 "updated_at": now,
             })
@@ -229,6 +256,74 @@ class VectorStore:
             ))
 
         return out
+
+    async def search_cross_modal(
+        self,
+        collection: Collection,
+        query_vector: list[float],
+        limit: int = 10,
+        filter_modality: Optional[str] = None,
+        min_score: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """Cross-modal search — text query finds images, image query finds text.
+
+        Works because multimodal models produce vectors in the same
+        embedding space regardless of input type.
+
+        Parameters
+        ----------
+        filter_modality : str, optional
+            Only return results of this modality ("text" or "image").
+            None = return all modalities.
+        """
+        filter_clause = None
+        if filter_modality:
+            filter_clause = f"modality = '{filter_modality}'"
+
+        results = await self.search(
+            collection, query_vector, limit=limit,
+            filter=filter_clause, min_score=min_score,
+        )
+
+        # Enrich with modality-specific fields
+        enriched = []
+        for r in results:
+            meta = r.metadata or {}
+            entry = {
+                "id": r.id,
+                "score": r.score,
+                "text": r.text,
+                "modality": meta.get("modality", "text"),
+                "image_ref": meta.get("image_ref", ""),
+                "image_hash": meta.get("image_hash", ""),
+                "thumbnail_ref": meta.get("thumbnail_ref", ""),
+                "caption": meta.get("caption", ""),
+                "metadata": meta,
+            }
+            enriched.append(entry)
+        return enriched
+
+    async def search_by_image_hash(self, collection: Collection, image_hash: str) -> Optional[VectorResult]:
+        """Find an existing vector by image hash (for dedup)."""
+        try:
+            table = await self._db.open_table(collection.value)
+            results = await table.search().where(f"image_hash = '{image_hash}'").limit(1).to_pandas()
+            if results.empty:
+                return None
+            row = results.iloc[0]
+            meta_str = row.get("metadata", "{}")
+            try:
+                meta = json.loads(meta_str) if isinstance(meta_str, str) else {}
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+            return VectorResult(
+                id=str(row["id"]),
+                score=1.0,
+                text=str(row.get("text", "")),
+                metadata=meta,
+            )
+        except Exception:
+            return None
 
     async def delete(self, collection: Collection, id: str) -> None:
         """Delete a single entry by ID."""

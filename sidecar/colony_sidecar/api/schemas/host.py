@@ -210,6 +210,8 @@ class EmbedHealthResponse(BaseModel):
     latency_ms: float = 0.0
     status: str = "unknown"
     error: Optional[str] = None
+    modalities: List[str] = ["text"]
+    multimodal_enabled: bool = False
 
 
 class BackfillRequest(BaseModel):
@@ -247,12 +249,61 @@ class MigrateResponse(BaseModel):
 
 class IndexRequest(BaseModel):
     identity: HostIdentity
-    items: List[dict]  # [{text, collection, id, metadata?}]
+    items: List[dict]  # [{text, collection, id, metadata?}] or [{image, mime_type, caption, collection, id}]
 
 
 class IndexResponse(BaseModel):
     indexed: int = 0
     failed: int = 0
+    model: str = ""
+
+
+class ImageEmbedRequest(BaseModel):
+    identity: HostIdentity
+    image: Optional[str] = None  # Base64-encoded image
+    image_url: Optional[str] = None  # URL to image
+    image_path: Optional[str] = None  # Local file path
+    mime_type: Optional[str] = None
+    caption: Optional[str] = None
+    collection: Optional[str] = None
+    id: Optional[str] = None
+
+
+class ImageEmbedResponse(BaseModel):
+    model: str
+    vector: List[float]
+    image_hash: str = ""
+    image_ref: str = ""
+    thumbnail_ref: str = ""
+    caption: str = ""
+    width: int = 0
+    height: int = 0
+    modality: str = "image"
+
+
+class ImageBatchEmbedRequest(BaseModel):
+    identity: HostIdentity
+    images: List[dict]  # [{image, image_url, image_path, mime_type, caption}]
+    collection: Optional[str] = None
+
+
+class ImageBatchEmbedResponse(BaseModel):
+    model: str
+    results: List[dict]  # [{vector, image_hash, caption, ...}]
+
+
+class MultimodalSearchRequest(BaseModel):
+    identity: HostIdentity
+    query: Optional[str] = None  # Text query
+    query_image: Optional[str] = None  # Base64 image for image-based search
+    collection: Optional[str] = None
+    filter_modality: Optional[str] = None  # "text" or "image"
+    limit: int = 10
+    min_score: float = 0.0
+
+
+class MultimodalSearchResponse(BaseModel):
+    results: List[dict]
     model: str = ""
 
 

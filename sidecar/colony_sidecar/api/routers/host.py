@@ -55,6 +55,10 @@ from colony_sidecar.api.schemas.host import (
     HostMessage,
     IdentityInitRequest,
     IdentityStatusResponse,
+    ImageBatchEmbedRequest,
+    ImageBatchEmbedResponse,
+    ImageEmbedRequest,
+    ImageEmbedResponse,
     IndexRequest,
     IndexResponse,
     InsightResponse,
@@ -75,6 +79,8 @@ from colony_sidecar.api.schemas.host import (
     MemoryWriteResponse,
     MigrateRequest,
     MigrateResponse,
+    MultimodalSearchRequest,
+    MultimodalSearchResponse,
     ReasoningToolCall,
     ReasoningTurnRequest,
     ReasoningTurnResponse,
@@ -533,9 +539,157 @@ async def embed_health() -> EmbedHealthResponse:
         return EmbedHealthResponse(status="error", error="embedder not initialized")
     try:
         result = await _embedder.health_check()
+        # Add multimodal status
+        result["modalities"] = _embedder.modalities if hasattr(_embedder, "modalities") else ["text"]
+        result["multimodal_enabled"] = _embedder.is_multimodal if hasattr(_embedder, "is_multimodal") else False
         return EmbedHealthResponse(**result)
     except Exception as exc:
         return EmbedHealthResponse(status="error", error=str(exc))
+
+
+@router.post("/memory/embed/image", response_model=ImageEmbedResponse)
+async def memory_embed_image(body: ImageEmbedRequest) -> ImageEmbedResponse:
+    """Embed a single image and optionally store it."""
+    if _embedder is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
+    if not _embedder.is_multimodal:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Multimodal not enabled")
+
+    try:
+        # Determine image source
+        source = body.image or body.image_url or body.image_path
+        if not source:
+            raise HTTPException(status_code=400, detail="No image provided (use image, image_url, or image_path)")
+
+        vector, meta = await _embedder.embed_image(
+            source,
+            mime_type=body.mime_type or "",
+            caption=body.caption or "",
+        )
+
+        # If collection and id provided, also index it
+        if body.collection and body.id:
+            from colony_sidecar.vector import get_store
+            from colony_sidecar.vector.collections import Collection
+            from colony_sidecar.vector.query import VectorItem
+
+            store = get_store()
+            if store:
+                try:
+                    col = Collection(body.collection)
+                except ValueError:
+                    col = Collection.MEMORIES
+                vi = VectorItem(
+                    id=body.id,
+                    text=meta.get("caption", ""),
+                    vector=vector,
+                    metadata=meta,
+                )
+                await store.add_batch(col, [vi])
+
+        model_id = meta.get("model_id", "")
+        return ImageEmbedResponse(
+            model=model_id,
+            vector=vector,
+            image_hash=meta.get("image_hash", ""),
+            image_ref=meta.get("image_ref", ""),
+            thumbnail_ref=meta.get("thumbnail_ref", ""),
+            caption=meta.get("caption", ""),
+            width=meta.get("width", 0),
+            height=meta.get("height", 0),
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("image embed failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/memory/embed/image/batch", response_model=ImageBatchEmbedResponse)
+async def memory_embed_image_batch(body: ImageBatchEmbedRequest) -> ImageBatchEmbedResponse:
+    """Embed multiple images."""
+    if _embedder is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
+    if not _embedder.is_multimodal:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Multimodal not enabled")
+    if len(body.images) > 32:
+        raise HTTPException(status_code=400, detail=f"Batch size {len(body.images)} exceeds limit of 32")
+
+    try:
+        results = []
+        for img_item in body.images:
+            source = img_item.get("image") or img_item.get("image_url") or img_item.get("image_path")
+            if not source:
+                continue
+            vector, meta = await _embedder.embed_image(
+                source,
+                mime_type=img_item.get("mime_type", ""),
+                caption=img_item.get("caption", ""),
+            )
+            results.append({"vector": vector, **meta})
+
+        model_id = results[0].get("model_id", "") if results else ""
+        return ImageBatchEmbedResponse(model=model_id, results=results)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("image batch embed failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/memory/search/multimodal", response_model=MultimodalSearchResponse)
+async def memory_search_multimodal(body: MultimodalSearchRequest) -> MultimodalSearchResponse:
+    """Cross-modal search — text query finds images, image query finds text."""
+    if _embedder is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
+
+    from colony_sidecar.vector import get_store
+    store = get_store()
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="VectorStore not initialized")
+
+    try:
+        from colony_sidecar.vector.collections import Collection
+
+        col_name = body.collection or "memories"
+        try:
+            col = Collection(col_name)
+        except ValueError:
+            col = Collection.MEMORIES
+
+        # Get query vector
+        if body.query:
+            if _embedder.is_multimodal:
+                query_vector = await _embedder._multimodal_provider.embed_text(body.query)
+            else:
+                query_vector = await _embedder.embed(body.query)
+        elif body.query_image:
+            if not _embedder.is_multimodal:
+                raise HTTPException(status_code=400, detail="Image query requires multimodal to be enabled")
+            vector, _ = await _embedder.embed_image(body.query_image)
+            query_vector = vector
+        else:
+            raise HTTPException(status_code=400, detail="No query provided (use query or query_image)")
+
+        results = await store.search_cross_modal(
+            col, query_vector,
+            limit=body.limit,
+            filter_modality=body.filter_modality,
+            min_score=body.min_score,
+        )
+
+        model_id = ""
+        if hasattr(_embedder, "_provider") and hasattr(_embedder._provider, "_config"):
+            model_id = _embedder._provider._config.model_id
+
+        return MultimodalSearchResponse(results=results, model=model_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("multimodal search failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/memory/backfill", response_model=BackfillResponse)
@@ -660,40 +814,67 @@ async def memory_index(body: IndexRequest) -> IndexResponse:
         if hasattr(_embedder, "_provider") and hasattr(_embedder._provider, "_config"):
             model_id = _embedder._provider._config.model_id
 
-        # Embed all texts
-        texts = [item.get("text", "") for item in body.items]
-        vectors = await _embedder.embed_batch(texts)
+        # Separate text items from image items
+        text_items = []
+        image_items = []
+        for item in body.items:
+            if item.get("image") or item.get("image_url") or item.get("image_path"):
+                image_items.append(item)
+            else:
+                text_items.append(item)
 
-        # Store each item
         indexed = 0
         failed = 0
-        for item, vector in zip(body.items, vectors):
+
+        # Process text items
+        if text_items:
+            texts = [item.get("text", "") for item in text_items]
+            vectors = await _embedder.embed_batch(texts)
+            for item, vector in zip(text_items, vectors):
+                try:
+                    col_name = item.get("collection", "memories")
+                    try:
+                        col = Collection(col_name)
+                    except ValueError:
+                        col = Collection.MEMORIES
+                    meta = item.get("metadata", {})
+                    meta["model_id"] = model_id
+                    vi = VectorItem(id=item.get("id", str(uuid.uuid4())), text=item.get("text", ""), vector=vector, metadata=meta)
+                    await store.add_batch(col, [vi])
+                    indexed += 1
+                except Exception as exc:
+                    logger.warning("index text item failed: %s", exc)
+                    failed += 1
+
+        # Process image items
+        for item in image_items:
             try:
+                source = item.get("image") or item.get("image_url") or item.get("image_path")
+                if not source:
+                    failed += 1
+                    continue
+                vector, meta = await _embedder.embed_image(
+                    source,
+                    mime_type=item.get("mime_type", ""),
+                    caption=item.get("caption", ""),
+                )
                 col_name = item.get("collection", "memories")
                 try:
                     col = Collection(col_name)
                 except ValueError:
                     col = Collection.MEMORIES
-
-                meta = item.get("metadata", {})
-                meta["model_id"] = model_id
-
-                vi = VectorItem(
-                    id=item.get("id", str(uuid.uuid4())),
-                    text=item.get("text", ""),
-                    vector=vector,
-                    metadata=meta,
-                )
+                vi = VectorItem(id=item.get("id", str(uuid.uuid4())), text=meta.get("caption", ""), vector=vector, metadata=meta)
                 await store.add_batch(col, [vi])
                 indexed += 1
             except Exception as exc:
-                logger.warning("index item failed: %s", exc)
+                logger.warning("index image item failed: %s", exc)
                 failed += 1
 
         return IndexResponse(model=model_id or "unknown", indexed=indexed, failed=failed)
     except Exception as exc:
         logger.warning("memory_index failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
 
 @router.post("/context/assemble", response_model=ContextAssembleResponse)
 async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleResponse:
