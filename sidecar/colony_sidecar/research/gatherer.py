@@ -95,6 +95,9 @@ class GatherConfig:
 class WebGatherer:
     """Gather evidence from web search."""
 
+    def __init__(self, search_orchestrator=None):
+        self._search_orchestrator = search_orchestrator
+
     async def gather(
         self,
         query: str,
@@ -102,8 +105,29 @@ class WebGatherer:
     ) -> List[EvidenceItem]:
         """Return ranked web snippets for *query*."""
         results: List[EvidenceItem] = []
+
+        # Try SearchOrchestrator first (new path)
+        if self._search_orchestrator and self._search_orchestrator.has_providers:
+            try:
+                raw = await self._search_orchestrator.search(query, max_results=max_results)
+                for item in raw[:max_results]:
+                    results.append(
+                        EvidenceItem(
+                            source_type=SourceType.WEB,
+                            content=item.content or item.snippet,
+                            citation=item.url,
+                            retrieved_at=item.retrieved_at,
+                            relevance_score=max(0.0, 1.0 - (item.rank * 0.1)),
+                            metadata={"source": item.source, "title": item.title},
+                        )
+                    )
+                if results:
+                    return results
+            except Exception as exc:
+                logger.debug("WebGatherer: SearchOrchestrator failed (%s)", exc)
+
+        # Fallback: try ResearchOrchestrator (legacy path)
         try:
-            # Attempt to use the ResearchOrchestrator if available
             from colony_sidecar.intelligence.components.research_orchestrator import (
                 ResearchOrchestrator,
             )
@@ -122,9 +146,8 @@ class WebGatherer:
                     )
                 )
         except Exception as exc:
-            logger.debug("WebGatherer: orchestrator unavailable (%s) — skipping", exc)
-            # No results — web search not configured
-            pass
+            logger.debug("WebGatherer: no search provider available (%s) — returning empty", exc)
+
         return results
 
 

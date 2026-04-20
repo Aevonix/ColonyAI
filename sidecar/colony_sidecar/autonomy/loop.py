@@ -204,7 +204,8 @@ class AutonomyLoop:
         await self._phase_anomalies()
 
         logger.debug("Scheduled tasks skipped — scheduler not yet implemented")
-        # await self._phase_cron()
+        # TODO: wire scheduler.tick() into the autonomy loop when
+        # the scheduler is attached to the loop instance
 
         # Phase 5: run initiative engine
         await self._phase_initiative()

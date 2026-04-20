@@ -446,6 +446,31 @@ async def memory_read(body: MemoryReadRequest) -> MemoryReadResponse:
         return MemoryReadResponse(entries=[])
 
 
+@router.get("/memory/status")
+async def memory_status():
+    """Diagnostic for memory subsystem wiring."""
+    neo4j_connected = False
+    embeddings_ready = False
+    vector_store_ready = False
+
+    if _graph is not None:
+        try:
+            await _graph.client.verify_connectivity()
+            neo4j_connected = True
+        except Exception:
+            pass
+        embeddings_ready = _graph._embed_fn is not None
+        vector_store_ready = _graph._vector_store is not None
+
+    wired = neo4j_connected and embeddings_ready and vector_store_ready
+    return {
+        "wired": wired,
+        "neo4j_connected": neo4j_connected,
+        "embeddings_ready": embeddings_ready,
+        "vector_store_ready": vector_store_ready,
+    }
+
+
 @router.post("/memory/write", response_model=MemoryWriteResponse)
 async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
     if _graph is None:
@@ -1646,6 +1671,41 @@ def set_research_pipeline(pipeline) -> None:
     _research_pipeline = pipeline
 
 
+_search_orchestrator = None
+
+
+def set_search_orchestrator(orchestrator) -> None:
+    global _search_orchestrator
+    _search_orchestrator = orchestrator
+
+
+@router.get("/search/providers")
+async def list_search_providers():
+    if _search_orchestrator is None:
+        return {"providers": [], "available": False}
+    return {
+        "providers": _search_orchestrator.list_providers(),
+        "available": _search_orchestrator.has_providers,
+    }
+
+
+@router.post("/search")
+async def search(body: dict):
+    if _search_orchestrator is None or not _search_orchestrator.has_providers:
+        raise HTTPException(status_code=501, detail="No search provider configured")
+    query = body.get("query", "")
+    max_results = body.get("max_results", 5)
+    provider = body.get("provider", "")
+    results = await _search_orchestrator.search(query, max_results, provider)
+    return {
+        "results": [
+            {"title": r.title, "url": r.url, "snippet": r.snippet, "source": r.source}
+            for r in results
+        ],
+        "count": len(results),
+    }
+
+
 @router.post("/research/start", response_model=ResearchRunResponse)
 async def start_research(body: ResearchStartRequest) -> ResearchRunResponse:
     if _research_pipeline is None:
@@ -2212,6 +2272,39 @@ _task_queue = None
 def set_autonomy_loop(loop) -> None:
     global _autonomy_loop
     _autonomy_loop = loop
+
+
+_scheduler = None
+
+
+def set_scheduler(scheduler) -> None:
+    global _scheduler
+    _scheduler = scheduler
+
+
+@router.get("/autonomy/schedule")
+async def list_schedules():
+    if _scheduler is None:
+        return {"schedules": []}
+    return {"schedules": [s.to_dict() for s in _scheduler.list_schedules()]}
+
+
+@router.post("/autonomy/schedule/{schedule_id}/enable")
+async def enable_schedule(schedule_id: str):
+    if _scheduler is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    if _scheduler.enable(schedule_id):
+        return {"status": "enabled"}
+    raise HTTPException(status_code=404, detail="Schedule not found")
+
+
+@router.post("/autonomy/schedule/{schedule_id}/disable")
+async def disable_schedule(schedule_id: str):
+    if _scheduler is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    if _scheduler.disable(schedule_id):
+        return {"status": "disabled"}
+    raise HTTPException(status_code=404, detail="Schedule not found")
 
 
 @router.get("/autonomy/status", response_model=AutonomyStatusResponse)

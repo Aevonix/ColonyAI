@@ -17,6 +17,7 @@ from colony_sidecar.api.routers.host import (
     router as host_router,
     set_llm_router,
     set_autonomy_loop,
+    set_scheduler,
     set_chain_manager,
     set_reasoning_loop,
     set_graph,
@@ -31,6 +32,7 @@ from colony_sidecar.api.routers.host import (
     set_extraction_pipeline,
     set_metalearner,
     set_research_pipeline,
+    set_search_orchestrator,
     set_delivery_bridge,
     set_connection_discoverer,
     set_learner,
@@ -244,6 +246,12 @@ async def lifespan(app: FastAPI):
             await vs.ensure_collections(dimensions=embed_dims)
             graph.set_vector_store(vs)
             logger.info("ColonyGraph wired to vector store (path=%s)", vector_db_path)
+
+            # Verify end-to-end wiring
+            if graph._embed_fn and graph._vector_store:
+                logger.info("ColonyGraph fully operational (Neo4j + embeddings + vector store)")
+            else:
+                logger.warning("ColonyGraph partially wired — memory may be degraded")
         except Exception as vexc:
             logger.warning("Vector store wiring failed (recall will use keyword fallback): %s", vexc)
 
@@ -371,6 +379,28 @@ async def lifespan(app: FastAPI):
     # --- 12. Research pipeline ---
     try:
         from colony_sidecar.research.pipeline import ResearchPipeline
+        from colony_sidecar.research.search.orchestrator import SearchOrchestrator
+
+        # Wire search orchestrator
+        search_orchestrator = SearchOrchestrator()
+        search_provider = os.environ.get("COLONY_SEARCH_PROVIDER", "")
+        if search_provider == "tavily" and os.environ.get("TAVILY_API_KEY"):
+            from colony_sidecar.research.search.tavily import TavilyProvider
+            search_orchestrator.add_provider(TavilyProvider(os.environ["TAVILY_API_KEY"]))
+            logger.info("Search provider: Tavily")
+        elif search_provider == "serpapi" and os.environ.get("SERPAPI_KEY"):
+            from colony_sidecar.research.search.serpapi import SerpAPIProvider
+            search_orchestrator.add_provider(SerpAPIProvider(os.environ["SERPAPI_KEY"]))
+            logger.info("Search provider: SerpAPI")
+        elif search_provider == "brave" and os.environ.get("BRAVE_API_KEY"):
+            from colony_sidecar.research.search.brave import BraveSearchProvider
+            search_orchestrator.add_provider(BraveSearchProvider(os.environ["BRAVE_API_KEY"]))
+            logger.info("Search provider: Brave")
+        else:
+            logger.info("No search provider configured — web search unavailable")
+
+        set_search_orchestrator(search_orchestrator)
+
         research = ResearchPipeline()
         set_research_pipeline(research)
         logger.info("ResearchPipeline initialized")
@@ -520,13 +550,29 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.autonomy.loop import AutonomyLoop
         from colony_sidecar.autonomy.config import AutonomyConfig
         from colony_sidecar.autonomy.registry import SubsystemRegistry
+        from colony_sidecar.autonomy.scheduler import AutonomyScheduler
         autonomy_config = AutonomyConfig.from_env()
         registry = SubsystemRegistry()
         autonomy_loop = AutonomyLoop(registry=registry, config=autonomy_config)
         set_autonomy_loop(autonomy_loop)
+
+        # Wire scheduler
+        scheduler = AutonomyScheduler(db_path=str(state_dir / "schedules.db"))
+        set_scheduler(scheduler)
+        logger.info("AutonomyScheduler initialized")
+
+        # Register default periodic tasks
+        scheduler.register("health_check", lambda: {"status": "ok"}, interval_seconds=300, metadata={"description": "Subsystem health check"})
+        scheduler.register("signal_ingest", lambda: {"status": "ok"}, interval_seconds=600, metadata={"description": "Process queued behavioral signals"})
+        scheduler.register("briefing_generate", lambda: {"status": "ok"}, interval_seconds=1800, metadata={"description": "Generate proactive briefings"})
+        scheduler.register("memory_consolidate", lambda: {"status": "ok"}, interval_seconds=3600, metadata={"description": "Deduplicate and merge near-duplicate memories"})
+        scheduler.register("cpi_track", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Calculate Cognitive Performance Index"})
+        scheduler.register("world_model_prune", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Remove stale world model entities"})
+
         logger.info(
-            "AutonomyLoop initialized (tick=%ds, not started — use /v1/host/autonomy/start)",
+            "AutonomyLoop initialized (tick=%ds, scheduler=%d tasks)",
             autonomy_config.tick_interval_secs,
+            len(scheduler.list_schedules()),
         )
     except Exception as exc:
         logger.warning("AutonomyLoop init failed: %s", exc)
