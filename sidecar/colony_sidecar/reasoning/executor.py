@@ -86,7 +86,6 @@ class ToolExecutor:
                 self.register("list_directory", ListDirectoryTool(sandbox_dir))
             except Exception:
                 pass
-        self._handlers[name] = handler
 
     def unregister(self, name: str) -> None:
         """Remove a tool handler."""
