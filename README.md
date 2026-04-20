@@ -254,7 +254,7 @@ Colony uses a two-layer identity model:
 
 This means you can restore your Colony onto any number of machines — each gets its own node identity while sharing the same Colony identity. Networking, clustering, and federation build on this foundation.
 
-**Genesis.** The first Colony (Marc's) is the trust anchor for the entire network. Its manifest is self-signed with Ed25519 and committed to the repo. A hardcoded public key in the source verifies the signature. Genesis status is cryptographically unforgeable — editing the manifest locally doesn't work because the signature won't verify against the hardcoded key.
+**Genesis.** The first Colony is the trust anchor for the entire network. Its manifest is self-signed with Ed25519 and committed to the repo. A hardcoded public key in the source verifies the signature. Genesis status is cryptographically unforgeable — editing the manifest locally doesn't work because the signature won't verify against the hardcoded key.
 
 **Backup & restore.** `colony backup` exports your entire Colony identity (colony_id, encrypted private key, Genesis manifest) as a single encrypted JSON file. `colony restore` brings it back on any machine. Store the backup file and passphrase in your password manager.
 
