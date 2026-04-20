@@ -20,7 +20,7 @@ function makeCtx(opts?: {
   failSafetyClosed?: boolean;
   safetyResult?: SafetyCheckResponse | Error;
 }) {
-  const caps = opts?.caps ?? ["safety"];
+  const caps = opts?.caps ?? ["response_gate"];
   const safetyCheck = vi.fn<
     [SafetyCheckRequest],
     Promise<SafetyCheckResponse>
@@ -100,7 +100,7 @@ describe("safetyHook", () => {
 
   it("passes through when the sidecar decision is 'pass'", async () => {
     const { ctx, safetyCheck, logger } = makeCtx({
-      caps: ["safety"],
+      caps: ["response_gate"],
       safetyResult: { decision: "pass", blocked: false },
     });
     const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
@@ -115,7 +115,7 @@ describe("safetyHook", () => {
 
   it("cancels when the sidecar returns blocked=true / decision='block' and logs the reason WITHOUT leaking it via the return", async () => {
     const { ctx, safetyCheck, warn, logger } = makeCtx({
-      caps: ["safety"],
+      caps: ["response_gate"],
       safetyResult: {
         decision: "block",
         blocked: true,
@@ -159,7 +159,7 @@ describe("safetyHook", () => {
 
   it("fails closed on a 501 when failSafetyClosed=true", async () => {
     const { ctx, warn, logger } = makeCtx({
-      caps: ["safety"],
+      caps: ["response_gate"],
       safetyResult: new ColonyApiError(
         501,
         "phase1_wiring_required",
@@ -177,7 +177,7 @@ describe("safetyHook", () => {
 
   it("fails OPEN on a 501 when failSafetyClosed=false", async () => {
     const { ctx, warn, logger } = makeCtx({
-      caps: ["safety"],
+      caps: ["response_gate"],
       safetyResult: new ColonyApiError(
         501,
         "phase1_wiring_required",
@@ -195,7 +195,7 @@ describe("safetyHook", () => {
 
   it("fails closed on a generic 5xx when failSafetyClosed=true", async () => {
     const { ctx, logger } = makeCtx({
-      caps: ["safety"],
+      caps: ["response_gate"],
       safetyResult: new ColonyApiError(503, "unavailable", "pool exhausted"),
       failSafetyClosed: true,
     });
@@ -208,7 +208,7 @@ describe("safetyHook", () => {
 
   it("fails closed on a network error when failSafetyClosed=true", async () => {
     const { ctx, logger } = makeCtx({
-      caps: ["safety"],
+      caps: ["response_gate"],
       safetyResult: new Error("ECONNREFUSED"),
       failSafetyClosed: true,
     });
@@ -221,7 +221,7 @@ describe("safetyHook", () => {
 
   it("fails closed on a 4xx contract error (and does NOT propagate the error out of the hook)", async () => {
     const { ctx, logger } = makeCtx({
-      caps: ["safety"],
+      caps: ["response_gate"],
       safetyResult: new ColonyApiError(400, "bad_request", "missing field"),
       failSafetyClosed: true,
     });
@@ -235,7 +235,7 @@ describe("safetyHook", () => {
   });
 
   it("builds a SafetyCheckRequest with the expected identity mapping", async () => {
-    const { ctx, safetyCheck, logger } = makeCtx({ caps: ["safety"] });
+    const { ctx, safetyCheck, logger } = makeCtx({ caps: ["response_gate"] });
     const hook = __safetyHook(ctx, __capabilityProbe(ctx), new SessionTextCache(), logger);
 
     await hook(
@@ -288,7 +288,7 @@ describe("safetyHook", () => {
 
   it("treats a 'pending' decision as a block and logs the reason", async () => {
     const { ctx, warn, logger } = makeCtx({
-      caps: ["safety"],
+      caps: ["response_gate"],
       safetyResult: {
         decision: "pending",
         blocked: false,
