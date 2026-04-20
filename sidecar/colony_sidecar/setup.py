@@ -601,6 +601,65 @@ def run_init(root_dir: str | None = None) -> int:
         print(_bold("Step 7: Embedding model (API mode — no download needed)"))
         print()
 
+    # ── Step 7b: Multimodal activation ──────────────────────────────────
+    print(_bold("Step 7b: Multimodal embeddings"))
+    print()
+
+    multimodal_enabled = "false"
+    multimodal_model = ""
+    multimodal_reranker = ""
+
+    # Check if the selected tier supports multimodal
+    try:
+        from colony_sidecar.vector.tiers import TIER_TABLE
+        selected_tier = None
+        for t in TIER_TABLE:
+            if t.text_embedder.model_id == embed_model or t.label == tier_label:
+                selected_tier = t
+                break
+
+        if selected_tier and selected_tier.multimodal_embedder:
+            mm_model = selected_tier.multimodal_embedder
+            mm_reranker = selected_tier.multimodal_reranker
+            print(f"  Your tier supports multimodal embeddings: {mm_model.model_id}")
+            print(f"  This enables image search and cross-modal retrieval (text → image, image → text)")
+            if mm_reranker:
+                print(f"  Multimodal reranker: {mm_reranker.model_id}")
+            print()
+            print("  Note: Enabling multimodal replaces the text-only embedder with the multimodal model.")
+            print("  Both text and image vectors will be in the same space — cross-modal search works.")
+            print()
+
+            answer = input(_bold("  Enable multimodal? [y/N]: ")).strip().lower()
+            if answer in ("y", "yes"):
+                multimodal_enabled = "true"
+                multimodal_model = mm_model.model_id
+                values["COLONY_MULTIMODAL"] = "true"
+                values["COLONY_EMBED_MODEL"] = mm_model.model_id
+                values["COLONY_EMBED_DIMS"] = str(mm_model.dims)
+                if mm_reranker:
+                    multimodal_reranker = mm_reranker.model_id
+                    values["COLONY_RERANKER_MODEL"] = mm_reranker.model_id
+                values["COLONY_IMAGE_STORAGE"] = "local"
+                values["COLONY_STRIP_EXIF_GPS"] = "true"
+                values["COLONY_IMAGE_SAFETY"] = "basic"
+                print(f"  ✅ Multimodal enabled: {mm_model.model_id} ({mm_model.dims}d)")
+                if embed_provider in ("cuda", "cpu", "mlx"):
+                    print(f"  Downloading multimodal model...")
+                    try:
+                        from sentence_transformers import SentenceTransformer
+                        SentenceTransformer(mm_model.model_id)
+                        print(f"  ✅ Multimodal model downloaded and cached")
+                    except Exception as exc:
+                        print(f"  ⚠️ Model download failed: {exc}")
+            else:
+                print("  ⚪ Multimodal skipped — text-only embeddings active")
+        else:
+            print("  ⚪ Your tier does not support multimodal embeddings")
+            print("  (Available from Tier 1 / 4GB+ with jina-clip-v2)")
+    except Exception as exc:
+        print(f"  ⚪ Multimodal check skipped: {exc}")
+
     print()
 
     # ── Step 8: Database setup ──────────────────────────────────────────

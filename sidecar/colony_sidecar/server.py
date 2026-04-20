@@ -180,6 +180,35 @@ async def lifespan(app: FastAPI):
         )
         from colony_sidecar.vector.embedder import make_provider
         pipeline = EmbeddingPipeline(make_provider(embed_config))
+
+        # Wire up multimodal if enabled
+        multimodal_enabled = os.environ.get("COLONY_MULTIMODAL", "false").lower() == "true"
+        if multimodal_enabled:
+            try:
+                from colony_sidecar.vector.multimodal_provider import make_multimodal_provider
+                from colony_sidecar.vector.image_store import make_image_store
+
+                mm_config = EmbeddingConfig(
+                    provider=embed_provider,
+                    model_id=embed_model,  # Already set to multimodal model by activate-multimodal or init
+                    dimensions=int(embed_dims) if embed_dims else 1024,
+                    base_url=os.environ.get("COLONY_EMBED_BASE_URL"),
+                    api_key=os.environ.get("COLONY_EMBED_API_KEY"),
+                )
+                mm_provider = make_multimodal_provider(mm_config)
+                img_store = make_image_store(
+                    mode=os.environ.get("COLONY_IMAGE_STORAGE", "local"),
+                    state_dir=os.environ.get("COLONY_STATE_DIR", "."),
+                )
+                pipeline = EmbeddingPipeline(
+                    provider=make_provider(embed_config),
+                    multimodal_provider=mm_provider,
+                    image_store=img_store,
+                )
+                logger.info("Multimodal enabled (model=%s, storage=%s)", embed_model, os.environ.get("COLONY_IMAGE_STORAGE", "local"))
+            except Exception as exc:
+                logger.warning("Multimodal init failed, falling back to text-only: %s", exc)
+
         await pipeline.warmup()
         set_embedder(pipeline)
         logger.info("EmbeddingPipeline initialized (provider=%s model=%s)", embed_provider, embed_model)

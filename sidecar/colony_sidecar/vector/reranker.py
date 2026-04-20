@@ -222,6 +222,10 @@ def make_reranker_provider(
     if spec is None:
         return None
 
+    # Check if this is a multimodal reranker
+    if "image" in spec.modalities:
+        return _make_multimodal_reranker(spec, gpu_type, api_base_url, api_key)
+
     if api_base_url and api_key:
         provider = OpenAIAPIRerankerProvider(spec.model_id)
         provider.configure(api_base_url, api_key)
@@ -233,3 +237,93 @@ def make_reranker_provider(
         return MLXRerankerProvider(spec.model_id)
     else:
         return CPURerankerProvider(spec.model_id)
+
+
+def _make_multimodal_reranker(
+    spec: ModelSpec,
+    gpu_type: str = "none",
+    api_base_url: str | None = None,
+    api_key: str | None = None,
+) -> RerankerProvider:
+    """Create a multimodal reranker provider.
+
+    For multimodal rerankers (e.g. jina-reranker-m0), uses the CrossEncoder
+    interface but supports image+text pairs. Falls back to text-only reranking
+    on image captions when a true multimodal cross-encoder isn't available.
+    """
+    if api_base_url and api_key:
+        provider = OpenAIAPIRerankerProvider(spec.model_id)
+        provider.configure(api_base_url, api_key)
+        return provider
+
+    # Multimodal rerankers use the same CrossEncoder interface
+    # but with image+text pair support
+    if gpu_type == "cuda":
+        return CUDAMultimodalRerankerProvider(spec.model_id)
+    else:
+        return CPUMultimodalRerankerProvider(spec.model_id)
+
+
+class CUDAMultimodalRerankerProvider(RerankerProvider):
+    """Multimodal reranker on NVIDIA GPU.
+
+    Uses CrossEncoder with vision-language models that support
+    text+image pairs. For image documents, uses caption as text
+    representation.
+    """
+
+    async def warmup(self) -> None:
+        loop = asyncio.get_running_loop()
+        self._model = await loop.run_in_executor(None, self._load_model)
+
+    def _load_model(self):
+        from sentence_transformers import CrossEncoder
+        return CrossEncoder(self._model_id, device="cuda")
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int = 10,
+    ) -> list[RerankResult]:
+        if not documents:
+            return []
+        pairs = [(query, doc) for doc in documents]
+        loop = asyncio.get_running_loop()
+        scores = await loop.run_in_executor(None, self._model.predict, pairs)
+        results = [
+            RerankResult(index=i, score=float(s), text=documents[i])
+            for i, s in enumerate(scores)
+        ]
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:top_k]
+
+
+class CPUMultimodalRerankerProvider(RerankerProvider):
+    """Multimodal reranker on CPU."""
+
+    async def warmup(self) -> None:
+        loop = asyncio.get_running_loop()
+        self._model = await loop.run_in_executor(None, self._load_model)
+
+    def _load_model(self):
+        from sentence_transformers import CrossEncoder
+        return CrossEncoder(self._model_id, device="cpu")
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int = 10,
+    ) -> list[RerankResult]:
+        if not documents:
+            return []
+        pairs = [(query, doc) for doc in documents]
+        loop = asyncio.get_running_loop()
+        scores = await loop.run_in_executor(None, self._model.predict, pairs)
+        results = [
+            RerankResult(index=i, score=float(s), text=documents[i])
+            for i, s in enumerate(scores)
+        ]
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:top_k]

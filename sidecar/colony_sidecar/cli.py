@@ -44,6 +44,13 @@ def main() -> None:
     migrate_p.add_argument("--old-model", default=None, help="Old model ID to migrate from (default: all)")
     migrate_p.add_argument("--batch-size", type=int, default=64, help="Batch size for embedding")
 
+    # --- activate-multimodal ---
+    mm_p = sub.add_parser("activate-multimodal", help="Enable multimodal embeddings and rerank")
+    mm_p.add_argument("--model", default=None, help="Multimodal model ID (default: auto-detect from tier)")
+    mm_p.add_argument("--storage", default="local", choices=["local", "embed_only"], help="Image storage mode")
+    mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
+    mm_p.add_argument("--skip-download", action="store_true", help="Skip model download")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -234,6 +241,101 @@ def main() -> None:
                 print(f"Migration failed: {resp.status_code} {resp.text}")
         except Exception as e:
             print(f"Could not connect to sidecar: {e}")
+
+    elif args.command == "activate-multimodal":
+        _load_dotenv()
+        env_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".env"
+        if not env_path.exists():
+            # Try sidecar directory
+            env_path = Path(__file__).parent / ".env"
+        if not env_path.exists():
+            print("No .env file found. Run 'colony init' first.")
+            return
+
+        # Determine multimodal model from tier
+        model = args.model
+        reranker_model = ""
+        dims = 0
+
+        if not model:
+            try:
+                from colony_sidecar.vector.tiers import TIER_TABLE
+                from colony_sidecar.vector.scanner import HardwareScanner
+                scanner = HardwareScanner()
+                scan = scanner.scan()
+                tier = scanner.recommend_tier(scan)
+                if tier and tier.multimodal_embedder:
+                    model = tier.multimodal_embedder.model_id
+                    dims = tier.multimodal_embedder.dims
+                    if tier.multimodal_reranker:
+                        reranker_model = tier.multimodal_reranker.model_id
+                else:
+                    print("Your hardware tier does not support multimodal embeddings.")
+                    print("Available from Tier 1 (4GB+) with jina-clip-v2.")
+                    return
+            except Exception as exc:
+                print(f"Could not auto-detect tier: {exc}")
+                print("Use --model to specify a multimodal model ID.")
+                return
+
+        print(f"Activating multimodal embeddings:")
+        print(f"  Model: {model}")
+        print(f"  Dims: {dims}")
+        if reranker_model:
+            print(f"  Reranker: {reranker_model}")
+        print(f"  Storage: {args.storage}")
+        print(f"  Safety: {args.safety}")
+        print()
+
+        answer = input("Continue? [y/N]: ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Cancelled.")
+            return
+
+        # Update .env
+        lines = env_path.read_text().splitlines()
+        updates = {
+            "COLONY_MULTIMODAL": "true",
+            "COLONY_EMBED_MODEL": model,
+            "COLONY_IMAGE_STORAGE": args.storage,
+            "COLONY_IMAGE_SAFETY": args.safety,
+            "COLONY_STRIP_EXIF_GPS": "true",
+        }
+        if dims:
+            updates["COLONY_EMBED_DIMS"] = str(dims)
+        if reranker_model:
+            updates["COLONY_RERANKER_MODEL"] = reranker_model
+
+        existing_keys = set()
+        for i, line in enumerate(lines):
+            if "=" in line and not line.strip().startswith("#"):
+                key = line.split("=", 1)[0].strip()
+                existing_keys.add(key)
+                if key in updates:
+                    lines[i] = f"{key}={updates[key]}"
+
+        # Add new keys not yet in .env
+        for key, value in updates.items():
+            if key not in existing_keys:
+                lines.append(f"{key}={value}")
+
+        env_path.write_text("\n".join(lines) + "\n")
+        print(f"\n✅ .env updated with multimodal config")
+
+        # Download model
+        if not args.skip_download:
+            print(f"Downloading multimodal model {model}...")
+            try:
+                from sentence_transformers import SentenceTransformer
+                SentenceTransformer(model)
+                print(f"✅ Model downloaded and cached")
+            except Exception as exc:
+                print(f"⚠️ Model download failed: {exc}")
+                print("The model will download on first start instead.")
+
+        print()
+        print("Restart the sidecar to activate multimodal: colony start")
+        print("If you have existing text vectors, run: colony migrate-tier")
 
     else:
         parser.print_help()
