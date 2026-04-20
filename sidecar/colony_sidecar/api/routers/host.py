@@ -994,7 +994,7 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             )
             if results:
                 body_text = "\n".join(
-                    f"- [{r.get('score', 0):.2f}] {r.get('content', '')}"
+                    f"- [{r.get('relevance', r.get('score', 0)):.2f}] {r.get('content', '')}"
                     for r in results
                 )
                 sections.append(ContextSection(
