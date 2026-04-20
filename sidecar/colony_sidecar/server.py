@@ -36,6 +36,7 @@ from colony_sidecar.api.routers.host import (
     set_search_orchestrator,
     set_delivery_bridge,
     set_connection_discoverer,
+    set_insight_store,
     set_learner,
     set_skills_registry,
     set_secrets_manager,
@@ -401,7 +402,10 @@ async def lifespan(app: FastAPI):
             search_orchestrator.add_provider(BraveSearchProvider(os.environ["BRAVE_API_KEY"]))
             logger.info("Search provider: Brave")
         else:
-            logger.info("No search provider configured — web search unavailable")
+            # Zero-config fallback so web_search works out of the box.
+            from colony_sidecar.research.search.duckduckgo import DuckDuckGoProvider
+            search_orchestrator.add_provider(DuckDuckGoProvider())
+            logger.info("Search provider: DuckDuckGo (default fallback)")
 
         set_search_orchestrator(search_orchestrator)
 
@@ -413,11 +417,16 @@ async def lifespan(app: FastAPI):
             te = None
         if te is not None:
             sandbox_dir = os.environ.get("COLONY_SANDBOX_DIR", str(state_dir / "sandbox"))
+            # Ensure the sandbox directory exists so file_ops don't fail on first call.
+            Path(sandbox_dir).mkdir(parents=True, exist_ok=True)
             te.register_native_tools(
                 search_orchestrator=search_orchestrator,
                 sandbox_dir=sandbox_dir,
             )
-            logger.info("Native tools registered (calculate, web_search, file_ops)")
+            logger.info(
+                "Native tools registered (calculate, web_search, file_ops; sandbox=%s)",
+                sandbox_dir,
+            )
 
         research = ResearchPipeline()
         set_research_pipeline(research)
@@ -445,6 +454,15 @@ async def lifespan(app: FastAPI):
             logger.warning("ConnectionDiscoverer skipped — ColonyGraph not available")
     except Exception as exc:
         logger.warning("ConnectionDiscoverer init failed: %s", exc)
+
+    # Insight overlay store (tracks dismissed-insight IDs).
+    try:
+        from colony_sidecar.intelligence.synthesis.insight_store import InsightStore
+        insight_store = InsightStore(state_dir / "insights.db")
+        set_insight_store(insight_store)
+        logger.info("InsightStore initialized")
+    except Exception as exc:
+        logger.warning("InsightStore init failed: %s", exc)
 
     # --- 15. Continuous learner ---
     try:
@@ -553,6 +571,7 @@ async def lifespan(app: FastAPI):
         logger.warning("SessionStore init failed: %s", exc)
 
     # --- 20. Task queue ---
+    task_queue = None
     try:
         from colony_sidecar.task_queue.queue_manager import TaskQueueManager
         task_queue = await TaskQueueManager.initialize(
@@ -563,6 +582,39 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("TaskQueueManager init failed: %s", exc)
 
+    # --- 20b. Worker node (executes queued jobs) ---
+    worker_task = None
+    if task_queue is not None:
+        try:
+            import asyncio as _asyncio
+            from colony_sidecar.task_queue.worker import WorkerNode
+            from colony_sidecar.task_queue.handlers.registry import build_default_handlers
+            from colony_sidecar.chain.node import get_or_create_node_id
+            import colony_sidecar.api.routers.host as _host_mod
+
+            worker_node_id = get_or_create_node_id(state_dir)
+            handlers = build_default_handlers(
+                router=_host_mod._llm_router,
+                world_model_store=_host_mod._world_store,
+                contact_store=_host_mod._contacts_store,
+                response_gate=_host_mod._response_gate,
+                node_id=worker_node_id,
+            )
+            worker = WorkerNode(
+                node_id=worker_node_id,
+                queue=task_queue.queue,
+                handlers=handlers,
+            )
+            worker_task = _asyncio.create_task(worker.start())
+            app.state.worker = worker
+            app.state.worker_task = worker_task
+            logger.info(
+                "WorkerNode started (node=%s, handlers=%s)",
+                worker_node_id, [jt.value for jt in handlers.keys()],
+            )
+        except Exception as exc:
+            logger.warning("WorkerNode init failed — queued jobs will not execute: %s", exc, exc_info=True)
+
     # --- 21. Autonomy loop ---
     try:
         from colony_sidecar.autonomy.loop import AutonomyLoop
@@ -571,19 +623,32 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.autonomy.scheduler import AutonomyScheduler
         autonomy_config = AutonomyConfig.from_env()
         registry = SubsystemRegistry()
-        autonomy_loop = AutonomyLoop(registry=registry, config=autonomy_config)
-        set_autonomy_loop(autonomy_loop)
 
-        # Wire scheduler
+        # Wire scheduler BEFORE the loop so the loop gets a direct reference.
         scheduler = AutonomyScheduler(db_path=str(state_dir / "schedules.db"))
         set_scheduler(scheduler)
         logger.info("AutonomyScheduler initialized")
+
+        autonomy_loop = AutonomyLoop(
+            registry=registry,
+            config=autonomy_config,
+            scheduler=scheduler,
+        )
+        set_autonomy_loop(autonomy_loop)
 
         # Register default periodic tasks
         scheduler.register("health_check", lambda: {"status": "ok"}, interval_seconds=300, metadata={"description": "Subsystem health check"})
         scheduler.register("signal_ingest", lambda: {"status": "ok"}, interval_seconds=600, metadata={"description": "Process queued behavioral signals"})
         scheduler.register("briefing_generate", lambda: {"status": "ok"}, interval_seconds=1800, metadata={"description": "Generate proactive briefings"})
-        scheduler.register("memory_consolidate", lambda: {"status": "ok"}, interval_seconds=3600, metadata={"description": "Deduplicate and merge near-duplicate memories"})
+
+        async def _run_memory_consolidate():
+            from colony_sidecar.api.routers.host import _consolidator as c
+            if c is None:
+                return {"status": "skipped", "reason": "consolidator_not_wired"}
+            result = await c.run()
+            return {"status": "ok", "merged": getattr(result, "merged_count", 0)}
+
+        scheduler.register("memory_consolidate", _run_memory_consolidate, interval_seconds=3600, metadata={"description": "Deduplicate and merge near-duplicate memories"})
         scheduler.register("cpi_track", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Calculate Cognitive Performance Index"})
         scheduler.register("world_model_prune", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Remove stale world model entities"})
 
@@ -633,6 +698,16 @@ async def lifespan(app: FastAPI):
     set_chain_manager(None)
     set_secrets_manager(None)
     set_session_store(None)
+    # Stop worker node (before queue so in-flight jobs can drain).
+    try:
+        worker = getattr(app.state, "worker", None)
+        if worker is not None:
+            await worker.stop(drain_timeout=10.0)
+        worker_task = getattr(app.state, "worker_task", None)
+        if worker_task is not None:
+            worker_task.cancel()
+    except Exception:
+        logger.debug("Worker shutdown error", exc_info=True)
     # Stop task queue
     try:
         from colony_sidecar.api.routers.host import _task_queue

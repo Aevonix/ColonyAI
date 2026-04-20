@@ -9,7 +9,7 @@ Capabilities:
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import logging
 
@@ -87,17 +87,38 @@ class ResearchOrchestrator:
     Source routing:
     - MEMORY: queries graph memory via ``graph.recall()``
     - KNOWLEDGE_GRAPH: returns structured knowledge graph context
-    - WEB / API: returns ``None`` (external integrations not yet wired)
+    - WEB: queries the injected ``SearchOrchestrator`` if one is provided.
+    - API: delegates to a handler registered via ``register_api_handler``.
 
     Args:
         graph_client: Colony graph client for knowledge graph queries
         event_bus: Colony event bus for research lifecycle events
+        search_orchestrator: Optional SearchOrchestrator for WEB sources.
     """
 
-    def __init__(self, graph_client: Any, event_bus: Any) -> None:
+    def __init__(
+        self,
+        graph_client: Any = None,
+        event_bus: Any = None,
+        search_orchestrator: Any = None,
+    ) -> None:
         self.graph = graph_client
         self.events = event_bus
+        self.search = search_orchestrator
         self._sources: List[ResearchSource] = []
+        self._api_handlers: Dict[str, Callable[[str], Awaitable[Optional[ResearchResult]]]] = {}
+
+    def register_api_handler(
+        self,
+        name: str,
+        handler: Callable[[str], Awaitable[Optional[ResearchResult]]],
+    ) -> None:
+        """Register an async handler for an API-typed source.
+
+        The handler receives the raw query string and must return a
+        ``ResearchResult`` or ``None``.
+        """
+        self._api_handlers[name] = handler
 
     def register_source(self, source: ResearchSource) -> None:
         """Register a research source.
@@ -177,11 +198,63 @@ class ResearchOrchestrator:
                 return await self._query_memory_source(source, query)
             elif source.type == SourceType.KNOWLEDGE_GRAPH:
                 return await self._query_graph_source(source, query)
-            elif source.type in (SourceType.API, SourceType.WEB):
-                return None  # External integrations not yet wired
+            elif source.type == SourceType.WEB:
+                return await self._query_web_source(source, query)
+            elif source.type == SourceType.API:
+                return await self._query_api_source(source, query)
         except Exception as exc:
             logger.warning("Source %s query failed: %s", source.name, exc)
         return None
+
+    async def _query_web_source(
+        self,
+        source: ResearchSource,
+        query: str,
+    ) -> Optional[ResearchResult]:
+        """Query the injected SearchOrchestrator for web results."""
+        if self.search is None or not getattr(self.search, "has_providers", False):
+            return None
+        try:
+            results = await self.search.search(query, max_results=5)
+            if not results:
+                return None
+            parts: List[str] = []
+            citations: List[str] = []
+            for r in results[:5]:
+                title = getattr(r, "title", "") or ""
+                snippet = getattr(r, "snippet", "") or ""
+                if title or snippet:
+                    parts.append(f"{title}: {snippet}" if title else snippet)
+                url = getattr(r, "url", "")
+                if url:
+                    citations.append(url)
+            content = "\n".join(parts).strip()
+            if not content:
+                return None
+            return ResearchResult(
+                source=source.name,
+                content=content,
+                confidence=min(0.8, source.priority * 0.8),
+                citations=citations,
+            )
+        except Exception as exc:
+            logger.debug("Web source query failed: %s", exc)
+            return None
+
+    async def _query_api_source(
+        self,
+        source: ResearchSource,
+        query: str,
+    ) -> Optional[ResearchResult]:
+        """Dispatch to a registered API handler (if any) for this source."""
+        handler = self._api_handlers.get(source.name)
+        if handler is None:
+            return None
+        try:
+            return await handler(query)
+        except Exception as exc:
+            logger.debug("API source '%s' handler failed: %s", source.name, exc)
+            return None
 
     async def _query_memory_source(
         self,

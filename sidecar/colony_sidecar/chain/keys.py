@@ -853,22 +853,100 @@ class RemoteNodeShareBackend:
 
 
 class BackupFileShareBackend:
-    """Reads from a portable .colonyshare backup file (read-only).
+    """Read/write a portable .colonyshare backup file.
 
-    Used during recovery only. The backup file is never modified.
+    Holds exactly one share. Writes are atomic (tmp + os.replace) and
+    include a SHA-256 checksum of the share payload so tampering can be
+    detected on read.
+
+    ``colony_id`` and ``network_id`` must be provided either at
+    construction or via an existing file on disk; otherwise ``store_share``
+    cannot build a valid payload.
     """
 
-    def __init__(self, file_path: Path) -> None:
-        self.file_path = file_path
+    _FILE_TYPE = "colony_key_share"
+    _FILE_VERSION = 2  # v2 adds checksum
+
+    def __init__(
+        self,
+        file_path: Path,
+        colony_id: Optional[str] = None,
+        network_id: Optional[str] = None,
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        self.file_path = Path(file_path)
         self._share: Optional[KeyShare] = None
+        self._colony_id = colony_id
+        self._network_id = network_id
+        self._overwrite = overwrite
+
+    @staticmethod
+    def _checksum(share_dict: dict) -> str:
+        import hashlib
+        payload = json.dumps(share_dict, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
 
     def _load(self) -> None:
         if self._share is None and self.file_path.exists():
             data = json.loads(self.file_path.read_text())
-            self._share = KeyShare.from_dict(data["share"])
+            share_dict = data["share"]
+            # If a checksum is present (v2+), verify it.
+            stored = data.get("checksum")
+            if stored is not None and stored != self._checksum(share_dict):
+                raise ValueError(
+                    f"Checksum mismatch in backup file {self.file_path}"
+                )
+            self._share = KeyShare.from_dict(share_dict)
+            # Populate colony/network IDs from file if not set at ctor.
+            if self._colony_id is None:
+                self._colony_id = data.get("colony_id")
+            if self._network_id is None:
+                self._network_id = data.get("network_id")
 
     def store_share(self, share: KeyShare) -> None:
-        raise NotImplementedError("BackupFileShareBackend is read-only")
+        """Atomically write ``share`` to the backup file.
+
+        Refuses to overwrite a file holding a *different* share_index
+        unless the backend was constructed with ``overwrite=True``.
+        """
+        # Resolve metadata — prefer ctor values, fall back to existing file.
+        if self._colony_id is None or self._network_id is None:
+            self._load()
+        if self._colony_id is None or self._network_id is None:
+            raise ValueError(
+                "colony_id and network_id are required to write a backup file"
+            )
+
+        if self.file_path.exists() and not self._overwrite:
+            try:
+                existing = json.loads(self.file_path.read_text())
+                existing_index = existing.get("share", {}).get("share_index")
+                if existing_index is not None and existing_index != share.share_index:
+                    raise ValueError(
+                        f"Backup already holds share_index={existing_index}; "
+                        f"refusing to overwrite with share_index={share.share_index}"
+                    )
+            except (json.JSONDecodeError, KeyError):
+                pass  # Corrupt file; will be replaced.
+
+        share_dict = share.to_dict()
+        data = {
+            "file_type": self._FILE_TYPE,
+            "file_version": self._FILE_VERSION,
+            "colony_id": self._colony_id,
+            "network_id": self._network_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "share": share_dict,
+            "checksum": self._checksum(share_dict),
+        }
+
+        tmp_path = self.file_path.with_suffix(self.file_path.suffix + ".tmp")
+        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(json.dumps(data, indent=2))
+        tmp_path.chmod(0o600)
+        os.replace(tmp_path, self.file_path)
+        self._share = share
 
     def retrieve_share(self, colony_id: str, share_index: int) -> Optional[KeyShare]:
         self._load()
@@ -877,7 +955,13 @@ class BackupFileShareBackend:
         return None
 
     def delete_share(self, colony_id: str, share_index: int) -> None:
-        pass  # read-only
+        self._load()
+        if self._share and self._share.share_index == share_index:
+            try:
+                self.file_path.unlink()
+            except FileNotFoundError:
+                pass
+            self._share = None
 
     def list_shares(self, colony_id: str) -> List[int]:
         self._load()
