@@ -80,17 +80,22 @@ class SignalCollector:
         t0 = time.monotonic()
 
     async def ingest_raw(self, signal_data: dict) -> None:
-        """Ingest a pre-computed signal from an external source.
-
-        The signal_data dict should contain: type, source, person_id (optional),
-        and any additional data fields.
-        """
+        """Ingest a pre-computed signal from an external source."""
         try:
+            from colony_sidecar.models.signal import Signal, SignalType, SignalStrength
+            sig_type = SignalType.ENGAGEMENT_DEPTH  # default
+            raw_type = signal_data.get("type", "")
+            for st in SignalType:
+                if st.value == raw_type or st.name.lower() == raw_type.lower():
+                    sig_type = st
+                    break
             sig = Signal(
-                signal_type=signal_data.get("type", "external"),
-                source=signal_data.get("source", "api"),
+                id=signal_data.get("id", f"raw-{time.monotonic_ns()}"),
                 person_id=signal_data.get("person_id", ""),
-                data=signal_data.get("data", {}),
+                signal_type=sig_type,
+                value=float(signal_data.get("value", 0.5)),
+                source=signal_data.get("source", "api"),
+                context=signal_data.get("data"),
             )
             await self.baselines.store_signal(sig)
         except Exception as e:

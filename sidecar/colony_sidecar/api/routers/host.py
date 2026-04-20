@@ -2205,8 +2205,9 @@ async def autonomy_cycle() -> dict:
     if _autonomy_loop is None:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
-        result = await _autonomy_loop.run_single_cycle()
-        return {"completed": True, "result": result}
+        _autonomy_loop.wake()
+        status = _autonomy_loop.status()
+        return {"completed": True, "result": status}
     except Exception as exc:
         logger.warning("autonomy_cycle failed: %s", exc)
         return {"completed": False, "error": str(exc)}
