@@ -6,15 +6,15 @@ Colony identity is decoupled from the signing keypair:
     public_key  — derived from keypair, published openly for verification
 
 Genesis:
-    The first Colony — Marc's Colony — is the trust anchor for the network.
+    The first Colony — the Genesis Colony — is the trust anchor for the network.
     The Genesis manifest is self-signed: it contains a signature created with
-    Marc's private key that verifies against a HARDCODED public key in this
+    the Genesis Colony's private key that verifies against a HARDCODED public key in this
     source file. This makes Genesis unforgeable even locally:
 
     - Editing genesis.json → signature fails verification → is_genesis: false
     - Editing the hardcoded key in source → creates a different trust anchor,
       other Colonies running the official release won't recognize it
-    - Only Marc's Colony can produce a valid signature (requires private key)
+    - Only the Genesis Colony can produce a valid signature (requires private key)
 
     This is the same model as CA root certificates in browsers, or the
     Bitcoin genesis block hash — open, verifiable, unfakeable.
@@ -32,9 +32,9 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Genesis trust anchor — HARDCODED public key (Marc's Colony)
+# Genesis trust anchor — HARDCODED public key (the Genesis Colony)
 # ---------------------------------------------------------------------------
-# This is the root of trust. The private key never leaves Marc's machine.
+# This is the root of trust. The private key never leaves the Genesis owner's machine.
 # This public key is used to VERIFY the Genesis manifest signature.
 # It cannot be used to CREATE signatures — that requires the private key.
 #
@@ -93,7 +93,7 @@ def is_genesis(colony_id: str, public_key_hex: str) -> bool:
 
     The manifest must have been loaded with a valid signature against the
     hardcoded GENESIS_TRUST_PUBLIC_KEY. Simply matching fields is not enough —
-    the signature proves it was created by Marc's private key.
+    the signature proves it was created by the Genesis Colony's private key.
     """
     if _GENESIS_MANIFEST is None:
         return False
@@ -195,12 +195,12 @@ def create_genesis_manifest(
     private_key_pem: Optional[str | bytes] = None,
     passphrase: Optional[bytes] = None,
 ) -> dict:
-    """Create a signed Genesis manifest for Marc's Colony.
+    """Create a signed Genesis manifest for the Genesis Colony.
 
-    The manifest is signed with Marc's private key so that all Colonies
+    The manifest is signed with the Genesis Colony's private key so that all Colonies
     can verify it against the hardcoded GENESIS_TRUST_PUBLIC_KEY.
 
-    This should only be called once — when Marc's Colony is first initialized.
+    This should only be called once — when the Genesis Colony is first initialized.
     The manifest is saved to disk and should be committed to the repo.
     """
     manifest = {

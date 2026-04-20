@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Status:** Implementing  
-**Author:** Marc / DevAgent
+**Author:** DevAgent
 
 ---
 
@@ -95,12 +95,12 @@ Colony (colony_id + Colony Ed25519 keypair)
 
 ## Genesis Colony
 
-Marc's Colony is the trust anchor. It's special because:
+the Genesis Colony is the trust anchor. It's special because:
 
 1. **genesis.json** is committed to the repo — every Colony install can verify it
 2. **Manifest is self-signed** — signature verifies against `GENESIS_TRUST_PUBLIC_KEY` hardcoded in source
-3. **Unforgeable** — can't fake Genesis even locally without Marc's private key
-4. **Marc can run unlimited nodes** — each gets its own node_id and node cert signed by the Colony key
+3. **Unforgeable** — can't fake Genesis even locally without the Genesis Colony's private key
+4. **The Genesis owner can run unlimited nodes** — each gets its own node_id and node cert signed by the Colony key
 
 ### Why This Is Safe
 - Public key is public — it verifies signatures, can't create them
@@ -111,7 +111,7 @@ Marc's Colony is the trust anchor. It's special because:
 
 ## Lifecycle
 
-### First Setup (Marc / Genesis)
+### First Setup (Genesis)
 
 ```bash
 colony init                    # Creates colony_id + Colony keypair
@@ -159,7 +159,7 @@ Same Colony identity. New node. Previous node_ids remain valid unless revoked.
 | `colony key generate` | Rotate Colony keypair (colony_id stays the same) |
 | `colony key set-passphrase` | Encrypt Colony private key |
 | `colony key manifest` | Create shareable colony manifest |
-| `colony key claim-genesis` | Claim Genesis (Marc's Colony, one-time) |
+| `colony key claim-genesis` | Claim Genesis (the Genesis Colony, one-time) |
 
 ### Backup & Restore
 | Command | Description |
@@ -207,7 +207,7 @@ GET /v1/host/identity/certificate
 │   ├── private.pem              # Node Ed25519 private key
 │   └── public.pem               # Node Ed25519 public key
 ├── node-cert.json               # Node certificate (signed by Colony key)
-├── genesis.json                 # Genesis manifest (Marc's Colony only)
+├── genesis.json                 # Genesis manifest (the Genesis Colony only)
 └── ... (other Colony state)
 ```
 
