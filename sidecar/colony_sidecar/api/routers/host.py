@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
+from colony_sidecar.goals.store import GoalNotFoundError
+
 from colony_sidecar.api.schemas.host import (
     HostConfigureRequest,
     HostConfigureResponse,
@@ -1366,6 +1368,8 @@ async def get_goal(goal_id: str) -> GoalResponse:
         )
     except HTTPException:
         raise
+    except GoalNotFoundError:
+        raise HTTPException(status_code=404, detail="Goal not found")
     except Exception as exc:
         logger.warning("get_goal failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1438,7 +1442,7 @@ async def get_contact(contact_id: str) -> ContactResponse:
     if _contacts_store is None:
         raise HTTPException(status_code=404, detail="Contact not found")
     try:
-        contact = await _contacts_store.get_contact(contact_id)
+        contact = await _contacts_store.get(contact_id)
         if contact is None:
             raise HTTPException(status_code=404, detail="Contact not found")
         return ContactResponse(**contact)
@@ -1869,7 +1873,7 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     if _contacts_store is not None and contact_id and features.get("relationships", True):
         async def _contact():
             try:
-                c = await _contacts_store.get_contact(contact_id)
+                c = await _contacts_store.get(contact_id)
                 return ("contact", c)
             except Exception:
                 return ("contact", None)
