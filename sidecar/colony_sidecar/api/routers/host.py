@@ -1613,7 +1613,7 @@ async def start_research(body: ResearchStartRequest) -> ResearchRunResponse:
             topic=body.topic,
             status=run.status.value if hasattr(run.status, "value") else str(run.status),
             stages_completed=[run.current_stage.value if hasattr(run.current_stage, "value") else str(run.current_stage)],
-            artifact=run.artifact if hasattr(run, "artifact") else None,
+            artifact=run.artifact.__dict__ if run.artifact and hasattr(run.artifact, "__dict__") else (run.artifact if isinstance(run.artifact, dict) else None),
         )
     except Exception as exc:
         logger.warning("start_research failed: %s", exc)
