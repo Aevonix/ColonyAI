@@ -446,16 +446,16 @@ async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
     if _graph is None:
         return MemoryWriteResponse(id="stub", accepted=False)
     try:
-        result = await _graph.store_memory(
+        memory_id = await _graph.store_memory(
             content=body.content,
             person_id=body.person_id,
-            memory_type=body.type,
-            entities=body.entities,
-            tags=body.tags,
-            strength=body.strength,
+            memory_type=body.type or "episodic",
+            entities=body.entities or [],
+            importance=body.strength if body.strength is not None else 1.0,
+            metadata={"tags": body.tags} if body.tags else None,
         )
         return MemoryWriteResponse(
-            id=result.get("id", str(uuid.uuid4())),
+            id=memory_id or str(uuid.uuid4()),
             accepted=True,
         )
     except Exception as exc:
@@ -468,13 +468,9 @@ async def memory_search(body: MemorySearchRequest) -> MemorySearchResponse:
     if _graph is None:
         return MemorySearchResponse(entries=[])
     try:
-        results = await _graph.search_memories(
+        results = await _graph.recall(
             query=body.query,
-            person_id=body.person_id,
             limit=body.limit or 10,
-            min_score=body.min_score,
-            types=body.types,
-            tags=body.tags,
         )
         entries = [
             MemoryEntry(
@@ -486,7 +482,7 @@ async def memory_search(body: MemorySearchRequest) -> MemorySearchResponse:
                 entities=e.get("entities"),
                 tags=e.get("tags"),
                 created_at=e.get("created_at"),
-                score=e.get("score"),
+                score=e.get("relevance", e.get("score")),
             )
             for e in results
         ]
@@ -992,9 +988,8 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
 
     if _graph is not None and body.incoming_message.content:
         try:
-            results = await _graph.search_memories(
+            results = await _graph.recall(
                 query=body.incoming_message.content,
-                person_id=body.context.contact_id if body.context else None,
                 limit=5,
             )
             if results:
@@ -1130,12 +1125,16 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
 
     try:
         from colony_sidecar.gate.models import GatePayload
+        from colony_sidecar.gate.layers.l4_trust import TrustTier
         payload = GatePayload(
             response_text=body.response_text,
-            incoming_message_text=body.incoming_message_text,
-            target_gateway=body.target_gateway,
-            trust_tier=body.trust_tier,
-            mentioned_entities=body.mentioned_entities,
+            incoming_message_text=getattr(body, "incoming_message_text", ""),
+            target_gateway=getattr(body, "target_gateway", ""),
+            target_contact_id=getattr(body, "contact_id", ""),
+            session_id=getattr(body, "session_id", ""),
+            turn_id=getattr(body, "turn_id", ""),
+            trust_tier=getattr(body, "trust_tier", TrustTier.STANDARD),
+            mentioned_entities=frozenset(getattr(body, "mentioned_entities", [])),
         )
         result = await _response_gate.evaluate(payload)
         return SafetyCheckResponse(
@@ -1277,7 +1276,7 @@ async def list_contacts() -> ContactListResponse:
     if _contacts_store is None:
         return ContactListResponse(contacts=[])
     try:
-        contacts = await _contacts_store.list_contacts()
+        contacts = await _contacts_store.list()
         return ContactListResponse(contacts=[ContactResponse(**c) for c in contacts])
     except Exception as exc:
         logger.warning("list_contacts failed: %s", exc)
@@ -1708,7 +1707,7 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     if _graph is not None:
         async def _mem():
             try:
-                results = await _graph.search_memories(query=msg, person_id=contact_id, limit=5)
+                results = await _graph.recall(query=msg, limit=5)
                 return ("memory", results)
             except Exception:
                 return ("memory", [])
