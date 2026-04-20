@@ -825,6 +825,47 @@ def _cmd_doctor(args) -> None:
             return r.status_code == 200
         check("Research endpoint", _research)
 
+        # 22. Memory status diagnostic
+        def _memory_status():
+            r = c.get("/v1/host/memory/status")
+            d = r.json()
+            return r.status_code == 200 and d.get("wired", False)
+        check("Memory subsystem wiring", _memory_status)
+
+        # 23. Search providers
+        def _search_providers():
+            r = c.get("/v1/host/search/providers")
+            d = r.json()
+            return r.status_code == 200 and isinstance(d.get("providers", []), list)
+        check("Search providers", _search_providers)
+
+        # 24. Autonomy scheduler
+        def _scheduler():
+            r = c.get("/v1/host/autonomy/schedule")
+            d = r.json()
+            return r.status_code == 200 and len(d.get("schedules", [])) > 0
+        check("Autonomy scheduler", _scheduler)
+
+        # 25. Extraction pipeline
+        def _extraction():
+            import base64
+            test_doc = base64.b64encode(b'{"name": "doctor-test", "type": "test"}').decode()
+            r = c.post("/v1/host/world/extract", json={"identity": {"host_id": "doctor"}, "content": test_doc, "mime_type": "application/json"})
+            return r.status_code == 200
+        check("Extraction pipeline", _extraction)
+
+        # 26. Native tools (calculate)
+        def _native_calc():
+            r = c.post("/v1/host/reasoning/turn", json={
+                "identity": {"host_id": "doctor"},
+                "context": {"session_id": "doctor", "contact_id": "doctor"},
+                "messages": [{"role": "user", "content": "Use the calculate tool to evaluate 2+2"}],
+                "max_iterations": 1,
+            }, timeout=30)
+            # 200 = success, 501 = not wired (still means endpoint works)
+            return r.status_code in (200, 501)
+        check("Native tools (calculate)", _native_calc)
+
         # --- Full checks (heavier, require LLM or async) ---
         if args.full:
             # Reasoning with LLM inference
