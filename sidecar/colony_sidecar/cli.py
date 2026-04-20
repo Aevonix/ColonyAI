@@ -79,8 +79,8 @@ def main() -> None:
 
     # --- restore ---
     restore_p = sub.add_parser("restore", help="Restore Colony from a backup")
-    restore_p.add_argument("--input", "-i", default=None, help="Input backup file path (default: stdin)")
-    restore_p.add_argument("--passphrase", default=None, help="Passphrase to decrypt private key")
+    restore_p.add_argument("--input", "-i", default=None, help="Backup file path (default: prompts for it)")
+    restore_p.add_argument("--passphrase", default=None, help="Passphrase to decrypt (default: prompts for it)")
     mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
     mm_p.add_argument("--skip-download", action="store_true", help="Skip model download")
 
@@ -415,14 +415,14 @@ def _cmd_backup(args) -> None:
 
 
 def _cmd_restore(args) -> None:
-    """Restore Colony from a backup."""
+    """Restore Colony from a backup — interactive by default."""
     _load_dotenv()
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
 
     # Check if identity already exists
     id_path = Path(state_dir) / "colony-id"
     if id_path.exists():
-        print("  Warning: A Colony identity already exists in this state directory.")
+        print("  A Colony identity already exists in this state directory.")
         existing_id = id_path.read_text().strip()
         print(f"  Existing colony_id: {existing_id}")
         confirm = input("  Overwrite? [y/N] ").strip().lower()
@@ -430,32 +430,35 @@ def _cmd_restore(args) -> None:
             print("  Restore cancelled.")
             return
 
-    # Read backup
+    # Get backup file
     if args.input:
-        backup_text = Path(args.input).read_text()
+        backup_path = args.input
     else:
-        import sys
-        print("  Paste backup JSON (Ctrl+D to end):")
-        backup_text = sys.stdin.read()
+        backup_path = input("  Backup file path: ").strip()
+
+    if not backup_path or not Path(backup_path).exists():
+        print(f"  Error: File not found: {backup_path}")
+        raise SystemExit(1)
 
     try:
-        backup_data = json.loads(backup_text)
+        backup_data = json.loads(Path(backup_path).read_text())
     except json.JSONDecodeError:
         print("  Error: Invalid backup JSON")
         raise SystemExit(1)
 
+    # Get passphrase if encrypted
     passphrase = None
     if backup_data.get("encrypted"):
         if args.passphrase:
             passphrase = args.passphrase.encode()
         else:
             import getpass
-            passphrase = getpass.getpass("Backup passphrase: ").encode()
+            passphrase = getpass.getpass("  Backup passphrase: ").encode()
 
     try:
         from colony_sidecar.chain.identity import restore_colony
         colony_id = restore_colony(state_dir, backup_data, passphrase=passphrase)
-        print(f"  ✅ Colony restored: {colony_id}")
+        print(f"\n  ✅ Colony restored: {colony_id}")
         if backup_data.get("genesis"):
             print(f"  ⚡ Genesis status restored")
         print(f"\n  Run 'colony start' to bring the Colony online.")
