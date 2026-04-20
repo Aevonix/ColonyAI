@@ -135,26 +135,26 @@ Memory operations:
         "importance": 1.0,
     },
     {
-        "content": """Safety Pipeline (ResponseGate)
+        "content": """Response Gate (ResponseGate)
 
-Colony has a 7-layer safety pipeline that filters LLM output before it reaches users:
+Colony has an optional 7-layer response gate that inspects LLM output before dispatch:
 
-Layer 1: Profanity filter — Blocks explicit language
-Layer 2: PII detection — Redacts personal information (SSN, email, phone, etc.)
-Layer 3: Harmful content — Detects dangerous instructions (violence, self-harm, illegal)
-Layer 4: Brand safety — Enforces tone/style guidelines
-Layer 5: Contextual safety — Considers conversation context and relationship
-Layer 6: Confidence check — Flags low-confidence or uncertain outputs
-Layer 7: Policy compliance — Enforces configurable organizational policies
+Layer 1: Recipient verification — Confirms the message target is valid (cannot be bypassed)
+Layer 2: PII scanning — Detects and blocks leaked personal information (SSN, email, phone, etc.)
+Layer 3: Cross-context detection — Prevents information bleeding between unrelated sessions
+Layer 4: Trust tier checking — Enforces trust-level boundaries per contact
+Layer 5: Injection detection — Catches prompt injection artifacts in LLM output
+Layer 6: Secondary review — Optional second-pass LLM review for suspicious outputs
+Layer 7: Send delay — Configurable hold window allowing cancellation before dispatch
 
-Each layer can: PASS (allow), FLAG (allow with warning), or BLOCK (reject).
+Each layer can PASS or BLOCK. Layers 1–5 short-circuit on first block.
+Per-contact bypass overrides are supported (except Layer 1 which is always enforced).
 
 When unwired (ResponseGate not configured), all content passes through.
-This is graceful degradation — safety is optional but recommended for production.
-
-The safety gate is called via /safety/check before sending LLM output to the user.""",
-        "topics": ["safety", "ResponseGate", "filtering", "PII", "content moderation"],
-        "entities": ["ResponseGate", "PII", "profanity filter", "harmful content"],
+The gate is entirely optional — designed for deployments where data leakage or
+injection risks matter (shared environments, multi-tenant, enterprise).""",
+        "topics": ["security", "ResponseGate", "PII", "data leakage", "injection"],
+        "entities": ["ResponseGate", "PII", "injection detection", "trust tier"],
         "importance": 0.9,
     },
     {

@@ -1,4 +1,4 @@
-"""Colony Vector — image content safety checks.
+"""Colony Vector — image content classifier.
 
 Validates images before embedding: format, dimensions, and optional
 content classification.
@@ -14,20 +14,20 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-class ImageSafetyLevel(str, Enum):
-    """Image safety check strictness."""
+class ImageCheckLevel(str, Enum):
+    """Image validation strictness."""
 
-    OFF = "off"        # No checks (not recommended for production)
+    OFF = "off"        # No checks
     BASIC = "basic"    # Format, dimension, and size validation only
     STRICT = "strict"  # Format + dimensions + content classification
 
 
 @dataclass
-class ImageSafetyResult:
-    """Result of an image safety check."""
+class ImageCheckResult:
+    """Result of an image content check."""
 
     safe: bool = True
-    level: ImageSafetyLevel = ImageSafetyLevel.BASIC
+    level: ImageCheckLevel = ImageCheckLevel.BASIC
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     classification: Optional[dict[str, float]] = None  # content scores for strict mode
@@ -37,14 +37,14 @@ class ImageSafetyResult:
         return "; ".join(self.errors) if self.errors else ""
 
 
-async def check_image_safety(
+async def check_image(
     data: bytes,
     mime_type: str = "",
     width: int = 0,
     height: int = 0,
-    level: ImageSafetyLevel = ImageSafetyLevel.BASIC,
-) -> ImageSafetyResult:
-    """Check image content safety.
+    level: ImageCheckLevel = ImageCheckLevel.BASIC,
+) -> ImageCheckResult:
+    """Check image content.
 
     Parameters
     ----------
@@ -54,16 +54,16 @@ async def check_image_safety(
         Detected or provided MIME type.
     width, height : int
         Image dimensions (0 if unknown).
-    level : ImageSafetyLevel
+    level : ImageCheckLevel
         How strict to check.
 
     Returns
     -------
-    ImageSafetyResult
+    ImageCheckResult
     """
-    result = ImageSafetyResult(level=level)
+    result = ImageCheckResult(level=level)
 
-    if level == ImageSafetyLevel.OFF:
+    if level == ImageCheckLevel.OFF:
         return result
 
     # --- Basic checks ---
@@ -93,7 +93,7 @@ async def check_image_safety(
     if width > 0 and height > 0 and (width < 16 or height < 16):
         result.warnings.append(f"Very small image: {width}x{height}px")
 
-    if level == ImageSafetyLevel.BASIC:
+    if level == ImageCheckLevel.BASIC:
         return result
 
     # --- Strict checks (content classification) ---
@@ -102,13 +102,13 @@ async def check_image_safety(
         classification = await _classify_content(data, mime_type)
         result.classification = classification
 
-        # Flag content with high NSFW scores
-        nsfw_score = classification.get("nsfw", 0.0)
-        if nsfw_score > 0.8:
-            result.errors.append(f"Image flagged as potentially explicit (score: {nsfw_score:.2f})")
+        # Flag content with high explicit scores
+        explicit_score = classification.get("explicit", 0.0)
+        if explicit_score > 0.8:
+            result.errors.append(f"Image classified as explicit content (score: {explicit_score:.2f})")
             result.safe = False
-        elif nsfw_score > 0.5:
-            result.warnings.append(f"Image may contain explicit content (score: {nsfw_score:.2f})")
+        elif explicit_score > 0.5:
+            result.warnings.append(f"Image may contain explicit content (score: {explicit_score:.2f})")
 
     except Exception as exc:
         logger.warning("Content classification failed: %s — allowing image (basic checks passed)", exc)
@@ -118,9 +118,9 @@ async def check_image_safety(
 
 
 async def _classify_content(data: bytes, mime_type: str) -> dict[str, float]:
-    """Classify image content for safety.
+    """Classify image content.
 
-    Tries a local NSFW classifier (falconsai/nsfw_image_detection via
+    Tries a local content classifier (falconsai/nsfw_image_detection via
     transformers). Falls back to safe scores if the model isn't available.
     """
     try:
@@ -140,12 +140,12 @@ async def _classify_content(data: bytes, mime_type: str) -> dict[str, float]:
         results = await asyncio.get_running_loop().run_in_executor(None, _run_classifier)
 
         # Parse results into score dict
-        scores = {"nsfw": 0.0, "safe": 1.0}
+        scores = {"explicit": 0.0, "safe": 1.0}
         for r in results:
             label = r.get("label", "").lower()
             score = r.get("score", 0.0)
             if "nsfw" in label or "explicit" in label:
-                scores["nsfw"] = score
+                scores["explicit"] = score
             if "safe" in label or "normal" in label:
                 scores["safe"] = score
 
@@ -153,7 +153,7 @@ async def _classify_content(data: bytes, mime_type: str) -> dict[str, float]:
 
     except ImportError:
         logger.debug("transformers not available for image classification — returning safe defaults")
-        return {"nsfw": 0.0, "violence": 0.0, "safe": 1.0}
+        return {"explicit": 0.0, "safe": 1.0}
     except Exception as exc:
         logger.debug("Image classification failed: %s — returning safe defaults", exc)
-        return {"nsfw": 0.0, "violence": 0.0, "safe": 1.0}
+        return {"explicit": 0.0, "safe": 1.0}

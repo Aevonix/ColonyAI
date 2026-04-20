@@ -419,7 +419,7 @@ class EmbeddingPipeline:
             compute_image_hash, extract_exif, load_image, resize_image,
             strip_gps_exif, validate_image,
         )
-        from colony_sidecar.vector.safety_image import check_image_safety, ImageSafetyLevel
+        from colony_sidecar.vector.safety_image import check_image, ImageCheckLevel
 
         # Load image
         data, detected_mime = await load_image(source, mime_type)
@@ -431,10 +431,10 @@ class EmbeddingPipeline:
             raise ValueError(f"Invalid image: {'; '.join(errors)}")
 
         # Safety check
-        safety_level = ImageSafetyLevel(os.environ.get("COLONY_IMAGE_SAFETY", "basic"))
-        safety = await check_image_safety(data, mime, level=safety_level)
-        if not safety.safe:
-            raise ValueError(f"Image rejected by safety check: {safety.reason}")
+        check_level = ImageCheckLevel(os.environ.get("COLONY_IMAGE_CHECK", "basic"))
+        result = await check_image(data, mime, level=check_level)
+        if not result.safe:
+            raise ValueError(f"Image check failed: {result.reason}")
 
         # Resize if needed
         data, width, height = resize_image(data)
