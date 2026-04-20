@@ -307,7 +307,11 @@ class ColonyGraph:
                 limit=limit,
                 min_strength=min_strength,
             )
-            memories = [record["memory"] async for record in result]
+            memories = []
+            async for record in result:
+                mem = record["memory"]
+                mem["relevance"] = record.get("relevance", mem.get("strength", 0.5))
+                memories.append(mem)
         # Fire-and-forget touch_memory for each recalled result
         for mem in memories:
             mid = mem.get("id")
