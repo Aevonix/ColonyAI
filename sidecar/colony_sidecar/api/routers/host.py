@@ -1125,7 +1125,7 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
 
     try:
         from colony_sidecar.gate.models import GatePayload
-        from colony_sidecar.gate.layers.l4_trust import TrustTier
+        from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
         payload = GatePayload(
             response_text=body.response_text,
             incoming_message_text=getattr(body, "incoming_message_text", ""),
