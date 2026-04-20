@@ -345,7 +345,7 @@ def main() -> None:
         print("Restart the sidecar to activate multimodal: colony start")
         print("If you have existing text vectors, run: colony migrate-tier")
 
-    elif command == "doctor":
+    elif args.command == "doctor":
         _cmd_doctor(args)
 
     else:
