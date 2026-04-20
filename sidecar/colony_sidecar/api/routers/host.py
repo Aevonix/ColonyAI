@@ -1133,7 +1133,7 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
             target_contact_id=getattr(body, "contact_id", ""),
             session_id=getattr(body, "session_id", ""),
             turn_id=getattr(body, "turn_id", ""),
-            trust_tier=getattr(body, "trust_tier", TrustTier.STANDARD),
+            trust_tier=getattr(body, "trust_tier", TrustTier.REGULAR),
             mentioned_entities=frozenset(getattr(body, "mentioned_entities", [])),
         )
         result = await _response_gate.evaluate(payload)

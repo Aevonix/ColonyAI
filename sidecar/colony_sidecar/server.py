@@ -268,6 +268,7 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.contacts.store import SQLiteContactStore
         contacts_store = SQLiteContactStore()
+        await contacts_store.connect()
         set_contacts_store(contacts_store)
         logger.info("ContactsStore initialized")
     except Exception as exc:
