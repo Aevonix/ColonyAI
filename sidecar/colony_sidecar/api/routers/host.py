@@ -1612,7 +1612,7 @@ async def start_research(body: ResearchStartRequest) -> ResearchRunResponse:
             run_id=run.id,
             topic=body.topic,
             status=run.status.value if hasattr(run.status, "value") else str(run.status),
-            stages_completed=[s.value if hasattr(s, "value") else str(s) for s in run.stages_completed],
+            stages_completed=[run.current_stage.value if hasattr(run.current_stage, "value") else str(run.current_stage)],
             artifact=run.artifact if hasattr(run, "artifact") else None,
         )
     except Exception as exc:
