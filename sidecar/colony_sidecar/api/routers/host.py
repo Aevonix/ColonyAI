@@ -1753,7 +1753,10 @@ def set_delivery_bridge(bridge) -> None:
 @router.get("/delivery/pending", response_model=DeliveryListResponse)
 async def list_pending_deliveries(gateway_id: str = "", limit: int = 20) -> DeliveryListResponse:
     if _delivery_bridge is None:
-        return DeliveryListResponse(pending=[])
+        raise HTTPException(
+            status_code=503,
+            detail="delivery_bridge_not_initialized",
+        )
     try:
         pending = _delivery_bridge.get_pending(gateway_id=gateway_id, limit=limit)
         return DeliveryListResponse(pending=pending)
@@ -1765,7 +1768,10 @@ async def list_pending_deliveries(gateway_id: str = "", limit: int = 20) -> Deli
 @router.post("/delivery/mark-sent")
 async def mark_delivery_sent(body: DeliveryMarkRequest) -> dict:
     if _delivery_bridge is None:
-        return {"ok": False}
+        raise HTTPException(
+            status_code=503,
+            detail="delivery_bridge_not_initialized",
+        )
     try:
         ok = _delivery_bridge.mark_sent(body.delivery_id)
         return {"ok": ok}
@@ -1779,10 +1785,16 @@ async def mark_delivery_sent(body: DeliveryMarkRequest) -> dict:
 # ---------------------------------------------------------------------------
 
 _connection_discoverer = None
+_insight_store = None
 
 def set_connection_discoverer(discoverer) -> None:
     global _connection_discoverer
     _connection_discoverer = discoverer
+
+
+def set_insight_store(store) -> None:
+    global _insight_store
+    _insight_store = store
 
 
 @router.post("/synthesis/discover", response_model=SynthesisDiscoverResponse)
@@ -1896,6 +1908,69 @@ async def list_skills() -> SkillsListResponse:
         return SkillsListResponse(skills=[])
 
 
+@router.get("/skills/drafts")
+async def list_skill_drafts() -> dict:
+    """List skills in DRAFT status awaiting approval."""
+    if _skills_registry is None:
+        return {"drafts": []}
+    try:
+        from colony_sidecar.skills.models import SkillStatus
+        drafts = await _skills_registry.list_all(status=SkillStatus.DRAFT)
+        return {
+            "drafts": [
+                {
+                    "id": getattr(d, "skill_id", ""),
+                    "name": getattr(d, "name", ""),
+                    "description": getattr(d, "description", ""),
+                    "created_at": (
+                        getattr(d, "created_at").isoformat()
+                        if getattr(d, "created_at", None) else None
+                    ),
+                }
+                for d in drafts
+            ]
+        }
+    except Exception as exc:
+        logger.warning("list_skill_drafts failed: %s", exc)
+        return {"drafts": []}
+
+
+@router.post("/skills/{skill_id}/approve")
+async def approve_skill(skill_id: str) -> dict:
+    """Move a DRAFT skill to ACTIVE."""
+    if _skills_registry is None:
+        raise HTTPException(status_code=503, detail="skills_registry_not_initialized")
+    try:
+        existing = await _skills_registry.get(skill_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        await _skills_registry.activate(skill_id)
+        return {"ok": True, "skill_id": skill_id, "status": "active"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("approve_skill failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/skills/{skill_id}/reject")
+async def reject_skill(skill_id: str) -> dict:
+    """Reject a DRAFT skill by archiving it."""
+    if _skills_registry is None:
+        raise HTTPException(status_code=503, detail="skills_registry_not_initialized")
+    try:
+        existing = await _skills_registry.get(skill_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        await _skills_registry.archive(skill_id)
+        return {"ok": True, "skill_id": skill_id, "status": "archived"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("reject_skill failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/skills/registry/{skill_id}", response_model=SkillDetailResponse)
 async def get_skill(skill_id: str) -> SkillDetailResponse:
     if _skills_registry is None:
@@ -1931,17 +2006,26 @@ async def list_insights(limit: int = 10, dismissed: bool = False) -> InsightsLis
         return InsightsListResponse(insights=[])
     try:
         connections = await _connection_discoverer.discover_connections(min_novelty=0.3)
+        dismissed_ids = _insight_store.list_dismissed() if _insight_store is not None else set()
         insights = []
-        for c in connections[:limit]:
+        for c in connections:
+            cid = getattr(c, "id", None) or str(uuid.uuid4())
+            is_dismissed = cid in dismissed_ids
+            if not dismissed and is_dismissed:
+                continue
+            if dismissed and not is_dismissed:
+                continue
             insights.append(InsightResponse(
-                id=getattr(c, "id", str(uuid.uuid4())),
+                id=cid,
                 title=getattr(c, "connection_type", "Connection"),
                 body=getattr(c, "description", "") or f"Connection between {', '.join(getattr(c, 'entities', []))}",
                 insight_type=getattr(c, "connection_type", "unknown"),
                 novelty=getattr(c, "novelty", 0.0),
                 entities=getattr(c, "entities", []),
-                dismissed=False,
+                dismissed=is_dismissed,
             ))
+            if len(insights) >= limit:
+                break
         return InsightsListResponse(insights=insights)
     except Exception as exc:
         logger.warning("list_insights failed: %s", exc)
@@ -1950,7 +2034,10 @@ async def list_insights(limit: int = 10, dismissed: bool = False) -> InsightsLis
 
 @router.post("/insights/{insight_id}/dismiss")
 async def dismiss_insight(insight_id: str) -> dict:
-    return {"ok": True}
+    if _insight_store is None:
+        raise HTTPException(status_code=503, detail="insight_store_not_initialized")
+    _insight_store.dismiss(insight_id)
+    return {"ok": True, "insight_id": insight_id}
 
 
 # ---------------------------------------------------------------------------
