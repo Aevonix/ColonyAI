@@ -92,7 +92,7 @@ Python 3.11+ and Docker. Docker is auto-installed by `colony init` if missing.
 ### Install
 
 ```bash
-git clone https://github.com/Aevonix/colony.git
+git clone https://github.com/Aevonix/ColonyAI.git
 cd colony/sidecar
 
 pip install -e .
@@ -423,7 +423,7 @@ Phase 2 adds parallel multimodal variants for each tier.
 ### Setup
 
 ```bash
-git clone https://github.com/Aevonix/colony.git
+git clone https://github.com/Aevonix/ColonyAI.git
 cd colony
 
 # TypeScript plugin
@@ -494,7 +494,7 @@ colony/
 ### Plugin Installation
 
 ```bash
-npm install @aevonix/colony
+npm install @aevonix/colonyai
 ```
 
 ### Plugin Configuration

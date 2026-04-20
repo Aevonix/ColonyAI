@@ -1,6 +1,6 @@
 {
   "id": "colony",
-  "name": "@aevonix/colony",
+  "name": "@aevonix/colonyai",
   "kind": "extension",
   "enabledByDefault": true,
   "description": "Colony intelligence sidecar - graph memory, autonomy loop, context assembly, safety pipeline",

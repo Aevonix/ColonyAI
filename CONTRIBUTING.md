@@ -5,7 +5,7 @@ Thanks for your interest in Colony! This guide covers how to contribute.
 ## Development Setup
 
 ```bash
-git clone https://github.com/Aevonix/colony.git
+git clone https://github.com/Aevonix/ColonyAI.git
 cd colony
 
 # Python sidecar
