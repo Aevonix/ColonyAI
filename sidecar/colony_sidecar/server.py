@@ -529,6 +529,16 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    # API key authentication (skips health/docs; open access if no key set)
+    from colony_sidecar.api.middleware import ApiKeyMiddleware
+    api_key = os.environ.get("COLONY_API_KEY")
+    app.add_middleware(ApiKeyMiddleware, api_key=api_key)
+    if api_key:
+        logger.info("API key authentication enabled")
+    else:
+        logger.warning("No COLONY_API_KEY set — API is open (dev mode)")
+
     app.include_router(host_router)
     return app
 
