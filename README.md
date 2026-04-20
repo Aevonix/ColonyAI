@@ -4,13 +4,13 @@
 
 Colony gives any agent harness a durable cognitive layer: memory, reasoning, goals, relationships, proactive delivery, and cryptographic identity. One HTTP API covers it. A TypeScript plugin loads into your host. A Python sidecar holds the state and runs the work.
 
-Colony runs as a plugin. It needs a harness to plug into (OpenClaw, Hermes, or anything that speaks the Colony plugin contract). Today that's the full scope: 21 subsystems, one user, one install. The roadmap grows the intelligence outward. Your nodes form your Colony. Your Colony federates with other Colonies. Federations connect through the SuperColony Network. Each phase expands what the shared intelligence can do.
+Colony runs as a plugin. It needs a harness to plug into (OpenClaw, Hermes, or anything that speaks the Colony plugin contract). Today that's the full scope: 22 subsystems, one user, one install. The roadmap grows the intelligence outward. Your nodes form your Colony. Your Colony federates with other Colonies. Federations connect through the SuperColony Network. Each phase expands what the shared intelligence can do.
 
 -----
 
 ## Why Colony
 
-Ant colonies are the textbook example of emergent collective intelligence. No central controller, specialized roles, coordination through a shared environment. The technical name for it is stigmergy: individuals modify the environment, other individuals read those modifications and respond. Colony applies that pattern to LLM agents. A shared substrate of memory, signals, and state that many specialized systems read from and write to.
+Ant colonies are the textbook example of emergent collective intelligence. No central controller, specialized roles, coordination through a shared environment. The technical name is stigmergy: individuals modify the environment, other individuals read those modifications and respond. Colony applies that pattern to LLM agents. A shared substrate of memory, signals, and state that many specialized systems read from and write to.
 
 Argentine ants form the largest known supercolony in nature. Six thousand kilometers of coastline, three continents, every individual treating every other individual as kin. The SuperColony Network is modeled on that. Independent colonies, global reach, participation on your terms.
 
@@ -127,7 +127,7 @@ After the sidecar is running, use `colony doctor` to verify all subsystems:
 COLONY_API_KEY=your-key colony doctor
 ```
 
-This checks health, auth, memory, response gate, goals, identity, secrets, embeddings, context assembly, skills, world model, signals, and autonomy — 15 subsystem checks. Exit code 0 if healthy, 1 if any check fails.
+15 subsystem checks: health, auth, memory, response gate, goals, identity, secrets, embeddings, context assembly, skills, world model, signals, autonomy. Exit code 0 if healthy, 1 if any check fails.
 
 For the full integration test suite (68 tests):
 
@@ -249,14 +249,14 @@ Full configuration reference in `docs/configuration.md`.
 
 Colony uses a two-layer identity model:
 
-- **Colony** — the logical identity. A permanent UUID (`colony_id`) paired with an Ed25519 keypair. One Colony, one owner, persists forever. Can run on multiple devices.
-- **Node** — a physical device running that Colony. Each device gets a unique `node_id` and its own Ed25519 keypair, certified by the Colony's private key.
+- **Colony** is the logical identity. A permanent UUID (`colony_id`) paired with an Ed25519 keypair. One Colony, one owner, persists forever. Can run on multiple devices.
+- **Node** is a physical device running that Colony. Each device gets a unique `node_id` and its own Ed25519 keypair, certified by the Colony's private key.
 
-This means you can restore your Colony onto any number of machines — each gets its own node identity while sharing the same Colony identity. Networking, clustering, and federation build on this foundation.
+You can restore your Colony onto any number of machines. Each gets its own node identity while sharing the same Colony identity. Networking, clustering, and federation build on this foundation.
 
-**Genesis.** The first Colony is the trust anchor for the entire network. Its manifest is self-signed with Ed25519 and committed to the repo. A hardcoded public key in the source verifies the signature. Genesis status is cryptographically unforgeable — editing the manifest locally doesn't work because the signature won't verify against the hardcoded key.
+**Genesis.** The first Colony is the trust anchor for the entire network. Its manifest is self-signed with Ed25519 and committed to the repo. A hardcoded public key in the source verifies the signature. Genesis status is cryptographically unforgeable. Editing the manifest locally does not work because the signature will not verify against the hardcoded key.
 
-**Backup & restore.** `colony backup` exports your entire Colony identity (colony_id, encrypted private key, Genesis manifest) as a single encrypted JSON file. `colony restore` brings it back on any machine. Store the backup file and passphrase in your password manager.
+**Backup and restore.** `colony backup` exports your entire Colony identity (colony_id, encrypted private key, Genesis manifest) as a single encrypted JSON file. `colony restore` brings it back on any machine. Store the backup file and passphrase in your password manager.
 
 ```bash
 # First setup
@@ -316,7 +316,7 @@ Colony ships in phases. The intelligence system is v1.0. Each phase expands the 
 
 ### Phase 1: Intelligence System (Shipped, v1.0)
 
-Single-node Colony mounted into a host harness. 21 subsystems wired. Everything described above in "What Colony Is Today."
+Single-node Colony mounted into a host harness. 22 subsystems wired. Everything described above in "What Colony Is Today."
 
 ### Phase 2: Multimodal (Shipped)
 
@@ -347,7 +347,7 @@ Capabilities added in Phase 3:
 - SWIM gossip for node health monitoring across the mesh
 - Shared state across the Colony (Redis-backed canonical registry, SQLite node caches)
 
-A single-node Colony is still a Colony. That node is both Queen and (implicitly) Alate. Phase 3 doesn't force you to add nodes; it unlocks the ability to grow when you're ready.
+A single-node Colony is still a Colony. That node is both Queen and (implicitly) Alate. Phase 3 does not force you to add nodes. It unlocks the ability to grow when you are ready.
 
 ### Phase 4: Federation
 
@@ -395,7 +395,7 @@ Capabilities added in Phase 5:
 - HMAC-protected roster persistence
 - The SuperColony Network itself: the global substrate where any Colony can participate or abstain
 
-Phase 5 is when Colony becomes what it's designed to be. A global mesh of agent intelligence, where your agents coordinate with other agents on your terms.
+Phase 5 is when Colony becomes what it is designed to be. A global mesh of agent intelligence, where your agents coordinate with other agents on your terms.
 
 -----
 
@@ -457,12 +457,12 @@ Exports the OpenAPI spec and regenerates `src/types-generated.ts`.
 ```
 colony/
 ├── src/                      # TypeScript plugin (thin HTTP client)
-├── sidecar/                  # Python sidecar (stateful, 21 subsystems)
+├── sidecar/                  # Python sidecar (stateful, 22 subsystems)
 │   └── colony_sidecar/
 │       ├── api/              # FastAPI routers + schemas
 │       ├── autonomy/         # Autonomy loop
 │       ├── briefings/        # Proactive briefing engine
-│       ├── chain/            # Cryptographic identity
+│       ├── chain/            # Cryptographic identity + keys + node certs
 │       ├── contacts/         # Relationship store
 │       ├── delivery/         # Proactive message bridge
 │       ├── events/           # WebSocket event stream
@@ -559,7 +559,7 @@ Includes Neo4j (APOC, memory tuning, health check) and the Colony sidecar (Huggi
 
 ## License
 
-[MIT](LICENSE) — Copyright © 2026 Aevonix
+[MIT](LICENSE) - Copyright 2026 Aevonix
 
 -----
 
