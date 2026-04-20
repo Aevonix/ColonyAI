@@ -423,7 +423,7 @@ async def lifespan(app: FastAPI):
         set_research_pipeline(research)
         logger.info("ResearchPipeline initialized")
     except Exception as exc:
-        logger.warning("ResearchPipeline init failed: %s", exc)
+        logger.warning("ResearchPipeline init failed: %s", exc, exc_info=True)
 
     # --- 13. Delivery bridge ---
     try:
