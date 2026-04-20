@@ -407,8 +407,9 @@ async def lifespan(app: FastAPI):
 
         # Register native tools with the ToolExecutor
         try:
-            from colony_sidecar.api.routers.host import _tool_executor as te
-        except ImportError:
+            import colony_sidecar.api.routers.host as _host_router
+            te = _host_router._tool_executor
+        except Exception:
             te = None
         if te is not None:
             sandbox_dir = os.environ.get("COLONY_SANDBOX_DIR", str(state_dir / "sandbox"))
