@@ -113,3 +113,8 @@ class SubsystemRegistry:
         if _reasoning_loop is not None:
             return _reasoning_loop._model
         return None
+
+    @property
+    def scheduler(self) -> Any:
+        from colony_sidecar.api.routers.host import _scheduler
+        return _scheduler

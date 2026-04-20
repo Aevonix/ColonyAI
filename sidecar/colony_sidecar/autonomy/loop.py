@@ -62,6 +62,7 @@ class LoopStats:
     tier_changes: int = 0
     memories_promoted: int = 0
     task_follow_ups: int = 0
+    scheduled_runs: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -80,6 +81,7 @@ class LoopStats:
             "tier_changes": self.tier_changes,
             "memories_promoted": self.memories_promoted,
             "task_follow_ups": self.task_follow_ups,
+            "scheduled_runs": self.scheduled_runs,
         }
 
 
@@ -118,11 +120,13 @@ class AutonomyLoop:
         registry: SubsystemRegistry,
         config: Optional[AutonomyConfig] = None,
         event_bus: Optional[EventBus] = None,
+        scheduler: Any = None,
     ) -> None:
         self._registry = registry
         self.config = config or AutonomyConfig()
         self.events = event_bus or EventBus()
         self.stats = LoopStats()
+        self._scheduler = scheduler
 
         self._running = False
         self._wake_event = asyncio.Event()
@@ -203,9 +207,8 @@ class AutonomyLoop:
         # Phase 3: check anomalies
         await self._phase_anomalies()
 
-        logger.debug("Scheduled tasks skipped — scheduler not yet implemented")
-        # TODO: wire scheduler.tick() into the autonomy loop when
-        # the scheduler is attached to the loop instance
+        # Phase 4: scheduled periodic tasks (memory consolidate, briefing, etc.)
+        await self._phase_scheduled()
 
         # Phase 5: run initiative engine
         await self._phase_initiative()
@@ -328,6 +331,31 @@ class AutonomyLoop:
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase anomalies error: %s", exc, exc_info=True)
+
+    async def _phase_scheduled(self) -> None:
+        """Run scheduled periodic tasks that are due (cron-style)."""
+        scheduler = self._scheduler or self._registry.scheduler
+        if scheduler is None:
+            return
+        try:
+            results = await scheduler.tick()
+            if results:
+                ok = sum(1 for r in results if r.get("status") == "ok")
+                self.stats.scheduled_runs += ok
+                errs = len(results) - ok
+                if errs:
+                    self.stats.errors += errs
+                    for r in results:
+                        if r.get("status") != "ok":
+                            logger.warning(
+                                "Scheduled task failed: %s — %s",
+                                r.get("task"), r.get("error"),
+                            )
+                if ok:
+                    logger.info("Phase scheduled: %d task(s) ran", ok)
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase scheduled error: %s", exc, exc_info=True)
 
     async def _phase_initiative(self) -> None:
         """Run initiative engine to generate autonomous action proposals."""
@@ -468,15 +496,71 @@ class AutonomyLoop:
             logger.error("Phase memory_distillation error: %s", exc, exc_info=True)
 
     async def _phase_task_completion(self) -> None:
-        """Check for completed tasks and follow up."""
+        """Emit follow-up events for goals that completed since the last check.
+
+        Runs at most hourly. Emits one ``task_completed_followup`` event per
+        newly-completed goal and asks the connection discoverer for
+        reflection insights when a backlog accumulates.
+        """
         now = datetime.now(timezone.utc)
         if self._last_task_completion_check is not None:
             elapsed = (now - self._last_task_completion_check).total_seconds()
             if elapsed < 3600:  # Check hourly
                 return
-        try:
-            self.stats.task_follow_ups += 0  # Placeholder
+
+        goals = self._registry.goals
+        if goals is None:
             self._last_task_completion_check = now
+            return
+
+        try:
+            from colony_sidecar.goals.models import GoalStatus
+            completed = goals.list_goals(status=GoalStatus.COMPLETED, limit=50)
+
+            window_start = self._last_task_completion_check
+            new_completions = []
+            for g in completed:
+                cat = getattr(g, "completed_at", None)
+                if cat is None:
+                    continue
+                if window_start is None or cat >= window_start:
+                    new_completions.append(g)
+
+            for g in new_completions:
+                try:
+                    self.events.emit(Event(
+                        id=f"task-followup-{getattr(g, 'goal_id', uuid.uuid4())}",
+                        source="autonomy.task_completion",
+                    ))
+                    broadcast = _get_broadcast()
+                    if broadcast is not None:
+                        try:
+                            broadcast({
+                                "type": "task_followup",
+                                "goal_id": getattr(g, "goal_id", ""),
+                                "title": getattr(g, "title", ""),
+                            })
+                        except Exception:
+                            logger.debug("broadcast task_followup failed", exc_info=True)
+                except Exception:
+                    logger.debug("emit task_followup failed", exc_info=True)
+
+            # If several goals finished in the window, ask synthesis for
+            # reflection connections to surface patterns.
+            if len(new_completions) >= 3:
+                discoverer = self._registry.connection_discoverer
+                if discoverer is not None and hasattr(discoverer, "discover_connections"):
+                    try:
+                        await discoverer.discover_connections(min_novelty=0.3)
+                    except Exception:
+                        logger.debug("reflection discovery failed", exc_info=True)
+
+            self.stats.task_follow_ups += len(new_completions)
+            self._last_task_completion_check = now
+            if new_completions:
+                logger.info(
+                    "Phase task_completion: %d follow-up(s)", len(new_completions)
+                )
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase task_completion error: %s", exc, exc_info=True)

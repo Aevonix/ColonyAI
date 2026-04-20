@@ -40,7 +40,8 @@ class PatternExtractor:
         input_schema = self._infer_input_schema(solution.inputs)
         output_schema = self._infer_output_schema(solution.output)
         source = self._synthesize_source(
-            solution.task_description, steps, input_schema, output_schema
+            solution.task_description, steps, input_schema, output_schema,
+            trace=solution.trace,
         )
         tags = self._extract_tags(solution.task_description)
 
@@ -123,28 +124,69 @@ class PatternExtractor:
         steps: List[str],
         input_schema: Dict[str, Any],
         output_schema: Dict[str, Any],
+        trace: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
+        """Emit a Python source string for the extracted skill.
+
+        If the trace contains tool calls, emit a ``run()`` that replays
+        each call via ``colony.tools.invoke`` so the skill actually runs
+        once a human has approved it. If no trace is available, emit the
+        legacy ``NotImplementedError`` scaffold so approval is mandatory.
+        """
         params = ", ".join(
             f"{k}: {v.get('type', 'Any')}"
             for k, v in input_schema.get("properties", {}).items()
         )
-        # Join with 16-space indent (matches the template's 16-space indent before dedent strips 12)
-        step_comments = "\n                ".join(f"# Step: {s}" for s in steps[:10])
-        if not step_comments:
-            step_comments = "# No steps recorded"
+        tool_calls = [
+            entry for entry in (trace or [])
+            if entry.get("type") == "tool_call"
+        ]
+
+        if not tool_calls:
+            step_comments = "\n                ".join(
+                f"# Step: {s}" for s in steps[:10]
+            ) or "# No steps recorded"
+            return textwrap.dedent(f"""\
+                from __future__ import annotations
+                from typing import Any
+
+                async def run({params}) -> Any:
+                    \"\"\"Auto-generated skill (empty trace — approval required).
+
+                    Original task: {description}
+                    \"\"\"
+                    {step_comments}
+                    raise NotImplementedError(
+                        "No execution trace captured — manual implementation required."
+                    )
+            """)
+
+        # Replay each captured tool call. The runtime exposes
+        # ``colony.tools.invoke(name, args)`` for dynamic dispatch; skills
+        # run inside the SkillExecutor sandbox so a failed replay is
+        # isolated from the rest of the sidecar.
+        replay_lines: List[str] = []
+        for i, entry in enumerate(tool_calls[:10]):
+            tool_name = entry.get("tool", "unknown")
+            args_repr = repr(entry.get("args", {}))
+            replay_lines.append(
+                f"    _r{i} = await colony.tools.invoke({tool_name!r}, {args_repr})"
+            )
+        replay_block = "\n".join(replay_lines)
+        last_var = f"_r{len(replay_lines) - 1}" if replay_lines else "None"
+
         return textwrap.dedent(f"""\
             from __future__ import annotations
             from typing import Any
 
-            async def run({params}) -> Any:
-                \"\"\"Auto-generated skill.
+            async def run(colony, {params}) -> Any:
+                \"\"\"Auto-generated skill — replays captured tool sequence.
 
                 Original task: {description}
+                Steps: {len(tool_calls)}
                 \"\"\"
-                {step_comments}
-                raise NotImplementedError(
-                    "Skill body requires human review before activation."
-                )
+            {replay_block}
+                return {last_var}
         """)
 
     def _generate_docstring(self, description: str, steps: List[str]) -> str:
