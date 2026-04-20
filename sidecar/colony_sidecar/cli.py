@@ -62,6 +62,7 @@ def main() -> None:
     doc_p.add_argument("--url", default=None, help="Sidecar URL (default: from .env)")
     doc_p.add_argument("--api-key", default=None, help="API key (default: from .env)")
     doc_p.add_argument("--verbose", "-v", action="store_true", help="Show detailed results")
+    doc_p.add_argument("--full", action="store_true", help="Run all checks including heavy ones (reasoning, research)")
 
     # --- key ---
     key_p = sub.add_parser("key", help="Manage Colony cryptographic identity")
@@ -787,6 +788,67 @@ def _cmd_doctor(args) -> None:
             r = c.post("/v1/host/autonomy/cycle", json={"identity": {"host_id": "doctor"}})
             return r.json().get("completed", False)
         check("Autonomy cycle", _autonomy)
+
+        # 16. Contacts
+        def _contacts():
+            r = c.get("/v1/host/contacts")
+            return r.status_code == 200 and isinstance(r.json(), list)
+        check("Contacts", _contacts)
+
+        # 17. Briefings
+        def _briefings():
+            r = c.get("/v1/host/briefings")
+            return r.status_code == 200
+        check("Briefings", _briefings)
+
+        # 18. Consolidate
+        def _consolidate():
+            r = c.post("/v1/host/consolidate", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}})
+            return r.status_code == 200
+        check("Consolidate", _consolidate)
+
+        # 19. Sessions
+        def _sessions():
+            r = c.post("/v1/host/sessions", json={"identity": {"host_id": "doctor"}, "context": {"session_id": f"dr-{uuid.uuid4().hex[:6]}", "contact_id": "c"}})
+            return r.status_code == 200
+        check("Sessions", _sessions)
+
+        # 20. Delivery
+        def _delivery():
+            r = c.get("/v1/host/delivery/status")
+            return r.status_code == 200
+        check("Delivery", _delivery)
+
+        # 21. Cognition
+        def _cognition():
+            r = c.get("/v1/host/cognition/metrics")
+            return r.status_code == 200
+        check("Cognition", _cognition)
+
+        # --- Full checks (heavier, require LLM or async) ---
+        if args.full:
+            # 22. Reasoning
+            def _reasoning():
+                r = c.post("/v1/host/reasoning", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "What is 2+2?", "max_iterations": 1}, timeout=30)
+                return r.status_code == 200
+            check("Reasoning (LLM)", _reasoning)
+
+            # 23. Research
+            def _research():
+                r = c.post("/v1/host/research", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "test", "depth": 1}, timeout=30)
+                return r.status_code == 200
+            check("Research (async)", _research)
+
+            # 24. Events (WebSocket)
+            def _events():
+                try:
+                    with httpx.Client(timeout=5) as ws_client:
+                        r = ws_client.get(f"{url}/v1/host/events", headers=headers)
+                        # WebSocket endpoint may return 426 (upgrade required) which means it exists
+                        return r.status_code in (200, 426, 403)
+                except Exception:
+                    return False
+            check("Events (WebSocket)", _events)
 
     # Summary
     passed = sum(1 for _, v in checks if v)
