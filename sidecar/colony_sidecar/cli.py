@@ -829,13 +829,13 @@ def _cmd_doctor(args) -> None:
         if args.full:
             # Reasoning with LLM inference
             def _reasoning_full():
-                r = c.post("/v1/host/reasoning/turn", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "What is 2+2?", "max_iterations": 1}, timeout=30)
+                r = c.post("/v1/host/reasoning/turn", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "messages": [{"role": "user", "content": "What is 2+2?"}], "max_iterations": 1}, timeout=30)
                 return r.status_code == 200
             check("Reasoning (LLM inference)", _reasoning_full)
 
             # Research with actual task
             def _research_full():
-                r = c.post("/v1/host/research/start", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "test", "depth": 1}, timeout=30)
+                r = c.post("/v1/host/research/start", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "topic": "test", "depth": "shallow"}, timeout=30)
                 return r.status_code == 200
             check("Research (async task)", _research_full)
 
