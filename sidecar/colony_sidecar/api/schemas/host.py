@@ -680,6 +680,8 @@ class EnrichedContextResponse(BaseModel):
 class IdentityStatusResponse(BaseModel):
     colony_id: Optional[str] = None
     public_key: Optional[str] = None
+    node_id: Optional[str] = None
+    node_public_key: Optional[str] = None
     initialized: bool = False
     keys_configured: bool = False
     is_genesis: bool = False

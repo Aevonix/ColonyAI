@@ -1998,6 +1998,8 @@ async def identity_status() -> IdentityStatusResponse:
         pubkey = None
         keys_configured = False
         is_genesis = False
+        node_id = None
+        node_pubkey = None
 
         # Try to get public key from key manager
         key_mgr = getattr(_chain_manager, "_key_manager", None)
@@ -2005,15 +2007,27 @@ async def identity_status() -> IdentityStatusResponse:
             try:
                 pubkey = key_mgr.public_key_hex()
                 keys_configured = True
-                # Check if this is Genesis
                 from colony_sidecar.chain.identity import is_genesis as check_genesis
                 is_genesis = check_genesis(colony_id, pubkey)
             except Exception:
                 pass
 
+        # Get node info
+        try:
+            from colony_sidecar.chain.node import get_node_info
+            import os
+            state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
+            info = get_node_info(state_dir)
+            node_id = info.get("node_id")
+            node_pubkey = info.get("node_public_key")
+        except Exception:
+            pass
+
         return IdentityStatusResponse(
             colony_id=colony_id,
             public_key=pubkey,
+            node_id=node_id,
+            node_public_key=node_pubkey,
             initialized=colony_id is not None,
             keys_configured=keys_configured,
             is_genesis=is_genesis,

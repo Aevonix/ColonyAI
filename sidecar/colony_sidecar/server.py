@@ -440,6 +440,23 @@ async def lifespan(app: FastAPI):
         except Exception as kexc:
             logger.warning("LocalKeyManager init skipped: %s", kexc)
 
+        # Initialize node identity
+        try:
+            from colony_sidecar.chain.node import get_or_create_node_id, ensure_node_keypair, create_node_certificate, load_node_certificate
+            node_id = get_or_create_node_id(state_dir)
+            node_km = ensure_node_keypair(state_dir)
+            logger.info("Node identity: %s (public_key=%s...)", node_id, node_km.public_key_hex()[:16])
+
+            # Create node certificate if missing
+            cert_path = Path(state_dir) / "node-cert.json"
+            if not cert_path.exists():
+                cert = create_node_certificate(state_dir, colony_key_manager=key_mgr)
+                logger.info("Node certificate created and signed by Colony key")
+            else:
+                logger.info("Node certificate exists")
+        except Exception as nexc:
+            logger.warning("Node identity init skipped: %s", nexc)
+
     except Exception as exc:
         logger.warning("ChainManager init failed: %s", exc)
 

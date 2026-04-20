@@ -54,6 +54,12 @@ def main() -> None:
     mm_p.add_argument("--model", default=None, help="Multimodal model ID (default: auto-detect from tier)")
     mm_p.add_argument("--storage", default="local", choices=["local", "embed_only"], help="Image storage mode")
 
+    # --- init ---
+    init_p = sub.add_parser("init", help="Initialize a new Colony identity")
+    init_p.add_argument("--passphrase", default=None, help="Encrypt Colony private key with passphrase (prompted if --encrypt)")
+    init_p.add_argument("--encrypt", action="store_true", help="Encrypt Colony private key")
+    init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Colony only)")
+
     # --- doctor ---
     doc_p = sub.add_parser("doctor", help="Run integration health check against running sidecar")
     doc_p.add_argument("--url", default=None, help="Sidecar URL (default: from .env)")
@@ -70,6 +76,11 @@ def main() -> None:
     key_sub.add_parser("manifest", help="Create a colony manifest (shareable public identity)")
     key_genesis = key_sub.add_parser("claim-genesis", help="Claim Genesis status for this Colony (first Colony only)")
     key_genesis.add_argument("--force", action="store_true", help="Overwrite existing Genesis manifest")
+
+    # --- node ---
+    node_p = sub.add_parser("node", help="Manage this device's node identity")
+    node_sub = node_p.add_subparsers(dest="node_command")
+    node_sub.add_parser("info", help="Show node_id, public key, and certificate status")
 
     # --- backup ---
     backup_p = sub.add_parser("backup", help="Export Colony identity as a portable backup")
@@ -376,11 +387,17 @@ def main() -> None:
     elif args.command == "key":
         _cmd_key(args)
 
+    elif args.command == "node":
+        _cmd_node(args)
+
     elif args.command == "backup":
         _cmd_backup(args)
 
     elif args.command == "restore":
         _cmd_restore(args)
+
+    elif args.command == "init":
+        _cmd_init(args)
 
     else:
         parser.print_help()
@@ -465,6 +482,72 @@ def _cmd_restore(args) -> None:
     except ValueError as e:
         print(f"  Error: {e}")
         raise SystemExit(1)
+
+
+def _cmd_init(args) -> None:
+    """Initialize a new Colony identity."""
+    _load_dotenv()
+    state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
+
+    from colony_sidecar.chain.identity import get_or_create_colony_id
+    from colony_sidecar.chain.local_keys import LocalKeyManager
+
+    id_path = Path(state_dir) / "colony-id"
+    if id_path.exists():
+        existing = id_path.read_text().strip()
+        print(f"  Colony already initialized: {existing}")
+        print(f"  Run 'colony key info' to see details.")
+        return
+
+    # Create colony_id
+    colony_id = get_or_create_colony_id(state_dir)
+    print(f"  Colony ID: {colony_id}")
+
+    # Determine passphrase
+    passphrase = None
+    if args.encrypt:
+        import getpass
+        passphrase = getpass.getpass("Colony key passphrase: ").encode()
+    elif args.passphrase:
+        passphrase = args.passphrase.encode()
+
+    # Generate Colony keypair
+    keys_dir = os.path.join(state_dir, "colony-keys")
+    km = LocalKeyManager.generate(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase)
+    print(f"  Public Key: {km.public_key_hex()}")
+    print(f"  Keypair saved to {keys_dir}/")
+
+    # Claim Genesis if requested
+    if args.claim_genesis:
+        from colony_sidecar.chain.identity import create_genesis_manifest
+        priv_path = os.path.join(keys_dir, "private.pem")
+        private_pem = Path(priv_path).read_bytes()
+        genesis_path = os.path.join(state_dir, "genesis.json")
+        create_genesis_manifest(colony_id, km.public_key_hex(), genesis_path,
+                                private_key_pem=private_pem, passphrase=passphrase)
+        print(f"  ⚡ Genesis claimed and manifest signed")
+
+    print(f"\n  Colony initialized. Run 'colony start' to bring it online.")
+
+
+def _cmd_node(args) -> None:
+    """Manage this device's node identity."""
+    _load_dotenv()
+    state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
+
+    if args.node_command == "info":
+        from colony_sidecar.chain.node import get_node_info
+        from colony_sidecar.chain.identity import get_or_create_colony_id
+        colony_id = get_or_create_colony_id(state_dir)
+        info = get_node_info(state_dir)
+        print(f"  Colony ID:  {colony_id}")
+        print(f"  Node ID:    {info.get('node_id', '(not created — run colony start)')}")
+        print(f"  Node Key:   {info.get('node_public_key', '(none)')}")
+        print(f"  Certified:  {'yes' if info.get('certified') else 'no'}")
+        if info.get('issued_at'):
+            print(f"  Issued At:  {info['issued_at']}")
+    else:
+        print("  Usage: colony node {info}")
 
 
 def _cmd_key(args) -> None:
