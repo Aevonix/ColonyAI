@@ -1,9 +1,11 @@
 """World Model primary store interface.
 
-Backed by SQLite (default) or Neo4j. All callers must use this interface
+Backed by SQLite (default) or PostgreSQL. All callers must use this interface
 and never access the backend directly.
 """
 
+import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 from collections import deque
@@ -12,6 +14,8 @@ from .config import WorldModelConfig
 from .entities import BaseEntity
 from .relationships import WorldRelationship
 from .sqlite.backend import SQLiteBackend
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,7 +50,19 @@ class WorldModelStore:
 
     async def connect(self) -> None:
         """Initialize and connect to the storage backend."""
-        if self._config.backend == "sqlite":
+        if self._config.backend == "postgres":
+            try:
+                from colony_sidecar.world_model.postgres.backend import PostgresBackend
+                pg_conn = os.environ.get("WORLD_MODEL_PG_CONNECTION", "")
+                if pg_conn:
+                    self._backend = PostgresBackend(pg_conn)
+                else:
+                    logger.warning("WORLD_MODEL_PG_CONNECTION not set — falling back to sqlite")
+                    self._backend = SQLiteBackend(self._config.sqlite_path)
+            except ImportError:
+                logger.warning("asyncpg not installed — falling back to sqlite")
+                self._backend = SQLiteBackend(self._config.sqlite_path)
+        elif self._config.backend == "sqlite":
             self._backend = SQLiteBackend(self._config.sqlite_path)
         else:
             logger.warning("WorldModel backend '%s' not supported — defaulting to sqlite", self._config.backend)
