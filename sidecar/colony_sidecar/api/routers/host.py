@@ -446,7 +446,7 @@ async def memory_read(body: MemoryReadRequest) -> MemoryReadResponse:
 @router.post("/memory/write", response_model=MemoryWriteResponse)
 async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
     if _graph is None:
-        return MemoryWriteResponse(id="stub", accepted=False)
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
         memory_id = await _graph.store_memory(
             content=body.content,

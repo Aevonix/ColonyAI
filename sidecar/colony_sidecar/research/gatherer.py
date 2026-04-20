@@ -122,17 +122,9 @@ class WebGatherer:
                     )
                 )
         except Exception as exc:
-            logger.debug("WebGatherer: orchestrator unavailable (%s), using stub", exc)
-            # Stub — returns synthetic evidence for offline/test use
-            results.append(
-                EvidenceItem(
-                    source_type=SourceType.WEB,
-                    content=f"[web stub] No live web search available. Query: {query}",
-                    citation="stub://web",
-                    retrieved_at=datetime.now(timezone.utc),
-                    relevance_score=0.5,
-                )
-            )
+            logger.debug("WebGatherer: orchestrator unavailable (%s) — skipping", exc)
+            # No results — web search not configured
+            pass
         return results
 
 

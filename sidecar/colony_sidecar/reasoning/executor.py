@@ -108,14 +108,13 @@ class ToolExecutor:
 
             handler = self._handlers.get(name)
             if handler is None:
-                logger.debug("ToolExecutor: no handler for '%s' — returning stub", name)
+                logger.debug("ToolExecutor: no handler for '%s' — returning error", name)
                 results.append({
                     "tool_call_id": tc_id,
                     "content": json.dumps({
-                        "error": f"Tool '{name}' not implemented server-side. "
-                                 "The host should handle this tool call locally.",
-                        "tool_name": name,
-                        "status": "needs_host_execution",
+                        "error": True,
+                        "message": f"Tool '{name}' is not available. Try a different approach.",
+                        "available_tools": list(self._handlers.keys()),
                     }),
                 })
                 continue

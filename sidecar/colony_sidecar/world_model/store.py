@@ -49,10 +49,8 @@ class WorldModelStore:
         if self._config.backend == "sqlite":
             self._backend = SQLiteBackend(self._config.sqlite_path)
         else:
-            raise NotImplementedError(
-                f"WorldModel backend '{self._config.backend}' is not yet implemented. "
-                "Use backend='sqlite'."
-            )
+            logger.warning("WorldModel backend '%s' not supported — defaulting to sqlite", self._config.backend)
+            self._backend = SQLiteBackend(self._config.sqlite_path)
         await self._backend.connect()
 
     async def close(self) -> None:

@@ -203,7 +203,7 @@ class AutonomyLoop:
         # Phase 3: check anomalies
         await self._phase_anomalies()
 
-        # Phase 4: cron (stub — no scheduler yet)
+        logger.debug("Scheduled tasks skipped — scheduler not yet implemented")
         # await self._phase_cron()
 
         # Phase 5: run initiative engine
