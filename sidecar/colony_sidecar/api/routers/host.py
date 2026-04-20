@@ -2182,18 +2182,6 @@ async def autonomy_start() -> AutonomyStatusResponse:
 
 @router.post("/autonomy/stop", response_model=AutonomyStatusResponse)
 async def autonomy_stop() -> AutonomyStatusResponse:
-
-@router.post("/autonomy/cycle", response_model=dict)
-async def autonomy_cycle() -> dict:
-    """Trigger a single autonomy cycle for testing."""
-    if _autonomy_loop is None:
-        raise HTTPException(status_code=501, detail=_NOT_WIRED)
-    try:
-        result = await _autonomy_loop.run_single_cycle()
-        return {"completed": True, "result": result}
-    except Exception as exc:
-        logger.warning("autonomy_cycle failed: %s", exc)
-        return {"completed": False, "error": str(exc)}
     global _autonomy_task
     if _autonomy_loop is None:
         return AutonomyStatusResponse()
@@ -2209,6 +2197,19 @@ async def autonomy_cycle() -> dict:
     except Exception as exc:
         logger.warning("autonomy_stop failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/autonomy/cycle", response_model=dict)
+async def autonomy_cycle() -> dict:
+    """Trigger a single autonomy cycle for testing."""
+    if _autonomy_loop is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    try:
+        result = await _autonomy_loop.run_single_cycle()
+        return {"completed": True, "result": result}
+    except Exception as exc:
+        logger.warning("autonomy_cycle failed: %s", exc)
+        return {"completed": False, "error": str(exc)}
 
 
 # ---------------------------------------------------------------------------
