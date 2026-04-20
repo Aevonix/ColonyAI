@@ -20,8 +20,11 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     # --- init ---
-    init_p = sub.add_parser("init", help="Interactive setup wizard")
+    init_p = sub.add_parser("init", help="Initialize Colony identity and setup")
     init_p.add_argument("--dir", default=".", help="Root directory for config files")
+    init_p.add_argument("--passphrase", default=None, help="Encrypt Colony private key with passphrase (prompted if --encrypt)")
+    init_p.add_argument("--encrypt", action="store_true", help="Encrypt Colony private key")
+    init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Colony only)")
 
     # --- start ---
     start_p = sub.add_parser("start", help="Start the sidecar server")
@@ -53,12 +56,6 @@ def main() -> None:
     mm_p = sub.add_parser("activate-multimodal", help="Enable multimodal embeddings and rerank")
     mm_p.add_argument("--model", default=None, help="Multimodal model ID (default: auto-detect from tier)")
     mm_p.add_argument("--storage", default="local", choices=["local", "embed_only"], help="Image storage mode")
-
-    # --- init ---
-    init_p = sub.add_parser("init", help="Initialize a new Colony identity")
-    init_p.add_argument("--passphrase", default=None, help="Encrypt Colony private key with passphrase (prompted if --encrypt)")
-    init_p.add_argument("--encrypt", action="store_true", help="Encrypt Colony private key")
-    init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Colony only)")
 
     # --- doctor ---
     doc_p = sub.add_parser("doctor", help="Run integration health check against running sidecar")
@@ -98,9 +95,20 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "init":
+        # Run setup wizard
         from colony_sidecar.setup import run_init
         code = run_init(root_dir=args.dir)
-        sys.exit(code)
+        if code != 0:
+            sys.exit(code)
+
+        # Initialize Colony identity if not already done
+        _load_dotenv()
+        state_dir = os.environ.get("COLONY_STATE_DIR", args.dir)
+        id_path = Path(state_dir) / "colony-id"
+        if not id_path.exists():
+            _cmd_init(args)
+        else:
+            print(f"  Colony identity already exists: {id_path.read_text().strip()}")
 
     elif args.command == "start":
         # Load .env if present
@@ -396,8 +404,6 @@ def main() -> None:
     elif args.command == "restore":
         _cmd_restore(args)
 
-    elif args.command == "init":
-        _cmd_init(args)
 
     else:
         parser.print_help()
