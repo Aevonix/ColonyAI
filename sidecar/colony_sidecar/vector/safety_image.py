@@ -120,14 +120,40 @@ async def check_image_safety(
 async def _classify_content(data: bytes, mime_type: str) -> dict[str, float]:
     """Classify image content for safety.
 
-    Uses a local classifier if available, otherwise returns empty scores.
-    Override this with a real implementation (e.g. OpenAI moderation API,
-    or a local NSFW model) in production.
+    Tries a local NSFW classifier (falconsai/nsfw_image_detection via
+    transformers). Falls back to safe scores if the model isn't available.
     """
-    # Placeholder — returns safe scores by default
-    # In production, integrate one of:
-    # - OpenAI Moderation API
-    # - local NSFW classifier (e.g. falconsai/nsfw_image_detection via transformers)
-    # - custom safety model
+    try:
+        import asyncio
+        from PIL import Image as PILImage
+        import io
 
-    return {"nsfw": 0.0, "violence": 0.0, "safe": 1.0}
+        img = PILImage.open(io.BytesIO(data))
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        def _run_classifier():
+            from transformers import pipeline as hf_pipeline
+            classifier = hf_pipeline("image-classification", model="falconsai/nsfw_image_detection", device=-1)
+            return classifier(img)
+
+        results = await asyncio.get_running_loop().run_in_executor(None, _run_classifier)
+
+        # Parse results into score dict
+        scores = {"nsfw": 0.0, "safe": 1.0}
+        for r in results:
+            label = r.get("label", "").lower()
+            score = r.get("score", 0.0)
+            if "nsfw" in label or "explicit" in label:
+                scores["nsfw"] = score
+            if "safe" in label or "normal" in label:
+                scores["safe"] = score
+
+        return scores
+
+    except ImportError:
+        logger.debug("transformers not available for image classification — returning safe defaults")
+        return {"nsfw": 0.0, "violence": 0.0, "safe": 1.0}
+    except Exception as exc:
+        logger.debug("Image classification failed: %s — returning safe defaults", exc)
+        return {"nsfw": 0.0, "violence": 0.0, "safe": 1.0}

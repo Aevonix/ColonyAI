@@ -213,6 +213,16 @@ async def lifespan(app: FastAPI):
         set_embedder(pipeline)
         logger.info("EmbeddingPipeline initialized (provider=%s model=%s)", embed_provider, embed_model)
 
+        # Pass LLM config to pipeline for auto-captioning
+        llm_config_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-llm-config.json"
+        if llm_config_path.exists() and hasattr(pipeline, "set_llm_config"):
+            try:
+                llm_cfg = _json.loads(llm_config_path.read_text())
+                pipeline.set_llm_config(llm_cfg)
+                logger.info("LLM config passed to EmbeddingPipeline for auto-captioning")
+            except Exception as exc:
+                logger.debug("Could not pass LLM config to pipeline: %s", exc)
+
         # Health check + model mismatch detection
         try:
             hc = await pipeline.health_check()

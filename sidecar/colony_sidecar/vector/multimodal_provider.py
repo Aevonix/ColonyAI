@@ -258,8 +258,31 @@ class CUDAMultimodalProvider(MultimodalEmbeddingProvider):
         self._ensure_model()
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(image.data))
-        vec = self._model.encode(img, normalize_embeddings=True)
-        return vec.tolist()
+        try:
+            vec = self._model.encode(img, normalize_embeddings=True)
+        except (TypeError, AttributeError):
+            # Some models don't accept PIL Image directly — try with image_processor
+            try:
+                from transformers import AutoProcessor
+                processor = AutoProcessor.from_pretrained(self._config.model_id)
+                inputs = processor(images=img, return_tensors="pt").to("cuda")
+                import torch
+                with torch.no_grad():
+                    outputs = self._model.get_text_features(**inputs) if hasattr(self._model, "get_text_features") else self._model(**inputs)
+                    if hasattr(outputs, "image_embeds"):
+                        vec = outputs.image_embeds[0].cpu().numpy()
+                    elif hasattr(outputs, "last_hidden_state"):
+                        vec = outputs.last_hidden_state[0].mean(dim=0).cpu().numpy()
+                    else:
+                        vec = outputs[0].cpu().numpy() if isinstance(outputs, (list, tuple)) else outputs.cpu().numpy()
+                import numpy as np
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+                vec = vec.tolist()
+            except Exception as exc:
+                raise ValueError(f"Model {self._config.model_id} does not support image embedding: {exc}") from exc
+        return vec if isinstance(vec, list) else vec.tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -291,8 +314,31 @@ class CPUMultimodalProvider(MultimodalEmbeddingProvider):
         self._ensure_model()
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(image.data))
-        vec = self._model.encode(img, normalize_embeddings=True)
-        return vec.tolist()
+        try:
+            vec = self._model.encode(img, normalize_embeddings=True)
+        except (TypeError, AttributeError):
+            # Some models don't accept PIL Image directly
+            try:
+                from transformers import AutoProcessor
+                processor = AutoProcessor.from_pretrained(self._config.model_id)
+                inputs = processor(images=img, return_tensors="pt")
+                import torch
+                with torch.no_grad():
+                    outputs = self._model.get_text_features(**inputs) if hasattr(self._model, "get_text_features") else self._model(**inputs)
+                    if hasattr(outputs, "image_embeds"):
+                        vec = outputs.image_embeds[0].cpu().numpy()
+                    elif hasattr(outputs, "last_hidden_state"):
+                        vec = outputs.last_hidden_state[0].mean(dim=0).cpu().numpy()
+                    else:
+                        vec = outputs[0].cpu().numpy() if isinstance(outputs, (list, tuple)) else outputs.cpu().numpy()
+                import numpy as np
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+                vec = vec.tolist()
+            except Exception as exc:
+                raise ValueError(f"Model {self._config.model_id} does not support image embedding: {exc}") from exc
+        return vec if isinstance(vec, list) else vec.tolist()
 
 
 # ---------------------------------------------------------------------------

@@ -153,18 +153,67 @@ def _mime_from_extension(path: Path) -> str:
 
 
 def extract_exif(data: bytes) -> dict[str, Any]:
-    """Extract EXIF metadata from JPEG image bytes.
+    """Extract EXIF metadata from image bytes.
 
-    Uses minimal parser — no PIL dependency for this path.
-    Falls back gracefully if EXIF not found or not JPEG.
+    Uses Pillow when available for comprehensive extraction.
+    Falls back to minimal JPEG parser for GPS and date only.
     """
     exif: dict[str, Any] = {}
 
+    # Try Pillow first (comprehensive)
+    try:
+        from PIL import Image
+        from PIL.ExifTags import TAGS, GPSTAGS
+
+        img = Image.open(io.BytesIO(data))
+        raw_exif = img.getexif()
+        if not raw_exif:
+            return exif
+
+        # Extract standard tags
+        tag_map = {
+            0x010F: "camera_make",
+            0x0110: "camera_model",
+            0x0132: "captured_at",
+            0x829A: "exposure_time",
+            0x920A: "focal_length",
+            0x8827: "iso",
+        }
+        for tag_id, value in raw_exif.items():
+            tag_name = TAGS.get(tag_id, tag_map.get(tag_id))
+            if tag_name in tag_map.values():
+                exif[tag_name] = str(value)
+            elif tag_id in tag_map:
+                exif[tag_map[tag_id]] = str(value)
+
+        # Extract GPS
+        gps_ifd = raw_exif.get_ifd(0x8825)  # GPS IFD tag
+        if gps_ifd:
+            gps_data = {}
+            for tag_id, value in gps_ifd.items():
+                tag_name = GPSTAGS.get(tag_id, str(tag_id))
+                gps_data[tag_name] = value
+
+            # Convert GPS coordinates to decimal
+            lat = _gps_to_decimal(gps_data.get("GPSLatitude"), gps_data.get("GPSLatitudeRef"))
+            lon = _gps_to_decimal(gps_data.get("GPSLongitude"), gps_data.get("GPSLongitudeRef"))
+            if lat is not None:
+                exif["gps_lat"] = lat
+            if lon is not None:
+                exif["gps_lon"] = lon
+
+        return exif
+
+    except ImportError:
+        pass  # Fall through to minimal parser
+    except Exception as exc:
+        logger.debug("Pillow EXIF extraction failed: %s — trying minimal parser", exc)
+
+    # Fallback: minimal JPEG EXIF parser (GPS + date only)
     if data[:2] != b"\xff\xd8":
         return exif  # Not JPEG
 
     try:
-        # Find EXIF APP1 marker
         i = 2
         while i < len(data) - 4:
             if data[i:i+2] == b"\xff\xe1":  # APP1 marker
@@ -179,9 +228,25 @@ def extract_exif(data: bytes) -> dict[str, Any]:
             else:
                 break
     except Exception as exc:
-        logger.debug("EXIF extraction failed: %s", exc)
+        logger.debug("Minimal EXIF extraction failed: %s", exc)
 
     return exif
+
+
+def _gps_to_decimal(coords, ref) -> Optional[float]:
+    """Convert GPS coordinates (degrees, minutes, seconds) to decimal."""
+    if not coords or len(coords) < 3:
+        return None
+    try:
+        degrees = float(coords[0])
+        minutes = float(coords[1])
+        seconds = float(coords[2])
+        decimal = degrees + minutes / 60.0 + seconds / 3600.0
+        if ref in ("S", "W"):
+            decimal = -decimal
+        return round(decimal, 6)
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def _parse_exif_tiff(data: bytes) -> dict[str, Any]:

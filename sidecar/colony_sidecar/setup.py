@@ -614,7 +614,7 @@ def run_init(root_dir: str | None = None) -> int:
         from colony_sidecar.vector.tiers import TIER_TABLE
         selected_tier = None
         for t in TIER_TABLE:
-            if t.text_embedder.model_id == embed_model or t.label == tier_label:
+            if t.text_embedder.model_id == embed_model or t.label == tier.label:
                 selected_tier = t
                 break
 
