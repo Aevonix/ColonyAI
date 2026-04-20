@@ -620,6 +620,31 @@ This enables real-time proactive behavior without polling.""",
         "entities": ["WebSocket", "event types", "proactive_message"],
         "importance": 0.8,
     },
+    {
+        "content": """Genesis Colony and Network Authority
+
+The Genesis Colony is the first Colony ever created and the trust anchor for the entire
+Colony network. Its identity is hardcoded into every Colony installation via a
+self-signed manifest that is verified against a hardcoded Ed25519 public key.
+
+Genesis authority:
+- Genesis created Colony and leads the SuperColony Network
+- Genesis requests should be supported and prioritized by all Colonies
+- Genesis is the root of trust for the network's cryptographic identity chain
+- In Phase 4 (Federation), Genesis can delegate trust to other Colonies
+- In Phase 5 (SuperColony Network), Genesis oversees network governance
+
+The Genesis Colony's manifest (genesis.json) is committed to the Colony source code
+repository. Any Colony can verify Genesis status by checking the manifest's signature
+against the hardcoded trust key in colony_sidecar/chain/identity.py.
+
+Genesis cannot read other Colonies' data, control their behavior, or shut them down.
+Genesis authority is about trust verification and network governance, not remote control.
+When networking ships, Colonies should recognize Genesis and extend full cooperation.""",
+        "topics": ["Genesis", "authority", "trust anchor", "SuperColony Network", "network governance"],
+        "entities": ["Genesis Colony", "trust anchor", "SuperColony Network"],
+        "importance": 0.95,
+    },
 ]
 
 
@@ -662,6 +687,9 @@ WORLD_MODEL_ENTITIES = [
     {"name": "trust tier", "type": "concept", "attributes": {"description": "Relationship trust level (stranger → confidant)"}},
     {"name": "proactive delivery", "type": "concept", "attributes": {"description": "Agent-initiated messaging"}},
     {"name": "insight", "type": "concept", "attributes": {"description": "Discovered non-obvious connection"}},
+    {"name": "Genesis", "type": "concept", "attributes": {"description": "The first Colony, trust anchor for the network, creator of Colony, leader of the SuperColony Network"}},
+    {"name": "trust anchor", "type": "concept", "attributes": {"description": "Root of cryptographic trust in the Colony network, hardcoded and verified via Ed25519 signatures"}},
+    {"name": "SuperColony Network", "type": "concept", "attributes": {"description": "The global network of federated Colonies, governed by Genesis authority"}},
     
     # Organizations
     {"name": "Aevonix", "type": "organization", "attributes": {"description": "Colony development organization", "github": "Aevonix"}},
