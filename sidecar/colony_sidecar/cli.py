@@ -473,9 +473,11 @@ def _cmd_key(args) -> None:
         from colony_sidecar.chain.identity import get_or_create_colony_id, get_genesis_manifest
         colony_id = get_or_create_colony_id(state_dir)
         keys_dir = os.path.join(state_dir, "colony-keys")
+        passphrase = os.environ.get("COLONY_KEY_PASSPHRASE", "")
+        passphrase_bytes = passphrase.encode() if passphrase else None
         try:
             from colony_sidecar.chain.local_keys import LocalKeyManager
-            km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id)
+            km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase_bytes)
             pubkey = km.public_key_hex()
             print(f"  Colony ID:  {colony_id}")
             print(f"  Public Key: {pubkey}")
@@ -503,12 +505,14 @@ def _cmd_key(args) -> None:
         from colony_sidecar.chain.identity import get_or_create_colony_id
         colony_id = get_or_create_colony_id(state_dir)
         keys_dir = os.path.join(state_dir, "colony-keys")
+        existing_pass = os.environ.get("COLONY_KEY_PASSPHRASE", "")
+        existing_pass_bytes = existing_pass.encode() if existing_pass else None
         passphrase = args.passphrase
         if not passphrase:
             import getpass
             passphrase = getpass.getpass("New passphrase: ")
         from colony_sidecar.chain.local_keys import LocalKeyManager
-        km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id)
+        km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id, passphrase=existing_pass_bytes)
         km.set_passphrase(passphrase.encode())
         print(f"  Passphrase set for colony {colony_id}")
 
@@ -516,8 +520,10 @@ def _cmd_key(args) -> None:
         from colony_sidecar.chain.identity import get_or_create_colony_id, create_colony_manifest
         colony_id = get_or_create_colony_id(state_dir)
         keys_dir = os.path.join(state_dir, "colony-keys")
+        passphrase = os.environ.get("COLONY_KEY_PASSPHRASE", "")
+        passphrase_bytes = passphrase.encode() if passphrase else None
         from colony_sidecar.chain.local_keys import LocalKeyManager
-        km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id)
+        km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase_bytes)
         manifest_path = os.path.join(state_dir, "colony-manifest.json")
         manifest = create_colony_manifest(colony_id, km.public_key_hex(), manifest_path)
         print(f"  Manifest saved to {manifest_path}")
@@ -535,9 +541,11 @@ def _cmd_key(args) -> None:
             return
 
         keys_dir = os.path.join(state_dir, "colony-keys")
+        passphrase = os.environ.get("COLONY_KEY_PASSPHRASE", "")
+        passphrase_bytes = passphrase.encode() if passphrase else None
         from colony_sidecar.chain.local_keys import LocalKeyManager
         try:
-            km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id)
+            km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase_bytes)
             pubkey = km.public_key_hex()
         except FileNotFoundError:
             # Generate keypair first
