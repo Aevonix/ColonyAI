@@ -33,6 +33,7 @@ class BatchImportResult:
     merged: int = 0
     skipped: int = 0
     failed: int = 0
+    handle_conflicts: int = 0
     records: List[ImportRecord] = field(default_factory=list)
 
     @property

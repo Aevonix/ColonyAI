@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import hmac
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -427,6 +429,14 @@ async def health() -> HostHealthResponse:
 # ---------------------------------------------------------------------------
 
 _NOT_WIRED = {"error": {"code": "not_wired", "message": "Backend not configured"}}
+
+# Skill identifiers must be safe for filesystem paths and registry keys.
+_SKILL_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")
+
+
+def _validate_skill_id(skill_id: str) -> None:
+    if not _SKILL_ID_RE.match(skill_id):
+        raise HTTPException(status_code=400, detail="invalid skill_id")
 
 
 @router.post("/memory/read", response_model=MemoryReadResponse)
@@ -1348,7 +1358,9 @@ async def events_ws(ws: WebSocket) -> None:
             return
         token = msg.get("token", "")
         expected = os.environ.get("COLONY_API_KEY", "")
-        if expected and token != expected:
+        if expected and not hmac.compare_digest(
+            token.encode("utf-8"), expected.encode("utf-8")
+        ):
             await ws.close(code=4003, reason="Invalid API key")
             return
     except asyncio.TimeoutError:
@@ -2007,6 +2019,7 @@ async def list_skill_drafts() -> dict:
 @router.post("/skills/{skill_id}/approve")
 async def approve_skill(skill_id: str) -> dict:
     """Move a DRAFT skill to ACTIVE."""
+    _validate_skill_id(skill_id)
     if _skills_registry is None:
         raise HTTPException(status_code=503, detail="skills_registry_not_initialized")
     try:
@@ -2035,6 +2048,7 @@ async def execute_skill(
     skill_id: str, body: SkillExecuteRequest,
 ) -> SkillExecuteResponse:
     """Invoke an ACTIVE skill in the sandboxed SkillExecutor."""
+    _validate_skill_id(skill_id)
     if _skill_executor is None:
         raise HTTPException(
             status_code=503, detail="skill_executor_not_initialized",
@@ -2056,6 +2070,7 @@ async def execute_skill(
 @router.post("/skills/{skill_id}/reject")
 async def reject_skill(skill_id: str) -> dict:
     """Reject a DRAFT skill by archiving it."""
+    _validate_skill_id(skill_id)
     if _skills_registry is None:
         raise HTTPException(status_code=503, detail="skills_registry_not_initialized")
     try:
@@ -2073,6 +2088,7 @@ async def reject_skill(skill_id: str) -> dict:
 
 @router.get("/skills/registry/{skill_id}", response_model=SkillDetailResponse)
 async def get_skill(skill_id: str) -> SkillDetailResponse:
+    _validate_skill_id(skill_id)
     if _skills_registry is None:
         raise HTTPException(status_code=404, detail="Skills not available")
     try:

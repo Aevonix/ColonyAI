@@ -18,6 +18,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
@@ -62,7 +63,13 @@ class ProactiveDeliveryBridge:
         gateway_url: Optional[str] = None,
         gateway_api_key: Optional[str] = None,
     ) -> None:
-        self._rate_limiter = rate_limiter or DeliveryRateLimiter()
+        if rate_limiter is None:
+            # Persist rate-limit state so a crashloop can't reset the daily
+            # caps. Lives alongside other sidecar state under COLONY_STATE_DIR.
+            state_dir = os.environ.get("COLONY_STATE_DIR", ".")
+            db_path = Path(state_dir) / "colony-delivery-rate-limit.db"
+            rate_limiter = DeliveryRateLimiter(db_path=db_path)
+        self._rate_limiter = rate_limiter
         self._pending: List[PendingDelivery] = []
         self._sent: List[PendingDelivery] = []  # short history for observability
         self._sent_max: int = 500  # cap to prevent unbounded growth
