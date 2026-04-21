@@ -77,10 +77,12 @@ export type HostEventType =
   | "world_model_changed"
   | "skill_draft_approved"
   | "turn_synced"
+  | "replay_complete"
   | "log";
 
 export interface HostEvent {
   type: HostEventType;
   occurred_at: string;
   payload: Record<string, unknown>;
+  seq?: number;
 }

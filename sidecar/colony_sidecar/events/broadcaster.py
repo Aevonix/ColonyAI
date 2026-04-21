@@ -40,6 +40,10 @@ def _resolve_broadcaster():
 def emit(event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
     """Broadcast a typed event to all WebSocket subscribers.
 
+    Also appends the event to the persistent journal so disconnected
+    clients can replay missed events via
+    ``GET /v1/host/events/replay?since=...``.
+
     Args:
         event_type: One of the canonical ``HostEventType`` values —
             ``briefing``, ``anomaly``, ``goal_update``,
@@ -51,11 +55,20 @@ def emit(event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
     """
     try:
         broadcaster = _resolve_broadcaster()
-        broadcaster({
+        event = {
             "type": event_type,
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "payload": payload or {},
-        })
+        }
+        broadcaster(event)
+
+        # Journal the event for replay (best-effort, non-blocking)
+        try:
+            from colony_sidecar.events.journal import append_event
+            append_event(event_type, payload or {})
+        except Exception:
+            logger.debug("journal append failed for %s", event_type, exc_info=True)
+
     except Exception:
         logger.debug("broadcast_event(%s) failed", event_type, exc_info=True)
 
