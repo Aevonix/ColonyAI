@@ -179,8 +179,8 @@ def _install_docker() -> bool:
 
 # ── Neo4j start ─────────────────────────────────────────────────────────────
 
-def _start_neo4j_docker() -> bool:
-    """Start Neo4j via docker compose. Returns True if successful."""
+def _start_neo4j_docker(neo4j_password: str) -> bool:
+    """Start Neo4j via docker compose with the given password. Returns True on success."""
     compose_path = Path(__file__).resolve().parents[2] / "docker-compose.yml"
     if not compose_path.exists():
         compose_path = Path("docker-compose.yml")
@@ -192,6 +192,7 @@ def _start_neo4j_docker() -> bool:
         result = subprocess.run(
             ["docker", "compose", "-f", str(compose_path), "up", "-d", "neo4j"],
             capture_output=True, text=True, timeout=60,
+            env={**os.environ, "NEO4J_PASSWORD": neo4j_password},
         )
         if result.returncode != 0:
             print(f"    ⚠️ docker compose failed: {result.stderr.strip()}")
@@ -456,35 +457,50 @@ def run_init(root_dir: str | None = None) -> int:
 
     neo4j_ok, neo4j_info = _check_neo4j()
     neo4j_password = ""
+    neo4j_generated = False
+    # One strong random password per install — reused across the paths below
+    # so Docker-start and manual setup both get a unique value by default.
+    _candidate = secrets.token_urlsafe(24)
 
     if neo4j_ok:
         print(f"  ✅ Neo4j is already running ({neo4j_info})")
-        neo4j_password = _prompt("  Neo4j password", "colony-local-dev")
+        print("  Enter the password this Neo4j instance was configured with.")
+        neo4j_password = _prompt("  Neo4j password", "")
     elif docker_ok:
         print("  Neo4j is required for graph memory (persistent knowledge,")
         print("  connections, world model).")
         print()
         start_neo4j = _prompt("  Start Neo4j via Docker? [Y/n]", "Y")
         if start_neo4j.lower() in ("y", "yes", ""):
-            # Password from docker-compose.yml: neo4j/colony-local-dev
-            neo4j_password = "colony-local-dev"
-            print("  Starting Neo4j...")
-            if _start_neo4j_docker():
+            neo4j_password = _candidate
+            neo4j_generated = True
+            print("  Starting Neo4j with a newly-generated password...")
+            if _start_neo4j_docker(neo4j_password):
                 print("  Waiting for Neo4j to become ready...")
                 if _wait_for_neo4j():
                     print(f"  ✅ Neo4j started (bolt://localhost:7687)")
-                    print(f"  Password: {neo4j_password}")
                 else:
                     print("  ⚠️ Neo4j started but not reachable yet (may need a moment)")
             else:
                 print("  ❌ Failed to start Neo4j via Docker")
-                neo4j_password = _prompt("  Enter Neo4j password (or leave blank to skip)", "")
+                neo4j_generated = False
+                neo4j_password = _prompt(
+                    "  Enter Neo4j password (or leave blank to skip)", "",
+                )
         else:
-            neo4j_password = _prompt("  Enter Neo4j password (or blank to skip)", "")
+            neo4j_password = _prompt(
+                "  Enter Neo4j password (blank to skip, or accept generated)",
+                _candidate,
+            )
+            neo4j_generated = (neo4j_password == _candidate)
     else:
         print("  Neo4j requires Docker, which is not available.")
         print("  Memory will be degraded until Docker + Neo4j are set up.")
-        neo4j_password = _prompt("  Enter Neo4j password (or blank to skip)", "")
+        neo4j_password = _prompt(
+            "  Enter Neo4j password (blank to skip, or accept generated)",
+            _candidate,
+        )
+        neo4j_generated = (neo4j_password == _candidate)
 
     print()
 
@@ -586,6 +602,11 @@ def run_init(root_dir: str | None = None) -> int:
 
     _write_env(env_path, values)
     print(f"  ✅ Written to {env_path}")
+    if neo4j_generated:
+        print(
+            "  🔐 Neo4j password was auto-generated and saved to .env — "
+            "rotate it any time by editing NEO4J_PASSWORD and restarting."
+        )
 
     # Configure OpenClaw plugin now that we have the API key
     if oc_configured:
@@ -921,6 +942,12 @@ def run_init(root_dir: str | None = None) -> int:
     if not neo4j_password:
         print(_yellow("  ⚠️ Graph memory is degraded (no Neo4j)."))
         print("  Install Docker and re-run 'colony init'")
+        print()
+    elif neo4j_generated:
+        print(_yellow(
+            "  ℹ️  Your Neo4j password is a random value in .env. Rotate it "
+            "whenever you like; docker-compose reads it from that file."
+        ))
         print()
 
     return 0
