@@ -336,7 +336,7 @@ Colony is not a RAG library. RAG is one capability among many. Colony also handl
 
 Colony ships in phases. The intelligence system is v1.0. Each phase expands the shared intelligence into a larger surface.
 
-### Phase 1: Intelligence System (Shipped, v1.0)
+### Phase 1: Intelligence System (Shipped)
 
 Single-node Colony mounted into a host harness. 22 subsystems wired. Everything described above in "What Colony Is Today."
 

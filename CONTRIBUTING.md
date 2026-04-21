@@ -63,24 +63,21 @@ npm run generate-types
 
 ## Versioning
 
-Colony uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`) aligned to development phases:
+Colony uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`):
 
 | Bump | When |
 |---|---|
-| **MAJOR** | Breaking API changes, phase transitions |
+| **MAJOR** | Breaking API changes |
 | **MINOR** | New subsystems, endpoints, features (backward-compatible) |
-| **PATCH** | Bugfixes, doc updates, config changes |
+| **PATCH** | Bugfixes, doc updates, config changes, security hardening |
 
-### Phase Mapping
+### Pre-1.0
 
-- `0.1.x` — Phase 1: Intelligence System
-- `0.2.x` — Phase 2: Multimodal
-- `0.3.x` — Phase 3: Colony Meshing
-- `0.4.x` — Phase 4: Federation
-- `0.5.x` — Phase 5: SuperColony Network
-- `1.0.0` — First stable release
+Everything is `0.MINOR.PATCH` until Colony reaches v1.0. Pre-1.0 means the API may change. MINOR bumps for new features, PATCH for fixes.
 
-Using `0.x` until 1.0 signals API may change. Each phase bump increments MINOR.
+### The v1.0 Target
+
+Colony 1.0.0 ships when the SuperColony Network is operational with all supporting features (Federation, mesh, multimodal intelligence) and we're confident the architecture is stable. There's no fixed checklist — we'll know it when the system holds together under real use and the API surface has settled. Until then, we ship features and bump MINOR freely.
 
 ### Package Sync
 
