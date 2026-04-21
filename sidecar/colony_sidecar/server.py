@@ -355,9 +355,26 @@ async def lifespan(app: FastAPI):
                 extractors.append(PDFExtractor())
             if HTMLExtractor:
                 extractors.append(HTMLExtractor())
-            pipeline = ExtractionPipeline(extractors=extractors)
+            llm_extract_fn = None
+            if llm_router is not None:
+                try:
+                    from colony_sidecar.world_model.extraction.llm_extractor import (
+                        build_llm_extract_fn,
+                    )
+                    llm_extract_fn = build_llm_extract_fn(llm_router)
+                except Exception as llm_exc:
+                    logger.warning("LLM extraction fallback disabled: %s", llm_exc)
+
+            pipeline = ExtractionPipeline(
+                extractors=extractors,
+                llm_extract_fn=llm_extract_fn,
+            )
             set_extraction_pipeline(pipeline)
-            logger.info("Extraction pipeline initialized (%d format extractors)", len(extractors))
+            logger.info(
+                "Extraction pipeline initialized (%d format extractors, llm_fallback=%s)",
+                len(extractors),
+                "on" if llm_extract_fn is not None else "off",
+            )
         except Exception as eexc:
             logger.warning("Extraction pipeline init skipped: %s", eexc)
     except Exception as exc:
@@ -666,6 +683,21 @@ async def lifespan(app: FastAPI):
         scheduler.register("memory_consolidate", _run_memory_consolidate, interval_seconds=3600, metadata={"description": "Deduplicate and merge near-duplicate memories"})
         scheduler.register("cpi_track", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Calculate Cognitive Performance Index"})
         scheduler.register("world_model_prune", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Remove stale world model entities"})
+
+        async def _run_digest_flush():
+            from colony_sidecar.api.routers.host import _delivery_bridge as bridge
+            if bridge is None:
+                return {"status": "skipped", "reason": "delivery_bridge_not_wired"}
+            header = os.environ.get("COLONY_DIGEST_HEADER", "Daily digest")
+            return await bridge.flush_digests_to_gateway(header=header)
+
+        digest_interval = int(os.environ.get("COLONY_DIGEST_INTERVAL_SECONDS", "86400"))
+        scheduler.register(
+            "digest_flush",
+            _run_digest_flush,
+            interval_seconds=digest_interval,
+            metadata={"description": "Bundle and deliver accumulated DIGEST-channel items"},
+        )
 
         logger.info(
             "AutonomyLoop initialized (tick=%ds, scheduler=%d tasks)",

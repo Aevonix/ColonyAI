@@ -198,10 +198,11 @@ def compress_sections(
     if mode in (CompressionMode.BALANCED, CompressionMode.AGGRESSIVE):
         infos = _tier2_truncate(infos, budget, cfg)
 
-    # --- Tier 3: LLM summarization (aggressive only) ---
-    # This is a placeholder — full LLM summarization requires the
-    # reasoning endpoint. For now, aggressive just uses tighter
-    # truncation. Will be implemented in a future release.
+    # --- Tier 3: tighter truncation (aggressive only, sync path) ---
+    # LLM summarization is the preferred aggressive tactic — see the async
+    # ``compress_sections_with_llm`` wrapper below. When no LLM is
+    # available we fall back to this deterministic tight-truncation tier
+    # so aggressive mode always produces *some* size reduction.
     if mode == CompressionMode.AGGRESSIVE:
         infos = _tier3_tight_truncate(infos, budget, cfg)
 
@@ -353,3 +354,114 @@ def _stats(
         "compression_ratio": round(ratio, 2),
         "saved_tokens": orig_tokens - result_tokens,
     }
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: LLM summarization (aggressive mode)
+# ---------------------------------------------------------------------------
+
+_SUMMARIZE_SYSTEM_PROMPT = (
+    "You compress long context sections for an AI assistant that has a limited "
+    "token budget. Rewrite the user's section to preserve every fact, name, "
+    "number, and decision — but drop filler, redundancy, and stylistic prose. "
+    "Return ONLY the compressed section body; no preamble, no headings, no "
+    "commentary about what you changed. Stay under the requested token budget."
+)
+
+
+async def _llm_summarize_body(
+    llm_router: Any,
+    *,
+    title: str,
+    body: str,
+    target_tokens: int,
+) -> Optional[str]:
+    """Ask the LLM to rewrite ``body`` under ``target_tokens``.
+
+    Returns the summary on success or ``None`` on any failure — callers fall
+    back to the tight-truncated body.
+    """
+    if not body or target_tokens <= 0:
+        return None
+    user_prompt = (
+        f"Section title: {title or '(untitled)'}\n"
+        f"Target: ~{target_tokens} tokens\n\n"
+        f"Section body:\n---\n{body}\n---\n\n"
+        f"Compressed body (plain text, no headings):"
+    )
+    try:
+        resp = await llm_router.complete(
+            messages=[
+                {"role": "system", "content": _SUMMARIZE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            context={"task": "context_compression", "max_tokens": max(64, target_tokens * 2)},
+        )
+    except Exception as exc:
+        logger.debug("LLM summarize call failed for '%s': %s", title, exc)
+        return None
+
+    summary = (getattr(resp, "content", "") or "").strip()
+    if not summary:
+        return None
+    # Trim accidental code fences / wrapping.
+    summary = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", summary).strip()
+    return summary or None
+
+
+async def compress_sections_with_llm(
+    sections: List[Dict[str, Any]],
+    *,
+    llm_router: Any,
+    query: str = "",
+    config: Optional[CompressionConfig] = None,
+    override_mode: Optional[CompressionMode] = None,
+) -> Dict[str, Any]:
+    """Async variant of ``compress_sections`` that applies LLM summarization.
+
+    Runs the full sync pipeline first (tier 1 drop + tier 2 truncate +
+    tier 3 tight truncate) and then — if mode is AGGRESSIVE and the LLM
+    is reachable — replaces truncated section bodies with LLM-generated
+    summaries. Falls back to the sync result on any LLM error so the
+    caller always gets a useful response.
+    """
+    result = compress_sections(
+        sections,
+        query=query,
+        config=config,
+        override_mode=override_mode,
+    )
+    mode_str = result["metadata"]["mode"]
+    if mode_str != CompressionMode.AGGRESSIVE.value or llm_router is None:
+        return result
+
+    cfg = config or _default_config()
+    truncated_ids = set(result["metadata"].get("truncated") or [])
+    if not truncated_ids:
+        return result
+
+    summarized_ids: List[str] = []
+    for section in result["sections"]:
+        sid = section.get("id", "")
+        if sid not in truncated_ids:
+            continue
+        body = section.get("body", "") or ""
+        target = max(cfg.min_section_tokens, int(estimate_tokens(body)))
+        summary = await _llm_summarize_body(
+            llm_router,
+            title=section.get("title", "") or "",
+            body=body,
+            target_tokens=target,
+        )
+        if summary is None:
+            continue
+        section["body"] = summary
+        summarized_ids.append(sid)
+
+    if summarized_ids:
+        result["metadata"]["summarized"] = summarized_ids
+        # Recompute stats to reflect the LLM pass.
+        originals = list(sections)
+        result["stats"] = _stats(originals, result["sections"], mode_str)
+
+    return result
