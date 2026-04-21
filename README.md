@@ -101,7 +101,17 @@ colony start   # run the sidecar
 colony status  # verify
 ```
 
-`colony init` handles dependency installation, Neo4j setup, hardware detection, model pre-download, and initial self-knowledge seeding.
+`colony init` handles dependency installation, Neo4j setup, hardware detection, model pre-download, initial self-knowledge seeding, and OpenClaw plugin configuration (including context engine routing).
+
+### Context Engine
+
+Colony ships a context engine that assembles rich, multi-source context (memory, goals, contacts, world model, skills, identity) into a single prompt injection. To activate it:
+
+```bash
+openclaw config set plugins.slots.contextEngine colony
+```
+
+This is set automatically by `colony init` when OpenClaw is detected. Without it, OpenClaw uses the legacy context engine and Colony's context assembly is bypassed.
 
 ### Docker Compose
 

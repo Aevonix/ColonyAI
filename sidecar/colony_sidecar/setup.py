@@ -254,6 +254,17 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
             else:
                 print("  ✅ Colony plugin configured in OpenClaw config")
 
+        # Set Colony as the active context engine
+        ce_result = subprocess.run(
+            ["openclaw", "config", "set", "plugins.slots.contextEngine", "colony"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if ce_result.returncode == 0:
+            print("  ✅ Colony set as active context engine (plugins.slots.contextEngine = colony)")
+        else:
+            print("  ⚠️ Could not set context engine slot — set manually:")
+            print("     openclaw config set plugins.slots.contextEngine colony")
+
         print(f"     sidecarUrl: {sidecar_url}")
         print(f"     apiKey: {api_key[:8]}...{api_key[-4:]}")
         return True
