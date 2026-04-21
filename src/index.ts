@@ -15,4 +15,5 @@ import { createColonyPlugin } from "./plugin.js";
  * Default export: the OpenClaw plugin entry. The OpenClaw loader looks
  * for a default export shaped by `definePluginEntry`.
  */
-export default createColonyPlugin();
+const _plugin = createColonyPlugin();
+export default _plugin;
