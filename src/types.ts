@@ -74,6 +74,8 @@ export type HostEventType =
   | "anomaly"
   | "goal_update"
   | "memory_consolidated"
+  | "world_model_changed"
+  | "skill_draft_approved"
   | "turn_synced"
   | "log";
 

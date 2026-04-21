@@ -89,6 +89,10 @@ from colony_sidecar.api.schemas.host import (
     ReasoningToolCall,
     ReasoningTurnRequest,
     ReasoningTurnResponse,
+    SkillExecuteRequest,
+    SkillExecuteResponse,
+    ToolInvokeRequest,
+    ToolInvokeResponse,
     ResearchListResponse,
     ResearchRunResponse,
     ResearchStartRequest,
@@ -1154,6 +1158,35 @@ async def reasoning_turn(body: ReasoningTurnRequest) -> ReasoningTurnResponse:
     )
 
 
+@router.post("/reasoning/tools/invoke", response_model=ToolInvokeResponse)
+async def tools_invoke(body: ToolInvokeRequest) -> ToolInvokeResponse:
+    """Invoke a single sidecar-resident tool by name.
+
+    Used by the OpenClaw plugin to expose Colony's native tools
+    (calculate, web_search, read_file, write_file, list_directory) as
+    first-class OpenClaw tools without routing them through the full
+    reasoning loop.
+    """
+    if _tool_executor is None:
+        return ToolInvokeResponse(
+            result="", available=False, error="tool_executor_not_initialized",
+        )
+    handler = _tool_executor._handlers.get(body.name)
+    if handler is None:
+        return ToolInvokeResponse(
+            result="", available=False,
+            error=f"Tool '{body.name}' is not registered",
+        )
+    try:
+        raw = await handler(body.arguments)
+        return ToolInvokeResponse(result=str(raw), available=True)
+    except Exception as exc:
+        logger.warning("tools_invoke('%s') failed: %s", body.name, exc)
+        return ToolInvokeResponse(
+            result="", available=True, error=f"{type(exc).__name__}: {exc}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Signals
 # ---------------------------------------------------------------------------
@@ -1883,10 +1916,16 @@ async def get_learning_weights() -> LearningWeightsResponse:
 # ---------------------------------------------------------------------------
 
 _skills_registry = None
+_skill_executor = None
 
 def set_skills_registry(registry) -> None:
     global _skills_registry
     _skills_registry = registry
+
+
+def set_skill_executor(executor) -> None:
+    global _skill_executor
+    _skill_executor = executor
 
 
 @router.get("/skills/registry", response_model=SkillsListResponse)
@@ -1945,11 +1984,42 @@ async def approve_skill(skill_id: str) -> dict:
         if existing is None:
             raise HTTPException(status_code=404, detail="Skill not found")
         await _skills_registry.activate(skill_id)
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("skill_draft_approved", {
+                "skill_id": skill_id,
+                "name": getattr(existing, "name", ""),
+            })
+        except Exception:
+            pass
         return {"ok": True, "skill_id": skill_id, "status": "active"}
     except HTTPException:
         raise
     except Exception as exc:
         logger.warning("approve_skill failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/skills/{skill_id}/execute", response_model=SkillExecuteResponse)
+async def execute_skill(
+    skill_id: str, body: SkillExecuteRequest,
+) -> SkillExecuteResponse:
+    """Invoke an ACTIVE skill in the sandboxed SkillExecutor."""
+    if _skill_executor is None:
+        raise HTTPException(
+            status_code=503, detail="skill_executor_not_initialized",
+        )
+    try:
+        result = await _skill_executor.invoke(skill_id, body.arguments)
+        return SkillExecuteResponse(
+            status=result.status,
+            output=result.output,
+            error=result.error,
+            execution_id=result.execution_id,
+            duration_ms=result.duration_ms,
+        )
+    except Exception as exc:
+        logger.warning("execute_skill('%s') failed: %s", skill_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -2122,11 +2192,52 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
                 return ("insights", [])
         tasks["insights"] = _insights()
 
+    # 7. Identity snapshot (colony_id, node_id, trust tier)
+    if features.get("identity", True) and _chain_manager is not None:
+        async def _identity():
+            try:
+                status = await identity_status()
+                return ("identity", status)
+            except Exception:
+                return ("identity", None)
+        tasks["identity"] = _identity()
+
+    # 8. Recent briefings
+    if _briefings_engine is not None and features.get("briefings", False):
+        async def _briefings():
+            try:
+                briefings = _briefings_engine.get_recent(limit=3)
+                return ("briefings", briefings or [])
+            except Exception:
+                return ("briefings", [])
+        tasks["briefings"] = _briefings()
+
+    # 9. Known contacts (top N — useful when the agent references someone
+    # not tied to the current contact_id).
+    if _contacts_store is not None and features.get("contactsList", False):
+        async def _contacts_list():
+            try:
+                contacts = await _contacts_store.list()
+                return ("contactsList", contacts[:8] if contacts else [])
+            except Exception:
+                return ("contactsList", [])
+        tasks["contactsList"] = _contacts_list()
+
+    # 10. Cognition snapshot (CPI — self-awareness metric)
+    if _metalearner is not None and features.get("cognition", False):
+        async def _cognition():
+            try:
+                cpi = await _metalearner.evaluate()
+                return ("cognition", cpi)
+            except Exception:
+                return ("cognition", None)
+        tasks["cognition"] = _cognition()
+
     # Run all tasks in parallel
     results = {}
     if tasks:
         task_items = list(tasks.items())
-        gathered = await asyncio.gather(*[t[1]() for t in task_items], return_exceptions=True)
+        gathered = await asyncio.gather(*[t[1] for t in task_items], return_exceptions=True)
         for (name, _), result in zip(task_items, gathered):
             if isinstance(result, Exception):
                 logger.debug("enriched_context %s failed: %s", name, result)
@@ -2177,6 +2288,74 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
             )
             sections.append(ContextSection(id="colony-insights", title="Recent Insights", body=body_text, priority=65))
 
+    identity = results.get("identity")
+    if identity is not None:
+        lines = []
+        if getattr(identity, "colony_id", None):
+            lines.append(f"colony_id: {identity.colony_id}")
+        if getattr(identity, "node_id", None):
+            lines.append(f"node_id: {identity.node_id}")
+        if getattr(identity, "trust_tier", None):
+            anchor = "verified" if identity.trust_anchor_verified else "unverified"
+            lines.append(f"trust_tier: {identity.trust_tier} (anchor {anchor})")
+        if getattr(identity, "is_genesis", False):
+            lines.append("role: GENESIS colony")
+        if lines:
+            sections.append(ContextSection(
+                id="colony-identity",
+                title="Colony Identity",
+                body="\n".join(lines),
+                priority=95,
+            ))
+
+    briefings = results.get("briefings")
+    if briefings:
+        parts = []
+        for b in briefings[:3]:
+            title = b.get("title") if isinstance(b, dict) else getattr(b, "title", "")
+            body = b.get("body") if isinstance(b, dict) else getattr(b, "body", "")
+            if title or body:
+                parts.append(f"- {title}: {body[:200]}" if title else f"- {body[:200]}")
+        if parts:
+            sections.append(ContextSection(
+                id="colony-briefings",
+                title="Recent Briefings",
+                body="\n".join(parts),
+                priority=60,
+            ))
+
+    contacts_list = results.get("contactsList")
+    if contacts_list:
+        parts = []
+        for c in contacts_list[:8]:
+            cd = c if isinstance(c, dict) else _to_dict(c)
+            name = cd.get("display_name") or cd.get("name") or cd.get("contact_id") or ""
+            tier = cd.get("trust_tier") or ""
+            if name:
+                parts.append(f"- {name}" + (f" ({tier})" if tier else ""))
+        if parts:
+            sections.append(ContextSection(
+                id="colony-contacts",
+                title="Known Contacts",
+                body="\n".join(parts),
+                priority=55,
+            ))
+
+    cognition = results.get("cognition")
+    if cognition is not None:
+        lines = []
+        for attr in ("overall", "memory", "reasoning", "social", "autonomy"):
+            val = getattr(cognition, attr, None)
+            if val is not None:
+                lines.append(f"{attr}: {val:.2f}")
+        if lines:
+            sections.append(ContextSection(
+                id="colony-cognition",
+                title="Cognitive Performance",
+                body="\n".join(lines),
+                priority=50,
+            ))
+
     return EnrichedContextResponse(sections=sections, contact_id=contact_id)
 
 
@@ -2197,12 +2376,17 @@ async def identity_status() -> IdentityStatusResponse:
     if _chain_manager is None:
         return IdentityStatusResponse(initialized=False)
     try:
+        import hashlib
+        import os
+
         colony_id = _chain_manager.colony_id
         pubkey = None
         keys_configured = False
-        is_genesis = False
+        is_genesis_flag = False
         node_id = None
         node_pubkey = None
+        node_cert_fingerprint = None
+        trust_anchor_verified = False
 
         # Try to get public key from key manager
         key_mgr = getattr(_chain_manager, "_key_manager", None)
@@ -2211,29 +2395,52 @@ async def identity_status() -> IdentityStatusResponse:
                 pubkey = key_mgr.public_key_hex()
                 keys_configured = True
                 from colony_sidecar.chain.identity import is_genesis as check_genesis
-                is_genesis = check_genesis(colony_id, pubkey)
+                is_genesis_flag = check_genesis(colony_id, pubkey)
             except Exception:
                 pass
 
-        # Get node info
+        # Get node info + cert fingerprint
+        state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
         try:
-            from colony_sidecar.chain.node import get_node_info
-            import os
-            state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
+            from colony_sidecar.chain.node import get_node_info, load_node_certificate
             info = get_node_info(state_dir)
             node_id = info.get("node_id")
             node_pubkey = info.get("node_public_key")
+            cert = load_node_certificate(state_dir)
+            if cert:
+                sig = cert.get("signature", "")
+                pub = cert.get("node_public_key") or cert.get("public_key") or ""
+                if sig or pub:
+                    fp_source = f"{pub}|{sig}".encode("utf-8")
+                    node_cert_fingerprint = hashlib.sha256(fp_source).hexdigest()[:32]
         except Exception:
             pass
+
+        # Derive trust tier + anchor verification.
+        from colony_sidecar.chain.identity import get_genesis_manifest
+        manifest = get_genesis_manifest()
+        trust_anchor_verified = manifest is not None
+        if is_genesis_flag:
+            trust_tier = "GENESIS"
+        elif keys_configured and trust_anchor_verified:
+            # A properly-keyed colony sitting under a verified Genesis anchor
+            # starts at REGULAR. Higher tiers (TRUSTED / PRIVILEGED) are
+            # reserved for future attestation flows.
+            trust_tier = "REGULAR"
+        else:
+            trust_tier = None
 
         return IdentityStatusResponse(
             colony_id=colony_id,
             public_key=pubkey,
             node_id=node_id,
             node_public_key=node_pubkey,
+            node_cert_fingerprint=node_cert_fingerprint,
             initialized=colony_id is not None,
             keys_configured=keys_configured,
-            is_genesis=is_genesis,
+            is_genesis=is_genesis_flag,
+            trust_tier=trust_tier,
+            trust_anchor_verified=trust_anchor_verified,
         )
     except Exception as exc:
         logger.warning("identity_status failed: %s", exc)
@@ -2261,14 +2468,47 @@ async def identity_init(body: IdentityInitRequest) -> IdentityStatusResponse:
 
 @router.post("/chain/verify", response_model=ChainVerifyResponse)
 async def chain_verify(body: ChainVerifyRequest) -> ChainVerifyResponse:
+    """Verify the chain is initialized and (when possible) return a
+    signed attestation proving the sidecar's authority over the
+    ``data`` payload.
+
+    The attestation is ``sign(colony_id || ':' || data || ':' || now)``
+    using the colony's Ed25519 private key. Callers verify it with
+    ``signer_public_key``. When the key manager isn't loaded the
+    attestation fields are ``None`` but the ``valid`` bit is still
+    computed from chain state.
+    """
     if _chain_manager is None:
         return ChainVerifyResponse(valid=False)
     try:
-        # Verify by checking chain state — ChainManager uses submit_transaction
-        # for data integrity, not a separate verify method
         state = await _chain_manager.get_state()
         is_valid = state is not None and state.height >= 0
-        return ChainVerifyResponse(valid=is_valid, colony_id=_chain_manager.colony_id)
+        colony_id = _chain_manager.colony_id
+
+        signed_attestation = None
+        signer_pub = None
+        attested_at = None
+        if is_valid:
+            key_mgr = getattr(_chain_manager, "_key_manager", None)
+            if key_mgr is not None:
+                try:
+                    from datetime import datetime, timezone
+                    attested_at = datetime.now(timezone.utc).isoformat()
+                    payload = (
+                        f"{colony_id}:{body.data}:{attested_at}".encode("utf-8")
+                    )
+                    signed_attestation = key_mgr.sign(payload)
+                    signer_pub = key_mgr.public_key_hex()
+                except Exception as sig_exc:
+                    logger.debug("attestation signing failed: %s", sig_exc)
+
+        return ChainVerifyResponse(
+            valid=is_valid,
+            colony_id=colony_id,
+            signed_attestation=signed_attestation,
+            attested_at=attested_at,
+            signer_public_key=signer_pub,
+        )
     except Exception as exc:
         logger.warning("chain_verify failed: %s", exc)
         return ChainVerifyResponse(valid=False)

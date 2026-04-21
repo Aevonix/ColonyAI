@@ -1,13 +1,24 @@
-import { ColonyPluginConfigSchema, type ColonyPluginConfig } from "./config.js";
+import {
+  ColonyPluginConfigSchema,
+  withHostLLMEnvOverrides,
+  type ColonyPluginConfig,
+} from "./config.js";
 import { ColonyApiError, ColonySidecarClient } from "./sidecar-client.js";
 import type {
   ContextSection,
   HostEvent,
   HostHealthResponse,
+  HostIdentity,
   HostMessage,
 } from "./types.js";
 import { SessionTextCache } from "./hooks/session-text-cache.js";
 import { TurnExtractionPipeline } from "./extraction/pipeline.js";
+import { createContextCache, type ContextCache } from "./context-cache.js";
+import { dispatchHostEvent } from "./event-handlers.js";
+import {
+  registerColonyTools,
+  type ToolRegistrarHandle,
+} from "./tool-registrar.js";
 
 /**
  * The real OpenClaw plugin API surface. Imported ``type``-only so the
@@ -270,10 +281,49 @@ async function handleProactiveMessage(
   }
 }
 
+/**
+ * Snapshot of colony / node identity fields resolved from the sidecar's
+ * ``/v1/host/identity/status`` at plugin registration time. Cached on the
+ * context so ``identity()`` can produce a full ``HostIdentity`` without
+ * re-hitting the sidecar each turn.
+ */
+export interface IdentitySnapshot {
+  colony_id?: string;
+  node_id?: string;
+  node_cert_fingerprint?: string;
+  trust_tier?: "REGULAR" | "TRUSTED" | "PRIVILEGED" | "GENESIS";
+  /** Result of the last ``chainVerify`` call at plugin startup. */
+  chain_valid?: boolean;
+  /** Hex-encoded Ed25519 signature of ``colony_id:data:timestamp`` returned
+   *  by the sidecar. Present only when the key manager is loaded. */
+  signed_attestation?: string;
+  attested_at?: string;
+  signer_public_key?: string;
+}
+
 export interface ColonyPluginContext {
   config: ColonyPluginConfig;
   client: ColonySidecarClient;
-  identity: () => { host_id: string; plugin_version: string };
+  identity: () => HostIdentity;
+  /**
+   * Resolve identity fields (colony_id, node_id, trust_tier) from the
+   * sidecar and cache them on the context. Safe to call multiple times;
+   * returns the current snapshot. Never throws — failures log and return
+   * the existing (possibly empty) snapshot.
+   */
+  refreshIdentity: () => Promise<IdentitySnapshot>;
+  /**
+   * Ask the sidecar to verify the chain state and sign an attestation
+   * over ``data``. Caches the result in the identity snapshot. Never
+   * throws.
+   */
+  verifyChain: (data?: string) => Promise<IdentitySnapshot>;
+  /**
+   * Plugin-wide cache-invalidation bus. The WS event dispatcher writes
+   * to it on memory/goal/world-model/briefing/skill updates so derived
+   * caches (identity snapshot, skill-tool registrations) can refresh.
+   */
+  cache: ContextCache;
   /**
    * Plugin-scoped logger. Optional so ``buildContext`` can be stubbed in
    * tests without requiring a logger; adapters that want to emit
@@ -283,12 +333,69 @@ export interface ColonyPluginContext {
 }
 
 function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
-  const config = ColonyPluginConfigSchema.parse(api.pluginConfig ?? {});
+  const parsed = ColonyPluginConfigSchema.parse(api.pluginConfig ?? {});
+  const config = withHostLLMEnvOverrides(parsed);
   const client = new ColonySidecarClient(config);
+  const snapshot: IdentitySnapshot = {};
+
+  const identity = (): HostIdentity => ({
+    host_id: config.hostId,
+    plugin_version: PLUGIN_VERSION,
+    ...(snapshot.colony_id ? { colony_id: snapshot.colony_id } : {}),
+    ...(snapshot.node_id ? { node_id: snapshot.node_id } : {}),
+    ...(snapshot.node_cert_fingerprint
+      ? { node_cert_fingerprint: snapshot.node_cert_fingerprint }
+      : {}),
+    ...(snapshot.trust_tier ? { trust_tier: snapshot.trust_tier } : {}),
+  });
+
+  const refreshIdentity = async (): Promise<IdentitySnapshot> => {
+    try {
+      const status = (await client.identityStatus()) as {
+        colony_id?: string | null;
+        node_id?: string | null;
+        node_cert_fingerprint?: string | null;
+        trust_tier?: IdentitySnapshot["trust_tier"] | null;
+      };
+      if (status?.colony_id) snapshot.colony_id = status.colony_id;
+      if (status?.node_id) snapshot.node_id = status.node_id;
+      if (status?.node_cert_fingerprint)
+        snapshot.node_cert_fingerprint = status.node_cert_fingerprint;
+      if (status?.trust_tier) snapshot.trust_tier = status.trust_tier;
+    } catch (err) {
+      api.logger?.warn(
+        `[colony] identity bootstrap failed: ${String(err)}`,
+      );
+    }
+    return { ...snapshot };
+  };
+
+  const verifyChain = async (
+    data: string = "bootstrap-probe",
+  ): Promise<IdentitySnapshot> => {
+    try {
+      const res = await client.chainVerify(data, identity());
+      snapshot.chain_valid = Boolean(res?.valid);
+      if (res?.signed_attestation)
+        snapshot.signed_attestation = res.signed_attestation;
+      if (res?.attested_at) snapshot.attested_at = res.attested_at;
+      if (res?.signer_public_key)
+        snapshot.signer_public_key = res.signer_public_key;
+    } catch (err) {
+      api.logger?.warn(`[colony] chain verify failed: ${String(err)}`);
+    }
+    return { ...snapshot };
+  };
+
+  const cache = createContextCache();
+
   return {
     config,
     client,
-    identity: () => ({ host_id: config.hostId, plugin_version: PLUGIN_VERSION }),
+    identity,
+    refreshIdentity,
+    verifyChain,
+    cache,
     logger: api.logger,
   };
 }
@@ -427,6 +534,36 @@ class ColonyMemorySearchManager {
         }));
       },
       () => [],
+    );
+  }
+
+  /**
+   * Persist a new memory through the sidecar. Agent turns call this
+   * via the ``colony_memory_write`` tool (registered by the tool
+   * registrar) so learning from a conversation actually lands in the
+   * graph instead of living only in the turn transcript.
+   */
+  async write(params: {
+    content: string;
+    kind?: string;
+    personId?: string;
+    entities?: string[];
+    tags?: string[];
+  }): Promise<{ id?: string; accepted: boolean }> {
+    return withDegradation(
+      { name: "memory.write" },
+      async () => {
+        const res = await this.ctx.client.memoryWrite({
+          identity: this.ctx.identity(),
+          content: params.content,
+          type: params.kind,
+          person_id: params.personId,
+          entities: params.entities,
+          tags: params.tags,
+        });
+        return { id: res.id ?? undefined, accepted: res.accepted ?? false };
+      },
+      () => ({ accepted: false } as { id?: string; accepted: boolean }),
     );
   }
 
@@ -752,6 +889,10 @@ function contextEngineFactory(
               goals: true,
               worldModel: true,
               insights: true,
+              identity: true,
+              briefings: true,
+              contactsList: true,
+              cognition: true,
             },
           }),
         () => ({ sections: [], notices: ["colony-context: degraded"] }),
@@ -1897,6 +2038,7 @@ function eventsLifecycleService(
   ctx: ColonyPluginContext,
   api: OpenClawPluginApi,
   logger?: OpenClawPluginApi["logger"],
+  toolRegistrar?: ToolRegistrarHandle,
 ) {
   let subscription: { close: () => void } | null = null;
 
@@ -1921,14 +2063,27 @@ function eventsLifecycleService(
             );
           }
 
-          // Handle proactive_message events by spawning a subagent turn
-          // to deliver the message. This is a workaround until OpenClaw
-          // provides a direct sendProactiveMessage API.
+          // Proactive_message is the only event that spawns a subagent
+          // turn — handled inline because it needs the OpenClaw API.
           if (event.type === "proactive_message") {
             handleProactiveMessage(event, api, logger).catch((err) => {
               logger?.warn(`[colony] proactive delivery failed: ${String(err)}`);
             });
+            return;
           }
+
+          // Every other declared event type goes through the dispatcher,
+          // which updates the cache-invalidation bus and runs any
+          // attached hooks (e.g. skill_draft_approved → tool refresh).
+          dispatchHostEvent(event, {
+            cache: ctx.cache,
+            logger,
+            onSkillApproved: toolRegistrar
+              ? async () => {
+                  await toolRegistrar.refreshSkillTools();
+                }
+              : undefined,
+          });
         });
         logger?.info(
           `[colony] events: subscribed to ${ctx.config.sidecarUrl}/v1/host/events`,
@@ -1961,8 +2116,6 @@ export function createColonyPlugin(): unknown {
       const cache = new SessionTextCache();
       const extraction = new TurnExtractionPipeline();
 
-      api.registerService(eventsLifecycleService(ctx, api, api.logger));
-
       // As of issue aevonix/colony-ai#7 Phase 6 all adapter shapes
       // match their real OpenClaw SDK contracts — every Phase 1–6
       // ``@ts-expect-error`` marker is gone. Follow-up work (Phase 7+)
@@ -1972,6 +2125,21 @@ export function createColonyPlugin(): unknown {
       if (ctx.config.ownMemoryCapability) {
         api.registerMemoryCapability(memoryCapability(ctx, caps));
       }
+
+      // Register Colony's native tools + active skills as first-class
+      // OpenClaw tools. The registrar returns a handle the events
+      // lifecycle service uses to refresh when skill_draft_approved
+      // arrives over the WS.
+      const memoryManagerForWrites = new ColonyMemorySearchManager(ctx, caps);
+      const toolRegistrar = registerColonyTools(
+        ctx,
+        api,
+        memoryManagerForWrites,
+      );
+
+      api.registerService(
+        eventsLifecycleService(ctx, api, api.logger, toolRegistrar),
+      );
 
       // #7 Phase 3 — ``memoryEmbeddingProvider`` returns the real
       // ``MemoryEmbeddingProviderAdapter`` shape (see its doc comment),
@@ -2028,6 +2196,56 @@ export function createColonyPlugin(): unknown {
         .catch((err: unknown) =>
           api.logger.warn(`[colony] sidecar health check failed: ${String(err)}`),
         );
+
+      // Bootstrap identity so ctx.identity() returns colony_id / node_id /
+      // trust_tier once resolved. Fire-and-forget — the first few turns
+      // may see a partial identity until the sidecar responds.
+      ctx
+        .refreshIdentity()
+        .then((snap) => {
+          if (snap.colony_id || snap.node_id) {
+            api.logger.info(
+              `[colony] identity resolved colony_id=${snap.colony_id ?? "?"} node_id=${snap.node_id ?? "?"} tier=${snap.trust_tier ?? "unset"}`,
+            );
+          }
+        })
+        .then(() => ctx.verifyChain())
+        .then((snap) => {
+          if (snap.chain_valid) {
+            api.logger.info(
+              `[colony] chain verified${snap.signed_attestation ? " (signed attestation)" : ""}`,
+            );
+          }
+        })
+        .catch(() => {
+          /* refreshIdentity / verifyChain never throw — belt-and-braces */
+        });
+
+      // Forward host LLM credentials if configured so the sidecar's
+      // ReasoningLoop can talk to the provider without its own keys.
+      if (ctx.config.hostLLM) {
+        const { hostLLM } = ctx.config;
+        ctx.client
+          .configureHost(
+            {
+              provider: hostLLM.provider,
+              api_key: hostLLM.apiKey,
+              base_url: hostLLM.baseUrl,
+              models: hostLLM.models ?? {},
+            },
+            ctx.identity(),
+          )
+          .then((res) =>
+            api.logger.info(
+              `[colony] host LLM configured provider=${res.provider ?? "?"}`,
+            ),
+          )
+          .catch((err) =>
+            api.logger.warn(
+              `[colony] host LLM configure failed: ${String(err)}`,
+            ),
+          );
+      }
     },
   });
 }
@@ -2036,6 +2254,7 @@ export function createColonyPlugin(): unknown {
 export { ColonySidecarClient, ColonyApiError } from "./sidecar-client.js";
 export type { ColonyPluginConfig } from "./config.js";
 export {
+  buildContext as __buildContext,
   memoryCapability as __memoryCapability,
   memoryEmbeddingProvider as __memoryEmbeddingProvider,
   contextEngineFactory as __contextEngineFactory,
