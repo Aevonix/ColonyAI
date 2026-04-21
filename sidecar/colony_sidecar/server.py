@@ -39,6 +39,7 @@ from colony_sidecar.api.routers.host import (
     set_insight_store,
     set_learner,
     set_skills_registry,
+    set_skill_executor,
     set_secrets_manager,
     set_session_store,
     set_task_queue,
@@ -473,7 +474,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("ContinuousLearner init failed: %s", exc)
 
-    # --- 16. Skills registry ---
+    # --- 16. Skills registry + executor ---
     skills_registry = None
     try:
         from colony_sidecar.skills.registry import SkillRegistry
@@ -482,6 +483,20 @@ async def lifespan(app: FastAPI):
         skills_registry.open()
         set_skills_registry(skills_registry)
         logger.info("SkillRegistry initialized (db=%s)", skills_db_path)
+
+        try:
+            from colony_sidecar.skills.executor import SkillExecutor
+            from colony_sidecar.skills.security.guards import CapabilityGuard
+            from colony_sidecar.skills.security.scanner import ASTScanner
+            skill_executor = SkillExecutor(
+                registry=skills_registry,
+                guard=CapabilityGuard(),
+                scanner=ASTScanner(),
+            )
+            set_skill_executor(skill_executor)
+            logger.info("SkillExecutor initialized")
+        except Exception as sexc:
+            logger.warning("SkillExecutor init failed: %s", sexc)
     except Exception as exc:
         logger.warning("SkillRegistry init failed: %s", exc)
 

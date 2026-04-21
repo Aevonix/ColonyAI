@@ -413,6 +413,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/reasoning/tools/invoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tools Invoke
+         * @description Invoke a single sidecar-resident tool by name.
+         *
+         *     Used by the OpenClaw plugin to expose Colony's native tools
+         *     (calculate, web_search, read_file, write_file, list_directory) as
+         *     first-class OpenClaw tools without routing them through the full
+         *     reasoning loop.
+         */
+        post: operations["tools_invoke_v1_host_reasoning_tools_invoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/host/signals/ingest": {
         parameters: {
             query?: never;
@@ -874,6 +899,26 @@ export interface paths {
          * @description Move a DRAFT skill to ACTIVE.
          */
         post: operations["approve_skill_v1_host_skills__skill_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/host/skills/{skill_id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute Skill
+         * @description Invoke an ACTIVE skill in the sandboxed SkillExecutor.
+         */
+        post: operations["execute_skill_v1_host_skills__skill_id__execute_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2532,6 +2577,31 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** SkillExecuteRequest */
+        SkillExecuteRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+            context?: components["schemas"]["HostTurnContext"] | null;
+        };
+        /** SkillExecuteResponse */
+        SkillExecuteResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "success" | "failed" | "timeout" | "violated";
+            /** Output */
+            output?: unknown | null;
+            /** Error */
+            error?: string | null;
+            /** Execution Id */
+            execution_id?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+        };
         /** SkillSummary */
         SkillSummary: {
             /** Id */
@@ -2594,6 +2664,31 @@ export interface components {
              * @default []
              */
             connections: components["schemas"]["SynthesisConnection"][];
+        };
+        /** ToolInvokeRequest */
+        ToolInvokeRequest: {
+            identity: components["schemas"]["HostIdentity"];
+            /** Name */
+            name: string;
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+        };
+        /** ToolInvokeResponse */
+        ToolInvokeResponse: {
+            /**
+             * Result
+             * @default
+             */
+            result: string;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
+            /** Error */
+            error?: string | null;
         };
         /** TurnSyncRequest */
         TurnSyncRequest: {
@@ -3284,6 +3379,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReasoningTurnResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tools_invoke_v1_host_reasoning_tools_invoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvokeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolInvokeResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4166,6 +4294,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_skill_v1_host_skills__skill_id__execute_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillExecuteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillExecuteResponse"];
                 };
             };
             /** @description Validation Error */

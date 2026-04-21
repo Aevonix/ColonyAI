@@ -175,6 +175,46 @@ export class ColonySidecarClient {
     return this.get(`/v1/host/skills/registry/${skillId}`);
   }
 
+  /**
+   * Execute an ACTIVE skill server-side. Returns the SkillExecutor
+   * result with status, output, error, and execution metadata.
+   */
+  executeSkill(
+    skillId: string,
+    args: Record<string, unknown>,
+    identity: HostIdentity,
+  ): Promise<{
+    status: "success" | "failed" | "timeout" | "violated";
+    output?: unknown;
+    error?: string | null;
+    execution_id?: string | null;
+    duration_ms?: number | null;
+  }> {
+    return this.post(`/v1/host/skills/${skillId}/execute`, {
+      identity,
+      arguments: args,
+    });
+  }
+
+  // --- Native tools --------------------------------------------------------
+
+  /**
+   * Invoke a sidecar-resident native tool (calculate, web_search,
+   * read_file, write_file, list_directory) by name. Returns the raw
+   * string result from the tool handler, or an error envelope.
+   */
+  toolsInvoke(
+    name: string,
+    args: Record<string, unknown>,
+    identity: HostIdentity,
+  ): Promise<{ result: string; available: boolean; error?: string | null }> {
+    return this.post("/v1/host/reasoning/tools/invoke", {
+      identity,
+      name,
+      arguments: args,
+    });
+  }
+
   // --- Insights ------------------------------------------------------------
 
   listInsights(params?: { limit?: number; dismissed?: boolean }): Promise<unknown> {

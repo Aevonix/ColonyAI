@@ -89,6 +89,10 @@ from colony_sidecar.api.schemas.host import (
     ReasoningToolCall,
     ReasoningTurnRequest,
     ReasoningTurnResponse,
+    SkillExecuteRequest,
+    SkillExecuteResponse,
+    ToolInvokeRequest,
+    ToolInvokeResponse,
     ResearchListResponse,
     ResearchRunResponse,
     ResearchStartRequest,
@@ -1154,6 +1158,35 @@ async def reasoning_turn(body: ReasoningTurnRequest) -> ReasoningTurnResponse:
     )
 
 
+@router.post("/reasoning/tools/invoke", response_model=ToolInvokeResponse)
+async def tools_invoke(body: ToolInvokeRequest) -> ToolInvokeResponse:
+    """Invoke a single sidecar-resident tool by name.
+
+    Used by the OpenClaw plugin to expose Colony's native tools
+    (calculate, web_search, read_file, write_file, list_directory) as
+    first-class OpenClaw tools without routing them through the full
+    reasoning loop.
+    """
+    if _tool_executor is None:
+        return ToolInvokeResponse(
+            result="", available=False, error="tool_executor_not_initialized",
+        )
+    handler = _tool_executor._handlers.get(body.name)
+    if handler is None:
+        return ToolInvokeResponse(
+            result="", available=False,
+            error=f"Tool '{body.name}' is not registered",
+        )
+    try:
+        raw = await handler(body.arguments)
+        return ToolInvokeResponse(result=str(raw), available=True)
+    except Exception as exc:
+        logger.warning("tools_invoke('%s') failed: %s", body.name, exc)
+        return ToolInvokeResponse(
+            result="", available=True, error=f"{type(exc).__name__}: {exc}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Signals
 # ---------------------------------------------------------------------------
@@ -1883,10 +1916,16 @@ async def get_learning_weights() -> LearningWeightsResponse:
 # ---------------------------------------------------------------------------
 
 _skills_registry = None
+_skill_executor = None
 
 def set_skills_registry(registry) -> None:
     global _skills_registry
     _skills_registry = registry
+
+
+def set_skill_executor(executor) -> None:
+    global _skill_executor
+    _skill_executor = executor
 
 
 @router.get("/skills/registry", response_model=SkillsListResponse)
@@ -1958,6 +1997,29 @@ async def approve_skill(skill_id: str) -> dict:
         raise
     except Exception as exc:
         logger.warning("approve_skill failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/skills/{skill_id}/execute", response_model=SkillExecuteResponse)
+async def execute_skill(
+    skill_id: str, body: SkillExecuteRequest,
+) -> SkillExecuteResponse:
+    """Invoke an ACTIVE skill in the sandboxed SkillExecutor."""
+    if _skill_executor is None:
+        raise HTTPException(
+            status_code=503, detail="skill_executor_not_initialized",
+        )
+    try:
+        result = await _skill_executor.invoke(skill_id, body.arguments)
+        return SkillExecuteResponse(
+            status=result.status,
+            output=result.output,
+            error=result.error,
+            execution_id=result.execution_id,
+            duration_ms=result.duration_ms,
+        )
+    except Exception as exc:
+        logger.warning("execute_skill('%s') failed: %s", skill_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

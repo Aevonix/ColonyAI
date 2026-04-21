@@ -358,6 +358,32 @@ class ReasoningTurnResponse(BaseModel):
     error: Optional[str] = None
 
 
+class ToolInvokeRequest(BaseModel):
+    identity: HostIdentity
+    name: str = Field(..., max_length=MAX_NAME_LEN)
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolInvokeResponse(BaseModel):
+    result: str = ""
+    available: bool = True
+    error: Optional[str] = None
+
+
+class SkillExecuteRequest(BaseModel):
+    identity: HostIdentity
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    context: Optional[HostTurnContext] = None
+
+
+class SkillExecuteResponse(BaseModel):
+    status: Literal["success", "failed", "timeout", "violated"]
+    output: Optional[Any] = None
+    error: Optional[str] = None
+    execution_id: Optional[str] = None
+    duration_ms: Optional[int] = None
+
+
 # --- Signals ----------------------------------------------------------------
 
 class SignalIngestRequest(BaseModel):
