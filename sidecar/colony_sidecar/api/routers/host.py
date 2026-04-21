@@ -119,6 +119,12 @@ from colony_sidecar.api.schemas.host import (
     SynthesisDiscoverResponse,
     TurnSyncRequest,
     TurnSyncResponse,
+    CommitmentCreateRequest,
+    CommitmentListResponse,
+    CommitmentResponse,
+    CommitmentUpdateRequest,
+    CognitionTriggerRequest,
+    CognitionTriggerResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -1276,6 +1282,27 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
         except Exception as exc:
             logger.warning("signals_ingest raw signals failed: %s", exc)
 
+    # Fire cognition trigger for high-priority signals (best-effort)
+    if recorded > 0:
+        try:
+            from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled
+            if _cognition_enabled():
+                import asyncio as _aio
+                content = ""
+                if incoming and incoming.content:
+                    content = incoming.content[:500]
+                _aio.create_task(trigger_cognition(
+                    trigger_type="signal_ingest",
+                    context={
+                        "signal_type": "engagement",
+                        "signal_data": {"content": content},
+                        "person_id": body.context.contact_id if body.context else "",
+                    },
+                    priority="low",
+                ))
+        except Exception:
+            logger.debug("cognition trigger from signal_ingest failed", exc_info=True)
+
     return SignalIngestResponse(accepted=True, signals_recorded=recorded)
 
 
@@ -1286,6 +1313,7 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
 @router.post("/turns/sync", response_model=TurnSyncResponse)
 async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # Best-effort: store turn metadata in the graph if available
+    graph_ok = False
     if _graph is not None:
         try:
             await _graph.record_turn(
@@ -1296,11 +1324,28 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                 tools_used=body.tools_used,
                 summary=body.summary,
             )
-            return TurnSyncResponse(accepted=True, continuity_updated=True)
+            graph_ok = True
         except Exception as exc:
             logger.warning("turns_sync failed: %s", exc)
 
-    return TurnSyncResponse(accepted=True, continuity_updated=False, skipped_reason="no_graph_store")
+    # Fire cognition trigger (best-effort, non-blocking)
+    try:
+        from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled
+        if _cognition_enabled():
+            import asyncio
+            asyncio.create_task(trigger_cognition(
+                trigger_type="turn_sync",
+                context={
+                    "conversation_text": body.summary or "",
+                    "person_id": body.context.contact_id,
+                    "session_id": body.context.session_id,
+                },
+                priority="normal",
+            ))
+    except Exception:
+        logger.debug("cognition trigger from turn_sync failed", exc_info=True)
+
+    return TurnSyncResponse(accepted=True, continuity_updated=graph_ok, skipped_reason=None if graph_ok else "no_graph_store")
 
 
 # ---------------------------------------------------------------------------
@@ -2024,6 +2069,12 @@ async def get_learning_weights() -> LearningWeightsResponse:
 # ---------------------------------------------------------------------------
 
 _skills_registry = None
+_commitment_store = None
+
+
+def set_commitment_store(store):
+    global _commitment_store
+    _commitment_store = store
 _skill_executor = None
 
 def set_skills_registry(registry) -> None:
@@ -2468,6 +2519,26 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
                 priority=50,
             ))
 
+    # Pending commitments
+    if _commitment_store is not None and contact_id and features.get("commitments", True):
+        try:
+            pending = _commitment_store.get_pending_for_person(contact_id)
+            if pending:
+                body_text = "\n".join(
+                    f"- {c['description']}"
+                    + (f" (due {c['due_at'][:10]})" if c.get('due_at') else "")
+                    + f" [priority {c['priority']}]"
+                    for c in pending[:5]
+                )
+                sections.append(ContextSection(
+                    id="colony-commitments",
+                    title="Pending Commitments",
+                    body=body_text,
+                    priority=72,
+                ))
+        except Exception:
+            logger.debug("commitment section failed", exc_info=True)
+
     # Adaptive compression
     compression_mode_str = None
     if body.compression:
@@ -2875,6 +2946,161 @@ class SeedResponse(BaseModel):
     skills: int = 0
     insights: int = 0
     errors: list[str] = []
+
+
+# ---------------------------------------------------------------------------
+# Commitment Tracking
+# ---------------------------------------------------------------------------
+
+@router.post("/commitments", status_code=status.HTTP_201_CREATED)
+async def create_commitment(body: CommitmentCreateRequest) -> CommitmentResponse:
+    """Create a new commitment."""
+    if _commitment_store is None:
+        raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
+
+    try:
+        result = _commitment_store.create(
+            person_id=body.person_id,
+            description=body.description,
+            due_at=body.due_at,
+            priority=body.priority,
+            source_type=body.source_type,
+            source_context=body.source_context,
+            metadata=body.metadata,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    try:
+        from colony_sidecar.events.broadcaster import emit as _emit
+        _emit("commitment.created", {
+            "commitment_id": result["id"],
+            "person_id": result["person_id"],
+            "description": result["description"],
+        })
+    except Exception:
+        pass
+    return CommitmentResponse(**result)
+
+
+@router.get("/commitments", response_model=CommitmentListResponse)
+async def list_commitments(
+    person_id: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    overdue_only: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> CommitmentListResponse:
+    """List commitments with optional filters."""
+    if _commitment_store is None:
+        raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
+
+    statuses = [s.strip() for s in status_filter.split(",")] if status_filter else None
+    result = _commitment_store.list(
+        person_id=person_id,
+        status=statuses,
+        overdue_only=overdue_only,
+        limit=limit,
+        offset=offset,
+    )
+    return CommitmentListResponse(**result)
+
+
+@router.get("/commitments/{commitment_id}", response_model=CommitmentResponse)
+async def get_commitment(commitment_id: str) -> CommitmentResponse:
+    """Get a single commitment by ID."""
+    if _commitment_store is None:
+        raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
+
+    result = _commitment_store.get(commitment_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Commitment not found")
+    return CommitmentResponse(**result)
+
+
+@router.patch("/commitments/{commitment_id}", response_model=CommitmentResponse)
+async def update_commitment(commitment_id: str, body: CommitmentUpdateRequest) -> CommitmentResponse:
+    """Update a commitment."""
+    if _commitment_store is None:
+        raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
+
+    try:
+        result = _commitment_store.update(
+            commitment_id=commitment_id,
+            status=body.status,
+            fulfilled_at=body.fulfilled_at,
+            description=body.description,
+            due_at=body.due_at,
+            priority=body.priority,
+            metadata=body.metadata,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Commitment not found")
+
+    # Emit events for status changes
+    if body.status == "fulfilled":
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("commitment.fulfilled", {
+                "commitment_id": result["id"],
+                "person_id": result["person_id"],
+            })
+        except Exception:
+            pass
+    elif body.status == "cancelled":
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("commitment.cancelled", {
+                "commitment_id": result["id"],
+                "person_id": result["person_id"],
+            })
+        except Exception:
+            pass
+
+    return CommitmentResponse(**result)
+
+
+@router.delete("/commitments/{commitment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_commitment(commitment_id: str):
+    """Delete a commitment. Only allowed for terminal states (fulfilled/cancelled)."""
+    if _commitment_store is None:
+        raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
+
+    deleted = _commitment_store.delete(commitment_id)
+    if not deleted:
+        existing = _commitment_store.get(commitment_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Commitment not found")
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot delete commitment in '{existing['status']}' state. Cancel it first.",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Cognition Substrate
+# ---------------------------------------------------------------------------
+
+@router.post("/cognition/trigger", response_model=CognitionTriggerResponse)
+async def cognition_trigger(body: CognitionTriggerRequest) -> CognitionTriggerResponse:
+    """Trigger a cognition cycle via OpenClaw subagent spawn.
+
+    The sidecar emits a cognition.requested event with the built prompt.
+    The Colony plugin picks this up and calls sessions_spawn with the
+    configured model and restricted tool allowlist.
+    """
+    from colony_sidecar.cognition.trigger import trigger_cognition
+
+    result = await trigger_cognition(
+        trigger_type=body.trigger_type,
+        context=body.context,
+        priority=body.priority,
+    )
+    return CognitionTriggerResponse(**result)
 
 
 @router.post("/seed", response_model=SeedResponse)
