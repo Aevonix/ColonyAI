@@ -96,12 +96,10 @@ git clone https://github.com/Aevonix/ColonyAI.git
 cd colony/sidecar
 
 pip install -e .
-colony init    # setup wizard: deps, Neo4j, hardware scan, model pre-download
-colony start   # run the sidecar
-colony status  # verify
+colony init    # setup wizard: deps, Neo4j, hardware scan, model pre-download, start, verify
 ```
 
-`colony init` handles dependency installation, Neo4j setup, hardware detection, model pre-download, initial self-knowledge seeding, and OpenClaw plugin configuration (including context engine routing).
+`colony init` handles the full first-run experience: dependency installation, Neo4j setup, hardware detection, model pre-download, self-knowledge seeding, OpenClaw plugin configuration (including context engine routing), sidecar startup with health verification, LLM credential check, gateway restart, and a `colony doctor` run to confirm all subsystems are healthy. One command, done.
 
 ### Context Engine
 
@@ -232,7 +230,7 @@ Full configuration reference in `docs/configuration.md`.
 
 | Command | Description |
 |---|---|
-| `colony init` | Interactive setup: deps, Neo4j, hardware scan, model pre-download, Colony identity creation |
+| `colony init` | Full first-run setup: deps, Neo4j, hardware scan, model pre-download, identity, sidecar start, verify, doctor |
 | `colony start` | Start the sidecar server (`--host`, `--port`, `--detach`) |
 | `colony status` | Check sidecar health and subsystem wiring |
 | `colony seed` | Seed self-knowledge (run after `colony init` if skipped) |
