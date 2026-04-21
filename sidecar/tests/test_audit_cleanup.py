@@ -243,3 +243,55 @@ def test_pii_hash_is_deterministic_and_short():
 def test_pii_hash_handles_empty():
     assert _pii_hash(None) == "∅"
     assert _pii_hash("") == "∅"
+
+
+# ── Wizard: Neo4j password auto-generation ────────────────────────────────────
+
+
+def test_setup_wizard_has_no_shared_default_password():
+    """Regression guard — the old 'colony-local-dev' shared default must stay
+    out of setup.py and docker-compose.yml."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    setup_src = (repo / "sidecar/colony_sidecar/setup.py").read_text()
+    compose_src = (repo / "docker-compose.yml").read_text()
+    assert "colony-local-dev" not in setup_src
+    assert "colony-local-dev" not in compose_src
+
+
+def test_start_neo4j_docker_forwards_password(monkeypatch):
+    """_start_neo4j_docker must inject NEO4J_PASSWORD into the compose env."""
+    import subprocess
+    from colony_sidecar import setup as wizard
+
+    captured = {}
+
+    class _FakeCompleted:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None):
+        captured["cmd"] = cmd
+        captured["env"] = env
+        return _FakeCompleted()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ok = wizard._start_neo4j_docker("super-secret-abc")
+    assert ok is True
+    assert captured["env"]["NEO4J_PASSWORD"] == "super-secret-abc"
+
+
+def test_env_roundtrip_preserves_generated_password(tmp_path):
+    """A generated password written via _write_env must come back through
+    _load_existing_env byte-for-byte, including URL-safe special chars."""
+    import secrets
+    from colony_sidecar.setup import _load_existing_env, _write_env
+
+    generated = secrets.token_urlsafe(24)
+    env_path = tmp_path / ".env"
+    _write_env(env_path, {"NEO4J_PASSWORD": generated, "COLONY_API_KEY": "k"})
+
+    loaded = _load_existing_env(env_path)
+    assert loaded["NEO4J_PASSWORD"] == generated
+    assert loaded["COLONY_API_KEY"] == "k"
