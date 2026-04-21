@@ -141,6 +141,13 @@ export function dispatchHostEvent(
       case "skill_draft_approved":
         handleSkillDraftApproved(event, ctx);
         return true;
+      case "commitment.created":
+      case "commitment.fulfilled":
+      case "commitment.overdue":
+      case "commitment.cancelled":
+        ctx.cache?.invalidate("commitments", event.payload);
+        ctx.logger?.info?.(`[colony.event] ${event.type}`);
+        return true;
       default:
         return false;
     }

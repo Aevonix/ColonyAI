@@ -43,6 +43,8 @@ from colony_sidecar.api.routers.host import (
     set_secrets_manager,
     set_session_store,
     set_task_queue,
+    set_commitment_store,
+    set_commitment_store,
     supported_capabilities,
 )
 
@@ -314,6 +316,17 @@ async def lifespan(app: FastAPI):
         logger.info("GoalEngine initialized (db=%s)", goals_db)
     except Exception as exc:
         logger.warning("GoalEngine init failed: %s", exc)
+
+    # --- 7b. Commitment Store ---
+    try:
+        from colony_sidecar.commitments.store import CommitmentStore
+
+        commitments_db = state_dir / "colony-commitments.db"
+        commitment_store = CommitmentStore(db_path=commitments_db)
+        set_commitment_store(commitment_store)
+        logger.info("CommitmentStore initialized (db=%s)", commitments_db)
+    except Exception as exc:
+        logger.warning("CommitmentStore init failed: %s", exc)
 
     # --- 8. Contacts ---
     try:
@@ -742,6 +755,7 @@ async def lifespan(app: FastAPI):
     set_connection_discoverer(None)
     set_learner(None)
     set_skills_registry(None)
+    set_commitment_store(None)
     set_chain_manager(None)
     set_secrets_manager(None)
     set_session_store(None)

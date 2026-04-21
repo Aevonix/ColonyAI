@@ -837,3 +837,63 @@ class HostConfigureResponse(BaseModel):
     configured: bool = True
     provider: Optional[str] = None
     models: Optional[Dict[str, str]] = None
+
+
+# ---------------------------------------------------------------------------
+# Commitment Tracking
+# ---------------------------------------------------------------------------
+
+class CommitmentCreateRequest(BaseModel):
+    person_id: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=1, max_length=1000)
+    due_at: Optional[str] = None
+    priority: int = Field(default=50, ge=0, le=100)
+    source_type: Literal["manual", "autonomy", "cognition"] = "manual"
+    source_context: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class CommitmentUpdateRequest(BaseModel):
+    status: Optional[Literal["fulfilled", "cancelled"]] = None
+    fulfilled_at: Optional[str] = None
+    description: Optional[str] = Field(None, min_length=1, max_length=1000)
+    due_at: Optional[str] = None
+    priority: Optional[int] = Field(None, ge=0, le=100)
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class CommitmentResponse(BaseModel):
+    id: str
+    person_id: str
+    description: str
+    made_at: str
+    due_at: Optional[str] = None
+    fulfilled_at: Optional[str] = None
+    status: str
+    source_type: str
+    source_context: Optional[str] = None
+    priority: int
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class CommitmentListResponse(BaseModel):
+    commitments: List[CommitmentResponse] = []
+    total: int
+    limit: int
+    offset: int
+
+
+# ---------------------------------------------------------------------------
+# Cognition Substrate
+# ---------------------------------------------------------------------------
+
+class CognitionTriggerRequest(BaseModel):
+    trigger_type: Literal["turn_sync", "signal_ingest", "anomaly", "manual"]
+    context: Dict[str, Any]
+    priority: Literal["high", "normal", "low"] = "normal"
+
+
+class CognitionTriggerResponse(BaseModel):
+    accepted: bool = True
+    message: str = "Cognition trigger accepted"
+    throttle_seconds: Optional[int] = None

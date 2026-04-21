@@ -24,6 +24,7 @@ DEFAULT_INTERVALS: Dict[str, int] = {
     "delivery_status": 60 * 60,  # 1 hour
     "api_response": 60,          # 1 minute
     "custom": 5 * 60,            # 5 minutes (fallback)
+    "commitment_overdue": 30 * 60, # 30 minutes
 }
 
 
@@ -51,6 +52,7 @@ async def handle_check_condition(
         "deployment_health": _check_deployment_health,
         "delivery_status": _check_delivery_status,
         "api_response": _check_api_response,
+        "commitment_overdue": _check_commitment_overdue,
     }
 
     checker = condition_checkers.get(condition_type)
@@ -335,4 +337,37 @@ async def _check_delivery_status(params: dict) -> dict:
         "condition_met": delivered,
         "status": str(status_code),
         "last_update": None,
+    }
+
+
+async def _check_commitment_overdue(params: dict) -> dict:
+    """Check for commitments that are past their due_at and still pending."""
+    from colony_sidecar.api.routers.host import _commitment_store, emit
+
+    if _commitment_store is None:
+        return {"condition_met": False, "overdue_count": 0}
+
+    overdue = _commitment_store.get_overdue()
+    if not overdue:
+        return {"condition_met": False, "overdue_count": 0}
+
+    # Mark pending → overdue
+    for c in overdue:
+        try:
+            _commitment_store.update(c["id"], status="overdue")
+            emit("commitment.overdue", {
+                "commitment_id": c["id"],
+                "person_id": c["person_id"],
+                "description": c["description"],
+            })
+        except Exception:
+            logger.debug("commitment overdue update failed for %s", c["id"], exc_info=True)
+
+    return {
+        "condition_met": True,
+        "overdue_count": len(overdue),
+        "overdue_commitments": [
+            {"id": c["id"], "description": c["description"], "person_id": c["person_id"]}
+            for c in overdue[:5]
+        ],
     }

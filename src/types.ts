@@ -78,6 +78,10 @@ export type HostEventType =
   | "skill_draft_approved"
   | "turn_synced"
   | "replay_complete"
+  | "commitment.created"
+  | "commitment.fulfilled"
+  | "commitment.overdue"
+  | "commitment.cancelled"
   | "log";
 
 export interface HostEvent {
@@ -85,4 +89,25 @@ export interface HostEvent {
   occurred_at: string;
   payload: Record<string, unknown>;
   seq?: number;
+}
+
+export interface CommitmentResponse {
+  id: string;
+  person_id: string;
+  description: string;
+  made_at: string;
+  due_at?: string;
+  fulfilled_at?: string;
+  status: string;
+  source_type: string;
+  source_context?: string;
+  priority: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CommitmentListResponse {
+  commitments: CommitmentResponse[];
+  total: number;
+  limit: number;
+  offset: number;
 }
