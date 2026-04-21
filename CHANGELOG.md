@@ -37,3 +37,24 @@ First release with all adapter shapes matching the real OpenClaw SDK contracts.
 ## 0.0.1 (2026-04-14)
 
 Initial scaffold. Adapter shapes did not match the real SDK contracts. Superseded by 0.1.0.
+
+## 0.1.1 (2026-04-21)
+
+### Added
+- Context engine slot: `plugins.slots.contextEngine = "colony"` auto-configured by setup wizard and documented in README
+- Setup wizard now starts the sidecar, verifies health, checks LLM credentials, offers gateway restart, and runs `colony doctor`
+- Node.js/npm guard in wizard — warns if missing before attempting plugin build
+- Full identity awareness through Colony's context engine (colony_id, node_id, trust_tier, Genesis status)
+- 22 E2E integration tests covering all subsystems (30 passed, 1 skipped in latest run)
+
+### Changed
+- Naming cleanup: "safety" → "response gate" / "content classifier" across codebase
+- Setup wizard renumbered: 11 steps (was 10), now includes start + verify + doctor
+- README updated to reflect hardened wizard flow — one `colony init` and you're done
+
+### Fixed
+- 25+ API router bugfixes (method names, constructors, type coercion, sync/await mismatches)
+- VectorStore wiring: explicit `connect(dimensions)` + `ensure_collections()` after graph init
+- GoalStore persistence: `:memory:` → `colony-goals.db`
+- ResponseGate L1: passes when no session context (direct API calls)
+- API key auth middleware added (was completely missing)
