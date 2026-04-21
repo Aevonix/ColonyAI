@@ -113,7 +113,7 @@ def _read_network_id(chain_manager: Optional[Any]) -> str:
     return os.environ.get("COLONY_NETWORK_ID", "local")
 
 
-def _read_public_key(chain_manager: Optional[Any]) -> str:
+def _read_public_key(chain_manager: Optional[Any]) -> Optional[str]:
     try:
         if chain_manager is not None:
             keys = getattr(chain_manager, "keys", None)
@@ -123,7 +123,7 @@ def _read_public_key(chain_manager: Optional[Any]) -> str:
                     return str(pub)
     except Exception:
         pass
-    return "unknown"
+    return None
 
 
 def _resolve_inference_tiers() -> list[InferenceTier]:

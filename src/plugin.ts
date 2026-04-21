@@ -1694,13 +1694,13 @@ function safetyHook(
 
       if (res.decision === "pending") {
         // Colony has a "pending — hold for review" decision that doesn't
-        // map cleanly onto the SDK's immediate allow/cancel semantics.
-        // Treat pending as a block until a re-send queue lands; letting
-        // the chunk through would be the unsafe direction.
-        // TODO(#7 Phase 7+): wire a proper re-send path once colony
-        // supports deferred delivery back to the host.
+        // map cleanly onto the SDK's immediate allow/cancel semantics;
+        // the chunk is cancelled (safe direction) but surfaced on a
+        // distinct log tag with layer/reason metadata so operators can
+        // tell held messages apart from outright blocks until a proper
+        // re-send queue lands.
         logger?.warn(
-          `[colony.safety] pending decision treated as block for ${event.to}: ${res.reason ?? "<no reason>"}`,
+          `[colony.safety.held] held for review — to=${event.to} layer=${res.blocking_layer ?? "?"} reason=${res.reason ?? "<no reason>"}`,
         );
         return { cancel: true };
       }
