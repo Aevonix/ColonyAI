@@ -219,10 +219,14 @@ async def _check_email_reply(params: dict) -> dict:
     try:
         from colony_sidecar.secrets.manager import SecretsManager
         from colony_sidecar.email.providers import IMAPProvider
-    except ImportError as exc:
-        raise RuntimeError(
-            "_check_email_reply requires colony.secrets and colony.email"
-        ) from exc
+    except ImportError:
+        logger.debug("email_reply check skipped — IMAP provider not installed")
+        return {
+            "condition_met": False,
+            "message_id": None,
+            "from": None,
+            "details": {"unavailable": "imap_provider_not_installed"},
+        }
 
     sm = SecretsManager()
     host = sm.get_required("COLONY_IMAP_HOST")

@@ -824,14 +824,34 @@ class ColonyGraph:
             logger.error("get_person failed for %s: %s", person_id, exc)
             return None
 
+    # Property names permitted on Person nodes. Values are always passed as
+    # parameters; this allowlist guards the one remaining interpolation point
+    # (the property name itself) against accidental misuse from a caller that
+    # forwards an attacker-controlled dict.
+    _PERSON_PROPS_ALLOWED = frozenset({
+        "name", "tier", "score", "lastInteraction", "created_at",
+        "baseline_msg_count",
+        "baseline_length_mean",
+        "baseline_length_m2",
+        "baseline_length_std",
+        "baseline_hour_histogram",
+        "baseline_updated_at",
+    })
+
     async def update_person(self, person_id: str, **props: Any) -> None:
         """Update arbitrary properties on a Person node.
 
         Only called from trusted internal code (BaselineStore).
-        All values are passed as Neo4j parameters — no string interpolation.
+        All values are passed as Neo4j parameters; property names are
+        validated against ``_PERSON_PROPS_ALLOWED``.
         """
         if not props:
             return
+        unknown = set(props) - self._PERSON_PROPS_ALLOWED
+        if unknown:
+            raise ValueError(
+                f"update_person rejected unknown properties: {sorted(unknown)}"
+            )
         set_clauses = ", ".join(f"p.{k} = ${k}" for k in props)
         cypher = f"MATCH (p:Person {{id: $person_id}}) SET {set_clauses}"
         t0 = time.monotonic()

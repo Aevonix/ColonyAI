@@ -19,6 +19,20 @@ BLOCKED_MODULES = frozenset({
     "marshal", "importlib.util",
 })
 
+# Dunder attributes that reach the runtime's object graph and let a skill
+# escape the builtins allowlist via chains like
+# ``().__class__.__bases__[0].__subclasses__()`` or
+# ``getattr(__builtins__, "eval")``. This is a *defense-in-depth* check —
+# real isolation requires a subprocess+seccomp sandbox, which is tracked
+# separately; this scanner just makes the obvious escape patterns loud.
+BLOCKED_DUNDERS = frozenset({
+    "__class__", "__bases__", "__mro__", "__subclasses__",
+    "__globals__", "__builtins__", "__import__",
+    "__getattribute__", "__dict__", "__code__",
+})
+
+_DYNAMIC_ATTR_FUNCS = frozenset({"getattr", "setattr", "delattr"})
+
 
 @dataclass
 class ScanFinding:
@@ -54,7 +68,13 @@ class ASTScanner:
       - Imports of blocked modules                            [IMP001]
       - base64.decode + exec/eval combinations               [OBF001]
       - os.environ access to undeclared variables            [ENV001]
+      - Dunder access used to escape the builtins allowlist  [ESC001]
+      - getattr/setattr/delattr with dynamic/dunder targets  [ESC002]
       - socket.connect to non-declared hosts                 [NET001]
+
+    Defense-in-depth only: a determined attacker can still compose escapes
+    this static scanner misses. Real isolation needs a subprocess + seccomp
+    sandbox, which is out of scope here.
     """
 
     def scan(self, source: str, skill_id: str) -> ASTScanResult:
@@ -129,6 +149,38 @@ class ASTScanner:
                         message="os.environ access detected; verify env vars are declared.",
                         evidence=ast.unparse(node)[:200],
                     ))
+
+                # ESC001: dunder access used to escape the builtins allowlist
+                if node.attr in BLOCKED_DUNDERS:
+                    findings.append(ScanFinding(
+                        rule_id="ESC001",
+                        severity="critical",
+                        line=node.lineno,
+                        message=f"Blocked dunder access: .{node.attr}",
+                        evidence=ast.unparse(node)[:200],
+                    ))
+
+            # ESC002: getattr/setattr/delattr with a dynamic or dunder target
+            if isinstance(node, ast.Call):
+                func_name = self._call_name(node)
+                if func_name in _DYNAMIC_ATTR_FUNCS and len(node.args) >= 2:
+                    second = node.args[1]
+                    flagged = False
+                    # getattr(x, "__class__") or similar constant dunder
+                    if isinstance(second, ast.Constant) and isinstance(second.value, str):
+                        if second.value in BLOCKED_DUNDERS:
+                            flagged = True
+                    # getattr(x, some_variable) — dynamic attribute name
+                    elif not isinstance(second, ast.Constant):
+                        flagged = True
+                    if flagged:
+                        findings.append(ScanFinding(
+                            rule_id="ESC002",
+                            severity="critical",
+                            line=node.lineno,
+                            message=f"{func_name}() with dynamic or dunder attribute",
+                            evidence=ast.unparse(node)[:200],
+                        ))
 
         # OBF001: base64 + exec combo (check if both in imports or calls)
         has_base64 = "base64" in imported_modules

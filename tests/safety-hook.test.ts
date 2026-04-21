@@ -286,7 +286,7 @@ describe("safetyHook", () => {
     );
   });
 
-  it("treats a 'pending' decision as a block and logs the reason", async () => {
+  it("treats a 'pending' decision as a held-for-review block and surfaces it on a distinct log tag", async () => {
     const { ctx, warn, logger } = makeCtx({
       caps: ["response_gate"],
       safetyResult: {
@@ -301,6 +301,7 @@ describe("safetyHook", () => {
 
     expect(result).toEqual({ cancel: true });
     expect(warn).toHaveBeenCalled();
-    expect(warn.mock.calls[0][0]).toMatch(/pending/);
+    expect(warn.mock.calls[0][0]).toMatch(/colony\.safety\.held/);
+    expect(warn.mock.calls[0][0]).toMatch(/awaiting human review/);
   });
 });

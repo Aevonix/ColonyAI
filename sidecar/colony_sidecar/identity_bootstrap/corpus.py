@@ -117,7 +117,7 @@ class ArchitectureManifest:
     colony_name: str
     colony_version: str
     network_id: str
-    public_key_hex: str
+    public_key_hex: Optional[str]
     layers: List[LayerRecord] = field(default_factory=list)
     api_endpoints: List[EndpointRecord] = field(default_factory=list)
     cognition_phases: List[CognitionPhase] = field(default_factory=list)
