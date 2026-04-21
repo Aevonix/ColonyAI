@@ -2,9 +2,75 @@
 
 **Sovereign intelligence and memory for AI agents. Designed to mesh into a unified super-agent.**
 
-Colony gives any agent harness a durable cognitive layer: memory, reasoning, goals, relationships, proactive delivery, and cryptographic identity. One HTTP API covers it. A TypeScript plugin loads into your host. A Python sidecar holds the state and runs the work.
+-----
 
-Colony runs as a plugin. It needs a harness to plug into (OpenClaw, Hermes, or anything that speaks the Colony plugin contract). Today that's the full scope: 22 subsystems, one user, one install. The roadmap grows the intelligence outward. Your nodes form your Colony. Your Colony federates with other Colonies. Federations connect through the SuperColony Network. Each phase expands what the shared intelligence can do.
+## Quick Start
+
+### With OpenClaw (recommended)
+
+```bash
+# Install the sidecar
+pip install colony-sidecar
+
+# Run the setup wizard — one command handles everything
+# • Dependencies + Neo4j + hardware scan + model download
+# • Plugin config + context engine routing
+# • Sidecar start + health verify + doctor check + gateway restart
+colony init
+
+# That's it. Colony is running and wired into OpenClaw.
+```
+
+**Prerequisites:** Python 3.11+, Docker (auto-installed by `colony init` if missing), [OpenClaw](https://github.com/openclaw/openclaw) with an LLM key configured.
+
+### Docker Compose
+
+```bash
+git clone https://github.com/Aevonix/ColonyAI.git
+cd ColonyAI
+
+# Set your credentials
+cp .env.example .env   # edit NEO4J_PASSWORD and COLONY_API_KEY
+
+docker compose up -d    # Neo4j + Colony sidecar
+```
+
+### Verify
+
+```bash
+colony status           # sidecar health
+COLONY_API_KEY=your-key colony doctor   # full subsystem check
+```
+
+### Context Engine
+
+Colony ships a context engine that assembles rich, multi-source context (memory, goals, contacts, world model, skills, identity) into a single prompt injection. It's set automatically by `colony init` when OpenClaw is detected. To set it manually:
+
+```bash
+openclaw config set plugins.slots.contextEngine colony
+```
+
+Without this, OpenClaw uses the legacy context engine and Colony's context assembly is bypassed.
+
+-----
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Why Colony](#why-colony)
+- [What Colony Is Today](#what-colony-is-today)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [API Reference](#api-reference)
+- [What Colony Is Not](#what-colony-is-not)
+- [Roadmap](#roadmap)
+- [Installation Profiles](#installation-profiles)
+- [CLI Reference](#cli-reference)
+- [Development](#development)
+- [OpenClaw Integration](#openclaw-integration)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 -----
 
@@ -18,7 +84,7 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ## What Colony Is Today
 
-v1.0 is the intelligence system. 22 wired subsystems. Everything below works now.
+22 wired subsystems. Everything below works now.
 
 ### 22 Wired Subsystems
 
@@ -60,64 +126,6 @@ v1.0 is the intelligence system. 22 wired subsystems. Everything below works now
 **Types stay in sync.** Python Pydantic schemas export an OpenAPI spec. TypeScript types generate from the spec. No client/server drift.
 
 **Authenticated by default.** When `COLONY_API_KEY` is set, all API endpoints require Bearer token authentication. Without it, the API runs in open dev mode.
-
------
-
-## Table of Contents
-
-- [Why Colony](#why-colony)
-- [What Colony Is Today](#what-colony-is-today)
-- [Quick Start](#quick-start)
-- [Architecture](#architecture)
-- [Configuration](#configuration)
-- [API Reference](#api-reference)
-- [What Colony Is Not](#what-colony-is-not)
-- [Roadmap](#roadmap)
-- [Installation Profiles](#installation-profiles)
-- [CLI Reference](#cli-reference)
-- [Development](#development)
-- [OpenClaw Integration](#openclaw-integration)
-- [Deployment](#deployment)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
-
------
-
-## Quick Start
-
-### Prerequisites
-
-Python 3.11+ and Docker. Docker is auto-installed by `colony init` if missing.
-
-### Install
-
-```bash
-git clone https://github.com/Aevonix/ColonyAI.git
-cd colony/sidecar
-
-pip install -e .
-colony init    # setup wizard: deps, Neo4j, hardware scan, model pre-download, start, verify
-```
-
-`colony init` handles the full first-run experience: dependency installation, Neo4j setup, hardware detection, model pre-download, self-knowledge seeding, OpenClaw plugin configuration (including context engine routing), sidecar startup with health verification, LLM credential check, gateway restart, and a `colony doctor` run to confirm all subsystems are healthy. One command, done.
-
-### Context Engine
-
-Colony ships a context engine that assembles rich, multi-source context (memory, goals, contacts, world model, skills, identity) into a single prompt injection. To activate it:
-
-```bash
-openclaw config set plugins.slots.contextEngine colony
-```
-
-This is set automatically by `colony init` when OpenClaw is detected. Without it, OpenClaw uses the legacy context engine and Colony's context assembly is bypassed.
-
-### Docker Compose
-
-For containerized deployments:
-
-```bash
-cp .env.example .env   # set NEO4J_PASSWORD and COLONY_API_KEY
-docker compose up -d    # Neo4j + Colony sidecar
 ```
 
 ### Verify
