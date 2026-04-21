@@ -85,7 +85,7 @@ Using `0.x` until 1.0 signals API may change. Each phase bump increments MINOR.
 ### Package Sync
 
 Both packages always share the same version:
-- `colony-sidecar` (PyPI)
+- `colonyai` (PyPI)
 - `@aevonix/colonyai` (npm)
 
 Mismatched versions are unsupported.

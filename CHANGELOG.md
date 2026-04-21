@@ -58,3 +58,9 @@ Initial scaffold. Adapter shapes did not match the real SDK contracts. Supersede
 - GoalStore persistence: `:memory:` → `colony-goals.db`
 - ResponseGate L1: passes when no session context (direct API calls)
 - API key auth middleware added (was completely missing)
+
+## 0.1.2 (2026-04-21)
+
+### Changed
+- Renamed PyPI package from `colony-sidecar` to `colonyai` for naming consistency across all registries
+- Updated README and CONTRIBUTING to reflect `pip install colonyai`
