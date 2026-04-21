@@ -1282,6 +1282,27 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
         except Exception as exc:
             logger.warning("signals_ingest raw signals failed: %s", exc)
 
+    # Fire cognition trigger for high-priority signals (best-effort)
+    if recorded > 0:
+        try:
+            from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled
+            if _cognition_enabled():
+                import asyncio as _aio
+                content = ""
+                if incoming and incoming.content:
+                    content = incoming.content[:500]
+                _aio.create_task(trigger_cognition(
+                    trigger_type="signal_ingest",
+                    context={
+                        "signal_type": "engagement",
+                        "signal_data": {"content": content},
+                        "person_id": body.context.contact_id if body.context else "",
+                    },
+                    priority="low",
+                ))
+        except Exception:
+            logger.debug("cognition trigger from signal_ingest failed", exc_info=True)
+
     return SignalIngestResponse(accepted=True, signals_recorded=recorded)
 
 
@@ -1292,6 +1313,7 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
 @router.post("/turns/sync", response_model=TurnSyncResponse)
 async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # Best-effort: store turn metadata in the graph if available
+    graph_ok = False
     if _graph is not None:
         try:
             await _graph.record_turn(
@@ -1302,11 +1324,28 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                 tools_used=body.tools_used,
                 summary=body.summary,
             )
-            return TurnSyncResponse(accepted=True, continuity_updated=True)
+            graph_ok = True
         except Exception as exc:
             logger.warning("turns_sync failed: %s", exc)
 
-    return TurnSyncResponse(accepted=True, continuity_updated=False, skipped_reason="no_graph_store")
+    # Fire cognition trigger (best-effort, non-blocking)
+    try:
+        from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled
+        if _cognition_enabled():
+            import asyncio
+            asyncio.create_task(trigger_cognition(
+                trigger_type="turn_sync",
+                context={
+                    "conversation_text": body.summary or "",
+                    "person_id": body.context.contact_id,
+                    "session_id": body.context.session_id,
+                },
+                priority="normal",
+            ))
+    except Exception:
+        logger.debug("cognition trigger from turn_sync failed", exc_info=True)
+
+    return TurnSyncResponse(accepted=True, continuity_updated=graph_ok, skipped_reason=None if graph_ok else "no_graph_store")
 
 
 # ---------------------------------------------------------------------------
