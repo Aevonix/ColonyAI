@@ -486,7 +486,11 @@ async def memory_status():
 @router.post("/memory/write", response_model=MemoryWriteResponse)
 async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
     if _graph is None:
-        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+        # Degrade gracefully to match the pattern used by the rest of
+        # the router (list_insights, list_briefings, etc.): when the
+        # underlying store isn't wired, accept the call and mark the
+        # write as not persisted rather than raising 501.
+        return MemoryWriteResponse(id="", accepted=False)
     try:
         memory_id = await _graph.store_memory(
             content=body.content,

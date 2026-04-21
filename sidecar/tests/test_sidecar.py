@@ -535,6 +535,10 @@ def test_build_assistant_message():
 
 @pytest.mark.asyncio
 async def test_tool_executor_unknown_tool():
+    """Unknown tools return a structured error envelope so the LLM can
+    see the miss and adjust — the executor does NOT defer back to the
+    host (that earlier design was superseded when Colony grew its own
+    native-tool surface)."""
     from colony_sidecar.reasoning.executor import ToolExecutor
     executor = ToolExecutor()
     results = await executor.execute_batch([
@@ -542,7 +546,9 @@ async def test_tool_executor_unknown_tool():
     ])
     assert len(results) == 1
     parsed = json.loads(results[0]["content"])
-    assert parsed["status"] == "needs_host_execution"
+    assert parsed["error"] is True
+    assert "unknown_tool" in parsed["message"]
+    assert "available_tools" in parsed
 
 
 @pytest.mark.asyncio
