@@ -61,6 +61,53 @@ colony generate-types
 npm run generate-types
 ```
 
+## Versioning
+
+Colony uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`) aligned to development phases:
+
+| Bump | When |
+|---|---|
+| **MAJOR** | Breaking API changes, phase transitions |
+| **MINOR** | New subsystems, endpoints, features (backward-compatible) |
+| **PATCH** | Bugfixes, doc updates, config changes |
+
+### Phase Mapping
+
+- `0.1.x` — Phase 1: Intelligence System
+- `0.2.x` — Phase 2: Multimodal
+- `0.3.x` — Phase 3: Colony Meshing
+- `0.4.x` — Phase 4: Federation
+- `0.5.x` — Phase 5: SuperColony Network
+- `1.0.0` — First stable release
+
+Using `0.x` until 1.0 signals API may change. Each phase bump increments MINOR.
+
+### Package Sync
+
+Both packages always share the same version:
+- `colony-sidecar` (PyPI)
+- `@aevonix/colonyai` (npm)
+
+Mismatched versions are unsupported.
+
+### Changelog
+
+Every release gets a dated entry in `CHANGELOG.md` with these categories:
+
+- **Added** — new subsystems, endpoints, features
+- **Changed** — behavior changes (backward-compatible)
+- **Deprecated** — scheduled removals
+- **Removed** — breaking changes
+- **Fixed** — bugfixes
+
+### Release Flow
+
+1. Update version in `package.json` + `pyproject.toml`
+2. Update `CHANGELOG.md` with dated entry
+3. Commit: `release: v0.1.x`
+4. Tag + push: `git tag v0.1.x && git push --tags`
+5. CI publishes PyPI + npm + Docker automatically
+
 ## Architecture Notes
 
 - **Sidecar owns all state** — Neo4j for graph memory, SQLite for contacts/goals/task queue
