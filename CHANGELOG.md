@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.3.0 (2026-04-21)
+
+Cognition substrate, commitment tracking, LLM compression tier 3, and native tool fixes.
+
+### Cognition Substrate
+- Commitment Store: SQLite-backed CRUD, status transitions (pending/fulfilled/cancelled/broken), overdue detection, delete guard (cancel first)
+- Context Assembly: Pending Commitments section (priority 72) injected per contact
+- Cognition Prompt + Trigger: `POST /v1/host/cognition/trigger`, throttle, `cognition.requested` event
+- Trigger Pipeline: turn sync + signal ingest auto-fire cognition triggers (non-blocking)
+- Config: `COLONY_COGNITION_ENABLED` (default false), `COLONY_COGNITION_MODEL`, `COLONY_COGNITION_THROTTLE_SECONDS` (default 30)
+- Config: `COLONY_COMMITMENTS_ENABLED` (default true), `COLONY_COMMITMENT_CHECK_INTERVAL_MINUTES` (default 30)
+
+### LLM Compression Tier 3
+- `compress_sections_with_llm()` async wrapper for aggressive mode
+- Falls back to sync tight-truncation on any LLM error
+- Automatically used when `_llm_router` is wired and mode is aggressive
+
+### DIGEST Delivery Channel
+- `build_digest_bundle()`, `consume_digest()`, `flush_digests_to_gateway()`
+- Scheduled daily via autonomy scheduler (configurable interval)
+- Config: `COLONY_DIGEST_HEADER`, `COLONY_DIGEST_INTERVAL_SECONDS` (default 86400)
+
+### LLM Entity Extractor
+- Fallback for ExtractionPipeline when format extractors return nothing
+- Bounded input (12K chars) and output (1024 tokens), JSON-only parsing
+- Graceful degradation: returns empty list on any failure
+
+### Fixes
+- Native tool registration: register `.execute` methods instead of class instances (critical bug, tools were uncallable)
+- ToolExecutor.get_definitions: only advertise tools with registered handlers
+- execute_batch: JSON-serialize dict/list results instead of str()
+- list_research endpoint: call pipeline instead of returning empty list
+- Duplicate `set_commitment_store` import removed
+- `.gitignore`: added `sidecar/events/`
+
 ## 0.2.0 (2026-04-21)
 
 Security hardening, event journal, and adaptive context compression.

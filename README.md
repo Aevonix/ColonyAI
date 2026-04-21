@@ -14,7 +14,7 @@ Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw,
 
 Each Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner.
 
-The current release delivers 26 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
+The current release delivers 28 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
 
 -----
 
@@ -98,7 +98,7 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ## What Colony Is Today
 
-26 wired subsystems. Everything below works now.
+28 wired subsystems. Everything below works now.
 
 ### 26 Wired Subsystems
 
@@ -150,7 +150,7 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ```bash
 curl http://localhost:7777/v1/host/health
-# Expected: {"status":"ok","capabilities":[...26 subsystems...]}
+# Expected: {"status":"ok","capabilities":[...28 subsystems...]}
 ```
 
 ### Full Health Check
@@ -195,7 +195,7 @@ Two deployable units. A thin TypeScript plugin that loads into your host process
 │  │ FastAPI Server                                      │            │
 │  └──────────────────────────┬──────────────────────────┘            │
 │  ┌──────────────────────────▼──────────────────────────┐            │
-│  │ SubsystemRegistry (26 subsystems)                   │            │
+│  │ SubsystemRegistry (28 subsystems)                   │            │
 │  └─────────────────────────────────────────────────────┘            │
 └──────────────────────────┬───────────────────────────────────────────┘
                            │
@@ -350,7 +350,7 @@ Colony ships in phases. The intelligence system is v1.0. Each phase expands the 
 
 ### Phase 1: Intelligence System (Shipped)
 
-Single-node Colony mounted into a host harness. 26 subsystems wired. Everything described above in "What Colony Is Today."
+Single-node Colony mounted into a host harness. 28 subsystems wired. Everything described above in "What Colony Is Today."
 
 ### Phase 2: Multimodal (Shipped)
 
@@ -491,7 +491,7 @@ Exports the OpenAPI spec and regenerates `src/types-generated.ts`.
 ```
 colony/
 ├── src/                      # TypeScript plugin (thin HTTP client)
-├── sidecar/                  # Python sidecar (stateful, 26 subsystems)
+├── sidecar/                  # Python sidecar (stateful, 28 subsystems)
 │   └── colony_sidecar/
 │       ├── api/              # FastAPI routers + schemas
 │       ├── autonomy/         # Autonomy loop
