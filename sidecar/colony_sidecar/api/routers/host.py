@@ -3020,7 +3020,6 @@ async def delete_commitment(commitment_id: str):
 
     deleted = _commitment_store.delete(commitment_id)
     if not deleted:
-        # Check if it exists but isn't terminal
         existing = _commitment_store.get(commitment_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="Commitment not found")
@@ -3029,6 +3028,28 @@ async def delete_commitment(commitment_id: str):
                 status_code=409,
                 detail=f"Cannot delete commitment in '{existing['status']}' state. Cancel it first.",
             )
+
+
+# ---------------------------------------------------------------------------
+# Cognition Substrate
+# ---------------------------------------------------------------------------
+
+@router.post("/cognition/trigger", response_model=CognitionTriggerResponse)
+async def cognition_trigger(body: CognitionTriggerRequest) -> CognitionTriggerResponse:
+    """Trigger a cognition cycle via OpenClaw subagent spawn.
+
+    The sidecar emits a cognition.requested event with the built prompt.
+    The Colony plugin picks this up and calls sessions_spawn with the
+    configured model and restricted tool allowlist.
+    """
+    from colony_sidecar.cognition.trigger import trigger_cognition
+
+    result = await trigger_cognition(
+        trigger_type=body.trigger_type,
+        context=body.context,
+        priority=body.priority,
+    )
+    return CognitionTriggerResponse(**result)
 
 
 @router.post("/seed", response_model=SeedResponse)

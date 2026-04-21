@@ -82,6 +82,7 @@ export type HostEventType =
   | "commitment.fulfilled"
   | "commitment.overdue"
   | "commitment.cancelled"
+  | "cognition.requested"
   | "log";
 
 export interface HostEvent {
