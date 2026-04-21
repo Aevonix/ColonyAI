@@ -10,7 +10,7 @@
 
 ```bash
 # Install the sidecar
-pip install colony-sidecar
+pip install colonyai
 
 # Run the setup wizard — one command handles everything
 # • Dependencies + Neo4j + hardware scan + model download
@@ -539,13 +539,13 @@ The plugin registers 22 capabilities (memory, consolidate, signals, embed, conte
 ### Docker
 
 ```bash
-docker build -t colony-sidecar .
+docker build -t colonyai .
 docker run -d \
   -p 7777:7777 \
   -e NEO4J_URI=bolt://neo4j:7687 \
   -e NEO4J_PASSWORD=password \
   -e COLONY_API_KEY=your-key \
-  colony-sidecar
+  colonyai
 ```
 
 ### Docker Compose
