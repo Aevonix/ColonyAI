@@ -7,6 +7,7 @@ import { ColonyApiError, ColonySidecarClient } from "./sidecar-client.js";
 import type {
   ContextSection,
   HostEvent,
+  HostEventType,
   HostHealthResponse,
   HostIdentity,
   HostMessage,
@@ -2042,6 +2043,7 @@ function eventsLifecycleService(
   toolRegistrar?: ToolRegistrarHandle,
 ) {
   let subscription: { close: () => void } | null = null;
+  let lastEventTimestamp: string | undefined;
 
   return {
     id: "colony-events",
@@ -2053,16 +2055,24 @@ function eventsLifecycleService(
         return;
       }
       try {
-        subscription = ctx.client.openEvents((event: HostEvent) => {
-          // Surface the event via OpenClaw's logger so operators see
-          // the cognition stream in plugin diagnostics.
-          try {
-            logger?.info(`[colony.event] ${summarizeHostEvent(event)}`);
-          } catch (cbErr) {
-            logger?.warn(
-              `[colony] events: callback error on ${event.type} (${String(cbErr)})`,
-            );
-          }
+        subscription = ctx.client.openEvents(
+          (event: HostEvent) => {
+            // Track the timestamp of every event for reconnect replay
+            const ts = (event as unknown as Record<string, unknown>).occurred_at as string | undefined;
+            if (ts) lastEventTimestamp = ts;
+
+            // Ignore replay_complete frames (these are journal replays, not live events)
+            if (event.type === ("replay_complete" as HostEventType)) return;
+
+            // Surface the event via OpenClaw's logger so operators see
+            // the cognition stream in plugin diagnostics.
+            try {
+              logger?.info(`[colony.event] ${summarizeHostEvent(event)}`);
+            } catch (cbErr) {
+              logger?.warn(
+                `[colony] events: callback error on ${event.type} (${String(cbErr)})`,
+              );
+            }
 
           // Proactive_message is the only event that spawns a subagent
           // turn — handled inline because it needs the OpenClaw API.
@@ -2085,7 +2095,8 @@ function eventsLifecycleService(
                 }
               : undefined,
           });
-        });
+        },
+        lastEventTimestamp);
         logger?.info(
           `[colony] events: subscribed to ${ctx.config.sidecarUrl}/v1/host/events`,
         );

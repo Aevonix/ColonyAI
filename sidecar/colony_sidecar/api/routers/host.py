@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
 from colony_sidecar.goals.store import GoalNotFoundError
@@ -1348,7 +1348,8 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
 async def events_ws(ws: WebSocket) -> None:
     await ws.accept()
 
-    # Read auth message
+    # Read auth message (may include lastEventId for reconnect replay)
+    last_event_id: Optional[str] = None
     try:
         raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
         import json as _json
@@ -1363,12 +1364,37 @@ async def events_ws(ws: WebSocket) -> None:
         ):
             await ws.close(code=4003, reason="Invalid API key")
             return
+        # Client sends lastEventId (ISO timestamp) to replay missed events
+        last_event_id = msg.get("lastEventId")
     except asyncio.TimeoutError:
         await ws.close(code=4001, reason="Auth timeout")
         return
     except Exception:
         await ws.close(code=4001, reason="Invalid auth")
         return
+
+    # Replay missed events if client provided lastEventId
+    if last_event_id:
+        try:
+            from colony_sidecar.events.journal import replay_events
+            result = replay_events(since=last_event_id, limit=500)
+            for event in result["events"]:
+                await ws.send_json({
+                    "type": event["type"],
+                    "occurred_at": event["recordedAt"],
+                    "payload": event.get("data", {}),
+                    "seq": event["seq"],
+                })
+            if result["events"]:
+                await ws.send_json({
+                    "type": "replay_complete",
+                    "replayedCount": len(result["events"]),
+                    "lastSeq": result["lastSeq"],
+                })
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Event replay failed for lastEventId=%s", last_event_id, exc_info=True
+            )
 
     q: asyncio.Queue = asyncio.Queue()
     _event_subscribers.append(q)
@@ -1383,6 +1409,24 @@ async def events_ws(ws: WebSocket) -> None:
             _event_subscribers.remove(q)
         except ValueError:
             pass
+
+
+@router.get("/events/replay")
+async def events_replay(
+    since: str = Query(..., description="ISO 8601 timestamp — replay events after this time"),
+    limit: int = Query(500, ge=1, le=1000, description="Max events to return"),
+    types: Optional[str] = Query(None, description="Comma-separated event type filter"),
+) -> dict:
+    """Replay journal events for disconnected clients.
+
+    Returns events recorded after ``since`` in sequential order.
+    Use ``Last-Event-Id`` from a previous WebSocket frame or the
+    ``recordedAt`` timestamp of the last event you processed.
+    """
+    from colony_sidecar.events.journal import replay_events
+
+    type_list = [t.strip() for t in types.split(",")] if types else None
+    return replay_events(since=since, limit=limit, types=type_list)
 
 
 # ---------------------------------------------------------------------------

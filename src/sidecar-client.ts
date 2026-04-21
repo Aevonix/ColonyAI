@@ -448,6 +448,35 @@ export class ColonySidecarClient {
   // --- Events stream -------------------------------------------------------
 
   /**
+   * Replay missed events from the persistent journal.
+   *
+   * Call this on WebSocket reconnect with the timestamp of the last
+   * event you successfully processed. Returns events recorded after
+   * that timestamp, up to ``limit``.
+   */
+  async replayEvents(
+    since: string,
+    limit: number = 500,
+    types?: string[],
+  ): Promise<{
+    events: Array<{
+      seq: number;
+      ulid: string;
+      type: string;
+      recordedAt: string;
+      data: Record<string, unknown>;
+    }>;
+    lastSeq: number;
+    hasMore: boolean;
+  }> {
+    const params = new URLSearchParams({ since, limit: String(limit) });
+    if (types && types.length > 0) {
+      params.set("types", types.join(","));
+    }
+    return this.get(`/v1/host/events/replay?${params}`);
+  }
+
+  /**
    * Open the host events WebSocket and invoke `onEvent` for every frame.
    * Returns a `close()` handle. The caller is responsible for retry —
    * this client does not auto-reconnect because reconnect policy is a
@@ -462,7 +491,10 @@ export class ColonySidecarClient {
    * header isn't read by colony — first-message auth is the
    * supported path.
    */
-  openEvents(onEvent: (event: HostEvent) => void): { close: () => void } {
+  openEvents(
+    onEvent: (event: HostEvent) => void,
+    lastEventId?: string,
+  ): { close: () => void } {
     const url = this.base.replace(/^http/, "ws") + "/v1/host/events";
     const ws = new WebSocket(url);
 
@@ -470,7 +502,12 @@ export class ColonySidecarClient {
 
     ws.on("open", () => {
       try {
-        ws.send(JSON.stringify({ type: "auth", token: this.config.apiKey }));
+        const authMsg: Record<string, string> = {
+          type: "auth",
+          token: this.config.apiKey ?? "",
+          ...(lastEventId ? { lastEventId } : {}),
+        };
+        ws.send(JSON.stringify(authMsg));
       } catch {
         // Socket closed mid-handshake; the close handler will fire.
       }
