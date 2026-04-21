@@ -74,6 +74,13 @@ const MemoryWriteSchema = Type.Object({
   tags: Type.Optional(Type.Array(Type.String())),
 });
 
+const VerifyAuthoritySchema = Type.Object({
+  data: Type.String({
+    description:
+      "Arbitrary payload to bind to the attestation (e.g. a claim or statement).",
+  }),
+});
+
 // ---------------------------------------------------------------------------
 // Native tool factories
 // ---------------------------------------------------------------------------
@@ -175,6 +182,31 @@ export function buildMemoryWriteTool(
       } catch (err) {
         return textResult(
           JSON.stringify({ accepted: false, error: String(err) }),
+        );
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Authority-assertion tool — agent can request a signed attestation
+// ---------------------------------------------------------------------------
+
+export function buildVerifyAuthorityTool(ctx: ColonyPluginContext): AnyTool {
+  return {
+    name: "colony_verify_authority",
+    label: "Colony: verify authority",
+    description:
+      "Request a signed attestation from Colony's sidecar binding the given data to the colony's public key. Returns {valid, colony_id, signed_attestation, signer_public_key}.",
+    parameters: VerifyAuthoritySchema,
+    async execute(_toolCallId, params) {
+      const p = params as Static<typeof VerifyAuthoritySchema>;
+      try {
+        const res = await ctx.client.chainVerify(p.data, ctx.identity());
+        return textResult(JSON.stringify(res), res);
+      } catch (err) {
+        return textResult(
+          JSON.stringify({ valid: false, error: String(err) }),
         );
       }
     },
@@ -291,6 +323,8 @@ export function registerColonyTools(
       const memTool = buildMemoryWriteTool(ctx, memoryManager);
       register(() => memTool as never, { name: memTool.name });
     }
+    const authTool = buildVerifyAuthorityTool(ctx);
+    register(() => authTool as never, { name: authTool.name });
   };
 
   const refreshSkillTools = async () => {

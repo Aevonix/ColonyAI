@@ -1,4 +1,8 @@
-import { ColonyPluginConfigSchema, type ColonyPluginConfig } from "./config.js";
+import {
+  ColonyPluginConfigSchema,
+  withHostLLMEnvOverrides,
+  type ColonyPluginConfig,
+} from "./config.js";
 import { ColonyApiError, ColonySidecarClient } from "./sidecar-client.js";
 import type {
   ContextSection,
@@ -288,6 +292,13 @@ export interface IdentitySnapshot {
   node_id?: string;
   node_cert_fingerprint?: string;
   trust_tier?: "REGULAR" | "TRUSTED" | "PRIVILEGED" | "GENESIS";
+  /** Result of the last ``chainVerify`` call at plugin startup. */
+  chain_valid?: boolean;
+  /** Hex-encoded Ed25519 signature of ``colony_id:data:timestamp`` returned
+   *  by the sidecar. Present only when the key manager is loaded. */
+  signed_attestation?: string;
+  attested_at?: string;
+  signer_public_key?: string;
 }
 
 export interface ColonyPluginContext {
@@ -301,6 +312,12 @@ export interface ColonyPluginContext {
    * the existing (possibly empty) snapshot.
    */
   refreshIdentity: () => Promise<IdentitySnapshot>;
+  /**
+   * Ask the sidecar to verify the chain state and sign an attestation
+   * over ``data``. Caches the result in the identity snapshot. Never
+   * throws.
+   */
+  verifyChain: (data?: string) => Promise<IdentitySnapshot>;
   /**
    * Plugin-wide cache-invalidation bus. The WS event dispatcher writes
    * to it on memory/goal/world-model/briefing/skill updates so derived
@@ -316,7 +333,8 @@ export interface ColonyPluginContext {
 }
 
 function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
-  const config = ColonyPluginConfigSchema.parse(api.pluginConfig ?? {});
+  const parsed = ColonyPluginConfigSchema.parse(api.pluginConfig ?? {});
+  const config = withHostLLMEnvOverrides(parsed);
   const client = new ColonySidecarClient(config);
   const snapshot: IdentitySnapshot = {};
 
@@ -352,6 +370,23 @@ function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
     return { ...snapshot };
   };
 
+  const verifyChain = async (
+    data: string = "bootstrap-probe",
+  ): Promise<IdentitySnapshot> => {
+    try {
+      const res = await client.chainVerify(data, identity());
+      snapshot.chain_valid = Boolean(res?.valid);
+      if (res?.signed_attestation)
+        snapshot.signed_attestation = res.signed_attestation;
+      if (res?.attested_at) snapshot.attested_at = res.attested_at;
+      if (res?.signer_public_key)
+        snapshot.signer_public_key = res.signer_public_key;
+    } catch (err) {
+      api.logger?.warn(`[colony] chain verify failed: ${String(err)}`);
+    }
+    return { ...snapshot };
+  };
+
   const cache = createContextCache();
 
   return {
@@ -359,6 +394,7 @@ function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
     client,
     identity,
     refreshIdentity,
+    verifyChain,
     cache,
     logger: api.logger,
   };
@@ -2173,9 +2209,43 @@ export function createColonyPlugin(): unknown {
             );
           }
         })
+        .then(() => ctx.verifyChain())
+        .then((snap) => {
+          if (snap.chain_valid) {
+            api.logger.info(
+              `[colony] chain verified${snap.signed_attestation ? " (signed attestation)" : ""}`,
+            );
+          }
+        })
         .catch(() => {
-          /* refreshIdentity never throws — belt-and-braces */
+          /* refreshIdentity / verifyChain never throw — belt-and-braces */
         });
+
+      // Forward host LLM credentials if configured so the sidecar's
+      // ReasoningLoop can talk to the provider without its own keys.
+      if (ctx.config.hostLLM) {
+        const { hostLLM } = ctx.config;
+        ctx.client
+          .configureHost(
+            {
+              provider: hostLLM.provider,
+              api_key: hostLLM.apiKey,
+              base_url: hostLLM.baseUrl,
+              models: hostLLM.models ?? {},
+            },
+            ctx.identity(),
+          )
+          .then((res) =>
+            api.logger.info(
+              `[colony] host LLM configured provider=${res.provider ?? "?"}`,
+            ),
+          )
+          .catch((err) =>
+            api.logger.warn(
+              `[colony] host LLM configure failed: ${String(err)}`,
+            ),
+          );
+      }
     },
   });
 }
