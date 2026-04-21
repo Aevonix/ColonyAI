@@ -276,6 +276,125 @@ class ProactiveDeliveryBridge:
 
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------
+    # DIGEST channel
+    # ------------------------------------------------------------------
+
+    def get_pending_digest(self, person_id: str) -> List[PendingDelivery]:
+        """Return all unsent DIGEST-channel deliveries for ``person_id``."""
+        return [
+            d for d in self._pending
+            if d.person_id == person_id and d.channel == "digest" and not d.sent
+        ]
+
+    def pending_digest_recipients(self) -> List[str]:
+        """List distinct ``person_id`` values with pending DIGEST items."""
+        seen = set()
+        ordered: List[str] = []
+        for d in self._pending:
+            if d.channel != "digest" or d.sent:
+                continue
+            if d.person_id in seen:
+                continue
+            seen.add(d.person_id)
+            ordered.append(d.person_id)
+        return ordered
+
+    def build_digest_bundle(
+        self,
+        person_id: str,
+        *,
+        header: str = "Daily digest",
+    ) -> Optional[str]:
+        """Format this person's pending DIGEST items into a single bundled text
+        block. Does not mark anything consumed — pair with ``consume_digest``.
+        Items are sorted by urgency descending, then by queue time."""
+        items = self.get_pending_digest(person_id)
+        if not items:
+            return None
+        items = sorted(items, key=lambda d: (-d.urgency, d.queued_at))
+        lines = [f"[{header}]"]
+        for d in items:
+            prefix = "\u203c" if d.urgency >= 0.8 else "\u2022"
+            lines.append(f"{prefix} {d.content}")
+        return "\n".join(lines)
+
+    def consume_digest(self, person_id: str) -> int:
+        """Mark all pending DIGEST deliveries for ``person_id`` as sent.
+
+        Returns the count consumed. Each consumed item is also recorded
+        against the rate limiter so the digest flush respects per-person
+        caps consistently with the other channels.
+        """
+        consumed = 0
+        for d in self._pending:
+            if d.person_id == person_id and d.channel == "digest" and not d.sent:
+                d.sent = True
+                self._rate_limiter.record_delivery(d.person_id)
+                self._sent.append(d)
+                consumed += 1
+        if consumed and len(self._sent) > self._sent_max:
+            self._sent = self._sent[-self._sent_max:]
+        return consumed
+
+    async def flush_digests_to_gateway(
+        self,
+        *,
+        platform: Optional[str] = None,
+        chat_id: Optional[str] = None,
+        header: str = "Daily digest",
+    ) -> Dict[str, Any]:
+        """Bundle each recipient's pending DIGEST items and push the bundle
+        to the gateway.
+
+        When ``platform``/``chat_id`` are omitted, the bridge falls back to
+        the configured home channel (see ``resolve_home_channel``). If no
+        home channel is configured, the flush is a no-op that returns
+        ``{"sent": 0, "reason": "no_home_channel"}`` so a scheduler can
+        still drain the item count at call time.
+
+        Returns a summary dict: ``{"sent": N, "skipped": M, "recipients":
+        [...], "reason": ...}``.
+        """
+        recipients = self.pending_digest_recipients()
+        if not recipients:
+            return {"sent": 0, "skipped": 0, "recipients": []}
+
+        if not platform or not chat_id:
+            home = self.resolve_home_channel()
+            if home is None:
+                return {
+                    "sent": 0,
+                    "skipped": len(recipients),
+                    "recipients": recipients,
+                    "reason": "no_home_channel",
+                }
+            platform = platform or home["platform"]
+            chat_id = chat_id or home["chat_id"]
+
+        sent = 0
+        skipped = 0
+        for person_id in recipients:
+            bundle = self.build_digest_bundle(person_id, header=header)
+            if not bundle:
+                continue
+            ok = await self.push_to_gateway(
+                platform=platform,
+                chat_id=chat_id,
+                message=bundle,
+                source="digest",
+            )
+            if ok:
+                self.consume_digest(person_id)
+                sent += 1
+            else:
+                skipped += 1
+        return {
+            "sent": sent,
+            "skipped": skipped,
+            "recipients": recipients,
+        }
+
     def purge_sent(self) -> int:
         """Remove sent deliveries from the pending queue. Returns count purged."""
         before = len(self._pending)

@@ -64,28 +64,36 @@ class ToolExecutor:
         self._handlers[name] = handler
 
     def register_native_tools(self, search_orchestrator=None, sandbox_dir: str = "") -> None:
-        """Register Colony-native tools that run inside the sidecar."""
+        """Register Colony-native tools that run inside the sidecar.
+
+        Tool classes expose ``.execute(args) -> dict``; the executor's
+        handler contract is ``(args) -> Awaitable[str|dict]``, so we bind
+        the bound-method ``tool.execute`` directly — registering the bare
+        instance would fail because the tool classes are not callable.
+        """
         try:
             from colony_sidecar.reasoning.native_tools.calculate import CalculateTool
-            self.register("calculate", CalculateTool())
-        except Exception:
-            pass
+            self.register("calculate", CalculateTool().execute)
+        except Exception as exc:
+            logger.warning("register calculate tool failed: %s", exc)
 
         if search_orchestrator and search_orchestrator.has_providers:
             try:
                 from colony_sidecar.reasoning.native_tools.web_search import WebSearchTool
-                self.register("web_search", WebSearchTool(search_orchestrator))
-            except Exception:
-                pass
+                self.register("web_search", WebSearchTool(search_orchestrator).execute)
+            except Exception as exc:
+                logger.warning("register web_search tool failed: %s", exc)
 
         if sandbox_dir:
             try:
-                from colony_sidecar.reasoning.native_tools.file_ops import ReadFileTool, WriteFileTool, ListDirectoryTool
-                self.register("read_file", ReadFileTool(sandbox_dir))
-                self.register("write_file", WriteFileTool(sandbox_dir))
-                self.register("list_directory", ListDirectoryTool(sandbox_dir))
-            except Exception:
-                pass
+                from colony_sidecar.reasoning.native_tools.file_ops import (
+                    ReadFileTool, WriteFileTool, ListDirectoryTool,
+                )
+                self.register("read_file", ReadFileTool(sandbox_dir).execute)
+                self.register("write_file", WriteFileTool(sandbox_dir).execute)
+                self.register("list_directory", ListDirectoryTool(sandbox_dir).execute)
+            except Exception as exc:
+                logger.warning("register file_ops tools failed: %s", exc)
 
     def unregister(self, name: str) -> None:
         """Remove a tool handler."""
@@ -100,13 +108,15 @@ class ToolExecutor:
         Parameters
         ----------
         available_tools :
-            Optional filter for specific tool names to include.
+            Optional filter for specific tool names to include. When None,
+            defaults to the set of registered handlers.
 
         Returns
         -------
         List of OpenAI-format tool definitions.
         """
-        # Get Colony-native tool definitions
+        if available_tools is None:
+            available_tools = list(self._handlers.keys())
         return get_tool_definitions(tool_names=available_tools)
 
     async def execute_batch(
@@ -145,9 +155,13 @@ class ToolExecutor:
 
             try:
                 result = await handler(arguments)
+                if isinstance(result, (dict, list)):
+                    content = json.dumps(result)
+                else:
+                    content = str(result)
                 results.append({
                     "tool_call_id": tc_id,
-                    "content": str(result),
+                    "content": content,
                 })
             except Exception as exc:
                 logger.error("ToolExecutor: handler '%s' failed: %s", name, exc)
