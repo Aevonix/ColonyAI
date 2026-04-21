@@ -26,6 +26,8 @@ import type {
   SignalIngestResponse,
   TurnSyncRequest,
   TurnSyncResponse,
+  CommitmentResponse,
+  CommitmentListResponse,
 } from "./types.js";
 
 /**
@@ -164,6 +166,56 @@ export class ColonySidecarClient {
 
   updateGoal(goalId: string, body: { status?: string; progress?: number; notes?: string }): Promise<unknown> {
     return this.request("PATCH", `/v1/host/goals/${goalId}`, body);
+  }
+
+  // --- Commitments --------------------------------------------------------
+
+  createCommitment(body: {
+    person_id: string;
+    description: string;
+    due_at?: string;
+    priority?: number;
+    source_type?: "manual" | "autonomy" | "cognition";
+    source_context?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<CommitmentResponse> {
+    return this.post<CommitmentResponse>("/v1/host/commitments", body);
+  }
+
+  listCommitments(params?: {
+    person_id?: string;
+    status?: string;
+    overdue_only?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<CommitmentListResponse> {
+    const qs = new URLSearchParams();
+    if (params?.person_id) qs.set("person_id", params.person_id);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.overdue_only) qs.set("overdue_only", "true");
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const query = qs.toString();
+    return this.get<CommitmentListResponse>(`/v1/host/commitments${query ? `?${query}` : ""}`);
+  }
+
+  getCommitment(id: string): Promise<CommitmentResponse> {
+    return this.get<CommitmentResponse>(`/v1/host/commitments/${id}`);
+  }
+
+  updateCommitment(id: string, body: {
+    status?: "fulfilled" | "cancelled";
+    fulfilled_at?: string;
+    description?: string;
+    due_at?: string;
+    priority?: number;
+    metadata?: Record<string, unknown>;
+  }): Promise<CommitmentResponse> {
+    return this.patch<CommitmentResponse>(`/v1/host/commitments/${id}`, body);
+  }
+
+  deleteCommitment(id: string): Promise<void> {
+    return this.delete(`/v1/host/commitments/${id}`);
   }
 
   // --- Skills --------------------------------------------------------------
@@ -578,6 +630,21 @@ export class ColonySidecarClient {
     opts?: { signal?: AbortSignal },
   ): Promise<T> {
     return this.request<T>("POST", path, body, opts);
+  }
+
+  private async patch<T>(
+    path: string,
+    body: unknown,
+    opts?: { signal?: AbortSignal },
+  ): Promise<T> {
+    return this.request<T>("PATCH", path, body, opts);
+  }
+
+  private async delete<T>(
+    path: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<T> {
+    return this.request<T>("DELETE", path, undefined, opts);
   }
 
   private async request<T>(

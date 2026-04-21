@@ -79,6 +79,11 @@ export const ColonyPluginConfigSchema = z.object({
    */
   compression: z.enum(["off", "conservative", "balanced", "aggressive"]).default("off"),
 
+  commitmentsEnabled: z.boolean().default(true),
+
+  cognitionEnabled: z.boolean().default(false),
+  cognitionModel: z.string().optional(),
+
   requestTimeoutMs: z.number().int().positive().default(30_000),
 
   /**
