@@ -13,6 +13,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -1029,9 +1030,34 @@ async def memory_index(body: IndexRequest) -> IndexResponse:
 
 @router.post("/context/assemble", response_model=ContextAssembleResponse)
 async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleResponse:
-    # Context assembly pulls from memory + goals + contacts + world model + skills
+    # Context assembly pulls from identity + memory + goals + contacts + world model + skills
     sections: list[ContextSection] = []
     query_text = body.incoming_message.content if body.incoming_message else ""
+
+    # --- Colony Identity ---
+    identity_lines = []
+    try:
+        from colony_sidecar.chain.identity import get_or_create_colony_id, get_genesis_manifest
+        from colony_sidecar.chain.node import get_or_create_node_id
+        state_dir = Path(os.environ.get("COLONY_STATE_DIR", os.path.expanduser("~/.colony")))
+        colony_id = get_or_create_colony_id(state_dir)
+        identity_lines.append(f"Colony ID: {colony_id}")
+        manifest = get_genesis_manifest()
+        if manifest:
+            identity_lines.append("Genesis: yes (trust anchor)")
+        else:
+            identity_lines.append("Genesis: no")
+        node_id = get_or_create_node_id(state_dir)
+        identity_lines.append(f"Node ID: {node_id}")
+    except Exception as exc:
+        logger.debug("context_assemble identity section failed: %s", exc)
+    if identity_lines:
+        sections.append(ContextSection(
+            id="colony-identity",
+            title="Colony Identity",
+            body="\n".join(identity_lines),
+            priority=100,
+        ))
 
     # --- Memory ---
     if _graph is not None and query_text:
