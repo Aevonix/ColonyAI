@@ -718,6 +718,7 @@ class EnrichedContextRequest(BaseModel):
     context: HostTurnContext
     message: str
     features: Optional[Dict[str, bool]] = None
+    compression: Optional[Literal["off", "conservative", "balanced", "aggressive"]] = None
 
 
 class EnrichedContextResponse(BaseModel):

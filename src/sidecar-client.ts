@@ -103,6 +103,7 @@ export class ColonySidecarClient {
     context: HostTurnContext;
     message: string;
     features?: Record<string, boolean>;
+    compression?: "off" | "conservative" | "balanced" | "aggressive";
   }): Promise<ContextAssembleResponse> {
     return this.post<ContextAssembleResponse>("/v1/host/context/enriched", body);
   }
