@@ -2402,6 +2402,26 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
                 priority=50,
             ))
 
+    # Adaptive compression
+    compression_mode_str = None
+    if body.compression:
+        compression_mode_str = body.compression
+    try:
+        from colony_sidecar.compression import compress_sections, CompressionMode
+        result = compress_sections(
+            sections=[s.model_dump() for s in sections],
+            query=msg,
+            override_mode=CompressionMode(compression_mode_str) if compression_mode_str else None,
+        )
+        compressed = [ContextSection(**s) for s in result["sections"]]
+        return EnrichedContextResponse(
+            sections=compressed,
+            contact_id=contact_id,
+            metadata=result.get("metadata"),
+        )
+    except Exception:
+        logger.debug("compression failed, returning uncompressed", exc_info=True)
+
     return EnrichedContextResponse(sections=sections, contact_id=contact_id)
 
 
