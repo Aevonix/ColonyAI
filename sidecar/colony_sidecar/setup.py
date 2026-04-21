@@ -22,6 +22,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -213,6 +214,16 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
     api_key = values["COLONY_API_KEY"]
 
     try:
+        # Check for Node.js (needed to build the plugin)
+        has_npm = shutil.which("npm") is not None
+        if not has_npm:
+            print("  ⚠️ Node.js/npm not found — Colony plugin requires Node.js to build.")
+            print("     Install Node.js: https://nodejs.org/ or via your package manager")
+            install_anyway = _prompt("  Continue with config-only setup? [y/N]", "N")
+            if install_anyway.lower() not in ("y", "yes"):
+                print("  Install Node.js and re-run 'colony init' to complete plugin setup.")
+                return False
+
         # Enable the plugin
         cmds = [
             ["openclaw", "config", "set", "plugins.entries.colony.enabled", "true"],
@@ -238,21 +249,19 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
             else:
                 # Plugin install might not exist as a command — that's OK
                 print("  ✅ Colony plugin configured in OpenClaw config")
-        else:
-            # Need to build first
-            if (colony_root / "package.json").exists() and shutil.which("npm"):
-                print("  Building Colony plugin...")
-                build_result = subprocess.run(
-                    ["npm", "run", "build"],
-                    capture_output=True, text=True, timeout=60,
-                    cwd=str(colony_root),
-                )
-                if build_result.returncode == 0:
-                    print("  ✅ Colony plugin built and configured in OpenClaw")
-                else:
-                    print("  ⚠️ Plugin build failed — configured config but may need manual build")
+        elif has_npm and (colony_root / "package.json").exists():
+            print("  Building Colony plugin...")
+            build_result = subprocess.run(
+                ["npm", "run", "build"],
+                capture_output=True, text=True, timeout=60,
+                cwd=str(colony_root),
+            )
+            if build_result.returncode == 0:
+                print("  ✅ Colony plugin built and configured in OpenClaw")
             else:
-                print("  ✅ Colony plugin configured in OpenClaw config")
+                print("  ⚠️ Plugin build failed — configured config but may need manual build")
+        else:
+            print("  ✅ Colony plugin configured in OpenClaw config")
 
         # Set Colony as the active context engine
         ce_result = subprocess.run(
@@ -778,9 +787,110 @@ def run_init(root_dir: str | None = None) -> int:
 
     print()
 
-    # ── Step 9: Summary ─────────────────────────────────────────────────
+    # ── Step 10: Start sidecar + verify ─────────────────────────────────
 
-    print(_bold("Step 10: Setup complete!"))
+    print(_bold("Step 10: Start sidecar and verify"))
+    print()
+
+    start_now = _prompt("  Start the Colony sidecar now? [Y/n]", "Y")
+    sidecar_started = False
+
+    if start_now.lower() in ("y", "yes", ""):
+        print("  Starting Colony sidecar...")
+        # Start in background
+        sidecar_proc = subprocess.Popen(
+            [sys.executable, "-m", "colony_sidecar.server"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=str(base),
+            env={**os.environ, **values},
+        )
+
+        # Wait for it to come up
+        sidecar_url = f"http://{values['COLONY_SIDECAR_HOST']}:{values['COLONY_SIDECAR_PORT']}"
+        for attempt in range(15):
+            time.sleep(1)
+            try:
+                import httpx
+                r = httpx.get(f"{sidecar_url}/v1/host/health", timeout=2)
+                if r.status_code == 200:
+                    sidecar_started = True
+                    caps = r.json().get("capabilities", [])
+                    print(f"  ✅ Sidecar running — {len(caps)} capabilities")
+                    break
+            except Exception:
+                pass
+
+        if not sidecar_started:
+            print("  ⚠️ Sidecar didn't respond within 15s")
+            print("  It may still be starting. Run 'colony status' to check.")
+    else:
+        print("  ⚪ Skipping sidecar start")
+
+    # ── Step 10b: Verify LLM credentials ────────────────────────────────
+
+    if oc_ok:
+        print()
+        print("  Checking LLM credentials in OpenClaw...")
+        try:
+            result = subprocess.run(
+                ["openclaw", "config", "get", "llm.apiKey"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip() and result.stdout.strip() != "undefined":
+                print("  ✅ LLM API key configured in OpenClaw")
+            else:
+                print(_yellow("  ⚠️ No LLM API key found in OpenClaw config"))
+                print("     Colony's reasoning engine inherits LLM credentials from OpenClaw.")
+                print("     Set one with: openclaw config set llm.apiKey <your-key>")
+        except Exception:
+            print("  ⚪ Could not verify LLM credentials")
+
+    # ── Step 10c: Restart gateway ───────────────────────────────────────
+
+    if oc_configured and oc_ok:
+        print()
+        print("  OpenClaw config was updated. The gateway needs a restart to load the plugin.")
+        restart_now = _prompt("  Restart OpenClaw gateway now? [Y/n]", "Y")
+        if restart_now.lower() in ("y", "yes", ""):
+            try:
+                subprocess.run(["openclaw", "gateway", "restart"], capture_output=True, text=True, timeout=15)
+                print("  ✅ Gateway restarting")
+                time.sleep(3)
+            except Exception as exc:
+                print(f"  ⚠️ Could not restart gateway: {exc}")
+                print("  Restart manually: openclaw gateway restart")
+        else:
+            print("  Restart manually when ready: openclaw gateway restart")
+
+    # ── Step 10d: Run colony doctor ─────────────────────────────────────
+
+    if sidecar_started:
+        print()
+        print("  Running health check ('colony doctor')...")
+        try:
+            env_with_key = {**os.environ, "COLONY_URL": sidecar_url, "COLONY_API_KEY": values["COLONY_API_KEY"]}
+            doc_result = subprocess.run(
+                [sys.executable, "-m", "colony_sidecar.doctor"],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(base),
+                env=env_with_key,
+            )
+            # Print doctor output
+            if doc_result.stdout:
+                for line in doc_result.stdout.strip().splitlines():
+                    print(f"  {line}")
+            if doc_result.returncode == 0:
+                print("  ✅ All subsystems healthy")
+            else:
+                print(_yellow("  ⚠️ Some subsystem checks failed — see above"))
+        except Exception as exc:
+            print(f"  ⚪ Doctor check skipped: {exc}")
+            print("  Run manually: COLONY_API_KEY=<key> colony doctor")
+
+    # ── Step 11: Summary ─────────────────────────────────────────────────
+
+    print()
+    print(_bold("Step 11: Setup complete!"))
     print()
 
     print("  Capability status:")
@@ -792,15 +902,13 @@ def run_init(root_dir: str | None = None) -> int:
     print(f"    ✅ World Model")
     print()
 
-    print("  Start the sidecar:")
-    print(f"    {_green('colony start')}")
-    print()
-    print("  Then seed self-knowledge:")
-    print(f"    {_green('colony seed')}")
-    print()
-    print("  Check health:")
-    print(f"    {_green('colony status')}")
-    print()
+    if not sidecar_started:
+        print("  Start the sidecar:")
+        print(f"    {_green('colony start')}")
+        print()
+        print("  Then verify:")
+        print(f"    {_green('colony status')}")
+        print()
 
     if not oc_configured:
         print("  Add Colony to your OpenClaw config:")
