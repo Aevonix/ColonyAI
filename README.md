@@ -14,7 +14,7 @@ Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw,
 
 Each Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner.
 
-The current release delivers 22 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
+The current release delivers 26 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
 
 -----
 
@@ -98,9 +98,9 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ## What Colony Is Today
 
-22 wired subsystems. Everything below works now.
+26 wired subsystems. Everything below works now.
 
-### 22 Wired Subsystems
+### 26 Wired Subsystems
 
 | Subsystem | Purpose |
 |---|---|
@@ -125,7 +125,11 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 | Secrets | Encrypted vault for sensitive configuration |
 | Autonomy | Background loop for anomaly detection, initiative generation, synthesis |
 | Sessions | Isolated session management |
-| Events | WebSocket stream for real-time events |
+| Events | WebSocket stream for real-time events with journal replay |
+| Event Journal | Append-only event persistence with atomic writes, SHA-256 checksums, and replay for disconnected clients |
+| Context Compression | Adaptive context compression (conservative/balanced/aggressive modes) with query-aware section scoring |
+| Skill Sandbox | Subprocess-isolated skill execution with resource limits (memory, CPU, file size, fork guard) |
+| Security Scanner | AST-based static analysis for skill uploads (dunder escapes, dynamic getattr, obfuscation patterns) |
 
 ### Key Properties
 
@@ -146,7 +150,7 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ```bash
 curl http://localhost:7777/v1/host/health
-# Expected: {"status":"ok","capabilities":[...22 subsystems...]}
+# Expected: {"status":"ok","capabilities":[...26 subsystems...]}
 ```
 
 ### Full Health Check
@@ -191,7 +195,7 @@ Two deployable units. A thin TypeScript plugin that loads into your host process
 │  │ FastAPI Server                                      │            │
 │  └──────────────────────────┬──────────────────────────┘            │
 │  ┌──────────────────────────▼──────────────────────────┐            │
-│  │ SubsystemRegistry (22 subsystems)                   │            │
+│  │ SubsystemRegistry (26 subsystems)                   │            │
 │  └─────────────────────────────────────────────────────┘            │
 └──────────────────────────┬───────────────────────────────────────────┘
                            │
@@ -346,7 +350,7 @@ Colony ships in phases. The intelligence system is v1.0. Each phase expands the 
 
 ### Phase 1: Intelligence System (Shipped)
 
-Single-node Colony mounted into a host harness. 22 subsystems wired. Everything described above in "What Colony Is Today."
+Single-node Colony mounted into a host harness. 26 subsystems wired. Everything described above in "What Colony Is Today."
 
 ### Phase 2: Multimodal (Shipped)
 
@@ -487,7 +491,7 @@ Exports the OpenAPI spec and regenerates `src/types-generated.ts`.
 ```
 colony/
 ├── src/                      # TypeScript plugin (thin HTTP client)
-├── sidecar/                  # Python sidecar (stateful, 22 subsystems)
+├── sidecar/                  # Python sidecar (stateful, 26 subsystems)
 │   └── colony_sidecar/
 │       ├── api/              # FastAPI routers + schemas
 │       ├── autonomy/         # Autonomy loop
@@ -544,7 +548,7 @@ npm install @aevonix/colonyai
 }
 ```
 
-The plugin registers 22 capabilities (memory, consolidate, signals, embed, context, reasoning, response_gate, goals, contacts, briefings, world_model, cognition, research, delivery, synthesis, learning, skills, identity, secrets, autonomy, sessions, task_queue, events) and 5 hooks (message_received, message_sending, llm_output, session_start, session_end).
+The plugin registers 26 capabilities (memory, consolidate, signals, embed, context, reasoning, response_gate, goals, contacts, briefings, world_model, cognition, research, delivery, synthesis, learning, skills, identity, secrets, autonomy, sessions, task_queue, events, event_journal, context_compression, skill_sandbox) and 5 hooks (message_received, message_sending, llm_output, session_start, session_end).
 
 -----
 
@@ -597,7 +601,7 @@ Includes Neo4j (APOC, memory tuning, health check) and the Colony sidecar (Huggi
 
 **Current release:** v0.1.0, Intelligence System (Phase 1 + Phase 2 multimodal)
 
-**Subsystems wired:** 22 of 22
+**Subsystems wired:** 26 of 26
 
 **Endpoints:** 44+
 
