@@ -1,4 +1,4 @@
-"""API key authentication middleware for Colony sidecar."""
+"""API key authentication + request-size middleware for Colony sidecar."""
 
 from __future__ import annotations
 
@@ -7,6 +7,12 @@ import os
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+
+# Default cap on request body size (10 MiB). Oversized uploads are rejected
+# at the middleware layer before the handler buffers them. Override via
+# COLONY_MAX_BODY_BYTES in the environment.
+_DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024
 
 
 # Endpoints reachable without a key, even in "dev mode" (no COLONY_API_KEY).
@@ -70,3 +76,39 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             status_code=401,
             content={"detail": "Invalid or missing API key"},
         )
+
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject requests that declare a body larger than ``max_bytes``.
+
+    Short-circuits before the handler reads the payload, so oversized uploads
+    cannot be used to exhaust memory. Requests without a ``Content-Length``
+    header (e.g. chunked transfer encoding) are allowed to pass — FastAPI's
+    own buffer limits still apply downstream.
+    """
+
+    def __init__(self, app, max_bytes: int = _DEFAULT_MAX_BODY_BYTES) -> None:
+        super().__init__(app)
+        self._max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next):
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                length = int(cl)
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Invalid Content-Length header"},
+                )
+            if length > self._max_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": (
+                            f"Request body exceeds limit "
+                            f"({length} > {self._max_bytes} bytes)"
+                        )
+                    },
+                )
+        return await call_next(request)
