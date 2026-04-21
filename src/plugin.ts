@@ -853,6 +853,7 @@ function contextEngineFactory(
           systemPromptAddition: addition,
         };
       };
+      logger?.info?.("[colony] context engine assemble() called — sessionId=" + (params.sessionId ?? "?"));
 
       // Capability gate: skip the sidecar call only when the probe
       // *succeeded* and reported "context" is off. Unknown probe state
