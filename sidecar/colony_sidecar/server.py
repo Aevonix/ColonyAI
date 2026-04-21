@@ -753,7 +753,16 @@ def create_app() -> FastAPI:
     )
 
     # API key authentication (skips health/docs; open access if no key set)
-    from colony_sidecar.api.middleware import ApiKeyMiddleware
+    from colony_sidecar.api.middleware import ApiKeyMiddleware, BodySizeLimitMiddleware
+
+    # Body-size cap runs before auth so oversized payloads are rejected with
+    # 413 regardless of the auth state.
+    try:
+        max_body = int(os.environ.get("COLONY_MAX_BODY_BYTES", "") or 10 * 1024 * 1024)
+    except ValueError:
+        max_body = 10 * 1024 * 1024
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body)
+
     api_key = os.environ.get("COLONY_API_KEY")
     app.add_middleware(ApiKeyMiddleware, api_key=api_key)
     if api_key:

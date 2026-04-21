@@ -118,11 +118,18 @@ def main() -> None:
         import uvicorn
         host = args.host or os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
         port = args.port or int(os.environ.get("COLONY_SIDECAR_PORT", "7777"))
+        try:
+            ws_max_size = int(
+                os.environ.get("COLONY_MAX_WS_FRAME_BYTES", "") or 1 * 1024 * 1024
+            )
+        except ValueError:
+            ws_max_size = 1 * 1024 * 1024
         uvicorn.run(
             "colony_sidecar.server:app",
             host=host,
             port=port,
             log_level=os.environ.get("LOG_LEVEL", "info").lower(),
+            ws_max_size=ws_max_size,
         )
 
     elif args.command == "status":
