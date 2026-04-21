@@ -68,6 +68,17 @@ export const ColonyPluginConfigSchema = z.object({
   failSafetyClosed: z.boolean().default(true),
 
   /** Per-call HTTP timeout (ms). */
+  /**
+   * Context compression mode. Controls how Colony compresses enriched
+   * context sections to fit within a token budget.
+   *
+   * - "off": No compression (default)
+   * - "conservative": Drop low-priority sections only
+   * - "balanced": Drop sections + truncate body text
+   * - "aggressive": Drop + truncate + tight summarization
+   */
+  compression: z.enum(["off", "conservative", "balanced", "aggressive"]).default("off"),
+
   requestTimeoutMs: z.number().int().positive().default(30_000),
 
   /**
