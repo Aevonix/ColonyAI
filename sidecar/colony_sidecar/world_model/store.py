@@ -272,7 +272,9 @@ class WorldModelStore:
 
     async def upsert_entity(self, entity: BaseEntity) -> BaseEntity:
         """Insert or update an entity. Returns the surviving entity."""
-        return await self._backend.upsert_entity(entity)
+        result = await self._backend.upsert_entity(entity)
+        self._emit_change("entity_upsert", entity_id=getattr(result, "id", None))
+        return result
 
     async def update_entity_property(
         self,
@@ -285,10 +287,12 @@ class WorldModelStore:
         await self._backend.update_entity_property(
             entity_id, property_key, property_value, confidence
         )
+        self._emit_change("entity_property_update", entity_id=entity_id, property_key=property_key)
 
     async def add_entity_alias(self, entity_id: str, alias: str) -> None:
         """Add an alias to an entity's alias list if not already present."""
         await self._backend.add_entity_alias(entity_id, alias)
+        self._emit_change("entity_alias_added", entity_id=entity_id)
 
     # ── Relationship writes ───────────────────────────────────────────────────
 
@@ -296,13 +300,33 @@ class WorldModelStore:
         self, relationship: WorldRelationship
     ) -> WorldRelationship:
         """Insert or update a relationship."""
-        return await self._backend.upsert_relationship(relationship)
+        result = await self._backend.upsert_relationship(relationship)
+        self._emit_change(
+            "relationship_upsert",
+            relationship_id=getattr(result, "id", None),
+        )
+        return result
 
     async def close_relationship(
         self, relationship_id: str, valid_to: str
     ) -> None:
         """Mark a relationship as ended by setting valid_to."""
         await self._backend.close_relationship(relationship_id, valid_to)
+        self._emit_change("relationship_closed", relationship_id=relationship_id)
+
+    # ── Event emission ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _emit_change(change_type: str, **payload: Any) -> None:
+        """Broadcast a world_model_changed event. Best-effort — never raises."""
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit(
+                "world_model_changed",
+                {"change_type": change_type, **{k: v for k, v in payload.items() if v is not None}},
+            )
+        except Exception:
+            pass
 
     # ── Observations ─────────────────────────────────────────────────────────
 
