@@ -11,6 +11,10 @@ import { SessionTextCache } from "./hooks/session-text-cache.js";
 import { TurnExtractionPipeline } from "./extraction/pipeline.js";
 import { createContextCache, type ContextCache } from "./context-cache.js";
 import { dispatchHostEvent } from "./event-handlers.js";
+import {
+  registerColonyTools,
+  type ToolRegistrarHandle,
+} from "./tool-registrar.js";
 
 /**
  * The real OpenClaw plugin API surface. Imported ``type``-only so the
@@ -494,6 +498,36 @@ class ColonyMemorySearchManager {
         }));
       },
       () => [],
+    );
+  }
+
+  /**
+   * Persist a new memory through the sidecar. Agent turns call this
+   * via the ``colony_memory_write`` tool (registered by the tool
+   * registrar) so learning from a conversation actually lands in the
+   * graph instead of living only in the turn transcript.
+   */
+  async write(params: {
+    content: string;
+    kind?: string;
+    personId?: string;
+    entities?: string[];
+    tags?: string[];
+  }): Promise<{ id?: string; accepted: boolean }> {
+    return withDegradation(
+      { name: "memory.write" },
+      async () => {
+        const res = await this.ctx.client.memoryWrite({
+          identity: this.ctx.identity(),
+          content: params.content,
+          type: params.kind,
+          person_id: params.personId,
+          entities: params.entities,
+          tags: params.tags,
+        });
+        return { id: res.id ?? undefined, accepted: res.accepted ?? false };
+      },
+      () => ({ accepted: false } as { id?: string; accepted: boolean }),
     );
   }
 
@@ -1968,6 +2002,7 @@ function eventsLifecycleService(
   ctx: ColonyPluginContext,
   api: OpenClawPluginApi,
   logger?: OpenClawPluginApi["logger"],
+  toolRegistrar?: ToolRegistrarHandle,
 ) {
   let subscription: { close: () => void } | null = null;
 
@@ -2007,6 +2042,11 @@ function eventsLifecycleService(
           dispatchHostEvent(event, {
             cache: ctx.cache,
             logger,
+            onSkillApproved: toolRegistrar
+              ? async () => {
+                  await toolRegistrar.refreshSkillTools();
+                }
+              : undefined,
           });
         });
         logger?.info(
@@ -2040,8 +2080,6 @@ export function createColonyPlugin(): unknown {
       const cache = new SessionTextCache();
       const extraction = new TurnExtractionPipeline();
 
-      api.registerService(eventsLifecycleService(ctx, api, api.logger));
-
       // As of issue aevonix/colony-ai#7 Phase 6 all adapter shapes
       // match their real OpenClaw SDK contracts — every Phase 1–6
       // ``@ts-expect-error`` marker is gone. Follow-up work (Phase 7+)
@@ -2051,6 +2089,21 @@ export function createColonyPlugin(): unknown {
       if (ctx.config.ownMemoryCapability) {
         api.registerMemoryCapability(memoryCapability(ctx, caps));
       }
+
+      // Register Colony's native tools + active skills as first-class
+      // OpenClaw tools. The registrar returns a handle the events
+      // lifecycle service uses to refresh when skill_draft_approved
+      // arrives over the WS.
+      const memoryManagerForWrites = new ColonyMemorySearchManager(ctx, caps);
+      const toolRegistrar = registerColonyTools(
+        ctx,
+        api,
+        memoryManagerForWrites,
+      );
+
+      api.registerService(
+        eventsLifecycleService(ctx, api, api.logger, toolRegistrar),
+      );
 
       // #7 Phase 3 — ``memoryEmbeddingProvider`` returns the real
       // ``MemoryEmbeddingProviderAdapter`` shape (see its doc comment),
