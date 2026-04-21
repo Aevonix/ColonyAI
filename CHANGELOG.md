@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.0 (2026-04-21)
+
+Security hardening, event journal, and adaptive context compression.
+
+### Security
+- Auth: `hmac.compare_digest` for API key checks (timing-attack resistant)
+- `/v1/host/configure` blocked in dev mode (no COLONY_API_KEY)
+- Body size limit middleware (10MB default, configurable)
+- WebSocket frame size cap (1MB default)
+- Subprocess-isolated skill sandbox with `setrlimit` guards (mem/CPU/fds/nproc)
+- AST scanner: ESC001 (dunder escape chains), ESC002 (dynamic getattr/setattr)
+- Rate limiter: SQLite-persisted delivery counts, crashloop-safe
+- PII: hashed contact data in logs, no raw PII in error messages
+- Neo4j: property allowlist on `update_person`, generated per-install password
+- Docker Compose: requires `NEO4J_PASSWORD`, no default fallback
+
+### Event Journal + Replay
+- Append-only file-per-event journal with atomic writes and SHA-256 checksums
+- `GET /v1/host/events/replay?since=&limit=&types=` endpoint
+- WebSocket reconnect with `lastEventId` for replaying missed events
+- Plugin tracks `lastEventTimestamp` across reconnects
+- Bounded retention (default 500 events, configurable)
+
+### Adaptive Context Compression
+- Three modes: off (default), conservative, balanced, aggressive
+- Tier 1: Drop low-relevance sections (query-aware F1 scoring)
+- Tier 2: Sentence-boundary-aware truncation
+- Tier 3: Tight truncation (LLM summarization placeholder for future)
+- Per-request override via API field, plugin config setting
+
 ## 0.1.0 (2026-04-16)
 
 First release with all adapter shapes matching the real OpenClaw SDK contracts.
