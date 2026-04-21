@@ -1,8 +1,12 @@
 # Colony
 
-**Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw. Not a replacement for them.** Colony's setup wizard supports OpenClaw today with support for Hermes and others coming soon.
+**Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw, not a replacement for them. The setup wizard supports OpenClaw today with support for Hermes and others coming soon. Colony provides durable memory, structured reasoning, goal management, relationship modeling, and cryptographic identity as a single, mountable plugin with a unified HTTP API.**
 
-It provides durable memory, structured reasoning, goal management, relationship modeling, and cryptographic identity as a single, mountable plugin with a unified HTTP API. A Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner. That's the unit of scale. The current release delivers 22 production subsystems to each Colony instance, forming a sovereign super-agent across your hardware. Colonies federate to share knowledge, tools, skills, and compute resources. The architecture is stigmergic by design, the same pattern that makes ant colonies collectively intelligent without a central controller. One Colony is a capable super-agent. Federated Colonies are something more.
+**Each Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner.**
+
+The current release delivers 22 production subsystems to each Colony instance. Across future releases, Colonies will network any number of nodes into a super-agent across your hardware. Colonies will also federate to share knowledge, tools, skills, and compute resources. The architecture is stigmergic by design, the same pattern that makes ant colonies collectively intelligent without a central controller.
+
+The concept: give agent harnesses like OpenClaw a foundation for persistent, evolving knowledge with the ability to generate and execute goals and tasks on a recurring, automated basis. Then network intelligence clusters together for trusted shared intelligence, ultimately forming a SuperColony of personal agent clusters that share resources and even compute.
 
 -----
 
