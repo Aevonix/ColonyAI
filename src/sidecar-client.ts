@@ -196,6 +196,42 @@ export class ColonySidecarClient {
     });
   }
 
+  // --- Host configuration --------------------------------------------------
+
+  /**
+   * Forward host LLM credentials + model assignments to the sidecar.
+   * Called once at plugin startup so the sidecar's ReasoningLoop can
+   * use the host's provider instead of requiring its own keys.
+   */
+  configureHost(
+    llm: Record<string, unknown>,
+    identity: HostIdentity,
+  ): Promise<{
+    configured: boolean;
+    provider?: string | null;
+    models?: Record<string, string> | null;
+  }> {
+    return this.post("/v1/host/configure", { identity, llm });
+  }
+
+  /**
+   * Request a signed chain-verify attestation from the sidecar. The
+   * sidecar signs ``colony_id:data:timestamp`` with the colony's
+   * Ed25519 private key when the key manager is available.
+   */
+  chainVerify(
+    data: string,
+    identity: HostIdentity,
+  ): Promise<{
+    valid: boolean;
+    colony_id?: string | null;
+    signed_attestation?: string | null;
+    attested_at?: string | null;
+    signer_public_key?: string | null;
+  }> {
+    return this.post("/v1/host/chain/verify", { identity, data });
+  }
+
   // --- Native tools --------------------------------------------------------
 
   /**
@@ -376,13 +412,6 @@ export class ColonySidecarClient {
     });
   }
 
-  chainVerify(data: string, signature?: string): Promise<unknown> {
-    return this.post("/v1/host/chain/verify", {
-      identity: { host_id: "colony-plugin" },
-      data,
-      signature,
-    });
-  }
 
   // --- Secrets -------------------------------------------------------------
 

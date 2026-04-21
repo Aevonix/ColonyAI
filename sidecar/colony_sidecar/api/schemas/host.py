@@ -755,6 +755,9 @@ class ChainVerifyRequest(BaseModel):
 class ChainVerifyResponse(BaseModel):
     valid: bool
     colony_id: Optional[str] = None
+    signed_attestation: Optional[str] = None
+    attested_at: Optional[str] = None
+    signer_public_key: Optional[str] = None
 
 
 # --- Secrets ----------------------------------------------------------------

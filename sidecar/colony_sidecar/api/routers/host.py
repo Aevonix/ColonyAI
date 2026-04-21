@@ -2468,14 +2468,47 @@ async def identity_init(body: IdentityInitRequest) -> IdentityStatusResponse:
 
 @router.post("/chain/verify", response_model=ChainVerifyResponse)
 async def chain_verify(body: ChainVerifyRequest) -> ChainVerifyResponse:
+    """Verify the chain is initialized and (when possible) return a
+    signed attestation proving the sidecar's authority over the
+    ``data`` payload.
+
+    The attestation is ``sign(colony_id || ':' || data || ':' || now)``
+    using the colony's Ed25519 private key. Callers verify it with
+    ``signer_public_key``. When the key manager isn't loaded the
+    attestation fields are ``None`` but the ``valid`` bit is still
+    computed from chain state.
+    """
     if _chain_manager is None:
         return ChainVerifyResponse(valid=False)
     try:
-        # Verify by checking chain state — ChainManager uses submit_transaction
-        # for data integrity, not a separate verify method
         state = await _chain_manager.get_state()
         is_valid = state is not None and state.height >= 0
-        return ChainVerifyResponse(valid=is_valid, colony_id=_chain_manager.colony_id)
+        colony_id = _chain_manager.colony_id
+
+        signed_attestation = None
+        signer_pub = None
+        attested_at = None
+        if is_valid:
+            key_mgr = getattr(_chain_manager, "_key_manager", None)
+            if key_mgr is not None:
+                try:
+                    from datetime import datetime, timezone
+                    attested_at = datetime.now(timezone.utc).isoformat()
+                    payload = (
+                        f"{colony_id}:{body.data}:{attested_at}".encode("utf-8")
+                    )
+                    signed_attestation = key_mgr.sign(payload)
+                    signer_pub = key_mgr.public_key_hex()
+                except Exception as sig_exc:
+                    logger.debug("attestation signing failed: %s", sig_exc)
+
+        return ChainVerifyResponse(
+            valid=is_valid,
+            colony_id=colony_id,
+            signed_attestation=signed_attestation,
+            attested_at=attested_at,
+            signer_public_key=signer_pub,
+        )
     except Exception as exc:
         logger.warning("chain_verify failed: %s", exc)
         return ChainVerifyResponse(valid=False)

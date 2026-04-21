@@ -1063,7 +1063,18 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Chain Verify */
+        /**
+         * Chain Verify
+         * @description Verify the chain is initialized and (when possible) return a
+         *     signed attestation proving the sidecar's authority over the
+         *     ``data`` payload.
+         *
+         *     The attestation is ``sign(colony_id || ':' || data || ':' || now)``
+         *     using the colony's Ed25519 private key. Callers verify it with
+         *     ``signer_public_key``. When the key manager isn't loaded the
+         *     attestation fields are ``None`` but the ``valid`` bit is still
+         *     computed from chain state.
+         */
         post: operations["chain_verify_v1_host_chain_verify_post"];
         delete?: never;
         options?: never;
@@ -1425,6 +1436,12 @@ export interface components {
             valid: boolean;
             /** Colony Id */
             colony_id?: string | null;
+            /** Signed Attestation */
+            signed_attestation?: string | null;
+            /** Attested At */
+            attested_at?: string | null;
+            /** Signer Public Key */
+            signer_public_key?: string | null;
         };
         /** CognitionCycleRequest */
         CognitionCycleRequest: {
