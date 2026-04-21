@@ -69,6 +69,55 @@ export const ColonyPluginConfigSchema = z.object({
 
   /** Per-call HTTP timeout (ms). */
   requestTimeoutMs: z.number().int().positive().default(30_000),
+
+  /**
+   * Optional host LLM configuration forwarded to the sidecar at startup.
+   * When present the plugin POSTs this to ``/v1/host/configure`` so the
+   * sidecar can reason with the host's provider instead of requiring
+   * its own credentials. Leave unset for sidecar-self-configured LLM.
+   *
+   * For security, API keys should be supplied via the
+   * ``COLONY_HOST_LLM_API_KEY`` environment variable rather than
+   * committed to plugin config files.
+   */
+  hostLLM: z
+    .object({
+      provider: z.string().min(1),
+      apiKey: z.string().min(1).optional(),
+      baseUrl: z.string().url().optional(),
+      models: z
+        .object({
+          small: z.string().optional(),
+          medium: z.string().optional(),
+          large: z.string().optional(),
+        })
+        .partial()
+        .optional(),
+    })
+    .optional(),
 });
 
 export type ColonyPluginConfig = z.infer<typeof ColonyPluginConfigSchema>;
+
+/**
+ * Fold environment-variable fallbacks into a parsed plugin config. The
+ * plugin config schema doesn't know about process-level secrets — this
+ * helper layers in ``COLONY_HOST_LLM_API_KEY`` / ``COLONY_HOST_LLM_BASE_URL``
+ * so credentials can stay out of the committed config file.
+ */
+export function withHostLLMEnvOverrides(
+  cfg: ColonyPluginConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): ColonyPluginConfig {
+  if (!cfg.hostLLM) return cfg;
+  const apiKey = cfg.hostLLM.apiKey ?? env.COLONY_HOST_LLM_API_KEY;
+  const baseUrl = cfg.hostLLM.baseUrl ?? env.COLONY_HOST_LLM_BASE_URL;
+  return {
+    ...cfg,
+    hostLLM: {
+      ...cfg.hostLLM,
+      ...(apiKey ? { apiKey } : {}),
+      ...(baseUrl ? { baseUrl } : {}),
+    },
+  };
+}

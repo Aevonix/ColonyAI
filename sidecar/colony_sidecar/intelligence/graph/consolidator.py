@@ -174,6 +174,16 @@ class MemoryConsolidator:
             len(result.errors),
             result.duration_ms,
         )
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("memory_consolidated", {
+                "examined": result.pairs_examined,
+                "merged": result.pairs_merged,
+                "conflicts": result.conflicts_detected,
+                "duration_ms": result.duration_ms,
+            })
+        except Exception:
+            logger.debug("memory_consolidated broadcast failed", exc_info=True)
         return result
 
     # ------------------------------------------------------------------

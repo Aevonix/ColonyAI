@@ -232,6 +232,16 @@ class GoalStore:
                     goal.progress_pct,
                 ),
             )
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("goal_update", {
+                "goal_id": goal.goal_id,
+                "status": goal.status.value,
+                "progress_pct": goal.progress_pct,
+                "title": goal.title,
+            })
+        except Exception:
+            pass
 
     def get_goal(self, goal_id: str) -> Goal:
         conn = self._get_conn()

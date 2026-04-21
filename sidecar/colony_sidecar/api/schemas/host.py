@@ -20,6 +20,10 @@ class HostIdentity(BaseModel):
     host_version: Optional[str] = None
     plugin_version: Optional[str] = None
     instance_id: Optional[str] = None
+    colony_id: Optional[str] = None
+    node_id: Optional[str] = None
+    node_cert_fingerprint: Optional[str] = None
+    trust_tier: Optional[Literal["REGULAR", "TRUSTED", "PRIVILEGED", "GENESIS"]] = None
 
 
 class HostTurnContext(BaseModel):
@@ -352,6 +356,32 @@ class ReasoningTurnResponse(BaseModel):
     tool_calls: List[ReasoningToolCall] = Field(default_factory=list)
     usage: Dict[str, Any] = Field(default_factory=dict)
     error: Optional[str] = None
+
+
+class ToolInvokeRequest(BaseModel):
+    identity: HostIdentity
+    name: str = Field(..., max_length=MAX_NAME_LEN)
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolInvokeResponse(BaseModel):
+    result: str = ""
+    available: bool = True
+    error: Optional[str] = None
+
+
+class SkillExecuteRequest(BaseModel):
+    identity: HostIdentity
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    context: Optional[HostTurnContext] = None
+
+
+class SkillExecuteResponse(BaseModel):
+    status: Literal["success", "failed", "timeout", "violated"]
+    output: Optional[Any] = None
+    error: Optional[str] = None
+    execution_id: Optional[str] = None
+    duration_ms: Optional[int] = None
 
 
 # --- Signals ----------------------------------------------------------------
@@ -703,9 +733,12 @@ class IdentityStatusResponse(BaseModel):
     public_key: Optional[str] = None
     node_id: Optional[str] = None
     node_public_key: Optional[str] = None
+    node_cert_fingerprint: Optional[str] = None
     initialized: bool = False
     keys_configured: bool = False
     is_genesis: bool = False
+    trust_tier: Optional[Literal["REGULAR", "TRUSTED", "PRIVILEGED", "GENESIS"]] = None
+    trust_anchor_verified: bool = False
 
 
 class IdentityInitRequest(BaseModel):
@@ -722,6 +755,9 @@ class ChainVerifyRequest(BaseModel):
 class ChainVerifyResponse(BaseModel):
     valid: bool
     colony_id: Optional[str] = None
+    signed_attestation: Optional[str] = None
+    attested_at: Optional[str] = None
+    signer_public_key: Optional[str] = None
 
 
 # --- Secrets ----------------------------------------------------------------
