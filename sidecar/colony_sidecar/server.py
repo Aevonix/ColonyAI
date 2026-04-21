@@ -44,7 +44,6 @@ from colony_sidecar.api.routers.host import (
     set_session_store,
     set_task_queue,
     set_commitment_store,
-    set_commitment_store,
     supported_capabilities,
 )
 

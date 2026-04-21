@@ -2971,11 +2971,15 @@ async def create_commitment(body: CommitmentCreateRequest) -> CommitmentResponse
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    emit("commitment.created", {
-        "commitment_id": result["id"],
-        "person_id": result["person_id"],
-        "description": result["description"],
-    })
+    try:
+        from colony_sidecar.events.broadcaster import emit as _emit
+        _emit("commitment.created", {
+            "commitment_id": result["id"],
+            "person_id": result["person_id"],
+            "description": result["description"],
+        })
+    except Exception:
+        pass
     return CommitmentResponse(**result)
 
 
@@ -3038,15 +3042,23 @@ async def update_commitment(commitment_id: str, body: CommitmentUpdateRequest) -
 
     # Emit events for status changes
     if body.status == "fulfilled":
-        emit("commitment.fulfilled", {
-            "commitment_id": result["id"],
-            "person_id": result["person_id"],
-        })
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("commitment.fulfilled", {
+                "commitment_id": result["id"],
+                "person_id": result["person_id"],
+            })
+        except Exception:
+            pass
     elif body.status == "cancelled":
-        emit("commitment.cancelled", {
-            "commitment_id": result["id"],
-            "person_id": result["person_id"],
-        })
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("commitment.cancelled", {
+                "commitment_id": result["id"],
+                "person_id": result["person_id"],
+            })
+        except Exception:
+            pass
 
     return CommitmentResponse(**result)
 
