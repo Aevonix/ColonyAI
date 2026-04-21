@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import logging
 import re
@@ -15,6 +16,13 @@ from .importers.macos_contacts import RawContactRecord
 from .store import SQLiteContactStore, _normalize_phone, _normalize_email, _gen_id
 
 logger = logging.getLogger("colony.contacts.importer")
+
+
+def _pii_hash(value: Optional[str]) -> str:
+    """Short hash for PII-safe log correlation (never log raw contact data)."""
+    if not value:
+        return "∅"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
 
 # vCard property pattern
 _VCARD_PROP = re.compile(r'^([A-Z\-]+)(?:;[^:]*)?:(.*)$')
@@ -141,26 +149,30 @@ class SQLiteContactImporter(ContactImporter):
                 auto_threshold = self._config.auto_merge_confidence_threshold
                 proposal_threshold = self._config.merge_proposal_threshold
 
+                async def _attach(contact_id: str, kind: str, value: str, confidence: Optional[float]) -> None:
+                    try:
+                        kwargs = {"source": raw.source}
+                        if confidence is not None:
+                            kwargs["confidence"] = confidence
+                        await self._store.add_handle(contact_id, kind, value, **kwargs)
+                    except ValueError:
+                        # Handle already owned by a different contact; store
+                        # resolves ownership separately. Count the conflict
+                        # so callers see lossy merges, and log a redacted
+                        # correlation hash only — never raw PII.
+                        result.handle_conflicts += 1
+                        logger.debug(
+                            "contact handle conflict: kind=%s value_hash=%s name_hash=%s",
+                            kind, _pii_hash(value), _pii_hash(display_name),
+                        )
+
                 if candidates and candidates[0][0] >= auto_threshold:
                     # High-confidence match — merge handles into existing contact
                     conf, existing_id, reason = candidates[0]
-                    # Add any new handles to the existing contact
                     for phone in norm_phones:
-                        try:
-                            await self._store.add_handle(
-                                existing_id, "imessage", phone,
-                                confidence=conf, source=raw.source,
-                            )
-                        except ValueError:
-                            pass  # Handle conflict handled by store
+                        await _attach(existing_id, "imessage", phone, conf)
                     for email in norm_emails:
-                        try:
-                            await self._store.add_handle(
-                                existing_id, "email", email,
-                                confidence=conf, source=raw.source,
-                            )
-                        except ValueError:
-                            pass
+                        await _attach(existing_id, "email", email, conf)
                     result.merged += 1
                     result.records.append(ImportRecord(
                         raw_display_name=display_name,
@@ -178,15 +190,9 @@ class SQLiteContactImporter(ContactImporter):
                         import_source=raw.source,
                     )
                     for phone in norm_phones:
-                        try:
-                            await self._store.add_handle(contact.contact_id, "imessage", phone, source=raw.source)
-                        except ValueError:
-                            pass
+                        await _attach(contact.contact_id, "imessage", phone, None)
                     for email in norm_emails:
-                        try:
-                            await self._store.add_handle(contact.contact_id, "email", email, source=raw.source)
-                        except ValueError:
-                            pass
+                        await _attach(contact.contact_id, "email", email, None)
                     # Queue merge proposal (handled by merger)
                     result.created += 1
                     result.records.append(ImportRecord(
@@ -204,15 +210,9 @@ class SQLiteContactImporter(ContactImporter):
                         import_source=raw.source,
                     )
                     for phone in norm_phones:
-                        try:
-                            await self._store.add_handle(contact.contact_id, "imessage", phone, source=raw.source)
-                        except ValueError:
-                            pass
+                        await _attach(contact.contact_id, "imessage", phone, None)
                     for email in norm_emails:
-                        try:
-                            await self._store.add_handle(contact.contact_id, "email", email, source=raw.source)
-                        except ValueError:
-                            pass
+                        await _attach(contact.contact_id, "email", email, None)
                     result.created += 1
                     result.records.append(ImportRecord(
                         raw_display_name=display_name,
@@ -220,12 +220,15 @@ class SQLiteContactImporter(ContactImporter):
                         contact_id=contact.contact_id,
                     ))
             except Exception as exc:
-                logger.warning("Failed to import record %r: %s", display_name, exc)
+                logger.warning(
+                    "Failed to import record (name_hash=%s): %s",
+                    _pii_hash(display_name), type(exc).__name__,
+                )
                 result.failed += 1
                 result.records.append(ImportRecord(
                     raw_display_name=display_name,
                     outcome=ImportOutcome.FAILED,
-                    error=str(exc),
+                    error=type(exc).__name__,
                 ))
         return result
 
