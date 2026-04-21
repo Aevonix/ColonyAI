@@ -17,6 +17,36 @@
         "type": "string",
         "description": "URL for the Colony sidecar API (default: http://localhost:7777)"
       },
+      "apiKey": {
+        "type": "string",
+        "description": "API key for Colony sidecar authentication (Authorization: Bearer). Optional for local dev."
+      },
+      "ownReasoningLoop": {
+        "type": "boolean",
+        "description": "Register Colony as the active agent harness (default: false)"
+      },
+      "ownMemoryCapability": {
+        "type": "boolean",
+        "description": "Register Colony as the active memory capability (default: false)"
+      },
+      "ownContextEngine": {
+        "type": "boolean",
+        "description": "Register Colony as the active context engine (default: false)"
+      },
+      "hostId": {
+        "type": "string",
+        "description": "Identity reported back to Colony for audit/scoping (default: openclaw)"
+      },
+      "hostLLM": {
+        "type": "object",
+        "description": "Host LLM configuration forwarded to the sidecar at startup",
+        "properties": {
+          "provider": { "type": "string" },
+          "apiKey": { "type": "string" },
+          "baseUrl": { "type": "string" },
+          "model": { "type": "string" }
+        }
+      },
       "timeout": {
         "type": "number",
         "description": "Request timeout in milliseconds (default: 30000)"

@@ -2110,6 +2110,7 @@ export function createColonyPlugin(): unknown {
     id: PLUGIN_ID,
     name: PLUGIN_NAME,
     description: PLUGIN_DESCRIPTION,
+    configSchema: ColonyPluginConfigSchema,
     register(api: OpenClawPluginApi) {
       const ctx = buildContext(api);
       const caps = capabilityProbe(ctx);
