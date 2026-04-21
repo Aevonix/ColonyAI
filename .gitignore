@@ -11,3 +11,4 @@ dist/
 .venv/
 .pytest_cache/
 sidecar/*.db
+sidecar/events/

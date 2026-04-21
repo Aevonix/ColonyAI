@@ -1854,8 +1854,30 @@ async def start_research(body: ResearchStartRequest) -> ResearchRunResponse:
 
 
 @router.get("/research", response_model=ResearchListResponse)
-async def list_research(limit: int = 20) -> ResearchListResponse:
-    return ResearchListResponse(runs=[])
+async def list_research(limit: int = 20, status_filter: Optional[str] = Query(None, alias="status")) -> ResearchListResponse:
+    if _research_pipeline is None:
+        return ResearchListResponse(runs=[])
+    try:
+        runs = _research_pipeline.list_runs(status=status_filter, limit=limit)
+        return ResearchListResponse(runs=[
+            ResearchRunResponse(
+                run_id=r.id,
+                topic=r.goal,
+                status=r.status.value if hasattr(r.status, "value") else str(r.status),
+                stages_completed=[
+                    r.current_stage.value if hasattr(r.current_stage, "value") else str(r.current_stage)
+                ],
+                artifact=(
+                    r.artifact.__dict__ if r.artifact and hasattr(r.artifact, "__dict__")
+                    else (r.artifact if isinstance(r.artifact, dict) else None)
+                ),
+                created_at=r.created_at.isoformat() if r.created_at else None,
+            )
+            for r in runs
+        ])
+    except Exception as exc:
+        logger.warning("list_research failed: %s", exc)
+        return ResearchListResponse(runs=[])
 
 
 # ---------------------------------------------------------------------------
@@ -2451,12 +2473,30 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     if body.compression:
         compression_mode_str = body.compression
     try:
-        from colony_sidecar.compression import compress_sections, CompressionMode
-        result = compress_sections(
-            sections=[s.model_dump() for s in sections],
-            query=msg,
-            override_mode=CompressionMode(compression_mode_str) if compression_mode_str else None,
+        from colony_sidecar.compression import (
+            CompressionMode,
+            compress_sections,
+            compress_sections_with_llm,
         )
+        override = CompressionMode(compression_mode_str) if compression_mode_str else None
+        # Aggressive mode can use the LLM router (when wired) to actually
+        # summarize truncated sections instead of just tight-truncating.
+        if (
+            override == CompressionMode.AGGRESSIVE
+            or (override is None and os.environ.get("COLONY_COMPRESSION_MODE", "").lower() == "aggressive")
+        ) and _llm_router is not None:
+            result = await compress_sections_with_llm(
+                sections=[s.model_dump() for s in sections],
+                llm_router=_llm_router,
+                query=msg,
+                override_mode=override,
+            )
+        else:
+            result = compress_sections(
+                sections=[s.model_dump() for s in sections],
+                query=msg,
+                override_mode=override,
+            )
         compressed = [ContextSection(**s) for s in result["sections"]]
         return EnrichedContextResponse(
             sections=compressed,
