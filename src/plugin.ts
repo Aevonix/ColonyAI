@@ -9,6 +9,8 @@ import type {
 } from "./types.js";
 import { SessionTextCache } from "./hooks/session-text-cache.js";
 import { TurnExtractionPipeline } from "./extraction/pipeline.js";
+import { createContextCache, type ContextCache } from "./context-cache.js";
+import { dispatchHostEvent } from "./event-handlers.js";
 
 /**
  * The real OpenClaw plugin API surface. Imported ``type``-only so the
@@ -296,6 +298,12 @@ export interface ColonyPluginContext {
    */
   refreshIdentity: () => Promise<IdentitySnapshot>;
   /**
+   * Plugin-wide cache-invalidation bus. The WS event dispatcher writes
+   * to it on memory/goal/world-model/briefing/skill updates so derived
+   * caches (identity snapshot, skill-tool registrations) can refresh.
+   */
+  cache: ContextCache;
+  /**
    * Plugin-scoped logger. Optional so ``buildContext`` can be stubbed in
    * tests without requiring a logger; adapters that want to emit
    * diagnostics should use the ``logger?.info(...)`` safe-access form.
@@ -340,11 +348,14 @@ function buildContext(api: OpenClawPluginApi): ColonyPluginContext {
     return { ...snapshot };
   };
 
+  const cache = createContextCache();
+
   return {
     config,
     client,
     identity,
     refreshIdentity,
+    cache,
     logger: api.logger,
   };
 }
@@ -1981,14 +1992,22 @@ function eventsLifecycleService(
             );
           }
 
-          // Handle proactive_message events by spawning a subagent turn
-          // to deliver the message. This is a workaround until OpenClaw
-          // provides a direct sendProactiveMessage API.
+          // Proactive_message is the only event that spawns a subagent
+          // turn — handled inline because it needs the OpenClaw API.
           if (event.type === "proactive_message") {
             handleProactiveMessage(event, api, logger).catch((err) => {
               logger?.warn(`[colony] proactive delivery failed: ${String(err)}`);
             });
+            return;
           }
+
+          // Every other declared event type goes through the dispatcher,
+          // which updates the cache-invalidation bus and runs any
+          // attached hooks (e.g. skill_draft_approved → tool refresh).
+          dispatchHostEvent(event, {
+            cache: ctx.cache,
+            logger,
+          });
         });
         logger?.info(
           `[colony] events: subscribed to ${ctx.config.sidecarUrl}/v1/host/events`,

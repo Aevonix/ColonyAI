@@ -1945,6 +1945,14 @@ async def approve_skill(skill_id: str) -> dict:
         if existing is None:
             raise HTTPException(status_code=404, detail="Skill not found")
         await _skills_registry.activate(skill_id)
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("skill_draft_approved", {
+                "skill_id": skill_id,
+                "name": getattr(existing, "name", ""),
+            })
+        except Exception:
+            pass
         return {"ok": True, "skill_id": skill_id, "status": "active"}
     except HTTPException:
         raise

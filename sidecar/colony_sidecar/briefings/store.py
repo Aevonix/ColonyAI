@@ -240,6 +240,15 @@ class BriefingStore:
                 row,
             )
             self._conn.commit()
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("briefing", {
+                "briefing_id": briefing.briefing_id,
+                "status": getattr(briefing.status, "value", str(briefing.status)),
+                "priority": briefing.priority,
+            })
+        except Exception:
+            pass
         return briefing
 
     def get(self, briefing_id: str) -> Optional[Briefing]:

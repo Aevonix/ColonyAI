@@ -6,6 +6,7 @@ import {
   ColonyApiError,
 } from "../src/plugin.js";
 import type { AgentMessage, ColonyPluginContext } from "../src/plugin.js";
+import { createContextCache } from "../src/context-cache.js";
 import type {
   ContextAssembleRequest,
   ContextAssembleResponse,
@@ -84,6 +85,7 @@ function makeCtx(opts?: {
     } as unknown as ColonyPluginContext["client"],
     identity: () => ({ host_id: "host-test", plugin_version: "0.0.1" }),
     refreshIdentity: async () => ({}),
+    cache: createContextCache(),
     logger,
   };
 
