@@ -896,6 +896,7 @@ function contextEngineFactory(
               contactsList: true,
               cognition: true,
             },
+            compression: ctx.config.compression !== "off" ? ctx.config.compression : undefined,
           }),
         () => ({ sections: [], notices: ["colony-context: degraded"] }),
       );
