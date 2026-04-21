@@ -1,12 +1,16 @@
 # Colony
 
-**Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw, not a replacement for them. The setup wizard supports OpenClaw today with support for Hermes and others coming soon. Colony provides durable memory, structured reasoning, goal management, relationship modeling, and cryptographic identity as a single, mountable plugin with a unified HTTP API.**
+Cognitive infrastructure layer for AI agents with persistent memory, structured reasoning, goals, and identity that outlive any single session.
 
-**Each Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner.**
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/colonyai.svg)](https://pypi.org/project/colonyai/) [![npm](https://img.shields.io/npm/v/@aevonix/colonyai.svg)](https://www.npmjs.com/package/@aevonix/colonyai) [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Faevonix%2Fcolony-blue)](https://github.com/Aevonix/ColonyAI/pkgs/container/colony) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://pypi.org/project/colonyai/) [![TypeScript](https://img.shields.io/badge/typescript-5.x-3178c6.svg)](https://www.typescriptlang.org/) [![Node.js](https://img.shields.io/badge/node-20%2B-339933.svg)](https://nodejs.org/)
 
-The current release delivers 22 production subsystems to each Colony instance. Across future releases, Colonies will network any number of nodes into a super-agent across your hardware. Colonies will also federate to share knowledge, tools, skills, and compute resources. The architecture is stigmergic by design, the same pattern that makes ant colonies collectively intelligent without a central controller.
+## What Is Colony?
 
-The concept: give agent harnesses like OpenClaw a foundation for persistent, evolving knowledge with the ability to generate and execute goals and tasks on a recurring, automated basis. Then network intelligence clusters together for trusted shared intelligence, ultimately forming a SuperColony of personal agent clusters that share resources and even compute.
+Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw, not a replacement for them. Colony provides durable memory, structured reasoning, goal management, relationship modeling, and cryptographic identity as a single, mountable plugin with a unified HTTP API.
+
+Each Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner.
+
+The current release delivers 22 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
 
 -----
 
