@@ -46,6 +46,8 @@ from colony_sidecar.api.routers.host import (
     set_commitment_store,
     set_affect_store,
     set_facts_store,
+    set_pattern_store,
+    set_surprise_store,
     supported_capabilities,
 )
 
@@ -345,6 +347,23 @@ async def lifespan(app: FastAPI):
         logger.info("SharedFactsStore initialized (db=%s)", facts_db)
     except Exception as exc:
         logger.warning("Theory of Mind init failed: %s", exc)
+
+    # --- Pattern Extraction + Surprise ---
+    try:
+        from colony_sidecar.patterns.store import PatternStore
+        from colony_sidecar.surprise.store import SurpriseStore
+
+        patterns_db = state_dir / "colony-patterns.db"
+        pattern_store = PatternStore(db_path=patterns_db)
+        set_pattern_store(pattern_store)
+        logger.info("PatternStore initialized (db=%s)", patterns_db)
+
+        surprise_db = state_dir / "colony-surprise.db"
+        surprise_store = SurpriseStore(db_path=surprise_db)
+        set_surprise_store(surprise_store)
+        logger.info("SurpriseStore initialized (db=%s)", surprise_db)
+    except Exception as exc:
+        logger.warning("Pattern/Surprise init failed: %s", exc)
 
     # --- 8. Contacts ---
     try:
@@ -776,6 +795,8 @@ async def lifespan(app: FastAPI):
     set_commitment_store(None)
     set_affect_store(None)
     set_facts_store(None)
+    set_pattern_store(None)
+    set_surprise_store(None)
     set_chain_manager(None)
     set_secrets_manager(None)
     set_session_store(None)

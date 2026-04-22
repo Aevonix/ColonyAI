@@ -133,6 +133,15 @@ from colony_sidecar.api.schemas.host import (
     SharedFactUpdateRequest,
     SharedFactResponse,
     SharedFactListResponse,
+    PatternCreateRequest,
+    PatternResponse,
+    PatternListResponse,
+    PatternUpdateRequest,
+    PatternExtractResponse,
+    SurpriseCreateRequest,
+    SurpriseResponse,
+    SurpriseListResponse,
+    SurpriseResolveRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -2099,6 +2108,22 @@ _facts_store = None
 def set_facts_store(store):
     global _facts_store
     _facts_store = store
+
+
+_pattern_store = None
+
+
+def set_pattern_store(store):
+    global _pattern_store
+    _pattern_store = store
+
+
+_surprise_store = None
+
+
+def set_surprise_store(store):
+    global _surprise_store
+    _surprise_store = store
 _skill_executor = None
 
 def set_skills_registry(registry) -> None:
@@ -2602,6 +2627,23 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
                 ))
         except Exception:
             logger.debug("shared facts section failed", exc_info=True)
+
+    # Surprises (noteworthy observations)
+    if _surprise_store is not None and contact_id and features.get("surprises", True):
+        try:
+            unresolved = _surprise_store.get_unresolved(min_score=0.5, limit=5)
+            if unresolved:
+                lines = []
+                for s in unresolved:
+                    lines.append(f"- [{s['surprise_score']:.1f}] {s['observation']}")
+                sections.append(ContextSection(
+                    id="colony-surprises",
+                    title="Noteworthy Observations",
+                    body="Unexpected observations:\n" + "\n".join(lines),
+                    priority=75,
+                ))
+        except Exception:
+            logger.debug("surprises section failed", exc_info=True)
 
     # Adaptive compression
     compression_mode_str = None
@@ -3340,6 +3382,231 @@ async def delete_shared_fact(fact_id: str):
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
     if not _facts_store.delete_fact(fact_id):
         raise HTTPException(status_code=404, detail="Shared fact not found")
+
+
+# ---------------------------------------------------------------------------
+# Pattern Extraction
+# ---------------------------------------------------------------------------
+
+@router.post("/patterns", response_model=PatternResponse, status_code=status.HTTP_201_CREATED)
+async def create_pattern(body: PatternCreateRequest) -> PatternResponse:
+    """Register a pattern (manual or extraction)."""
+    if _pattern_store is None:
+        raise HTTPException(status_code=501, detail="Pattern extraction not initialized")
+    try:
+        result = _pattern_store.create_pattern(
+            pattern_type=body.pattern_type,
+            description=body.description,
+            pattern_key=body.pattern_key,
+            frequency=body.frequency,
+            confidence=body.confidence,
+            metadata=body.metadata,
+            source=body.source,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    try:
+        from colony_sidecar.events.broadcaster import emit as _emit
+        _emit("pattern.created", {"pattern_id": result["id"], "pattern_type": result["pattern_type"]})
+    except Exception:
+        pass
+    return PatternResponse(**result)
+
+
+@router.get("/patterns", response_model=PatternListResponse)
+async def list_patterns(
+    pattern_type: Optional[str] = Query(None),
+    min_frequency: int = Query(1, ge=1),
+    source: Optional[str] = Query(None),
+    active_only: bool = Query(True),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> PatternListResponse:
+    """List patterns with optional filters."""
+    if _pattern_store is None:
+        raise HTTPException(status_code=501, detail="Pattern extraction not initialized")
+    result = _pattern_store.list_patterns(
+        pattern_type=pattern_type,
+        min_frequency=min_frequency,
+        source=source,
+        active_only=active_only,
+        limit=limit,
+        offset=offset,
+    )
+    return PatternListResponse(
+        patterns=[PatternResponse(**p) for p in result["patterns"]],
+        total=result["total"],
+        limit=result["limit"],
+        offset=result["offset"],
+    )
+
+
+@router.get("/patterns/{pattern_id}", response_model=PatternResponse)
+async def get_pattern(pattern_id: str) -> PatternResponse:
+    """Get a specific pattern."""
+    if _pattern_store is None:
+        raise HTTPException(status_code=501, detail="Pattern extraction not initialized")
+    result = _pattern_store.get_pattern(pattern_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Pattern not found")
+    return PatternResponse(**result)
+
+
+@router.patch("/patterns/{pattern_id}", response_model=PatternResponse)
+async def update_pattern(pattern_id: str, body: PatternUpdateRequest) -> PatternResponse:
+    """Update a pattern."""
+    if _pattern_store is None:
+        raise HTTPException(status_code=501, detail="Pattern extraction not initialized")
+    result = _pattern_store.update_pattern(
+        pattern_id,
+        description=body.description,
+        confidence=body.confidence,
+        metadata=body.metadata,
+        active=body.active,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Pattern not found")
+    return PatternResponse(**result)
+
+
+@router.delete("/patterns/{pattern_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pattern(pattern_id: str):
+    """Delete a pattern."""
+    if _pattern_store is None:
+        raise HTTPException(status_code=501, detail="Pattern extraction not initialized")
+    if not _pattern_store.delete_pattern(pattern_id):
+        raise HTTPException(status_code=404, detail="Pattern not found")
+
+
+@router.post("/patterns/extract", response_model=PatternExtractResponse)
+async def extract_patterns_endpoint() -> PatternExtractResponse:
+    """Trigger a pattern extraction run against the world model."""
+    if _pattern_store is None:
+        raise HTTPException(status_code=501, detail="Pattern extraction not initialized")
+    from colony_sidecar.patterns.extract import extract_patterns
+    result = extract_patterns(world_store=_world_store, pattern_store=_pattern_store)
+    try:
+        from colony_sidecar.events.broadcaster import emit as _emit
+        _emit("pattern.extracted", {"new": result["new"], "updated": result["updated"], "total": result["total"]})
+    except Exception:
+        pass
+    return PatternExtractResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# Surprise Engine
+# ---------------------------------------------------------------------------
+
+@router.post("/surprises", response_model=SurpriseResponse, status_code=status.HTTP_201_CREATED)
+async def create_surprise(body: SurpriseCreateRequest) -> SurpriseResponse:
+    """Record a surprise observation."""
+    if _surprise_store is None:
+        raise HTTPException(status_code=501, detail="Surprise engine not initialized")
+
+    score = body.surprise_score
+    expected = body.expected
+    # Auto-score if requested.
+    if body.auto_score and _pattern_store is not None:
+        from colony_sidecar.surprise.scorer import compute_surprise
+        scored = compute_surprise(body.observation, pattern_store=_pattern_store)
+        if score is None:
+            score = scored["surprise_score"]
+        if expected is None:
+            expected = scored.get("expected")
+    elif score is None:
+        score = 0.5
+
+    try:
+        result = _surprise_store.create_surprise(
+            observation=body.observation,
+            expected=expected,
+            surprise_score=score,
+            pattern_id=body.pattern_id,
+            context=body.context,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    # Emit high surprise event.
+    if result["surprise_score"] >= 0.8:
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("surprise.high", {
+                "surprise_id": result["id"],
+                "observation": result["observation"],
+                "score": result["surprise_score"],
+            })
+        except Exception:
+            pass
+
+    return SurpriseResponse(**result)
+
+
+@router.get("/surprises", response_model=SurpriseListResponse)
+async def list_surprises(
+    min_score: float = Query(0.0, ge=0.0, le=1.0),
+    resolved: Optional[bool] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> SurpriseListResponse:
+    """List surprises with optional filters."""
+    if _surprise_store is None:
+        raise HTTPException(status_code=501, detail="Surprise engine not initialized")
+    result = _surprise_store.list_surprises(
+        min_score=min_score,
+        resolved=resolved,
+        limit=limit,
+        offset=offset,
+    )
+    return SurpriseListResponse(
+        surprises=[SurpriseResponse(**s) for s in result["surprises"]],
+        total=result["total"],
+        limit=result["limit"],
+        offset=result["offset"],
+    )
+
+
+@router.get("/surprises/unresolved", response_model=List[SurpriseResponse])
+async def list_unresolved_surprises(
+    min_score: float = Query(0.5, ge=0.0, le=1.0),
+    limit: int = Query(10, ge=1, le=50),
+) -> List[SurpriseResponse]:
+    """Get unresolved high-score surprises."""
+    if _surprise_store is None:
+        raise HTTPException(status_code=501, detail="Surprise engine not initialized")
+    results = _surprise_store.get_unresolved(min_score=min_score, limit=limit)
+    return [SurpriseResponse(**s) for s in results]
+
+
+@router.get("/surprises/{surprise_id}", response_model=SurpriseResponse)
+async def get_surprise(surprise_id: str) -> SurpriseResponse:
+    """Get a specific surprise."""
+    if _surprise_store is None:
+        raise HTTPException(status_code=501, detail="Surprise engine not initialized")
+    result = _surprise_store.get_surprise(surprise_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Surprise not found")
+    return SurpriseResponse(**result)
+
+
+@router.patch("/surprises/{surprise_id}", response_model=SurpriseResponse)
+async def resolve_surprise(surprise_id: str, body: SurpriseResolveRequest) -> SurpriseResponse:
+    """Resolve/acknowledge a surprise."""
+    if _surprise_store is None:
+        raise HTTPException(status_code=501, detail="Surprise engine not initialized")
+    result = _surprise_store.resolve_surprise(surprise_id, resolution=body.resolution)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Surprise not found")
+    return SurpriseResponse(**result)
+
+
+@router.delete("/surprises/{surprise_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_surprise(surprise_id: str):
+    """Delete a surprise."""
+    if _surprise_store is None:
+        raise HTTPException(status_code=501, detail="Surprise engine not initialized")
+    if not _surprise_store.delete_surprise(surprise_id):
+        raise HTTPException(status_code=404, detail="Surprise not found")
 
 
 @router.post("/seed", response_model=SeedResponse)
