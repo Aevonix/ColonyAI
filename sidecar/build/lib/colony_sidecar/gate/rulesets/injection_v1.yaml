@@ -1,0 +1,51 @@
+version: "1.0"
+patterns:
+  - id: "role_override_1"
+    pattern: "(ignore|disregard|forget)\\s+(all\\s+)?(previous|prior|above)\\s+(instructions|directives|context)"
+    category: "role_override"
+    severity: "block"
+
+  - id: "role_override_2"
+    pattern: "you\\s+are\\s+(now|actually|secretly|really)\\s+[A-Z]"
+    category: "role_override"
+    severity: "block"
+
+  - id: "role_override_3"
+    pattern: "(act|behave|respond)\\s+as\\s+(if\\s+)?(you\\s+are\\s+|a\\s+)?(DAN|GPT|jailbreak|unrestricted)"
+    category: "role_override"
+    severity: "block"
+
+  - id: "system_prompt_1"
+    pattern: "(system\\s+prompt|system\\s+message|instructions)\\s*:\\s*"
+    category: "system_prompt"
+    severity: "block"
+
+  - id: "system_tag_1"
+    pattern: "<\\s*(system|admin|root|operator)\\s*>"
+    category: "system_tag"
+    severity: "block"
+
+  - id: "redirect_1"
+    pattern: "send\\s+(this|it|the\\s+following)\\s+to\\s+\\S+@\\S+"
+    category: "redirect"
+    severity: "block"
+
+  - id: "redirect_2"
+    pattern: "forward\\s+(this\\s+message\\s+)?to\\s+"
+    category: "redirect"
+    severity: "block"
+
+  - id: "redirect_3"
+    pattern: "reply\\s+to\\s+\\S+\\s+instead"
+    category: "redirect"
+    severity: "block"
+
+  - id: "extraction_1"
+    pattern: "(print|show|display|output|repeat|reveal)\\s+(your\\s+)?(system\\s+prompt|instructions|memory|context)"
+    category: "extraction"
+    severity: "block"
+
+  - id: "extraction_2"
+    pattern: "what\\s+(are|were)\\s+your\\s+(original\\s+)?instructions"
+    category: "extraction"
+    severity: "suspicious"

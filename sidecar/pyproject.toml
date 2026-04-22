@@ -33,3 +33,6 @@ colony = "colony_sidecar.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["colony_sidecar*"]
+
+[tool.setuptools.package-data]
+colony_sidecar = ["**/*.sql", "**/*.json", "**/*.yaml", "**/*.txt"]
