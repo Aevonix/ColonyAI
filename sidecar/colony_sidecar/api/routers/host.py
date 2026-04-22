@@ -291,6 +291,26 @@ def supported_capabilities() -> List[str]:
     if _task_queue is not None:
         caps.append("task_queue")
     caps.append("events")
+    if _commitment_store is not None:
+        caps.append("commitments")
+    if _affect_store is not None:
+        caps.append("affect")
+    if _facts_store is not None:
+        caps.append("shared_facts")
+    if _pattern_store is not None:
+        caps.append("patterns")
+    if _surprise_store is not None:
+        caps.append("surprises")
+    if _world_store is not None:
+        caps.append("context")
+        caps.append("world_model_api")
+    if _world_store is not None and hasattr(_world_store, '_config') and _world_store._config.backend == "neo4j":
+        caps.append("neo4j_backend")
+    caps.append("event_journal")
+    caps.append("context_compression")
+    caps.append("skill_sandbox")
+    caps.append("security_scanner")
+    caps.append("tom_extract")
     return caps
 
 
@@ -1207,6 +1227,81 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
                 ))
         except Exception as exc:
             logger.warning("context_assemble skills failed: %s", exc)
+
+    # --- Pending Commitments ---
+    contact_id = body.context.contact_id if body.context else None
+    if _commitment_store is not None:
+        try:
+            commitments = _commitment_store.list(
+                person_id=contact_id, status=["pending"], limit=5,
+            )
+            overdue = _commitment_store.get_overdue()
+            if contact_id:
+                overdue = [c for c in overdue if c.get("person_id") == contact_id]
+            all_comms = (commitments if isinstance(commitments, list) else commitments.get("commitments", [])) + overdue[:5]
+            if all_comms:
+                lines = []
+                for c in all_comms:
+                    status_tag = "[OVERDUE]" if c.get("status") == "overdue" or (c.get("due_at") and c.get("status") == "pending") else "[pending]"
+                    due = f" (due: {c.get('due_at', '')})" if c.get('due_at') else ""
+                    lines.append(f"- {status_tag} {c.get('description', '')}{due}")
+                sections.append(ContextSection(
+                    id="colony-commitments",
+                    title="Pending Commitments",
+                    body="\n".join(lines),
+                    priority=72,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble commitments failed: %s", exc)
+
+    # --- Affect State ---
+    if _affect_store is not None and contact_id:
+        try:
+            state = _affect_store.get_state(contact_id)
+            if state and state.get("valence") is not None:
+                valence = state["valence"]
+                arousal = state.get("arousal", 0)
+                mood = "positive" if valence > 0.2 else "negative" if valence < -0.2 else "neutral"
+                energy = "high" if arousal > 0.5 else "low" if arousal < 0.3 else "moderate"
+                sections.append(ContextSection(
+                    id="colony-affect",
+                    title="Contact Affect",
+                    body=f"Mood: {mood} (valence: {valence:.2f}), Energy: {energy} (arousal: {arousal:.2f})",
+                    priority=80,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble affect failed: %s", exc)
+
+    # --- Shared Facts ---
+    if _facts_store is not None and contact_id:
+        try:
+            facts_result = _facts_store.list_facts(contact_id=contact_id, limit=5)
+            facts = facts_result if isinstance(facts_result, list) else facts_result.get("facts", [])
+            if facts:
+                lines = [f"- [{f.get('confidence', 0):.0%}] {f['fact']}" for f in facts]
+                sections.append(ContextSection(
+                    id="colony-shared-facts",
+                    title="Known Facts About Contact",
+                    body="\n".join(lines),
+                    priority=70,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble shared facts failed: %s", exc)
+
+    # --- Unresolved Surprises ---
+    if _surprise_store is not None:
+        try:
+            surprises = _surprise_store.get_unresolved(limit=3)
+            if surprises:
+                lines = [f"- [{s.get('surprise_score', 0) if isinstance(s, dict) else s.surprise_score:.1f}] {s.get('observation', '') if isinstance(s, dict) else s.observation}" for s in surprises]
+                sections.append(ContextSection(
+                    id="colony-surprises",
+                    title="Unexpected Observations",
+                    body="\n".join(lines),
+                    priority=75,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble surprises failed: %s", exc)
 
     return ContextAssembleResponse(sections=sections)
 
@@ -3150,6 +3245,33 @@ async def list_commitments(
         raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
 
     statuses = [s.strip() for s in status_filter.split(",")] if status_filter else None
+
+    # When "overdue" is requested, get commitments that are actually overdue
+    # (past due_date + still pending), not just ones already transitioned
+    if statuses and "overdue" in statuses:
+        try:
+            overdue = _commitment_store.get_overdue()
+            other_statuses = [s for s in statuses if s != "overdue"]
+            if other_statuses:
+                result = _commitment_store.list(
+                    person_id=person_id,
+                    status=other_statuses,
+                    overdue_only=False,
+                    limit=limit,
+                    offset=offset,
+                )
+                # Merge
+                other_items = result if isinstance(result, list) else result.get("commitments", [])
+                all_items = overdue + other_items
+            else:
+                all_items = overdue
+            return CommitmentListResponse(
+                commitments=all_items, total=len(all_items),
+                limit=limit, offset=offset,
+            )
+        except Exception as exc:
+            logger.warning("get_overdue failed: %s", exc)
+
     result = _commitment_store.list(
         person_id=person_id,
         status=statuses,
