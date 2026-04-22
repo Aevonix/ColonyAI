@@ -85,6 +85,9 @@ export const ColonyPluginConfigSchema = z.object({
 
   cognitionEnabled: z.boolean().default(false),
   cognitionModel: z.string().optional(),
+  patternsEnabled: z.boolean().default(true),
+  surpriseEnabled: z.boolean().default(true),
+  surpriseThreshold: z.number().default(0.8),
 
   requestTimeoutMs: z.number().int().positive().default(30_000),
 

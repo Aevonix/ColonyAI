@@ -170,3 +170,52 @@ export interface SharedFactListResponse {
   limit: number;
   offset: number;
 }
+
+// Pattern Extraction
+export interface PatternResponse {
+  id: string;
+  pattern_type: string;
+  description: string;
+  pattern_key: string;
+  frequency: number;
+  last_seen: string;
+  first_seen: string;
+  confidence: number;
+  metadata?: Record<string, unknown>;
+  source: string;
+  active: boolean;
+}
+
+export interface PatternListResponse {
+  patterns: PatternResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PatternExtractResponse {
+  new: number;
+  updated: number;
+  total: number;
+  reason?: string;
+}
+
+// Surprise Engine
+export interface SurpriseResponse {
+  id: string;
+  observation: string;
+  expected?: string;
+  surprise_score: number;
+  pattern_id?: string;
+  context?: Record<string, unknown>;
+  timestamp: string;
+  resolved: boolean;
+  resolution?: string;
+}
+
+export interface SurpriseListResponse {
+  surprises: SurpriseResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}
