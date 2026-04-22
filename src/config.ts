@@ -80,6 +80,8 @@ export const ColonyPluginConfigSchema = z.object({
   compression: z.enum(["off", "conservative", "balanced", "aggressive"]).default("off"),
 
   commitmentsEnabled: z.boolean().default(true),
+  affectEnabled: z.boolean().default(true),
+  factsEnabled: z.boolean().default(true),
 
   cognitionEnabled: z.boolean().default(false),
   cognitionModel: z.string().optional(),

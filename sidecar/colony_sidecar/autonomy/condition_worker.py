@@ -25,6 +25,7 @@ DEFAULT_INTERVALS: Dict[str, int] = {
     "api_response": 60,          # 1 minute
     "custom": 5 * 60,            # 5 minutes (fallback)
     "commitment_overdue": 30 * 60, # 30 minutes
+    "affect_decline": 30 * 60,  # 30 minutes
 }
 
 
@@ -53,6 +54,7 @@ async def handle_check_condition(
         "delivery_status": _check_delivery_status,
         "api_response": _check_api_response,
         "commitment_overdue": _check_commitment_overdue,
+        "affect_decline": _check_affect_decline,
     }
 
     checker = condition_checkers.get(condition_type)
@@ -370,4 +372,33 @@ async def _check_commitment_overdue(params: dict) -> dict:
             {"id": c["id"], "description": c["description"], "person_id": c["person_id"]}
             for c in overdue[:5]
         ],
+    }
+
+
+async def _check_affect_decline(params: dict) -> dict:
+    """Check for sustained affect decline across contacts."""
+    from colony_sidecar.api.routers.host import _affect_store
+
+    if _affect_store is None:
+        return {"condition_met": False, "declining_contacts": 0}
+
+    states = _affect_store.get_all_states()
+    declining = [s for s in states if _affect_store.detect_sustained_decline(s["contact_id"])]
+    if not declining:
+        return {"condition_met": False, "declining_contacts": 0}
+
+    try:
+        from colony_sidecar.events.broadcaster import emit as _emit
+        for s in declining:
+            _emit("affect.sustained_decline", {
+                "contact_id": s["contact_id"],
+                "current_valence": s["current_valence"],
+            })
+    except Exception:
+        logger.debug("affect decline emit failed", exc_info=True)
+
+    return {
+        "condition_met": True,
+        "declining_contacts": len(declining),
+        "contacts": [{"contact_id": s["contact_id"], "valence": s["current_valence"]} for s in declining],
     }

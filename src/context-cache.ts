@@ -22,7 +22,9 @@ export type CacheChannel =
   | "briefings"
   | "identity"
   | "cognition"
-  | "commitments";
+  | "commitments"
+  | "affect"
+  | "facts";
 
 type Listener = (channel: CacheChannel, payload?: unknown) => void;
 

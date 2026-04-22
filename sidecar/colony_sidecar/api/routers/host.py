@@ -125,6 +125,14 @@ from colony_sidecar.api.schemas.host import (
     CommitmentUpdateRequest,
     CognitionTriggerRequest,
     CognitionTriggerResponse,
+    AffectEventCreateRequest,
+    AffectEventResponse,
+    AffectStateResponse,
+    AffectEventListResponse,
+    SharedFactCreateRequest,
+    SharedFactUpdateRequest,
+    SharedFactResponse,
+    SharedFactListResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -2075,6 +2083,22 @@ _commitment_store = None
 def set_commitment_store(store):
     global _commitment_store
     _commitment_store = store
+
+
+_affect_store = None
+
+
+def set_affect_store(store):
+    global _affect_store
+    _affect_store = store
+
+
+_facts_store = None
+
+
+def set_facts_store(store):
+    global _facts_store
+    _facts_store = store
 _skill_executor = None
 
 def set_skills_registry(registry) -> None:
@@ -2538,6 +2562,46 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
                 ))
         except Exception:
             logger.debug("commitment section failed", exc_info=True)
+
+    # Affect (emotional context)
+    if _affect_store is not None and contact_id and features.get("affect", True):
+        try:
+            state = _affect_store.get_state(contact_id)
+            if state["event_count"] > 0:
+                valence = state["current_valence"]
+                trend = state["trend"]
+                trend_label = {"improving": "trending up", "declining": "trending down", "stable": "stable"}.get(trend, trend)
+                body_text = f"Mood: {valence:+.1f} ({trend_label}). Event count: {state['event_count']}."
+                if valence > 0.3:
+                    body_text += " Positive disposition."
+                elif valence < -0.3:
+                    body_text += " Negative disposition — consider tone."
+                sections.append(ContextSection(
+                    id="colony-affect",
+                    title="Emotional Context",
+                    body=body_text,
+                    priority=80,
+                ))
+        except Exception:
+            logger.debug("affect section failed", exc_info=True)
+
+    # Shared facts
+    if _facts_store is not None and contact_id and features.get("shared_facts", True):
+        try:
+            result = _facts_store.list_facts(contact_id=contact_id, limit=10)
+            if result["total"] > 0:
+                lines = []
+                for f in result["facts"]:
+                    source_label = {"told_by_contact": "They told us", "told_to_contact": "We told them", "shared_context": "Shared", "inferred": "Inferred"}.get(f["source"], f["source"])
+                    lines.append(f"- [{source_label}] {f['fact']}")
+                sections.append(ContextSection(
+                    id="colony-shared-facts",
+                    title=f"Shared Knowledge with {contact_id}",
+                    body="\n".join(lines),
+                    priority=70,
+                ))
+        except Exception:
+            logger.debug("shared facts section failed", exc_info=True)
 
     # Adaptive compression
     compression_mode_str = None
@@ -3101,6 +3165,181 @@ async def cognition_trigger(body: CognitionTriggerRequest) -> CognitionTriggerRe
         priority=body.priority,
     )
     return CognitionTriggerResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# Theory of Mind — Affect
+# ---------------------------------------------------------------------------
+
+@router.post("/affect/events", response_model=AffectEventResponse, status_code=status.HTTP_201_CREATED)
+async def create_affect_event(body: AffectEventCreateRequest) -> AffectEventResponse:
+    """Record an affect event for a contact."""
+    if _affect_store is None:
+        raise HTTPException(status_code=501, detail="Affect tracking not initialized")
+    try:
+        result = _affect_store.create_event(
+            contact_id=body.contact_id,
+            valence=body.valence,
+            arousal=body.arousal,
+            source=body.source,
+            trigger=body.trigger,
+            session_id=body.session_id,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    try:
+        from colony_sidecar.events.broadcaster import emit as _emit
+        _emit("affect.event_created", {
+            "event_id": result["id"],
+            "contact_id": result["contact_id"],
+            "valence": result["valence"],
+        })
+    except Exception:
+        pass
+
+    # Check for negative spike
+    if _affect_store.detect_negative_spike(body.contact_id):
+        try:
+            from colony_sidecar.events.broadcaster import emit as _emit
+            _emit("affect.negative_spike", {
+                "contact_id": body.contact_id,
+                "valence": result["valence"],
+            })
+        except Exception:
+            pass
+
+    return AffectEventResponse(**result)
+
+
+@router.get("/affect/state/{contact_id}", response_model=AffectStateResponse)
+async def get_affect_state(contact_id: str) -> AffectStateResponse:
+    """Get the current affect state for a contact."""
+    if _affect_store is None:
+        raise HTTPException(status_code=501, detail="Affect tracking not initialized")
+    state = _affect_store.get_state(contact_id)
+    return AffectStateResponse(**state)
+
+
+@router.get("/affect/history/{contact_id}", response_model=AffectEventListResponse)
+async def list_affect_history(
+    contact_id: str,
+    source: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> AffectEventListResponse:
+    """Get affect event history for a contact."""
+    if _affect_store is None:
+        raise HTTPException(status_code=501, detail="Affect tracking not initialized")
+    events = _affect_store.list_events(contact_id=contact_id, source=source, limit=limit, offset=offset)
+    total = len(events)  # approximate for paginated view
+    return AffectEventListResponse(events=[AffectEventResponse(**e) for e in events], total=total, limit=limit, offset=offset)
+
+
+@router.delete("/affect/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_affect_event(event_id: str):
+    """Delete an affect event."""
+    if _affect_store is None:
+        raise HTTPException(status_code=501, detail="Affect tracking not initialized")
+    if not _affect_store.delete_event(event_id):
+        raise HTTPException(status_code=404, detail="Affect event not found")
+
+
+# ---------------------------------------------------------------------------
+# Theory of Mind — Shared Facts
+# ---------------------------------------------------------------------------
+
+@router.post("/mind/facts", response_model=SharedFactResponse, status_code=status.HTTP_201_CREATED)
+async def create_shared_fact(body: SharedFactCreateRequest) -> SharedFactResponse:
+    """Add a shared fact about what a contact knows."""
+    if _facts_store is None:
+        raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    try:
+        result = _facts_store.create_fact(
+            contact_id=body.contact_id,
+            fact=body.fact,
+            source=body.source,
+            confidence=body.confidence,
+            expires_at=body.expires_at,
+            metadata=body.metadata,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    try:
+        from colony_sidecar.events.broadcaster import emit as _emit
+        _emit("mind.fact_created", {
+            "fact_id": result["id"],
+            "contact_id": result["contact_id"],
+            "source": result["source"],
+        })
+    except Exception:
+        pass
+
+    return SharedFactResponse(**result)
+
+
+@router.get("/mind/facts", response_model=SharedFactListResponse)
+async def list_shared_facts(
+    contact_id: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    min_confidence: float = Query(0.0, ge=0.0, le=1.0),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> SharedFactListResponse:
+    """List shared facts with optional filters."""
+    if _facts_store is None:
+        raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    result = _facts_store.list_facts(
+        contact_id=contact_id,
+        source=source,
+        min_confidence=min_confidence,
+        limit=limit,
+        offset=offset,
+    )
+    return SharedFactListResponse(
+        facts=[SharedFactResponse(**f) for f in result["facts"]],
+        total=result["total"],
+        limit=result["limit"],
+        offset=result["offset"],
+    )
+
+
+@router.get("/mind/facts/{fact_id}", response_model=SharedFactResponse)
+async def get_shared_fact(fact_id: str) -> SharedFactResponse:
+    """Get a specific shared fact."""
+    if _facts_store is None:
+        raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    result = _facts_store.get_fact(fact_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Shared fact not found")
+    return SharedFactResponse(**result)
+
+
+@router.patch("/mind/facts/{fact_id}", response_model=SharedFactResponse)
+async def update_shared_fact(fact_id: str, body: SharedFactUpdateRequest) -> SharedFactResponse:
+    """Update a shared fact."""
+    if _facts_store is None:
+        raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    result = _facts_store.update_fact(
+        fact_id,
+        confidence=body.confidence,
+        expires_at=body.expires_at,
+        fact=body.fact,
+        metadata=body.metadata,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Shared fact not found")
+    return SharedFactResponse(**result)
+
+
+@router.delete("/mind/facts/{fact_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_shared_fact(fact_id: str):
+    """Delete a shared fact."""
+    if _facts_store is None:
+        raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    if not _facts_store.delete_fact(fact_id):
+        raise HTTPException(status_code=404, detail="Shared fact not found")
 
 
 @router.post("/seed", response_model=SeedResponse)

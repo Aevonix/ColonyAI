@@ -28,6 +28,11 @@ import type {
   TurnSyncResponse,
   CommitmentResponse,
   CommitmentListResponse,
+  AffectEventResponse,
+  AffectStateResponse,
+  AffectEventListResponse,
+  SharedFactResponse,
+  SharedFactListResponse,
 } from "./types.js";
 
 /**
@@ -216,6 +221,88 @@ export class ColonySidecarClient {
 
   deleteCommitment(id: string): Promise<void> {
     return this.delete(`/v1/host/commitments/${id}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Theory of Mind — Affect
+  // ---------------------------------------------------------------------------
+
+  createAffectEvent(body: {
+    contact_id: string;
+    valence: number;
+    arousal?: number;
+    source?: string;
+    trigger?: string;
+    session_id?: string;
+  }): Promise<AffectEventResponse> {
+    return this.post<AffectEventResponse>("/v1/host/affect/events", body);
+  }
+
+  getAffectState(contactId: string): Promise<AffectStateResponse> {
+    return this.get<AffectStateResponse>(`/v1/host/affect/state/${contactId}`);
+  }
+
+  listAffectHistory(
+    contactId: string,
+    opts?: { source?: string; limit?: number; offset?: number },
+  ): Promise<AffectEventListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const query = params.toString();
+    return this.get<AffectEventListResponse>(`/v1/host/affect/history/${contactId}${query ? `?${query}` : ""}`);
+  }
+
+  deleteAffectEvent(eventId: string): Promise<void> {
+    return this.delete(`/v1/host/affect/events/${eventId}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Theory of Mind — Shared Facts
+  // ---------------------------------------------------------------------------
+
+  createSharedFact(body: {
+    contact_id: string;
+    fact: string;
+    source?: string;
+    confidence?: number;
+    expires_at?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<SharedFactResponse> {
+    return this.post<SharedFactResponse>("/v1/host/mind/facts", body);
+  }
+
+  listSharedFacts(opts?: {
+    contact_id?: string;
+    source?: string;
+    min_confidence?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<SharedFactListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.contact_id) params.set("contact_id", opts.contact_id);
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.min_confidence) params.set("min_confidence", String(opts.min_confidence));
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const query = params.toString();
+    return this.get<SharedFactListResponse>(`/v1/host/mind/facts${query ? `?${query}` : ""}`);
+  }
+
+  getSharedFact(id: string): Promise<SharedFactResponse> {
+    return this.get<SharedFactResponse>(`/v1/host/mind/facts/${id}`);
+  }
+
+  updateSharedFact(
+    id: string,
+    body: { fact?: string; confidence?: number; expires_at?: string; metadata?: Record<string, unknown> },
+  ): Promise<SharedFactResponse> {
+    return this.patch<SharedFactResponse>(`/v1/host/mind/facts/${id}`, body);
+  }
+
+  deleteSharedFact(id: string): Promise<void> {
+    return this.delete(`/v1/host/mind/facts/${id}`);
   }
 
   // --- Skills --------------------------------------------------------------
