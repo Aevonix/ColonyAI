@@ -14,7 +14,7 @@ Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw,
 
 Each Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner.
 
-The current release delivers 30 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
+The current release delivers 32 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
 
 -----
 
@@ -98,7 +98,7 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ## What Colony Is Today
 
-30 wired subsystems. Everything below works now.
+32 wired subsystems. Everything below works now.
 
 ### 26 Wired Subsystems
 
@@ -109,7 +109,7 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 | Response Gate | 7-layer response inspection (recipient verification, PII scanning, cross-context isolation, trust tiers, injection detection, secondary review, send delay) |
 | Signals | Behavioral signal ingestion for profiling and pattern detection |
 | Embeddings | Auto-tier-detected embedding pipeline (text + multimodal) |
-| Context Assembly | Parallel query across 16 subsystems to build LLM context |
+| Context Assembly | Parallel query across 18 subsystems to build LLM context |
 | Reasoning | Bounded LLM iteration loop with tool calling |
 | Goals | DAG-based goal decomposition and tracking |
 | Contacts | Relationship store with trust tiers and interaction history |
