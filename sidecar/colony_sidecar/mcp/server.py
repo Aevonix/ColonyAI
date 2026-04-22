@@ -411,3 +411,7 @@ def run_http(host: str = "127.0.0.1", port: int = 7778) -> None:
     """Run the MCP server using streamable HTTP transport."""
     server = create_server()
     server.run(transport="streamable-http", host=host, port=port)
+
+
+if __name__ == "__main__":
+    run_stdio()
