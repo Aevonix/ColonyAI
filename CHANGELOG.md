@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0 (2026-04-22)
+
+Pattern Extraction + Surprise Engine: pattern detection and anomaly scoring.
+
+### Pattern Extraction
+- PatternStore: SQLite-backed CRUD with upsert (frequency increment on duplicate pattern_key)
+- Deactivate stale patterns, list with filters (type, min frequency, source, active)
+- 4 pattern types: entity_cooccurrence, relation_frequency, temporal_sequence, attribute_cluster
+- Extraction logic: entity cooccurrence, relation frequency, attribute clusters
+- Extraction workers graceful no-op when world model not wired
+- `POST /v1/host/patterns/extract` trigger endpoint
+
+### Surprise Engine
+- SurpriseStore: SQLite-backed CRUD, resolve, count_unresolved, get_unresolved
+- Scorer: pattern-matching scoring (no match=0.7, violated=0.5+conf×0.5, low freq=0.2, high freq=0.0)
+- Auto-score via `auto_score` flag on create (routes through scorer with pattern store)
+- `GET /v1/host/surprises/unresolved` for high-score unresolved surprises
+
+### Integration
+- Context assembly: surprises section at priority 75 (between affect 80 and shared facts 70)
+- Autonomy: `surprise_accumulation` condition (30min interval, fires when 5+ unresolved in 1h)
+- Events: `pattern.created`, `pattern.extracted`, `surprise.high`, `surprise.accumulation`
+- TypeScript client + types + config + cache channels
+- 38 new unit tests (158 total)
+
 ## 0.4.0 (2026-04-22)
 
 Theory of Mind v0.1: affect tracking and shared facts.
