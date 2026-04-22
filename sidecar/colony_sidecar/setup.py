@@ -725,7 +725,7 @@ def run_init(root_dir: str | None = None) -> int:
     contacts_db = base / values.get("COLONY_CONTACTS_DB", "colony-contacts.db")
     try:
         from colony_sidecar.contacts.store import SQLiteContactStore, ContactsConfig
-        SQLiteContactStore(config=ContactsConfig(db_path=str(contacts_db)))
+        SQLiteContactStore(config=ContactsConfig(sqlite_path=str(contacts_db)))
         print(f"  ✅ Contacts DB initialized ({contacts_db})")
     except Exception as exc:
         print(f"  ⚠️ Contacts DB init failed: {exc}")
@@ -752,12 +752,13 @@ def run_init(root_dir: str | None = None) -> int:
                 graph = ColonyGraph(config=config)
                 try:
                     await graph.connect()
-                    # Simple connectivity test
-                    result = await graph.run_query("RETURN 1 AS ok", {})
-                    if result:
+                    # Verify driver is connected
+                    if graph._driver:
+                        async with graph._driver.session(database=config.database) as session:
+                            await session.run("RETURN 1")
                         print(f"  ✅ Neo4j connected ({values['NEO4J_URI']})")
                     else:
-                        print(f"  ⚠️ Neo4j connected but query returned nothing")
+                        print(f"  ⚠️ Neo4j driver not initialized")
                 finally:
                     await graph.close()
 
