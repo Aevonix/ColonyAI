@@ -231,6 +231,8 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
             ["openclaw", "config", "set", f"plugins.entries.colony.config.sidecarUrl", sidecar_url],
             ["openclaw", "config", "set", f"plugins.entries.colony.config.apiKey", api_key],
             ["openclaw", "config", "set", f"plugins.entries.colony.config.hostId", "openclaw"],
+            ["openclaw", "config", "set", f"plugins.entries.colony.config.ownContextEngine", "true"],
+            ["openclaw", "config", "set", f"plugins.entries.colony.config.ownMemoryCapability", "true"],
         ]
         for cmd in cmds:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -591,6 +593,7 @@ def run_init(root_dir: str | None = None) -> int:
         "NEO4J_USER": existing.get("NEO4J_USER", "neo4j"),
         "NEO4J_PASSWORD": neo4j_password or existing.get("NEO4J_PASSWORD", ""),
         "NEO4J_DATABASE": existing.get("NEO4J_DATABASE", "neo4j"),
+        "WORLD_MODEL_BACKEND": existing.get("WORLD_MODEL_BACKEND", "neo4j" if neo4j_password else "sqlite"),
         "COLONY_API_KEY": existing.get("COLONY_API_KEY", secrets.token_urlsafe(32)),
         "COLONY_CONTACTS_DB": existing.get("COLONY_CONTACTS_DB", "colony-contacts.db"),
         "COLONY_EMBED_PROVIDER": embed_provider,
@@ -891,7 +894,7 @@ def run_init(root_dir: str | None = None) -> int:
         try:
             env_with_key = {**os.environ, "COLONY_URL": sidecar_url, "COLONY_API_KEY": values["COLONY_API_KEY"]}
             doc_result = subprocess.run(
-                [sys.executable, "-m", "colony_sidecar.doctor"],
+                [sys.executable, "-m", "colony_sidecar", "doctor", "--url", sidecar_url],
                 capture_output=True, text=True, timeout=30,
                 cwd=str(base),
                 env=env_with_key,
@@ -908,6 +911,45 @@ def run_init(root_dir: str | None = None) -> int:
             print(f"  ⚪ Doctor check skipped: {exc}")
             print("  Run manually: COLONY_API_KEY=<key> colony doctor")
 
+        # Verify data flow — create test commitment and check context assembly
+        print()
+        print("  Verifying data flow (context assembly integration)...")
+        try:
+            import httpx
+            # Create a test commitment
+            r = httpx.post(
+                f"{sidecar_url}/v1/host/commitments",
+                headers={"Authorization": f"Bearer {values['COLONY_API_KEY']}"},
+                json={"person_id": "setup-test", "description": "Setup verification commitment"},
+                timeout=5,
+            )
+            if r.status_code in (200, 201):
+                # Assemble context and check commitments appear
+                r = httpx.post(
+                    f"{sidecar_url}/v1/host/context/assemble",
+                    headers={"Authorization": f"Bearer {values['COLONY_API_KEY']}"},
+                    json={
+                        "identity": {"host_id": "setup"},
+                        "context": {"session_id": "setup", "contact_id": "setup-test"},
+                        "incoming_message": {"role": "user", "content": "test"},
+                    },
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    sections = r.json().get("sections", [])
+                    section_ids = [s["id"] for s in sections]
+                    if "colony-commitments" in section_ids:
+                        print("  ✅ Data flow verified — commitments appear in context assembly")
+                    else:
+                        print(_yellow("  ⚠️ Commitments not appearing in context assembly"))
+                        print(f"     Sections returned: {section_ids}")
+                else:
+                    print(_yellow(f"  ⚠️ Context assembly returned {r.status_code}"))
+            else:
+                print(_yellow(f"  ⚠️ Could not create test commitment ({r.status_code})"))
+        except Exception as exc:
+            print(f"  ⚪ Data flow verification skipped: {exc}")
+
     # ── Step 11: Summary ─────────────────────────────────────────────────
 
     print()
@@ -920,7 +962,12 @@ def run_init(root_dir: str | None = None) -> int:
     print(f"    {'✅' if neo4j_password else '⚪'} Memory (ColonyGraph{' — Neo4j connected' if neo4j_password else ' — Neo4j not configured'})")
     print(f"    ✅ Goals")
     print(f"    ✅ Contacts")
-    print(f"    ✅ World Model")
+    print(f"    ✅ World Model ({'Neo4j' if neo4j_password else 'SQLite'} backend)")
+    print(f"    ✅ Commitment Tracking")
+    print(f"    ✅ Affect Tracking (Theory of Mind)")
+    print(f"    ✅ Shared Facts (Theory of Mind)")
+    print(f"    ✅ Pattern Extraction + Surprise Engine")
+    print(f"    ✅ Event Journal + Context Compression")
     print()
 
     if not sidecar_started:
