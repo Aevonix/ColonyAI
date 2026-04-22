@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.5.3 (2026-04-22)
+
+Neo4j graph database backend for the World Model, plus full CRUD API endpoints.
+
+### Neo4j Backend
+- Full `Neo4jBackend` implementing the same interface as SQLiteBackend
+- Entity and relationship CRUD with Cypher MERGE/SET
+- Native graph traversal via `get_neighbors()`
+- Full-text search via Neo4j index
+- Observations, merge proposals, entity resolution, stats
+- Auto-schema on connect: indexes, constraints, full-text index
+- Compatible with Neo4j driver v6 async API
+- Backend selection via `WORLD_MODEL_BACKEND` env var (sqlite/neo4j)
+- Env vars: `NEO4J_URI`, `NEO4J_DATABASE`, `NEO4J_USER`, `NEO4J_PASSWORD`
+- Automatic fallback to SQLite if driver missing or Neo4j unavailable
+
+### World Model API Endpoints (12 new)
+- `POST /world/entities` — create entity
+- `GET /world/entities/{id}` — get entity
+- `PATCH /world/entities/{id}` — update entity
+- `DELETE /world/entities/{id}` — delete entity
+- `POST /world/relationships` — create relationship
+- `GET /world/relationships` — list/query relationships with filters
+- `GET /world/relationships/{id}` — get relationship
+- `PATCH /world/relationships/{id}` — update/close relationship
+- `DELETE /world/relationships/{id}` — close relationship
+- `GET /world/entities/{id}/neighborhood` — BFS graph traversal
+- `GET /world/entities/{src}/path/{tgt}` — shortest path
+- `GET /world/stats` — world model statistics
+
+### Fixes
+- Default `neo4j_database` changed from `colony` to `neo4j` (Community edition compatibility)
+- Stats query filters NULL entity_types from legacy data
+
 ## 0.5.2 (2026-04-22)
 
 Security and dependency maintenance.
