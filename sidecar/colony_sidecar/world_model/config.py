@@ -16,7 +16,7 @@ class WorldModelConfig:
     # ── Backend ────────────────────────────────────────────────────────
     backend: str = "sqlite"         # "neo4j" | "sqlite"
     neo4j_uri: str = "bolt://localhost:7687"
-    neo4j_database: str = "colony"
+    neo4j_database: str = "neo4j"
     sqlite_path: str = "colony_world_model.db"
 
     # ── Confidence thresholds ──────────────────────────────────────────

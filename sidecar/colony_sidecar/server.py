@@ -401,10 +401,12 @@ async def lifespan(app: FastAPI):
     world_store = None
     try:
         from colony_sidecar.world_model.store import WorldModelStore
-        world_store = WorldModelStore()
+        from colony_sidecar.world_model.config import WorldModelConfig
+        _wm_backend = os.environ.get("WORLD_MODEL_BACKEND", "sqlite")
+        world_store = WorldModelStore(WorldModelConfig(backend=_wm_backend))
         await world_store.connect()
         set_world_store(world_store)
-        logger.info("WorldModelStore initialized and connected")
+        logger.info("WorldModelStore initialized and connected (backend=%s)", _wm_backend)
 
         # Wire extraction pipeline
         try:
@@ -444,7 +446,7 @@ async def lifespan(app: FastAPI):
         logger.warning("WorldModelStore init failed: %s", exc)
         # Try without connect() — some operations work without it
         try:
-            world_store = WorldModelStore()
+            world_store = WorldModelStore(WorldModelConfig(backend=_wm_backend))
             set_world_store(world_store)
             logger.info("WorldModelStore initialized (without connect)")
         except Exception:
