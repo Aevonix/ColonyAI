@@ -583,7 +583,7 @@ class AutonomyLoop:
         if graph is None:
             return
         try:
-            from colony_sidecar.intelligence.relationships.scorer import RelationshipScorer
+            from colony_sidecar.intelligence.relationships.relationships.scorer import RelationshipScorer
             scorer = RelationshipScorer(graph)
             if hasattr(scorer, "refresh_all_scores"):
                 changes = await scorer.refresh_all_scores()

@@ -122,7 +122,7 @@ class GoalStore:
         goals = self.list_goals(status=goal_status, limit=limit + 1, offset=offset)
 
         if priority:
-            goals = [g for g in goals if g.priority.value == priority]
+            goals = [g for g in goals if (g.priority.value if hasattr(g.priority, 'value') else g.priority) == priority]
 
         has_more = len(goals) > limit
         if has_more:
@@ -133,9 +133,9 @@ class GoalStore:
                 "goal_id": g.goal_id,
                 "title": g.title,
                 "description": g.description,
-                "status": g.status.value,
-                "priority": g.priority.value,
-                "source": g.source.value,
+                "status": g.status.value if hasattr(g.status, 'value') else g.status,
+                "priority": g.priority.value if hasattr(g.priority, 'value') else g.priority,
+                "source": g.source.value if hasattr(g.source, 'value') else g.source,
                 "created_at": g.created_at.isoformat(),
                 "updated_at": g.updated_at.isoformat(),
                 "tags": g.tags,
@@ -213,9 +213,9 @@ class GoalStore:
                     goal.goal_id,
                     goal.title,
                     goal.description,
-                    goal.source.value,
-                    goal.status.value,
-                    goal.priority.value,
+                    goal.source.value if hasattr(goal.source, 'value') else goal.source,
+                    goal.status.value if hasattr(goal.status, 'value') else goal.status,
+                    goal.priority.value if hasattr(goal.priority, 'value') else goal.priority,
                     outcome_json,
                     goal.deadline.isoformat() if goal.deadline else None,
                     goal.parent_goal_id,
@@ -236,7 +236,7 @@ class GoalStore:
             from colony_sidecar.events.broadcaster import emit as _emit
             _emit("goal_update", {
                 "goal_id": goal.goal_id,
-                "status": goal.status.value,
+                "status": goal.status.value if hasattr(goal.status, 'value') else goal.status,
                 "progress_pct": goal.progress_pct,
                 "title": goal.title,
             })
@@ -262,7 +262,7 @@ class GoalStore:
         if status:
             rows = conn.execute(
                 "SELECT * FROM goals WHERE status = ? ORDER BY priority DESC, created_at DESC LIMIT ? OFFSET ?",
-                (status.value, limit, offset),
+                (status.value if hasattr(status, 'value') else status, limit, offset),
             ).fetchall()
         else:
             rows = conn.execute(
@@ -352,7 +352,7 @@ class GoalStore:
                     json.dumps(subtask.payload),
                     json.dumps(subtask.capabilities),
                     json.dumps(subtask.depends_on),
-                    subtask.status.value,
+                    subtask.status.value if hasattr(subtask.status, 'value') else subtask.status,
                     subtask.job_id,
                     json.dumps(subtask.result) if subtask.result else None,
                     subtask.depth,
@@ -436,7 +436,7 @@ class GoalStore:
                     "payload": s.payload,
                     "capabilities": s.capabilities,
                     "depends_on": s.depends_on,
-                    "status": s.status.value,
+                    "status": s.status.value if hasattr(s.status, 'value') else s.status,
                     "job_id": s.job_id,
                     "result": s.result,
                     "depth": s.depth,
@@ -528,8 +528,8 @@ class GoalStore:
                 """,
                 (
                     goal_id,
-                    from_status.value,
-                    to_status.value,
+                    from_status.value if hasattr(from_status, 'value') else from_status,
+                    to_status.value if hasattr(to_status, 'value') else to_status,
                     trigger,
                     _now_iso(),
                     json.dumps(metadata or {}),
