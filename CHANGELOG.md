@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2 (2026-04-22)
+
+Security and dependency maintenance.
+
+### Security
+- Updated openclaw dependency to 2026.4.21 (resolves 9 Dependabot alerts: protobufjs critical, tar high, axios moderate)
+- All transitive vulnerabilities now resolved (0 npm audit findings)
+
+### Bug Fixes
+- Fixed `_llm_router` reference in ToM extractor init log (would crash when LLM router is wired)
+
 ## 0.5.1 (2026-04-22)
 
 ToM Layer 3: LLM extraction for affect and shared facts.
