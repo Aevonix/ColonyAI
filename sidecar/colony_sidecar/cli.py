@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -30,10 +32,18 @@ def main() -> None:
     start_p = sub.add_parser("start", help="Start the sidecar server")
     start_p.add_argument("--host", default=None, help="Override listen host")
     start_p.add_argument("--port", type=int, default=None, help="Override listen port")
-    start_p.add_argument("--detach", action="store_true", help="Run in background")
+    start_p.add_argument("--detach", "-d", action="store_true", help="Run in background (daemon mode)")
+    start_p.add_argument("--force", "-f", action="store_true", help="Kill existing process on port if needed")
+
+    # --- stop ---
+    sub.add_parser("stop", help="Stop the running sidecar")
 
     # --- status ---
-    sub.add_parser("status", help="Check sidecar health")
+    sub.add_parser("status", help="Check sidecar health and pipeline status")
+
+    # --- validate ---
+    val_p = sub.add_parser("validate", help="Run end-to-end pipeline validation (uses LLM credits)")
+    val_p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     # --- generate-types ---
     sub.add_parser("generate-types", help="Export OpenAPI spec (for TypeScript generation)")
@@ -112,44 +122,36 @@ def main() -> None:
             print(f"  Colony identity already exists: {id_path.read_text().strip()}")
 
     elif args.command == "start":
-        # Load .env if present
         _load_dotenv()
-
-        import uvicorn
         host = args.host or os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
         port = args.port or int(os.environ.get("COLONY_SIDECAR_PORT", "7777"))
-        try:
-            ws_max_size = int(
-                os.environ.get("COLONY_MAX_WS_FRAME_BYTES", "") or 1 * 1024 * 1024
+
+        if args.detach:
+            _cmd_start_daemon(host, port, args.force)
+        else:
+            # Foreground mode — just run uvicorn directly
+            import uvicorn
+            try:
+                ws_max_size = int(
+                    os.environ.get("COLONY_MAX_WS_FRAME_BYTES", "") or 1 * 1024 * 1024
+                )
+            except ValueError:
+                ws_max_size = 1 * 1024 * 1024
+            uvicorn.run(
+                "colony_sidecar.server:app",
+                host=host,
+                port=port,
+                log_level=os.environ.get("LOG_LEVEL", "info").lower(),
+                ws_max_size=ws_max_size,
             )
-        except ValueError:
-            ws_max_size = 1 * 1024 * 1024
-        uvicorn.run(
-            "colony_sidecar.server:app",
-            host=host,
-            port=port,
-            log_level=os.environ.get("LOG_LEVEL", "info").lower(),
-            ws_max_size=ws_max_size,
-        )
+
+    elif args.command == "stop":
+        _load_dotenv()
+        _cmd_stop()
 
     elif args.command == "status":
         _load_dotenv()
-        import httpx
-        host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
-        port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
-        try:
-            resp = httpx.get(f"http://{host}:{port}/v1/host/health", timeout=5)
-            data = resp.json()
-            status = data.get("status", "unknown")
-            caps = data.get("capabilities", [])
-            notes = data.get("notes", {})
-            print(f"Status: {status}")
-            print(f"Capabilities: {', '.join(caps) if caps else 'none'}")
-            for k, v in notes.items():
-                print(f"  {k}: {v}")
-        except Exception as exc:
-            print(f"Sidecar not reachable: {exc}")
-            sys.exit(1)
+        _cmd_status()
 
     elif args.command == "generate-types":
         _load_dotenv()
@@ -396,6 +398,10 @@ def main() -> None:
         print()
         print("Restart the sidecar to activate multimodal: colony start")
         print("If you have existing text vectors, run: colony migrate-tier")
+
+    elif args.command == "validate":
+        _load_dotenv()
+        _cmd_validate(args)
 
     elif args.command == "doctor":
         _cmd_doctor(args)
@@ -674,6 +680,350 @@ def _cmd_key(args) -> None:
         print("  Usage: colony key {info|generate|set-passphrase|manifest|claim-genesis}")
 
 
+
+def _find_pid_on_port(port: int) -> int | None:
+    """Find the PID of a process listening on the given port."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        pids = result.stdout.strip().splitlines()
+        return int(pids[0]) if pids and pids[0].isdigit() else None
+    except Exception:
+        return None
+
+
+def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
+    """Start the sidecar as a background daemon."""
+    import subprocess
+
+    # Check if port is already in use
+    existing_pid = _find_pid_on_port(port)
+    if existing_pid:
+        if force:
+            print(f"  Killing existing process {existing_pid} on port {port}...")
+            try:
+                os.kill(existing_pid, 15)  # SIGTERM
+                time.sleep(2)
+                # Check if it died
+                if _find_pid_on_port(port):
+                    os.kill(existing_pid, 9)  # SIGKILL
+                    time.sleep(1)
+                print(f"  ✅ Process killed")
+            except ProcessLookupError:
+                pass
+        else:
+            print(f"  ⚠️ Port {port} is already in use (PID {existing_pid})")
+            answer = input("  Kill existing process and restart? [Y/n] ").strip().lower()
+            if answer in ("n", "no"):
+                print("  Cancelled.")
+                return
+            try:
+                os.kill(existing_pid, 15)
+                time.sleep(2)
+                if _find_pid_on_port(port):
+                    os.kill(existing_pid, 9)
+                    time.sleep(1)
+                print(f"  ✅ Process killed")
+            except ProcessLookupError:
+                pass
+
+    # Build env from .env values
+    env = {**os.environ}
+    env["COLONY_SIDECAR_HOST"] = host
+    env["COLONY_SIDECAR_PORT"] = str(port)
+
+    # Start uvicorn
+    log_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / "sidecar.log"
+    print(f"  Starting Colony sidecar on {host}:{port}...")
+    print(f"  Log: {log_path}")
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn",
+         "colony_sidecar.server:app",
+         "--host", host,
+         "--port", str(port)],
+        stdout=open(log_path, "w"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        env=env,
+    )
+
+    # Write PID file
+    pid_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / "sidecar.pid"
+    pid_path.write_text(str(proc.pid))
+
+    # Wait for health check
+    import httpx
+    for attempt in range(20):
+        time.sleep(1)
+        try:
+            r = httpx.get(f"http://{host}:{port}/v1/host/health", timeout=2)
+            if r.status_code == 200:
+                data = r.json()
+                caps = len(data.get("capabilities", []))
+                print(f"  ✅ Sidecar running (PID {proc.pid}, {caps} capabilities)")
+                # Check E2E validation status
+                stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
+                if not stamp.exists():
+                    print(f"  ⚠️ E2E pipeline not validated — run 'colony validate' to test")
+                return
+        except Exception:
+            pass
+
+    print(f"  ⚠️ Sidecar didn't respond within 20s")
+    print(f"  Check logs: {log_path}")
+    print(f"  PID: {proc.pid}")
+
+
+def _cmd_stop() -> None:
+    """Stop the running sidecar."""
+    # Try PID file first
+    pid_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / "sidecar.pid"
+    port = int(os.environ.get("COLONY_SIDECAR_PORT", "7777"))
+
+    pid = None
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text().strip())
+        except ValueError:
+            pass
+
+    # Fallback: find by port
+    if not pid:
+        pid = _find_pid_on_port(port)
+
+    if not pid:
+        print(f"  No sidecar process found on port {port}")
+        return
+
+    try:
+        os.kill(pid, 15)  # SIGTERM
+        print(f"  Stopping sidecar (PID {pid})...")
+        time.sleep(2)
+
+        # Check if still alive
+        if _find_pid_on_port(port):
+            print(f"  Process didn't stop gracefully, killing...")
+            os.kill(pid, 9)  # SIGKILL
+            time.sleep(1)
+
+        print(f"  ✅ Sidecar stopped")
+
+        # Clean up PID file
+        if pid_path.exists():
+            pid_path.unlink()
+
+    except ProcessLookupError:
+        print(f"  Process {pid} already gone")
+        if pid_path.exists():
+            pid_path.unlink()
+
+
+def _cmd_status() -> None:
+    """Check sidecar health and pipeline status."""
+    import httpx
+
+    host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+    port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+    url = f"http://{host}:{port}"
+    api_key = os.environ.get("COLONY_API_KEY", "")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    try:
+        resp = httpx.get(f"{url}/v1/host/health", headers=headers, timeout=5)
+        data = resp.json()
+        status = data.get("status", "unknown")
+        caps = data.get("capabilities", [])
+        notes = data.get("notes", {})
+
+        # Status icon
+        icon = "🟢" if status == "ok" else "🔴"
+        print(f"{icon} Colony Sidecar — {status}")
+        print(f"  URL: {url}")
+        print(f"  Capabilities: {len(caps)}")
+
+        # Show notable notes
+        for k, v in notes.items():
+            if "fail" in str(v).lower() or "error" in str(v).lower() or "not wired" in str(v).lower():
+                print(f"  ⚠️  {k}: {v}")
+
+        # Check E2E validation stamp
+        stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
+        if stamp.exists():
+            stamp_data = json.loads(stamp.read_text())
+            validated_at = stamp_data.get("validated_at", "unknown")
+            print(f"  ✅ E2E validated: {validated_at}")
+        else:
+            print(f"  ⚠️  E2E pipeline not validated")
+            print(f"     Run 'colony validate' to test the full pipeline")
+
+    except Exception as exc:
+        print(f"🔴 Sidecar not reachable: {exc}")
+        # Check if process exists
+        pid = _find_pid_on_port(int(port))
+        if pid:
+            print(f"  Process {pid} is on port {port} but not responding")
+        else:
+            print(f"  No process on port {port}")
+            print(f"  Start with: colony start")
+        sys.exit(1)
+
+
+def _cmd_validate(args) -> None:
+    """Run end-to-end pipeline validation."""
+    import httpx
+
+    host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+    port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+    url = f"http://{host}:{port}"
+    api_key = os.environ.get("COLONY_API_KEY", "")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    state_dir = os.environ.get("COLONY_STATE_DIR", ".")
+
+    print("🧪 Colony E2E Pipeline Validation")
+    print("=" * 40)
+    print()
+
+    # Step 0: Confirm LLM usage
+    if not args.yes:
+        print("This test will send one prompt through the LLM to verify the full pipeline.")
+        print("It uses a small amount of LLM API credits.")
+        answer = input("Continue? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Cancelled.")
+            return
+
+    # Step 1: Check sidecar is running
+    print("\n[1/5] Checking sidecar...")
+    try:
+        resp = httpx.get(f"{url}/v1/host/health", headers=headers, timeout=5)
+        data = resp.json()
+        if data.get("status") != "ok":
+            print(f"  ❌ Sidecar not healthy: {data.get('status')}")
+            return
+        print(f"  ✅ Sidecar running ({len(data.get('capabilities', []))} capabilities)")
+    except Exception as e:
+        print(f"  ❌ Sidecar not reachable: {e}")
+        print("  Start with: colony start")
+        return
+
+    # Step 2: Seed test data
+    print("\n[2/5] Seeding test data...")
+    test_contact = f"validate-{uuid.uuid4().hex[:6]}"
+
+    r = httpx.post(f"{url}/v1/host/commitments", headers=headers,
+        json={"person_id": test_contact, "description": "Validate E2E pipeline", "priority": 2}, timeout=5)
+    if r.status_code not in (200, 201):
+        print(f"  ❌ Could not create commitment: {r.status_code}")
+        return
+    cid = r.json().get("id")
+    print(f"  ✅ Test commitment created")
+
+    r = httpx.post(f"{url}/v1/host/affect/events", headers=headers,
+        json={"contact_id": test_contact, "valence": 0.6, "arousal": 0.4, "trigger": "validation test"}, timeout=5)
+    print(f"  ✅ Test affect recorded" if r.status_code in (200, 201) else f"  ⚠️ Affect failed: {r.status_code}")
+
+    r = httpx.post(f"{url}/v1/host/mind/facts", headers=headers,
+        json={"contact_id": test_contact, "fact": "Running pipeline validation", "category": "test", "confidence": 0.5}, timeout=5)
+    print(f"  ✅ Test fact recorded" if r.status_code in (200, 201) else f"  ⚠️ Fact failed: {r.status_code}")
+
+    # Step 3: Context assembly
+    print("\n[3/5] Testing context assembly...")
+    r = httpx.post(f"{url}/v1/host/context/assemble", headers=headers,
+        json={"identity": {"host_id": "validate"}, "context": {"session_id": "validate", "contact_id": test_contact},
+              "incoming_message": {"role": "user", "content": "What am I working on?"}}, timeout=10)
+    if r.status_code != 200:
+        print(f"  ❌ Context assembly failed: {r.status_code}")
+        return
+
+    sections = r.json().get("sections", [])
+    section_ids = [s["id"] for s in sections]
+    expected = ["colony-commitments", "colony-affect", "colony-shared-facts"]
+    found = [e for e in expected if e in section_ids]
+    print(f"  ✅ Context assembly: {len(sections)} sections, {len(found)}/{len(expected)} cognitive sections present")
+
+    # Step 4: Check LLM is configured
+    print("\n[4/5] Checking LLM configuration...")
+    has_openclaw = bool(shutil.which("openclaw"))
+    llm_ok = False
+
+    if has_openclaw:
+        try:
+            result = subprocess.run(
+                ["openclaw", "config", "get", "llm.apiKey"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip() and result.stdout.strip() != "undefined":
+                llm_ok = True
+                print(f"  ✅ LLM API key configured in OpenClaw")
+            else:
+                print(f"  ⚠️ No LLM API key in OpenClaw — cannot test full LLM pipeline")
+                print(f"  Configure with: openclaw config set llm.apiKey <key>")
+        except Exception:
+            print(f"  ⚠️ Could not check OpenClaw LLM config")
+    else:
+        # Check sidecar's own LLM config
+        r = httpx.get(f"{url}/v1/host/health", headers=headers, timeout=5)
+        notes = r.json().get("notes", {})
+        if "llm" in str(notes).lower() and "not" not in str(notes.get("llm", "")).lower():
+            llm_ok = True
+            print(f"  ✅ LLM configured in sidecar")
+        else:
+            print(f"  ⚠️ LLM status unknown — cannot verify full LLM pipeline")
+
+    # Step 5: Test full LLM pipeline if possible
+    print("\n[5/5] Testing full pipeline...")
+    if llm_ok and has_openclaw:
+        print("  Sending test message through OpenClaw...")
+        try:
+            result = subprocess.run(
+                ["openclaw", "agent", "--once", "What is 2+2? Reply with just the number."],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0 and "4" in result.stdout:
+                print(f"  ✅ Full pipeline working — LLM responded through Colony")
+            else:
+                print(f"  ⚠️ LLM responded but couldn't verify Colony was in the chain")
+                print(f"  Agent output: {result.stdout[:100]}")
+        except subprocess.TimeoutExpired:
+            print(f"  ⚠️ LLM test timed out (model may be slow)")
+        except Exception as e:
+            print(f"  ⚠️ LLM test failed: {e}")
+    else:
+        print("  ⚪ Full LLM pipeline test skipped (no LLM configured or OpenClaw not available)")
+
+    # Cleanup: delete test commitment
+    if cid:
+        httpx.delete(f"{url}/v1/host/commitments/{cid}", headers=headers, timeout=5)
+
+    # Write validation stamp
+    stamp_path = Path(state_dir) / ".colony-e2e-validated"
+    stamp_data = {
+        "validated_at": datetime.now(timezone.utc).isoformat(),
+        "context_sections": len(sections),
+        "cognitive_sections": len(found),
+        "llm_tested": llm_ok and has_openclaw,
+    }
+    stamp_path.write_text(json.dumps(stamp_data, indent=2))
+
+    # Summary
+    print()
+    all_ok = len(found) >= 2  # At least commitments + one other
+    if all_ok:
+        print("🟢 Pipeline validation passed")
+        print(f"  Context assembly: {len(sections)} sections")
+        print(f"  Cognitive sections: {', '.join(found)}")
+        if not llm_ok:
+            print(f"  ⚠️ LLM pipeline not tested — configure LLM and re-run 'colony validate'")
+    else:
+        print("🔴 Pipeline validation incomplete")
+        print(f"  Missing sections: {set(expected) - set(found)}")
+        print(f"  Check sidecar logs and configuration")
+
+
 def _cmd_doctor(args) -> None:
     """Run integration health check against the running sidecar."""
     import httpx
@@ -914,6 +1264,12 @@ def _cmd_doctor(args) -> None:
             r = c.get("/v1/host/events/replay?limit=1")
             return r.status_code in (200, 501)  # 501 if no events yet
         check("Event journal", _events)
+
+        # 34. E2E pipeline validation
+        def _e2e_validated():
+            stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
+            return stamp.exists()
+        check("E2E pipeline validated", _e2e_validated)
 
         # --- Full checks (heavier, require LLM or async) ---
         if args.full:

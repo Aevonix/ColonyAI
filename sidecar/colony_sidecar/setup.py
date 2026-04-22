@@ -833,21 +833,17 @@ def run_init(root_dir: str | None = None) -> int:
 
     if start_now.lower() in ("y", "yes", ""):
         print("  Starting Colony sidecar...")
-        # Start uvicorn in background with log capture
-        log_path = base / "sidecar.log"
-        sidecar_proc = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn",
-             "colony_sidecar.server:app",
+        # Use 'colony start -d' which handles port conflicts, PID tracking, etc.
+        sidecar_result = subprocess.run(
+            [sys.executable, "-m", "colony_sidecar", "start",
              "--host", values["COLONY_SIDECAR_HOST"],
-             "--port", values["COLONY_SIDECAR_PORT"]],
-            stdout=open(log_path, "w"),
-            stderr=subprocess.STDOUT,
+             "--port", values["COLONY_SIDECAR_PORT"],
+             "--detach", "--force"],
+            capture_output=True, text=True, timeout=30,
             cwd=str(base),
             env={**os.environ, **values},
-            start_new_session=True,
         )
-
-        # Wait for it to come up
+        # Check if it started
         sidecar_url = f"http://{values['COLONY_SIDECAR_HOST']}:{values['COLONY_SIDECAR_PORT']}"
         for attempt in range(15):
             time.sleep(1)
@@ -1040,6 +1036,20 @@ def run_init(root_dir: str | None = None) -> int:
             "  ℹ️  Your Neo4j password is a random value in .env. Rotate it "
             "whenever you like; docker-compose reads it from that file."
         ))
+        print()
+
+    # E2E validation prompt
+    if sidecar_started and oc_ok:
+        print()
+        print("  The sidecar is running and OpenClaw is configured.")
+        print("  You can validate the full pipeline (sidecar + context + LLM) with:")
+        print(f"    {_green('colony validate')}")
+        print("  This sends one test prompt and uses a small amount of LLM credits.")
+        print(f"  Until validated, {_yellow('colony status')} and {_yellow('colony doctor')} will show a warning.")
+        print()
+    elif sidecar_started:
+        print()
+        print(f"  Validate your setup: {_green('colony validate')}")
         print()
 
     return 0
