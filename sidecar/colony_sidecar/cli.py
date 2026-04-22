@@ -716,7 +716,10 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
                 pass
         else:
             print(f"  ⚠️ Port {port} is already in use (PID {existing_pid})")
-            answer = input("  Kill existing process and restart? [Y/n] ").strip().lower()
+            try:
+                answer = input("  Kill existing process and restart? [Y/n] ").strip().lower()
+            except EOFError:
+                answer = "y"  # Default to yes when no stdin (e.g. scripts)
             if answer in ("n", "no"):
                 print("  Cancelled.")
                 return
