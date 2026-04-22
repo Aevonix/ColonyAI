@@ -50,7 +50,27 @@ class WorldModelStore:
 
     async def connect(self) -> None:
         """Initialize and connect to the storage backend."""
-        if self._config.backend == "postgres":
+        if self._config.backend == "neo4j":
+            try:
+                from colony_sidecar.world_model.neo4j.backend import Neo4jBackend
+                neo4j_uri = self._config.neo4j_uri
+                neo4j_db = self._config.neo4j_database
+                neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
+                neo4j_pass = os.environ.get("NEO4J_PASSWORD", "")
+                if neo4j_uri and neo4j_pass:
+                    self._backend = Neo4jBackend(
+                        uri=neo4j_uri,
+                        database=neo4j_db,
+                        username=neo4j_user,
+                        password=neo4j_pass,
+                    )
+                else:
+                    logger.warning("NEO4J_URI or NEO4J_PASSWORD not set — falling back to sqlite")
+                    self._backend = SQLiteBackend(self._config.sqlite_path)
+            except ImportError:
+                logger.warning("neo4j driver not installed — falling back to sqlite")
+                self._backend = SQLiteBackend(self._config.sqlite_path)
+        elif self._config.backend == "postgres":
             try:
                 from colony_sidecar.world_model.postgres.backend import PostgresBackend
                 pg_conn = os.environ.get("WORLD_MODEL_PG_CONNECTION", "")
