@@ -216,82 +216,81 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.vector.embedder import make_provider
         provider = make_provider(embed_config)
         if provider is None:
-            # 'skip' provider — embeddings disabled
-            logger.info("EmbeddingPipeline skipped (provider=skip)")
+            # 'skip' provider — embeddings disabled entirely
+            logger.info("EmbeddingPipeline skipped (provider=skip) — embeddings disabled")
         else:
             pipeline = EmbeddingPipeline(provider)
 
-        # Wire up multimodal if enabled
-        multimodal_enabled = os.environ.get("COLONY_MULTIMODAL", "false").lower() == "true"
-        if multimodal_enabled:
+            # Wire up multimodal if enabled
+            multimodal_enabled = os.environ.get("COLONY_MULTIMODAL", "false").lower() == "true"
+            if multimodal_enabled:
+                try:
+                    from colony_sidecar.vector.multimodal_provider import make_multimodal_provider
+                    from colony_sidecar.vector.image_store import make_image_store
+
+                    mm_config = EmbeddingConfig(
+                        provider=embed_provider,
+                        model_id=embed_model,
+                        dimensions=int(embed_dims) if embed_dims else 1024,
+                        base_url=os.environ.get("COLONY_EMBED_BASE_URL"),
+                        api_key=os.environ.get("COLONY_EMBED_API_KEY"),
+                    )
+                    mm_provider = make_multimodal_provider(mm_config)
+                    img_store = make_image_store(
+                        mode=os.environ.get("COLONY_IMAGE_STORAGE", "local"),
+                        state_dir=os.environ.get("COLONY_STATE_DIR", "."),
+                    )
+                    pipeline = EmbeddingPipeline(
+                        provider=make_provider(embed_config),
+                        multimodal_provider=mm_provider,
+                        image_store=img_store,
+                    )
+                    logger.info("Multimodal enabled (model=%s, storage=%s)", embed_model, os.environ.get("COLONY_IMAGE_STORAGE", "local"))
+                except Exception as exc:
+                    logger.warning("Multimodal init failed, falling back to text-only: %s", exc)
+
+            await pipeline.warmup()
+            set_embedder(pipeline)
+            logger.info("EmbeddingPipeline initialized (provider=%s model=%s)", embed_provider, embed_model)
+
+            # Wire embedding pipeline into ColonyGraph for vector-backed recall
             try:
-                from colony_sidecar.vector.multimodal_provider import make_multimodal_provider
-                from colony_sidecar.vector.image_store import make_image_store
+                graph.set_embed_fn(pipeline.embed)
+                from colony_sidecar.vector.store import VectorStore
+                vector_db_path = os.path.join(state_dir, "lancedb")
+                vs = VectorStore(data_dir=vector_db_path)
+                embed_dims = int(os.environ.get("COLONY_EMBED_DIMS", pipeline.dimensions or 384))
+                await vs.connect(dimensions=embed_dims)
+                await vs.ensure_collections(dimensions=embed_dims)
+                graph.set_vector_store(vs)
+                logger.info("ColonyGraph wired to vector store (path=%s)", vector_db_path)
 
-                mm_config = EmbeddingConfig(
-                    provider=embed_provider,
-                    model_id=embed_model,  # Already set to multimodal model by activate-multimodal or init
-                    dimensions=int(embed_dims) if embed_dims else 1024,
-                    base_url=os.environ.get("COLONY_EMBED_BASE_URL"),
-                    api_key=os.environ.get("COLONY_EMBED_API_KEY"),
-                )
-                mm_provider = make_multimodal_provider(mm_config)
-                img_store = make_image_store(
-                    mode=os.environ.get("COLONY_IMAGE_STORAGE", "local"),
-                    state_dir=os.environ.get("COLONY_STATE_DIR", "."),
-                )
-                pipeline = EmbeddingPipeline(
-                    provider=make_provider(embed_config),
-                    multimodal_provider=mm_provider,
-                    image_store=img_store,
-                )
-                logger.info("Multimodal enabled (model=%s, storage=%s)", embed_model, os.environ.get("COLONY_IMAGE_STORAGE", "local"))
-            except Exception as exc:
-                logger.warning("Multimodal init failed, falling back to text-only: %s", exc)
+                if graph._embed_fn and graph._vector_store:
+                    logger.info("ColonyGraph fully operational (Neo4j + embeddings + vector store)")
+                else:
+                    logger.warning("ColonyGraph partially wired — memory may be degraded")
+            except Exception as vexc:
+                logger.warning("Vector store wiring failed (recall will use keyword fallback): %s", vexc)
 
-        await pipeline.warmup()
-        set_embedder(pipeline)
-        logger.info("EmbeddingPipeline initialized (provider=%s model=%s)", embed_provider, embed_model)
+            # Pass LLM config to pipeline for auto-captioning
+            llm_config_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-llm-config.json"
+            if llm_config_path.exists() and hasattr(pipeline, "set_llm_config"):
+                try:
+                    llm_cfg = _json.loads(llm_config_path.read_text())
+                    pipeline.set_llm_config(llm_cfg)
+                    logger.info("LLM config passed to EmbeddingPipeline for auto-captioning")
+                except Exception as exc:
+                    logger.debug("Could not pass LLM config to pipeline: %s", exc)
 
-        # Wire embedding pipeline into ColonyGraph for vector-backed recall
-        try:
-            graph.set_embed_fn(pipeline.embed)
-            from colony_sidecar.vector.store import VectorStore
-            vector_db_path = os.path.join(state_dir, "lancedb")
-            vs = VectorStore(data_dir=vector_db_path)
-            embed_dims = int(os.environ.get("COLONY_EMBED_DIMS", pipeline.dimensions or 384))
-            await vs.connect(dimensions=embed_dims)
-            await vs.ensure_collections(dimensions=embed_dims)
-            graph.set_vector_store(vs)
-            logger.info("ColonyGraph wired to vector store (path=%s)", vector_db_path)
-
-            # Verify end-to-end wiring
-            if graph._embed_fn and graph._vector_store:
-                logger.info("ColonyGraph fully operational (Neo4j + embeddings + vector store)")
-            else:
-                logger.warning("ColonyGraph partially wired — memory may be degraded")
-        except Exception as vexc:
-            logger.warning("Vector store wiring failed (recall will use keyword fallback): %s", vexc)
-
-        # Pass LLM config to pipeline for auto-captioning
-        llm_config_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-llm-config.json"
-        if llm_config_path.exists() and hasattr(pipeline, "set_llm_config"):
+            # Health check + model mismatch detection
             try:
-                llm_cfg = _json.loads(llm_config_path.read_text())
-                pipeline.set_llm_config(llm_cfg)
-                logger.info("LLM config passed to EmbeddingPipeline for auto-captioning")
+                hc = await pipeline.health_check()
+                if hc.get("status") != "ok":
+                    logger.warning("Embedder health check failed: %s", hc.get("error", "unknown"))
+                else:
+                    logger.info("Embedder health check passed (latency=%.1fms)", hc.get("latency_ms", 0))
             except Exception as exc:
-                logger.debug("Could not pass LLM config to pipeline: %s", exc)
-
-        # Health check + model mismatch detection
-        try:
-            hc = await pipeline.health_check()
-            if hc.get("status") != "ok":
-                logger.warning("Embedder health check failed: %s", hc.get("error", "unknown"))
-            else:
-                logger.info("Embedder health check passed (latency=%.1fms)", hc.get("latency_ms", 0))
-        except Exception as exc:
-            logger.warning("Embedder health check exception: %s", exc)
+                logger.warning("Embedder health check exception: %s", exc)
     except Exception as exc:
         logger.warning("EmbeddingPipeline init failed: %s", exc)
 
