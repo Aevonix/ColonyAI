@@ -571,11 +571,17 @@ def run_init(root_dir: str | None = None) -> int:
                     print(f"  Reranker: {tier.text_reranker.model_id} ({tier.text_reranker.params})")
                 else:
                     print(f"  Reranker: none")
-                embed_mode = _prompt("  Use API embeddings instead? (no model download needed) [y/N]", "N")
-                if embed_mode.lower() in ("y", "yes"):
+                embed_mode = _prompt("  Choose: [1] Local model  [2] API embeddings  [3] Skip embeddings", "1")
+                if embed_mode == "2":
                     embed_provider = "openai_api"
                     reranker_model = ""
                     print(f"  ✅ Using API embeddings (inherits host LLM key)")
+                elif embed_mode == "3":
+                    embed_provider = "skip"
+                    embed_model = ""
+                    embed_dims = ""
+                    reranker_model = ""
+                    print(f"  ✅ Embeddings skipped — Colony will run without vector search")
             else:
                 embed_provider = "cpu"
                 embed_model = "sentence-transformers/all-MiniLM-L6-v2"
@@ -619,7 +625,12 @@ def run_init(root_dir: str | None = None) -> int:
     print()
 
     # ── Step 7: Download embedding + reranker models
-    if embed_provider in ("cuda", "cpu", "mlx") and embed_model:
+    if embed_provider == "skip":
+        print(_bold("Step 7: Embeddings skipped"))
+        print()
+        print("  Colony will run without vector search. You can enable embeddings later")
+        print("  by editing COLONY_EMBED_PROVIDER in .env and restarting.")
+    elif embed_provider in ("cuda", "cpu", "mlx") and embed_model:
         print(_bold("Step 7: Download embedding model"))
         print()
         print(f"  Downloading {embed_model}...")
@@ -713,8 +724,8 @@ def run_init(root_dir: str | None = None) -> int:
 
     contacts_db = base / values.get("COLONY_CONTACTS_DB", "colony-contacts.db")
     try:
-        from colony_sidecar.contacts.store import SQLiteContactStore
-        SQLiteContactStore(db_path=str(contacts_db))
+        from colony_sidecar.contacts.store import SQLiteContactStore, ContactsConfig
+        SQLiteContactStore(config=ContactsConfig(db_path=str(contacts_db)))
         print(f"  ✅ Contacts DB initialized ({contacts_db})")
     except Exception as exc:
         print(f"  ⚠️ Contacts DB init failed: {exc}")
@@ -740,8 +751,13 @@ def run_init(root_dir: str | None = None) -> int:
                 )
                 graph = ColonyGraph(config=config)
                 try:
-                    await graph.health_check()
-                    print(f"  ✅ Neo4j connected ({values['NEO4J_URI']})")
+                    await graph.connect()
+                    # Simple connectivity test
+                    result = await graph.run_query("RETURN 1 AS ok", {})
+                    if result:
+                        print(f"  ✅ Neo4j connected ({values['NEO4J_URI']})")
+                    else:
+                        print(f"  ⚠️ Neo4j connected but query returned nothing")
                 finally:
                     await graph.close()
 
@@ -821,9 +837,12 @@ def run_init(root_dir: str | None = None) -> int:
 
     if start_now.lower() in ("y", "yes", ""):
         print("  Starting Colony sidecar...")
-        # Start in background
+        # Start uvicorn in background
         sidecar_proc = subprocess.Popen(
-            [sys.executable, "-m", "colony_sidecar.server"],
+            [sys.executable, "-m", "uvicorn",
+             "colony_sidecar.server:app",
+             "--host", values["COLONY_SIDECAR_HOST"],
+             "--port", values["COLONY_SIDECAR_PORT"]],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=str(base),
             env={**os.environ, **values},
