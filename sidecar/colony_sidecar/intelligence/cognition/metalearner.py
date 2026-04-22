@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Dict, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 
 from .types import GapSeverity
@@ -139,7 +139,16 @@ class MetaLearner:
     async def evaluate(self) -> "CognitivePerformanceIndex":
         """Compute current Cognitive Performance Index."""
         if not self._performance_index:
-            raise RuntimeError("PerformanceIndexComputer not wired")
+            logger.warning("MetaLearner.evaluate: PerformanceIndexComputer not wired — returning default CPI")
+            from colony_sidecar.intelligence.cognition.performance_index import CognitivePerformanceIndex, CPIComponent
+            now = datetime.now(timezone.utc)
+            default_comp = CPIComponent(name="default", score=50.0)
+            return CognitivePerformanceIndex(
+                retrieval=default_comp, prediction=default_comp,
+                goal_progress=default_comp, tool_efficiency=default_comp,
+                initiative=default_comp, response_quality=default_comp,
+                overall=50.0, computed_at=now,
+            )
 
         cpi = await self._performance_index.compute(self._metrics_collector)
 

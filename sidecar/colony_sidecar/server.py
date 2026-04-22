@@ -6,6 +6,7 @@ etc.) as a plugin via the ``/v1/host`` API surface.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -769,6 +770,10 @@ async def lifespan(app: FastAPI):
             autonomy_config.tick_interval_secs,
             len(scheduler.list_schedules()),
         )
+
+        # Auto-start the autonomy loop as a background task
+        asyncio.create_task(autonomy_loop.start())
+        logger.info("AutonomyLoop auto-start scheduled")
     except Exception as exc:
         logger.warning("AutonomyLoop init failed: %s", exc)
 

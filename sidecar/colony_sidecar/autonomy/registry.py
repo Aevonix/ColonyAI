@@ -37,8 +37,12 @@ class SubsystemRegistry:
     @property
     def anomalies(self) -> Any:
         from colony_sidecar.intelligence.components.anomaly_detector import AnomalyDetector
+        from colony_sidecar.api.routers.host import _graph
+        from colony_sidecar.events.bus import EventBus
         if not hasattr(self, '_anomaly_detector'):
-            self._anomaly_detector = AnomalyDetector()
+            graph_client = _graph.driver if _graph and hasattr(_graph, 'driver') else None
+            event_bus = EventBus()
+            self._anomaly_detector = AnomalyDetector(graph_client, event_bus)
         return self._anomaly_detector
 
     @property

@@ -392,28 +392,44 @@ class Neo4jBackend:
         self, entity_id: str, min_confidence: float = 0.30,
         relationship_types: Optional[List[str]] = None,
     ) -> List[Tuple[BaseEntity, WorldRelationship]]:
-        rel_match = "-[r]->" if not relationship_types else \
-            "-[r:" + "|".join(_sanitize_rel_type(t) for t in relationship_types) + "]->"
+        # Bidirectional: both outgoing and incoming relationships
+        if not relationship_types:
+            rel_type_filter = ""
+        else:
+            rel_type_filter = ":" + "|".join(_sanitize_rel_type(t) for t in relationship_types)
 
-        cypher = (
-            f"MATCH (s:Entity {{id: $id}}){rel_match}(t:Entity) "
+        # Outgoing: (center)-[r]->(other)
+        cypher_out = (
+            f"MATCH (s:Entity {{id: $id}})-[r{rel_type_filter}]->(t:Entity) "
             "WHERE r.confidence >= $min_conf RETURN s.id AS source_id, t.id AS target_id, "
             "type(r) AS rel_type, properties(r) AS rel_props, t"
         )
+        # Incoming: (other)-[r]->(center)
+        cypher_in = (
+            f"MATCH (t:Entity)-[r{rel_type_filter}]->(s:Entity {{id: $id}}) "
+            "WHERE r.confidence >= $min_conf RETURN t.id AS source_id, s.id AS target_id, "
+            "type(r) AS rel_type, properties(r) AS rel_props, t"
+        )
 
+        neighbors = []
+        seen_ids = set()
         async with self._driver.session(database=self._database) as session:
-            result = await session.run(cypher, id=entity_id, min_conf=min_confidence)
-            records = await result.data()
-            neighbors = []
-            for rec in records:
-                entity = _props_to_entity(_node_to_dict(rec["t"]))
-                props = rec["rel_props"] or {}
-                props["source_id"] = rec["source_id"]
-                props["target_id"] = rec["target_id"]
-                props.setdefault("relationship_type", rec["rel_type"])
-                rel = _props_to_rel(props)
-                neighbors.append((entity, rel))
-            return neighbors
+            for cypher in [cypher_out, cypher_in]:
+                result = await session.run(cypher, id=entity_id, min_conf=min_confidence)
+                records = await result.data()
+                for rec in records:
+                    nid = rec["target_id"] if rec["source_id"] == entity_id else rec["source_id"]
+                    if nid in seen_ids or nid == entity_id:
+                        continue
+                    seen_ids.add(nid)
+                    entity = _props_to_entity(_node_to_dict(rec["t"]))
+                    props = rec["rel_props"] or {}
+                    props["source_id"] = rec["source_id"]
+                    props["target_id"] = rec["target_id"]
+                    props.setdefault("relationship_type", rec["rel_type"])
+                    rel = _props_to_rel(props)
+                    neighbors.append((entity, rel))
+        return neighbors
 
     # ── Relationship writes ───────────────────────────────────────────────
 

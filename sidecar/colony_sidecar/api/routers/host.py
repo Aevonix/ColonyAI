@@ -463,7 +463,11 @@ async def health() -> HostHealthResponse:
     if _learner is not None:
         notes["learning"] = "ContinuousLearner wired"
     if _autonomy_loop is not None:
-        notes["autonomy"] = "AutonomyLoop wired (not started)"
+        running = getattr(_autonomy_loop, '_running', False)
+        if running:
+            notes["autonomy"] = f"AutonomyLoop running (ticks={getattr(_autonomy_loop.stats, 'ticks', 0)})"
+        else:
+            notes["autonomy"] = "AutonomyLoop wired (not started)"
     if _session_store is not None:
         notes["sessions"] = "InMemorySessionStore wired"
     if _task_queue is not None:
