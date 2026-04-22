@@ -665,55 +665,56 @@ def run_init(root_dir: str | None = None) -> int:
     multimodal_reranker = ""
 
     # Check if the selected tier supports multimodal
-    try:
-        from colony_sidecar.vector.tiers import TIER_TABLE
-        selected_tier = None
-        for t in TIER_TABLE:
-            if t.text_embedder.model_id == embed_model or t.label == tier.label:
-                selected_tier = t
-                break
+    if embed_provider != "skip":
+        try:
+            from colony_sidecar.vector.tiers import TIERS
+            selected_tier = None
+            for t in TIERS:
+                if t.text_embedder and t.text_embedder.model_id == embed_model or t.label == tier.label:
+                    selected_tier = t
+                    break
 
-        if selected_tier and selected_tier.multimodal_embedder:
-            mm_model = selected_tier.multimodal_embedder
-            mm_reranker = selected_tier.multimodal_reranker
-            print(f"  Your tier supports multimodal embeddings: {mm_model.model_id}")
-            print(f"  This enables image search and cross-modal retrieval (text → image, image → text)")
-            if mm_reranker:
-                print(f"  Multimodal reranker: {mm_reranker.model_id}")
-            print()
-            print("  Note: Enabling multimodal replaces the text-only embedder with the multimodal model.")
-            print("  Both text and image vectors will be in the same space — cross-modal search works.")
-            print()
-
-            answer = input(_bold("  Enable multimodal? [y/N]: ")).strip().lower()
-            if answer in ("y", "yes"):
-                multimodal_enabled = "true"
-                multimodal_model = mm_model.model_id
-                values["COLONY_MULTIMODAL"] = "true"
-                values["COLONY_EMBED_MODEL"] = mm_model.model_id
-                values["COLONY_EMBED_DIMS"] = str(mm_model.dims)
+            if selected_tier and selected_tier.multimodal_embedder:
+                mm_model = selected_tier.multimodal_embedder
+                mm_reranker = selected_tier.multimodal_reranker
+                print(f"  Your tier supports multimodal embeddings: {mm_model.model_id}")
+                print(f"  This enables image search and cross-modal retrieval (text → image, image → text)")
                 if mm_reranker:
-                    multimodal_reranker = mm_reranker.model_id
-                    values["COLONY_RERANKER_MODEL"] = mm_reranker.model_id
-                values["COLONY_IMAGE_STORAGE"] = "local"
-                values["COLONY_STRIP_EXIF_GPS"] = "true"
-                values["COLONY_IMAGE_SAFETY"] = "basic"
-                print(f"  ✅ Multimodal enabled: {mm_model.model_id} ({mm_model.dims}d)")
-                if embed_provider in ("cuda", "cpu", "mlx"):
-                    print(f"  Downloading multimodal model...")
-                    try:
-                        from sentence_transformers import SentenceTransformer
-                        SentenceTransformer(mm_model.model_id)
-                        print(f"  ✅ Multimodal model downloaded and cached")
-                    except Exception as exc:
-                        print(f"  ⚠️ Model download failed: {exc}")
+                    print(f"  Multimodal reranker: {mm_reranker.model_id}")
+                print()
+                print("  Note: Enabling multimodal replaces the text-only embedder with the multimodal model.")
+                print("  Both text and image vectors will be in the same space — cross-modal search works.")
+                print()
+
+                answer = input(_bold("  Enable multimodal? [y/N]: ")).strip().lower()
+                if answer in ("y", "yes"):
+                    multimodal_enabled = "true"
+                    multimodal_model = mm_model.model_id
+                    values["COLONY_MULTIMODAL"] = "true"
+                    values["COLONY_EMBED_MODEL"] = mm_model.model_id
+                    values["COLONY_EMBED_DIMS"] = str(mm_model.dims)
+                    if mm_reranker:
+                        multimodal_reranker = mm_reranker.model_id
+                        values["COLONY_RERANKER_MODEL"] = mm_reranker.model_id
+                    values["COLONY_IMAGE_STORAGE"] = "local"
+                    values["COLONY_STRIP_EXIF_GPS"] = "true"
+                    values["COLONY_IMAGE_SAFETY"] = "basic"
+                    print(f"  ✅ Multimodal enabled: {mm_model.model_id} ({mm_model.dims}d)")
+                    if embed_provider in ("cuda", "cpu", "mlx"):
+                        print(f"  Downloading multimodal model...")
+                        try:
+                            from sentence_transformers import SentenceTransformer
+                            SentenceTransformer(mm_model.model_id)
+                            print(f"  ✅ Multimodal model downloaded and cached")
+                        except Exception as exc:
+                            print(f"  ⚠️ Model download failed: {exc}")
+                else:
+                    print("  ⚪ Multimodal skipped — text-only embeddings active")
             else:
-                print("  ⚪ Multimodal skipped — text-only embeddings active")
-        else:
-            print("  ⚪ Your tier does not support multimodal embeddings")
-            print("  (Available from Tier 1 / 4GB+ with jina-clip-v2)")
-    except Exception as exc:
-        print(f"  ⚪ Multimodal check skipped: {exc}")
+                print("  ⚪ Your tier does not support multimodal embeddings")
+                print("  (Available from Tier 1 / 4GB+ with jina-clip-v2)")
+        except Exception as exc:
+            print(f"  ⚪ Multimodal check skipped: {exc}")
 
     print()
 
@@ -744,23 +745,17 @@ def run_init(root_dir: str | None = None) -> int:
             from pydantic import SecretStr
 
             async def _test_neo4j():
-                config = GraphConfig(
-                    uri=values["NEO4J_URI"],
-                    auth=(values["NEO4J_USER"], SecretStr(neo4j_password)),
-                    database=values.get("NEO4J_DATABASE", "neo4j"),
+                from neo4j import AsyncGraphDatabase
+                driver = AsyncGraphDatabase.driver(
+                    values["NEO4J_URI"],
+                    auth=(values["NEO4J_USER"], neo4j_password),
                 )
-                graph = ColonyGraph(config=config)
                 try:
-                    await graph.connect()
-                    # Verify driver is connected
-                    if graph._driver:
-                        async with graph._driver.session(database=config.database) as session:
-                            await session.run("RETURN 1")
-                        print(f"  ✅ Neo4j connected ({values['NEO4J_URI']})")
-                    else:
-                        print(f"  ⚠️ Neo4j driver not initialized")
+                    async with driver.session(database=values.get("NEO4J_DATABASE", "neo4j")) as session:
+                        await session.run("RETURN 1")
+                    print(f"  ✅ Neo4j connected ({values['NEO4J_URI']})")
                 finally:
-                    await graph.close()
+                    await driver.close()
 
             asyncio.run(_test_neo4j())
         except Exception as exc:
@@ -838,15 +833,18 @@ def run_init(root_dir: str | None = None) -> int:
 
     if start_now.lower() in ("y", "yes", ""):
         print("  Starting Colony sidecar...")
-        # Start uvicorn in background
+        # Start uvicorn in background with log capture
+        log_path = base / "sidecar.log"
         sidecar_proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn",
              "colony_sidecar.server:app",
              "--host", values["COLONY_SIDECAR_HOST"],
              "--port", values["COLONY_SIDECAR_PORT"]],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=open(log_path, "w"),
+            stderr=subprocess.STDOUT,
             cwd=str(base),
             env={**os.environ, **values},
+            start_new_session=True,
         )
 
         # Wait for it to come up
@@ -893,18 +891,45 @@ def run_init(root_dir: str | None = None) -> int:
 
     if oc_configured and oc_ok:
         print()
-        print("  OpenClaw config was updated. The gateway needs a restart to load the plugin.")
+        print("  OpenClaw config was updated. The gateway needs a restart to load the Colony plugin.")
+        print("  This will briefly interrupt any active agent sessions.")
         restart_now = _prompt("  Restart OpenClaw gateway now? [Y/n]", "Y")
         if restart_now.lower() in ("y", "yes", ""):
             try:
-                subprocess.run(["openclaw", "gateway", "restart"], capture_output=True, text=True, timeout=15)
-                print("  ✅ Gateway restarting")
-                time.sleep(3)
+                result = subprocess.run(
+                    ["openclaw", "gateway", "restart"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    print("  ✅ Gateway restarted")
+                    # Wait for it to come back up and verify plugin loaded
+                    print("  Waiting for gateway to come back up...")
+                    for attempt in range(15):
+                        time.sleep(2)
+                        try:
+                            plugin_result = subprocess.run(
+                                ["openclaw", "plugin", "list"],
+                                capture_output=True, text=True, timeout=5,
+                            )
+                            if plugin_result.returncode == 0 and "colony" in plugin_result.stdout.lower():
+                                print("  ✅ Colony plugin loaded in OpenClaw")
+                                break
+                        except Exception:
+                            pass
+                    else:
+                        print("  ⚠️ Could not verify plugin load. Check manually: openclaw plugin list")
+                else:
+                    print(f"  ⚠️ Gateway restart returned error: {result.stderr[:100]}")
+                    print("  Restart manually: openclaw gateway restart")
+            except subprocess.TimeoutExpired:
+                print("  ⚠️ Gateway restart timed out")
+                print("  It may still be restarting. Check: openclaw gateway status")
             except Exception as exc:
                 print(f"  ⚠️ Could not restart gateway: {exc}")
                 print("  Restart manually: openclaw gateway restart")
         else:
             print("  Restart manually when ready: openclaw gateway restart")
+            print("  Colony won't receive messages from OpenClaw until the gateway is restarted.")
 
     # ── Step 10d: Run colony doctor ─────────────────────────────────────
 
