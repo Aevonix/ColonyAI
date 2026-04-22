@@ -372,7 +372,7 @@ async def lifespan(app: FastAPI):
             from colony_sidecar.tom.extractor import TomExtractor
             tom_extractor = TomExtractor(llm_router)
             set_tom_extractor(tom_extractor)
-            logger.info("ToM LLM Extractor initialized (router=%s)", type(_llm_router).__name__)
+            logger.info("ToM LLM Extractor initialized (router=%s)", type(llm_router).__name__)
         else:
             logger.info("ToM LLM Extractor skipped — no LLM router")
     except Exception as exc:
