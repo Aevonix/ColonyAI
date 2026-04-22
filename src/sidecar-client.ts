@@ -33,6 +33,11 @@ import type {
   AffectEventListResponse,
   SharedFactResponse,
   SharedFactListResponse,
+  PatternResponse,
+  PatternListResponse,
+  PatternExtractResponse,
+  SurpriseResponse,
+  SurpriseListResponse,
 } from "./types.js";
 
 /**
