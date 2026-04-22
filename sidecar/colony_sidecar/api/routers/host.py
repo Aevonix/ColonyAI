@@ -448,6 +448,21 @@ async def health() -> HostHealthResponse:
         notes["sessions"] = "InMemorySessionStore wired"
     if _task_queue is not None:
         notes["task_queue"] = "TaskQueueManager wired"
+    if _commitment_store is not None:
+        notes["commitments"] = "CommitmentStore wired"
+    if _affect_store is not None:
+        notes["affect"] = "AffectStore wired"
+    if _facts_store is not None:
+        notes["shared_facts"] = "SharedFactsStore wired"
+    if _pattern_store is not None:
+        notes["patterns"] = "PatternStore wired"
+    if _surprise_store is not None:
+        notes["surprises"] = "SurpriseStore wired"
+    if _world_store is not None and hasattr(_world_store, '_backend') and _world_store._backend is not None:
+        backend_type = type(_world_store._backend).__name__
+        notes["world_model_backend"] = f"{backend_type} connected"
+    if _world_store is not None and hasattr(_world_store, '_config') and _world_store._config.backend == "neo4j":
+        notes["neo4j"] = "Neo4j backend selected"
 
     health_status = "ok"
     if model_mismatch:

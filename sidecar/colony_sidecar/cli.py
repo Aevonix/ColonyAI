@@ -873,6 +873,48 @@ def _cmd_doctor(args) -> None:
             return r.status_code in (200, 501)
         check("Native tools (calculate)", _native_calc)
 
+        # 27. Commitments
+        def _commitments():
+            r = c.get("/v1/host/commitments?status=pending&limit=1")
+            return r.status_code == 200
+        check("Commitment tracking", _commitments)
+
+        # 28. Affect tracking
+        def _affect():
+            r = c.get("/v1/host/affect/state/doctor-contact")
+            return r.status_code == 200
+        check("Affect tracking", _affect)
+
+        # 29. Shared facts
+        def _facts():
+            r = c.get("/v1/host/shared-facts?limit=1")
+            return r.status_code == 200
+        check("Shared facts", _facts)
+
+        # 30. Patterns
+        def _patterns():
+            r = c.get("/v1/host/patterns?limit=1")
+            return r.status_code == 200
+        check("Pattern extraction", _patterns)
+
+        # 31. Surprises
+        def _surprises():
+            r = c.get("/v1/host/surprises?limit=1")
+            return r.status_code == 200
+        check("Surprise engine", _surprises)
+
+        # 32. World Model API (CRUD)
+        def _world_api():
+            r = c.get("/v1/host/world/stats")
+            return r.status_code == 200 and "total_entities" in r.json()
+        check("World model API", _world_api)
+
+        # 33. Event journal
+        def _events():
+            r = c.get("/v1/host/events/replay?limit=1")
+            return r.status_code in (200, 501)  # 501 if no events yet
+        check("Event journal", _events)
+
         # --- Full checks (heavier, require LLM or async) ---
         if args.full:
             # Reasoning with LLM inference
