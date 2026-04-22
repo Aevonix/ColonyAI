@@ -87,6 +87,10 @@ export type HostEventType =
   | "affect.negative_spike"
   | "affect.sustained_decline"
   | "mind.fact_created"
+  | "pattern.created"
+  | "pattern.extracted"
+  | "surprise.high"
+  | "surprise.accumulation"
   | "log";
 
 export interface HostEvent {
