@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 (2026-04-22)
+
+New CLI commands for lifecycle management and E2E validation.
+
+- **Added:** `colony start -d` — daemon mode with PID tracking, port conflict detection, auto-kill stale processes
+- **Added:** `colony stop` — clean shutdown (SIGTERM → SIGKILL fallback)
+- **Added:** `colony status` — health check + E2E validation status
+- **Added:** `colony validate` — full pipeline test (seeds data, checks context assembly, optional LLM test)
+- **Added:** E2E validation stamp (`.colony-e2e-validated`) — persists across restarts
+- **Added:** `colony doctor` check #34: E2E pipeline validated
+- **Added:** Validation warnings in `colony status` and `colony start` until E2E is run
+- **Added:** Setup wizard prompts for `colony validate` after setup
+- **Fixed:** EOFError on `colony start -d` when stdin unavailable
+
 ## 0.5.7 (2026-04-22)
 
 Setup wizard bug fixes and gateway restart flow.
