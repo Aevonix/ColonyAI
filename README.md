@@ -14,7 +14,7 @@ Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw,
 
 Each Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner.
 
-The current release delivers 32 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
+The current release delivers 35 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
 
 -----
 
@@ -98,9 +98,9 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ## What Colony Is Today
 
-32 wired subsystems. Everything below works now.
+35 wired subsystems. Everything below works now.
 
-### 26 Wired Subsystems
+### 35 Wired Subsystems
 
 | Subsystem | Purpose |
 |---|---|
@@ -109,12 +109,12 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 | Response Gate | 7-layer response inspection (recipient verification, PII scanning, cross-context isolation, trust tiers, injection detection, secondary review, send delay) |
 | Signals | Behavioral signal ingestion for profiling and pattern detection |
 | Embeddings | Auto-tier-detected embedding pipeline (text + multimodal) |
-| Context Assembly | Parallel query across 18 subsystems to build LLM context |
+| Context Assembly | Parallel query across subsystems to build LLM context |
 | Reasoning | Bounded LLM iteration loop with tool calling |
 | Goals | DAG-based goal decomposition and tracking |
 | Contacts | Relationship store with trust tiers and interaction history |
 | Briefings | Proactive relationship summaries and conversation starters |
-| World Model | Entity graph for people, places, organizations, concepts |
+| World Model | Entity graph for people, places, organizations, concepts with Neo4j or SQLite backend |
 | Cognition | MetaLearner with Cognitive Performance Index tracking |
 | Research | Background research pipeline with configurable depth |
 | Delivery | Proactive message delivery bridge |
@@ -130,6 +130,14 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 | Context Compression | Adaptive context compression (conservative/balanced/aggressive modes) with query-aware section scoring |
 | Skill Sandbox | Subprocess-isolated skill execution with resource limits (memory, CPU, file size, fork guard) |
 | Security Scanner | AST-based static analysis for skill uploads (dunder escapes, dynamic getattr, obfuscation patterns) |
+| Commitment Tracking | LLM-extracted commitments with status transitions, overdue detection, and cognition triggers |
+| Affect Tracking | Valence/arousal affect model per contact with trend detection |
+| Shared Facts | Cross-contact knowledge graph with confidence scoring |
+| Pattern Extraction | Entity co-occurrence, relation frequency, temporal sequence, and attribute cluster detection |
+| Surprise Engine | Expectation-violation scoring with accumulation-based autonomy triggers |
+| ToM LLM Extraction | LLM-backed affect and fact extraction from conversation turns with per-contact throttling |
+| Neo4j Backend | Native graph database backend for World Model with Cypher traversal, full-text search, and auto-schema |
+| World Model API | 12 REST endpoints for entity/relationship CRUD, graph traversal, and statistics |
 
 ### Key Properties
 
@@ -150,7 +158,7 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 
 ```bash
 curl http://localhost:7777/v1/host/health
-# Expected: {"status":"ok","capabilities":[...30 subsystems...]}
+# Expected: {"status":"ok","capabilities":[...35 subsystems...]}
 ```
 
 ### Full Health Check
@@ -195,7 +203,7 @@ Two deployable units. A thin TypeScript plugin that loads into your host process
 │  │ FastAPI Server                                      │            │
 │  └──────────────────────────┬──────────────────────────┘            │
 │  ┌──────────────────────────▼──────────────────────────┐            │
-│  │ SubsystemRegistry (30 subsystems)                   │            │
+│  │ SubsystemRegistry (35 subsystems)                   │            │
 │  └─────────────────────────────────────────────────────┘            │
 └──────────────────────────┬───────────────────────────────────────────┘
                            │
@@ -230,6 +238,10 @@ COLONY_SIDECAR_PORT=7777
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your-password
+
+# World Model backend (sqlite or neo4j)
+WORLD_MODEL_BACKEND=sqlite
+NEO4J_DATABASE=neo4j
 
 # API auth
 COLONY_API_KEY=your-api-key
@@ -350,7 +362,7 @@ Colony ships in phases. The intelligence system is v1.0. Each phase expands the 
 
 ### Phase 1: Intelligence System (Shipped)
 
-Single-node Colony mounted into a host harness. 30 subsystems wired. Everything described above in "What Colony Is Today."
+Single-node Colony mounted into a host harness. 35 subsystems wired. Everything described above in "What Colony Is Today."
 
 ### Phase 2: Multimodal (Shipped)
 
@@ -491,7 +503,7 @@ Exports the OpenAPI spec and regenerates `src/types-generated.ts`.
 ```
 colony/
 ├── src/                      # TypeScript plugin (thin HTTP client)
-├── sidecar/                  # Python sidecar (stateful, 30 subsystems)
+├── sidecar/                  # Python sidecar (stateful, 35 subsystems)
 │   └── colony_sidecar/
 │       ├── api/              # FastAPI routers + schemas
 │       ├── autonomy/         # Autonomy loop
@@ -548,7 +560,7 @@ npm install @aevonix/colonyai
 }
 ```
 
-The plugin registers 26 capabilities (memory, consolidate, signals, embed, context, reasoning, response_gate, goals, contacts, briefings, world_model, cognition, research, delivery, synthesis, learning, skills, identity, secrets, autonomy, sessions, task_queue, events, event_journal, context_compression, skill_sandbox) and 5 hooks (message_received, message_sending, llm_output, session_start, session_end).
+The plugin registers 35 capabilities (memory, consolidate, signals, embed, context, reasoning, response_gate, goals, contacts, briefings, world_model, cognition, research, delivery, synthesis, learning, skills, identity, secrets, autonomy, sessions, task_queue, events, event_journal, context_compression, skill_sandbox, commitments, affect, shared_facts, patterns, surprises, tom_extract, world_model_api, neo4j_backend, security_scanner) and 5 hooks (message_received, message_sending, llm_output, session_start, session_end).
 
 -----
 
@@ -599,12 +611,12 @@ Includes Neo4j (APOC, memory tuning, health check) and the Colony sidecar (Huggi
 
 ## Status
 
-**Current release:** v0.1.0, Intelligence System (Phase 1 + Phase 2 multimodal)
+**Current release:** v0.5.3, Intelligence System (Phase 1 + Phase 2 multimodal)
 
-**Subsystems wired:** 26 of 26
+**Subsystems wired:** 35 of 35
 
-**Endpoints:** 44+
+**Endpoints:** 56+
 
-**Tests:** 36 vector, 114 TypeScript, Python suite
+**Tests:** 194 Python, 151 TypeScript
 
 **Next up:** Phase 3 (Colony Meshing)
