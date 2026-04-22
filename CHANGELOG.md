@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.5 (2026-04-22)
+
+Critical packaging and startup fixes.
+
+- **Fixed:** SQL schema files (goals, contacts, task_queue, world_model) missing from pip wheel
+- **Fixed:** `COLONY_EMBED_PROVIDER=skip` now gracefully disables embeddings instead of crashing
+- **Fixed:** Affect in context assembly reads `current_valence`/`current_arousal` (AffectStore API)
+- **Fixed:** `build/` directory accidentally committed to git (removed, added to .gitignore)
+- **Added:** `package_data` in pyproject.toml to include SQL/JSON/YAML files in wheel
+- **Added:** E2E test scripts for live environment validation (full cycle + turn sync extraction)
+
 ## 0.5.4 (2026-04-22)
 
 Fixes for autonomy loop, startup errors, and graph traversal.
