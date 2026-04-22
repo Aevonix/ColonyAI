@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.7 (2026-04-22)
+
+Setup wizard bug fixes and gateway restart flow.
+
+- **Fixed:** Neo4j connectivity test in wizard (uses raw driver, not ColonyGraph)
+- **Fixed:** Sidecar auto-start in wizard (writes to log file, start_new_session)
+- **Fixed:** TIER_TABLE → TIERS import (correct export name)
+- **Fixed:** Skip multimodal check when embeddings disabled
+- **Added:** Gateway restart verification — waits for restart, checks plugin loaded
+- **Added:** Warning that Colony won't receive messages until gateway restart
+
 ## 0.5.6 (2026-04-22)
 
 Setup wizard fixes for fresh install experience.
