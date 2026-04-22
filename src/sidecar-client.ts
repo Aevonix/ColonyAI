@@ -305,6 +305,106 @@ export class ColonySidecarClient {
     return this.delete(`/v1/host/mind/facts/${id}`);
   }
 
+  // --- Pattern Extraction ---------------------------------------------------
+
+  createPattern(body: {
+    pattern_type: string;
+    description: string;
+    pattern_key: string;
+    frequency?: number;
+    confidence?: number;
+    metadata?: Record<string, unknown>;
+    source?: string;
+  }): Promise<PatternResponse> {
+    return this.post<PatternResponse>("/v1/host/patterns", body);
+  }
+
+  listPatterns(opts?: {
+    pattern_type?: string;
+    min_frequency?: number;
+    source?: string;
+    active_only?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<PatternListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.pattern_type) params.set("pattern_type", opts.pattern_type);
+    if (opts?.min_frequency) params.set("min_frequency", String(opts.min_frequency));
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.active_only !== undefined) params.set("active_only", String(opts.active_only));
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const query = params.toString();
+    return this.get<PatternListResponse>(`/v1/host/patterns${query ? `?${query}` : ""}`);
+  }
+
+  getPattern(id: string): Promise<PatternResponse> {
+    return this.get<PatternResponse>(`/v1/host/patterns/${id}`);
+  }
+
+  updatePattern(
+    id: string,
+    body: { description?: string; confidence?: number; metadata?: Record<string, unknown>; active?: boolean },
+  ): Promise<PatternResponse> {
+    return this.patch<PatternResponse>(`/v1/host/patterns/${id}`, body);
+  }
+
+  deletePattern(id: string): Promise<void> {
+    return this.delete(`/v1/host/patterns/${id}`);
+  }
+
+  extractPatterns(): Promise<PatternExtractResponse> {
+    return this.post<PatternExtractResponse>("/v1/host/patterns/extract", {});
+  }
+
+  // --- Surprise Engine ------------------------------------------------------
+
+  createSurprise(body: {
+    observation: string;
+    expected?: string;
+    surprise_score?: number;
+    pattern_id?: string;
+    context?: Record<string, unknown>;
+    auto_score?: boolean;
+  }): Promise<SurpriseResponse> {
+    return this.post<SurpriseResponse>("/v1/host/surprises", body);
+  }
+
+  listSurprises(opts?: {
+    min_score?: number;
+    resolved?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<SurpriseListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.min_score !== undefined) params.set("min_score", String(opts.min_score));
+    if (opts?.resolved !== undefined) params.set("resolved", String(opts.resolved));
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const query = params.toString();
+    return this.get<SurpriseListResponse>(`/v1/host/surprises${query ? `?${query}` : ""}`);
+  }
+
+  listUnresolvedSurprises(opts?: { min_score?: number; limit?: number }): Promise<SurpriseResponse[]> {
+    const params = new URLSearchParams();
+    if (opts?.min_score !== undefined) params.set("min_score", String(opts.min_score));
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    const query = params.toString();
+    return this.get<SurpriseResponse[]>(`/v1/host/surprises/unresolved${query ? `?${query}` : ""}`);
+  }
+
+  getSurprise(id: string): Promise<SurpriseResponse> {
+    return this.get<SurpriseResponse>(`/v1/host/surprises/${id}`);
+  }
+
+  resolveSurprise(id: string, resolution?: string): Promise<SurpriseResponse> {
+    return this.patch<SurpriseResponse>(`/v1/host/surprises/${id}`, { resolution });
+  }
+
+  deleteSurprise(id: string): Promise<void> {
+    return this.delete(`/v1/host/surprises/${id}`);
+  }
+
   // --- Skills --------------------------------------------------------------
 
   listSkills(): Promise<{ skills: unknown[] }> {

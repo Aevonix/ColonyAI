@@ -976,3 +976,88 @@ class SharedFactListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# ---------------------------------------------------------------------------
+# Pattern Extraction
+# ---------------------------------------------------------------------------
+
+class PatternCreateRequest(BaseModel):
+    pattern_type: Literal["entity_cooccurrence", "relation_frequency", "temporal_sequence", "attribute_cluster"]
+    description: str
+    pattern_key: str
+    frequency: int = 1
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    metadata: Optional[Dict[str, Any]] = None
+    source: Literal["extraction", "manual", "inferred"] = "extraction"
+
+
+class PatternResponse(BaseModel):
+    id: str
+    pattern_type: str
+    description: str
+    pattern_key: str
+    frequency: int
+    last_seen: str
+    first_seen: str
+    confidence: float
+    metadata: Optional[Dict[str, Any]] = None
+    source: str
+    active: bool = True
+
+
+class PatternListResponse(BaseModel):
+    patterns: List[PatternResponse] = []
+    total: int
+    limit: int
+    offset: int
+
+
+class PatternUpdateRequest(BaseModel):
+    description: Optional[str] = None
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    metadata: Optional[Dict[str, Any]] = None
+    active: Optional[bool] = None
+
+
+class PatternExtractResponse(BaseModel):
+    new: int = 0
+    updated: int = 0
+    total: int = 0
+    reason: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Surprise Engine
+# ---------------------------------------------------------------------------
+
+class SurpriseCreateRequest(BaseModel):
+    observation: str
+    expected: Optional[str] = None
+    surprise_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    pattern_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+    auto_score: bool = False
+
+
+class SurpriseResponse(BaseModel):
+    id: str
+    observation: str
+    expected: Optional[str] = None
+    surprise_score: float
+    pattern_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+    timestamp: str
+    resolved: bool = False
+    resolution: Optional[str] = None
+
+
+class SurpriseListResponse(BaseModel):
+    surprises: List[SurpriseResponse] = []
+    total: int
+    limit: int
+    offset: int
+
+
+class SurpriseResolveRequest(BaseModel):
+    resolution: Optional[str] = None

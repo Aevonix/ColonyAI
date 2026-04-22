@@ -158,6 +158,16 @@ export function dispatchHostEvent(
         ctx.cache?.invalidate("facts", event.payload);
         ctx.logger?.info?.(`[colony.event] ${event.type}`);
         return true;
+      case "pattern.created":
+      case "pattern.extracted":
+        ctx.cache?.invalidate("patterns", event.payload);
+        ctx.logger?.info?.(`[colony.event] ${event.type}`);
+        return true;
+      case "surprise.high":
+      case "surprise.accumulation":
+        ctx.cache?.invalidate("surprises", event.payload);
+        ctx.logger?.info?.(`[colony.event] ${event.type}`);
+        return true;
       default:
         return false;
     }

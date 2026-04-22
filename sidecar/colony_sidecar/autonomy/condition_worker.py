@@ -26,6 +26,7 @@ DEFAULT_INTERVALS: Dict[str, int] = {
     "custom": 5 * 60,            # 5 minutes (fallback)
     "commitment_overdue": 30 * 60, # 30 minutes
     "affect_decline": 30 * 60,  # 30 minutes
+    "surprise_accumulation": 30 * 60,  # 30 minutes
 }
 
 
@@ -55,6 +56,7 @@ async def handle_check_condition(
         "api_response": _check_api_response,
         "commitment_overdue": _check_commitment_overdue,
         "affect_decline": _check_affect_decline,
+        "surprise_accumulation": _check_surprise_accumulation,
     }
 
     checker = condition_checkers.get(condition_type)
@@ -401,4 +403,27 @@ async def _check_affect_decline(params: dict) -> dict:
         "condition_met": True,
         "declining_contacts": len(declining),
         "contacts": [{"contact_id": s["contact_id"], "valence": s["current_valence"]} for s in declining],
+    }
+
+
+async def _check_surprise_accumulation(params: dict) -> dict:
+    """Check for accumulated unresolved surprises."""
+    from colony_sidecar.api.routers.host import _surprise_store
+
+    if _surprise_store is None:
+        return {"condition_met": False, "unresolved_count": 0}
+
+    count = _surprise_store.count_unresolved(since_hours=1)
+    if count < 5:
+        return {"condition_met": False, "unresolved_count": count}
+
+    try:
+        from colony_sidecar.events.broadcaster import emit as _emit
+        _emit("surprise.accumulation", {"unresolved_count": count})
+    except Exception:
+        logger.debug("surprise accumulation emit failed", exc_info=True)
+
+    return {
+        "condition_met": True,
+        "unresolved_count": count,
     }
