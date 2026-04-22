@@ -71,10 +71,12 @@ async def _get(path: str, params: dict | None = None) -> dict | None:
 
 async def _post(path: str, data: dict) -> dict | None:
     try:
-        # Inject source if not already present
+        # Inject provenance from COLONY_MCP_SOURCE (separate from sidecar's own 'source' enum)
         src = _source()
-        if src and "source" not in data:
-            data["source"] = src
+        if src and "provenance" not in data:
+            data["provenance"] = src
+        # Remove 'source' if it was set externally — sidecar has its own enum for that
+        data.pop("source", None)
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(f"{_base_url()}{path}", headers={**_headers(), "Content-Type": "application/json"}, json=data)
             if r.status_code in (200, 201):
@@ -199,10 +201,14 @@ def create_server() -> FastMCP:
         limit: int = 5,
     ) -> dict:
         """Search the world model for entities or relationships. Call when exploring a codebase, understanding dependencies, or planning changes."""
-        params: dict[str, Any] = {"q": query, "limit": limit}
+        data: dict[str, Any] = {
+            "identity": {"host_id": "mcp"},
+            "query": query,
+            "limit": limit,
+        }
         if entity_type:
-            params["entity_type"] = entity_type
-        return await _get("/v1/host/world/entities/search", params=params)
+            data["entity_type"] = entity_type
+        return await _post("/v1/host/world/entities/query", data)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     async def colony_get_patterns(
@@ -346,7 +352,7 @@ def create_server() -> FastMCP:
     @mcp.resource("colony://world/entities")
     async def world_resource() -> dict:
         """Top entities in the world model."""
-        return await _get("/v1/host/world/entities/search", params={"limit": 10})
+        return await _post("/v1/host/world/entities/query", {"identity": {"host_id": "mcp"}, "query": "", "limit": 10})
 
     @mcp.resource("colony://surprises/unresolved")
     async def surprises_resource() -> dict:
