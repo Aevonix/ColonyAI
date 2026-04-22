@@ -88,6 +88,8 @@ export const ColonyPluginConfigSchema = z.object({
   patternsEnabled: z.boolean().default(true),
   surpriseEnabled: z.boolean().default(true),
   surpriseThreshold: z.number().default(0.8),
+  tomLlmExtractionEnabled: z.boolean().default(false),
+  tomExtractionThrottleMinutes: z.number().default(5),
 
   requestTimeoutMs: z.number().int().positive().default(30_000),
 

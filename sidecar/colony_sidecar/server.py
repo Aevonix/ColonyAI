@@ -48,6 +48,7 @@ from colony_sidecar.api.routers.host import (
     set_facts_store,
     set_pattern_store,
     set_surprise_store,
+    set_tom_extractor,
     supported_capabilities,
 )
 
@@ -364,6 +365,18 @@ async def lifespan(app: FastAPI):
         logger.info("SurpriseStore initialized (db=%s)", surprise_db)
     except Exception as exc:
         logger.warning("Pattern/Surprise init failed: %s", exc)
+
+    # --- ToM LLM Extractor ---
+    try:
+        if llm_router is not None:
+            from colony_sidecar.tom.extractor import TomExtractor
+            tom_extractor = TomExtractor(llm_router)
+            set_tom_extractor(tom_extractor)
+            logger.info("ToM LLM Extractor initialized (router=%s)", type(_llm_router).__name__)
+        else:
+            logger.info("ToM LLM Extractor skipped — no LLM router")
+    except Exception as exc:
+        logger.warning("ToM Extractor init failed: %s", exc)
 
     # --- 8. Contacts ---
     try:
@@ -797,6 +810,7 @@ async def lifespan(app: FastAPI):
     set_facts_store(None)
     set_pattern_store(None)
     set_surprise_store(None)
+    set_tom_extractor(None)
     set_chain_manager(None)
     set_secrets_manager(None)
     set_session_store(None)
