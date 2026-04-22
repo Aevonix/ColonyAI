@@ -91,6 +91,8 @@ export type HostEventType =
   | "pattern.extracted"
   | "surprise.high"
   | "surprise.accumulation"
+  | "tom.affect_extracted"
+  | "tom.fact_extracted"
   | "log";
 
 export interface HostEvent {
@@ -222,4 +224,19 @@ export interface SurpriseListResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+// ToM LLM Extraction
+export interface TomExtractRequest {
+  conversation_text: string;
+  contact_id: string;
+  session_id?: string;
+  extract_affect?: boolean;
+  extract_facts?: boolean;
+}
+
+export interface TomExtractResponse {
+  affect?: Record<string, unknown>;
+  facts: Record<string, unknown>[];
+  throttled: boolean;
 }
