@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.4 (2026-04-22)
+
+Fixes for autonomy loop, startup errors, and graph traversal.
+
+### Autonomy
+- Autonomy loop now auto-starts on sidecar startup (was manual only)
+- AnomalyDetector now receives graph_client + EventBus (was missing required args)
+- Fixed import path for RelationshipScorer (nested directory structure)
+- MetaLearner returns default CPI when PerformanceIndexComputer not wired (was RuntimeError)
+
+### Goals
+- All enum `.value` accesses now use hasattr guards (str vs enum crash)
+
+### Neo4j Backend
+- `get_neighbors()` now bidirectional — follows both outgoing and incoming relationships
+- Fixes neighborhood traversal and path finding for directed edges
+
+### Health & Setup
+- Health endpoint shows autonomy running state + tick count
+- Setup wizard adds ownContextEngine + ownMemoryCapability to OpenClaw plugin config
+- Setup wizard auto-selects WORLD_MODEL_BACKEND based on Neo4j password
+- Setup wizard verifies data flow (creates test commitment, checks context assembly)
+- Added asyncio + timezone imports where missing
+
 ## 0.5.3 (2026-04-22)
 
 Neo4j graph database backend for the World Model, plus full CRUD API endpoints.
