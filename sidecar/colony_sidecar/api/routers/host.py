@@ -144,6 +144,17 @@ from colony_sidecar.api.schemas.host import (
     SurpriseResolveRequest,
     TomExtractRequest,
     TomExtractResponse,
+    WorldEntityCreateRequest,
+    WorldEntityUpdateRequest,
+    WorldEntityDetailResponse,
+    WorldEntityListResponse,
+    WorldRelationshipCreateRequest,
+    WorldRelationshipUpdateRequest,
+    WorldRelationshipResponse,
+    WorldRelationshipListResponse,
+    WorldNeighborhoodResponse,
+    WorldPathResponse,
+    WorldStatsResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -3770,4 +3781,332 @@ async def seed_self_knowledge_endpoint() -> SeedResponse:
         skills=results.get("skills", 0),
         insights=results.get("insights", 0),
         errors=results.get("errors", []),
+    )
+
+
+# ============================================================================
+# World Model — Entity CRUD
+# ============================================================================
+
+@router.post("/world/entities", response_model=WorldEntityDetailResponse)
+async def create_world_entity(body: WorldEntityCreateRequest) -> WorldEntityDetailResponse:
+    """Create a new entity in the world model."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        from colony_sidecar.world_model.entities import BaseEntity, ENTITY_CLASS_MAP
+        from colony_sidecar.world_model.neo4j.backend import _generate_id
+        cls = ENTITY_CLASS_MAP.get(body.entity_type, BaseEntity)
+        import dataclasses
+        valid = {f.name for f in dataclasses.fields(cls)}
+        now = datetime.now(timezone.utc)
+        kwargs = {k: v for k, v in {
+            "id": _generate_id("we"),
+            "name": body.name,
+            "entity_type": body.entity_type,
+            "aliases": body.aliases or [],
+            "external_ids": body.external_ids or {},
+            "confidence": body.confidence,
+            "properties": body.properties or {},
+            "first_seen": now,
+            "last_seen": now,
+            "created_at": now,
+            "updated_at": now,
+        }.items() if k in valid}
+        entity = cls(**kwargs)
+        result = await _world_store.upsert_entity(entity)
+        return _wm_entity_to_response(result)
+    except Exception as exc:
+        logger.warning("create_world_entity failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/world/entities/{entity_id}", response_model=WorldEntityDetailResponse)
+async def get_world_entity(entity_id: str) -> WorldEntityDetailResponse:
+    """Get a single entity by ID."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    entity = await _world_store.get_entity(entity_id)
+    if entity is None:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return _wm_entity_to_response(entity)
+
+
+@router.patch("/world/entities/{entity_id}", response_model=WorldEntityDetailResponse)
+async def update_world_entity(entity_id: str, body: WorldEntityUpdateRequest) -> WorldEntityDetailResponse:
+    """Update an existing entity's properties."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        entity = await _world_store.get_entity(entity_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        if body.name is not None:
+            entity.name = body.name
+        if body.confidence is not None:
+            entity.confidence = body.confidence
+        if body.properties:
+            for k, v in body.properties.items():
+                await _world_store.update_entity_property(entity_id, k, v, entity.confidence)
+        if body.aliases:
+            for alias in body.aliases:
+                await _world_store.add_entity_alias(entity_id, alias)
+        # Re-fetch to get updated state
+        entity = await _world_store.get_entity(entity_id)
+        return _wm_entity_to_response(entity)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("update_world_entity failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.delete("/world/entities/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_world_entity(entity_id: str):
+    """Delete an entity from the world model."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        if _world_store._backend is None:
+            raise HTTPException(status_code=501, detail="World model backend not connected")
+        await _world_store._backend.delete_entity(entity_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("delete_world_entity failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================================
+# World Model — Relationship CRUD
+# ============================================================================
+
+@router.post("/world/relationships", response_model=WorldRelationshipResponse)
+async def create_world_relationship(body: WorldRelationshipCreateRequest) -> WorldRelationshipResponse:
+    """Create a new relationship between two entities."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        from colony_sidecar.world_model.relationships import WorldRelationship
+        from colony_sidecar.world_model.neo4j.backend import _generate_id
+        now = datetime.now(timezone.utc).isoformat()
+        rel = WorldRelationship(
+            id=_generate_id("wr"),
+            source_id=body.source_id,
+            target_id=body.target_id,
+            relationship_type=body.relationship_type,
+            confidence=body.confidence,
+            valid_from=body.valid_from or now,
+            properties=body.properties or {},
+            created_at=now,
+            updated_at=now,
+        )
+        result = await _world_store.upsert_relationship(rel)
+        return _wm_rel_to_response(result)
+    except Exception as exc:
+        logger.warning("create_world_relationship failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/world/relationships", response_model=WorldRelationshipListResponse)
+async def list_world_relationships(
+    source_id: Optional[str] = None,
+    target_id: Optional[str] = None,
+    relationship_type: Optional[str] = None,
+    active_only: bool = False,
+    limit: int = 100,
+) -> WorldRelationshipListResponse:
+    """Query relationships with flexible filtering."""
+    if _world_store is None:
+        return WorldRelationshipListResponse()
+    try:
+        rels = await _world_store.query_relationships(
+            source_id=source_id,
+            target_id=target_id,
+            relationship_type=relationship_type,
+            active_only=active_only,
+            limit=limit,
+        )
+        return WorldRelationshipListResponse(
+            relationships=[_wm_rel_to_response(r) for r in rels],
+            total=len(rels),
+        )
+    except Exception as exc:
+        logger.warning("list_world_relationships failed: %s", exc)
+        return WorldRelationshipListResponse()
+
+
+@router.get("/world/relationships/{rel_id}", response_model=WorldRelationshipResponse)
+async def get_world_relationship(rel_id: str) -> WorldRelationshipResponse:
+    """Get a single relationship by ID."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    if _world_store._backend is None:
+        raise HTTPException(status_code=501, detail="World model backend not connected")
+    rel = await _world_store._backend.get_relationship(rel_id)
+    if rel is None:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    return _wm_rel_to_response(rel)
+
+
+@router.patch("/world/relationships/{rel_id}", response_model=WorldRelationshipResponse)
+async def update_world_relationship(rel_id: str, body: WorldRelationshipUpdateRequest) -> WorldRelationshipResponse:
+    """Update a relationship (close it or update properties)."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        if body.valid_to is not None:
+            await _world_store.close_relationship(rel_id, body.valid_to)
+        if body.properties and _world_store._backend:
+            # Update properties on the relationship
+            rel = await _world_store._backend.get_relationship(rel_id)
+            if rel is None:
+                raise HTTPException(status_code=404, detail="Relationship not found")
+            rel.properties.update(body.properties)
+            if body.confidence is not None:
+                rel.confidence = body.confidence
+            await _world_store.upsert_relationship(rel)
+        elif body.confidence is not None:
+            if _world_store._backend:
+                rel = await _world_store._backend.get_relationship(rel_id)
+                if rel is None:
+                    raise HTTPException(status_code=404, detail="Relationship not found")
+                rel.confidence = body.confidence
+                await _world_store.upsert_relationship(rel)
+        # Re-fetch
+        if _world_store._backend:
+            rel = await _world_store._backend.get_relationship(rel_id)
+            if rel:
+                return _wm_rel_to_response(rel)
+        raise HTTPException(status_code=404, detail="Relationship not found after update")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("update_world_relationship failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.delete("/world/relationships/{rel_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_world_relationship(rel_id: str):
+    """Delete a relationship from the world model."""
+    # Neo4j doesn't have a dedicated delete in store, use close
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        await _world_store.close_relationship(rel_id, now)
+    except Exception as exc:
+        logger.warning("delete_world_relationship failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================================
+# World Model — Graph Traversal
+# ============================================================================
+
+@router.get("/world/entities/{entity_id}/neighborhood", response_model=WorldNeighborhoodResponse)
+async def get_entity_neighborhood(
+    entity_id: str,
+    max_hops: int = 2,
+    relationship_types: Optional[str] = None,  # comma-separated
+    max_nodes: int = 200,
+) -> WorldNeighborhoodResponse:
+    """Get the graph neighborhood around an entity."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        types_list = relationship_types.split(",") if relationship_types else None
+        result = await _world_store.get_neighborhood(
+            entity_id=entity_id,
+            max_hops=max_hops,
+            relationship_types=types_list,
+            max_nodes=max_nodes,
+        )
+        return WorldNeighborhoodResponse(
+            center=_wm_entity_to_response(result.center) if result.center else None,
+            reachable=[_wm_entity_to_response(e) for e in result.reachable],
+            edges=[_wm_rel_to_response(r) for r in result.edges],
+            hop_counts=result.hop_counts,
+            truncated=result.truncated,
+        )
+    except Exception as exc:
+        logger.warning("get_entity_neighborhood failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/world/entities/{source_id}/path/{target_id}", response_model=WorldPathResponse)
+async def find_entity_path(
+    source_id: str,
+    target_id: str,
+    max_hops: int = 5,
+) -> WorldPathResponse:
+    """Find the shortest path between two entities."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        path = await _world_store.find_path(
+            source_id=source_id,
+            target_id=target_id,
+            max_hops=max_hops,
+        )
+        if path is None:
+            return WorldPathResponse(source_id=source_id, target_id=target_id, found=False)
+        return WorldPathResponse(
+            source_id=source_id,
+            target_id=target_id,
+            path=[_wm_rel_to_response(r) for r in path],
+            found=True,
+        )
+    except Exception as exc:
+        logger.warning("find_entity_path failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/world/stats", response_model=WorldStatsResponse)
+async def get_world_stats() -> WorldStatsResponse:
+    """Get world model statistics."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        stats = await _world_store.get_stats()
+        return WorldStatsResponse(**stats.__dict__ if hasattr(stats, "__dict__") else stats)
+    except Exception as exc:
+        logger.warning("get_world_stats failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================================
+# World Model — Helpers
+# ============================================================================
+
+def _wm_entity_to_response(entity) -> WorldEntityDetailResponse:
+    """Convert a BaseEntity subclass to WorldEntityDetailResponse."""
+    return WorldEntityDetailResponse(
+        id=entity.id,
+        name=entity.name,
+        entity_type=entity.entity_type,
+        aliases=entity.aliases or [],
+        external_ids=entity.external_ids or {},
+        confidence=entity.confidence,
+        properties=entity.properties or {},
+        first_seen=entity.first_seen.isoformat() if entity.first_seen else None,
+        last_seen=entity.last_seen.isoformat() if entity.last_seen else None,
+        created_at=entity.created_at.isoformat() if entity.created_at else None,
+        updated_at=entity.updated_at.isoformat() if entity.updated_at else None,
+    )
+
+
+def _wm_rel_to_response(rel) -> WorldRelationshipResponse:
+    """Convert a WorldRelationship to WorldRelationshipResponse."""
+    return WorldRelationshipResponse(
+        id=rel.id,
+        source_id=rel.source_id,
+        target_id=rel.target_id,
+        relationship_type=rel.relationship_type,
+        confidence=rel.confidence,
+        valid_from=rel.valid_from,
+        valid_to=rel.valid_to,
+        properties=rel.properties or {},
+        is_active=rel.is_active if hasattr(rel, "is_active") else rel.valid_to is None,
+        created_at=rel.created_at,
     )

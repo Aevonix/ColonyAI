@@ -1079,3 +1079,107 @@ class TomExtractResponse(BaseModel):
     affect: Optional[Dict[str, Any]] = None
     facts: List[Dict[str, Any]] = []
     throttled: bool = False
+
+
+# ---------------------------------------------------------------------------
+# World Model — Entities
+# ---------------------------------------------------------------------------
+
+class WorldEntityCreateRequest(BaseModel):
+    name: str
+    entity_type: str
+    aliases: Optional[List[str]] = []
+    external_ids: Optional[Dict[str, str]] = {}
+    confidence: float = 0.5
+    properties: Optional[Dict[str, Any]] = {}
+
+
+class WorldEntityUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    confidence: Optional[float] = None
+    properties: Optional[Dict[str, Any]] = None
+    aliases: Optional[List[str]] = None
+
+
+class WorldEntityDetailResponse(BaseModel):
+    id: str
+    name: str
+    entity_type: str
+    aliases: List[str] = []
+    external_ids: Dict[str, str] = {}
+    confidence: float = 0.5
+    properties: Dict[str, Any] = {}
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class WorldEntityListResponse(BaseModel):
+    entities: List[WorldEntityDetailResponse] = []
+    total: int = 0
+
+
+# ---------------------------------------------------------------------------
+# World Model — Relationships
+# ---------------------------------------------------------------------------
+
+class WorldRelationshipCreateRequest(BaseModel):
+    source_id: str
+    target_id: str
+    relationship_type: str
+    confidence: float = 0.5
+    valid_from: Optional[str] = None
+    properties: Optional[Dict[str, Any]] = {}
+
+
+class WorldRelationshipUpdateRequest(BaseModel):
+    confidence: Optional[float] = None
+    valid_to: Optional[str] = None
+    properties: Optional[Dict[str, Any]] = None
+
+
+class WorldRelationshipResponse(BaseModel):
+    id: str
+    source_id: str
+    target_id: str
+    relationship_type: str
+    confidence: float = 0.5
+    valid_from: Optional[str] = None
+    valid_to: Optional[str] = None
+    properties: Dict[str, Any] = {}
+    is_active: bool = True
+    created_at: Optional[str] = None
+
+
+class WorldRelationshipListResponse(BaseModel):
+    relationships: List[WorldRelationshipResponse] = []
+    total: int = 0
+
+
+# ---------------------------------------------------------------------------
+# World Model — Graph Traversal
+# ---------------------------------------------------------------------------
+
+class WorldNeighborhoodResponse(BaseModel):
+    center: Optional[WorldEntityDetailResponse] = None
+    reachable: List[WorldEntityDetailResponse] = []
+    edges: List[WorldRelationshipResponse] = []
+    hop_counts: Dict[str, int] = {}
+    truncated: bool = False
+
+
+class WorldPathResponse(BaseModel):
+    source_id: str
+    target_id: str
+    path: Optional[List[WorldRelationshipResponse]] = None
+    found: bool = False
+
+
+class WorldStatsResponse(BaseModel):
+    total_entities: int = 0
+    entities_by_type: Dict[str, int] = {}
+    total_relationships: int = 0
+    active_relationships: int = 0
+    total_observations: int = 0
+    merge_proposals_pending: int = 0
