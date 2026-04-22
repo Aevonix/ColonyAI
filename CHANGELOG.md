@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.6 (2026-04-22)
+
+Setup wizard fixes for fresh install experience.
+
+- **Added:** "Skip embeddings" option in tier selection (option 3) — Colony runs without vector search
+- **Fixed:** Sidecar auto-start in wizard now uses uvicorn instead of bare module
+- **Fixed:** ContactsStore init uses correct `sqlite_path` parameter
+- **Fixed:** Neo4j connectivity test uses driver session directly (bypasses query allowlist)
+- **Fixed:** `COLONY_EMBED_PROVIDER=skip` no longer crashes EmbeddingPipeline
+- **Validated:** Full `pip install colonyai` → `colony init` → sidecar start → health=ok flow
+
 ## 0.5.5 (2026-04-22)
 
 Critical packaging and startup fixes.
