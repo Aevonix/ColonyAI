@@ -1012,11 +1012,14 @@ def _cmd_mcp(args) -> None:
                 continue
             diff = remove_from_harness(hid, dry_run=args.dry_run)
             if diff:
-                print(diff)
+                prefix = "  Would remove" if args.dry_run else "  Removed"
+                print(f"{prefix}: {hdef['display']}")
             else:
                 print(f"  {hdef['display']} — Colony not configured, skipping")
 
-        if not args.dry_run:
+        if args.dry_run:
+            print("  Run without --dry-run to apply changes")
+        else:
             print("  Colony MCP removed from harness configs")
 
 
