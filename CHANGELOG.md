@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 (2026-04-22)
+
+Theory of Mind v0.1: affect tracking and shared facts.
+
+### Affect Tracking
+- AffectStore: per-contact emotional valence (-1.0 to 1.0) and arousal (0.0 to 1.0)
+- Exponential decay toward neutral (5% per hour, configurable)
+- Trend detection: improving, declining, stable
+- Negative spike detection (valence <= -0.5)
+- Sustained decline detection (3+ events with declining trend)
+- Context assembly injection: Emotional Context section (priority 80)
+- Autonomy: affect_decline check every 30min
+- Events: affect.event_created, affect.negative_spike, affect.sustained_decline
+- API: POST /affect/events, GET /affect/state/{id}, GET /affect/history/{id}, DELETE /affect/events/{id}
+
+### Shared Facts
+- SharedFactsStore: what the agent believes each contact knows
+- Fact categories: told_by_contact, told_to_contact, shared_context, inferred
+- Confidence scores (0.0-1.0), TTL expiry, expired fact purging
+- Context assembly injection: Shared Knowledge section (priority 70)
+- Event: mind.fact_created
+- API: POST /mind/facts, GET /mind/facts, GET /mind/facts/{id}, PATCH /mind/facts/{id}, DELETE /mind/facts/{id}
+
 ## 0.3.0 (2026-04-21)
 
 Cognition substrate, commitment tracking, LLM compression tier 3, and native tool fixes.
