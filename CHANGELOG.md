@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (2026-04-22)
+## 0.5.8 (2026-04-22)
 
 New CLI commands for lifecycle management and E2E validation.
 
