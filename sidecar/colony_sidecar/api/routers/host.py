@@ -1262,9 +1262,9 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     if _affect_store is not None and contact_id:
         try:
             state = _affect_store.get_state(contact_id)
-            if state and state.get("valence") is not None:
-                valence = state["valence"]
-                arousal = state.get("arousal", 0)
+            if state and (state.get("valence") is not None or state.get("current_valence") is not None):
+                valence = state.get("valence") or state.get("current_valence", 0)
+                arousal = state.get("arousal") or state.get("current_arousal", 0)
                 mood = "positive" if valence > 0.2 else "negative" if valence < -0.2 else "neutral"
                 energy = "high" if arousal > 0.5 else "low" if arousal < 0.3 else "moderate"
                 sections.append(ContextSection(
