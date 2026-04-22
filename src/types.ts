@@ -83,6 +83,10 @@ export type HostEventType =
   | "commitment.overdue"
   | "commitment.cancelled"
   | "cognition.requested"
+  | "affect.event_created"
+  | "affect.negative_spike"
+  | "affect.sustained_decline"
+  | "mind.fact_created"
   | "log";
 
 export interface HostEvent {
@@ -108,6 +112,60 @@ export interface CommitmentResponse {
 
 export interface CommitmentListResponse {
   commitments: CommitmentResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// ---------------------------------------------------------------------------
+// Theory of Mind — Affect
+// ---------------------------------------------------------------------------
+
+export interface AffectEventResponse {
+  id: string;
+  contact_id: string;
+  valence: number;
+  arousal: number;
+  source: string;
+  trigger: string | null;
+  timestamp: string;
+  session_id: string | null;
+}
+
+export interface AffectStateResponse {
+  contact_id: string;
+  current_valence: number;
+  current_arousal: number;
+  trend: string;
+  last_event_id: string | null;
+  last_updated: string | null;
+  event_count: number;
+}
+
+export interface AffectEventListResponse {
+  events: AffectEventResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// ---------------------------------------------------------------------------
+// Theory of Mind — Shared Facts
+// ---------------------------------------------------------------------------
+
+export interface SharedFactResponse {
+  id: string;
+  contact_id: string;
+  fact: string;
+  source: string;
+  confidence: number;
+  created_at: string;
+  expires_at: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface SharedFactListResponse {
+  facts: SharedFactResponse[];
   total: number;
   limit: number;
   offset: number;

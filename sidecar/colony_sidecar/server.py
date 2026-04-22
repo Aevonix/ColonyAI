@@ -44,6 +44,8 @@ from colony_sidecar.api.routers.host import (
     set_session_store,
     set_task_queue,
     set_commitment_store,
+    set_affect_store,
+    set_facts_store,
     supported_capabilities,
 )
 
@@ -326,6 +328,23 @@ async def lifespan(app: FastAPI):
         logger.info("CommitmentStore initialized (db=%s)", commitments_db)
     except Exception as exc:
         logger.warning("CommitmentStore init failed: %s", exc)
+
+    # --- 7c. Theory of Mind ---
+    try:
+        from colony_sidecar.tom.affect import AffectStore
+        from colony_sidecar.tom.facts import SharedFactsStore
+
+        affect_db = state_dir / "colony-affect.db"
+        affect_store = AffectStore(db_path=affect_db)
+        set_affect_store(affect_store)
+        logger.info("AffectStore initialized (db=%s)", affect_db)
+
+        facts_db = state_dir / "colony-facts.db"
+        facts_store = SharedFactsStore(db_path=facts_db)
+        set_facts_store(facts_store)
+        logger.info("SharedFactsStore initialized (db=%s)", facts_db)
+    except Exception as exc:
+        logger.warning("Theory of Mind init failed: %s", exc)
 
     # --- 8. Contacts ---
     try:
@@ -755,6 +774,8 @@ async def lifespan(app: FastAPI):
     set_learner(None)
     set_skills_registry(None)
     set_commitment_store(None)
+    set_affect_store(None)
+    set_facts_store(None)
     set_chain_manager(None)
     set_secrets_manager(None)
     set_session_store(None)
