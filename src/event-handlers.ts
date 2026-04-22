@@ -148,6 +148,16 @@ export function dispatchHostEvent(
         ctx.cache?.invalidate("commitments", event.payload);
         ctx.logger?.info?.(`[colony.event] ${event.type}`);
         return true;
+      case "affect.event_created":
+      case "affect.negative_spike":
+      case "affect.sustained_decline":
+        ctx.cache?.invalidate("affect", event.payload);
+        ctx.logger?.info?.(`[colony.event] ${event.type}`);
+        return true;
+      case "mind.fact_created":
+        ctx.cache?.invalidate("facts", event.payload);
+        ctx.logger?.info?.(`[colony.event] ${event.type}`);
+        return true;
       default:
         return false;
     }

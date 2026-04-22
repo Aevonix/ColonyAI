@@ -897,3 +897,82 @@ class CognitionTriggerResponse(BaseModel):
     accepted: bool = True
     message: str = "Cognition trigger accepted"
     throttle_seconds: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Theory of Mind — Affect
+# ---------------------------------------------------------------------------
+
+class AffectEventCreateRequest(BaseModel):
+    contact_id: str
+    valence: float = Field(..., ge=-1.0, le=1.0)
+    arousal: float = Field(0.5, ge=0.0, le=1.0)
+    source: Literal["explicit", "inferred", "signal"] = "explicit"
+    trigger: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class AffectEventResponse(BaseModel):
+    id: str
+    contact_id: str
+    valence: float
+    arousal: float
+    source: str
+    trigger: Optional[str] = None
+    timestamp: str
+    session_id: Optional[str] = None
+
+
+class AffectStateResponse(BaseModel):
+    contact_id: str
+    current_valence: float = 0.0
+    current_arousal: float = 0.3
+    trend: str = "stable"
+    last_event_id: Optional[str] = None
+    last_updated: Optional[str] = None
+    event_count: int = 0
+
+
+class AffectEventListResponse(BaseModel):
+    events: List[AffectEventResponse] = []
+    total: int
+    limit: int
+    offset: int
+
+
+# ---------------------------------------------------------------------------
+# Theory of Mind — Shared Facts
+# ---------------------------------------------------------------------------
+
+class SharedFactCreateRequest(BaseModel):
+    contact_id: str
+    fact: str
+    source: Literal["told_by_contact", "told_to_contact", "shared_context", "inferred"] = "shared_context"
+    confidence: float = Field(0.8, ge=0.0, le=1.0)
+    expires_at: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class SharedFactUpdateRequest(BaseModel):
+    fact: Optional[str] = None
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    expires_at: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class SharedFactResponse(BaseModel):
+    id: str
+    contact_id: str
+    fact: str
+    source: str
+    confidence: float
+    created_at: str
+    expires_at: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class SharedFactListResponse(BaseModel):
+    facts: List[SharedFactResponse] = []
+    total: int
+    limit: int
+    offset: int
