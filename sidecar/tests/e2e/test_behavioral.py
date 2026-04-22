@@ -292,14 +292,15 @@ class TestPatternSurpriseBehavior:
         r = client.post("/v1/host/surprises", json={
             "observation": f"resolve-test-{uuid.uuid4().hex[:6]}",
             "expected": "A", "actual": "B",
-            "surprise_score": 0.7,
+            "surprise_score": 0.95,  # High enough to appear in default min_score filter
         })
         sid = r.json()["id"]
 
         # Before resolution: should be in unresolved
         r = client.get("/v1/host/surprises/unresolved")
-        unresolved_ids = [s["id"] for s in r.json()]
-        assert sid in unresolved_ids, "Unresolved surprise should appear in list"
+        unresolved = r.json()
+        unresolved_ids = [s["id"] for s in unresolved]
+        assert sid in unresolved_ids, f"Surprise {sid} not in unresolved: {unresolved_ids[:5]}..."
 
         # Resolve
         client.patch(f"/v1/host/surprises/{sid}", json={"resolution": "Fixed"})
