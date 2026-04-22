@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1 (2026-04-22)
+
+ToM Layer 3: LLM extraction for affect and shared facts.
+
+### ToM LLM Extraction
+- TomExtractor: async LLM-backed extraction from conversation turns
+- Affect extraction: valence/arousal/trigger from conversation text (neutral readings skipped)
+- Fact extraction: knowledge items with source classification
+- Per-contact throttle (5 min default, configurable via COLONY_TOM_EXTRACTION_THROTTLE_MINUTES)
+- Auto-fires on turn_sync when LLM router is wired
+- POST /v1/host/tom/extract for manual extraction
+- 21 new unit tests
+
 ## 0.5.0 (2026-04-22)
 
 Pattern Extraction + Surprise Engine: pattern detection and anomaly scoring.
