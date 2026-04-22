@@ -1113,14 +1113,13 @@ def _cmd_validate(args) -> None:
         except Exception:
             print(f"  ⚠️ Could not check OpenClaw LLM config")
     else:
-        # Check sidecar's own LLM config
-        r = httpx.get(f"{url}/v1/host/health", headers=headers, timeout=5)
-        notes = r.json().get("notes", {})
-        if "llm" in str(notes).lower() and "not" not in str(notes.get("llm", "")).lower():
-            llm_ok = True
-            print(f"  ✅ LLM configured in sidecar")
+        # Check MCP harnesses
+        has_mcp = bool(shutil.which("claude") or shutil.which("codex") or shutil.which("crush"))
+        if has_mcp:
+            print(f"  \u26a0\ufe0f CLI harness detected but LLM test requires OpenClaw")
+            print(f"  MCP tools validated via context assembly — LLM pipeline needs manual verification")
         else:
-            print(f"  ⚠️ LLM status unknown — cannot verify full LLM pipeline")
+            print(f"  \u26a0\ufe0f No OpenClaw or MCP harness — LLM pipeline needs manual verification")
 
     # Step 5: Test full LLM pipeline if possible
     print("\n[5/5] Testing full pipeline...")
