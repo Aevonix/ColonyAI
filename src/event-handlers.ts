@@ -168,6 +168,14 @@ export function dispatchHostEvent(
         ctx.cache?.invalidate("surprises", event.payload);
         ctx.logger?.info?.(`[colony.event] ${event.type}`);
         return true;
+      case "tom.affect_extracted":
+        ctx.cache?.invalidate("affect", event.payload);
+        ctx.logger?.info?.(`[colony.event] ${event.type}`);
+        return true;
+      case "tom.fact_extracted":
+        ctx.cache?.invalidate("facts", event.payload);
+        ctx.logger?.info?.(`[colony.event] ${event.type}`);
+        return true;
       default:
         return false;
     }

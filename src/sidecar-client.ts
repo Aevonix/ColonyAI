@@ -38,6 +38,8 @@ import type {
   PatternExtractResponse,
   SurpriseResponse,
   SurpriseListResponse,
+  TomExtractRequest,
+  TomExtractResponse,
 } from "./types.js";
 
 /**
@@ -408,6 +410,12 @@ export class ColonySidecarClient {
 
   deleteSurprise(id: string): Promise<void> {
     return this.delete(`/v1/host/surprises/${id}`);
+  }
+
+  // --- ToM LLM Extraction --------------------------------------------------
+
+  extractTom(body: TomExtractRequest): Promise<TomExtractResponse> {
+    return this.post<TomExtractResponse>("/v1/host/tom/extract", body);
   }
 
   // --- Skills --------------------------------------------------------------

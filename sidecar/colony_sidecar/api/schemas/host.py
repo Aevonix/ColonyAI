@@ -1061,3 +1061,21 @@ class SurpriseListResponse(BaseModel):
 
 class SurpriseResolveRequest(BaseModel):
     resolution: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# ToM LLM Extraction
+# ---------------------------------------------------------------------------
+
+class TomExtractRequest(BaseModel):
+    conversation_text: str
+    contact_id: str
+    session_id: Optional[str] = None
+    extract_affect: bool = True
+    extract_facts: bool = True
+
+
+class TomExtractResponse(BaseModel):
+    affect: Optional[Dict[str, Any]] = None
+    facts: List[Dict[str, Any]] = []
+    throttled: bool = False

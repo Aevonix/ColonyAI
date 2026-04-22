@@ -142,6 +142,8 @@ from colony_sidecar.api.schemas.host import (
     SurpriseResponse,
     SurpriseListResponse,
     SurpriseResolveRequest,
+    TomExtractRequest,
+    TomExtractResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -1362,6 +1364,18 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     except Exception:
         logger.debug("cognition trigger from turn_sync failed", exc_info=True)
 
+    # ToM LLM extraction (best-effort, non-blocking)
+    try:
+        if _tom_extractor is not None and _affect_store is not None and _facts_store is not None:
+            import asyncio
+            asyncio.create_task(_run_tom_extraction(
+                conversation_text=body.summary or "",
+                contact_id=body.context.contact_id,
+                session_id=body.context.session_id,
+            ))
+    except Exception:
+        logger.debug("ToM extraction from turn_sync failed", exc_info=True)
+
     return TurnSyncResponse(accepted=True, continuity_updated=graph_ok, skipped_reason=None if graph_ok else "no_graph_store")
 
 
@@ -2108,6 +2122,14 @@ _facts_store = None
 def set_facts_store(store):
     global _facts_store
     _facts_store = store
+
+
+_tom_extractor = None
+
+
+def set_tom_extractor(extractor) -> None:
+    global _tom_extractor
+    _tom_extractor = extractor
 
 
 _pattern_store = None
@@ -3607,6 +3629,107 @@ async def delete_surprise(surprise_id: str):
         raise HTTPException(status_code=501, detail="Surprise engine not initialized")
     if not _surprise_store.delete_surprise(surprise_id):
         raise HTTPException(status_code=404, detail="Surprise not found")
+
+
+# ---------------------------------------------------------------------------
+# ToM LLM Extraction
+# ---------------------------------------------------------------------------
+
+async def _run_tom_extraction(
+    conversation_text: str,
+    contact_id: str,
+    session_id: Optional[str] = None,
+) -> None:
+    """Background task: extract affect + facts from a conversation turn."""
+    if _tom_extractor is None:
+        return
+    # Affect
+    try:
+        affect = await _tom_extractor.extract_affect(
+            conversation_text, contact_id, session_id=session_id,
+        )
+        if affect and _affect_store is not None:
+            _affect_store.create_event(
+                contact_id=affect["contact_id"],
+                valence=affect["valence"],
+                arousal=affect["arousal"],
+                source="inferred",
+                trigger=affect.get("trigger"),
+            )
+            try:
+                from colony_sidecar.events.broadcaster import emit as _emit
+                _emit("affect.event_created", {"contact_id": contact_id, "source": "inferred"})
+            except Exception:
+                pass
+    except Exception:
+        logger.debug("ToM affect extraction failed", exc_info=True)
+    # Facts
+    try:
+        facts = await _tom_extractor.extract_facts(
+            conversation_text, contact_id, session_id=session_id,
+        )
+        if facts and _facts_store is not None:
+            for f in facts:
+                _facts_store.create_fact(
+                    contact_id=f["contact_id"],
+                    fact=f["fact"],
+                    source=f["source"],
+                    confidence=f["confidence"],
+                )
+            try:
+                from colony_sidecar.events.broadcaster import emit as _emit
+                _emit("mind.fact_created", {"contact_id": contact_id, "source": f["source"]})
+            except Exception:
+                pass
+    except Exception:
+        logger.debug("ToM fact extraction failed", exc_info=True)
+
+
+@router.post("/tom/extract", response_model=TomExtractResponse)
+async def extract_tom(body: TomExtractRequest) -> TomExtractResponse:
+    """Manually trigger ToM extraction for a conversation snippet."""
+    if _tom_extractor is None:
+        raise HTTPException(status_code=501, detail="ToM extraction not available (no LLM router)")
+
+    affect_result = None
+    facts_result = []
+
+    if body.extract_affect:
+        affect_result = await _tom_extractor.extract_affect(
+            body.conversation_text,
+            body.contact_id,
+            session_id=body.session_id,
+        )
+        if affect_result and _affect_store is not None:
+            _affect_store.create_event(
+                contact_id=affect_result["contact_id"],
+                valence=affect_result["valence"],
+                arousal=affect_result["arousal"],
+                source="inferred",
+                trigger=affect_result.get("trigger"),
+            )
+
+    if body.extract_facts:
+        facts_result = await _tom_extractor.extract_facts(
+            body.conversation_text,
+            body.contact_id,
+            session_id=body.session_id,
+        )
+        if facts_result and _facts_store is not None:
+            for f in facts_result:
+                _facts_store.create_fact(
+                    contact_id=f["contact_id"],
+                    fact=f["fact"],
+                    source=f["source"],
+                    confidence=f["confidence"],
+                )
+
+    throttled = not _tom_extractor._can_extract(body.contact_id)
+    return TomExtractResponse(
+        affect=affect_result,
+        facts=facts_result,
+        throttled=throttled,
+    )
 
 
 @router.post("/seed", response_model=SeedResponse)
