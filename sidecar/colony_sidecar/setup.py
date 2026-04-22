@@ -394,33 +394,102 @@ def run_init(root_dir: str | None = None) -> int:
 
     print()
 
-    # ── Step 3: Host framework + OpenClaw plugin ────────────────────────
+    # ── Step 3: Host framework ────────────────────────────────────────
 
     print(_bold("Step 3: Host framework"))
     print()
-    print("  Colony is a sidecar — it needs a host (OpenClaw, Hermes, etc.)")
-    print("  to provide LLM credentials at runtime.")
+    print("  Colony is a sidecar — it connects to a host that provides LLM access.")
+    print()
+    print("  [1] OpenClaw (messaging agent platform)")
+    print("  [2] Claude Code (coding agent)")
+    print("  [3] Codex (coding agent)")
+    print("  [4] Crush (coding agent)")
+    print("  [5] Standalone (no host — Colony API only)")
     print()
 
-    host_choice = _prompt("  Which host framework? [openclaw/other]", "openclaw")
+    host_choice = _prompt("  Choose [1-5]", "1")
     oc_configured = False
+    mcp_harnesses = []  # harnesses to configure via MCP
+    contact_id = None
 
-    if host_choice.lower() in ("openclaw", "oc", ""):
+    # Map choice to framework
+    framework_map = {"1": "openclaw", "2": "claude-code", "3": "codex", "4": "crush", "5": "standalone"}
+    framework = framework_map.get(host_choice, "openclaw")
+
+    if framework == "openclaw":
         oc_config_path = Path.home() / ".openclaw" / "openclaw.json"
         if oc_config_path.exists():
-            print(f"  ✅ OpenClaw config found: {oc_config_path}")
+            print(f"  \u2705 OpenClaw config found: {oc_config_path}")
         else:
-            print("  ⚠️ No OpenClaw config found at ~/.openclaw/openclaw.json")
+            print("  \u26a0\ufe0f No OpenClaw config found at ~/.openclaw/openclaw.json")
 
         if oc_ok:
             oc_plugin = _prompt("  Configure Colony as an OpenClaw plugin? [Y/n]", "Y")
             if oc_plugin.lower() in ("y", "yes", ""):
-                oc_configured = True  # Will configure after .env is written
+                oc_configured = True
         else:
             print("  OpenClaw CLI not found — plugin setup skipped.")
             print("  Install OpenClaw and re-run 'colony init' to configure the plugin.")
+
+        # Offer MCP for additional coding harnesses
+        try:
+            from colony_sidecar.mcp.config import detect_harnesses, HARNESS_DEFS
+            detected = detect_harnesses()
+            installed = {k: v for k, v in detected.items() if v}
+            if installed:
+                print()
+                print("  OpenClaw is your primary agent. Colony can also connect")
+                print("  coding harnesses so they share the same intelligence layer.")
+                print("  Data from each source is tagged for provenance tracking.")
+                print()
+                print("  Detected coding harnesses:")
+                options = list(installed.keys())
+                for i, hid in enumerate(options, 1):
+                    print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
+                print()
+                mcp_choice = _prompt("  Connect which? (comma-separated, or 'all' or 'none') [all]", "all")
+                if mcp_choice.lower() not in ("none", "n", "skip"):
+                    if mcp_choice.lower() == "all" or not mcp_choice:
+                        mcp_harnesses = options
+                    else:
+                        indices = [int(x.strip()) for x in mcp_choice.split(",") if x.strip().isdigit()]
+                        mcp_harnesses = [options[i - 1] for i in indices if 1 <= i <= len(options)]
+
+                if mcp_harnesses:
+                    contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""))
+        except ImportError:
+            pass  # MCP SDK not installed, skip
+
+    elif framework == "standalone":
+        print("  Colony will run as a standalone API server.")
+        print("  Connect your own integration using the REST API.")
+
     else:
-        print("  Colony will receive LLM credentials from your host on connect.")
+        # CLI harness (claude-code, codex, crush)
+        harness_names = {"claude-code": "Claude Code", "codex": "Codex", "crush": "Crush"}
+        print(f"  Colony will connect to {harness_names[framework]} via MCP.")
+        mcp_harnesses = [framework]
+
+        # Also detect other harnesses
+        try:
+            from colony_sidecar.mcp.config import detect_harnesses, HARNESS_DEFS
+            detected = detect_harnesses()
+            installed = {k: v for k, v in detected.items() if v and k != framework}
+            if installed:
+                print()
+                print("  Other coding harnesses detected:")
+                options = list(installed.keys())
+                for i, hid in enumerate(options, 1):
+                    print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
+                print()
+                extra = _prompt("  Also connect? (comma-separated, or 'none') [none]", "none")
+                if extra.lower() not in ("none", "n", ""):
+                    indices = [int(x.strip()) for x in extra.split(",") if x.strip().isdigit()]
+                    mcp_harnesses.extend([options[i - 1] for i in indices if 1 <= i <= len(options)])
+        except ImportError:
+            pass
+
+        contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""))
 
     print()
 
@@ -1038,10 +1107,36 @@ def run_init(root_dir: str | None = None) -> int:
         ))
         print()
 
-    # E2E validation prompt
-    if sidecar_started and oc_ok:
+    # MCP harness setup
+    if mcp_harnesses and sidecar_started:
         print()
-        print("  The sidecar is running and OpenClaw is configured.")
+        print(_bold("  Configuring MCP harnesses..."))
+        try:
+            from colony_sidecar.mcp.config import add_to_harness, HARNESS_DEFS
+            for hid in mcp_harnesses:
+                hdef = HARNESS_DEFS.get(hid)
+                if not hdef:
+                    continue
+                diff = add_to_harness(hid, contact_id or os.environ.get("USER", "user"))
+                if diff is None:
+                    print(f"  {hdef['display']}: already configured")
+                else:
+                    print(f"  {hdef['display']}: configured (source: {hdef['source_tag']})")
+        except ImportError:
+            print("  MCP SDK not installed — run: pip install colonyai[mcp]")
+        except Exception as exc:
+            print(f"  MCP setup failed: {exc}")
+        print()
+
+    # E2E validation prompt
+    if sidecar_started and (oc_ok or mcp_harnesses):
+        print()
+        if oc_ok and mcp_harnesses:
+            print("  The sidecar is running with OpenClaw + MCP harnesses configured.")
+        elif oc_ok:
+            print("  The sidecar is running and OpenClaw is configured.")
+        else:
+            print("  The sidecar is running with MCP harnesses configured.")
         print("  You can validate the full pipeline (sidecar + context + LLM) with:")
         print(f"    {_green('colony validate')}")
         print("  This sends one test prompt and uses a small amount of LLM credits.")
