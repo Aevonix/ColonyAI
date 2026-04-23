@@ -40,7 +40,7 @@ HARNESS_DEFS = {
     "crush": {
         "display": "Crush",
         "detect_cmds": ["crush"],
-        "config_path": "~/.config/crush/crush.json",
+        "config_path": "~/.crush/mcp.json",
         "config_format": "json",
         "mcp_key": "mcpServers",
         "source_tag": "crush",
@@ -189,11 +189,15 @@ def _add_to_yaml_config(config_path: str, contact_id: str, source: str, dry_run:
     if mcp_key not in data:
         data[mcp_key] = {}
 
+    api_key_value = os.environ.get("COLONY_API_KEY", "")
+    if not api_key_value:
+        return "  COLONY_API_KEY env var not set — set it before running mcp setup"
+
     new_config = {
         "command": "colony",
         "args": ["mcp"],
         "env": {
-            "COLONY_API_KEY": "${COLONY_API_KEY}",
+            "COLONY_API_KEY": api_key_value,
             "COLONY_URL": f"http://127.0.0.1:{sidecar_port}",
             "COLONY_MCP_CONTACT_ID": contact_id,
             "COLONY_MCP_SOURCE": source,
