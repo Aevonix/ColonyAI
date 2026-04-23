@@ -125,6 +125,13 @@ class RaftNode:
         self.height = 0
         self.last_block_hash = "0" * 64
 
+        # Metrics for monitoring
+        self._metrics: dict[str, int] = {
+            "blocks_rejected": 0,
+            "blocks_accepted": 0,
+            "invalid_signatures": 0,
+        }
+
         self._election_timeout: float = self._random_timeout()
         self._last_heartbeat: float = time.monotonic()
         self._votes_received: set[str] = set()
@@ -145,6 +152,10 @@ class RaftNode:
     def quorum(self) -> int:
         n = len(self.peer_ids) + 1  # include self
         return max(1, (n * 2 // 3) + 1)
+
+    def get_metrics(self) -> dict[str, int]:
+        """Return consensus metrics for monitoring."""
+        return dict(self._metrics)
 
     async def start(self) -> None:
         self._running = True
@@ -333,12 +344,35 @@ class RaftNode:
             return
 
         self._last_heartbeat = time.monotonic()
-        # Validate block (basic checks)
-        is_valid = (
-            block.index == self.height + 1
-            and block.previous_hash == self.last_block_hash
-        )
+        
+        # Validate block (comprehensive checks)
+        validation_errors = []
+        
+        # 1. Index and previous_hash (chain integrity)
+        if block.index != self.height + 1:
+            validation_errors.append(f"index mismatch: expected {self.height + 1}, got {block.index}")
+        if block.previous_hash != self.last_block_hash:
+            validation_errors.append("previous_hash mismatch")
+        
+        # 2. Merkle root (transaction integrity)
+        tx_ids = [tx.tx_id for tx in block.transactions]
+        expected_merkle = build_merkle_root(tx_ids)
+        if block.merkle_root != expected_merkle:
+            validation_errors.append("merkle_root mismatch")
+        
+        # 3. Timestamp (not in future, reasonable)
+        try:
+            block_ts = datetime.fromisoformat(block.timestamp.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            if block_ts > now:
+                validation_errors.append("timestamp in future")
+        except (ValueError, AttributeError):
+            validation_errors.append("invalid timestamp format")
+        
+        is_valid = len(validation_errors) == 0
+        
         if is_valid:
+            self._metrics["blocks_accepted"] += 1
             msg_type = "BLOCK_ACK"
             msg_data: dict = {
                 "term": term,
@@ -356,6 +390,11 @@ class RaftNode:
             signature = self.sign_data(canonical.encode())
             msg_data["signature"] = signature
         else:
+            self._metrics["blocks_rejected"] += 1
+            logger.warning(
+                "BLOCK_PROPOSE rejected: %s",
+                ", ".join(validation_errors),
+            )
             msg_type = "BLOCK_NACK"
             nack_canonical = json.dumps(
                 {"type": "BLOCK_NACK", "term": term,
@@ -368,7 +407,7 @@ class RaftNode:
                 "term": term,
                 "block_hash": block.block_hash,
                 "sentinel_id": self.config.sentinel_id,
-                "reason": "invalid_block",
+                "reason": "invalid_block: " + ", ".join(validation_errors),
                 "signature": nack_sig,
             }
         # Validate leader_id against known peer list before routing response
@@ -544,11 +583,14 @@ class RaftNode:
         block = BlockCls.from_dict(data["block"])
         if term >= self.current_term and block.index == self.height + 1:
             if not self._verify_block_signature(block):
+                self._metrics["invalid_signatures"] += 1
+                self._metrics["blocks_rejected"] += 1
                 logger.warning(
                     "COMMIT_BLOCK rejected: invalid or missing signature from producer %s",
                     block.producer_id,
                 )
                 return
+            self._metrics["blocks_accepted"] += 1
             await self.on_commit(block)
             self.height = block.index
             self.last_block_hash = block.block_hash
