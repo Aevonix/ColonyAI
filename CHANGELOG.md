@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.7 (2026-04-23)
+
+Second code audit: MCP contract, Hermes integration, runtime crash, and security fixes.
+
+### Fixed
+- C1: `colony_get_context` now always sends `incoming_message` (was conditionally omitted → 422)
+- C2: `TurnSyncRequest` has `user_message`/`assistant_message` fields; sidecar extracts from raw messages
+- C3: YAML harness config uses `${COLONY_API_KEY}` template (was baking raw key to disk)
+- C4: Synthesized skills get `ColonyRuntime` handle injected (was crashing with missing arg)
+- H1: `cancellation_reason` goes into `metadata` dict (was dropped by Pydantic)
+- H2: `context` param type changed to `dict` (was str → 422)
+- H3: WebSocket `onEvent` wrapped in try/catch (was unguarded → crash propagation)
+- H4: Hermes provider logs WARN on 401/403 (was DEBUG, silent degradation)
+- H5: Initiative IDs use UUID (was collision-prone `hash() % 100000`)
+- H6: `datetime.now(timezone.utc)` everywhere (was mixing naive/aware → TypeError)
+- H7: Sandbox `__import__` wrapped with manifest whitelist enforcement
+- M1: `arousal` param defaults to 0.5 in `colony_record_affect`
+- M2: `expected` param is optional in `colony_record_surprise`
+- M6: `refreshSkillTools` debounced with in-flight promise (was racy)
+
+### New
+- `sidecar/colony_sidecar/skills/runtime.py` — `ColonyRuntime` class for synthesized skill tool access
+- `allowed_imports` field on `SkillPermissions` for manifest-declared module whitelist
+
 ## 0.6.2 (2026-04-23)
 
 Code audit fixes from Claude Code security scan.
