@@ -53,7 +53,7 @@ Start the Colony sidecar now? [Y/n] [Y]: Traceback (most recent call last):
 ## Issue 2: Hardware scan crashes on EOF, skips tier selection
 
 **Severity:** High  
-**Status:** ⏳ CLI args added, logic pending
+**Status:** ✅ FIXED (--tier CLI arg + EOF handling)
 **Location:** `sidecar/colony_sidecar/setup.py` — tier selection + hardware scan
 
 **Problem:** The tier selection prompt is preceded by a hardware scan that calls `_probe_hardware()` which internally uses `input()` or similar blocking call. When stdin is exhausted, this crashes and tier selection is skipped entirely.
@@ -112,7 +112,7 @@ cat: /home/aevonix/.colony/config.yaml: No such file or directory
 ## Issue 4: Defaults to localhost bind, no way to change via wizard
 
 **Severity:** Medium  
-**Status:** ⏳ CLI arg added, prompt pending
+**Status:** ✅ FIXED (--bind/--port CLI args + interactive prompt)
 **Location:** `sidecar/colony_sidecar/setup.py`
 
 **Problem:** `COLONY_SIDECAR_HOST` defaults to `127.0.0.1`. There's no prompt to change it. For headless servers (DGX Spark, VPS), the sidecar needs to bind to `0.0.0.0` to be accessible from other machines.
@@ -162,7 +162,7 @@ Step 5: Neo4j graph memory
 ## Issue 6: SQLite DBs scattered in home directory
 
 **Severity:** Low  
-**Status:** ⏳ colony_home created, paths pending
+**Status:** ✅ FIXED (paths now use ~/.colony/data/)
 **Location:** `sidecar/colony_sidecar/setup.py`
 
 **Problem:** Multiple SQLite databases are created in `~/` instead of `~/.colony/`:
@@ -190,7 +190,7 @@ Step 5: Neo4j graph memory
 ## Issue 7: No validation that selected tier matches hardware
 
 **Severity:** Medium  
-**Status:** ⏳ Pending
+**Status:** ⏳ Pending (would need runtime check)
 **Location:** `sidecar/colony_sidecar/setup.py`
 
 **Problem:** Even when tier selection works, there's no validation that the selected tier is appropriate for the hardware. User can select tier 7 on a 4GB laptop.
@@ -209,7 +209,7 @@ Step 5: Neo4j graph memory
 ## Issue 8: Embedding model download happens during init, not first start
 
 **Severity:** Low  
-**Status:** ⏳ CLI arg added, logic pending
+**Status:** ✅ FIXED (--skip-model-download CLI arg)
 **Location:** `sidecar/colony_sidecar/setup.py` — Step 7
 
 **Problem:** The wizard downloads the embedding model during `colony init`. For large models (harrier-oss-v1-27b is 27B params), this can take a long time and block the wizard.
@@ -234,19 +234,13 @@ Step 7: Download embedding model
 
 ## Summary
 
-| Issue | Severity | Fix Complexity |
-|-------|----------|----------------|
-| Piped input crashes wizard | Critical | Medium |
-| Tier selection skipped silently | High | Medium |
-| No config file output | Medium | Low |
-| No bind address prompt | Medium | Low |
-| Neo4j auth detection | Low | Low |
-| DBs scattered in ~/ | Low | Low |
-| No tier/hardware validation | Medium | Medium |
-| Model download blocks init | Low | Low |
-
-**Priority fixes:**
-1. Add `--non-interactive` mode with CLI flags for all prompts
-2. Add `--config` flag to read from YAML file
-3. Handle EOF gracefully (use defaults, don't crash)
-4. Add `--bind` and `--tier` CLI flags
+| Issue | Severity | Status |
+|-------|----------|--------|
+| Piped input crashes wizard | Critical | ✅ FIXED |
+| Tier selection skipped silently | High | ✅ FIXED |
+| No config file output | Medium | ✅ FIXED |
+| No bind address prompt | Medium | ✅ FIXED |
+| Neo4j auth detection | Low | ✅ FIXED |
+| DBs scattered in ~/ | Low | ✅ FIXED |
+| No tier/hardware validation | Medium | ⏳ Pending |
+| Model download blocks init | Low | ✅ FIXED |
