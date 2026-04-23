@@ -171,7 +171,7 @@ class InitiativeEngine:
         Returns:
             Active initiatives sorted by priority (descending)
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         active = [
             i for i in self._initiatives
             if i.expires_at is None or i.expires_at > now
@@ -192,14 +192,14 @@ class InitiativeEngine:
             priority = min(1.0, 0.4 + days * 0.1)
             initiatives.append(
                 Initiative(
-                    id=f"followup-{hash(desc) % 100000:05d}-{datetime.now().timestamp():.0f}",
+                    id=f"followup-{_uuid_module.uuid4().hex[:12]}",
                     type=InitiativeType.FOLLOW_UP,
                     description=f"Follow up on: {desc}",
                     priority=priority,
                     rationale=f"Task has been pending for {days:.0f} day(s)",
                     action_hint=f"Review status of '{desc}'",
                     entity_id=item.get("entity_id"),
-                    expires_at=datetime.now() + timedelta(days=3),
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=3),
                 )
             )
         return initiatives
@@ -232,14 +232,14 @@ class InitiativeEngine:
             priority = min(1.0, 0.3 + days * 0.05)
             initiatives.append(
                 Initiative(
-                    id=f"relationship-{hash(name) % 100000:05d}-{datetime.now().timestamp():.0f}",
+                    id=f"relationship-{_uuid_module.uuid4().hex[:12]}",
                     type=InitiativeType.RELATIONSHIP,
                     description=f"Reach out to {name}",
                     priority=priority,
                     rationale=f"No contact with {name} for {days:.0f} day(s)",
                     action_hint=f"Send a quick message to {name}",
                     entity_id=contact.get("entity_id"),
-                    expires_at=datetime.now() + timedelta(days=7),
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=7),
                 )
             )
         return initiatives
@@ -260,13 +260,13 @@ class InitiativeEngine:
 
             initiatives.append(
                 Initiative(
-                    id=f"health-{hash(metric) % 100000:05d}-{datetime.now().timestamp():.0f}",
+                    id=f"health-{_uuid_module.uuid4().hex[:12]}",
                     type=InitiativeType.HEALTH,
                     description=f"Review {metric}: current={value}, target={target}",
                     priority=priority,
                     rationale=f"{metric} is outside target range",
                     action_hint=f"Check and adjust {metric}",
-                    expires_at=datetime.now() + timedelta(hours=24),
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
                 )
             )
         return initiatives
@@ -279,13 +279,13 @@ class InitiativeEngine:
             priority = float(slot.get("priority", 0.5))
             initiatives.append(
                 Initiative(
-                    id=f"schedule-{hash(desc) % 100000:05d}-{datetime.now().timestamp():.0f}",
+                    id=f"schedule-{_uuid_module.uuid4().hex[:12]}",
                     type=InitiativeType.SCHEDULING,
                     description=desc,
                     priority=min(1.0, priority),
                     rationale=slot.get("rationale", "Based on observed patterns"),
                     action_hint=slot.get("action_hint"),
-                    expires_at=datetime.now() + timedelta(days=1),
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=1),
                 )
             )
         return initiatives

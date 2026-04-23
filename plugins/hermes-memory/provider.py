@@ -69,6 +69,8 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._session_id = session_id
         self._platform = kwargs.get("platform", "cli")
         hermes_home = kwargs.get("hermes_home", "")
+        if not self._api_key:
+            logger.warning("Colony: COLONY_API_KEY not set — requests will fail if sidecar requires auth")
         logger.info("Colony memory provider initialized (session=%s, platform=%s, home=%s)",
                      session_id, self._platform, hermes_home)
 
@@ -106,6 +108,13 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 timeout=10,
             )
             resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            if code in (401, 403):
+                logger.warning("Colony prefetch auth failed (HTTP %d) — check COLONY_API_KEY", code)
+            else:
+                logger.debug("Colony prefetch failed: %s", exc)
+            return ""
         except (httpx.HTTPError, OSError) as exc:
             logger.debug("Colony prefetch failed: %s", exc)
             return ""
@@ -149,7 +158,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         try:
             client = self._get_async_client()
             headers = self._headers()
-            await client.post(
+            resp = await client.post(
                 f"{self.sidecar_url}/v1/host/turns/sync",
                 headers=headers,
                 json={
@@ -163,6 +172,13 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 },
                 timeout=5,
             )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            if code in (401, 403):
+                logger.warning("Colony turn sync auth failed (HTTP %d) — check COLONY_API_KEY", code)
+            else:
+                logger.debug("Colony turn sync failed: %s", exc)
         except (httpx.HTTPError, OSError) as exc:
             logger.debug("Colony turn sync failed: %s", exc)
 
