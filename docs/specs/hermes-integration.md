@@ -12,7 +12,7 @@ Colony provides persistent cognitive infrastructure (commitments, affect, facts,
 
 ## What We Build Now (v0.7.0)
 
-### 1. Hermes MCP Harness Config
+### 1. Hermes MCP Harness Config (v0.6.3)
 
 Add Hermes to Colony's MCP harness configuration so `colony mcp setup` configures Hermes automatically.
 
@@ -48,7 +48,7 @@ mcp_servers:
 
 **Result:** After `colony init` + `colony mcp setup`, Hermes auto-discovers all 14 Colony MCP tools as `mcp_colony_*`. Hermes can check commitments, record affect, search world model, create commitments, remember facts, etc. Zero code changes on Hermes's side.
 
-### 2. Colony Context Engine Plugin for Hermes
+### 2. Colony Context Engine Plugin for Hermes (v0.6.3)
 
 Hermes has a pluggable context engine system. The ABC is in `agent/context_engine.py`. The default engine (`context_compressor.py`) does lossy summarization of middle conversation turns when context exceeds token thresholds. Colony can replace or supplement this with an engine that calls Colony's `/v1/host/context/assemble` endpoint.
 
@@ -266,7 +266,7 @@ Options to evaluate:
 ## Dependency Order
 
 ```
-Phase 1 (v0.7.0):  MCP harness config + context engine plugin
+Phase 1 (v0.6.3):  MCP harness config + context engine plugin
                      ↓
 Phase 2:            Turn sync hook (needs Hermes plugin/hook analysis)
                      ↓
