@@ -40,7 +40,7 @@ HARNESS_DEFS = {
     "crush": {
         "display": "Crush",
         "detect_cmds": ["crush"],
-        "config_path": "~/.config/crush/crush.json",
+        "config_path": "~/.crush/mcp.json",
         "config_format": "json",
         "mcp_key": "mcpServers",
         "source_tag": "crush",
