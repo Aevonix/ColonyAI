@@ -678,8 +678,9 @@ def test_subsystem_registry():
     from colony_sidecar.autonomy.registry import SubsystemRegistry
     registry = SubsystemRegistry()
     # All properties should return None or a value without error
-    assert registry.graph is None or registry.graph is not None
-    assert registry.goals is None or registry.goals is not None
+    # Access them to verify they don't raise
+    _ = registry.graph
+    _ = registry.goals
 
 
 def test_autonomy_loop_instantiation():

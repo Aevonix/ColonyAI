@@ -632,7 +632,9 @@ class ColonyMemorySearchManager {
   }
 
   async probeVectorAvailability(): Promise<boolean> {
-    return false;
+    // Vector operations require the embed capability (vector store is part of memory subsystem)
+    const hasEmbed = await this.caps.has("embed");
+    return hasEmbed;
   }
 
   async close(): Promise<void> {

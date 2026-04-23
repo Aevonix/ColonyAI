@@ -27,6 +27,7 @@ from colony_sidecar.api.routers.host import (
     set_response_gate,
     set_signal_collector,
     set_embedder,
+    set_reranker,
     set_goals_engine,
     set_contacts_store,
     set_briefings_engine,

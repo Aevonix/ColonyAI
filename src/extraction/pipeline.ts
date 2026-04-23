@@ -204,10 +204,6 @@ export class TurnExtractionPipeline {
 
     const truncated = text.slice(0, SUMMARY_MAX_CHARS);
     // Find the last sentence boundary within the truncated text.
-    const lastBoundary = truncated.search(
-      /[^.!?]*[.!?](?:\s|$)/g,
-    );
-    // Use regex exec to find the last match position
     let lastPos = -1;
     const re = /[.!?](?:\s|$)/g;
     let m: RegExpExecArray | null;
