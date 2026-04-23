@@ -11,6 +11,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Harness definitions
@@ -48,6 +53,14 @@ HARNESS_DEFS = {
         "mcp_key": "mcp",  # OpenCode uses "mcp" not "mcpServers"
         "mcp_type": "stdio",  # OpenCode requires type field
         "source_tag": "opencode",
+    },
+    "hermes": {
+        "display": "Hermes",
+        "detect_cmds": ["hermes"],
+        "config_path": "~/.hermes/config.yaml",
+        "config_format": "yaml",
+        "mcp_key": "mcp_servers",
+        "source_tag": "hermes",
     },
 }
 
@@ -154,6 +167,82 @@ env = {{ COLONY_API_KEY = "${{COLONY_API_KEY}}", COLONY_URL = "http://127.0.0.1:
     return f"  Adding:\n{toml_block.strip()}"
 
 
+def _add_to_yaml_config(config_path: str, contact_id: str, source: str, dry_run: bool = False) -> str | None:
+    """Add Colony to a YAML-format harness config."""
+    if yaml is None:
+        return "  PyYAML not installed — run: pip install pyyaml"
+
+    path = Path(config_path).expanduser()
+    sidecar_port = os.environ.get('COLONY_SIDECAR_PORT', '7777')
+
+    data = {}
+    if path.exists():
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except yaml.YAMLError:
+            data = {}
+
+    if not isinstance(data, dict):
+        data = {}
+
+    mcp_key = "mcp_servers"
+    if mcp_key not in data:
+        data[mcp_key] = {}
+
+    new_config = {
+        "command": "colony",
+        "args": ["mcp"],
+        "env": {
+            "COLONY_API_KEY": "${COLONY_API_KEY}",
+            "COLONY_URL": f"http://127.0.0.1:{sidecar_port}",
+            "COLONY_MCP_CONTACT_ID": contact_id,
+            "COLONY_MCP_SOURCE": source,
+        },
+    }
+
+    existing = data[mcp_key].get("colony")
+    if existing == new_config:
+        return None  # Already configured identically
+
+    old_desc = yaml.dump(existing, default_flow_style=False) if existing else "(not present)"
+    new_desc = yaml.dump(new_config, default_flow_style=False)
+
+    if not dry_run:
+        data[mcp_key]["colony"] = new_config
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+
+    return f"  Old: {old_desc[:100]}\n  New: {new_desc[:100]}"
+
+
+def _remove_from_yaml_config(config_path: str, dry_run: bool = False) -> str | None:
+    """Remove Colony from a YAML-format harness config."""
+    if yaml is None:
+        return "  PyYAML not installed"
+
+    path = Path(config_path).expanduser()
+    if not path.exists():
+        return None
+
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    mcp_key = "mcp_servers"
+    if mcp_key in data and isinstance(data[mcp_key], dict) and "colony" in data[mcp_key]:
+        if not dry_run:
+            del data[mcp_key]["colony"]
+            if not data[mcp_key]:
+                del data[mcp_key]
+            path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+        return "  Removed 'colony' from Hermes config"
+    return None
+
+
 def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False) -> str | None:
     """Add Colony MCP config to a specific harness. Returns diff or None if already configured."""
     hdef = HARNESS_DEFS.get(harness_id)
@@ -166,6 +255,8 @@ def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False) -> s
         return _add_to_json_config(hdef, contact_id, source, dry_run)
     elif hdef["config_format"] == "toml":
         return _add_to_toml_config(hdef["config_path"], contact_id, source, dry_run)
+    elif hdef["config_format"] == "yaml":
+        return _add_to_yaml_config(hdef["config_path"], contact_id, source, dry_run)
 
     return None
 
@@ -209,5 +300,8 @@ def remove_from_harness(harness_id: str, dry_run: bool = False) -> str | None:
                     output.append(line)
             path.write_text("\n".join(output))
         return f"  Removed 'colony' from {hdef['display']} config"
+
+    elif hdef["config_format"] == "yaml":
+        return _remove_from_yaml_config(hdef["config_path"], dry_run)
 
     return None
