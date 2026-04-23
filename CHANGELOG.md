@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.11 (2026-04-23)
+
+Fix: Neo4j auto-start and validate EOF.
+
+### Fixed
+- `colony start` now checks and starts Neo4j container if needed
+- `colony validate` handles EOF gracefully with helpful message
+- Neo4j container persisted across sidecar restarts
+
 ## 0.6.10 (2026-04-23)
 
 Fix: `--tier` CLI arg now correctly skips interactive tier selection.

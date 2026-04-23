@@ -728,9 +728,87 @@ def _find_pid_on_port(port: int) -> int | None:
         return None
 
 
+def _check_and_start_neo4j() -> bool:
+    """Check if Neo4j is running, start it if needed. Returns True if Neo4j is available."""
+    import subprocess
+    from pathlib import Path
+    
+    # Check if Neo4j container is already running
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "name=neo4j-colony", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        if "neo4j-colony" in result.stdout:
+            return True  # Already running
+    except Exception:
+        return False  # Docker not available
+    
+    # Check if container exists but is stopped
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=neo4j-colony", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        if "neo4j-colony" in result.stdout:
+            print("  Starting Neo4j container...")
+            subprocess.run(["docker", "start", "neo4j-colony"], capture_output=True, timeout=10)
+            time.sleep(3)
+            return True
+    except Exception:
+        pass
+    
+    # Check if we have Neo4j config in .env
+    env_path = Path.home() / ".env"
+    if not env_path.exists():
+        return False
+    
+    neo4j_password = None
+    try:
+        for line in env_path.read_text().splitlines():
+            if line.startswith("NEO4J_PASSWORD="):
+                neo4j_password = line.split("=", 1)[1].strip()
+                break
+    except Exception:
+        pass
+    
+    if not neo4j_password:
+        return False
+    
+    # Start Neo4j container
+    print("  Starting Neo4j container...")
+    neo4j_data = Path.home() / ".colony" / "neo4j-data"
+    neo4j_data.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        cmd = [
+            "docker", "run", "-d",
+            "--name", "neo4j-colony",
+            "-p", "7474:7474",
+            "-p", "7687:7687",
+            "-e", f"NEO4J_AUTH=neo4j/{neo4j_password}",
+            "-v", f"{neo4j_data}:/data",
+            "neo4j:5.15"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            print("  ✅ Neo4j started")
+            time.sleep(3)  # Wait for Neo4j to initialize
+            return True
+        else:
+            print(f"  ⚠️ Failed to start Neo4j: {result.stderr.strip()}")
+            return False
+    except Exception as exc:
+        print(f"  ⚠️ Failed to start Neo4j: {exc}")
+        return False
+
+
 def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     """Start the sidecar as a background daemon."""
     import subprocess
+
+    # Check and start Neo4j if needed
+    _check_and_start_neo4j()
 
     # Check if port is already in use
     existing_pid = _find_pid_on_port(port)
@@ -1052,7 +1130,11 @@ def _cmd_validate(args) -> None:
     if not args.yes:
         print("This test will send one prompt through the LLM to verify the full pipeline.")
         print("It uses a small amount of LLM API credits.")
-        answer = input("Continue? [y/N] ").strip().lower()
+        try:
+            answer = input("Continue? [y/N] ").strip().lower()
+        except EOFError:
+            print("  \u26a0\ufe0f No stdin — use --yes to skip confirmation")
+            return
         if answer not in ("y", "yes"):
             print("Cancelled.")
             return
