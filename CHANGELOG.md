@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.6.8 (2026-04-23)
+
+Colony init wizard: non-interactive mode and all piped input issues fixed.
+
+### New
+- `--non-interactive` mode for headless/automated setup
+- `--host-framework` CLI arg (openclaw, hermes, claude-code, codex, crush, standalone)
+- `--contact-name` CLI arg
+- `--bind` and `--port` CLI args for network configuration
+- `--tier` CLI arg for embedding tier selection (0-7)
+- `--neo4j-password` CLI arg
+- `--skip-model-download` to defer embedding model download
+- `--start` flag to start sidecar after init
+- `_check_neo4j_auth()` to detect if Neo4j requires authentication
+- `_write_config_yaml()` writes `~/.colony/config.yaml` alongside `.env`
+
+### Fixed
+- Issue 1: `_prompt()` returns default on EOF instead of crashing
+- Issue 2: Tier selection no longer skipped silently when stdin exhausted
+- Issue 3: Config YAML now written to `~/.colony/config.yaml`
+- Issue 4: Bind address prompt added (interactive) + CLI args
+- Issue 5: Neo4j auth detection skips password prompt when auth disabled
+- Issue 6: SQLite DBs now stored in `~/.colony/data/` instead of `~/`
+- Issue 8: `--skip-model-download` defers model download to first start
+
+### Example
+```bash
+colony init --non-interactive \\
+  --host-framework claude-code \\
+  --contact-name marc \\
+  --bind 0.0.0.0 \\
+  --port 7777 \\
+  --tier 6 \\
+  --start
+```
+
 ## 0.6.7 (2026-04-23)
 
 Second code audit: MCP contract, Hermes integration, runtime crash, and security fixes.
