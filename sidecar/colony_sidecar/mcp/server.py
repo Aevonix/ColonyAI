@@ -148,9 +148,8 @@ def create_server() -> FastMCP:
         payload: dict[str, Any] = {
             "identity": {"host_id": "mcp"},
             "context": {"session_id": "mcp", "contact_id": cid},
+            "incoming_message": {"role": "user", "content": message or ""},
         }
-        if message:
-            payload["incoming_message"] = {"role": "user", "content": message}
 
         return await _post("/v1/host/context/assemble", payload)
 
@@ -267,7 +266,7 @@ def create_server() -> FastMCP:
         """Cancel a commitment that's no longer relevant. Not the same as fulfilled — cancelled means it won't be done."""
         data: dict[str, Any] = {"status": "cancelled"}
         if reason:
-            data["cancellation_reason"] = reason
+            data.setdefault("metadata", {})["cancellation_reason"] = reason
         return await _patch(f"/v1/host/commitments/{commitment_id}", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
@@ -303,9 +302,9 @@ def create_server() -> FastMCP:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
     async def colony_record_affect(
         valence: float,
-        arousal: float,
         trigger: str,
         contact_id: str | None = None,
+        arousal: float = 0.5,
     ) -> dict:
         """Record an emotional state or mood observation. Call when the user expresses frustration or satisfaction, or after successes/failures."""
         cid, err = _require_contact(contact_id)
@@ -322,21 +321,22 @@ def create_server() -> FastMCP:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
     async def colony_record_surprise(
         observation: str,
-        expected: str,
+        expected: str | None = None,
         surprise_score: float | None = None,
         pattern_id: str | None = None,
-        context: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> dict:
         """Record something unexpected. Call when something doesn't behave as expected, a bug is weirder than anticipated, or assumptions are violated. Observation should include what actually happened vs what was expected."""
         data: dict[str, Any] = {
             "observation": observation,
-            "expected": expected,
         }
+        if expected is not None:
+            data["expected"] = expected
         if surprise_score is not None:
             data["surprise_score"] = surprise_score
         if pattern_id:
             data["pattern_id"] = pattern_id
-        if context:
+        if context is not None:
             data["context"] = context
         return await _post("/v1/host/surprises", data)
 

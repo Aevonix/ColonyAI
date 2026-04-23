@@ -259,6 +259,7 @@ class SkillExecutor:
         payload = json.dumps({
             "source": source_bytes.decode("utf-8", errors="replace"),
             "inputs": inputs,
+            "allowed_imports": manifest.permissions.allowed_imports if hasattr(manifest.permissions, 'allowed_imports') else [],
             "limits": {
                 "mem_mb": manifest.permissions.max_memory_mb,
                 "cpu_secs": manifest.permissions.max_duration_secs,
@@ -384,4 +385,11 @@ class SkillExecutor:
         run_fn = getattr(module, "run", None)
         if run_fn is None:
             raise AttributeError("Skill has no 'run' function.")
+        # Inject colony runtime if the skill signature expects it
+        import inspect
+        sig = inspect.signature(run_fn)
+        if "colony" in sig.parameters:
+            from colony_sidecar.skills.runtime import ColonyRuntime
+            colony_rt = ColonyRuntime(base_url=os.environ.get("COLONY_URL", "http://127.0.0.1:7777"))
+            inputs = {"colony": colony_rt, **inputs}
         return await run_fn(**inputs)

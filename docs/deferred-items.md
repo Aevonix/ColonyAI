@@ -157,3 +157,91 @@ Last updated: 2026-04-23
 - **Issue:** Extension point documented as "not implemented here — hook provided via override" is never wired in production initialization.
 - **Reason deferred:** Goals subsystem works without LLM interpretation. The hook exists for future use.
 - **Will unblock when:** Goals need smarter inference beyond rule-based decomposition.
+
+---
+
+## From 2026-04-23 Second Audit
+
+### README Miscounts (subsystems, endpoints, resources, tests)
+
+- **Location:** `README.md:19, 102, 144, 215, 591`
+- **Issue:** README claims 36 subsystems (actual 38), "34 checks" in doctor (actual 38), "4+" resources (actual 6), "57+" endpoints (actual 117 decorators), test counts don't match pytest --collect-only.
+- **Reason deferred:** Counts should be automated via CI script, not manually maintained. Any manual fix will drift again.
+- **Will unblock when:** We add a CI step that extracts real counts from code and validates against README.
+
+### iMessage Truncation UTF-8 Edge Case
+
+- **Location:** `sidecar/colony_sidecar/briefings/delivery.py:130`
+- **Issue:** `text[: _IMESSAGE_MAX_CHARS - len(trailer)]` slices by character count. If iMessage's actual limit is bytes, emoji-dense bodies can be oversized.
+- **Reason deferred:** Python str slicing is char-based which is usually correct. Need to verify whether iMessage limit is chars or bytes before changing anything.
+- **Will unblock when:** We confirm the iMessage limit unit, or a user reports truncation issues with emoji-heavy briefings.
+
+### ThreadPoolExecutor Per Call in Aggregators
+
+- **Location:** `sidecar/colony_sidecar/briefings/aggregators.py:237-238`
+- **Issue:** New `ThreadPoolExecutor(max_workers=1)` per invocation when a loop is already running. Thread handle accumulation under burst load.
+- **Reason deferred:** Low impact in practice. Aggregator calls are infrequent.
+- **Will unblock when:** Touched during a briefings refactor, or we see thread handle issues in production.
+
+### No Adversarial Tests for Skill Security Scanner
+
+- **Location:** `sidecar/colony_sidecar/skills/security/scanner.py` (280 LOC, 8 rules)
+- **Issue:** Only four positive cases. Obfuscation (base64 → exec), socket.connect to undeclared host, lambda escapes, __code__/__closure__ mutation aren't tested.
+- **Reason deferred:** Incremental test coverage. Scanner is functional, just undertested.
+- **Will unblock when:** We add a parametrized adversarial corpus.
+
+### Hermes install.sh Doesn't Verify Hermes Is Installed
+
+- **Location:** `plugins/hermes-memory/install.sh`
+- **Issue:** Copies files to `~/.hermes/plugins/memory/colony/` without checking Hermes exists. Silent no-op if target dir isn't found.
+- **Reason deferred:** Script prints instructions regardless. Not a runtime bug.
+- **Will unblock when:** We add a precondition check to the script.
+
+### Bearer Auth Not Systematically Covered in Tests
+
+- **Location:** `sidecar/tests/test_audit_cleanup.py:84-109`
+- **Issue:** Only two endpoints checked for auth enforcement. No matrix over the 117 routes. Dev-mode allowlist isn't regression-tested.
+- **Reason deferred:** Important but large surface area. Parametrized test over all routes is a separate task.
+- **Will unblock when:** We build an auth test matrix that iterates over `app.routes`.
+
+### World-Model Schema Migrations Untested
+
+- **Location:** `sidecar/colony_sidecar/intelligence/graph/migrations.py`
+- **Issue:** No test validates that a fresh DB + all migrations yields the same schema as an incrementally migrated DB.
+- **Reason deferred:** Migration test harness needs design.
+- **Will unblock when:** We add a migration consistency test.
+
+### Compression Edge Cases Untested
+
+- **Location:** `sidecar/tests/test_compression.py`
+- **Issue:** No cases for `max_tokens < min_section_tokens`, budget underflow, title longer than budget, oversized query.
+- **Reason deferred:** Compression is off by default. Edge cases are plausible under low-tier hardware but unlikely.
+- **Will unblock when:** We add edge case tests to the compression test suite.
+
+### README Provenance Claim Broader Than Reality
+
+- **Location:** `README.md:274-276`
+- **Issue:** Claims provenance "works with any harness" but it's only stored in schemas that have a `metadata` field. Schemas without metadata drop it.
+- **Reason deferred:** Partial fix applied (provenance goes to `metadata.provenance`). Full fix requires adding `provenance` or `metadata` to all create-request schemas.
+- **Will unblock when:** Schema migration adds `metadata` to all create-request schemas.
+
+### Skill Approval Async Rejection Fire-and-Forget
+
+- **Location:** `src/event-handlers.ts:107`
+- **Issue:** `Promise.resolve(onSkillApproved(id)).catch(log)` isn't awaited. Ordering and flush-on-exit are best-effort.
+- **Reason deferred:** Low impact. Tool refresh is idempotent.
+- **Will unblock when:** We see ordering issues in practice.
+
+### TS Tests Mock Entire OpenClaw SDK
+
+- **Location:** `tests/setup.ts:4-21`
+- **Issue:** All TS tests run against mocks. Real integration breakage won't be caught. `vitest.config.ts` excludes `integration/`.
+- **Reason deferred:** Integration tests need a running OpenClaw gateway. CI job design needed.
+- **Will unblock when:** We add an integration test CI job against a real or recorded SDK.
+
+### E2E Tests Use Hardcoded time.sleep()
+
+- **Location:** `sidecar/tests/e2e/scripts/test_full_cycle.py`
+- **Issue:** Flaky under CI load.
+- **Reason deferred:** Works in practice. Replacing with polling is a nice-to-have.
+- **Will unblock when:** We see flaky E2E failures in CI.

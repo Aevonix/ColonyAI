@@ -1468,6 +1468,19 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
 
 @router.post("/turns/sync", response_model=TurnSyncResponse)
 async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
+    # If structured fields are empty but raw messages are present,
+    # extract topics/entities/summary from the raw messages.
+    if not body.topics and not body.entities and not body.summary:
+        if body.user_message is not None or body.assistant_message is not None:
+            user_text = body.user_message.content if body.user_message else ""
+            asst_text = body.assistant_message.content if body.assistant_message else ""
+            combined = f"User: {user_text}\nAssistant: {asst_text}".strip()
+            if combined and combined != "User: \nAssistant:":
+                body.summary = combined[:2000]
+                # Extract rough topics from user message
+                words = user_text.split()
+                body.topics = [w.lower().strip(".,!?;:") for w in words if len(w) > 4][:10]
+
     # Best-effort: store turn metadata in the graph if available
     graph_ok = False
     if _graph is not None:
