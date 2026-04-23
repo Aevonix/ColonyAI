@@ -39,7 +39,7 @@ colony init
 
 That one command handles dependencies, Neo4j, hardware scan, model download, plugin config, sidecar start, health verify, and doctor check.
 
-### With Hermes
+### With Hermes (experimental)
 
 ```bash
 pip install colonyai
@@ -65,7 +65,7 @@ memory:
     contact_id: "default"
 ```
 
-### With Claude Code, Codex, Crush, or OpenCode
+### With Claude Code, Codex, Crush, or OpenCode (experimental)
 
 ```bash
 pip install colonyai
