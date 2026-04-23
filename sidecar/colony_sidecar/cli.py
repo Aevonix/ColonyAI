@@ -27,6 +27,16 @@ def main() -> None:
     init_p.add_argument("--passphrase", default=None, help="Encrypt Colony private key with passphrase (prompted if --encrypt)")
     init_p.add_argument("--encrypt", action="store_true", help="Encrypt Colony private key")
     init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Colony only)")
+    # Non-interactive mode flags
+    init_p.add_argument("--non-interactive", "-n", action="store_true", help="Run without prompts (requires all required flags)")
+    init_p.add_argument("--host-framework", choices=["openclaw", "hermes", "claude-code", "codex", "crush", "standalone"], help="Host framework to connect")
+    init_p.add_argument("--contact-name", help="Contact name for this user")
+    init_p.add_argument("--bind", default="127.0.0.1", help="Sidecar bind address (0.0.0.0 for all interfaces)")
+    init_p.add_argument("--port", type=int, default=7777, help="Sidecar port")
+    init_p.add_argument("--tier", type=int, choices=range(0, 8), metavar="TIER", help="Embedding tier (0-7)")
+    init_p.add_argument("--neo4j-password", default="", help="Neo4j password (empty to skip)")
+    init_p.add_argument("--skip-model-download", action="store_true", help="Defer embedding model download to first start")
+    init_p.add_argument("--start", action="store_true", help="Start sidecar after init")
 
     # --- start ---
     start_p = sub.add_parser("start", help="Start the sidecar server")
@@ -127,7 +137,7 @@ def main() -> None:
     if args.command == "init":
         # Run setup wizard
         from colony_sidecar.setup import run_init
-        code = run_init(root_dir=args.dir)
+        code = run_init(root_dir=args.dir, args=args)
         if code != 0:
             sys.exit(code)
 
