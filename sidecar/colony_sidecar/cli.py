@@ -155,6 +155,9 @@ def main() -> None:
         host = args.host or os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
         port = args.port or int(os.environ.get("COLONY_SIDECAR_PORT", "7777"))
 
+        # Check and start Neo4j if needed (both foreground and daemon mode)
+        _check_and_start_neo4j()
+
         if args.detach:
             _cmd_start_daemon(host, port, args.force)
         else:
@@ -806,9 +809,6 @@ def _check_and_start_neo4j() -> bool:
 def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     """Start the sidecar as a background daemon."""
     import subprocess
-
-    # Check and start Neo4j if needed
-    _check_and_start_neo4j()
 
     # Check if port is already in use
     existing_pid = _find_pid_on_port(port)
