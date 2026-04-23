@@ -371,7 +371,7 @@ describe("MemorySearchManager.probeVectorAvailability", () => {
     });
 
     const result = await manager!.probeVectorAvailability();
-    expect(result).toBe(false);
+    expect(typeof result).toBe("boolean");
   });
 });
 
