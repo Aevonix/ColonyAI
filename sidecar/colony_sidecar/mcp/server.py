@@ -62,30 +62,29 @@ async def _get(path: str, params: dict | None = None) -> dict | None:
             r = await client.get(f"{_base_url()}{path}", headers=_headers(), params=params)
             if r.status_code == 200:
                 return r.json()
-            return {"error": f"http_{r.status_code}", "message": r.text[:200]}
+            return {"error": f"http_{r.status_code}", "message": r.text[:1000]}
     except httpx.ConnectError as exc:
         return _sidecar_error(exc)
     except Exception as exc:
-        return {"error": "request_failed", "message": str(exc)[:200]}
+        return {"error": "request_failed", "message": str(exc)[:1000]}
 
 
 async def _post(path: str, data: dict) -> dict | None:
     try:
-        # Inject provenance from COLONY_MCP_SOURCE (separate from sidecar's own 'source' enum)
+        # Inject provenance from COLONY_MCP_SOURCE into metadata so it
+        # survives Pydantic validation (top-level 'provenance' is not in any schema).
         src = _source()
-        if src and "provenance" not in data:
-            data["provenance"] = src
-        # Remove 'source' if it was set externally — sidecar has its own enum for that
-        data.pop("source", None)
+        if src:
+            data.setdefault("metadata", {})["provenance"] = src
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(f"{_base_url()}{path}", headers={**_headers(), "Content-Type": "application/json"}, json=data)
             if r.status_code in (200, 201):
                 return r.json()
-            return {"error": f"http_{r.status_code}", "message": r.text[:200]}
+            return {"error": f"http_{r.status_code}", "message": r.text[:1000]}
     except httpx.ConnectError as exc:
         return _sidecar_error(exc)
     except Exception as exc:
-        return {"error": "request_failed", "message": str(exc)[:200]}
+        return {"error": "request_failed", "message": str(exc)[:1000]}
 
 
 async def _patch(path: str, data: dict) -> dict | None:
@@ -94,20 +93,23 @@ async def _patch(path: str, data: dict) -> dict | None:
             r = await client.patch(f"{_base_url()}{path}", headers={**_headers(), "Content-Type": "application/json"}, json=data)
             if r.status_code == 200:
                 return r.json()
-            return {"error": f"http_{r.status_code}", "message": r.text[:200]}
+            return {"error": f"http_{r.status_code}", "message": r.text[:1000]}
     except httpx.ConnectError as exc:
         return _sidecar_error(exc)
     except Exception as exc:
-        return {"error": "request_failed", "message": str(exc)[:200]}
+        return {"error": "request_failed", "message": str(exc)[:1000]}
 
 
-async def _delete(path: str) -> int:
+async def _delete(path: str) -> tuple[int, str]:
+    """Delete a resource. Returns (status_code, error_message_or_empty)."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.delete(f"{_base_url()}{path}", headers=_headers())
-            return r.status_code
-    except Exception:
-        return -1
+            return r.status_code, ""
+    except httpx.ConnectError as exc:
+        return -1, str(exc)[:200]
+    except Exception as exc:
+        return -1, str(exc)[:200]
 
 
 # ---------------------------------------------------------------------------
@@ -158,13 +160,11 @@ def create_server() -> FastMCP:
         person_id: str | None = None,
         limit: int = 10,
     ) -> dict:
-        """List or search commitments. Call before starting work, when a deadline is mentioned, or when planning a sprint."""
-        cid, err = _require_contact(person_id)
-        if err:
-            return err
+        """List or search commitments. Call before starting work, when a deadline is mentioned, or when planning a sprint. If person_id is not provided, returns all commitments."""
         params: dict[str, Any] = {"limit": limit}
         if status:
             params["status"] = status
+        cid = _contact_id(person_id)
         if cid:
             params["person_id"] = cid
         return await _get("/v1/host/commitments", params=params)
@@ -172,16 +172,19 @@ def create_server() -> FastMCP:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     async def colony_lookup_facts(
         contact_id: str | None = None,
-        category: str | None = None,
+        source: str | None = None,
+        min_confidence: float | None = None,
         limit: int = 10,
     ) -> dict:
-        """Retrieve facts about a contact. Call when starting a conversation, making design decisions, or personalizing output."""
+        """Retrieve facts about a contact. Call when starting a conversation, making design decisions, or personalizing output. Filter by source (told_by_contact, told_to_contact, shared_context, inferred) or minimum confidence."""
         cid, err = _require_contact(contact_id)
         if err:
             return err
         params: dict[str, Any] = {"contact_id": cid, "limit": limit}
-        if category:
-            params["category"] = category
+        if source:
+            params["source"] = source
+        if min_confidence is not None:
+            params["min_confidence"] = min_confidence
         return await _get("/v1/host/mind/facts", params=params)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -212,13 +215,19 @@ def create_server() -> FastMCP:
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     async def colony_get_patterns(
-        category: str | None = None,
+        pattern_type: str | None = None,
+        min_frequency: int | None = None,
+        active_only: bool = False,
         limit: int = 5,
     ) -> dict:
-        """Retrieve learned patterns. Call when suggesting workflows, onboarding to a project, or planning work."""
+        """Retrieve learned patterns. Call when suggesting workflows, onboarding to a project, or planning work. Filter by pattern_type, minimum frequency, or active status."""
         params: dict[str, Any] = {"limit": limit}
-        if category:
-            params["category"] = category
+        if pattern_type:
+            params["pattern_type"] = pattern_type
+        if min_frequency is not None:
+            params["min_frequency"] = min_frequency
+        if active_only:
+            params["active_only"] = True
         return await _get("/v1/host/patterns", params=params)
 
     # --- Mutating tools ---
@@ -228,9 +237,9 @@ def create_server() -> FastMCP:
         description: str,
         person_id: str | None = None,
         due_at: str | None = None,
-        priority: int = 2,
+        priority: int = 50,
     ) -> dict:
-        """Create a new commitment. Call when the user promises something, agrees to a deadline, or a task has a clear due date."""
+        """Create a new commitment. Call when the user promises something, agrees to a deadline, or a task has a clear due date. Priority is 0-100, default 50."""
         cid, err = _require_contact(person_id)
         if err:
             return err
@@ -265,10 +274,10 @@ def create_server() -> FastMCP:
     async def colony_remember_fact(
         fact: str,
         contact_id: str | None = None,
-        category: str | None = None,
+        source: str | None = None,
         confidence: float = 0.8,
     ) -> dict:
-        """Store a fact about a person, project, or concept. Call when the user states a preference, makes a decision, or reveals context worth remembering."""
+        """Store a fact about a person, project, or concept. Call when the user states a preference, makes a decision, or reveals context worth remembering. Source can be: told_by_contact, told_to_contact, shared_context, inferred."""
         cid, err = _require_contact(contact_id)
         if err:
             return err
@@ -277,8 +286,8 @@ def create_server() -> FastMCP:
             "fact": fact,
             "confidence": confidence,
         }
-        if category:
-            data["category"] = category
+        if source:
+            data["source"] = source
         return await _post("/v1/host/mind/facts", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
@@ -286,10 +295,10 @@ def create_server() -> FastMCP:
         fact_id: str,
     ) -> dict:
         """Remove an outdated or incorrect fact. Call when you learn a fact was wrong, a preference changes, or context is stale."""
-        status = await _delete(f"/v1/host/mind/facts/{fact_id}")
+        status, err_msg = await _delete(f"/v1/host/mind/facts/{fact_id}")
         if status == 204 or status == 200:
             return {"deleted": True}
-        return {"error": "delete_failed", "message": f"Status {status}"}
+        return {"error": "delete_failed", "message": f"Status {status}: {err_msg}"}
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
     async def colony_record_affect(
@@ -314,17 +323,21 @@ def create_server() -> FastMCP:
     async def colony_record_surprise(
         observation: str,
         expected: str,
-        actual: str,
         surprise_score: float | None = None,
+        pattern_id: str | None = None,
+        context: str | None = None,
     ) -> dict:
-        """Record something unexpected. Call when something doesn't behave as expected, a bug is weirder than anticipated, or assumptions are violated."""
+        """Record something unexpected. Call when something doesn't behave as expected, a bug is weirder than anticipated, or assumptions are violated. Observation should include what actually happened vs what was expected."""
         data: dict[str, Any] = {
             "observation": observation,
             "expected": expected,
-            "actual": actual,
         }
         if surprise_score is not None:
             data["surprise_score"] = surprise_score
+        if pattern_id:
+            data["pattern_id"] = pattern_id
+        if context:
+            data["context"] = context
         return await _post("/v1/host/surprises", data)
 
     # --- Resources ---
@@ -357,7 +370,7 @@ def create_server() -> FastMCP:
     @mcp.resource("colony://surprises/unresolved")
     async def surprises_resource() -> dict:
         """Current unresolved surprises."""
-        return await _get("/v1/host/surprises", params={"status": "unresolved"})
+        return await _get("/v1/host/surprises", params={"resolved": False})
 
     # --- Prompts ---
 

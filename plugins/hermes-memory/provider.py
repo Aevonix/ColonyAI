@@ -8,17 +8,23 @@ Plugin directory: ~/.hermes/plugins/memory/colony/
 Config key: memory.provider = "colony"
 """
 
+import asyncio
 import logging
 import os
-import threading
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
+# Import the ABC if available (Hermes SDK installed).
+try:
+    from agent.memory_provider import MemoryProvider as _MemoryProviderABC
+except ImportError:
+    _MemoryProviderABC = object  # type: ignore[misc, assignment]  # fallback for standalone testing
 
-class ColonyMemoryProvider:
+
+class ColonyMemoryProvider(_MemoryProviderABC):
     """Colony memory provider for Hermes.
 
     Reads cognitive context from Colony's sidecar via /v1/host/context/assemble
@@ -38,8 +44,10 @@ class ColonyMemoryProvider:
         self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
         self._session_id = ""
         self._cached_context: str = ""
-        self._prefetch_thread: Optional[threading.Thread] = None
+        self._prefetch_ready = asyncio.Event()
+        self._prefetch_ready.set()  # No prefetch pending initially
         self._platform = "cli"
+        self._async_client: Optional[httpx.AsyncClient] = None
 
     @property
     def name(self) -> str:
@@ -48,7 +56,7 @@ class ColonyMemoryProvider:
     # -- Core lifecycle -------------------------------------------------------
 
     def is_available(self) -> bool:
-        """Check if the Colony sidecar is reachable."""
+        """Check if the Colony sidecar is reachable (sync, for startup checks)."""
         try:
             headers = self._headers()
             resp = httpx.get(f"{self.sidecar_url}/v1/host/health", headers=headers, timeout=3)
@@ -72,7 +80,7 @@ class ColonyMemoryProvider:
 
     # -- Prefetch (context injection) -----------------------------------------
 
-    def prefetch(self, query: str, *, session_id: str = "") -> str:
+    async def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Recall relevant context from Colony for the upcoming turn.
 
         Called by MemoryManager before each API call. Returns formatted
@@ -82,8 +90,9 @@ class ColonyMemoryProvider:
             return self._cached_context
 
         try:
+            client = self._get_async_client()
             headers = self._headers()
-            resp = httpx.post(
+            resp = await client.post(
                 f"{self.sidecar_url}/v1/host/context/assemble",
                 headers=headers,
                 json={
@@ -111,24 +120,36 @@ class ColonyMemoryProvider:
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         """Start a background prefetch for the next turn."""
         self._cached_context = ""
+        self._prefetch_ready.clear()
 
-        def _fetch():
-            self._cached_context = self.prefetch(query, session_id=session_id)
+        async def _fetch():
+            try:
+                self._cached_context = await self.prefetch(query, session_id=session_id)
+            finally:
+                self._prefetch_ready.set()
 
-        self._prefetch_thread = threading.Thread(target=_fetch, daemon=True)
-        self._prefetch_thread.start()
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_fetch())
+        except RuntimeError:
+            # No running loop — run synchronously
+            self._cached_context = asyncio.get_event_loop().run_until_complete(
+                self.prefetch(query, session_id=session_id)
+            )
+            self._prefetch_ready.set()
 
     # -- Turn sync ------------------------------------------------------------
 
-    def sync_turn(self, user_msg: str, assistant_response: str) -> None:
+    async def sync_turn(self, user_msg: str, assistant_response: str) -> None:
         """Sync a completed turn to Colony for extraction.
 
         Fires POST /v1/host/turns/sync so Colony can extract commitments,
         affect, facts, and patterns from the conversation.
         """
         try:
+            client = self._get_async_client()
             headers = self._headers()
-            httpx.post(
+            await client.post(
                 f"{self.sidecar_url}/v1/host/turns/sync",
                 headers=headers,
                 json={
@@ -148,10 +169,7 @@ class ColonyMemoryProvider:
     # -- Tool schemas (optional) ----------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        """Return tool schemas for Colony MCP tools.
-
-        These mirror the MCP tools but through Hermes's native tool system.
-        """
+        """Return tool schemas for Colony MCP tools."""
         return []
 
     def handle_tool_call(self, name: str, args: Dict[str, Any], **kwargs) -> str:
@@ -165,11 +183,12 @@ class ColonyMemoryProvider:
         """Flush any pending context at session end."""
         self._cached_context = ""
 
-    def shutdown(self) -> None:
+    async def shutdown(self) -> None:
         """Clean up."""
         self._cached_context = ""
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=2)
+        if self._async_client:
+            await self._async_client.aclose()
+            self._async_client = None
 
     # -- Internals ------------------------------------------------------------
 
@@ -179,20 +198,17 @@ class ColonyMemoryProvider:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
 
-    @property
-    def _contact_id(self) -> str:
-        return self.__contact_id
-
-    @_contact_id.setter
-    def _contact_id(self, value: str):
-        self.__contact_id = value
+    def _get_async_client(self) -> httpx.AsyncClient:
+        if self._async_client is None or self._async_client.is_closed:
+            self._async_client = httpx.AsyncClient()
+        return self._async_client
 
     def _format_sections(self, sections: list[dict[str, Any]]) -> str:
         """Format Colony sections into a memory-context block."""
         parts = []
         for section in sections:
-            header = section.get("id", "colony-context")
-            content = section.get("content", "")
+            header = section.get("title", section.get("id", "colony-context"))
+            body = section.get("body", "")
             priority = section.get("priority", 50)
-            parts.append(f"## {header} [priority {priority}]\n{content}")
+            parts.append(f"## {header} [priority {priority}]\n{body}")
         return "<memory-context>\n[Colony Cognitive Context]\n\n" + "\n\n".join(parts) + "\n</memory-context>"

@@ -100,6 +100,13 @@ def _read_json(path: Path) -> dict:
         try:
             return json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
+            # Back up the corrupted file before treating as empty
+            backup = path.with_suffix(path.suffix + ".bak")
+            try:
+                shutil.copy2(path, backup)
+                print(f"  Warning: {path} had invalid JSON — backed up to {backup}")
+            except OSError:
+                pass
             return {}
     return {}
 
@@ -152,14 +159,22 @@ env = {{ COLONY_API_KEY = "${{COLONY_API_KEY}}", COLONY_URL = "http://127.0.0.1:
     if path.exists():
         content = path.read_text()
         if "[mcp_servers.colony]" in content:
-            return None  # Already present
+            # Check if the existing config matches current settings
+            sidecar_port_current = os.environ.get('COLONY_SIDECAR_PORT', '7777')
+            expected_block = f'COLONY_URL = "http://127.0.0.1:{sidecar_port_current}"'
+            if expected_block in content:
+                return None  # Already present and up to date
+            # Config exists but is stale — remove old block and replace
+            import re
+            content = re.sub(r'\n?\[mcp_servers\.colony\]\n[^\n]*(?:\n[^\n]*)*', '', content)
     else:
         content = ""
 
     if not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
         # Append Colony config
-        with open(path, "a") as f:
+        with open(path, "w") as f:
+            f.write(content)
             if content and not content.endswith("\n"):
                 f.write("\n")
             f.write(toml_block)

@@ -6,6 +6,69 @@ Last updated: 2026-04-23
 
 ---
 
+## MCP Provenance Not Stored in Schemas
+
+- **Location:** `sidecar/colony_sidecar/api/schemas/host.py` (all create-request schemas)
+- **Issue:** `COLONY_MCP_SOURCE` provenance is injected into request data by the MCP server but no Pydantic model has a `provenance` field. The value is silently dropped by Pydantic validation. Per-harness attribution doesn't work through MCP.
+- **Reason deferred:** Partial fix applied — provenance now goes into `metadata` dict instead of top-level, which survives Pydantic's `extra="ignore"` for models that have a `metadata` field. Not all schemas have `metadata`. Adding `provenance` to every create-request schema is a larger change that needs careful schema migration.
+- **Will unblock when:** We add a `provenance` field to the base schema or add `metadata` to all create-request schemas.
+
+---
+
+## MCP Session ID Hardcoded to "mcp"
+
+- **Location:** `sidecar/colony_sidecar/mcp/server.py:148, 355`
+- **Issue:** Every MCP-initiated call uses `session_id="mcp"`, mixing all MCP invocations into one logical session in the sidecar's session store. Ruins session-scoped analytics.
+- **Reason deferred:** Needs design decision — generate per-process UUID at server start, or read `COLONY_MCP_SESSION_ID` from env, or generate per-request. Also affects world model entity queries and context assembly.
+- **Will unblock when:** We need session-scoped analytics or multi-session MCP usage.
+
+---
+
+## Port Baked at Config-Write Time
+
+- **Location:** `sidecar/colony_sidecar/mcp/config.py:88, 143, 176`
+- **Issue:** `COLONY_SIDECAR_PORT` is baked into the harness config when `colony mcp setup` runs. If the user later changes the port, every harness keeps calling the stale URL until setup is re-run.
+- **Reason deferred:** Acceptable tradeoff. TOML/JSON configs for Claude Code/Codex/OpenCode support `${COLONY_URL}` expansion, but not all harnesses do. Documenting the limitation is sufficient for now.
+- **Will unblock when:** We standardize on env var expansion across all harnesses, or add a `colony mcp refresh` command.
+
+---
+
+## Hermes MemoryProvider No-Op Property Indirection
+
+- **Location:** `plugins/hermes-memory/provider.py` (removed in rewrite)
+- **Issue:** `_contact_id` used a property/setter pair with name mangling that added no value over a plain attribute.
+- **Reason deferred:** Fixed in async rewrite — `_contact_id` is now a plain attribute.
+- **Will unblock when:** N/A (resolved)
+
+---
+
+## Prefetch Cache Race in Hermes Provider
+
+- **Location:** `plugins/hermes-memory/provider.py:111-119`
+- **Issue:** `queue_prefetch` clears `_cached_context` and fires an async task. If `prefetch` is called before the task completes, it sees empty and issues a duplicate HTTP call.
+- **Reason deferred:** Partially addressed in async rewrite with `asyncio.Event`. Full solution would use a `Future` or `Lock`. The race is narrow — Hermes's MemoryManager calls `queue_prefetch` then `prefetch` sequentially, so the overlap window is small.
+- **Will unblock when:** Hermes's MemoryManager behavior changes, or we see duplicate calls in practice.
+
+---
+
+## MCP SDK No Upper Bound
+
+- **Location:** `sidecar/pyproject.toml:25`
+- **Issue:** `mcp[cli]>=1.0` has no upper bound. A future 2.x could break the call shape or transport enums.
+- **Reason deferred:** Premature. We don't know what 2.0 breaks yet. Pinning now could prevent adopting compatible minor updates.
+- **Will unblock when:** MCP SDK 2.0 is announced or breaks our usage.
+
+---
+
+## `mcp setup --harness all` Inconsistency
+
+- **Location:** `sidecar/colony_sidecar/cli.py`
+- **Issue:** Interactive mode iterates detected harnesses; explicit `all` goes through all defs. Minor mismatch with the remove path.
+- **Reason deferred:** Edge case. Both paths work; the difference is that `--harness all` attempts config for harnesses that aren't installed, while interactive only shows detected ones.
+- **Will unblock when:** We unify the logic or add a `--detected-only` flag.
+
+---
+
 ## Proactive Delivery Spawns Full Subagent Turn
 
 - **Location:** `src/plugin.ts:237-283 / 2082`
