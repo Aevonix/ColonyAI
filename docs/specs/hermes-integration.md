@@ -10,9 +10,9 @@ Colony provides persistent cognitive infrastructure (commitments, affect, facts,
 
 ---
 
-## What We Build Now (v0.7.0)
+## What We Build Now (v0.6.3)
 
-### 1. Hermes MCP Harness Config (v0.6.3)
+### 1. Hermes MCP Harness Config
 
 Add Hermes to Colony's MCP harness configuration so `colony mcp setup` configures Hermes automatically.
 
@@ -48,122 +48,58 @@ mcp_servers:
 
 **Result:** After `colony init` + `colony mcp setup`, Hermes auto-discovers all 14 Colony MCP tools as `mcp_colony_*`. Hermes can check commitments, record affect, search world model, create commitments, remember facts, etc. Zero code changes on Hermes's side.
 
-### 2. Colony Context Engine Plugin for Hermes (v0.6.3)
+**Status:** Done.
 
-Hermes has a pluggable context engine system. The ABC is in `agent/context_engine.py`. The default engine (`context_compressor.py`) does lossy summarization of middle conversation turns when context exceeds token thresholds. Colony can replace or supplement this with an engine that calls Colony's `/v1/host/context/assemble` endpoint.
+### 2. Colony Memory Provider Plugin for Hermes
 
-**How Hermes's prompt assembly works (from docs):**
+Hermes has a pluggable memory provider system. The ABC is in `agent/memory_provider.py`. The default provider uses MEMORY.md/USER.md for persistent recall. Colony implements the MemoryProvider ABC to inject cognitive context and sync turns back for extraction.
 
-The system prompt is built in layers by `agent/prompt_builder.py`:
+**How Hermes's memory system works (from source):**
 
-1. Agent identity (SOUL.md)
-2. Tool-aware behavior guidance
-3. Honcho static block (when active)
-4. Optional system message
-5. Frozen MEMORY snapshot
-6. Frozen USER profile snapshot
-7. Skills index
-8. Context files (AGENTS.md, .hermes.md, etc.)
-9. Timestamp + session ID
-10. Platform hint
+The MemoryManager (`agent/memory_manager.py`) orchestrates one built-in provider (always active) and at most one external provider. The lifecycle is:
 
-Additionally, there are "API-call-time-only layers" that are NOT cached:
-- `ephemeral_system_prompt`
-- Prefill messages
-- Gateway-derived session context overlays
-- Later-turn Honcho recall
+1. `initialize(session_id, **kwargs)` — called at agent startup
+2. `system_prompt_block()` — static text added to system prompt
+3. `prefetch(query, session_id)` — called before each API call, returns context text
+4. `sync_turn(user_msg, assistant_response)` — called after each turn
+5. `shutdown()` — clean exit
 
-Colony's context should inject as an API-call-time-only layer so it stays fresh on every call and doesn't break prompt caching for the stable prefix.
+Optional hooks include `on_session_end(messages)`, `on_pre_compress(messages)`, and `on_memory_write()`.
+
+Only ONE external memory provider runs at a time (alongside the built-in). Colony should be configured as `memory.provider: colony` in config.yaml.
 
 **Plugin structure:**
 
 ```
-~/.hermes/plugins/context_engine/colony/
+~/.hermes/plugins/memory/colony/
   __init__.py
-  engine.py       # ColonyContextEngine(ContextEngine)
+  provider.py     # ColonyMemoryProvider
   SKILL.md        # Plugin metadata
 ```
 
-**engine.py pseudocode:**
+**provider.py implementation:**
 
-```python
-from agent.context_engine import ContextEngine
-
-class ColonyContextEngine(ContextEngine):
-    """Colony context engine for Hermes.
-    
-    Calls Colony sidecar's /v1/host/context/assemble endpoint
-    to get cognitive context (commitments, affect, facts, patterns, surprises)
-    and injects it as an ephemeral system prompt layer.
-    """
-
-    def __init__(self, config):
-        self.sidecar_url = config.get("url", "http://127.0.0.1:7777")
-        self.api_key = config.get("api_key", os.environ.get("COLONY_API_KEY", ""))
-        self.contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
-
-    async def compress(self, messages, system_prompt, **kwargs):
-        """Called by Hermes's agent loop to get context.
-        
-        Instead of compressing, we call Colony's context assembly
-        and return the assembled sections as additional context.
-        """
-        # Call Colony sidecar
-        context = httpx.post(
-            f"{self.sidecar_url}/v1/host/context/assemble",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json={
-                "identity": {"host_id": "hermes"},
-                "context": {
-                    "session_id": kwargs.get("session_id", ""),
-                    "contact_id": self.contact_id,
-                },
-                "incoming_message": self._extract_last_user_message(messages),
-            },
-            timeout=10,
-        )
-        
-        # Return assembled sections as ephemeral context
-        sections = context.json().get("sections", [])
-        if sections:
-            return self._format_sections(sections)
-        return None
-
-    def _extract_last_user_message(self, messages):
-        """Extract the last user message for query-aware context."""
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                return {"role": "user", "content": msg.get("content", "")}
-        return {"role": "user", "content": ""}
-
-    def _format_sections(self, sections):
-        """Format Colony sections into a prompt block."""
-        parts = []
-        for section in sections:
-            header = section.get("id", "colony-context")
-            content = section.get("content", "")
-            priority = section.get("priority", 50)
-            parts.append(f"## {header} [priority {priority}]\n{content}")
-        return "# Colony Cognitive Context\n\n" + "\n\n".join(parts)
-```
-
-**Important detail:** The ContextEngine ABC interface needs to be verified against the actual source code at `agent/context_engine.py`. The pseudocode above assumes a `compress(messages, system_prompt, **kwargs)` signature. The real interface might be different. Check:
-- What arguments does the ABC require?
-- Is it sync or async?
-- Does it return a string to inject, or modify messages in place?
-- Can it add to the ephemeral layer specifically?
+- `name` property returns `"colony"`
+- `is_available()` checks sidecar health endpoint
+- `initialize(session_id)` stores session and platform info
+- `system_prompt_block()` returns brief note that Colony is active
+- `prefetch(query)` calls `/v1/host/context/assemble`, formats sections as `<memory-context>` block
+- `sync_turn(user_msg, assistant_response)` calls `/v1/host/turns/sync` for extraction
+- `shutdown()` cleans up cached context
 
 **Hermes config for the plugin:**
 
 ```yaml
 # In ~/.hermes/config.yaml
-context_engine:
-  plugin: colony
+memory:
+  provider: colony
   config:
     url: "http://127.0.0.1:7777"
     api_key: "${COLONY_API_KEY}"
-    contact_id: "marc"
+    contact_id: "default"
 ```
+
+**Status:** Done.
 
 ### 3. Colony CLI: Hermes Setup
 
@@ -172,36 +108,16 @@ Update `colony init` setup wizard to offer Hermes as a host framework choice (al
 When Hermes is selected:
 - Verify `hermes` CLI is installed
 - Configure MCP servers in `~/.hermes/config.yaml`
-- Optionally install Colony context engine plugin to `~/.hermes/plugins/context_engine/colony/`
+- Optionally install Colony memory provider plugin to `~/.hermes/plugins/memory/colony/`
 - Set COLONY_MCP_CONTACT_ID in Hermes config
 - Verify sidecar is reachable
 - Offer to start Hermes gateway if not running
 
+**Status:** Done (MCP config + setup wizard choice).
+
 ---
 
 ## What We Defer
-
-### Turn Sync Hook
-
-**Goal:** When Hermes processes a conversation turn, automatically fire `POST /v1/host/turns/sync` to Colony's sidecar. This triggers LLM extraction of commitments, affect, and facts from the conversation.
-
-**Why deferred:** Hermes's hook/plugin system needs deeper source analysis. The entry points are:
-- `hermes_cli/plugins.py` — PluginManager with discovery and hooks
-- `gateway/hooks.py` — Hook discovery and lifecycle events
-- `gateway/builtin_hooks/` — Always-registered hooks
-
-Need to determine:
-1. What hook points exist (pre-turn, post-turn, post-response, etc.)
-2. Whether hooks can access the full message content (user message + agent response)
-3. Whether hooks run sync or async
-4. Whether hooks can make HTTP calls to the sidecar
-
-**Implementation sketch:** A Hermes hook that fires after each agent response, POSTing the user message + agent response to Colony's turn sync endpoint. The turn sync endpoint handles extraction, pattern detection, and cognition triggers internally.
-
-**Source references:**
-- `hermes_cli/plugins.py` — PluginManager
-- `gateway/hooks.py` — Hook lifecycle
-- `run_agent.py` — AIAgent loop (where hooks fire)
 
 ### Cognition Channel Adapter
 
@@ -223,7 +139,7 @@ Need to determine:
 
 **Goal:** Sync between Hermes's MEMORY.md/USER.md and Colony's cognitive stores.
 
-**Why deferred:** Both systems have memory but with different philosophies. Hermes: small, curated, frozen per session (2,200 + 1,375 chars). Colony: large, structured, live-updating graph stores. The mapping isn't straightforward.
+**Why deferred:** Both systems have memory but with different philosophies. Hermes: small, curated, frozen per session (~3.5K chars). Colony: large, structured, live-updating graph stores. The mapping isn't straightforward.
 
 Options to evaluate:
 1. **Colony replaces Hermes memory.** Hermes's memory tool writes to Colony instead of MEMORY.md. Colony's context engine returns the relevant memory. Pros: single source of truth. Cons: breaks Hermes's prompt caching assumptions.
@@ -266,16 +182,16 @@ Options to evaluate:
 ## Dependency Order
 
 ```
-Phase 1 (v0.6.3):  MCP harness config + context engine plugin
+Phase 1 (v0.6.3):  MCP harness config + memory provider plugin
                      ↓
-Phase 2:            Turn sync hook (needs Hermes plugin/hook analysis)
+Phase 2:            Cognition channel adapter + memory bridge
                      ↓
-Phase 3:            Cognition channel adapter + memory bridge
-                     ↓
-Phase 4:            Contact ID mapping + Honcho coordination
+Phase 3:            Contact ID mapping + Honcho coordination
 ```
 
-Each phase is independently valuable. Phase 1 gives Hermes users Colony tools + Colony context. Phase 2 enables automatic extraction. Phase 3 enables full bidirectional intelligence. Phase 4 polishes the multi-user experience.
+Each phase is independently valuable. Phase 1 gives Hermes users Colony tools + Colony context + turn sync. Phase 2 enables full bidirectional intelligence. Phase 3 polishes the multi-user experience.
+
+Note: Turn sync is already handled by `sync_turn()` in the memory provider. The originally planned "Phase 2: Turn sync hook" is no longer needed as a separate phase since the MemoryProvider lifecycle covers it.
 
 ---
 
@@ -289,8 +205,8 @@ Each phase is independently valuable. Phase 1 gives Hermes users Colony tools + 
 - [ ] `colony mcp remove --harness hermes` removes Colony from config
 - [ ] Existing Hermes config (providers, models, toolsets) is preserved
 - [ ] Hermes discovers all 14 Colony MCP tools after setup
-- [ ] Colony context engine plugin returns assembled sections
-- [ ] Colony context engine plugin handles sidecar unreachable gracefully
+- [ ] Colony memory provider plugin returns assembled sections
+- [ ] Colony memory provider plugin handles sidecar unreachable gracefully
 - [ ] `colony init` offers Hermes as a host framework choice
 
 ---
@@ -304,17 +220,15 @@ Each phase is independently valuable. Phase 1 gives Hermes users Colony tools + 
 | `colony_sidecar/mcp/config.py` | Add `hermes` to HARNESS_DEFS with YAML format |
 | `colony_sidecar/mcp/config.py` | Add `_add_to_yaml_config()` and YAML removal support |
 | `colony_sidecar/setup.py` | Add Hermes to host framework choices |
-| `colony_sidecar/doctor.py` | Add Hermes detection check |
-| `tests/test_mcp_config.py` | Add Hermes YAML config tests |
 
-### New: Colony context engine plugin for Hermes
+### New: Colony memory provider plugin for Hermes
 
 | File | Purpose |
 |---|---|
-| `plugins/hermes-context-engine/__init__.py` | Plugin registration |
-| `plugins/hermes-context-engine/engine.py` | ColonyContextEngine implementation |
-| `plugins/hermes-context-engine/SKILL.md` | Plugin metadata |
-| `plugins/hermes-context-engine/install.sh` | Installation script (copies to ~/.hermes/plugins/) |
+| `plugins/hermes-memory/__init__.py` | Plugin registration |
+| `plugins/hermes-memory/provider.py` | ColonyMemoryProvider implementation |
+| `plugins/hermes-memory/SKILL.md` | Plugin metadata |
+| `plugins/hermes-memory/install.sh` | Installation script (copies to ~/.hermes/plugins/memory/colony/) |
 
 ### Not modified
 
