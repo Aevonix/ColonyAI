@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.2 (2026-04-23)
+
+Code audit fixes from Claude Code security scan.
+
+### Fixed
+- H1: Added missing `set_reranker` import to server.py (was silently failing on reranker config)
+- H2: Fixed tautological test assertions in test_sidecar.py
+- H3: Implemented `probeVectorAvailability` — now checks embed capability instead of hardcoded false
+- H4: Removed dead `lastBoundary` variable in pipeline.ts
+- H5: Added metrics tracking for invalid blocks (`blocks_rejected`, `blocks_accepted`, `invalid_signatures`)
+- H6: Comprehensive block validation: merkle root check, future timestamp rejection, detailed NACK reasons
+- H7: 12 Byzantine-fault tests for Raft consensus
+- Medium: Error logging for Raft fire-and-forget message sends via `_spawn_send()` helper
+
+### Tests
+- 12 new Byzantine-fault tests in `test_consensus_byzantine.py`
+
 ## 0.6.1 (2026-04-22)
 
 Colony MCP Server: shared intelligence across agent and coding harnesses.
