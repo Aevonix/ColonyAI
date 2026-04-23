@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.12 (2026-04-23)
+
+Fix: Neo4j auto-start now works in foreground mode.
+
+### Fixed
+- Neo4j check moved before detach decision (was only in daemon mode)
+- Works for both `colony start` and `colony start -d`
+
 ## 0.6.11 (2026-04-23)
 
 Fix: Neo4j auto-start and validate EOF.
