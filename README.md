@@ -78,7 +78,7 @@ The MCP server exposes 14 tools, 4+ resources, and 3 prompts to any connected co
 
 ### Multi-harness setup
 
-Colony supports running multiple harnesses simultaneously. OpenClaw or Hermes for conversations, Claude Code for implementation, Codex for CI tasks. They share the same memory, commitments, and world model.
+Colony supports running multiple harnesses simultaneously. Any combination works. They share the same memory, commitments, and world model.
 
 ```bash
 colony init              # Choose all harnesses that apply
