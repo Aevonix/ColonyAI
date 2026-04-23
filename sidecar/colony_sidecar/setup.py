@@ -261,91 +261,80 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
     api_key = values["COLONY_API_KEY"]
 
     try:
-        # Check for Node.js (needed for npm)
-        has_npm = shutil.which("npm") is not None
-        if not has_npm:
-            print("  ⚠️ Node.js/npm not found — Colony plugin requires Node.js.")
-            print("     Install Node.js: https://nodejs.org/ or via your package manager")
-            install_anyway = _prompt("  Continue with config-only setup? [y/N]", "N", non_interactive)
-            if install_anyway.lower() not in ("y", "yes"):
-                print("  Install Node.js and re-run 'colony init' to complete plugin setup.")
+        # Check for Node.js (needed for OpenClaw plugins)
+        node_result = shutil.which("node")
+        if not node_result:
+            print("  ⚠️ Node.js not found — Colony plugin requires Node.js v22+.")
+            print("     Install Node.js: https://nodejs.org/ or via nvm/brew")
+            print("  Skipping plugin install — Colony sidecar will still work.")
+            return False
+        
+        # Check Node.js version (plugin requires >= 22.16.0)
+        version_result = subprocess.run(
+            ["node", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        if version_result.returncode == 0:
+            node_version = version_result.stdout.strip().lstrip("v")
+            major = int(node_version.split(".")[0])
+            if major < 22:
+                print(f"  ⚠️ Node.js v{node_version} found, but Colony plugin requires v22.16+")
+                print("     Upgrade with: nvm install 22 && nvm use 22")
+                print("     Or: brew install node@22")
+                print("  Skipping plugin install — Colony sidecar will still work.")
                 return False
         else:
-            # Check Node.js version (plugin requires >= 22.16.0)
-            node_result = subprocess.run(
-                ["node", "--version"],
-                capture_output=True, text=True, timeout=5
-            )
-            if node_result.returncode == 0:
-                node_version = node_result.stdout.strip().lstrip("v")
-                major = int(node_version.split(".")[0])
-                if major < 22:
-                    print(f"  ⚠️ Node.js v{node_version} found, but Colony plugin requires v22.16+")
-                    print("     Upgrade with: nvm install 22 && nvm use 22")
-                    print("     Or: brew install node@22")
-                    print("  Skipping plugin install — will configure OpenClaw only.")
-                else:
-                    # Node version OK, proceed with npm install
-                    print("  Checking Colony plugin installation...")
-                    result = subprocess.run(
-                        ["npm", "list", "-g", "@aevonix/colonyai", "--depth=0"],
-                        capture_output=True, text=True, timeout=10
-                    )
-                    
-                    if "@aevonix/colonyai" not in result.stdout:
-                        # Package not installed, try to install globally
-                        print("  Installing @aevonix/colonyai globally...")
-                        install_result = subprocess.run(
-                            ["npm", "install", "-g", "@aevonix/colonyai"],
-                            capture_output=True, text=True, timeout=120
-                        )
-                        
-                        if install_result.returncode != 0:
-                            # Check if it was a permission error
-                            if "EACCES" in install_result.stderr or "permission denied" in install_result.stderr.lower():
-                                print("  ⚠️ Permission denied — trying with sudo...")
-                                sudo_result = subprocess.run(
-                                    ["sudo", "npm", "install", "-g", "@aevonix/colonyai"],
-                                    capture_output=True, text=True, timeout=120
-                                )
-                                if sudo_result.returncode != 0:
-                                    print(f"  ⚠️ Failed to install Colony plugin: {sudo_result.stderr.strip()[:200]}")
-                                    print("  Continuing with config-only setup...")
-                                else:
-                                    print("  ✅ Colony plugin installed globally (via sudo)")
-                            else:
-                                print(f"  ⚠️ Failed to install Colony plugin: {install_result.stderr.strip()[:200]}")
-                                print("  Continuing with config-only setup...")
-                        else:
-                            print("  ✅ Colony plugin installed globally")
-                    else:
-                        print("  ✅ Colony plugin already installed")
+            print("  ⚠️ Could not determine Node.js version")
+            return False
 
-        # Enable the plugin in OpenClaw config
-        print("  Configuring OpenClaw plugin settings...")
-        cmds = [
-            ["openclaw", "config", "set", "plugins.entries.colony.enabled", "true"],
-            ["openclaw", "config", "set", "plugins.entries.colony.config.sidecarUrl", sidecar_url],
-            ["openclaw", "config", "set", "plugins.entries.colony.config.apiKey", api_key],
-            ["openclaw", "config", "set", "plugins.entries.colony.config.hostId", "openclaw"],
-            ["openclaw", "config", "set", "plugins.entries.colony.config.ownContextEngine", "true"],
-            ["openclaw", "config", "set", "plugins.entries.colony.config.ownMemoryCapability", "true"],
-        ]
+        # Check if Colony plugin is already installed
+        print("  Checking Colony plugin installation...")
+        list_result = subprocess.run(
+            ["openclaw", "plugins", "list", "--json"],
+            capture_output=True, text=True, timeout=30
+        )
         
-        config_errors = []
-        for cmd in cmds:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode != 0:
-                config_errors.append(' '.join(cmd[-2:]))
+        plugin_installed = False
+        if list_result.returncode == 0 and "colony" in list_result.stdout:
+            # Parse to confirm it's actually installed
+            try:
+                import json
+                data = json.loads(list_result.stdout)
+                for plugin in data.get("plugins", []):
+                    if plugin.get("id") == "colony" and plugin.get("status") in ("loaded", "enabled"):
+                        plugin_installed = True
+                        break
+            except:
+                pass
         
-        if config_errors:
-            print(f"  ⚠️ Some config settings failed: {', '.join(config_errors)}")
-            print("  This usually means the plugin isn't installed yet.")
-            print("  After installing the plugin, run: openclaw gateway restart")
+        if plugin_installed:
+            print("  ✅ Colony plugin already installed and loaded")
         else:
-            print("  ✅ Plugin config written to OpenClaw")
+            # Install the plugin via OpenClaw CLI
+            print("  Installing Colony plugin via OpenClaw...")
+            install_result = subprocess.run(
+                ["openclaw", "plugins", "install", "@aevonix/colonyai"],
+                capture_output=True, text=True, timeout=120
+            )
+            
+            if install_result.returncode != 0:
+                # Check for common errors
+                stderr = install_result.stderr.lower()
+                if "eacces" in stderr or "permission denied" in stderr:
+                    print("  ⚠️ Permission denied — check OpenClaw extensions directory permissions")
+                elif "network" in stderr or "fetch" in stderr:
+                    print("  ⚠️ Network error — could not fetch plugin from npm registry")
+                else:
+                    # Show truncated error
+                    err_msg = install_result.stderr.strip()[:300] or install_result.stdout.strip()[:300]
+                    print(f"  ⚠️ Plugin install failed: {err_msg}")
+                print("  You can install manually with: openclaw plugins install @aevonix/colonyai")
+                return False
+            else:
+                print("  ✅ Colony plugin installed")
 
         # Set Colony as the active context engine
+        print("  Configuring Colony as context engine...")
         ce_result = subprocess.run(
             ["openclaw", "config", "set", "plugins.slots.contextEngine", "colony"],
             capture_output=True, text=True, timeout=10,
@@ -360,6 +349,38 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
         print("  Colony plugin configuration:")
         print(f"    sidecarUrl: {sidecar_url}")
         print(f"    apiKey: {api_key[:8]}...{api_key[-4:]}")
+        
+        # Offer to restart gateway
+        print("")
+        print("  The OpenClaw gateway needs to be restarted to load the plugin.")
+        restart = _prompt("  Restart gateway now? [Y/n]", "Y", non_interactive)
+        if restart.lower() in ("y", "yes", ""):
+            restart_result = subprocess.run(
+                ["openclaw", "gateway", "restart"],
+                capture_output=True, text=True, timeout=30
+            )
+            if restart_result.returncode == 0:
+                print("  ✅ Gateway restarted")
+                print("  Waiting for gateway to come back up...")
+                time.sleep(3)
+                # Check if gateway is healthy
+                for _ in range(10):
+                    health = subprocess.run(
+                        ["openclaw", "gateway", "status"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if health.returncode == 0:
+                        print("  ✅ Gateway is running")
+                        break
+                    time.sleep(1)
+                else:
+                    print("  ⚠️ Gateway may still be starting — check with: openclaw gateway status")
+            else:
+                print(f"  ⚠️ Gateway restart failed: {restart_result.stderr.strip()[:100]}")
+                print("  Restart manually with: openclaw gateway restart")
+        else:
+            print("  Restart manually with: openclaw gateway restart")
+        
         return True
 
     except Exception as exc:

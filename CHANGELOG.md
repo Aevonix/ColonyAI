@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.18 (2026-04-23)
+
+Wizard now uses `openclaw plugins install` for proper plugin registration.
+
+### Changed
+- Use `openclaw plugins install @aevonix/colonyai` instead of `npm install -g`
+- Check if plugin is already installed before reinstalling
+- Prompt to restart gateway after plugin install
+- Better error messages for permission/network failures
+
 ## 0.6.17 (2026-04-23)
 
 Fixed missing npm dependency.
