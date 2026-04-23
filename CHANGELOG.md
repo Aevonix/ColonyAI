@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.0 (2026-04-22)
+
+Colony MCP Server: shared intelligence across agent and coding harnesses.
+
+### New
+- MCP server exposing 14 tools, 4+ resources, 3 prompts to Claude Code, Codex, and Crush
+- `colony mcp` CLI: run (stdio/HTTP), detect, setup (selective, --dry-run), remove (--dry-run)
+- `/mcp` HTTP endpoint on sidecar for streamable HTTP transport
+- Harness auto-detection (claude, codex, crush CLIs)
+- Selective harness setup: choose which harnesses connect, not all-or-nothing
+- Source tracking via COLONY_MCP_SOURCE env var, auto-injected by MCP server
+- Provenance field on all MCP writes (separate from sidecar's source enum)
+- Contact ID required during setup, set via COLONY_MCP_CONTACT_ID
+- Host framework selection in setup wizard (OpenClaw, Claude Code, Codex, Crush, Standalone)
+- `mcp[cli]>=1.0` as optional dependency
+- 51 MCP unit tests (27 server + 24 config)
+- 14/14 MCP tools E2E validated against live sidecar
+
+### Fixed
+- World model search endpoint: POST /v1/host/world/entities/query (not GET /search)
+- Provenance vs source: MCP provenance writes to `provenance` field, not `source`, to avoid enum conflicts with sidecar schemas
+
 ## 0.5.8 (2026-04-22)
 
 New CLI commands for lifecycle management and E2E validation.

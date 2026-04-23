@@ -2,88 +2,91 @@
 
 # Colony
 
-Cognitive infrastructure layer for AI agents with persistent memory, structured reasoning, goals, and identity that outlive any single session.
+Persistent memory and cognitive infrastructure for AI agents and coding tools. One intelligence layer, many frontends.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/colonyai.svg)](https://pypi.org/project/colonyai/) [![npm](https://img.shields.io/npm/v/@aevonix/colonyai.svg)](https://www.npmjs.com/package/@aevonix/colonyai) [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Faevonix%2Fcolony-blue)](https://github.com/Aevonix/ColonyAI/pkgs/container/colony) [![CI](https://github.com/Aevonix/ColonyAI/actions/workflows/ci.yml/badge.svg)](https://github.com/Aevonix/ColonyAI/actions/workflows/ci.yml) [![GitHub Release](https://img.shields.io/github/v/release/Aevonix/ColonyAI)](https://github.com/Aevonix/ColonyAI/releases) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://pypi.org/project/colonyai/) [![TypeScript](https://img.shields.io/badge/typescript-5.x-3178c6.svg)](https://www.typescriptlang.org/) [![Node.js](https://img.shields.io/badge/node-20%2B-339933.svg)](https://nodejs.org/)
 
 </div>
 
-## What Is Colony?
+## What Is Colony
 
-Colony is a cognitive infrastructure layer for agent harnesses such as OpenClaw, not a replacement for them. Colony provides durable memory, structured reasoning, goal management, relationship modeling, and cryptographic identity as a single, mountable plugin with a unified HTTP API.
+Colony gives your agents and coding tools a shared, persistent intelligence layer. Commitments, affect state, world knowledge, patterns, and facts that outlive any session and flow across every tool you use.
 
-Each Colony is a one-to-many orchestrator: one logical identity spanning any number of physical devices and agents, presenting a single point of interaction to its owner.
+Your OpenClaw agent remembers what you promised last week. Claude Code knows your emotional state from this morning's conversation. Codex can look up the architecture decisions your agent catalogued. Same brain, different hands.
 
-The current release delivers 35 production subsystems. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony — personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design: the same pattern that makes ant colonies collectively intelligent without a central controller.
+This works because Colony is not another agent. It is infrastructure. A sidecar process with a unified API and an MCP server that any harness can plug into. OpenClaw talks HTTP. Claude Code talks MCP. Both read and write to the same stores. The commitments you make in a chat with OpenClaw show up when Claude Code checks your workload. The facts your coding session extracts feed back into your agent's context assembly.
+
+The current release delivers 36 production subsystems across 57+ API endpoints. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony: personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design. The same pattern that makes ant colonies collectively intelligent without a central controller.
 
 -----
 
 ## Quick Start
 
-### With OpenClaw (recommended)
+### With OpenClaw
 
 ```bash
-# Install the sidecar
 pip install colonyai
-
-# Run the setup wizard — one command handles everything
-# • Dependencies + Neo4j + hardware scan + model download
-# • Plugin config + context engine routing
-# • Sidecar start + health verify + doctor check + gateway restart
 colony init
-
-# That's it. Colony is running and wired into OpenClaw.
 ```
 
-**Prerequisites:** Python 3.11+, Docker (auto-installed by `colony init` if missing), [OpenClaw](https://github.com/openclaw/openclaw) with an LLM key configured.
+That one command handles dependencies, Neo4j, hardware scan, model download, plugin config, sidecar start, health verify, and doctor check.
+
+### With Claude Code, Codex, or Crush
+
+```bash
+pip install colonyai
+colony init          # Choose your harness during setup
+colony start -d      # Start sidecar as daemon
+colony mcp setup     # Auto-detect and configure connected harnesses
+```
+
+The MCP server exposes 14 tools, 4+ resources, and 3 prompts to any connected coding harness. Claude Code gets them automatically. Codex and Crush get them through their MCP integration.
+
+### Multi-harness setup
+
+Colony supports running multiple harnesses simultaneously. OpenClaw for conversations, Claude Code for implementation, Codex for CI tasks. They share the same memory, commitments, and world model.
+
+```bash
+colony init              # Choose all harnesses that apply
+colony mcp setup         # Configure each one selectively
+colony mcp detect        # See which harnesses are installed
+```
 
 ### Docker Compose
 
 ```bash
 git clone https://github.com/Aevonix/ColonyAI.git
 cd ColonyAI
-
-# Set your credentials
-cp .env.example .env   # edit NEO4J_PASSWORD and COLONY_API_KEY
-
-docker compose up -d    # Neo4j + Colony sidecar
+cp .env.example .env     # Edit NEO4J_PASSWORD and COLONY_API_KEY
+docker compose up -d     # Neo4j + Colony sidecar
 ```
 
 ### Verify
 
 ```bash
-colony status           # sidecar health
-COLONY_API_KEY=your-key colony doctor   # full subsystem check
+colony status             # Sidecar health + E2E validation status
+colony doctor             # Full subsystem check (34 checks)
+colony validate           # 5-step pipeline test, writes validation stamp
 ```
 
-### Context Engine
-
-Colony ships a context engine that assembles rich, multi-source context (memory, goals, contacts, world model, skills, identity) into a single prompt injection. It's set automatically by `colony init` when OpenClaw is detected. To set it manually:
-
-```bash
-openclaw config set plugins.slots.contextEngine colony
-```
-
-Without this, OpenClaw uses the legacy context engine and Colony's context assembly is bypassed.
+**Prerequisites:** Python 3.11+, Docker (auto-installed by `colony init` if missing). For OpenClaw: an LLM key configured. For coding harnesses: the harness installed locally.
 
 -----
 
 ## Table of Contents
 
+- [What Is Colony](#what-is-colony)
 - [Quick Start](#quick-start)
 - [Why Colony](#why-colony)
-- [What Colony Is Today](#what-colony-is-today)
+- [36 Wired Subsystems](#36-wired-subsystems)
+- [MCP Server](#mcp-server)
 - [Architecture](#architecture)
 - [Configuration](#configuration)
+- [CLI Reference](#cli-reference)
 - [API Reference](#api-reference)
 - [What Colony Is Not](#what-colony-is-not)
 - [Roadmap](#roadmap)
-- [Installation Profiles](#installation-profiles)
-- [CLI Reference](#cli-reference)
 - [Development](#development)
-- [OpenClaw Integration](#openclaw-integration)
-- [Deployment](#deployment)
-- [Troubleshooting](#troubleshooting)
 - [License](#license)
 
 -----
@@ -92,58 +95,92 @@ Without this, OpenClaw uses the legacy context engine and Colony's context assem
 
 Ant colonies are the textbook example of emergent collective intelligence. No central controller, specialized roles, coordination through a shared environment. The technical name is stigmergy: individuals modify the environment, other individuals read those modifications and respond. Colony applies that pattern to LLM agents. A shared substrate of memory, signals, and state that many specialized systems read from and write to.
 
+But stigmergy only works when the agents share the same environment. That is why Colony runs as a standalone sidecar with a unified API. Your chat agent, your coding agent, your CI agent: all reading and writing to the same commitments, the same world model, the same affect state. The left hand knows what the right hand is doing because they share a brain.
+
 Argentine ants form the largest known supercolony in nature. Six thousand kilometers of coastline, three continents, every individual treating every other individual as kin. The SuperColony Network is modeled on that. Independent colonies, global reach, participation on your terms.
 
 -----
 
-## What Colony Is Today
+## 36 Wired Subsystems
 
-35 wired subsystems. Everything below works now.
+Everything below works now.
 
-### 35 Wired Subsystems
+### Core
 
 | Subsystem | Purpose |
 |---|---|
+| Context Assembly | Parallel query across subsystems to build LLM context with priority-ranked sections |
 | Consolidate | Memory deduplication and merge for near-duplicate graph entries |
 | Memory | Neo4j-backed graph storage for conversations, entities, relationships, insights |
 | Response Gate | 7-layer response inspection (recipient verification, PII scanning, cross-context isolation, trust tiers, injection detection, secondary review, send delay) |
 | Signals | Behavioral signal ingestion for profiling and pattern detection |
 | Embeddings | Auto-tier-detected embedding pipeline (text + multimodal) |
-| Context Assembly | Parallel query across subsystems to build LLM context |
 | Reasoning | Bounded LLM iteration loop with tool calling |
-| Goals | DAG-based goal decomposition and tracking |
-| Contacts | Relationship store with trust tiers and interaction history |
-| Briefings | Proactive relationship summaries and conversation starters |
-| World Model | Entity graph for people, places, organizations, concepts with Neo4j or SQLite backend |
-| Cognition | MetaLearner with Cognitive Performance Index tracking |
-| Research | Background research pipeline with configurable depth |
-| Delivery | Proactive message delivery bridge |
-| Synthesis | Connection discovery between entities and topics |
-| Learning | Continuous learning from corrections and engagement |
 | Skills | Tool registry with metadata |
 | Identity | Ed25519 cryptographic identity with Colony + Node layers, Genesis trust anchor, backup/restore |
 | Secrets | Encrypted vault for sensitive configuration |
-| Autonomy | Background loop for anomaly detection, initiative generation, synthesis |
 | Sessions | Isolated session management |
-| Events | WebSocket stream for real-time events with journal replay |
-| Event Journal | Append-only event persistence with atomic writes, SHA-256 checksums, and replay for disconnected clients |
-| Context Compression | Adaptive context compression (conservative/balanced/aggressive modes) with query-aware section scoring |
-| Skill Sandbox | Subprocess-isolated skill execution with resource limits (memory, CPU, file size, fork guard) |
-| Security Scanner | AST-based static analysis for skill uploads (dunder escapes, dynamic getattr, obfuscation patterns) |
+
+### Goals and Planning
+
+| Subsystem | Purpose |
+|---|---|
+| Goals | DAG-based goal decomposition and tracking |
 | Commitment Tracking | LLM-extracted commitments with status transitions, overdue detection, and cognition triggers |
+| Research | Background research pipeline with configurable depth |
+
+### Relationships
+
+| Subsystem | Purpose |
+|---|---|
+| Contacts | Relationship store with trust tiers and interaction history |
+| Briefings | Proactive relationship summaries and conversation starters |
+| Delivery | Proactive message delivery bridge |
+
+### World Model
+
+| Subsystem | Purpose |
+|---|---|
+| World Model | Entity graph for people, places, organizations, concepts with Neo4j or SQLite backend |
+| Neo4j Backend | Native graph database backend with Cypher traversal, full-text search, and auto-schema |
+| World Model API | 12 REST endpoints for entity/relationship CRUD, graph traversal, and statistics |
+
+### Cognitive Architecture
+
+| Subsystem | Purpose |
+|---|---|
+| Cognition | MetaLearner with Cognitive Performance Index tracking |
+| Autonomy | Background loop for anomaly detection, initiative generation, synthesis |
+| Commitment Tracking | LLM-extracted commitments with status transitions, overdue detection, cognition triggers |
 | Affect Tracking | Valence/arousal affect model per contact with trend detection |
 | Shared Facts | Cross-contact knowledge graph with confidence scoring |
 | Pattern Extraction | Entity co-occurrence, relation frequency, temporal sequence, and attribute cluster detection |
 | Surprise Engine | Expectation-violation scoring with accumulation-based autonomy triggers |
 | ToM LLM Extraction | LLM-backed affect and fact extraction from conversation turns with per-contact throttling |
-| Neo4j Backend | Native graph database backend for World Model with Cypher traversal, full-text search, and auto-schema |
-| World Model API | 12 REST endpoints for entity/relationship CRUD, graph traversal, and statistics |
+
+### Safety and Efficiency
+
+| Subsystem | Purpose |
+|---|---|
+| Event Journal | Append-only event persistence with atomic writes, SHA-256 checksums, and replay for disconnected clients |
+| Context Compression | Adaptive context compression (conservative/balanced/aggressive modes) with query-aware section scoring |
+| Skill Sandbox | Subprocess-isolated skill execution with resource limits (memory, CPU, file size, fork guard) |
+| Security Scanner | AST-based static analysis for skill uploads (dunder escapes, dynamic getattr, obfuscation patterns) |
+
+### Integration
+
+| Subsystem | Purpose |
+|---|---|
+| Events | WebSocket stream for real-time events with journal replay |
+| MCP Server | Model Context Protocol server exposing 14 tools, 4+ resources, and 3 prompts to coding harnesses |
+| Learning | Continuous learning from corrections and engagement |
+| Synthesis | Connection discovery between entities and topics |
 
 ### Key Properties
 
-**Harness-required.** Colony runs as a plugin inside a host harness. OpenClaw is the reference integration. Any host that implements the Colony plugin contract can mount it.
+**Multi-harness by design.** Colony is not tied to one runtime. OpenClaw talks HTTP. Claude Code, Codex, and Crush talk MCP. All share the same intelligence layer. Add harnesses selectively. Run them simultaneously.
 
-**No LLM keys required locally.** Colony inherits LLM credentials from its host at runtime. For plugin development, you can supply them in `.env` to exercise the sidecar directly.
+**No LLM keys required locally.** Colony inherits LLM credentials from its host at runtime. For standalone use or plugin development, supply them in `.env` to exercise the sidecar directly.
 
 **Retrieval auto-configures.** `colony init` scans your hardware and picks the right embedding and reranker models for your tier, from a 4GB laptop to a 256GB workstation.
 
@@ -152,76 +189,137 @@ Argentine ants form the largest known supercolony in nature. Six thousand kilome
 **Types stay in sync.** Python Pydantic schemas export an OpenAPI spec. TypeScript types generate from the spec. No client/server drift.
 
 **Authenticated by default.** When `COLONY_API_KEY` is set, all API endpoints require Bearer token authentication. Without it, the API runs in open dev mode.
-```
 
-### Verify
+-----
+
+## MCP Server
+
+Colony ships a built-in MCP server that exposes its cognitive infrastructure as tools to any MCP-compatible coding harness. This is how your coding tools get access to commitments, affect state, world knowledge, and patterns.
+
+### 14 MCP Tools
+
+**Read-only tools (safe, no side effects):**
+
+| Tool | What It Does |
+|---|---|
+| `colony_health` | Check sidecar health and capabilities |
+| `colony_get_context` | Assemble full context for the current conversation |
+| `colony_check_commitments` | List commitments for a contact, optionally filtered by status |
+| `colony_lookup_facts` | Look up shared facts about a contact |
+| `colony_check_affect` | Read current affect state (valence/arousal) for a contact |
+| `colony_search_world` | Search the world model for entities or relationships |
+| `colony_get_patterns` | List detected behavioral patterns |
+
+**Mutating tools (write data):**
+
+| Tool | What It Does |
+|---|---|
+| `colony_create_commitment` | Record a new commitment |
+| `colony_fulfill_commitment` | Mark a commitment as fulfilled |
+| `colony_cancel_commitment` | Cancel a commitment with a reason |
+| `colony_remember_fact` | Store a shared fact about a contact |
+| `colony_forget_fact` | Delete a shared fact |
+| `colony_record_affect` | Record an affect event (valence + arousal) |
+| `colony_record_surprise` | Record an expectation violation |
+
+### Resources and Prompts
+
+The MCP server also exposes resources for context and prompts for guided interaction:
+
+- `colony://world/entities` - Top entities in the world model
+- `colony://surprises/recent` - Recent surprise events
+- `colony://commitments/active` - Active commitments
+- `colony://affect/state` - Current affect summaries
+
+### Source Tracking
+
+Every write through the MCP server is tagged with a `provenance` field indicating which harness made the change. This is injected automatically from the `COLONY_MCP_SOURCE` environment variable. You can trace whether a commitment was created by Claude Code, Codex, or your OpenClaw agent.
+
+### Setup
 
 ```bash
-curl http://localhost:7777/v1/host/health
-# Expected: {"status":"ok","capabilities":[...35 subsystems...]}
+# Auto-detect installed harnesses and configure them
+colony mcp setup
+
+# See what would change without writing anything
+colony mcp setup --dry-run
+
+# Check which harnesses are detected
+colony mcp detect
+
+# Remove Colony from a specific harness
+colony mcp remove --harness claude-code
+colony mcp remove --harness claude-code --dry-run
 ```
 
-### Full Health Check
+Supported harnesses:
 
-After the sidecar is running, use `colony doctor` to verify all subsystems:
+| Harness | Config Format | Detection |
+|---|---|---|
+| Claude Code | JSON (`~/.claude.json`) | `claude` CLI |
+| Codex | TOML (`~/.codex/config.toml`) | `codex` CLI |
+| Crush | JSON (`~/.crush/mcp.json`) | `crush` CLI |
 
-```bash
-COLONY_API_KEY=your-key colony doctor
-```
-
-15 subsystem checks: health, auth, memory, response gate, goals, identity, secrets, embeddings, context assembly, skills, world model, signals, autonomy. Exit code 0 if healthy, 1 if any check fails.
-
-For the full integration test suite (68 tests):
+### Running the MCP Server
 
 ```bash
-pip install pytest httpx
-COLONY_URL=http://localhost:7777 COLONY_API_KEY=your-key pytest tests/integration/ -v
+# Via CLI (stdio transport, default)
+colony mcp
+
+# Via CLI (HTTP transport for remote/CI)
+colony mcp --transport http --port 8765
+
+# The sidecar also exposes /mcp for streamable HTTP transport
+# Available at http://localhost:7777/mcp when the sidecar is running
 ```
 
 -----
 
 ## Architecture
 
-Two deployable units. A thin TypeScript plugin that loads into your host process, and a Python sidecar that owns state and runs the subsystems.
+Two deployable units. A thin TypeScript plugin that loads into OpenClaw, and a Python sidecar that owns state and runs the subsystems. The MCP server runs inside the sidecar process and proxies all calls through the same API.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│ Host Harness (OpenClaw, etc.)                                       │
-│                                                                     │
-│  ┌────────────────┐  ┌─────────────┐  ┌────────────────────────┐   │
-│  │ Plugin Loader  │  │ Agent Loop  │  │ Channel Adapters       │   │
-│  └───────┬────────┘  └──────┬──────┘  └────────────┬───────────┘   │
-│          └──────────────────┼──────────────────────┘                │
-└─────────────────────────────┼────────────────────────────────────────┘
-                              │
-                              │ HTTP /v1/host/*
-                              │ WebSocket /v1/host/events
-                              │
-┌─────────────────────────────┼────────────────────────────────────────┐
-│ Colony Sidecar              │                                        │
-│  ┌──────────────────────────▼──────────────────────────┐            │
-│  │ FastAPI Server                                      │            │
-│  └──────────────────────────┬──────────────────────────┘            │
-│  ┌──────────────────────────▼──────────────────────────┐            │
-│  │ SubsystemRegistry (35 subsystems)                   │            │
-│  └─────────────────────────────────────────────────────┘            │
-└──────────────────────────┬───────────────────────────────────────────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-   ┌────▼────┐       ┌─────▼─────┐      ┌────▼────┐
-   │  Neo4j  │       │  LiteLLM  │      │ SQLite  │
-   │ (memory)│       │(reasoning)│      │(contacts│
-   └─────────┘       └───────────┘      └─────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Host Harnesses                                                          │
+│                                                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │  OpenClaw     │  │ Claude Code  │  │    Codex     │  │   Crush    │  │
+│  │  (HTTP/WS)   │  │   (MCP)      │  │    (MCP)     │  │   (MCP)    │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └─────┬──────┘  │
+│         └─────────────────┴─────────────────┴───────────────┘         │
+└──────────────────────────────┬──────────────────────────────────────────┘
+                               │
+            ┌──────────────────┴──────────────────┐
+            │  HTTP /v1/host/*    MCP stdio/HTTP   │
+            │  WebSocket /v1/host/events           │
+            └──────────────────┬──────────────────┘
+                               │
+┌──────────────────────────────┴──────────────────────────────────────────┐
+│ Colony Sidecar                                                          │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ FastAPI Server + MCP Server                                      │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ SubsystemRegistry (36 subsystems)                                │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────┬──────────────────────────────────────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        │                      │                      │
+   ┌────▼────┐           ┌─────▼─────┐          ┌────▼────┐
+   │  Neo4j  │           │  LiteLLM  │          │ SQLite  │
+   │ (memory)│           │(reasoning)│          │(contacts│
+   └─────────┘           └───────────┘          └─────────┘
 ```
 
 ### Communication
 
-Plugin to sidecar: HTTP POST to `/v1/host/*` endpoints.
+OpenClaw to sidecar: HTTP POST to `/v1/host/*` endpoints, WebSocket `/v1/host/events` for real-time events.
 
-Sidecar to plugin: WebSocket `/v1/host/events` for real-time events.
+Coding harnesses to sidecar: MCP protocol over stdio or HTTP, proxied through the same API internally.
 
-Contract: OpenAPI spec generated from Python schemas. TypeScript types auto-generated.
+Contract: OpenAPI spec generated from Python schemas. TypeScript types auto-generated. No client/server drift.
 
 -----
 
@@ -255,6 +353,10 @@ COLONY_RERANKER_MODEL=
 # Multimodal embeddings (enabled via colony init or activate-multimodal)
 COLONY_MULTIMODAL=false
 
+# MCP source tracking (auto-set by colony mcp setup)
+COLONY_MCP_SOURCE=
+COLONY_MCP_CONTACT_ID=
+
 LOG_LEVEL=info
 ```
 
@@ -264,13 +366,15 @@ Full configuration reference in `docs/configuration.md`.
 
 ## CLI Reference
 
-### Setup & Operations
+### Setup and Operations
 
 | Command | Description |
 |---|---|
-| `colony init` | Full first-run setup: deps, Neo4j, hardware scan, model pre-download, identity, sidecar start, verify, doctor |
+| `colony init` | Full first-run setup: deps, Neo4j, hardware scan, model pre-download, identity, harness selection, sidecar start, verify, doctor |
 | `colony start` | Start the sidecar server (`--host`, `--port`, `--detach`) |
-| `colony status` | Check sidecar health and subsystem wiring |
+| `colony stop` | Stop a detached sidecar process |
+| `colony status` | Check sidecar health, subsystem wiring, and E2E validation |
+| `colony validate` | Run 5-step pipeline test, writes `.colony-e2e-validated` stamp |
 | `colony seed` | Seed self-knowledge (run after `colony init` if skipped) |
 | `colony doctor` | Run integration health check against running sidecar (`--url`, `--api-key`, `-v`) |
 | `colony generate-types` | Export OpenAPI spec and generate TypeScript types |
@@ -278,7 +382,17 @@ Full configuration reference in `docs/configuration.md`.
 | `colony migrate-tier` | Migrate vectors from old embedding model to current |
 | `colony activate-multimodal` | Enable multimodal embeddings and reranking |
 
-### Identity & Keys
+### MCP Commands
+
+| Command | Description |
+|---|---|
+| `colony mcp` | Run the MCP server (stdio transport, default) |
+| `colony mcp --transport http --port 8765` | Run MCP server with HTTP transport |
+| `colony mcp detect` | Show which coding harnesses are installed |
+| `colony mcp setup` | Configure harnesses to use Colony MCP (`--dry-run` to preview) |
+| `colony mcp remove` | Remove Colony MCP from a harness (`--dry-run` to preview) |
+
+### Identity and Keys
 
 | Command | Description |
 |---|---|
@@ -331,292 +445,165 @@ Full OpenAPI spec:
 curl http://localhost:7777/openapi.json
 ```
 
-Common request structure:
+### Core
 
-```json
-{
-  "identity": { "host_id": "string" },
-  "context": { "session_id": "string", "contact_id": "string" }
-}
-```
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/health` | Health check and capabilities |
+| POST | `/context/assemble` | Assemble multi-source context for LLM injection |
+| POST | `/turns/sync` | Sync a conversation turn (triggers extraction, pattern detection, cognition) |
+| GET | `/events` | WebSocket endpoint for real-time event stream |
+| GET | `/events/replay` | Replay events from a checkpoint for reconnected clients |
 
-Full endpoint documentation in `docs/api.md`.
+### Memory and World Model
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/memory/query` | Query memory graph |
+| GET | `/world/entities` | List world model entities |
+| POST | `/world/entities/query` | Search entities with full-text or semantic query |
+| POST | `/world/entities` | Create an entity |
+| GET | `/world/entities/{id}` | Get entity by ID |
+| PATCH | `/world/entities/{id}` | Update an entity |
+| DELETE | `/world/entities/{id}` | Delete an entity |
+| POST | `/world/relationships` | Create a relationship |
+| GET | `/world/relationships/{id}` | Get relationship by ID |
+| DELETE | `/world/relationships/{id}` | Delete a relationship |
+| GET | `/world/entities/{id}/neighborhood` | Get entity neighborhood (N-hop traversal) |
+| GET | `/world/entities/{source_id}/path/{target_id}` | Find shortest path between entities |
+| GET | `/world/stats` | World model statistics |
+| POST | `/world/extract` | Extract entities from text |
+
+### Commitments
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/commitments` | Create a commitment |
+| GET | `/commitments` | List commitments (filter by person, status) |
+| GET | `/commitments/{id}` | Get commitment by ID |
+| PATCH | `/commitments/{id}` | Update commitment (status transitions, add note) |
+
+### Theory of Mind
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/affect/state/{contact_id}` | Get current affect state for a contact |
+| POST | `/affect/events` | Record an affect event |
+| GET | `/affect/events` | Query affect history |
+| GET | `/mind/facts` | Look up shared facts about a contact |
+| POST | `/mind/facts` | Store a shared fact |
+| DELETE | `/mind/facts/{id}` | Delete a shared fact |
+
+### Patterns and Surprise
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/patterns` | List detected behavioral patterns |
+| POST | `/surprises` | Record a surprise (expectation violation) |
+| GET | `/surprises` | Query recorded surprises |
+
+### Cognition
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/cognition/trigger` | Trigger cognition cycle (throttled, auto-fires on turn sync) |
+
+### Goals, Skills, and Identity
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/goals` | Create a goal |
+| GET | `/goals` | List goals |
+| GET | `/skills` | List registered skills |
+| POST | `/identity/colony` | Get or create Colony identity |
+| GET | `/identity/colony` | Get Colony identity info |
+| POST | `/identity/node` | Get or create Node identity |
+
+### MCP
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/mcp` | Streamable HTTP MCP transport endpoint |
 
 -----
 
 ## What Colony Is Not
 
-Colony is not an agent framework. It does not replace OpenClaw, Hermes, LangGraph, or similar. It mounts into them.
+Colony does not replace your agent harness. It is the layer underneath. OpenClaw handles communication, Claude Code handles code, Codex handles CI. Colony handles memory, identity, and cognitive state.
 
-Colony is not an LLM. It inherits LLM credentials from its host.
+Colony does not ship its own LLM client. It inherits LLM credentials from its host harness at runtime. The cognition channel routes through OpenClaw's `sessions_spawn`. Standalone mode uses credentials from `.env`.
 
-Colony is not a vector database. It uses Neo4j for graph memory and configurable embedding pipelines for vectors.
+Colony is not a vector database. It uses Neo4j for graph storage and has an embedding pipeline, but it is not a general-purpose vector store.
 
-Colony is not a RAG library. RAG is one capability among many. Colony also handles goals, relationships, autonomy, identity, and (on the roadmap) networking and federation.
+Colony is not an agent framework. It does not run agents. It provides the infrastructure that makes agents smarter: shared memory, commitment tracking, affect modeling, pattern detection, and world knowledge that persists across sessions and flows across tools.
 
 -----
 
 ## Roadmap
 
-Colony ships in phases. The intelligence system is v1.0. Each phase expands the shared intelligence into a larger surface.
+### Now (v0.6.0)
 
-### Phase 1: Intelligence System (Shipped)
+- 36 wired subsystems, 57+ API endpoints
+- MCP server for Claude Code, Codex, Crush
+- Multi-harness shared intelligence layer
+- Neo4j + SQLite world model backends
+- Cognitive architecture: commitments, affect, shared facts, patterns, surprise
+- Event journal with replay
+- Adaptive context compression
+- Full lifecycle CLI (start/stop/status/validate/doctor)
 
-Single-node Colony mounted into a host harness. 35 subsystems wired. Everything described above in "What Colony Is Today."
+### Next
 
-### Phase 2: Multimodal (Shipped)
+- More MCP tools as cognitive subsystems grow
+- Remote MCP transport for CI and team setups
+- Enhanced provenance tracking across all stores
+- Response gate PII and injection interception testing
+- SuperColony Network architecture spec
 
-Text-only retrieval was the original default. Phase 2 adds a multimodal toggle.
+### Future
 
-A second index runs alongside the text index for image embeddings. Image-containing content routes to a multimodal embedder (Qwen3-VL-Embedding-8B or equivalent per tier). Text queries fan out across both indexes. Image queries hit the multimodal index only. Migration from text-only to multimodal is additive: the existing text index stays intact. Backfill of historical image content is opt-in.
+- SuperColony Network: independent colonies sharing knowledge and compute on a global substrate
+- Colony federation and trust propagation
+- Cross-colony commitment tracking
+- Stigmergic coordination protocol
 
-Users who stay text-only keep the same retrieval path they had in v1.0. Flipping the toggle extends Colony into images without changing what was already there.
-
-### Phase 3: Colony Meshing
-
-The first networking release. A single user's Colony expands from one node to a mesh of nodes they own. The mesh uses SWIM gossip for health monitoring and Raft-inspired election for failover.
-
-Node roles:
-
-| Role | Description |
-|---|---|
-| Queen | Main node. Canonical state, point of contact for the owner, orchestration. One per Colony. |
-| Alate | Overlay on a Worker. The highest-capability Worker in the Colony, designated as Queen-successor. Still executes tasks. Promotes to Queen on failure, either temporarily (until Queen returns) or permanently (when the owner "Crowns" it). |
-| Worker | Executes tasks from the Queen's queue. All non-Queen nodes are Workers. |
-| Sentinel | Overlay on any node. Validates the SuperColony chain. Ships with Phase 5. |
-
-Capabilities added in Phase 3:
-
-- Node registration via single-use link tokens (15-min TTL, capability-allowlisted)
-- Automatic Alate selection based on resource score (GPU VRAM, RAM, local models, API keys)
-- Raft-inspired leader election on Queen failure
-- SWIM gossip for node health monitoring across the mesh
-- Shared state across the Colony (Redis-backed canonical registry, SQLite node caches)
-
-A single-node Colony is still a Colony. That node is both Queen and (implicitly) Alate. Phase 3 does not force you to add nodes. It unlocks the ability to grow when you are ready.
-
-### Phase 4: Federation
-
-Phase 4 lets independent Colonies communicate under explicit trust. Your Colony can federate with another user's Colony. A team can form a shared Federation from each member's Colony.
-
-Trust levels (0 to 4, strictly increasing permissions):
-
-| Level | Name | Capabilities |
-|---|---|---|
-| 0 | Discovery | See each other's existence. No data exchange. |
-| 1 | Verified | Exchange capability lists and health. Cryptographic identity confirmed. |
-| 2 | Trusted | Post tasks to each other's queue. No memory sharing. |
-| 3 | Allied | Query each other's memory graph (with redaction). |
-| 4 | Full Mesh | Full bidirectional memory sync with redaction. |
-
-Capabilities added in Phase 4:
-
-- Cryptographic identity exchange and trust negotiation
-- Signed, replay-protected message envelopes between Colonies (timestamp, nonce, Ed25519 signature)
-- Federated task delegation with capability gating (Trust 2+)
-- Federated memory queries with redaction (Trust 3+)
-- Skills marketplace for sharing capabilities between Colonies
-- Peer reliability tracking (uptime, response time, task success rate)
-
-Federation extends your Colony outward. A Colony with no federation peers keeps its full intelligence layer intact. When you federate, that intelligence starts exchanging with peers under the trust level you negotiate.
-
-### Phase 5: SuperColony Network
-
-Phase 5 ships the global external network. Independent Colonies worldwide discover each other, exchange information under limited trust, and participate in a shared cryptographic chain.
-
-ColonyChain (CNP) is the blockchain backbone:
-
-- Genesis Sentinel creates the genesis block. Its hash becomes the network ID.
-- Proof-of-Work registration prevents spam (difficulty 22).
-- Sentinels validate blocks and maintain the ledger.
-- NAT traversal (address probe, rendezvous, relay) handles nodes behind firewalls.
-- Shamir's Secret Sharing handles identity recovery.
-
-Capabilities added in Phase 5:
-
-- Sentinel discovery (DNS SRV, bootstrap seed list, roster propagation)
-- Gossip-based peer discovery across Colonies (no central registry)
-- Global inter-Colony messaging under explicit trust policies
-- Version enforcement and migration support
-- HMAC-protected roster persistence
-- The SuperColony Network itself: the global substrate where any Colony can participate or abstain
-
-Phase 5 is when Colony becomes what it is designed to be. A global mesh of agent intelligence, where your agents coordinate with other agents on your terms.
-
------
-
-## Installation Profiles
-
-Phase 1 installs auto-detect your hardware and select an embedding + reranker stack. Current defaults:
-
-| Memory | Embedder | Reranker |
-|---|---|---|
-| 0 to 4 GB | all-MiniLM-L6-v2 | (none) |
-| 4 to 8 GB | nomic-embed-text-v1.5 | (none) |
-| 8 to 16 GB | Qwen3-Embedding-0.6B | bge-reranker-v2-m3 |
-| 16 to 32 GB | Qwen3-Embedding-4B | Qwen3-Reranker-0.6B |
-| 32 to 64 GB | Qwen3-Embedding-8B | Qwen3-Reranker-4B |
-| 64 to 128 GB | Qwen3-Embedding-8B | Qwen3-Reranker-8B |
-| 128 to 256 GB | Harrier-OSS-v1-27B | Qwen3-Reranker-8B |
-| 256 GB+ | Harrier-OSS-v1-27B | Qwen3-Reranker-8B |
-
-Phase 2 adds parallel multimodal variants for each tier.
+v1.0.0 ships when the SuperColony Network is operational with all supporting features and the architecture is determined stable.
 
 -----
 
 ## Development
 
-### Setup
-
 ```bash
 git clone https://github.com/Aevonix/ColonyAI.git
-cd colony
+cd ColonyAI/sidecar
 
-# TypeScript plugin
+# Python
+pip install -e ".[dev]"
+pytest tests/ -v                    # 245 unit tests
+COLONY_API_KEY=test pytest tests/e2e/ -v   # 77 E2E tests (needs sidecar)
+
+# TypeScript
+cd ../
 npm install
-
-# Python sidecar
-cd sidecar
-pip install -e ".[dev,neo4j,lancedb]"
+npm run build                       # Compiles + type-checks
+npm test                            # 151 TypeScript tests
 ```
 
-### Tests
+### Test Counts
 
-```bash
-npm test                         # TypeScript
-cd sidecar && PYTHONPATH=. pytest # Python
-npm run test:integration         # integration (requires running sidecar)
-```
+| Suite | Count |
+|---|---|
+| Python unit tests | 245 |
+| TypeScript tests | 151 |
+| E2E integration tests | 77 |
+| MCP unit tests | 51 |
 
-### Type Generation
+### Contributing
 
-After modifying Python schemas:
-
-```bash
-npm run generate-types
-```
-
-Exports the OpenAPI spec and regenerates `src/types-generated.ts`.
-
-### Project Structure
-
-```
-colony/
-├── src/                      # TypeScript plugin (thin HTTP client)
-├── sidecar/                  # Python sidecar (stateful, 35 subsystems)
-│   └── colony_sidecar/
-│       ├── api/              # FastAPI routers + schemas
-│       ├── autonomy/         # Autonomy loop
-│       ├── briefings/        # Proactive briefing engine
-│       ├── chain/            # Cryptographic identity + keys + node certs
-│       ├── contacts/         # Relationship store
-│       ├── delivery/         # Proactive message bridge
-│       ├── events/           # WebSocket event stream
-│       ├── gate/             # 7-layer response gate
-│       ├── goals/            # DAG goal engine
-│       ├── identity_bootstrap/ # Self-knowledge seeding
-│       ├── intelligence/     # Graph, cognition, synthesis, learning
-│       ├── models/           # Shared Pydantic models
-│       ├── reasoning/        # ReasoningLoop + ToolExecutor
-│       ├── redact/           # Content redaction
-│       ├── research/         # Background research pipeline
-│       ├── router/           # LLMRouter
-│       ├── secrets/          # Encrypted vault
-│       ├── sessions/         # Session management
-│       ├── skills/           # Skills registry
-│       ├── task_queue/       # Task queue + scheduler + workers
-│       ├── tools/            # Colony-native tool definitions
-│       ├── vector/           # Embedding pipeline
-│       └── world_model/      # Entity graph
-├── Dockerfile
-├── docker-compose.yml
-└── package.json
-```
-
------
-
-## OpenClaw Integration
-
-### Plugin Installation
-
-```bash
-npm install @aevonix/colonyai
-```
-
-### Plugin Configuration
-
-```json
-{
-  "plugins": {
-    "colony": {
-      "sidecarUrl": "http://127.0.0.1:7777",
-      "apiKey": "your-api-key",
-      "ownReasoningLoop": true,
-      "ownMemoryCapability": true,
-      "ownContextEngine": true,
-      "forwardProactiveDeliveries": true
-    }
-  }
-}
-```
-
-The plugin registers 35 capabilities (memory, consolidate, signals, embed, context, reasoning, response_gate, goals, contacts, briefings, world_model, cognition, research, delivery, synthesis, learning, skills, identity, secrets, autonomy, sessions, task_queue, events, event_journal, context_compression, skill_sandbox, commitments, affect, shared_facts, patterns, surprises, tom_extract, world_model_api, neo4j_backend, security_scanner) and 5 hooks (message_received, message_sending, llm_output, session_start, session_end).
-
------
-
-## Deployment
-
-### Docker
-
-```bash
-docker build -t colonyai .
-docker run -d \
-  -p 7777:7777 \
-  -e NEO4J_URI=bolt://neo4j:7687 \
-  -e NEO4J_PASSWORD=password \
-  -e COLONY_API_KEY=your-key \
-  colonyai
-```
-
-### Docker Compose
-
-Production setup with health checks and persistent volumes:
-
-```bash
-cp .env.example .env
-docker compose up -d
-```
-
-Includes Neo4j (APOC, memory tuning, health check) and the Colony sidecar (HuggingFace model cache volume).
-
------
-
-## Troubleshooting
-
-**Sidecar won't start.** Check the log: `colony start 2>&1 | tee colony.log`. Common causes: port 7777 in use (override with `COLONY_SIDECAR_PORT`), Neo4j unreachable (check `NEO4J_URI` and `NEO4J_PASSWORD`), Python below 3.11 (upgrade).
-
-**Memory returns empty results.** Neo4j not connected or no data yet. Verify with `curl http://localhost:7474` and `colony status | grep memory`.
-
-**Type generation fails.** Install dev dependencies: `cd sidecar && pip install -e ".[dev]"`, then `npm run generate-types`.
-
-**WebSocket events not received.** Check auth response. On connect, you should see `{"type":"auth_ok","scopes":[...]}`. If not, verify `COLONY_API_KEY` matches.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for versioning conventions, PR process, and coding standards.
 
 -----
 
 ## License
 
-[MIT](LICENSE) - Copyright 2026 Aevonix
-
------
-
-## Status
-
-**Current release:** v0.5.3, Intelligence System (Phase 1 + Phase 2 multimodal)
-
-**Subsystems wired:** 35 of 35
-
-**Endpoints:** 56+
-
-**Tests:** 194 Python, 151 TypeScript
-
-**Next up:** Phase 3 (Colony Meshing)
+[MIT](LICENSE)
