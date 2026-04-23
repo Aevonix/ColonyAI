@@ -32,11 +32,12 @@ class TestHarnessDefs:
             assert "config_format" in hdef, f"{hid} missing config_format"
             assert "source_tag" in hdef, f"{hid} missing source_tag"
 
-    def test_three_harnesses_defined(self):
-        assert len(HARNESS_DEFS) == 3
+    def test_four_harnesses_defined(self):
+        assert len(HARNESS_DEFS) == 4
         assert "claude-code" in HARNESS_DEFS
         assert "codex" in HARNESS_DEFS
         assert "crush" in HARNESS_DEFS
+        assert "opencode" in HARNESS_DEFS
 
     def test_source_tags_are_unique(self):
         tags = [hdef["source_tag"] for hdef in HARNESS_DEFS.values()]
@@ -57,7 +58,7 @@ class TestDetection:
         with patch("shutil.which") as mock_which:
             mock_which.return_value = "/usr/bin/claude"
             result = detect_harnesses()
-            assert len(result) == 3
+            assert len(result) == 4
             # All should be True since mock returns a path for any command
             assert all(result.values())
 
@@ -261,3 +262,58 @@ class TestUnknownHarness:
     def test_remove_unknown_returns_error(self):
         diff = remove_from_harness("unknown-harness")
         assert "Unknown harness" in diff
+
+
+# ---------------------------------------------------------------------------
+# OpenCode-specific tests (uses "mcp" key + "type": "stdio")
+# ---------------------------------------------------------------------------
+
+class TestOpenCodeConfig:
+    def test_add_to_opencode_uses_mcp_key(self, tmp_path):
+        config_path = tmp_path / "opencode.json"
+        config_path.write_text("{}")
+
+        with patch.object(Path, "expanduser", return_value=config_path):
+            diff = add_to_harness("opencode", "marc")
+            assert diff is not None
+
+            data = json.loads(config_path.read_text())
+            # OpenCode uses "mcp" not "mcpServers"
+            assert "mcp" in data
+            assert "mcpServers" not in data
+            colony = data["mcp"]["colony"]
+            assert colony["command"] == "colony"
+            assert colony["type"] == "stdio"
+            assert colony["env"]["COLONY_MCP_SOURCE"] == "opencode"
+
+    def test_claude_code_uses_mcpServers_key(self, tmp_path):
+        config_path = tmp_path / "claude.json"
+        config_path.write_text("{}")
+
+        with patch.object(Path, "expanduser", return_value=config_path):
+            add_to_harness("claude-code", "marc")
+
+            data = json.loads(config_path.read_text())
+            assert "mcpServers" in data
+            assert "mcp" not in data
+            # Claude Code does NOT include "type" field
+            assert "type" not in data["mcpServers"]["colony"]
+
+    def test_remove_from_opencode(self, tmp_path):
+        config_path = tmp_path / "opencode.json"
+        config_path.write_text("{}")
+
+        with patch.object(Path, "expanduser", return_value=config_path):
+            add_to_harness("opencode", "marc")
+            assert "colony" in json.loads(config_path.read_text())["mcp"]
+            remove_from_harness("opencode")
+            assert "colony" not in json.loads(config_path.read_text()).get("mcp", {})
+
+    def test_detect_opencode(self):
+        with patch("shutil.which") as mock_which:
+            def side_effect(cmd):
+                return "/usr/local/bin/opencode" if cmd == "opencode" else None
+            mock_which.side_effect = side_effect
+            result = detect_harnesses()
+            assert result["opencode"] is True
+            assert result["claude-code"] is False

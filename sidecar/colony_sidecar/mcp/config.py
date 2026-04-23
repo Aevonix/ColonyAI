@@ -22,6 +22,7 @@ HARNESS_DEFS = {
         "detect_cmds": ["claude"],
         "config_path": "~/.claude.json",
         "config_format": "json",
+        "mcp_key": "mcpServers",  # Key for MCP servers in config
         "source_tag": "claude-code",
     },
     "codex": {
@@ -36,7 +37,17 @@ HARNESS_DEFS = {
         "detect_cmds": ["crush"],
         "config_path": "~/.config/crush/crush.json",
         "config_format": "json",
+        "mcp_key": "mcpServers",
         "source_tag": "crush",
+    },
+    "opencode": {
+        "display": "OpenCode",
+        "detect_cmds": ["opencode"],
+        "config_path": "~/.config/opencode/opencode.json",
+        "config_format": "json",
+        "mcp_key": "mcp",  # OpenCode uses "mcp" not "mcpServers"
+        "mcp_type": "stdio",  # OpenCode requires type field
+        "source_tag": "opencode",
     },
 }
 
@@ -54,9 +65,9 @@ def detect_harnesses() -> dict[str, bool]:
 # Config writers
 # ---------------------------------------------------------------------------
 
-def _mcp_config(contact_id: str, source: str) -> dict[str, Any]:
+def _mcp_config(contact_id: str, source: str, include_type: bool = False) -> dict[str, Any]:
     """Return the MCP server config block for Colony."""
-    return {
+    config = {
         "command": "colony",
         "args": ["mcp"],
         "env": {
@@ -66,6 +77,9 @@ def _mcp_config(contact_id: str, source: str) -> dict[str, Any]:
             "COLONY_MCP_SOURCE": source,
         },
     }
+    if include_type:
+        config["type"] = "stdio"
+    return config
 
 
 def _read_json(path: Path) -> dict:
@@ -82,16 +96,20 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def _add_to_json_config(config_path: str, contact_id: str, source: str, dry_run: bool = False) -> str | None:
+def _add_to_json_config(hdef: dict, contact_id: str, source: str, dry_run: bool = False) -> str | None:
     """Add Colony to a JSON-format harness config. Returns diff description or None if already present."""
+    config_path = hdef["config_path"]
+    mcp_key = hdef.get("mcp_key", "mcpServers")
+    needs_type = hdef.get("mcp_type") == "stdio"
+    
     path = Path(config_path).expanduser()
     data = _read_json(path)
 
-    if "mcpServers" not in data:
-        data["mcpServers"] = {}
+    if mcp_key not in data:
+        data[mcp_key] = {}
 
-    existing = data["mcpServers"].get("colony")
-    new_config = _mcp_config(contact_id, source)
+    existing = data[mcp_key].get("colony")
+    new_config = _mcp_config(contact_id, source, include_type=needs_type)
 
     if existing == new_config:
         return None  # Already configured identically
@@ -100,7 +118,7 @@ def _add_to_json_config(config_path: str, contact_id: str, source: str, dry_run:
     new_desc = json.dumps(new_config, indent=2)
 
     if not dry_run:
-        data["mcpServers"]["colony"] = new_config
+        data[mcp_key]["colony"] = new_config
         _write_json(path, data)
 
     return f"  Old: {old_desc[:100]}\n  New: {new_desc[:100]}"
@@ -142,13 +160,12 @@ def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False) -> s
     if not hdef:
         return f"  Unknown harness: {harness_id}"
 
-    config_path = hdef["config_path"]
     source = hdef["source_tag"]
 
     if hdef["config_format"] == "json":
-        return _add_to_json_config(config_path, contact_id, source, dry_run)
+        return _add_to_json_config(hdef, contact_id, source, dry_run)
     elif hdef["config_format"] == "toml":
-        return _add_to_toml_config(config_path, contact_id, source, dry_run)
+        return _add_to_toml_config(hdef["config_path"], contact_id, source, dry_run)
 
     return None
 
@@ -160,12 +177,13 @@ def remove_from_harness(harness_id: str, dry_run: bool = False) -> str | None:
         return f"  Unknown harness: {harness_id}"
 
     path = Path(hdef["config_path"]).expanduser()
+    mcp_key = hdef.get("mcp_key", "mcpServers")
 
     if hdef["config_format"] == "json":
         data = _read_json(path)
-        if "mcpServers" in data and "colony" in data["mcpServers"]:
+        if mcp_key in data and "colony" in data[mcp_key]:
             if not dry_run:
-                del data["mcpServers"]["colony"]
+                del data[mcp_key]["colony"]
                 _write_json(path, data)
             return f"  Removed 'colony' from {hdef['display']} config"
         return None

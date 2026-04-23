@@ -31,7 +31,7 @@ colony init
 
 That one command handles dependencies, Neo4j, hardware scan, model download, plugin config, sidecar start, health verify, and doctor check.
 
-### With Claude Code, Codex, or Crush
+### With Claude Code, Codex, Crush, or OpenCode
 
 ```bash
 pip install colonyai
@@ -40,7 +40,7 @@ colony start -d      # Start sidecar as daemon
 colony mcp setup     # Auto-detect and configure connected harnesses
 ```
 
-The MCP server exposes 14 tools, 4+ resources, and 3 prompts to any connected coding harness. Claude Code gets them automatically. Codex and Crush get them through their MCP integration.
+The MCP server exposes 14 tools, 4+ resources, and 3 prompts to any connected coding harness. Claude Code and OpenCode get them automatically. Codex and Crush get them through their MCP integration.
 
 ### Multi-harness setup
 
@@ -178,7 +178,7 @@ Everything below works now.
 
 ### Key Properties
 
-**Multi-harness by design.** Colony is not tied to one runtime. OpenClaw talks HTTP. Claude Code, Codex, and Crush talk MCP. All share the same intelligence layer. Add harnesses selectively. Run them simultaneously.
+**Multi-harness by design.** Colony is not tied to one runtime. OpenClaw talks HTTP. Claude Code, OpenCode, Codex, and Crush talk MCP. All share the same intelligence layer. Add harnesses selectively. Run them simultaneously.
 
 **No LLM keys required locally.** Colony inherits LLM credentials from its host at runtime. For standalone use or plugin development, supply them in `.env` to exercise the sidecar directly.
 
@@ -259,6 +259,7 @@ Supported harnesses:
 | Claude Code | JSON (`~/.claude.json`) | `claude` CLI |
 | Codex | TOML (`~/.codex/config.toml`) | `codex` CLI |
 | Crush | JSON (`~/.crush/mcp.json`) | `crush` CLI |
+| OpenCode | JSON (`~/.config/opencode/opencode.json`) | `opencode` CLI |
 
 ### Running the MCP Server
 
@@ -283,11 +284,11 @@ Two deployable units. A thin TypeScript plugin that loads into OpenClaw, and a P
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Host Harnesses                                                          │
 │                                                                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
-│  │  OpenClaw     │  │ Claude Code  │  │    Codex     │  │   Crush    │  │
-│  │  (HTTP/WS)   │  │   (MCP)      │  │    (MCP)     │  │   (MCP)    │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └─────┬──────┘  │
-│         └─────────────────┴─────────────────┴───────────────┘         │
+│  ┌──────────┐  ┌────────────┐  ┌─────────┐  ┌─────────┐  ┌──────────┐  │
+│  │ OpenClaw │  │ Claude Code│  │  Codex  │  │  Crush  │  │ OpenCode │  │
+│  │ (HTTP/WS)│  │   (MCP)    │  │  (MCP)  │  │  (MCP)  │  │  (MCP)   │  │
+│  └────┬─────┘  └─────┬──────┘  └────┬────┘  └────┬────┘  └────┬─────┘  │
+│       └──────────────┴──────────────┴──────────────┴───────────┘         │
 └──────────────────────────────┬──────────────────────────────────────────┘
                                │
             ┌──────────────────┴──────────────────┐
