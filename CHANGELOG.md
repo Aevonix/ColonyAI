@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.9 (2026-04-23)
+
+Wizard fixes: Neo4j docker-run and multimodal EOF.
+
+### Fixed
+- Neo4j startup now uses `docker run` instead of docker-compose.yml
+- Multimodal prompt now uses `_prompt()` for EOF handling
+- OpenClaw config set error handling improved
+
 ## 0.6.8 (2026-04-23)
 
 Colony init wizard: non-interactive mode and all piped input issues fixed.
