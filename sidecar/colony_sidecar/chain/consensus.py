@@ -157,6 +157,19 @@ class RaftNode:
         """Return consensus metrics for monitoring."""
         return dict(self._metrics)
 
+    def _spawn_send(self, peer_id: str, msg: dict) -> None:
+        """Spawn a message send task with error logging.
+        
+        Fire-and-forget is intentional for Raft — we don't block consensus 
+        on network delays. But we log failures for debugging.
+        """
+        async def _send_with_logging():
+            try:
+                await self.send_message(peer_id, msg)
+            except Exception as e:
+                logger.warning("Failed to send %s to %s: %s", msg.get("type"), peer_id, e)
+        asyncio.create_task(_send_with_logging())
+
     async def start(self) -> None:
         self._running = True
         self._tasks = [
@@ -218,11 +231,9 @@ class RaftNode:
             last_log_hash=self.last_block_hash,
         )
         for peer_id in self.peer_ids:
-            asyncio.create_task(
-                self.send_message(
-                    peer_id,
-                    {"type": "VOTE_REQUEST", "data": self._vote_request_dict(req)},
-                )
+            self._spawn_send(
+                peer_id,
+                {"type": "VOTE_REQUEST", "data": self._vote_request_dict(req)},
             )
 
         # Single-node cluster: self-vote satisfies quorum immediately
@@ -301,7 +312,7 @@ class RaftNode:
             },
         }
         for peer_id in self.peer_ids:
-            asyncio.create_task(self.send_message(peer_id, hb))
+            self._spawn_send(peer_id, hb)
 
     async def handle_heartbeat(self, data: dict) -> None:
         hb = Heartbeat(**data)
@@ -332,7 +343,7 @@ class RaftNode:
             "data": {"term": self.current_term, "block": block.to_dict()},
         }
         for peer_id in self.peer_ids:
-            asyncio.create_task(self.send_message(peer_id, proposal))
+            self._spawn_send(peer_id, proposal)
 
     async def handle_propose_block(self, data: dict) -> None:
         from .block import Block as BlockCls
@@ -539,7 +550,7 @@ class RaftNode:
             "data": {"term": self.current_term, "block": block.to_dict()},
         }
         for peer_id in self.peer_ids:
-            asyncio.create_task(self.send_message(peer_id, commit_msg))
+            self._spawn_send(peer_id, commit_msg)
 
         await self.on_commit(block)
         self.height = block.index
