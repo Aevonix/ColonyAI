@@ -12,15 +12,15 @@ Persistent memory and cognitive infrastructure for AI agents and coding tools. O
 
 Colony gives your agents and coding tools a shared, persistent intelligence layer. Commitments, affect state, world knowledge, patterns, and facts that outlive any session and flow across every tool you use.
 
-Your OpenClaw agent remembers what you promised last week. Claude Code knows your emotional state from this morning's conversation. Codex can look up the architecture decisions your agent catalogued. Same brain, different hands.
+When your agent promises to do something in a chat, your coding tool sees that commitment. When a coding session extracts a new fact about your architecture, your agent gets it injected into context. One memory, many frontends.
 
-This works because Colony is not another agent. It is infrastructure. A sidecar process with a unified API and an MCP server that any harness can plug into.
+Colony is not another agent. It is infrastructure. A sidecar process with a unified API and an MCP server that any harness can plug into.
 
-**For OpenClaw:** Colony mounts as a plugin. The sidecar runs alongside the gateway, and OpenClaw communicates via HTTP/WebSocket. Context assembly, commitment tracking, affect state, and all 36 subsystems are available as part of every conversation turn.
+**For OpenClaw:** Colony mounts as a plugin. The sidecar runs alongside the gateway, communicating via HTTP/WebSocket. Context assembly, commitment tracking, affect state, and all 36 subsystems are available as part of every conversation turn.
 
 **For coding harnesses (Claude Code, Codex, Crush, OpenCode):** Colony exposes an MCP server with 14 tools, 4+ resources, and 3 prompts. Your coding tools can check commitments, look up facts, record affect, search the world model, and write back new knowledge, all through the standard MCP protocol.
 
-Both paths read and write to the same stores. The commitments you make in a chat with OpenClaw show up when Claude Code checks your workload. The facts your coding session extracts feed back into your agent's context assembly.
+Both paths read and write to the same stores. Any harness can observe or contribute to the same commitments, facts, and world model.
 
 The current release delivers 36 production subsystems across 57+ API endpoints. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony: personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design. The same pattern that makes ant colonies collectively intelligent without a central controller.
 
