@@ -2,11 +2,16 @@
 
 Tested on Spark 1 (DGX Spark, Ubuntu 24.04, aarch64) with Colony v0.6.7.
 
+## Status
+
+**Partially fixed in commit 54602f3** — Foundation laid, full implementation pending.
+
 ---
 
 ## Issue 1: Piped input doesn't reach all prompts
 
 **Severity:** Critical  
+**Status:** ✅ FIXED (EOF handling in _prompt)
 **Location:** `sidecar/colony_sidecar/setup.py` — `_prompt()` function
 
 **Problem:** The wizard uses `input()` for all prompts. When piping input via SSH (e.g., `printf "3\nmarc\n\n6\nY\n" | colony init`), only the first few prompts receive input. Later prompts get `EOFError` and crash.
@@ -48,6 +53,7 @@ Start the Colony sidecar now? [Y/n] [Y]: Traceback (most recent call last):
 ## Issue 2: Hardware scan crashes on EOF, skips tier selection
 
 **Severity:** High  
+**Status:** ⏳ CLI args added, logic pending
 **Location:** `sidecar/colony_sidecar/setup.py` — tier selection + hardware scan
 
 **Problem:** The tier selection prompt is preceded by a hardware scan that calls `_probe_hardware()` which internally uses `input()` or similar blocking call. When stdin is exhausted, this crashes and tier selection is skipped entirely.
@@ -76,6 +82,7 @@ Select tier [0-7] [6]: Warning: You are sending unauthenticated requests to the 
 ## Issue 3: No config file output, only .env
 
 **Severity:** Medium  
+**Status:** ✅ FIXED (_write_config_yaml added)
 **Location:** `sidecar/colony_sidecar/setup.py`
 
 **Problem:** The wizard writes to `~/.env` but doesn't create a `~/.colony/config.yaml`. The original design expects a config file, but the wizard only produces environment variables.
@@ -105,6 +112,7 @@ cat: /home/aevonix/.colony/config.yaml: No such file or directory
 ## Issue 4: Defaults to localhost bind, no way to change via wizard
 
 **Severity:** Medium  
+**Status:** ⏳ CLI arg added, prompt pending
 **Location:** `sidecar/colony_sidecar/setup.py`
 
 **Problem:** `COLONY_SIDECAR_HOST` defaults to `127.0.0.1`. There's no prompt to change it. For headless servers (DGX Spark, VPS), the sidecar needs to bind to `0.0.0.0` to be accessible from other machines.
@@ -129,6 +137,7 @@ COLONY_SIDECAR_HOST=127.0.0.1
 ## Issue 5: Neo4j password prompt assumes auth is enabled
 
 **Severity:** Low  
+**Status:** ✅ FIXED (_check_neo4j_auth added)
 **Location:** `sidecar/colony_sidecar/setup.py` — Step 5
 
 **Problem:** The wizard prompts for Neo4j password, but if Neo4j was started with `NEO4J_AUTH=none`, the password prompt is confusing. Empty password is valid but the wizard doesn't explain this.
@@ -153,6 +162,7 @@ Step 5: Neo4j graph memory
 ## Issue 6: SQLite DBs scattered in home directory
 
 **Severity:** Low  
+**Status:** ⏳ colony_home created, paths pending
 **Location:** `sidecar/colony_sidecar/setup.py`
 
 **Problem:** Multiple SQLite databases are created in `~/` instead of `~/.colony/`:
@@ -180,6 +190,7 @@ Step 5: Neo4j graph memory
 ## Issue 7: No validation that selected tier matches hardware
 
 **Severity:** Medium  
+**Status:** ⏳ Pending
 **Location:** `sidecar/colony_sidecar/setup.py`
 
 **Problem:** Even when tier selection works, there's no validation that the selected tier is appropriate for the hardware. User can select tier 7 on a 4GB laptop.
@@ -198,6 +209,7 @@ Step 5: Neo4j graph memory
 ## Issue 8: Embedding model download happens during init, not first start
 
 **Severity:** Low  
+**Status:** ⏳ CLI arg added, logic pending
 **Location:** `sidecar/colony_sidecar/setup.py` — Step 7
 
 **Problem:** The wizard downloads the embedding model during `colony init`. For large models (harrier-oss-v1-27b is 27B params), this can take a long time and block the wizard.
