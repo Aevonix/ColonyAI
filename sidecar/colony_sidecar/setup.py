@@ -251,7 +251,7 @@ def _start_neo4j_docker(neo4j_password: str) -> bool:
 
 # ── OpenClaw plugin setup ───────────────────────────────────────────────────
 
-def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> bool:
+def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_interactive: bool = False) -> bool:
     """Configure Colony as an OpenClaw plugin. Returns True if successful."""
     if not _check_openclaw():
         print("  ⚠️ OpenClaw CLI not found in PATH")
@@ -909,7 +909,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     # Configure OpenClaw plugin now that we have the API key
     if oc_configured:
         print()
-        _configure_openclaw_plugin(values, colony_root)
+        _configure_openclaw_plugin(values, colony_root, non_interactive)
 
     print()
 
