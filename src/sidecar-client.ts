@@ -747,6 +747,7 @@ export class ColonySidecarClient {
   openEvents(
     onEvent: (event: HostEvent) => void,
     lastEventId?: string,
+    onDisconnect?: (code?: number, reason?: string) => void,
   ): { close: () => void } {
     const url = this.base.replace(/^http/, "ws") + "/v1/host/events";
     const ws = new WebSocket(url);
@@ -805,6 +806,14 @@ export class ColonySidecarClient {
       }
 
       onEvent(parsed as HostEvent);
+    });
+
+    ws.on("error", (err: Error) => {
+      onDisconnect?.(undefined, err.message);
+    });
+
+    ws.on("close", (code: number, reason: Buffer) => {
+      onDisconnect?.(code, reason.toString());
     });
 
     return {

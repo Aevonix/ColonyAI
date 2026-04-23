@@ -455,8 +455,8 @@ async def lifespan(app: FastAPI):
             world_store = WorldModelStore(WorldModelConfig(backend=_wm_backend))
             set_world_store(world_store)
             logger.info("WorldModelStore initialized (without connect)")
-        except Exception:
-            pass
+        except Exception as exc2:
+            logger.error("WorldModelStore fallback init also failed: %s", exc2)
 
     # --- 11. Cognition (MetaLearner) ---
     try:
