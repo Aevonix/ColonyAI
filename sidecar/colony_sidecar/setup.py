@@ -210,26 +210,42 @@ def _install_docker() -> bool:
 # ── Neo4j start ─────────────────────────────────────────────────────────────
 
 def _start_neo4j_docker(neo4j_password: str) -> bool:
-    """Start Neo4j via docker compose with the given password. Returns True on success."""
-    compose_path = Path(__file__).resolve().parents[2] / "docker-compose.yml"
-    if not compose_path.exists():
-        compose_path = Path("docker-compose.yml")
-    if not compose_path.exists():
-        print("  ⚠️ docker-compose.yml not found")
-        return False
-
+    """Start Neo4j via docker run. Returns True on success."""
+    # Check if neo4j-colony container already exists
     try:
         result = subprocess.run(
-            ["docker", "compose", "-f", str(compose_path), "up", "-d", "neo4j"],
-            capture_output=True, text=True, timeout=60,
-            env={**os.environ, "NEO4J_PASSWORD": neo4j_password},
+            ["docker", "ps", "-a", "--filter", "name=neo4j-colony", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10
         )
+        if "neo4j-colony" in result.stdout:
+            # Container exists, start it
+            subprocess.run(["docker", "start", "neo4j-colony"], capture_output=True, timeout=10)
+            return True
+    except Exception:
+        pass
+
+    # Create data directory
+    neo4j_data = Path.home() / ".colony" / "neo4j-data"
+    neo4j_data.mkdir(parents=True, exist_ok=True)
+
+    # Run Neo4j container
+    try:
+        cmd = [
+            "docker", "run", "-d",
+            "--name", "neo4j-colony",
+            "-p", "7474:7474",
+            "-p", "7687:7687",
+            "-e", f"NEO4J_AUTH=neo4j/{neo4j_password}",
+            "-v", f"{neo4j_data}:/data",
+            "neo4j:5.15"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            print(f"    ⚠️ docker compose failed: {result.stderr.strip()}")
+            print(f"    ⚠️ docker run failed: {result.stderr.strip()}")
             return False
         return True
     except Exception as exc:
-        print(f"    ⚠️ docker compose failed: {exc}")
+        print(f"    ⚠️ docker run failed: {exc}")
         return False
 
 
@@ -903,7 +919,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 print("  Both text and image vectors will be in the same space — cross-modal search works.")
                 print()
 
-                answer = input(_bold("  Enable multimodal? [y/N]: ")).strip().lower()
+                answer = _prompt("  Enable multimodal? [y/N]", "N", non_interactive).lower()
                 if answer in ("y", "yes"):
                     multimodal_enabled = "true"
                     multimodal_model = mm_model.model_id
