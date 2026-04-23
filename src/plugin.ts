@@ -584,8 +584,9 @@ class ColonyMemorySearchManager {
           identity: this.ctx.identity(),
           memory_id: memoryId,
         });
-        const entry = res.entries[0];
-        return { text: entry?.content ?? "", path: params.relPath };
+        const entry = res.entries?.[0];
+        if (!entry?.content) return { text: "", path: params.relPath };
+        return { text: entry.content, path: params.relPath };
       },
       () => ({ text: "", path: params.relPath }),
     );
@@ -2089,17 +2090,25 @@ function eventsLifecycleService(
           // Every other declared event type goes through the dispatcher,
           // which updates the cache-invalidation bus and runs any
           // attached hooks (e.g. skill_draft_approved → tool refresh).
-          dispatchHostEvent(event, {
-            cache: ctx.cache,
-            logger,
-            onSkillApproved: toolRegistrar
-              ? async () => {
-                  await toolRegistrar.refreshSkillTools();
-                }
-              : undefined,
-          });
+          try {
+            dispatchHostEvent(event, {
+              cache: ctx.cache,
+              logger,
+              onSkillApproved: toolRegistrar
+                ? async () => {
+                    await toolRegistrar.refreshSkillTools();
+                  }
+                : undefined,
+            });
+          } catch (dispatchErr) {
+            logger?.warn(`[colony] events: dispatch error on ${event.type} (${String(dispatchErr)})`);
+          }
         },
-        lastEventTimestamp);
+        lastEventTimestamp,
+        (code, reason) => {
+          logger?.warn(`[colony] events: WebSocket closed (code=${code} reason=${reason}) — proactive deliveries disabled until reconnect`);
+          subscription = null;
+        });
         logger?.info(
           `[colony] events: subscribed to ${ctx.config.sidecarUrl}/v1/host/events`,
         );
@@ -2216,26 +2225,24 @@ export function createColonyPlugin(): unknown {
       // Bootstrap identity so ctx.identity() returns colony_id / node_id /
       // trust_tier once resolved. Fire-and-forget — the first few turns
       // may see a partial identity until the sidecar responds.
-      ctx
-        .refreshIdentity()
-        .then((snap) => {
+      (async () => {
+        try {
+          const snap = await ctx.refreshIdentity();
           if (snap.colony_id || snap.node_id) {
             api.logger.info(
               `[colony] identity resolved colony_id=${snap.colony_id ?? "?"} node_id=${snap.node_id ?? "?"} tier=${snap.trust_tier ?? "unset"}`,
             );
           }
-        })
-        .then(() => ctx.verifyChain())
-        .then((snap) => {
-          if (snap.chain_valid) {
+          const verified = await ctx.verifyChain();
+          if (verified.chain_valid) {
             api.logger.info(
-              `[colony] chain verified${snap.signed_attestation ? " (signed attestation)" : ""}`,
+              `[colony] chain verified${verified.signed_attestation ? " (signed attestation)" : ""}`,
             );
           }
-        })
-        .catch(() => {
+        } catch {
           /* refreshIdentity / verifyChain never throw — belt-and-braces */
-        });
+        }
+      })();
 
       // Forward host LLM credentials if configured so the sidecar's
       // ReasoningLoop can talk to the provider without its own keys.

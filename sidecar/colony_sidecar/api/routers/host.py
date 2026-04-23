@@ -159,6 +159,18 @@ from colony_sidecar.api.schemas.host import (
 
 logger = logging.getLogger(__name__)
 
+# Background task bookkeeping — prevents garbage-collection of fire-and-forget
+# asyncio tasks (see https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task)
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_task(coro) -> asyncio.Task:
+    """Create an asyncio task, retain a reference, and auto-discard on completion."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 
 def _to_dict(obj):
     """Convert Pydantic models or other objects to plain dicts."""
@@ -862,7 +874,7 @@ async def memory_embed_async(body: dict) -> dict:
         except Exception as exc:
             _async_embed_tasks[task_id] = {"status": "failed", "error": str(exc)}
 
-    asyncio.create_task(_run())
+    _spawn_task(_run())
     return {"task_id": task_id, "status": "started"}
 
 
@@ -957,7 +969,7 @@ async def memory_backfill(body: BackfillRequest) -> BackfillResponse:
     _backfill_results: dict = getattr(router, "_backfill_results", {})
     router._backfill_results = _backfill_results
 
-    asyncio.create_task(_run())
+    _spawn_task(_run())
     return BackfillResponse(task_id=task_id, status="started")
 
 
@@ -1004,7 +1016,7 @@ async def memory_migrate(body: MigrateRequest) -> MigrateResponse:
     _migrate_results: dict = getattr(router, "_migrate_results", {})
     router._migrate_results = _migrate_results
 
-    asyncio.create_task(_run())
+    _spawn_task(_run())
     return MigrateResponse(task_id=task_id, status="started")
 
 
@@ -1435,7 +1447,7 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
                 content = ""
                 if incoming and incoming.content:
                     content = incoming.content[:500]
-                _aio.create_task(trigger_cognition(
+                _spawn_task(trigger_cognition(
                     trigger_type="signal_ingest",
                     context={
                         "signal_type": "engagement",
@@ -1477,7 +1489,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled
         if _cognition_enabled():
             import asyncio
-            asyncio.create_task(trigger_cognition(
+            _spawn_task(trigger_cognition(
                 trigger_type="turn_sync",
                 context={
                     "conversation_text": body.summary or "",
@@ -1493,7 +1505,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     try:
         if _tom_extractor is not None and _affect_store is not None and _facts_store is not None:
             import asyncio
-            asyncio.create_task(_run_tom_extraction(
+            _spawn_task(_run_tom_extraction(
                 conversation_text=body.summary or "",
                 contact_id=body.context.contact_id,
                 session_id=body.context.session_id,
