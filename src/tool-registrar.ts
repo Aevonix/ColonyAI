@@ -327,12 +327,25 @@ export function registerColonyTools(
     register(() => authTool as never, { name: authTool.name });
   };
 
+  let _refreshPromise: Promise<void> | null = null;
+
   const refreshSkillTools = async () => {
-    const tools = await fetchActiveSkillTools(ctx);
-    for (const tool of tools) {
-      if (knownSkillToolNames.has(tool.name)) continue;
-      knownSkillToolNames.add(tool.name);
-      register(() => tool as never, { name: tool.name });
+    // Debounce: if a refresh is already in progress, wait for it
+    if (_refreshPromise) {
+      return _refreshPromise;
+    }
+    _refreshPromise = (async () => {
+      const tools = await fetchActiveSkillTools(ctx);
+      for (const tool of tools) {
+        if (knownSkillToolNames.has(tool.name)) continue;
+        knownSkillToolNames.add(tool.name);
+        register(() => tool as never, { name: tool.name });
+      }
+    })();
+    try {
+      await _refreshPromise;
+    } finally {
+      _refreshPromise = null;
     }
   };
 

@@ -39,6 +39,7 @@ class SkillPermissions:
     allowed_read_paths: List[str] = field(default_factory=list)
     allowed_write_paths: List[str] = field(default_factory=list)
     allowed_env_vars: List[str] = field(default_factory=list)
+    allowed_imports: List[str] = field(default_factory=list)
     max_duration_secs: int = 60
     max_memory_mb: int = 256
 
