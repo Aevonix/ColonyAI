@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.16 (2026-04-23)
+
+Added OpenClaw plugin manifest for native plugin installation.
+
+### Added
+- `openclaw.plugin.json` manifest for `openclaw plugins install` support
+- Declares contextEngine and memory contracts
+- Config schema with sidecarUrl, apiKey, hostId settings
+
 ## 0.6.15 (2026-04-23)
 
 Improved OpenClaw plugin installation with better error handling.

@@ -1,83 +1,56 @@
 {
   "id": "colony",
-  "name": "@aevonix/colonyai",
-  "kind": "extension",
-  "enabledByDefault": true,
-  "description": "Colony intelligence sidecar - graph memory, autonomy loop, context assembly, safety pipeline",
+  "name": "Colony",
+  "description": "Colony intelligence sidecar — graph memory, context assembly, safety pipeline, autonomy loop. Mounts into OpenClaw as context engine and memory capability provider.",
+  "version": "0.6.16",
   "contracts": {
-    "contextEngines": ["colony"],
-    "memoryCapabilities": ["colony"],
-    "memoryEmbeddingProviders": ["colony"]
+    "contextEngine": true,
+    "memory": true
   },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable the Colony plugin"
+      },
       "sidecarUrl": {
         "type": "string",
-        "description": "URL for the Colony sidecar API (default: http://localhost:7777)"
+        "default": "http://127.0.0.1:7777",
+        "description": "URL of the Colony sidecar"
       },
       "apiKey": {
         "type": "string",
-        "description": "API key for Colony sidecar authentication (Authorization: Bearer). Optional for local dev."
-      },
-      "ownReasoningLoop": {
-        "type": "boolean",
-        "description": "Register Colony as the active agent harness (default: false)"
-      },
-      "ownMemoryCapability": {
-        "type": "boolean",
-        "description": "Register Colony as the active memory capability (default: false)"
-      },
-      "ownContextEngine": {
-        "type": "boolean",
-        "description": "Register Colony as the active context engine (default: false)"
+        "description": "API key for Colony sidecar authentication"
       },
       "hostId": {
         "type": "string",
-        "description": "Identity reported back to Colony for audit/scoping (default: openclaw)"
+        "default": "openclaw",
+        "description": "Host identifier for Colony"
       },
-      "hostLLM": {
-        "type": "object",
-        "description": "Host LLM configuration forwarded to the sidecar at startup",
-        "properties": {
-          "provider": { "type": "string" },
-          "apiKey": { "type": "string" },
-          "baseUrl": { "type": "string" },
-          "model": { "type": "string" }
-        }
+      "ownContextEngine": {
+        "type": "boolean",
+        "default": true,
+        "description": "Colony provides its own context engine implementation"
       },
-      "timeout": {
-        "type": "number",
-        "description": "Request timeout in milliseconds (default: 30000)"
-      },
-      "llmConfig": {
-        "type": "object",
-        "description": "LLM provider config to send to sidecar (auto-detected from OpenClaw config if omitted)",
-        "properties": {
-          "provider": {
-            "type": "string",
-            "description": "LLM provider: anthropic, openai, zai, or local"
-          },
-          "apiKey": {
-            "type": "string",
-            "description": "API key for the LLM provider"
-          },
-          "baseUrl": {
-            "type": "string",
-            "description": "Custom base URL for OpenAI-compatible providers"
-          },
-          "models": {
-            "type": "object",
-            "description": "Model IDs per tier: { small, medium, large }",
-            "properties": {
-              "small": { "type": "string" },
-              "medium": { "type": "string" },
-              "large": { "type": "string" }
-            }
-          }
-        }
+      "ownMemoryCapability": {
+        "type": "boolean",
+        "default": true,
+        "description": "Colony provides its own memory capability implementation"
       }
+    },
+    "required": ["sidecarUrl", "apiKey"]
+  },
+  "uiHints": {
+    "sidecarUrl": {
+      "label": "Sidecar URL",
+      "placeholder": "http://127.0.0.1:7777"
+    },
+    "apiKey": {
+      "label": "API Key",
+      "sensitive": true
     }
   }
 }
