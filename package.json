@@ -1,6 +1,6 @@
 {
   "name": "@aevonix/colonyai",
-  "version": "0.6.16",
+  "version": "0.6.17",
   "description": "Colony's intelligence sidecar — graph memory, autonomy loop, context assembly, safety pipeline — mountable into OpenClaw, Hermes, and other agent harnesses via the /v1/host API.",
   "type": "module",
   "main": "./dist/index.js",
@@ -63,6 +63,7 @@
     }
   },
   "dependencies": {
+    "@sinclair/typebox": "^0.34.0",
     "ws": "^8.18.0",
     "zod": "^3.23.0"
   },

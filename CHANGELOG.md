@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.17 (2026-04-23)
+
+Fixed missing npm dependency.
+
+### Fixed
+- Added `@sinclair/typebox` dependency (used by tool-registrar)
+
 ## 0.6.16 (2026-04-23)
 
 Added OpenClaw plugin manifest for native plugin installation.
