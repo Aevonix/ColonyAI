@@ -798,14 +798,22 @@ export class ColonySidecarClient {
           // pass it through so existing consumers that depend on the
           // hello frame keep working.
           authed = true;
-          onEvent(parsed as HostEvent);
+          try {
+            onEvent(parsed as HostEvent);
+          } catch {
+            /* ignore handler errors */
+          }
           return;
         }
         // Any other pre-auth-ok frame is unexpected; drop it.
         return;
       }
 
-      onEvent(parsed as HostEvent);
+      try {
+        onEvent(parsed as HostEvent);
+      } catch {
+        /* ignore handler errors */
+      }
     });
 
     ws.on("error", (err: Error) => {

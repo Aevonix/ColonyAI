@@ -393,6 +393,11 @@ class TurnSyncRequest(BaseModel):
     pending_tasks: List[str] = Field(default_factory=list)
     tools_used: List[str] = Field(default_factory=list)
     summary: Optional[str] = None
+    # Raw message fields — populated by Hermes provider and MCP tools.
+    # When structured fields are empty but raw messages are present,
+    # the sidecar runs extraction from the raw messages.
+    user_message: Optional[HostMessage] = None
+    assistant_message: Optional[HostMessage] = None
 
 
 class TurnSyncResponse(BaseModel):

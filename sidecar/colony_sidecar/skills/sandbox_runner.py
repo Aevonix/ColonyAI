@@ -105,7 +105,7 @@ def _peak_memory_kb() -> int:
         return 0
 
 
-async def _invoke(source: str, inputs: Dict[str, Any]) -> Any:
+async def _invoke(source: str, inputs: Dict[str, Any], allowed_imports: List[str] | None = None) -> Any:
     """Compile + exec the skill in a minimal namespace and call run()."""
     # Minimal builtins. The scanner already rejects the loudest offenders
     # at upload time; stripping them again at runtime is belt-and-braces
@@ -115,11 +115,12 @@ async def _invoke(source: str, inputs: Dict[str, Any]) -> Any:
     # ``import`` statement and ``class`` statement compile down to calls to
     # them, so without them even well-behaved skills can't run.
     import builtins as _bi
+    import importlib as _importlib
 
     _banned = {
         "eval", "exec", "compile", "open", "breakpoint", "input",
     }
-    _safe_dunders = {"__import__", "__build_class__", "__name__", "__doc__"}
+    _safe_dunders = {"__build_class__", "__name__", "__doc__"}
 
     safe_builtins: Dict[str, Any] = {}
     for name in dir(_bi):
@@ -129,7 +130,30 @@ async def _invoke(source: str, inputs: Dict[str, Any]) -> Any:
             continue
         safe_builtins[name] = getattr(_bi, name)
 
+    # Replace bare __import__ with a whitelist-enforcing wrapper.
+    # Pre-load declared modules so "from X import Y" works without
+    # hitting __import__ for declared modules.
+    declared_modules: set[str] = set(allowed_imports or [])
+    _original_import = _bi.__import__
+    preloaded: Dict[str, Any] = {}
+    for mod_name in declared_modules:
+        try:
+            preloaded[mod_name] = _importlib.import_module(mod_name)
+        except ImportError:
+            pass  # will fail at use-time if the skill actually needs it
+
+    def _restricted_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name in preloaded:
+            return preloaded[name]
+        if name in declared_modules:
+            return _original_import(name, *args, **kwargs)
+        raise ImportError(f"Import of '{name}' not allowed (not in skill manifest)")
+
+    safe_builtins["__import__"] = _restricted_import
+
     namespace: Dict[str, Any] = {"__builtins__": safe_builtins, "__name__": "__skill__"}
+    # Inject pre-loaded modules into namespace so top-level imports resolve
+    namespace.update(preloaded)
     code = compile(source, "<skill>", "exec")
     exec(code, namespace)  # noqa: S102
 
@@ -163,6 +187,7 @@ def main() -> int:
 
     source: str = request.get("source", "")
     inputs: Dict[str, Any] = request.get("inputs") or {}
+    allowed_imports: List[str] = request.get("allowed_imports") or []
     limits: Dict[str, Any] = request.get("limits") or {}
 
     mem_mb = int(limits.get("mem_mb") or 256)
@@ -179,7 +204,7 @@ def main() -> int:
         pass
 
     try:
-        output = asyncio.run(_invoke(source, inputs))
+        output = asyncio.run(_invoke(source, inputs, allowed_imports))
         _emit({
             "status": "success",
             "output": _fallback_repr(output),
