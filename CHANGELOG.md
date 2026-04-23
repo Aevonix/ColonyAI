@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.15 (2026-04-23)
+
+Improved OpenClaw plugin installation with better error handling.
+
+### Fixed
+- Check Node.js version before npm install (requires v22.16+)
+- Retry npm install with `sudo` on EACCES permission errors
+- Clear guidance when Node version is too old
+- Better error messages and next steps
+
 ## 0.6.14 (2026-04-23)
 
 Fix: OpenClaw plugin auto-install via npm.

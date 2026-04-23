@@ -271,27 +271,55 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
                 print("  Install Node.js and re-run 'colony init' to complete plugin setup.")
                 return False
         else:
-            # Check if Colony npm package is installed globally
-            print("  Checking Colony plugin installation...")
-            result = subprocess.run(
-                ["npm", "list", "-g", "@aevonix/colonyai", "--depth=0"],
-                capture_output=True, text=True, timeout=10
+            # Check Node.js version (plugin requires >= 22.16.0)
+            node_result = subprocess.run(
+                ["node", "--version"],
+                capture_output=True, text=True, timeout=5
             )
-            
-            if "@aevonix/colonyai" not in result.stdout:
-                # Package not installed, install it globally
-                print("  Installing @aevonix/colonyai globally...")
-                install_result = subprocess.run(
-                    ["npm", "install", "-g", "@aevonix/colonyai"],
-                    capture_output=True, text=True, timeout=120
-                )
-                if install_result.returncode != 0:
-                    print(f"  ⚠️ Failed to install Colony plugin: {install_result.stderr.strip()}")
-                    print("  Continuing with config-only setup...")
+            if node_result.returncode == 0:
+                node_version = node_result.stdout.strip().lstrip("v")
+                major = int(node_version.split(".")[0])
+                if major < 22:
+                    print(f"  ⚠️ Node.js v{node_version} found, but Colony plugin requires v22.16+")
+                    print("     Upgrade with: nvm install 22 && nvm use 22")
+                    print("     Or: brew install node@22")
+                    print("  Skipping plugin install — will configure OpenClaw only.")
                 else:
-                    print("  ✅ Colony plugin installed globally")
-            else:
-                print("  ✅ Colony plugin already installed")
+                    # Node version OK, proceed with npm install
+                    print("  Checking Colony plugin installation...")
+                    result = subprocess.run(
+                        ["npm", "list", "-g", "@aevonix/colonyai", "--depth=0"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    
+                    if "@aevonix/colonyai" not in result.stdout:
+                        # Package not installed, try to install globally
+                        print("  Installing @aevonix/colonyai globally...")
+                        install_result = subprocess.run(
+                            ["npm", "install", "-g", "@aevonix/colonyai"],
+                            capture_output=True, text=True, timeout=120
+                        )
+                        
+                        if install_result.returncode != 0:
+                            # Check if it was a permission error
+                            if "EACCES" in install_result.stderr or "permission denied" in install_result.stderr.lower():
+                                print("  ⚠️ Permission denied — trying with sudo...")
+                                sudo_result = subprocess.run(
+                                    ["sudo", "npm", "install", "-g", "@aevonix/colonyai"],
+                                    capture_output=True, text=True, timeout=120
+                                )
+                                if sudo_result.returncode != 0:
+                                    print(f"  ⚠️ Failed to install Colony plugin: {sudo_result.stderr.strip()[:200]}")
+                                    print("  Continuing with config-only setup...")
+                                else:
+                                    print("  ✅ Colony plugin installed globally (via sudo)")
+                            else:
+                                print(f"  ⚠️ Failed to install Colony plugin: {install_result.stderr.strip()[:200]}")
+                                print("  Continuing with config-only setup...")
+                        else:
+                            print("  ✅ Colony plugin installed globally")
+                    else:
+                        print("  ✅ Colony plugin already installed")
 
         # Enable the plugin in OpenClaw config
         print("  Configuring OpenClaw plugin settings...")
@@ -312,7 +340,8 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
         
         if config_errors:
             print(f"  ⚠️ Some config settings failed: {', '.join(config_errors)}")
-            print("  You may need to configure manually after plugin is installed.")
+            print("  This usually means the plugin isn't installed yet.")
+            print("  After installing the plugin, run: openclaw gateway restart")
         else:
             print("  ✅ Plugin config written to OpenClaw")
 
@@ -336,7 +365,6 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
     except Exception as exc:
         print(f"  ⚠️ OpenClaw plugin setup failed: {exc}")
         return False
-
 
 # ── .env helpers ────────────────────────────────────────────────────────────
 
