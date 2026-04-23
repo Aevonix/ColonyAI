@@ -79,12 +79,12 @@ def main() -> None:
     mcp_run.add_argument("--port", type=int, default=7778, help="HTTP port (for http transport)")
 
     mcp_setup = mcp_sub.add_parser("setup", help="Configure a coding harness to use Colony")
-    mcp_setup.add_argument("--harness", choices=["claude-code", "codex", "crush", "all"], default=None, help="Specific harness to configure")
+    mcp_setup.add_argument("--harness", choices=["claude-code", "codex", "crush", "opencode", "hermes", "all"], default=None, help="Specific harness to configure")
     mcp_setup.add_argument("--contact-id", default=None, help="Your identifier (skip prompt)")
     mcp_setup.add_argument("--dry-run", action="store_true", help="Show changes without writing")
 
     mcp_remove = mcp_sub.add_parser("remove", help="Remove Colony from a harness config")
-    mcp_remove.add_argument("--harness", choices=["claude-code", "codex", "crush", "all"], default=None, help="Specific harness to remove")
+    mcp_remove.add_argument("--harness", choices=["claude-code", "codex", "crush", "opencode", "hermes", "all"], default=None, help="Specific harness to remove")
     mcp_remove.add_argument("--dry-run", action="store_true", help="Show changes without writing")
 
     mcp_sub.add_parser("detect", help="Detect installed coding harnesses")
@@ -930,7 +930,7 @@ def _cmd_mcp(args) -> None:
 
         if not installed:
             print("  No coding harnesses detected.")
-            print("  Install one of: Claude Code, Codex, or Crush")
+            print("  Install one of: Claude Code, Codex, Crush, OpenCode, or Hermes")
             print("  Then run: colony mcp setup")
             return
 
