@@ -18,6 +18,8 @@ Colony is not another agent. It is infrastructure. A sidecar process with a unif
 
 **For OpenClaw:** Colony mounts as a plugin. The sidecar runs alongside the gateway, communicating via HTTP/WebSocket. Context assembly, commitment tracking, affect state, and all 36 subsystems are available as part of every conversation turn.
 
+**For Hermes:** Colony ships a MemoryProvider plugin that injects cognitive context before each turn and syncs turns back for extraction. Hermes also connects via MCP for direct tool access.
+
 **For coding harnesses (Claude Code, Codex, Crush, OpenCode):** Colony exposes an MCP server with 14 tools, 4+ resources, and 3 prompts. Your coding tools can check commitments, look up facts, record affect, search the world model, and write back new knowledge, all through the standard MCP protocol.
 
 Both paths read and write to the same stores. Any harness can observe or contribute to the same commitments, facts, and world model.
@@ -37,6 +39,32 @@ colony init
 
 That one command handles dependencies, Neo4j, hardware scan, model download, plugin config, sidecar start, health verify, and doctor check.
 
+### With Hermes
+
+```bash
+pip install colonyai
+colony init              # Choose Hermes as host framework
+pip install pyyaml        # Required for Hermes YAML config
+colony mcp setup          # Writes MCP config to ~/.hermes/config.yaml
+```
+
+Colony also ships a MemoryProvider plugin for Hermes that injects cognitive context before each turn and syncs turns back for extraction. Install it:
+
+```bash
+bash plugins/hermes-memory/install.sh
+```
+
+Then add to `~/.hermes/config.yaml`:
+
+```yaml
+memory:
+  provider: colony
+  config:
+    url: "http://127.0.0.1:7777"
+    api_key: "${COLONY_API_KEY}"
+    contact_id: "default"
+```
+
 ### With Claude Code, Codex, Crush, or OpenCode
 
 ```bash
@@ -50,7 +78,7 @@ The MCP server exposes 14 tools, 4+ resources, and 3 prompts to any connected co
 
 ### Multi-harness setup
 
-Colony supports running multiple harnesses simultaneously. OpenClaw for conversations, Claude Code for implementation, Codex for CI tasks. They share the same memory, commitments, and world model.
+Colony supports running multiple harnesses simultaneously. OpenClaw or Hermes for conversations, Claude Code for implementation, Codex for CI tasks. They share the same memory, commitments, and world model.
 
 ```bash
 colony init              # Choose all harnesses that apply
@@ -75,7 +103,7 @@ colony doctor             # Full subsystem check (34 checks)
 colony validate           # 5-step pipeline test, writes validation stamp
 ```
 
-**Prerequisites:** Python 3.11+, Docker (auto-installed by `colony init` if missing). For OpenClaw: an LLM key configured. For coding harnesses: the harness installed locally.
+**Prerequisites:** Python 3.11+, Docker (auto-installed by `colony init` if missing). For OpenClaw: an LLM key configured. For Hermes: PyYAML installed. For coding harnesses: the harness installed locally.
 
 -----
 
@@ -184,7 +212,7 @@ Everything below works now.
 
 ### Key Properties
 
-**Multi-harness by design.** Colony is not tied to one runtime. OpenClaw talks HTTP. Claude Code, OpenCode, Codex, and Crush talk MCP. All share the same intelligence layer. Add harnesses selectively. Run them simultaneously.
+**Multi-harness by design.** Colony is not tied to one runtime. OpenClaw talks HTTP. Hermes talks HTTP with a MemoryProvider plugin. Claude Code, OpenCode, Codex, and Crush talk MCP. All share the same intelligence layer. Add harnesses selectively. Run them simultaneously.
 
 **No LLM keys required locally.** Colony inherits LLM credentials from its host at runtime. For standalone use or plugin development, supply them in `.env` to exercise the sidecar directly.
 
@@ -266,6 +294,7 @@ Supported harnesses:
 | Codex | TOML (`~/.codex/config.toml`) | `codex` CLI |
 | Crush | JSON (`~/.crush/mcp.json`) | `crush` CLI |
 | OpenCode | JSON (`~/.config/opencode/opencode.json`) | `opencode` CLI |
+| Hermes | YAML (`~/.hermes/config.yaml`) | `hermes` CLI |
 
 ### Running the MCP Server
 
@@ -290,11 +319,15 @@ Two deployable units. A thin TypeScript plugin that loads into OpenClaw, and a P
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Host Harnesses                                                          │
 │                                                                         │
-│  ┌──────────┐  ┌────────────┐  ┌─────────┐  ┌─────────┐  ┌──────────┐  │
-│  │ OpenClaw │  │ Claude Code│  │  Codex  │  │  Crush  │  │ OpenCode │  │
-│  │ (HTTP/WS)│  │   (MCP)    │  │  (MCP)  │  │  (MCP)  │  │  (MCP)   │  │
-│  └────┬─────┘  └─────┬──────┘  └────┬────┘  └────┬────┘  └────┬─────┘  │
-│       └──────────────┴──────────────┴──────────────┴───────────┘         │
+│  ┌──────────┐  ┌──────────┐  ┌────────────┐  ┌─────────┐               │
+│  │ OpenClaw │  │  Hermes  │  │ Claude Code│  │  Codex   │               │
+│  │ (HTTP/WS)│  │(HTTP+Mem)│  │   (MCP)    │  │  (MCP)   │               │
+│  └────┬─────┘  └────┬─────┘  └─────┬──────┘  └────┬─────┘               │
+│       ┌──────────────┴──────────────┴──────────────┘                     │
+│  ┌─────────┐  ┌──────────┐        │                                     │
+│  │  Crush  │  │ OpenCode │        │                                     │
+│  │  (MCP)  │  │  (MCP)   │────────┘                                     │
+│  └─────────┘  └──────────┘                                              │
 └──────────────────────────────┬──────────────────────────────────────────┘
                                │
             ┌──────────────────┴──────────────────┐
