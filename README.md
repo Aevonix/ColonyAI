@@ -14,7 +14,13 @@ Colony gives your agents and coding tools a shared, persistent intelligence laye
 
 Your OpenClaw agent remembers what you promised last week. Claude Code knows your emotional state from this morning's conversation. Codex can look up the architecture decisions your agent catalogued. Same brain, different hands.
 
-This works because Colony is not another agent. It is infrastructure. A sidecar process with a unified API and an MCP server that any harness can plug into. OpenClaw talks HTTP. Claude Code talks MCP. Both read and write to the same stores. The commitments you make in a chat with OpenClaw show up when Claude Code checks your workload. The facts your coding session extracts feed back into your agent's context assembly.
+This works because Colony is not another agent. It is infrastructure. A sidecar process with a unified API and an MCP server that any harness can plug into.
+
+**For OpenClaw:** Colony mounts as a plugin. The sidecar runs alongside the gateway, and OpenClaw communicates via HTTP/WebSocket. Context assembly, commitment tracking, affect state, and all 36 subsystems are available as part of every conversation turn.
+
+**For coding harnesses (Claude Code, Codex, Crush, OpenCode):** Colony exposes an MCP server with 14 tools, 4+ resources, and 3 prompts. Your coding tools can check commitments, look up facts, record affect, search the world model, and write back new knowledge, all through the standard MCP protocol.
+
+Both paths read and write to the same stores. The commitments you make in a chat with OpenClaw show up when Claude Code checks your workload. The facts your coding session extracts feed back into your agent's context assembly.
 
 The current release delivers 36 production subsystems across 57+ API endpoints. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony: personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design. The same pattern that makes ant colonies collectively intelligent without a central controller.
 
@@ -233,7 +239,7 @@ The MCP server also exposes resources for context and prompts for guided interac
 
 ### Source Tracking
 
-Every write through the MCP server is tagged with a `provenance` field indicating which harness made the change. This is injected automatically from the `COLONY_MCP_SOURCE` environment variable. You can trace whether a commitment was created by Claude Code, Codex, or your OpenClaw agent.
+Every write through the MCP server is tagged with a `provenance` field indicating which harness made the change. This is injected automatically from the `COLONY_MCP_SOURCE` environment variable. It works with any harness: Claude Code, Codex, Crush, OpenCode, OpenClaw, or anything else that sets the variable. You can trace whether a commitment was created by your coding tool or your chat agent.
 
 ### Setup
 
