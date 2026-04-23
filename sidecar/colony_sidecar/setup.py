@@ -250,7 +250,7 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
         if not has_npm:
             print("  ⚠️ Node.js/npm not found — Colony plugin requires Node.js to build.")
             print("     Install Node.js: https://nodejs.org/ or via your package manager")
-            install_anyway = _prompt("  Continue with config-only setup? [y/N]", "N")
+            install_anyway = _prompt("  Continue with config-only setup? [y/N]", "N", non_interactive)
             if install_anyway.lower() not in ("y", "yes"):
                 print("  Install Node.js and re-run 'colony init' to complete plugin setup.")
                 return False
@@ -475,20 +475,30 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     print(_bold("Step 3: Host framework"))
     print()
-    print("  Colony is a sidecar — it connects to a host that provides LLM access.")
-    print()
-    print("  [1] OpenClaw (messaging agent platform)")
-    print("  [2] Hermes (full agent runtime)")
-    print("  [3] Claude Code (coding agent)")
-    print("  [4] Codex (coding agent)")
-    print("  [5] Crush (coding agent)")
-    print("  [6] Standalone (no host — Colony API only)")
-    print()
+    
+    # Non-interactive mode: use CLI args
+    if non_interactive and args and args.host_framework:
+        framework = args.host_framework
+        print(f"  Host framework: {framework} (non-interactive)")
+        host_choice = {"openclaw": "1", "hermes": "2", "claude-code": "3", "codex": "4", "crush": "5", "standalone": "6"}.get(framework, "6")
+    else:
+        print("  Colony is a sidecar — it connects to a host that provides LLM access.")
+        print()
+        print("  [1] OpenClaw (messaging agent platform)")
+        print("  [2] Hermes (full agent runtime)")
+        print("  [3] Claude Code (coding agent)")
+        print("  [4] Codex (coding agent)")
+        print("  [5] Crush (coding agent)")
+        print("  [6] Standalone (no host — Colony API only)")
+        print()
 
-    host_choice = _prompt("  Choose [1-6]", "1")
+        host_choice = _prompt("  Choose [1-6]", "1", non_interactive)
+        framework_map = {"1": "openclaw", "2": "hermes", "3": "claude-code", "4": "codex", "5": "crush", "6": "standalone"}
+        framework = framework_map.get(host_choice, "openclaw")
+    
     oc_configured = False
-    mcp_harnesses = []  # harnesses to configure via MCP
-    contact_id = None
+    mcp_harnesses = []
+    contact_id = args.contact_name if (args and args.contact_name) else None
 
     # Map choice to framework
     framework_map = {"1": "openclaw", "2": "hermes", "3": "claude-code", "4": "codex", "5": "crush", "6": "standalone"}
@@ -502,7 +512,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
             print("  \u26a0\ufe0f No OpenClaw config found at ~/.openclaw/openclaw.json")
 
         if oc_ok:
-            oc_plugin = _prompt("  Configure Colony as an OpenClaw plugin? [Y/n]", "Y")
+            oc_plugin = _prompt("  Configure Colony as an OpenClaw plugin? [Y/n]", "Y", non_interactive)
             if oc_plugin.lower() in ("y", "yes", ""):
                 oc_configured = True
         else:
@@ -525,7 +535,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 for i, hid in enumerate(options, 1):
                     print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
                 print()
-                mcp_choice = _prompt("  Connect which? (comma-separated, or 'all' or 'none') [all]", "all")
+                mcp_choice = _prompt("  Connect which? (comma-separated, or 'all' or 'none') [all]", "all", non_interactive)
                 if mcp_choice.lower() not in ("none", "n", "skip"):
                     if mcp_choice.lower() == "all" or not mcp_choice:
                         mcp_harnesses = options
@@ -534,7 +544,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                         mcp_harnesses = [options[i - 1] for i in indices if 1 <= i <= len(options)]
 
                 if mcp_harnesses:
-                    contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""))
+                    contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""), non_interactive)
         except ImportError:
             pass  # MCP SDK not installed, skip
 
@@ -545,7 +555,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         else:
             print("  \u26a0\ufe0f Hermes CLI not found — MCP setup will still write config.")
         mcp_harnesses = ["hermes"]
-        contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""))
+        contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""), non_interactive)
 
         # Offer MCP for additional coding harnesses
         try:
@@ -563,7 +573,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 for i, hid in enumerate(options, 1):
                     print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
                 print()
-                mcp_choice = _prompt("  Connect which? (comma-separated, or 'all' or 'none') [none]", "none")
+                mcp_choice = _prompt("  Connect which? (comma-separated, or 'all' or 'none') [none]", "none", non_interactive)
                 if mcp_choice.lower() not in ("none", "n", "", "skip"):
                     if mcp_choice.lower() == "all":
                         mcp_harnesses.extend(options)
@@ -595,14 +605,14 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 for i, hid in enumerate(options, 1):
                     print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
                 print()
-                extra = _prompt("  Also connect? (comma-separated, or 'none') [none]", "none")
+                extra = _prompt("  Also connect? (comma-separated, or 'none') [none]", "none", non_interactive)
                 if extra.lower() not in ("none", "n", ""):
                     indices = [int(x.strip()) for x in extra.split(",") if x.strip().isdigit()]
                     mcp_harnesses.extend([options[i - 1] for i in indices if 1 <= i <= len(options)])
         except ImportError:
             pass
 
-        contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""))
+        contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""), non_interactive)
 
     print()
 
@@ -613,7 +623,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print()
         print("  Docker is required for Neo4j (graph memory).")
         print()
-        install_docker = _prompt("  Install Docker now? [Y/n]", "Y")
+        install_docker = _prompt("  Install Docker now? [Y/n]", "Y", non_interactive)
         if install_docker.lower() in ("y", "yes", ""):
             if _install_docker():
                 print("  Waiting for Docker daemon...")
@@ -649,12 +659,12 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     if neo4j_ok:
         print(f"  ✅ Neo4j is already running ({neo4j_info})")
         print("  Enter the password this Neo4j instance was configured with.")
-        neo4j_password = _prompt("  Neo4j password", "")
+        neo4j_password = _prompt("  Neo4j password", "", non_interactive)
     elif docker_ok:
         print("  Neo4j is required for graph memory (persistent knowledge,")
         print("  connections, world model).")
         print()
-        start_neo4j = _prompt("  Start Neo4j via Docker? [Y/n]", "Y")
+        start_neo4j = _prompt("  Start Neo4j via Docker? [Y/n]", "Y", non_interactive)
         if start_neo4j.lower() in ("y", "yes", ""):
             neo4j_password = _candidate
             neo4j_generated = True
@@ -669,12 +679,12 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 print("  ❌ Failed to start Neo4j via Docker")
                 neo4j_generated = False
                 neo4j_password = _prompt(
-                    "  Enter Neo4j password (or leave blank to skip)", "",
+                    "  Enter Neo4j password (or leave blank to skip)", "", non_interactive
                 )
         else:
             neo4j_password = _prompt(
                 "  Enter Neo4j password (blank to skip, or accept generated)",
-                _candidate,
+                _candidate, non_interactive
             )
             neo4j_generated = (neo4j_password == _candidate)
     else:
@@ -682,7 +692,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print("  Memory will be degraded until Docker + Neo4j are set up.")
         neo4j_password = _prompt(
             "  Enter Neo4j password (blank to skip, or accept generated)",
-            _candidate,
+            _candidate, non_interactive
         )
         neo4j_generated = (neo4j_password == _candidate)
 
@@ -708,9 +718,15 @@ def run_init(root_dir: str | None = None, args=None) -> int:
             detected_tier = get_tier_by_memory(hw.vram_gb, hw.ram_gb)
             detected_index = TIERS.index(detected_tier)
 
-            print()
-            print(_bold("  Embedding + Reranker Tier Selection"))
-            print()
+            # Non-interactive mode: use CLI tier if provided
+            if non_interactive and args and args.tier is not None:
+                tier_index = args.tier
+                tier = TIERS[tier_index]
+                print(f"  Selected tier {tier_index}: {tier.label} (non-interactive)")
+            else:
+                print()
+                print(_bold("  Embedding + Reranker Tier Selection"))
+                print()
             print(f"  Detected: {hw.gpu_name} ({hw.vram_gb}GB VRAM, {hw.ram_gb}GB RAM)")
             print(f"  Recommended tier: {detected_tier.label}")
             print()
@@ -731,7 +747,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 print(f"        Estimated memory: {mem_str}")
             print()
 
-            choice = _prompt(f"  Select tier [0-{len(TIERS)-1}]", str(detected_index))
+            choice = _prompt(f"  Select tier [0-{len(TIERS)-1}]", str(detected_index), non_interactive)
             try:
                 tier_index = int(choice)
                 tier_index = max(0, min(tier_index, len(TIERS) - 1))
@@ -753,7 +769,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     print(f"  Reranker: {tier.text_reranker.model_id} ({tier.text_reranker.params})")
                 else:
                     print(f"  Reranker: none")
-                embed_mode = _prompt("  Choose: [1] Local model  [2] API embeddings  [3] Skip embeddings", "1")
+                embed_mode = _prompt("  Choose: [1] Local model  [2] API embeddings  [3] Skip embeddings", "1", non_interactive)
                 if embed_mode == "2":
                     embed_provider = "openai_api"
                     reranker_model = ""
@@ -774,16 +790,30 @@ def run_init(root_dir: str | None = None, args=None) -> int:
             embed_model = "sentence-transformers/all-MiniLM-L6-v2"
             embed_dims = "384"
 
+    # Get bind address and port from CLI args or prompt
+    bind_address = existing.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+    sidecar_port = existing.get("COLONY_SIDECAR_PORT", "7777")
+    
+    if non_interactive and args:
+        bind_address = args.bind
+        sidecar_port = str(args.port)
+    elif not non_interactive:
+        print(_bold("Step 6a: Bind Address"))
+        print("  The sidecar can bind to localhost (127.0.0.1) or all interfaces (0.0.0.0)")
+        bind_address = _prompt("  Bind address", bind_address, non_interactive)
+        sidecar_port = _prompt("  Port", sidecar_port, non_interactive)
+        print()
+
     values: dict[str, str] = {
-        "COLONY_SIDECAR_PORT": existing.get("COLONY_SIDECAR_PORT", "7777"),
-        "COLONY_SIDECAR_HOST": existing.get("COLONY_SIDECAR_HOST", "127.0.0.1"),
+        "COLONY_SIDECAR_PORT": sidecar_port,
+        "COLONY_SIDECAR_HOST": bind_address,
         "NEO4J_URI": existing.get("NEO4J_URI", "bolt://localhost:7687"),
         "NEO4J_USER": existing.get("NEO4J_USER", "neo4j"),
         "NEO4J_PASSWORD": neo4j_password or existing.get("NEO4J_PASSWORD", ""),
         "NEO4J_DATABASE": existing.get("NEO4J_DATABASE", "neo4j"),
         "WORLD_MODEL_BACKEND": existing.get("WORLD_MODEL_BACKEND", "neo4j" if neo4j_password else "sqlite"),
         "COLONY_API_KEY": existing.get("COLONY_API_KEY", secrets.token_urlsafe(32)),
-        "COLONY_CONTACTS_DB": existing.get("COLONY_CONTACTS_DB", "colony-contacts.db"),
+        "COLONY_CONTACTS_DB": existing.get("COLONY_CONTACTS_DB", str(colony_home / "data" / "contacts.db")),
         "COLONY_EMBED_PROVIDER": embed_provider,
         "COLONY_EMBED_MODEL": embed_model,
         "COLONY_EMBED_DIMS": embed_dims,
@@ -793,6 +823,11 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     _write_env(env_path, values)
     print(f"  ✅ Written to {env_path}")
+    
+    # Also write config.yaml for easier inspection
+    config_yaml_path = colony_home / "config.yaml"
+    _write_config_yaml(config_yaml_path, values, framework)
+    print(f"  ✅ Written to {config_yaml_path}")
     if neo4j_generated:
         print(
             "  🔐 Neo4j password was auto-generated and saved to .env — "
@@ -1010,7 +1045,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     print(_bold("Step 10: Start sidecar and verify"))
     print()
 
-    start_now = _prompt("  Start the Colony sidecar now? [Y/n]", "Y")
+    start_now = _prompt("  Start the Colony sidecar now? [Y/n]", "Y", non_interactive)
     sidecar_started = False
 
     if start_now.lower() in ("y", "yes", ""):
@@ -1071,7 +1106,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print()
         print("  OpenClaw config was updated. The gateway needs a restart to load the Colony plugin.")
         print("  This will briefly interrupt any active agent sessions.")
-        restart_now = _prompt("  Restart OpenClaw gateway now? [Y/n]", "Y")
+        restart_now = _prompt("  Restart OpenClaw gateway now? [Y/n]", "Y", non_interactive)
         if restart_now.lower() in ("y", "yes", ""):
             try:
                 result = subprocess.run(
