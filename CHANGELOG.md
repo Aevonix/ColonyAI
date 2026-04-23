@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.14 (2026-04-23)
+
+Fix: OpenClaw plugin auto-install via npm.
+
+### Fixed
+- Wizard now checks if `@aevonix/colonyai` is installed globally
+- Auto-installs via `npm install -g @aevonix/colonyai` if missing
+- Better error messages when config settings fail
+
 ## 0.6.13 (2026-04-23)
 
 Neo4j health check system with auto-recovery.
