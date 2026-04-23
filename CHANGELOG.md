@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.10 (2026-04-23)
+
+Fix: `--tier` CLI arg now correctly skips interactive tier selection.
+
+### Fixed
+- Tier CLI arg in non-interactive mode now properly skips the tier selection UI
+- Tier selection UI is now inside the else block for interactive mode
+
 ## 0.6.9 (2026-04-23)
 
 Wizard fixes: Neo4j docker-run and multimodal EOF.

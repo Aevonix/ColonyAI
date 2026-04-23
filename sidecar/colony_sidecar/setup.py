@@ -743,34 +743,35 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 print()
                 print(_bold("  Embedding + Reranker Tier Selection"))
                 print()
-            print(f"  Detected: {hw.gpu_name} ({hw.vram_gb}GB VRAM, {hw.ram_gb}GB RAM)")
-            print(f"  Recommended tier: {detected_tier.label}")
-            print()
-            print("  Available tiers (lower = less memory, faster startup):")
-            print()
+                print(f"  Detected: {hw.gpu_name} ({hw.vram_gb}GB VRAM, {hw.ram_gb}GB RAM)")
+                print(f"  Recommended tier: {detected_tier.label}")
+                print()
+                print("  Available tiers (lower = less memory, faster startup):")
+                print()
 
-            for i, t in enumerate(TIERS):
-                marker = " ← recommended" if i == detected_index else ""
-                emb = f"{t.text_embedder.model_id} ({t.text_embedder.params})" if t.text_embedder else "none"
-                rnk = f"{t.text_reranker.model_id} ({t.text_reranker.params})" if t.text_reranker else "none"
-                # Rough memory estimates (params * 2 bytes for FP16 + overhead)
-                emb_mem = _estimate_model_gb(t.text_embedder) if t.text_embedder else 0
-                rnk_mem = _estimate_model_gb(t.text_reranker) if t.text_reranker else 0
-                total_mem = emb_mem + rnk_mem
-                mem_str = f"~{total_mem:.1f}GB" if total_mem > 0 else "~0.5GB"
-                print(f"    [{i}] {t.memory_range}: {t.label}{marker}")
-                print(f"        Embedder: {emb} | Reranker: {rnk}")
-                print(f"        Estimated memory: {mem_str}")
-            print()
+                for i, t in enumerate(TIERS):
+                    marker = " ← recommended" if i == detected_index else ""
+                    emb = f"{t.text_embedder.model_id} ({t.text_embedder.params})" if t.text_embedder else "none"
+                    rnk = f"{t.text_reranker.model_id} ({t.text_reranker.params})" if t.text_reranker else "none"
+                    # Rough memory estimates (params * 2 bytes for FP16 + overhead)
+                    emb_mem = _estimate_model_gb(t.text_embedder) if t.text_embedder else 0
+                    rnk_mem = _estimate_model_gb(t.text_reranker) if t.text_reranker else 0
+                    total_mem = emb_mem + rnk_mem
+                    mem_str = f"~{total_mem:.1f}GB" if total_mem > 0 else "~0.5GB"
+                    print(f"    [{i}] {t.memory_range}: {t.label}{marker}")
+                    print(f"        Embedder: {emb} | Reranker: {rnk}")
+                    print(f"        Estimated memory: {mem_str}")
+                print()
 
-            choice = _prompt(f"  Select tier [0-{len(TIERS)-1}]", str(detected_index), non_interactive)
-            try:
-                tier_index = int(choice)
-                tier_index = max(0, min(tier_index, len(TIERS) - 1))
-            except ValueError:
-                tier_index = detected_index
+                choice = _prompt(f"  Select tier [0-{len(TIERS)-1}]", str(detected_index), non_interactive)
+                try:
+                    tier_index = int(choice)
+                    tier_index = max(0, min(tier_index, len(TIERS) - 1))
+                except ValueError:
+                    tier_index = detected_index
 
-            tier = TIERS[tier_index]
+                tier = TIERS[tier_index]
+
             spec = tier.text_embedder
             if spec:
                 embed_provider = "cuda" if hw.gpu_type == "cuda" else "cpu"
