@@ -311,24 +311,6 @@ class MultimodalSearchResponse(BaseModel):
     model: str = ""
 
 
-# --- Context ----------------------------------------------------------------
-
-class ContextAssembleRequest(BaseModel):
-    identity: HostIdentity
-    context: HostTurnContext
-    incoming_message: HostMessage
-    available_tools: Optional[List[str]] = None
-    citations_mode: Optional[Literal["off", "inline", "appendix"]] = None
-
-
-class ContextSection(BaseModel):
-    id: str
-    title: Optional[str] = None
-    body: str
-    priority: Optional[int] = None
-    citations: Optional[List[Dict[str, Any]]] = None
-
-
 class ContextAssembleResponse(BaseModel):
     sections: List[ContextSection] = []
     notices: Optional[List[str]] = None

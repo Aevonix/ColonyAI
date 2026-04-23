@@ -32,19 +32,20 @@ class TestHarnessDefs:
             assert "config_format" in hdef, f"{hid} missing config_format"
             assert "source_tag" in hdef, f"{hid} missing source_tag"
 
-    def test_four_harnesses_defined(self):
-        assert len(HARNESS_DEFS) == 4
+    def test_harnesses_defined(self):
+        assert len(HARNESS_DEFS) == 5
         assert "claude-code" in HARNESS_DEFS
         assert "codex" in HARNESS_DEFS
         assert "crush" in HARNESS_DEFS
         assert "opencode" in HARNESS_DEFS
+        assert "hermes" in HARNESS_DEFS
 
     def test_source_tags_are_unique(self):
         tags = [hdef["source_tag"] for hdef in HARNESS_DEFS.values()]
         assert len(tags) == len(set(tags)), "Source tags must be unique"
 
     def test_config_formats_are_valid(self):
-        valid = {"json", "toml"}
+        valid = {"json", "toml", "yaml"}
         for hid, hdef in HARNESS_DEFS.items():
             assert hdef["config_format"] in valid, f"{hid} has invalid format"
 
@@ -58,7 +59,7 @@ class TestDetection:
         with patch("shutil.which") as mock_which:
             mock_which.return_value = "/usr/bin/claude"
             result = detect_harnesses()
-            assert len(result) == 4
+            assert len(result) == 5
             # All should be True since mock returns a path for any command
             assert all(result.values())
 
