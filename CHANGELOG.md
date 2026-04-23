@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (2026-04-22)
+## 0.6.1 (2026-04-22)
 
 Colony MCP Server: shared intelligence across agent and coding harnesses.
 
