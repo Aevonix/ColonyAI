@@ -544,7 +544,13 @@ This avoids the "default" junk drawer problem. Every fact, commitment, and affec
 
 The `source` field is **not included in tool input schemas**. It is automatically injected by the MCP server from the `COLONY_MCP_SOURCE` environment variable. Tool callers should never set it manually — the MCP server always overrides it.
 
-When calling the sidecar API, the MCP server adds `source` as a query parameter or request body field. This ensures provenance is always accurate and can't be spoofed by the harness.
+**Important:** The sidecar API has its own `source` field that uses specific enum values (e.g., `explicit`/`inferred` for affect, `told_by_contact`/`shared_context`/`inferred` for facts). This conflicts with freeform provenance tags like `claude-code` or `codex`. To avoid 422 validation errors, the MCP server:
+
+1. Writes MCP provenance to a `provenance` field (not `source`)
+2. Strips any `source` key from outgoing POST data to prevent enum conflicts
+3. The sidecar ignores unknown fields gracefully, so `provenance` is stored but doesn't conflict with existing logic
+
+Future work: add a `provenance` column to sidecar stores for proper provenance tracking.
 
 ## MCP Resources
 

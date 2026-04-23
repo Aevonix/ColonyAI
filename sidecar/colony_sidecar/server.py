@@ -883,6 +883,20 @@ def create_app() -> FastAPI:
         logger.warning("No COLONY_API_KEY set — API is open (dev mode)")
 
     app.include_router(host_router)
+
+    # MCP streamable HTTP endpoint
+    try:
+        from colony_sidecar.mcp.server import create_server
+        mcp_server = create_server()
+        # Mount MCP ASGI app at /mcp
+        mcp_asgi = mcp_server.streamable_http_app()
+        app.mount("/mcp", mcp_asgi)
+        logger.info("MCP endpoint mounted at /mcp (streamable HTTP)")
+    except ImportError:
+        logger.debug("MCP SDK not installed — /mcp endpoint not available (install colonyai[mcp])")
+    except Exception as exc:
+        logger.warning("Could not mount MCP endpoint: %s", exc)
+
     return app
 
 

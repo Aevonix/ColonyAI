@@ -22,6 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp[cli]>=1.0"]
 lancedb = ["lancedb>=0.6", "pyarrow>=14.0"]
 postgres = ["asyncpg>=0.29"]
 extraction = ["PyMuPDF>=1.24", "beautifulsoup4>=4.12"]

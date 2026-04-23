@@ -69,6 +69,25 @@ def main() -> None:
 
     # --- doctor ---
     doc_p = sub.add_parser("doctor", help="Run integration health check against running sidecar")
+
+    # --- mcp ---
+    mcp_p = sub.add_parser("mcp", help="Colony MCP server and harness configuration")
+    mcp_sub = mcp_p.add_subparsers(dest="mcp_command")
+    mcp_run = mcp_sub.add_parser("run", help="Start MCP server (stdio transport)")
+    mcp_run.add_argument("--transport", choices=["stdio", "http"], default="stdio", help="Transport mode")
+    mcp_run.add_argument("--host", default="127.0.0.1", help="HTTP host (for http transport)")
+    mcp_run.add_argument("--port", type=int, default=7778, help="HTTP port (for http transport)")
+
+    mcp_setup = mcp_sub.add_parser("setup", help="Configure a coding harness to use Colony")
+    mcp_setup.add_argument("--harness", choices=["claude-code", "codex", "crush", "all"], default=None, help="Specific harness to configure")
+    mcp_setup.add_argument("--contact-id", default=None, help="Your identifier (skip prompt)")
+    mcp_setup.add_argument("--dry-run", action="store_true", help="Show changes without writing")
+
+    mcp_remove = mcp_sub.add_parser("remove", help="Remove Colony from a harness config")
+    mcp_remove.add_argument("--harness", choices=["claude-code", "codex", "crush", "all"], default=None, help="Specific harness to remove")
+    mcp_remove.add_argument("--dry-run", action="store_true", help="Show changes without writing")
+
+    mcp_sub.add_parser("detect", help="Detect installed coding harnesses")
     doc_p.add_argument("--url", default=None, help="Sidecar URL (default: from .env)")
     doc_p.add_argument("--api-key", default=None, help="API key (default: from .env)")
     doc_p.add_argument("--verbose", "-v", action="store_true", help="Show detailed results")
@@ -402,6 +421,10 @@ def main() -> None:
     elif args.command == "validate":
         _load_dotenv()
         _cmd_validate(args)
+
+    elif args.command == "mcp":
+        _load_dotenv()
+        _cmd_mcp(args)
 
     elif args.command == "doctor":
         _cmd_doctor(args)
@@ -875,6 +898,131 @@ def _cmd_status() -> None:
         sys.exit(1)
 
 
+def _cmd_mcp(args) -> None:
+    """Handle colony mcp subcommands."""
+    from colony_sidecar.mcp.server import create_server, run_stdio, run_http
+    from colony_sidecar.mcp.config import (
+        HARNESS_DEFS, detect_harnesses, add_to_harness, remove_from_harness,
+    )
+
+    if not hasattr(args, "mcp_command") or not args.mcp_command:
+        # Default: run the MCP server
+        run_stdio()
+        return
+
+    if args.mcp_command == "run":
+        if args.transport == "http":
+            run_http(host=args.host, port=args.port)
+        else:
+            run_stdio()
+
+    elif args.mcp_command == "detect":
+        detected = detect_harnesses()
+        print("Detected coding harnesses:")
+        for hid, installed in detected.items():
+            status = "installed" if installed else "not found"
+            icon = "  \u2705" if installed else "  \u274c"
+            print(f"{icon} {HARNESS_DEFS[hid]['display']:15s} {status}")
+
+    elif args.mcp_command == "setup":
+        detected = detect_harnesses()
+        installed = {k: v for k, v in detected.items() if v}
+
+        if not installed:
+            print("  No coding harnesses detected.")
+            print("  Install one of: Claude Code, Codex, or Crush")
+            print("  Then run: colony mcp setup")
+            return
+
+        # Get contact ID
+        contact_id = args.contact_id
+        if not contact_id:
+            try:
+                contact_id = input("  What should Colony call you? ").strip()
+            except EOFError:
+                contact_id = os.environ.get("USER", "user")
+            if not contact_id:
+                contact_id = os.environ.get("USER", "user")
+
+        # Determine which harnesses to configure
+        if args.harness == "all":
+            selected = list(installed.keys())
+        elif args.harness:
+            if args.harness not in installed:
+                print(f"  {HARNESS_DEFS[args.harness]['display']} is not installed")
+                return
+            selected = [args.harness]
+        else:
+            # Interactive selection
+            print("  Detected coding harnesses:")
+            options = list(installed.keys())
+            for i, hid in enumerate(options, 1):
+                print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
+            print()
+            try:
+                choice = input("  Which should Colony connect? (comma-separated, or 'all') [all]: ").strip()
+            except EOFError:
+                choice = "all"
+
+            if not choice or choice.lower() == "all":
+                selected = options
+            else:
+                indices = [int(x.strip()) for x in choice.split(",") if x.strip().isdigit()]
+                selected = [options[i - 1] for i in indices if 1 <= i <= len(options)]
+
+        if not selected:
+            print("  No harnesses selected. Run 'colony mcp setup' again when ready.")
+            return
+
+        # Configure each selected harness
+        for hid in selected:
+            hdef = HARNESS_DEFS[hid]
+            print(f"  Configuring {hdef['display']}...")
+            diff = add_to_harness(hid, contact_id, dry_run=args.dry_run)
+            if diff is None:
+                print(f"  Already configured — skipping")
+            elif args.dry_run:
+                print(f"  Would add (dry run):")
+                print(diff)
+            else:
+                print(f"  Added Colony MCP (source: {hdef['source_tag']})")
+
+        if args.dry_run:
+            print("  Run without --dry-run to apply changes")
+        else:
+            print(f"  Contact ID: {contact_id}")
+            print(f"  Start the sidecar with: colony start")
+
+    elif args.mcp_command == "remove":
+        if args.harness == "all":
+            targets = list(HARNESS_DEFS.keys())
+        elif args.harness:
+            targets = [args.harness]
+        else:
+            detected = detect_harnesses()
+            targets = [k for k, v in detected.items() if v]
+
+        if not targets:
+            print("  No harnesses to remove from.")
+            return
+
+        for hid in targets:
+            hdef = HARNESS_DEFS.get(hid)
+            if not hdef:
+                continue
+            diff = remove_from_harness(hid, dry_run=args.dry_run)
+            if diff:
+                prefix = "  Would remove" if args.dry_run else "  Removed"
+                print(f"{prefix}: {hdef['display']}")
+            else:
+                print(f"  {hdef['display']} — Colony not configured, skipping")
+
+        if args.dry_run:
+            print("  Run without --dry-run to apply changes")
+        else:
+            print("  Colony MCP removed from harness configs")
+
+
 def _cmd_validate(args) -> None:
     """Run end-to-end pipeline validation."""
     import httpx
@@ -968,14 +1116,13 @@ def _cmd_validate(args) -> None:
         except Exception:
             print(f"  ⚠️ Could not check OpenClaw LLM config")
     else:
-        # Check sidecar's own LLM config
-        r = httpx.get(f"{url}/v1/host/health", headers=headers, timeout=5)
-        notes = r.json().get("notes", {})
-        if "llm" in str(notes).lower() and "not" not in str(notes.get("llm", "")).lower():
-            llm_ok = True
-            print(f"  ✅ LLM configured in sidecar")
+        # Check MCP harnesses
+        has_mcp = bool(shutil.which("claude") or shutil.which("codex") or shutil.which("crush"))
+        if has_mcp:
+            print(f"  \u26a0\ufe0f CLI harness detected but LLM test requires OpenClaw")
+            print(f"  MCP tools validated via context assembly — LLM pipeline needs manual verification")
         else:
-            print(f"  ⚠️ LLM status unknown — cannot verify full LLM pipeline")
+            print(f"  \u26a0\ufe0f No OpenClaw or MCP harness — LLM pipeline needs manual verification")
 
     # Step 5: Test full LLM pipeline if possible
     print("\n[5/5] Testing full pipeline...")
