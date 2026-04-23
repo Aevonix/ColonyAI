@@ -127,11 +127,17 @@ colony validate           # 5-step pipeline test, writes validation stamp
 
 ## Why Colony
 
-Ant colonies are the textbook example of emergent collective intelligence. No central controller, specialized roles, coordination through a shared environment. The technical name is stigmergy: individuals modify the environment, other individuals read those modifications and respond. Colony applies that pattern to LLM agents. A shared substrate of memory, signals, and state that many specialized systems read from and write to.
+Most agent memory is session-scoped. When the conversation ends, the context is gone. When you switch tools, you start over. Colony fixes that.
 
-But stigmergy only works when the agents share the same environment. That is why Colony runs as a standalone sidecar with a unified API. Your chat agent, your coding agent, your CI agent: all reading and writing to the same commitments, the same world model, the same affect state. The left hand knows what the right hand is doing because they share a brain.
+**Persistent.** Commitments, affect state, facts, patterns, and world model outlive every session. What Colony learns on Monday is available on Friday.
 
-Argentine ants form the largest known supercolony in nature. Six thousand kilometers of coastline, three continents, every individual treating every other individual as kin. The SuperColony Network is modeled on that. Independent colonies, global reach, participation on your terms.
+**Cross-tool.** Every connected harness reads and writes to the same stores. A commitment created in your chat agent shows up in your coding tool. A fact extracted during a coding session feeds back into your agent's context.
+
+**Harness-agnostic.** Colony doesn't care what runtime you use. OpenClaw, Hermes, Claude Code, Codex, Crush, OpenCode, or anything else that speaks HTTP or MCP. Plug in whatever you want.
+
+**Self-contained.** Colony runs as a sidecar, not inside any host. It has its own API, its own storage, its own lifecycle. No host lock-in.
+
+**Degrades gracefully.** An unwired subsystem returns empty results instead of errors. Use what you need, skip what you don't.
 
 -----
 
