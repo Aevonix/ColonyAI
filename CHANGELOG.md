@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.19 (2026-04-23)
+
+Fixed crash in wizard plugin setup.
+
+### Fixed
+- `non_interactive` parameter now passed to `_configure_openclaw_plugin()`
+- Prevents `NameError: name 'non_interactive' is not defined` in non-interactive mode
+
 ## 0.6.18 (2026-04-23)
 
 Wizard now uses `openclaw plugins install` for proper plugin registration.
