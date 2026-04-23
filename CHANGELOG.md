@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.13 (2026-04-23)
+
+Neo4j health check system with auto-recovery.
+
+### New
+- `_neo4j_health_check()`: Connect + auth + query verification
+- `_neo4j_poll_health()`: Poll with timeout and progress messages
+- `COLONY_NEO4J_STARTUP_TIMEOUT` env var (default 30s)
+
+### Fixed
+- Neo4j now verified healthy before sidecar accepts requests
+- Auto-restart on failed health check for running containers
+- Clear error messages with actionable steps on failure
+- No more arbitrary `sleep(3)` — waits exactly as long as needed
+
+### Behavior
+- Cold start → create container → poll with timeout
+- Warm start (stopped) → start → poll with timeout
+- Hot start (running) → quick check → restart + poll on failure
+- All paths degrade gracefully with clear user guidance
+
 ## 0.6.12 (2026-04-23)
 
 Fix: Neo4j auto-start now works in foreground mode.

@@ -731,55 +731,153 @@ def _find_pid_on_port(port: int) -> int | None:
         return None
 
 
+def _neo4j_health_check(password: str, timeout_s: int = 5) -> tuple[bool, str]:
+    """Check if Neo4j is healthy (connect + auth + query). Returns (success, error_message)."""
+    from neo4j import GraphDatabase
+    from neo4j.exceptions import AuthError, ServiceUnavailable
+    
+    try:
+        driver = GraphDatabase.driver(
+            "bolt://localhost:7687",
+            auth=("neo4j", password),
+            connection_timeout=timeout_s
+        )
+        with driver.session() as session:
+            session.run("RETURN 1").single()
+        driver.close()
+        return True, ""
+    except AuthError:
+        return False, "auth_failed"
+    except ServiceUnavailable:
+        return False, "not_responding"
+    except Exception as e:
+        return False, str(e)
+
+
+def _neo4j_poll_health(password: str, timeout_s: int = 30) -> tuple[bool, str]:
+    """Poll Neo4j health until ready or timeout. Returns (success, error_message)."""
+    timeout_s = int(os.environ.get("COLONY_NEO4J_STARTUP_TIMEOUT", timeout_s))
+    
+    for i in range(1, timeout_s + 1):
+        success, error = _neo4j_health_check(password, timeout_s=2)
+        if success:
+            return True, ""
+        if error == "auth_failed":
+            # Auth failure is immediate, no point retrying
+            return False, error
+        if i < timeout_s:
+            print(f"  Waiting for Neo4j ({i}/{timeout_s}s)...")
+        time.sleep(1)
+    
+    return False, "timeout"
+
+
 def _check_and_start_neo4j() -> bool:
     """Check if Neo4j is running, start it if needed. Returns True if Neo4j is available."""
     import subprocess
     from pathlib import Path
     
-    # Check if Neo4j container is already running
+    # Check if Docker is available
+    try:
+        result = subprocess.run(["docker", "--version"], capture_output=True, timeout=5)
+        if result.returncode != 0:
+            return False
+    except Exception:
+        return False
+    
+    # Check for Neo4j credentials in .env
+    env_path = Path.home() / ".env"
+    neo4j_password = None
+    if env_path.exists():
+        try:
+            for line in env_path.read_text().splitlines():
+                if line.startswith("NEO4J_PASSWORD="):
+                    neo4j_password = line.split("=", 1)[1].strip()
+                    break
+        except Exception:
+            pass
+    
+    if not neo4j_password:
+        # No credentials configured, skip Neo4j
+        return False
+    
+    # Check container state
+    container_running = False
+    container_exists = False
+    
     try:
         result = subprocess.run(
             ["docker", "ps", "--filter", "name=neo4j-colony", "--format", "{{.Names}}"],
             capture_output=True, text=True, timeout=10
         )
-        if "neo4j-colony" in result.stdout:
-            return True  # Already running
+        container_running = "neo4j-colony" in result.stdout
     except Exception:
-        return False  # Docker not available
+        pass
     
-    # Check if container exists but is stopped
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=neo4j-colony", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=10
-        )
-        if "neo4j-colony" in result.stdout:
-            print("  Starting Neo4j container...")
-            subprocess.run(["docker", "start", "neo4j-colony"], capture_output=True, timeout=10)
-            time.sleep(3)
+    if not container_running:
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "-a", "--filter", "name=neo4j-colony", "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=10
+            )
+            container_exists = "neo4j-colony" in result.stdout
+        except Exception:
+            pass
+    
+    # Scenario 1: Container already running
+    if container_running:
+        print("  Neo4j container already running")
+        success, error = _neo4j_health_check(neo4j_password)
+        if success:
+            print("  ✅ Neo4j ready")
             return True
-    except Exception:
-        pass
-    
-    # Check if we have Neo4j config in .env
-    env_path = Path.home() / ".env"
-    if not env_path.exists():
+        
+        # Quick check failed, try restart
+        print("  Neo4j health check failed, restarting...")
+        try:
+            subprocess.run(["docker", "restart", "neo4j-colony"], capture_output=True, timeout=30)
+        except Exception:
+            pass
+        
+        success, error = _neo4j_poll_health(neo4j_password)
+        if success:
+            print("  ✅ Neo4j recovered after restart")
+            return True
+        
+        if error == "auth_failed":
+            print("  ❌ Neo4j auth failed — password in .env doesn't match container")
+            print("     Reset: docker rm -f neo4j-colony && colony init")
+        else:
+            print("  ❌ Neo4j not responding after restart")
+            print("     Check logs: docker logs neo4j-colony")
+            print("     Reset: docker rm -f neo4j-colony && colony init")
+        print("  ⚠️ Graph memory degraded")
         return False
     
-    neo4j_password = None
-    try:
-        for line in env_path.read_text().splitlines():
-            if line.startswith("NEO4J_PASSWORD="):
-                neo4j_password = line.split("=", 1)[1].strip()
-                break
-    except Exception:
-        pass
-    
-    if not neo4j_password:
+    # Scenario 2: Container exists but stopped
+    if container_exists:
+        print("  Starting Neo4j container...")
+        try:
+            subprocess.run(["docker", "start", "neo4j-colony"], capture_output=True, timeout=30)
+        except Exception:
+            pass
+        
+        success, error = _neo4j_poll_health(neo4j_password)
+        if success:
+            print("  ✅ Neo4j ready")
+            return True
+        
+        if error == "auth_failed":
+            print("  ❌ Neo4j auth failed — password in .env doesn't match container")
+            print("     Reset: docker rm -f neo4j-colony && colony init")
+        else:
+            print("  ❌ Neo4j not ready after 30s")
+            print("     Check logs: docker logs neo4j-colony")
+        print("  ⚠️ Graph memory degraded")
         return False
     
-    # Start Neo4j container
-    print("  Starting Neo4j container...")
+    # Scenario 3: No container, create new one
+    print("  Creating Neo4j container...")
     neo4j_data = Path.home() / ".colony" / "neo4j-data"
     neo4j_data.mkdir(parents=True, exist_ok=True)
     
@@ -794,16 +892,24 @@ def _check_and_start_neo4j() -> bool:
             "neo4j:5.15"
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode == 0:
-            print("  ✅ Neo4j started")
-            time.sleep(3)  # Wait for Neo4j to initialize
-            return True
-        else:
-            print(f"  ⚠️ Failed to start Neo4j: {result.stderr.strip()}")
+        if result.returncode != 0:
+            print(f"  ⚠️ Failed to create Neo4j container: {result.stderr.strip()}")
+            print("  ⚠️ Graph memory degraded")
             return False
     except Exception as exc:
-        print(f"  ⚠️ Failed to start Neo4j: {exc}")
+        print(f"  ⚠️ Failed to create Neo4j container: {exc}")
+        print("  ⚠️ Graph memory degraded")
         return False
+    
+    success, error = _neo4j_poll_health(neo4j_password)
+    if success:
+        print("  ✅ Neo4j ready")
+        return True
+    
+    print("  ❌ Neo4j not ready after 30s")
+    print("     Check logs: docker logs neo4j-colony")
+    print("  ⚠️ Graph memory degraded")
+    return False
 
 
 def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
