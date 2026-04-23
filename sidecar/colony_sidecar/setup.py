@@ -261,56 +261,60 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
     api_key = values["COLONY_API_KEY"]
 
     try:
-        # Check for Node.js (needed to build the plugin)
+        # Check for Node.js (needed for npm)
         has_npm = shutil.which("npm") is not None
         if not has_npm:
-            print("  ⚠️ Node.js/npm not found — Colony plugin requires Node.js to build.")
+            print("  ⚠️ Node.js/npm not found — Colony plugin requires Node.js.")
             print("     Install Node.js: https://nodejs.org/ or via your package manager")
             install_anyway = _prompt("  Continue with config-only setup? [y/N]", "N", non_interactive)
             if install_anyway.lower() not in ("y", "yes"):
                 print("  Install Node.js and re-run 'colony init' to complete plugin setup.")
                 return False
+        else:
+            # Check if Colony npm package is installed globally
+            print("  Checking Colony plugin installation...")
+            result = subprocess.run(
+                ["npm", "list", "-g", "@aevonix/colonyai", "--depth=0"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if "@aevonix/colonyai" not in result.stdout:
+                # Package not installed, install it globally
+                print("  Installing @aevonix/colonyai globally...")
+                install_result = subprocess.run(
+                    ["npm", "install", "-g", "@aevonix/colonyai"],
+                    capture_output=True, text=True, timeout=120
+                )
+                if install_result.returncode != 0:
+                    print(f"  ⚠️ Failed to install Colony plugin: {install_result.stderr.strip()}")
+                    print("  Continuing with config-only setup...")
+                else:
+                    print("  ✅ Colony plugin installed globally")
+            else:
+                print("  ✅ Colony plugin already installed")
 
-        # Enable the plugin
+        # Enable the plugin in OpenClaw config
+        print("  Configuring OpenClaw plugin settings...")
         cmds = [
             ["openclaw", "config", "set", "plugins.entries.colony.enabled", "true"],
-            ["openclaw", "config", "set", f"plugins.entries.colony.config.sidecarUrl", sidecar_url],
-            ["openclaw", "config", "set", f"plugins.entries.colony.config.apiKey", api_key],
-            ["openclaw", "config", "set", f"plugins.entries.colony.config.hostId", "openclaw"],
-            ["openclaw", "config", "set", f"plugins.entries.colony.config.ownContextEngine", "true"],
-            ["openclaw", "config", "set", f"plugins.entries.colony.config.ownMemoryCapability", "true"],
+            ["openclaw", "config", "set", "plugins.entries.colony.config.sidecarUrl", sidecar_url],
+            ["openclaw", "config", "set", "plugins.entries.colony.config.apiKey", api_key],
+            ["openclaw", "config", "set", "plugins.entries.colony.config.hostId", "openclaw"],
+            ["openclaw", "config", "set", "plugins.entries.colony.config.ownContextEngine", "true"],
+            ["openclaw", "config", "set", "plugins.entries.colony.config.ownMemoryCapability", "true"],
         ]
+        
+        config_errors = []
         for cmd in cmds:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
-                print(f"  ⚠️ Config set failed: {' '.join(cmd[-2:])}")
-                return False
-
-        # Try to install the plugin if the dist directory exists
-        dist_dir = colony_root / "dist"
-        if dist_dir.exists():
-            result = subprocess.run(
-                ["openclaw", "plugin", "install", str(colony_root)],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode == 0:
-                print("  ✅ Colony plugin installed and configured in OpenClaw")
-            else:
-                # Plugin install might not exist as a command — that's OK
-                print("  ✅ Colony plugin configured in OpenClaw config")
-        elif has_npm and (colony_root / "package.json").exists():
-            print("  Building Colony plugin...")
-            build_result = subprocess.run(
-                ["npm", "run", "build"],
-                capture_output=True, text=True, timeout=60,
-                cwd=str(colony_root),
-            )
-            if build_result.returncode == 0:
-                print("  ✅ Colony plugin built and configured in OpenClaw")
-            else:
-                print("  ⚠️ Plugin build failed — configured config but may need manual build")
+                config_errors.append(' '.join(cmd[-2:]))
+        
+        if config_errors:
+            print(f"  ⚠️ Some config settings failed: {', '.join(config_errors)}")
+            print("  You may need to configure manually after plugin is installed.")
         else:
-            print("  ✅ Colony plugin configured in OpenClaw config")
+            print("  ✅ Plugin config written to OpenClaw")
 
         # Set Colony as the active context engine
         ce_result = subprocess.run(
@@ -318,13 +322,15 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path) -> boo
             capture_output=True, text=True, timeout=10,
         )
         if ce_result.returncode == 0:
-            print("  ✅ Colony set as active context engine (plugins.slots.contextEngine = colony)")
+            print("  ✅ Colony set as active context engine")
         else:
             print("  ⚠️ Could not set context engine slot — set manually:")
             print("     openclaw config set plugins.slots.contextEngine colony")
 
-        print(f"     sidecarUrl: {sidecar_url}")
-        print(f"     apiKey: {api_key[:8]}...{api_key[-4:]}")
+        print("")
+        print("  Colony plugin configuration:")
+        print(f"    sidecarUrl: {sidecar_url}")
+        print(f"    apiKey: {api_key[:8]}...{api_key[-4:]}")
         return True
 
     except Exception as exc:
