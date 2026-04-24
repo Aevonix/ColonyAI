@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0 (2026-04-24)
+
+Major refactor of harness integration in the wizard.
+
+### Changed
+- **Breaking:** New CLI flags for harness configuration:
+  - `--mcp-harnesses` for coding harnesses (claude-code, codex, crush, opencode)
+  - `--agent-harness` for agent harnesses (openclaw, hermes)
+  - `--no-harness` for standalone mode
+- `--host-framework` deprecated but still works for backward compatibility
+- Step 3 renamed from "Host framework" to "Harness integration"
+- Separate detection and setup for coding harnesses vs agent harnesses
+- Standalone mode is now explicit and first-class
+- Shows install instructions when OpenClaw is requested but not installed
+- Detects Node.js stability (version manager vs system install)
+
+### Added
+- `_detect_coding_harnesses()` - detect MCP-capable coding harnesses
+- `_detect_agent_harnesses()` - detect agent harnesses (OpenClaw, Hermes)
+- `_check_nodejs_stability()` - check if Node.js is system-wide or version manager
+- `_setup_mcp_harnesses()` - configure multiple MCP harnesses
+- `_setup_agent_harness()` - configure agent harness plugin
+- `_show_openclaw_install_instructions()` - platform-specific install guide
+
+### Fixed
+- Colony can now run completely standalone with no harness
+- Better guidance when harness not installed
+
 ## 0.6.19 (2026-04-23)
 
 Fixed crash in wizard plugin setup.

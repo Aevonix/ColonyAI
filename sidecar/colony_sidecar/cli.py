@@ -29,7 +29,12 @@ def main() -> None:
     init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Colony only)")
     # Non-interactive mode flags
     init_p.add_argument("--non-interactive", "-n", action="store_true", help="Run without prompts (requires all required flags)")
-    init_p.add_argument("--host-framework", choices=["openclaw", "hermes", "claude-code", "codex", "crush", "standalone"], help="Host framework to connect")
+    # Harness configuration (new approach)
+    init_p.add_argument("--mcp-harnesses", help="Connect coding harnesses via MCP (comma-separated: claude-code,codex,crush,opencode)")
+    init_p.add_argument("--agent-harness", choices=["openclaw", "hermes"], help="Connect agent harness via plugin")
+    init_p.add_argument("--no-harness", action="store_true", help="Skip all harness setup (standalone mode)")
+    # Backward compatibility
+    init_p.add_argument("--host-framework", choices=["openclaw", "hermes", "claude-code", "codex", "crush", "standalone"], help="Host framework (deprecated: use --agent-harness or --mcp-harnesses)")
     init_p.add_argument("--contact-name", help="Contact name for this user")
     init_p.add_argument("--bind", default="127.0.0.1", help="Sidecar bind address (0.0.0.0 for all interfaces)")
     init_p.add_argument("--port", type=int, default=7777, help="Sidecar port")
