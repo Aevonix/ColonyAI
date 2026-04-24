@@ -54,12 +54,14 @@ from colony_sidecar.api.routers.host import (
     supported_capabilities,
 )
 
+from colony_sidecar import get_state_dir
+
 logger = logging.getLogger(__name__)
 
 
 def _state_dir() -> Path:
-    """Resolve the Colony state directory."""
-    return Path(os.environ.get("COLONY_STATE_DIR", ".")).resolve()
+    """Resolve the Colony state directory (wrapper for get_state_dir)."""
+    return get_state_dir()
 
 
 @asynccontextmanager
