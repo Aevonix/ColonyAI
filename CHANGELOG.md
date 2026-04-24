@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.21 (2026-04-24)
+
+Fixed port conflict handling in foreground mode.
+
+### Fixed
+- Foreground mode (`colony start`) now checks if port is in use before starting
+- Exits with error if port occupied, with helpful message
+- `--force` flag works in both foreground and daemon modes to kill existing process
+
 ## 0.6.20 (2026-04-24)
 
 Harness integration refactor with new CLI flags.
