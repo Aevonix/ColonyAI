@@ -1,11 +1,11 @@
 # Changelog
 
-## 0.7.0 (2026-04-24)
+## 0.6.20 (2026-04-24)
 
-Major refactor of harness integration in the wizard.
+Harness integration refactor with new CLI flags.
 
 ### Changed
-- **Breaking:** New CLI flags for harness configuration:
+- New CLI flags for harness configuration:
   - `--mcp-harnesses` for coding harnesses (claude-code, codex, crush, opencode)
   - `--agent-harness` for agent harnesses (openclaw, hermes)
   - `--no-harness` for standalone mode
