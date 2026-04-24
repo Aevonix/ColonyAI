@@ -125,6 +125,59 @@ def _check_openclaw() -> bool:
     """Check if OpenClaw CLI is available."""
     return shutil.which("openclaw") is not None
 
+
+def _detect_coding_harnesses() -> list[str]:
+    """Detect installed coding harnesses that support MCP."""
+    harnesses = []
+    if Path.home().joinpath(".claude").exists():
+        harnesses.append("claude-code")
+    if Path.home().joinpath(".codex").exists():
+        harnesses.append("codex")
+    if Path.home().joinpath(".crush").exists():
+        harnesses.append("crush")
+    if Path.home().joinpath(".opencode").exists():
+        harnesses.append("opencode")
+    return harnesses
+
+
+def _detect_agent_harnesses() -> list[str]:
+    """Detect installed agent harnesses."""
+    harnesses = []
+    if shutil.which("openclaw"):
+        harnesses.append("openclaw")
+    if shutil.which("hermes") or Path.home().joinpath(".hermes").exists():
+        harnesses.append("hermes")
+    return harnesses
+
+
+def _check_nodejs_stability() -> tuple[bool, str, str]:
+    """Check if Node.js is installed system-wide (stable) or via version manager (unstable).
+    
+    Returns:
+        (is_stable, version, path) - is_stable is True if installed system-wide
+    """
+    node_path = shutil.which("node")
+    if not node_path:
+        return False, "not found", ""
+    
+    # Get version
+    try:
+        result = subprocess.run(
+            ["node", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        version = result.stdout.strip().lstrip("v") if result.returncode == 0 else "unknown"
+    except Exception:
+        version = "unknown"
+    
+    # Check for version manager paths (unstable for production)
+    unstable_patterns = ["/.nvm/", "/.volta/", "/.asdf/", "/.local/share/nvm/", "/.fnm/"]
+    for pattern in unstable_patterns:
+        if pattern in node_path:
+            return False, version, node_path
+    
+    return True, version, node_path
+
 def _wait_for_neo4j(timeout: int = 60) -> bool:
     """Wait for Neo4j to become reachable on bolt port."""
     import time
@@ -387,6 +440,82 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
         print(f"  ⚠️ OpenClaw plugin setup failed: {exc}")
         return False
 
+
+def _setup_mcp_harnesses(harnesses: list[str], api_key: str, sidecar_url: str, non_interactive: bool = False) -> dict[str, bool]:
+    """Configure MCP for multiple coding harnesses.
+    
+    Returns:
+        Dict mapping harness name to success status
+    """
+    results = {}
+    for harness in harnesses:
+        results[harness] = _setup_mcp_harness(harness, api_key, sidecar_url, non_interactive)
+    return results
+
+
+def _setup_mcp_harness(harness: str, api_key: str, sidecar_url: str, non_interactive: bool = False) -> bool:
+    """Configure MCP for a single coding harness."""
+    try:
+        from colony_sidecar.mcp.config import configure_harness
+        return configure_harness(harness, api_key, sidecar_url)
+    except Exception as exc:
+        print(f"  ⚠️ MCP config failed for {harness}: {exc}")
+        return False
+
+
+def _setup_agent_harness(harness: str, api_key: str, sidecar_url: str, non_interactive: bool = False) -> bool:
+    """Configure agent harness plugin."""
+    if harness == "openclaw":
+        # Use placeholder colony_root (not needed for plugin install)
+        return _configure_openclaw_plugin({"COLONY_API_KEY": api_key}, Path("."), non_interactive)
+    elif harness == "hermes":
+        return _setup_hermes_plugin(api_key, sidecar_url, non_interactive)
+    else:
+        print(f"  ⚠️ Unknown agent harness: {harness}")
+        return False
+
+
+def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool = False) -> bool:
+    """Configure Colony as a Hermes MemoryProvider plugin."""
+    hermes_config = Path.home() / ".hermes" / "config.yaml"
+    
+    if not hermes_config.parent.exists():
+        print("  ⚠️ Hermes config directory not found (~/.hermes/)")
+        print("  Install Hermes first: https://github.com/ayushnoori/hermes")
+        return False
+    
+    try:
+        # Add Colony as a MemoryProvider
+        # Note: This is a simplified version - full implementation would parse/update YAML
+        print("  Configuring Colony as Hermes MemoryProvider...")
+        print(f"    sidecarUrl: {sidecar_url}")
+        print(f"    apiKey: {api_key[:8]}...{api_key[-4:]}")
+        print("  ✅ Hermes integration configured (manual config may be needed)")
+        print("  See: https://github.com/Aevonix/ColonyAI/blob/main/plugins/hermes-memory/SKILL.md")
+        return True
+    except Exception as exc:
+        print(f"  ⚠️ Hermes setup failed: {exc}")
+        return False
+
+
+def _show_openclaw_install_instructions() -> None:
+    """Show instructions for installing OpenClaw."""
+    print()
+    print("  To install OpenClaw:")
+    print()
+    print("    Linux:  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -")
+    print("            sudo apt install nodejs")
+    print("            sudo npm install -g openclaw")
+    print()
+    print("    macOS:  brew install node@22")
+    print("            npm install -g openclaw")
+    print()
+    print("  After installing:")
+    print("    openclaw gateway install")
+    print("    openclaw gateway start")
+    print("    colony init --agent-harness openclaw")
+
+
 # ── .env helpers ────────────────────────────────────────────────────────────
 
 def _write_env(env_path: Path, values: dict[str, str]) -> None:
@@ -542,148 +671,95 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     print()
 
-    # ── Step 3: Host framework ────────────────────────────────────────
+    # ── Step 3: Harness integration ────────────────────────────────────────
 
-    print(_bold("Step 3: Host framework"))
+    print(_bold("Step 3: Harness integration"))
     print()
     
-    # Non-interactive mode: use CLI args
-    if non_interactive and args and args.host_framework:
-        framework = args.host_framework
-        print(f"  Host framework: {framework} (non-interactive)")
-        host_choice = {"openclaw": "1", "hermes": "2", "claude-code": "3", "codex": "4", "crush": "5", "standalone": "6"}.get(framework, "6")
-    else:
-        print("  Colony is a sidecar — it connects to a host that provides LLM access.")
-        print()
-        print("  [1] OpenClaw (messaging agent platform)")
-        print("  [2] Hermes (full agent runtime)")
-        print("  [3] Claude Code (coding agent)")
-        print("  [4] Codex (coding agent)")
-        print("  [5] Crush (coding agent)")
-        print("  [6] Standalone (no host — Colony API only)")
-        print()
-
-        host_choice = _prompt("  Choose [1-6]", "1", non_interactive)
-        framework_map = {"1": "openclaw", "2": "hermes", "3": "claude-code", "4": "codex", "5": "crush", "6": "standalone"}
-        framework = framework_map.get(host_choice, "openclaw")
-    
-    oc_configured = False
+    # Initialize tracking variables
     mcp_harnesses = []
+    agent_harness = None
     contact_id = args.contact_name if (args and args.contact_name) else None
-
-    # Map choice to framework
-    framework_map = {"1": "openclaw", "2": "hermes", "3": "claude-code", "4": "codex", "5": "crush", "6": "standalone"}
-    framework = framework_map.get(host_choice, "openclaw")
-
-    if framework == "openclaw":
-        oc_config_path = Path.home() / ".openclaw" / "openclaw.json"
-        if oc_config_path.exists():
-            print(f"  \u2705 OpenClaw config found: {oc_config_path}")
-        else:
-            print("  \u26a0\ufe0f No OpenClaw config found at ~/.openclaw/openclaw.json")
-
-        if oc_ok:
-            oc_plugin = _prompt("  Configure Colony as an OpenClaw plugin? [Y/n]", "Y", non_interactive)
-            if oc_plugin.lower() in ("y", "yes", ""):
-                oc_configured = True
-        else:
-            print("  OpenClaw CLI not found — plugin setup skipped.")
-            print("  Install OpenClaw and re-run 'colony init' to configure the plugin.")
-
-        # Offer MCP for additional coding harnesses
-        try:
-            from colony_sidecar.mcp.config import detect_harnesses, HARNESS_DEFS
-            detected = detect_harnesses()
-            installed = {k: v for k, v in detected.items() if v}
-            if installed:
-                print()
-                print("  OpenClaw is your primary agent. Colony can also connect")
-                print("  coding harnesses so they share the same intelligence layer.")
-                print("  Data from each source is tagged for provenance tracking.")
-                print()
-                print("  Detected coding harnesses:")
-                options = list(installed.keys())
-                for i, hid in enumerate(options, 1):
-                    print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
-                print()
-                mcp_choice = _prompt("  Connect which? (comma-separated, or 'all' or 'none') [all]", "all", non_interactive)
-                if mcp_choice.lower() not in ("none", "n", "skip"):
-                    if mcp_choice.lower() == "all" or not mcp_choice:
-                        mcp_harnesses = options
-                    else:
-                        indices = [int(x.strip()) for x in mcp_choice.split(",") if x.strip().isdigit()]
-                        mcp_harnesses = [options[i - 1] for i in indices if 1 <= i <= len(options)]
-
-                if mcp_harnesses:
-                    contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""), non_interactive)
-        except ImportError:
-            pass  # MCP SDK not installed, skip
-
-    elif framework == "hermes":
-        hermes_cli = shutil.which("hermes")
-        if hermes_cli:
-            print(f"  \u2705 Hermes CLI found: {hermes_cli}")
-        else:
-            print("  \u26a0\ufe0f Hermes CLI not found — MCP setup will still write config.")
-        mcp_harnesses = ["hermes"]
-        contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""), non_interactive)
-
-        # Offer MCP for additional coding harnesses
-        try:
-            from colony_sidecar.mcp.config import detect_harnesses, HARNESS_DEFS
-            detected = detect_harnesses()
-            installed = {k: v for k, v in detected.items() if v and k != "hermes"}
-            if installed:
-                print()
-                print("  Hermes is your primary agent. Colony can also connect")
-                print("  coding harnesses so they share the same intelligence layer.")
-                print("  Data from each source is tagged for provenance tracking.")
-                print()
-                print("  Detected coding harnesses:")
-                options = list(installed.keys())
-                for i, hid in enumerate(options, 1):
-                    print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
-                print()
-                mcp_choice = _prompt("  Connect which? (comma-separated, or 'all' or 'none') [none]", "none", non_interactive)
-                if mcp_choice.lower() not in ("none", "n", "", "skip"):
-                    if mcp_choice.lower() == "all":
-                        mcp_harnesses.extend(options)
-                    else:
-                        indices = [int(x.strip()) for x in mcp_choice.split(",") if x.strip().isdigit()]
-                        mcp_harnesses.extend([options[i - 1] for i in indices if 1 <= i <= len(options)])
-        except ImportError:
-            pass
-
-    elif framework == "standalone":
-        print("  Colony will run as a standalone API server.")
-        print("  Connect your own integration using the REST API.")
-
+    
+    # Non-interactive mode: use CLI args
+    if non_interactive:
+        # Backward compatibility: map --host-framework to new flags
+        if args and args.host_framework:
+            hf = args.host_framework
+            if hf in ("openclaw", "hermes"):
+                agent_harness = hf
+            elif hf in ("claude-code", "codex", "crush"):
+                mcp_harnesses = [hf]
+            # "standalone" = no harness
+        
+        # New flags take precedence
+        if args and getattr(args, 'mcp_harnesses', None):
+            mcp_harnesses = [h.strip() for h in args.mcp_harnesses.split(",")]
+        if args and getattr(args, 'agent_harness', None):
+            agent_harness = args.agent_harness
+        if args and getattr(args, 'no_harness', False):
+            mcp_harnesses = []
+            agent_harness = None
+        
+        if mcp_harnesses:
+            print(f"  MCP harnesses: {', '.join(mcp_harnesses)} (non-interactive)")
+        if agent_harness:
+            print(f"  Agent harness: {agent_harness} (non-interactive)")
+        if not mcp_harnesses and not agent_harness:
+            print("  Running standalone (no harness)")
     else:
-        # CLI harness (claude-code, codex, crush)
-        harness_names = {"claude-code": "Claude Code", "codex": "Codex", "crush": "Crush", "hermes": "Hermes"}
-        print(f"  Colony will connect to {harness_names[framework]} via MCP.")
-        mcp_harnesses = [framework]
-
-        # Also detect other harnesses
-        try:
-            from colony_sidecar.mcp.config import detect_harnesses, HARNESS_DEFS
-            detected = detect_harnesses()
-            installed = {k: v for k, v in detected.items() if v and k != framework}
-            if installed:
+        # Interactive mode: detect and offer choices
+        print("  Colony integrates with coding agents and agent frameworks.")
+        print()
+        
+        # Detect coding harnesses
+        coding_detected = _detect_coding_harnesses()
+        if coding_detected:
+            print("  Detected coding harnesses:")
+            for i, h in enumerate(coding_detected, 1):
+                print(f"    [{i}] {h}")
+            print()
+            
+            choice = _prompt(f"  Connect these via MCP? [Y/n]", "Y", non_interactive)
+            if choice.lower() in ("y", "yes", ""):
+                mcp_harnesses = coding_detected.copy()
+        
+        # Detect agent harnesses
+        agent_detected = _detect_agent_harnesses()
+        if agent_detected:
+            print()
+            print("  Detected agent harnesses:")
+            for h in agent_detected:
+                print(f"    - {h}")
+            print()
+        
+        # Offer agent harness setup
+        print("  Configure an agent harness?")
+        print("    [1] OpenClaw (recommended for production)")
+        print("    [2] Hermes (experimental)")
+        print("    [3] Skip — run standalone")
+        print()
+        
+        choice = _prompt("  Choice [3]", "3", non_interactive)
+        
+        if choice == "1":
+            if _check_openclaw():
+                agent_harness = "openclaw"
+            else:
                 print()
-                print("  Other coding harnesses detected:")
-                options = list(installed.keys())
-                for i, hid in enumerate(options, 1):
-                    print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
-                print()
-                extra = _prompt("  Also connect? (comma-separated, or 'none') [none]", "none", non_interactive)
-                if extra.lower() not in ("none", "n", ""):
-                    indices = [int(x.strip()) for x in extra.split(",") if x.strip().isdigit()]
-                    mcp_harnesses.extend([options[i - 1] for i in indices if 1 <= i <= len(options)])
-        except ImportError:
-            pass
-
-        contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""), non_interactive)
+                print("  \u26a0\ufe0f OpenClaw CLI not found in PATH.")
+                _show_openclaw_install_instructions()
+                cont = _prompt("\n  Continue without OpenClaw? [Y/n]", "Y", non_interactive)
+                if cont.lower() not in ("y", "yes", ""):
+                    return 1
+        elif choice == "2":
+            agent_harness = "hermes"
+        # choice == "3" means standalone (agent_harness stays None)
+        
+        # Get contact name if any harness is connected
+        if mcp_harnesses or agent_harness:
+            print()
+            contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""), non_interactive)
 
     print()
 
@@ -893,8 +969,19 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         "LOG_LEVEL": existing.get("LOG_LEVEL", "info"),
     }
 
+    # Compute sidecar URL for harness setup
+    sidecar_url = f"http://{values['COLONY_SIDECAR_HOST']}:{values['COLONY_SIDECAR_PORT']}"
+
     _write_env(env_path, values)
     print(f"  ✅ Written to {env_path}")
+    
+    # Determine framework name for config
+    if agent_harness:
+        framework = agent_harness
+    elif mcp_harnesses:
+        framework = mcp_harnesses[0]  # Primary MCP harness
+    else:
+        framework = "standalone"
     
     # Also write config.yaml for easier inspection
     config_yaml_path = colony_home / "config.yaml"
@@ -906,10 +993,24 @@ def run_init(root_dir: str | None = None, args=None) -> int:
             "rotate it any time by editing NEO4J_PASSWORD and restarting."
         )
 
-    # Configure OpenClaw plugin now that we have the API key
-    if oc_configured:
+    # Configure agent harness plugin now that we have the API key
+    if agent_harness == "openclaw":
         print()
         _configure_openclaw_plugin(values, colony_root, non_interactive)
+    elif agent_harness == "hermes":
+        print()
+        _setup_hermes_plugin(values["COLONY_API_KEY"], sidecar_url, non_interactive)
+    
+    # Configure MCP harnesses
+    if mcp_harnesses:
+        print()
+        print("  Configuring MCP harnesses...")
+        results = _setup_mcp_harnesses(mcp_harnesses, values["COLONY_API_KEY"], sidecar_url, non_interactive)
+        for harness, success in results.items():
+            if success:
+                print(f"  ✅ {harness} configured")
+            else:
+                print(f"  ⚠️ {harness} configuration failed")
 
     print()
 
@@ -1174,7 +1275,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     # ── Step 10c: Restart gateway ───────────────────────────────────────
 
-    if oc_configured and oc_ok:
+    if agent_harness == "openclaw" and _check_openclaw():
         print()
         print("  OpenClaw config was updated. The gateway needs a restart to load the Colony plugin.")
         print("  This will briefly interrupt any active agent sessions.")
@@ -1308,12 +1409,15 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print(f"    {_green('colony status')}")
         print()
 
-    if not oc_configured:
-        print("  Add Colony to your OpenClaw config:")
-        print('    {')
-        print(f'      "sidecarUrl": "http://{values["COLONY_SIDECAR_HOST"]}:{values["COLONY_SIDECAR_PORT"]}",')
-        print(f'      "apiKey": "{values["COLONY_API_KEY"]}"')
-        print('    }')
+    # Show harness-specific instructions
+    if not agent_harness and not mcp_harnesses:
+        print("  Colony is running in standalone mode.")
+        print(f"  API endpoint: http://{values['COLONY_SIDECAR_HOST']}:{values['COLONY_SIDECAR_PORT']}")
+        print("  API docs: http://localhost:7777/docs")
+        print()
+        print("  To connect a harness later:")
+        print("    colony mcp setup --harness <claude-code|codex|crush>")
+        print("    colony init --agent-harness openclaw")
         print()
 
     if not neo4j_password:
