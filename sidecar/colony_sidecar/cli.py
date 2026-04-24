@@ -97,6 +97,10 @@ def main() -> None:
     mcp_setup.add_argument("--harness", choices=["claude-code", "codex", "crush", "opencode", "hermes", "all"], default=None, help="Specific harness to configure")
     mcp_setup.add_argument("--contact-id", default=None, help="Your identifier (skip prompt)")
     mcp_setup.add_argument("--dry-run", action="store_true", help="Show changes without writing")
+    mcp_setup.add_argument("--print-config", action="store_true", help="Print MCP config snippet (for distributed setups)")
+    mcp_setup.add_argument("--sidecar-url", default=None, help="Sidecar URL (for remote Colony, e.g., http://192.168.1.100:7777)")
+    mcp_setup.add_argument("--mcp-command", default=None, help="MCP server command (for standalone mode)")
+    mcp_setup.add_argument("--mcp-args", default=None, help="MCP server args (for standalone mode)")
 
     mcp_remove = mcp_sub.add_parser("remove", help="Remove Colony from a harness config")
     mcp_remove.add_argument("--harness", choices=["claude-code", "codex", "crush", "opencode", "hermes", "all"], default=None, help="Specific harness to remove")
@@ -1142,6 +1146,44 @@ def _cmd_mcp(args) -> None:
             print(f"{icon} {HARNESS_DEFS[hid]['display']:15s} {status}")
 
     elif args.mcp_command == "setup":
+        # Handle --print-config (for distributed setups)
+        if getattr(args, 'print_config', False):
+            import json
+            from colony_sidecar.mcp.config import _mcp_config
+            
+            contact_id = args.contact_id or os.environ.get("USER", "user")
+            harness = args.harness or "crush"
+            
+            # Get harness definition
+            hdef = HARNESS_DEFS.get(harness)
+            if not hdef:
+                print(f"Unknown harness: {harness}")
+                print(f"Available: {', '.join(HARNESS_DEFS.keys())}")
+                return
+            
+            # Build MCP config with optional overrides
+            sidecar_url = getattr(args, 'sidecar_url', None)
+            mcp_command = getattr(args, 'mcp_command', None)
+            mcp_args = getattr(args, 'mcp_args', None)
+            
+            # Set env vars for _mcp_config if provided
+            if mcp_command:
+                os.environ["COLONY_MCP_COMMAND"] = mcp_command
+            if mcp_args:
+                os.environ["COLONY_MCP_ARGS"] = mcp_args
+            
+            needs_type = hdef.get("mcp_type") == "stdio"
+            mcp_config = _mcp_config(contact_id, hdef["source_tag"], include_type=needs_type, sidecar_url=sidecar_url)
+            
+            # Print the full config snippet
+            full_config = {"mcp": {"colony": mcp_config}}
+            print(json.dumps(full_config, indent=2))
+            print()
+            print(f"# Add this to {hdef['config_path']}")
+            print(f"# Contact ID: {contact_id}")
+            print(f"# Source: {hdef['source_tag']}")
+            return
+        
         detected = detect_harnesses()
         installed = {k: v for k, v in detected.items() if v}
 
@@ -1149,6 +1191,9 @@ def _cmd_mcp(args) -> None:
             print("  No coding harnesses detected.")
             print("  Install one of: Claude Code, Codex, Crush, OpenCode, or Hermes")
             print("  Then run: colony mcp setup")
+            print()
+            print("  For distributed setups (Colony on remote machine):")
+            print("    colony mcp setup --print-config --sidecar-url http://HOST:7777 --harness crush")
             return
 
         # Get contact ID

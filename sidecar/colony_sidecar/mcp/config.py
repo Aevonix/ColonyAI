@@ -79,23 +79,32 @@ def detect_harnesses() -> dict[str, bool]:
 # Config writers
 # ---------------------------------------------------------------------------
 
-def _mcp_config(contact_id: str, source: str, include_type: bool = False) -> dict[str, Any]:
+def _mcp_config(contact_id: str, source: str, include_type: bool = False, sidecar_url: str | None = None) -> dict[str, Any]:
     """Return the MCP server config block for Colony.
     
     Supports:
     - Local mode: Uses 'colony mcp' command (requires colony CLI installed)
-    - Remote mode: Uses COLONY_SIDECAR_URL env var to point to remote sidecar
+    - Remote mode: Uses sidecar_url param or COLONY_SIDECAR_URL env var
     - Standalone mode: Uses COLONY_MCP_COMMAND env var for custom MCP server command
+    
+    Args:
+        contact_id: User identifier for Colony context
+        source: Source tag (e.g., 'crush', 'claude-code')
+        include_type: Whether to include 'type: stdio' field
+        sidecar_url: Optional explicit sidecar URL (overrides env var)
     """
     # Check for custom MCP server command (standalone mode)
     custom_command = os.environ.get("COLONY_MCP_COMMAND")
     custom_args = os.environ.get("COLONY_MCP_ARGS", "")
     
-    # Determine sidecar URL
-    sidecar_url = os.environ.get("COLONY_SIDECAR_URL")
-    if not sidecar_url:
-        sidecar_port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
-        sidecar_url = f"http://127.0.0.1:{sidecar_port}"
+    # Determine sidecar URL (param > env > default)
+    if sidecar_url:
+        final_url = sidecar_url
+    else:
+        final_url = os.environ.get("COLONY_SIDECAR_URL")
+        if not final_url:
+            sidecar_port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+            final_url = f"http://127.0.0.1:{sidecar_port}"
     
     if custom_command:
         # Standalone mode: custom Python script or other MCP server
@@ -105,7 +114,7 @@ def _mcp_config(contact_id: str, source: str, include_type: bool = False) -> dic
             "args": args,
             "env": {
                 "COLONY_API_KEY": "${COLONY_API_KEY}",
-                "COLONY_URL": sidecar_url,
+                "COLONY_URL": final_url,
                 "COLONY_MCP_CONTACT_ID": contact_id,
                 "COLONY_MCP_SOURCE": source,
             },
@@ -117,7 +126,7 @@ def _mcp_config(contact_id: str, source: str, include_type: bool = False) -> dic
             "args": ["mcp"],
             "env": {
                 "COLONY_API_KEY": "${COLONY_API_KEY}",
-                "COLONY_URL": sidecar_url,
+                "COLONY_URL": final_url,
                 "COLONY_MCP_CONTACT_ID": contact_id,
                 "COLONY_MCP_SOURCE": source,
             },
@@ -291,13 +300,24 @@ def _remove_from_yaml_config(config_path: str, dry_run: bool = False) -> str | N
     return None
 
 
-def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False) -> str | None:
-    """Add Colony MCP config to a specific harness. Returns diff or None if already configured."""
+def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False, sidecar_url: str | None = None) -> str | None:
+    """Add Colony MCP config to a specific harness. Returns diff or None if already configured.
+    
+    Args:
+        harness_id: Harness to configure (e.g., 'crush', 'claude-code')
+        contact_id: User identifier
+        dry_run: If True, don't write changes
+        sidecar_url: Optional explicit sidecar URL (overrides env vars)
+    """
     hdef = HARNESS_DEFS.get(harness_id)
     if not hdef:
         return f"  Unknown harness: {harness_id}"
 
     source = hdef["source_tag"]
+    
+    # Store sidecar_url in env for _mcp_config to pick up
+    if sidecar_url:
+        os.environ["COLONY_SIDECAR_URL"] = sidecar_url
 
     if hdef["config_format"] == "json":
         return _add_to_json_config(hdef, contact_id, source, dry_run)
