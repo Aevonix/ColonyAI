@@ -40,9 +40,10 @@ HARNESS_DEFS = {
     "crush": {
         "display": "Crush",
         "detect_cmds": ["crush"],
-        "config_path": "~/.crush/mcp.json",
+        "config_path": "~/.crush.json",
         "config_format": "json",
-        "mcp_key": "mcpServers",
+        "mcp_key": "mcp",
+        "mcp_type": "stdio",
         "source_tag": "crush",
     },
     "opencode": {
@@ -79,17 +80,49 @@ def detect_harnesses() -> dict[str, bool]:
 # ---------------------------------------------------------------------------
 
 def _mcp_config(contact_id: str, source: str, include_type: bool = False) -> dict[str, Any]:
-    """Return the MCP server config block for Colony."""
-    config = {
-        "command": "colony",
-        "args": ["mcp"],
-        "env": {
-            "COLONY_API_KEY": "${COLONY_API_KEY}",
-            "COLONY_URL": f"http://127.0.0.1:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}",
-            "COLONY_MCP_CONTACT_ID": contact_id,
-            "COLONY_MCP_SOURCE": source,
-        },
-    }
+    """Return the MCP server config block for Colony.
+    
+    Supports:
+    - Local mode: Uses 'colony mcp' command (requires colony CLI installed)
+    - Remote mode: Uses COLONY_SIDECAR_URL env var to point to remote sidecar
+    - Standalone mode: Uses COLONY_MCP_COMMAND env var for custom MCP server command
+    """
+    # Check for custom MCP server command (standalone mode)
+    custom_command = os.environ.get("COLONY_MCP_COMMAND")
+    custom_args = os.environ.get("COLONY_MCP_ARGS", "")
+    
+    # Determine sidecar URL
+    sidecar_url = os.environ.get("COLONY_SIDECAR_URL")
+    if not sidecar_url:
+        sidecar_port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+        sidecar_url = f"http://127.0.0.1:{sidecar_port}"
+    
+    if custom_command:
+        # Standalone mode: custom Python script or other MCP server
+        args = custom_args.split() if custom_args else []
+        config = {
+            "command": custom_command,
+            "args": args,
+            "env": {
+                "COLONY_API_KEY": "${COLONY_API_KEY}",
+                "COLONY_URL": sidecar_url,
+                "COLONY_MCP_CONTACT_ID": contact_id,
+                "COLONY_MCP_SOURCE": source,
+            },
+        }
+    else:
+        # Standard mode: use colony CLI
+        config = {
+            "command": "colony",
+            "args": ["mcp"],
+            "env": {
+                "COLONY_API_KEY": "${COLONY_API_KEY}",
+                "COLONY_URL": sidecar_url,
+                "COLONY_MCP_CONTACT_ID": contact_id,
+                "COLONY_MCP_SOURCE": source,
+            },
+        }
+    
     if include_type:
         config["type"] = "stdio"
     return config

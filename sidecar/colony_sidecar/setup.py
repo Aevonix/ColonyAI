@@ -49,16 +49,36 @@ def _bold(msg: str) -> str:
     return f"\033[1m{msg}\033[0m"
 
 def _prompt(prompt: str, default: str = "", non_interactive: bool = False) -> str:
-    """Prompt for input with a default value. Returns default on EOF or non-interactive mode."""
+    """Prompt for input with a default value. Returns default on EOF or non-interactive mode.
+    
+    Also checks for COLONY_INIT_DEFAULTS env var for scripted defaults.
+    Format: COLONY_INIT_DEFAULTS='key1=val1,key2=val2'
+    """
     if non_interactive:
         return default
+    
+    # Check for scripted defaults
+    defaults_env = os.environ.get("COLONY_INIT_DEFAULTS", "")
+    if defaults_env:
+        for pair in defaults_env.split(","):
+            if "=" in pair:
+                key, val = pair.split("=", 1)
+                # Map prompt keywords to defaults
+                prompt_lower = prompt.lower()
+                if key.lower() in prompt_lower or prompt_lower in key.lower():
+                    return val
+    
     suffix = f" [{default}]" if default else ""
     try:
         val = input(f"{prompt}{suffix}: ").strip()
         return val or default
     except EOFError:
         # Gracefully handle piped input exhaustion
+        print()  # Add newline for clean output
         return default
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        sys.exit(130)
 
 
 # ── Check helpers ───────────────────────────────────────────────────────────
@@ -133,7 +153,7 @@ def _detect_coding_harnesses() -> list[str]:
         harnesses.append("claude-code")
     if Path.home().joinpath(".codex").exists():
         harnesses.append("codex")
-    if Path.home().joinpath(".crush").exists():
+    if Path.home().joinpath(".crush.json").exists():
         harnesses.append("crush")
     if Path.home().joinpath(".opencode").exists():
         harnesses.append("opencode")
@@ -799,14 +819,27 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     neo4j_ok, neo4j_info = _check_neo4j()
     neo4j_password = ""
     neo4j_generated = False
+    neo4j_auth_required = True
     # One strong random password per install — reused across the paths below
     # so Docker-start and manual setup both get a unique value by default.
     _candidate = secrets.token_urlsafe(24)
 
     if neo4j_ok:
         print(f"  ✅ Neo4j is already running ({neo4j_info})")
-        print("  Enter the password this Neo4j instance was configured with.")
-        neo4j_password = _prompt("  Neo4j password", "", non_interactive)
+        
+        # Check if Neo4j requires auth
+        try:
+            neo4j_auth_required = _check_neo4j_auth()
+        except Exception:
+            neo4j_auth_required = True  # Assume auth required if check fails
+        
+        if not neo4j_auth_required:
+            print("  Neo4j is running without authentication (auth disabled).")
+            neo4j_password = ""
+            print("  ✅ No password needed — connection will use no auth")
+        else:
+            print("  Enter the password this Neo4j instance was configured with.")
+            neo4j_password = _prompt("  Neo4j password", "", non_interactive)
     elif docker_ok:
         print("  Neo4j is required for graph memory (persistent knowledge,")
         print("  connections, world model).")
@@ -934,9 +967,53 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 embed_dims = "384"
         except Exception as exc:
             print(f"  ⚠️ Hardware scan failed: {exc}")
-            embed_provider = "cpu"
-            embed_model = "sentence-transformers/all-MiniLM-L6-v2"
-            embed_dims = "384"
+            print("  Falling back to safe defaults...")
+            
+            # Try to detect high-RAM systems even without GPU info
+            try:
+                # Simple RAM check without full scanner
+                import platform
+                system = platform.system().lower()
+                ram_gb = 8  # default
+                
+                if system == "linux":
+                    try:
+                        with open("/proc/meminfo") as f:
+                            for line in f:
+                                if line.startswith("MemTotal:"):
+                                    ram_gb = int(line.split()[1]) // (1024 * 1024) + 1
+                                    break
+                    except Exception:
+                        pass
+                elif system == "darwin":
+                    import subprocess
+                    result = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        ram_gb = int(result.stdout.strip()) // (1024 ** 3)
+                
+                # High-RAM system (>= 64GB) deserves better than tier 0
+                if ram_gb >= 128:
+                    print(f"  Detected high-memory system ({ram_gb}GB RAM)")
+                    embed_provider = "cpu"
+                    embed_model = "BAAI/bge-large-en-v1.5"
+                    embed_dims = "1024"
+                    print("  Using BGE-large (CPU) for better quality")
+                elif ram_gb >= 64:
+                    print(f"  Detected high-memory system ({ram_gb}GB RAM)")
+                    embed_provider = "cpu"
+                    embed_model = "BAAI/bge-base-en-v1.5"
+                    embed_dims = "768"
+                    print("  Using BGE-base (CPU) for better quality")
+                else:
+                    embed_provider = "cpu"
+                    embed_model = "sentence-transformers/all-MiniLM-L6-v2"
+                    embed_dims = "384"
+                    print(f"  Using MiniLM (CPU) — {ram_gb}GB RAM detected")
+            except Exception:
+                # Ultimate fallback
+                embed_provider = "cpu"
+                embed_model = "sentence-transformers/all-MiniLM-L6-v2"
+                embed_dims = "384"
 
     # Get bind address and port from CLI args or prompt
     bind_address = existing.get("COLONY_SIDECAR_HOST", "127.0.0.1")
