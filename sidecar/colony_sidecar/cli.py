@@ -166,7 +166,25 @@ def main() -> None:
         if args.detach:
             _cmd_start_daemon(host, port, args.force)
         else:
-            # Foreground mode — just run uvicorn directly
+            # Foreground mode — check port first
+            existing_pid = _find_pid_on_port(port)
+            if existing_pid:
+                if args.force:
+                    print(f"Killing existing process {existing_pid} on port {port}...")
+                    try:
+                        os.kill(existing_pid, 15)  # SIGTERM
+                        time.sleep(2)
+                        if _find_pid_on_port(port):
+                            os.kill(existing_pid, 9)  # SIGKILL
+                            time.sleep(1)
+                        print("Process killed.")
+                    except ProcessLookupError:
+                        pass
+                else:
+                    print(f"Error: Port {port} is already in use (PID {existing_pid})")
+                    print("Use --force to kill existing process, or stop it first with: colony stop")
+                    sys.exit(1)
+            
             import uvicorn
             try:
                 ws_max_size = int(
