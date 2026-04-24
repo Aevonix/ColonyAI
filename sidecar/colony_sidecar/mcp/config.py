@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 try:
     import yaml
@@ -79,7 +79,7 @@ def detect_harnesses() -> dict[str, bool]:
 # Config writers
 # ---------------------------------------------------------------------------
 
-def _mcp_config(contact_id: str, source: str, include_type: bool = False, sidecar_url: str | None = None) -> dict[str, Any]:
+def _mcp_config(contact_id: str, source: str, include_type: bool = False, sidecar_url: Optional[str] = None) -> dict[str, Any]:
     """Return the MCP server config block for Colony.
     
     Supports:
@@ -158,7 +158,7 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def _add_to_json_config(hdef: dict, contact_id: str, source: str, dry_run: bool = False) -> str | None:
+def _add_to_json_config(hdef: dict, contact_id: str, source: str, dry_run: bool = False) -> Optional[str]:
     """Add Colony to a JSON-format harness config. Returns diff description or None if already present."""
     config_path = hdef["config_path"]
     mcp_key = hdef.get("mcp_key", "mcpServers")
@@ -186,7 +186,7 @@ def _add_to_json_config(hdef: dict, contact_id: str, source: str, dry_run: bool 
     return f"  Old: {old_desc[:100]}\n  New: {new_desc[:100]}"
 
 
-def _add_to_toml_config(config_path: str, contact_id: str, source: str, dry_run: bool = False) -> str | None:
+def _add_to_toml_config(config_path: str, contact_id: str, source: str, dry_run: bool = False) -> Optional[str]:
     """Add Colony to a TOML-format harness config."""
     path = Path(config_path).expanduser()
     sidecar_port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
@@ -224,7 +224,7 @@ env = {{ COLONY_API_KEY = "${{COLONY_API_KEY}}", COLONY_URL = "http://127.0.0.1:
     return f"  Adding:\n{toml_block.strip()}"
 
 
-def _add_to_yaml_config(config_path: str, contact_id: str, source: str, dry_run: bool = False) -> str | None:
+def _add_to_yaml_config(config_path: str, contact_id: str, source: str, dry_run: bool = False) -> Optional[str]:
     """Add Colony to a YAML-format harness config."""
     if yaml is None:
         return "  PyYAML not installed — run: pip install pyyaml"
@@ -272,7 +272,7 @@ def _add_to_yaml_config(config_path: str, contact_id: str, source: str, dry_run:
     return f"  Old: {old_desc[:100]}\n  New: {new_desc[:100]}"
 
 
-def _remove_from_yaml_config(config_path: str, dry_run: bool = False) -> str | None:
+def _remove_from_yaml_config(config_path: str, dry_run: bool = False) -> Optional[str]:
     """Remove Colony from a YAML-format harness config."""
     if yaml is None:
         return "  PyYAML not installed"
@@ -300,7 +300,7 @@ def _remove_from_yaml_config(config_path: str, dry_run: bool = False) -> str | N
     return None
 
 
-def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False, sidecar_url: str | None = None) -> str | None:
+def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False, sidecar_url: Optional[str] = None) -> Optional[str]:
     """Add Colony MCP config to a specific harness. Returns diff or None if already configured.
     
     Args:
@@ -329,7 +329,7 @@ def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False, side
     return None
 
 
-def remove_from_harness(harness_id: str, dry_run: bool = False) -> str | None:
+def remove_from_harness(harness_id: str, dry_run: bool = False) -> Optional[str]:
     """Remove Colony MCP config from a harness. Returns description or None if not present."""
     hdef = HARNESS_DEFS.get(harness_id)
     if not hdef:
