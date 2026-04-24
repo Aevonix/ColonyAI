@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 
+from colony_sidecar import get_state_dir
+
 from colony_sidecar.goals.models import (
     Goal,
     GoalDAG,
@@ -89,11 +91,10 @@ class GoalStore:
 
     @classmethod
     def get_instance(cls) -> "GoalStore":
-        """Return the process-wide singleton backed by ~/.colony/goals.db."""
+        """Return the process-wide singleton backed by ~/.colony/data/goals.db."""
         global _goal_store_instance
         if _goal_store_instance is None:
-            colony_home = Path(os.environ.get("COLONY_HOME", str(Path.home() / ".colony")))
-            colony_home.mkdir(parents=True, exist_ok=True)
+            colony_home = get_state_dir()
             _goal_store_instance = cls(str(colony_home / "goals.db"))
         return _goal_store_instance
 

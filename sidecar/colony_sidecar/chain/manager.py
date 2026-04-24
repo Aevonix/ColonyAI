@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Optional
 
+from colony_sidecar import get_state_dir
+
 from .block import Block
 from .state_machine import ChainStateMachine
 from .storage import ChainStore
@@ -244,10 +246,10 @@ class ChainManager:
 
     @classmethod
     def get_instance(cls) -> "ChainManager":
-        """Return the process-wide singleton backed by ~/.colony/chain.db."""
+        """Return the process-wide singleton backed by ~/.colony/data/chain.db."""
         global _chain_manager_instance
         if _chain_manager_instance is None:
-            colony_home = Path(os.environ.get("COLONY_HOME", str(Path.home() / ".colony")))
+            colony_home = get_state_dir()
             db_path = colony_home / "chain.db"
             # Derive colony_id from genesis block cryptographic identity
             colony_id = "local"

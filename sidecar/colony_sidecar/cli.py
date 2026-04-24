@@ -60,6 +60,11 @@ def main() -> None:
     val_p = sub.add_parser("validate", help="Run end-to-end pipeline validation (uses LLM credits)")
     val_p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
+    # --- doctor ---
+    doctor_p = sub.add_parser("doctor", help="Diagnose and fix common issues")
+    doctor_p.add_argument("--fix", action="store_true", help="Automatically fix issues found")
+    doctor_p.add_argument("--clean-orphans", action="store_true", help="Kill orphaned sidecar processes")
+
     # --- generate-types ---
     sub.add_parser("generate-types", help="Export OpenAPI spec (for TypeScript generation)")
 
@@ -758,6 +763,84 @@ def _find_pid_on_port(port: int) -> int | None:
         return None
 
 
+def _find_orphan_processes() -> list[int]:
+    """Find orphaned colony sidecar processes (parent died).
+    
+    Returns list of PIDs that are:
+    - Running uvicorn/colony_sidecar
+    - Have parent PID 1 (init) or parent doesn't exist
+    """
+    orphans = []
+    try:
+        import subprocess
+        # Find all python processes running uvicorn or colony_sidecar
+        result = subprocess.run(
+            ["ps", "aux"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return orphans
+        
+        for line in result.stdout.splitlines():
+            # Look for colony sidecar processes
+            if "uvicorn" in line and "colony_sidecar" in line:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        pid = int(parts[1])
+                        ppid = int(parts[2]) if len(parts) > 2 else 0
+                        # Parent PID 1 = orphan (reparented to init)
+                        # Also check if parent exists
+                        if ppid == 1:
+                            orphans.append(pid)
+                        elif ppid > 1:
+                            try:
+                                os.kill(ppid, 0)  # Check if parent exists
+                            except OSError:
+                                # Parent doesn't exist, this is an orphan
+                                orphans.append(pid)
+                    except (ValueError, OSError):
+                        pass
+    except Exception:
+        pass
+    return orphans
+
+
+def _cleanup_orphans(kill: bool = False) -> int:
+    """Find and optionally kill orphaned colony processes.
+    
+    Args:
+        kill: If True, kill the orphans; if False, just report them
+    
+    Returns:
+        Number of orphans found
+    """
+    orphans = _find_orphan_processes()
+    if not orphans:
+        return 0
+    
+    if kill:
+        for pid in orphans:
+            try:
+                os.kill(pid, 15)  # SIGTERM
+                print(f"  Killed orphan process {pid}")
+            except ProcessLookupError:
+                pass
+            except Exception as e:
+                print(f"  Failed to kill {pid}: {e}")
+        time.sleep(1)
+        # Check if any survived
+        for pid in orphans:
+            try:
+                os.kill(pid, 0)
+                os.kill(pid, 9)  # SIGKILL
+                print(f"  Force-killed stubborn process {pid}")
+            except ProcessLookupError:
+                pass
+    
+    return len(orphans)
+
+
 def _neo4j_health_check(password: str, timeout_s: int = 5) -> tuple[bool, str]:
     """Check if Neo4j is healthy (connect + auth + query). Returns (success, error_message)."""
     from neo4j import GraphDatabase
@@ -943,6 +1026,11 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     """Start the sidecar as a background daemon."""
     import subprocess
 
+    # Clean up any orphaned processes first
+    orphan_count = _cleanup_orphans(kill=True)
+    if orphan_count:
+        print(f"  Cleaned up {orphan_count} orphan process(es)")
+
     # Check if port is already in use
     existing_pid = _find_pid_on_port(port)
     if existing_pid:
@@ -1067,6 +1155,11 @@ def _cmd_stop() -> None:
         print(f"  Process {pid} already gone")
         if pid_path.exists():
             pid_path.unlink()
+        
+        # Check for orphan cleanup
+        orphan_count = _cleanup_orphans(kill=True)
+        if orphan_count:
+            print(f"  Cleaned up {orphan_count} orphan process(es)")
 
 
 def _cmd_status() -> None:
@@ -1686,6 +1779,21 @@ def _cmd_doctor(args) -> None:
             stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
             return stamp.exists()
         check("E2E pipeline validated", _e2e_validated)
+
+    # --- Orphan process check ---
+    if getattr(args, 'clean_orphans', False):
+        print("\n  Checking for orphaned sidecar processes...")
+        orphan_count = _cleanup_orphans(kill=True)
+        if orphan_count:
+            print(f"  ✅ Cleaned up {orphan_count} orphan process(es)")
+        else:
+            print("  ✅ No orphan processes found")
+    else:
+        orphans = _find_orphan_processes()
+        if orphans:
+            print(f"\n  ⚠️ Found {len(orphans)} orphaned sidecar process(es): {orphans}")
+            print("  Run 'colony doctor --clean-orphans' to clean them up")
+            checks.append(("No orphan processes", False))
 
         # --- Full checks (heavier, require LLM or async) ---
         if args.full:

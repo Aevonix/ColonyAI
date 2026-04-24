@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
+from colony_sidecar import get_state_dir
+
 from .models import (
     Briefing,
     BriefingPriority,
@@ -169,11 +171,10 @@ class BriefingStore:
 
     @classmethod
     def get_instance(cls) -> "BriefingStore":
-        """Return the process-wide singleton backed by ~/.colony/briefings.db."""
+        """Return the process-wide singleton backed by ~/.colony/data/briefings.db."""
         global _briefing_store_instance
         if _briefing_store_instance is None:
-            colony_home = Path(os.environ.get("COLONY_HOME", str(Path.home() / ".colony")))
-            colony_home.mkdir(parents=True, exist_ok=True)
+            colony_home = get_state_dir()
             _briefing_store_instance = cls(str(colony_home / "briefings.db"))
         return _briefing_store_instance
 
