@@ -155,6 +155,28 @@ from colony_sidecar.api.schemas.host import (
     WorldNeighborhoodResponse,
     WorldPathResponse,
     WorldStatsResponse,
+    # Multi-Agent v0.7.0
+    AgentInviteRequest,
+    AgentInviteResponse,
+    AgentConnectRequest,
+    AgentConnectResponse,
+    AgentNodeCert,
+    AgentRegisterRequest,
+    AgentRegisterResponse,
+    AgentHeartbeatRequest,
+    AgentMetadataSchema,
+    AgentResponse,
+    AgentListResponse,
+    AgentHealthResponse,
+    AgentUpdateRequest,
+    InitiativeCreateRequest,
+    InitiativeResponse,
+    InitiativeListResponse,
+    InitiativeClaimRequest,
+    InitiativeCompleteRequest,
+    InitiativeFailRequest,
+    InitiativeDelegateRequest,
+    InitiativePriorityRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -4278,3 +4300,591 @@ def _wm_rel_to_response(rel) -> WorldRelationshipResponse:
         is_active=rel.is_active if hasattr(rel, "is_active") else rel.valid_to is None,
         created_at=rel.created_at,
     )
+
+
+# ============================================================================
+# Multi-Agent — Agent Management (v0.7.0)
+# ============================================================================
+
+_agent_store = None
+_invite_store = None
+_initiative_store = None
+_assignment_engine = None
+_websocket_manager = None
+
+
+def set_agent_store(store) -> None:
+    global _agent_store
+    _agent_store = store
+
+
+def set_invite_store(store) -> None:
+    global _invite_store
+    _invite_store = store
+
+
+def set_initiative_store(store) -> None:
+    global _initiative_store
+    _initiative_store = store
+
+
+def set_assignment_engine(engine) -> None:
+    global _assignment_engine
+    _assignment_engine = engine
+
+
+def set_websocket_manager(manager) -> None:
+    global _websocket_manager
+    _websocket_manager = manager
+
+
+# --- Agent Onboarding ---
+
+@router.post("/agents/invite", response_model=AgentInviteResponse)
+async def create_agent_invite(body: AgentInviteRequest) -> AgentInviteResponse:
+    """Generate a setup code for remote agent onboarding."""
+    if _invite_store is None:
+        raise HTTPException(status_code=501, detail="Invite store not initialized")
+    
+    colony_id = os.environ.get("COLONY_ID", str(uuid.uuid4()))
+    
+    invite = _invite_store.create(
+        colony_id=colony_id,
+        capabilities=body.granted_capabilities,
+        is_primary=body.granted_is_primary,
+        max_concurrent=body.granted_max_concurrent,
+        expires_seconds=body.expires_in_seconds,
+        label=body.label,
+    )
+    
+    # Build setup command
+    colony_url = os.environ.get("COLONY_URL", "http://localhost:7777")
+    setup_command = f"colony agent connect --setup-code {invite['setup_code']} --colony-url {colony_url}"
+    
+    return AgentInviteResponse(
+        code=invite["setup_code"],
+        expires_at=invite["expires_at"],
+        max_uses=1,  # Single use by default
+        setup_command=setup_command,
+    )
+
+
+@router.post("/agents/connect", response_model=AgentConnectResponse)
+async def connect_remote_agent(body: AgentConnectRequest) -> AgentConnectResponse:
+    """Connect a remote agent using setup code."""
+    if _invite_store is None or _agent_store is None:
+        raise HTTPException(status_code=501, detail="Agent system not initialized")
+    
+    # Generate agent ID and node ID
+    agent_id = str(uuid.uuid4())
+    node_id = body.node_id or str(uuid.uuid4())
+    colony_id = os.environ.get("COLONY_ID", str(uuid.uuid4()))
+    
+    # Validate and use setup code
+    try:
+        invite = _invite_store.use(body.setup_code, node_id, agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Create node certificate (simplified for now - TODO: proper signing)
+    from datetime import timedelta
+    issued_at = datetime.now(timezone.utc)
+    node_cert = AgentNodeCert(
+        colony_id=colony_id,
+        node_id=node_id,
+        public_key=body.node_public_key,
+        signature=f"sig-{uuid.uuid4()}",  # TODO: actual signature
+        issued_at=issued_at.isoformat(),
+    )
+    
+    # Register agent
+    agent = _agent_store.create({
+        "agent_id": agent_id,
+        "node_id": node_id,
+        "colony_id": colony_id,
+        "name": body.name,
+        "connection_mode": "remote",
+        "capabilities": invite.get("capabilities", []),
+        "is_primary": invite.get("is_primary", False),
+        "max_concurrent": invite.get("max_concurrent", 5),
+        "metadata": body.metadata,
+    })
+    
+    # Build websocket URL
+    colony_url = os.environ.get("COLONY_URL", "ws://localhost:7777")
+    ws_url = f"{colony_url.replace('http', 'ws')}/v1/host/agents/{agent_id}/stream"
+    
+    return AgentConnectResponse(
+        agent_id=agent_id,
+        node_id=node_id,
+        colony_id=colony_id,
+        node_cert=node_cert,
+        websocket_url=ws_url,
+        capabilities=agent.capabilities,
+        is_primary=agent.is_primary,
+        max_concurrent=agent.max_concurrent,
+    )
+
+
+@router.post("/agents/register", response_model=AgentRegisterResponse)
+async def register_local_agent(body: AgentRegisterRequest) -> AgentRegisterResponse:
+    """Register a local agent (same network, no setup code)."""
+    if _agent_store is None:
+        raise HTTPException(status_code=501, detail="Agent store not initialized")
+    
+    agent_id = body.agent_id or str(uuid.uuid4())
+    node_id = body.node_id or str(uuid.uuid4())
+    colony_id = os.environ.get("COLONY_ID", str(uuid.uuid4()))
+    
+    agent = _agent_store.create({
+        "agent_id": agent_id,
+        "node_id": node_id,
+        "colony_id": colony_id,
+        "name": body.name,
+        "connection_mode": body.connection_mode,
+        "gateway_url": body.gateway_url,
+        "capabilities": body.capabilities,
+        "is_primary": body.is_primary,
+        "priority": body.priority,
+        "max_concurrent": body.max_concurrent,
+        "excluded_types": body.excluded_types,
+        "metadata": body.metadata,
+    })
+    
+    ws_url = None
+    if body.connection_mode == "remote":
+        colony_url = os.environ.get("COLONY_URL", "ws://localhost:7777")
+        ws_url = f"{colony_url.replace('http', 'ws')}/v1/host/agents/{agent_id}/stream"
+    
+    return AgentRegisterResponse(
+        agent_id=agent_id,
+        node_id=node_id,
+        colony_id=colony_id,
+        websocket_url=ws_url,
+    )
+
+
+# --- Agent Management ---
+
+@router.post("/agents/{agent_id}/heartbeat")
+async def agent_heartbeat(agent_id: str, body: AgentHeartbeatRequest) -> Dict[str, Any]:
+    """Update agent status with heartbeat."""
+    if _agent_store is None:
+        raise HTTPException(status_code=501, detail="Agent store not initialized")
+    
+    agent = _agent_store.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Update status and metadata
+    updates = {
+        "status": body.status,
+        "current_assignments": len(body.current_initiatives) if body.current_initiatives else 0,
+        "last_seen_at": datetime.now(timezone.utc),
+    }
+    if body.metadata:
+        updates["metadata"] = body.metadata
+    
+    _agent_store.update(agent_id, **updates)
+    
+    return {"status": "ok", "agent_id": agent_id}
+
+
+@router.get("/agents", response_model=AgentListResponse)
+async def list_agents(
+    status: Optional[str] = Query(None),
+    capability: Optional[str] = Query(None),
+) -> AgentListResponse:
+    """List all registered agents."""
+    if _agent_store is None:
+        raise HTTPException(status_code=501, detail="Agent store not initialized")
+    
+    agents = _agent_store.list(status=status, capability=capability)
+    
+    return AgentListResponse(
+        agents=[
+            AgentResponse(
+                agent_id=a.agent_id,
+                node_id=a.node_id,
+                name=a.name,
+                colony_id=a.colony_id,
+                connection_mode=a.connection_mode,
+                gateway_url=a.gateway_url,
+                capabilities=a.capabilities,
+                is_primary=a.is_primary,
+                priority=a.priority,
+                max_concurrent=a.max_concurrent,
+                excluded_types=a.excluded_types,
+                status=a.status,
+                current_assignments=a.current_assignments,
+                metadata=AgentMetadataSchema(**a.metadata.to_dict()) if hasattr(a.metadata, 'to_dict') else AgentMetadataSchema(),
+                registered_at=a.registered_at.isoformat() if a.registered_at else "",
+                last_seen_at=a.last_seen_at.isoformat() if a.last_seen_at else None,
+            )
+            for a in agents
+        ],
+        total=len(agents),
+    )
+
+
+@router.get("/agents/{agent_id}", response_model=AgentResponse)
+async def get_agent(agent_id: str) -> AgentResponse:
+    """Get agent details."""
+    if _agent_store is None:
+        raise HTTPException(status_code=501, detail="Agent store not initialized")
+    
+    agent = _agent_store.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    return AgentResponse(
+        agent_id=agent.agent_id,
+        node_id=agent.node_id,
+        name=agent.name,
+        colony_id=agent.colony_id,
+        connection_mode=agent.connection_mode,
+        gateway_url=agent.gateway_url,
+        capabilities=agent.capabilities,
+        is_primary=agent.is_primary,
+        priority=agent.priority,
+        max_concurrent=agent.max_concurrent,
+        excluded_types=agent.excluded_types,
+        status=agent.status,
+        current_assignments=agent.current_assignments,
+        metadata=AgentMetadataSchema(**agent.metadata.to_dict()) if hasattr(agent.metadata, 'to_dict') else AgentMetadataSchema(),
+        registered_at=agent.registered_at.isoformat() if agent.registered_at else "",
+        last_seen_at=agent.last_seen_at.isoformat() if agent.last_seen_at else None,
+    )
+
+
+@router.delete("/agents/{agent_id}")
+async def revoke_agent(agent_id: str) -> Dict[str, Any]:
+    """Revoke an agent's access."""
+    if _agent_store is None:
+        raise HTTPException(status_code=501, detail="Agent store not initialized")
+    
+    agent = _agent_store.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    _agent_store.revoke(agent_id)
+    
+    return {"status": "revoked", "agent_id": agent_id}
+
+
+@router.patch("/agents/{agent_id}", response_model=AgentResponse)
+async def update_agent(agent_id: str, body: AgentUpdateRequest) -> AgentResponse:
+    """Update agent configuration."""
+    if _agent_store is None:
+        raise HTTPException(status_code=501, detail="Agent store not initialized")
+    
+    agent = _agent_store.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    updates = body.dict(exclude_unset=True)
+    if updates:
+        agent = _agent_store.update(agent_id, **updates)
+    
+    return AgentResponse(
+        agent_id=agent.agent_id,
+        node_id=agent.node_id,
+        name=agent.name,
+        colony_id=agent.colony_id,
+        connection_mode=agent.connection_mode,
+        gateway_url=agent.gateway_url,
+        capabilities=agent.capabilities,
+        is_primary=agent.is_primary,
+        priority=agent.priority,
+        max_concurrent=agent.max_concurrent,
+        excluded_types=agent.excluded_types,
+        status=agent.status,
+        current_assignments=agent.current_assignments,
+        metadata=AgentMetadataSchema(**agent.metadata.to_dict()) if hasattr(agent.metadata, 'to_dict') else AgentMetadataSchema(),
+        registered_at=agent.registered_at.isoformat() if agent.registered_at else "",
+        last_seen_at=agent.last_seen_at.isoformat() if agent.last_seen_at else None,
+    )
+
+
+@router.get("/agents/health", response_model=AgentHealthResponse)
+async def get_agents_health() -> AgentHealthResponse:
+    """Get health status of all agents."""
+    if _agent_store is None:
+        raise HTTPException(status_code=501, detail="Agent store not initialized")
+    
+    agents = _agent_store.list()
+    
+    return AgentHealthResponse(
+        agents=[
+            {
+                "agent_id": a.agent_id,
+                "name": a.name,
+                "status": a.status,
+                "last_seen_at": a.last_seen_at.isoformat() if a.last_seen_at else None,
+                "current_initiatives": a.current_assignments,
+            }
+            for a in agents
+        ],
+        websocket_endpoint="/v1/host/agents/{agent_id}/stream",
+    )
+
+
+# --- Initiative Management ---
+
+@router.post("/initiatives", response_model=InitiativeResponse)
+async def create_initiative(body: InitiativeCreateRequest) -> InitiativeResponse:
+    """Create a new initiative."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    
+    initiative = _initiative_store.create(
+        type=body.initiative_type,
+        description=body.description,
+        priority=body.priority,
+        timeout_seconds=body.timeout_seconds,
+        dedup_key=body.dedup_key,
+        preferred_agent_id=body.target_agent_id,
+        # Extra context stored separately if needed
+    )
+    
+    return _initiative_to_response(initiative)
+
+
+@router.get("/initiatives", response_model=InitiativeListResponse)
+async def list_initiatives(
+    status: Optional[str] = Query(None),
+    agent_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=1000),
+) -> InitiativeListResponse:
+    """List initiatives with optional filters."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    
+    initiatives = _initiative_store.list(
+        status=status,
+        assigned_agent_id=agent_id,
+        limit=limit,
+    )
+    
+    return InitiativeListResponse(
+        initiatives=[_initiative_to_response(i) for i in initiatives],
+        total=len(initiatives),
+    )
+
+
+@router.get("/initiatives/{initiative_id}", response_model=InitiativeResponse)
+async def get_initiative(initiative_id: str) -> InitiativeResponse:
+    """Get initiative details."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    
+    return _initiative_to_response(initiative)
+
+
+@router.post("/initiatives/{initiative_id}/claim")
+async def claim_initiative(
+    initiative_id: str,
+    body: InitiativeClaimRequest,
+) -> Dict[str, Any]:
+    """Claim an initiative for an agent."""
+    if _initiative_store is None or _agent_store is None:
+        raise HTTPException(status_code=501, detail="System not initialized")
+    
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    
+    if initiative.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Initiative already {initiative.status}")
+    
+    agent = _agent_store.get(body.agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    _initiative_store.assign(initiative_id, body.agent_id)
+    
+    return {"status": "claimed", "initiative_id": initiative_id, "agent_id": body.agent_id}
+    
+    return {"status": "claimed", "initiative_id": initiative_id, "agent_id": body.agent_id}
+
+
+@router.post("/initiatives/{initiative_id}/complete")
+async def complete_initiative(
+    initiative_id: str,
+    body: InitiativeCompleteRequest,
+) -> Dict[str, Any]:
+    """Mark initiative as completed."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    
+    if initiative.assigned_agent_id != body.agent_id:
+        raise HTTPException(status_code=403, detail="Not assigned to this agent")
+    
+    _initiative_store.complete(initiative_id, body.agent_id, body.result.get("result"), body.result)
+    
+    return {"status": "completed", "initiative_id": initiative_id}
+
+
+@router.post("/initiatives/{initiative_id}/fail")
+async def fail_initiative(
+    initiative_id: str,
+    body: InitiativeFailRequest,
+) -> Dict[str, Any]:
+    """Mark initiative as failed."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    
+    if initiative.assigned_agent_id != body.agent_id:
+        raise HTTPException(status_code=403, detail="Not assigned to this agent")
+    
+    _initiative_store.fail(initiative_id, body.agent_id, body.error_message)
+    
+    return {"status": "failed", "initiative_id": initiative_id}
+
+
+@router.post("/initiatives/{initiative_id}/delegate")
+async def delegate_initiative(
+    initiative_id: str,
+    body: InitiativeDelegateRequest,
+) -> Dict[str, Any]:
+    """Delegate initiative to another agent."""
+    if _initiative_store is None or _agent_store is None:
+        raise HTTPException(status_code=501, detail="System not initialized")
+    
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    
+    agent = _agent_store.get(body.target_agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Target agent not found")
+    
+    _initiative_store.update(
+        initiative_id,
+        assigned_agent_id=body.target_agent_id,
+        delegated_reason=body.reason,
+    )
+    _initiative_store.log_history(
+        initiative_id,
+        action="delegated",
+        agent_id=initiative.assigned_agent_id,
+        details={"target_agent_id": body.target_agent_id, "reason": body.reason},
+    )
+    
+    return {"status": "delegated", "initiative_id": initiative_id, "target_agent_id": body.target_agent_id}
+
+
+@router.patch("/initiatives/{initiative_id}/priority")
+async def update_initiative_priority(
+    initiative_id: str,
+    body: InitiativePriorityRequest,
+) -> Dict[str, Any]:
+    """Update initiative priority."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    
+    _initiative_store.update(initiative_id, priority=body.priority)
+    
+    return {"status": "updated", "initiative_id": initiative_id, "priority": body.priority}
+
+
+@router.post("/initiatives/{initiative_id}/retry")
+async def retry_initiative(initiative_id: str) -> Dict[str, Any]:
+    """Retry a failed initiative."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    
+    if initiative.status != "failed":
+        raise HTTPException(status_code=400, detail="Can only retry failed initiatives")
+    
+    _initiative_store.update(
+        initiative_id,
+        status="pending",
+        assigned_agent_id=None,
+        error_message=None,
+        failed_at=None,
+    )
+    _initiative_store.log_history(initiative_id, action="retry", agent_id=None)
+    
+    return {"status": "pending", "initiative_id": initiative_id}
+
+
+@router.delete("/initiatives/{initiative_id}")
+async def cancel_initiative(initiative_id: str) -> Dict[str, Any]:
+    """Cancel an initiative."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    
+    _initiative_store.cancel(initiative_id)
+    
+    return {"status": "cancelled", "initiative_id": initiative_id}
+
+
+# --- Initiative Helpers ---
+
+def _initiative_to_response(initiative) -> InitiativeResponse:
+    """Convert StoredInitiative to InitiativeResponse."""
+    # Handle result as dict if it's a string or None
+    result_dict = None
+    if initiative.result:
+        if isinstance(initiative.result, dict):
+            result_dict = initiative.result
+        elif isinstance(initiative.result, str):
+            result_dict = {"result": initiative.result}
+    
+    return InitiativeResponse(
+        id=initiative.id,
+        initiative_type=initiative.type,
+        title=initiative.rationale or initiative.description[:50],  # Use rationale as title
+        description=initiative.description,
+        priority=int(initiative.priority * 100) if initiative.priority else 0,
+        status=initiative.status,
+        timeout_seconds=initiative.timeout_seconds,
+        context={},  # Not stored separately
+        target_agent_id=None,  # Not in StoredInitiative
+        assigned_agent_id=initiative.assigned_agent_id,
+        dedup_key=initiative.dedup_key,
+        result=result_dict,
+        error_message=initiative.failed_reason,
+        created_at=initiative.created_at.isoformat() if initiative.created_at else "",
+        acknowledged_at=initiative.acknowledged_at.isoformat() if initiative.acknowledged_at else None,
+        completed_at=initiative.completed_at.isoformat() if initiative.completed_at else None,
+        failed_at=initiative.failed_at.isoformat() if initiative.failed_at else None,
+        expires_at=initiative.expires_at.isoformat() if initiative.expires_at else None,
+    )
+
+
+# --- WebSocket Endpoint ---
+
+@router.websocket("/agents/{agent_id}/stream")
+async def agent_websocket_stream(ws: WebSocket, agent_id: str) -> None:
+    """WebSocket endpoint for real-time initiative delivery."""
+    if _websocket_manager is None:
+        await ws.close(code=1011, reason="WebSocket manager not initialized")
+        return
+    
+    await _websocket_manager.handle_connection(ws, agent_id)

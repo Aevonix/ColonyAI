@@ -25,6 +25,7 @@ class InitiativeType(str, Enum):
     RELATIONSHIP = "relationship"
     HEALTH = "health"
     SCHEDULING = "scheduling"
+    CODING = "coding"  # Code execution / refactoring tasks
 
 
 @dataclass
@@ -39,6 +40,7 @@ class Initiative:
         rationale: Why this suggestion was generated
         action_hint: Optional suggested concrete action
         entity_id: Optional related entity (person, task, etc.)
+        dedup_key: Optional deduplication key (prevents duplicates)
         expires_at: When this initiative is no longer relevant
         created_at: When the initiative was generated
     """
@@ -50,6 +52,7 @@ class Initiative:
     rationale: str
     action_hint: Optional[str] = None
     entity_id: Optional[str] = None
+    dedup_key: Optional[str] = None
     expires_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -73,10 +76,17 @@ class InitiativeEngine:
         mind_model: Mind model for behavioral state awareness
     """
 
-    def __init__(self, graph_client: Any, event_bus: Any, mind_model: Any) -> None:
+    def __init__(
+        self,
+        graph_client: Any,
+        event_bus: Any,
+        mind_model: Any,
+        store: Optional[Any] = None,  # InitiativeStore for persistence
+    ) -> None:
         self.graph = graph_client
         self.events = event_bus
         self.mind_model = mind_model
+        self._store = store  # Optional: InitiativeStore for persistence
         self._initiatives: List[Initiative] = []
         self._context: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -148,6 +158,29 @@ class InitiativeEngine:
         filtered = [i for i in initiatives if i.priority >= min_priority]
         result = sorted(filtered, key=lambda i: i.priority, reverse=True)
 
+        # Persist to store if available
+        if self._store:
+            for initiative in result:
+                try:
+                    # Generate dedup_key from entity_id if not set
+                    if not initiative.dedup_key and initiative.entity_id:
+                        initiative.dedup_key = f"{initiative.type.value}:{initiative.entity_id}"
+
+                    self._store.create(
+                        type=initiative.type.value,
+                        description=initiative.description,
+                        priority=initiative.priority,
+                        rationale=initiative.rationale,
+                        action_hint=initiative.action_hint,
+                        entity_id=initiative.entity_id,
+                        dedup_key=initiative.dedup_key,
+                        expires_at=initiative.expires_at,
+                        source_type="autonomy",
+                        created_by="initiative_engine",
+                    )
+                except Exception as e:
+                    logger.warning("Failed to persist initiative %s: %s", initiative.id, e)
+
         logger.debug(
             "Generated %d initiatives (%d above threshold %.2f)",
             len(initiatives),
@@ -163,6 +196,14 @@ class InitiativeEngine:
             initiative_id: ID of the initiative to dismiss
         """
         self._initiatives = [i for i in self._initiatives if i.id != initiative_id]
+
+        # Update store if available
+        if self._store:
+            try:
+                self._store.cancel(initiative_id, cancelled_by="initiative_engine", reason="dismissed")
+            except Exception as e:
+                logger.warning("Failed to dismiss initiative %s in store: %s", initiative_id, e)
+
         logger.debug("Dismissed initiative %s", initiative_id)
 
     async def get_active(self) -> List[Initiative]:
@@ -171,6 +212,37 @@ class InitiativeEngine:
         Returns:
             Active initiatives sorted by priority (descending)
         """
+        # Load from store if available
+        if self._store:
+            try:
+                stored = self._store.list(
+                    status=["pending", "assigned", "acknowledged"],
+                    limit=100,
+                )
+                # Convert StoredInitiative to Initiative
+                from datetime import datetime as dt
+                result = []
+                for s in stored:
+                    # Check expiry
+                    if s.expires_at and dt.now(timezone.utc) > s.expires_at:
+                        continue
+                    result.append(Initiative(
+                        id=s.id,
+                        type=InitiativeType(s.type),
+                        description=s.description,
+                        priority=s.priority,
+                        rationale=s.rationale or "",
+                        action_hint=s.action_hint,
+                        entity_id=s.entity_id,
+                        dedup_key=s.dedup_key,
+                        expires_at=s.expires_at,
+                        created_at=s.created_at,
+                    ))
+                return sorted(result, key=lambda i: i.priority, reverse=True)
+            except Exception as e:
+                logger.warning("Failed to load from store, using in-memory: %s", e)
+
+        # Fallback to in-memory
         now = datetime.now(timezone.utc)
         active = [
             i for i in self._initiatives
@@ -188,6 +260,7 @@ class InitiativeEngine:
         for item in self._context.get("pending_tasks", []):
             desc = item.get("description", "pending task")
             days = float(item.get("days_pending", 0))
+            entity_id = item.get("entity_id")
             # Priority grows with time pending, capped at 1.0
             priority = min(1.0, 0.4 + days * 0.1)
             initiatives.append(
@@ -198,7 +271,8 @@ class InitiativeEngine:
                     priority=priority,
                     rationale=f"Task has been pending for {days:.0f} day(s)",
                     action_hint=f"Review status of '{desc}'",
-                    entity_id=item.get("entity_id"),
+                    entity_id=entity_id,
+                    dedup_key=f"follow_up:{entity_id}" if entity_id else None,
                     expires_at=datetime.now(timezone.utc) + timedelta(days=3),
                 )
             )
@@ -209,6 +283,7 @@ class InitiativeEngine:
         initiatives: List[Initiative] = []
         for task in self._context.get("completed_tasks", []):
             desc = task.get("description", "background task")
+            entity_id = task.get("entity_id")
             initiatives.append(
                 Initiative(
                     id=f"task-done-{_uuid_module.uuid4().hex[:8]}",
@@ -217,7 +292,8 @@ class InitiativeEngine:
                     priority=0.6,
                     rationale="Background task finished with result",
                     action_hint=None,  # Deliver to user, don't auto-execute
-                    entity_id=task.get("entity_id"),
+                    entity_id=entity_id,
+                    dedup_key=f"task_done:{entity_id}" if entity_id else None,
                     expires_at=datetime.now(timezone.utc) + timedelta(hours=6),
                 )
             )
@@ -229,6 +305,7 @@ class InitiativeEngine:
         for contact in self._context.get("neglected_contacts", []):
             name = contact.get("name", "contact")
             days = float(contact.get("days_since_contact", 0))
+            entity_id = contact.get("entity_id")
             priority = min(1.0, 0.3 + days * 0.05)
             initiatives.append(
                 Initiative(
@@ -238,7 +315,8 @@ class InitiativeEngine:
                     priority=priority,
                     rationale=f"No contact with {name} for {days:.0f} day(s)",
                     action_hint=f"Send a quick message to {name}",
-                    entity_id=contact.get("entity_id"),
+                    entity_id=entity_id,
+                    dedup_key=f"relationship:{entity_id}" if entity_id else None,
                     expires_at=datetime.now(timezone.utc) + timedelta(days=7),
                 )
             )
