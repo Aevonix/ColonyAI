@@ -473,6 +473,7 @@ type FakeApi = {
   registerContextEngine: ReturnType<typeof vi.fn>;
   registerService: ReturnType<typeof vi.fn>;
   registerHook: ReturnType<typeof vi.fn>;
+  registerHttpRoute: ReturnType<typeof vi.fn>;
   on: ReturnType<typeof vi.fn>;
 };
 
@@ -491,6 +492,7 @@ function makeFakeApi(pluginConfig: Record<string, unknown>): FakeApi {
     registerContextEngine: vi.fn(),
     registerService: vi.fn(),
     registerHook: vi.fn(),
+    registerHttpRoute: vi.fn().mockReturnValue(true),
     on: vi.fn(),
   };
 }
