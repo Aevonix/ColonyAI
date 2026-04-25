@@ -444,6 +444,21 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
         else:
             print("  ✅ Plugin configuration written")
         
+        # Write Colony context to OpenClaw workspace
+        from colony_sidecar.harness_integration import write_colony_context, write_colony_skill
+        from colony_sidecar.harness_integration.detect import detect_openclaw_workspace
+        
+        workspace = detect_openclaw_workspace()
+        if workspace:
+            if write_colony_context(workspace):
+                print("  ✅ Colony context written to OpenClaw workspace")
+            
+            if write_colony_skill("openclaw", workspace):
+                print("  ✅ Colony diagnostic skill installed")
+        else:
+            print("  ⚠️ Could not detect OpenClaw workspace — context file not written")
+            print("     Manually create: ~/.openclaw/workspace/COLONY.md")
+        
         # Gateway restart is handled in Step 10c after sidecar starts
         return True
 
@@ -467,8 +482,25 @@ def _setup_mcp_harnesses(harnesses: list[str], api_key: str, sidecar_url: str, n
 def _setup_mcp_harness(harness: str, api_key: str, sidecar_url: str, non_interactive: bool = False) -> bool:
     """Configure MCP for a single coding harness."""
     try:
-        from colony_sidecar.mcp.config import configure_harness
-        return configure_harness(harness, api_key, sidecar_url)
+        from colony_sidecar.mcp.config import add_to_harness
+        
+        # Get contact_id from environment or default
+        contact_id = os.environ.get("COLONY_MCP_CONTACT_ID", os.environ.get("USER", "user"))
+        
+        result = add_to_harness(harness, contact_id, dry_run=False, sidecar_url=sidecar_url)
+        
+        if result is not None:
+            print(f"  ✅ {harness} MCP configured")
+            
+            # Write skill
+            from colony_sidecar.harness_integration import write_colony_skill
+            if write_colony_skill(harness):
+                print(f"  ✅ {harness} diagnostic skill installed")
+            
+            return True
+        else:
+            print(f"  ⚪ {harness} already configured")
+            return True
     except Exception as exc:
         print(f"  ⚠️ MCP config failed for {harness}: {exc}")
         return False
