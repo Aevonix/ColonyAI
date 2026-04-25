@@ -150,7 +150,7 @@ Skill directory paths:
 | Codex | `~/.codex/skills/colony-diagnose/` |
 | Claude Code | `~/.codex/skills/colony-diagnose/` (shared) |
 | OpenCode | `~/.config/opencode/skills/colony-diagnose/` |
-| Hermes | None (plugin-based) |
+| Hermes | None (has MCP config in `~/.hermes/config.yaml`, but no skill directory) |
 
 **Crush `skills_paths` handling:**
 
