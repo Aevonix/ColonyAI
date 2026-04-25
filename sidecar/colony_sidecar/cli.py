@@ -133,6 +133,17 @@ def main() -> None:
     node_sub = node_p.add_subparsers(dest="node_command")
     node_sub.add_parser("info", help="Show node_id, public key, and certificate status")
 
+    # --- spawn ---
+    spawn_p = sub.add_parser("spawn", help="Spawn a coding agent with Colony context")
+    spawn_p.add_argument("task", nargs="*", help="Task description (or use --task-file)")
+    spawn_p.add_argument("--task-file", "-f", default=None, help="Read task from file")
+    spawn_p.add_argument("--store", "-s", action="store_true", help="Store task in Colony before spawning")
+    spawn_p.add_argument("--host", default=None, help="Coding server hostname (default: from config or COLONY_SPAWN_HOST)")
+    spawn_p.add_argument("--agent", default="crush", choices=["crush", "codex", "claude-code"], help="Coding agent to use")
+    spawn_p.add_argument("--model", default=None, help="Model override for the agent")
+    spawn_p.add_argument("--contact", default=None, help="Contact ID for Colony context (default: from config)")
+    spawn_p.add_argument("--dry-run", action="store_true", help="Print command without executing")
+
     # --- backup ---
     backup_p = sub.add_parser("backup", help="Export Colony identity as a portable backup")
     backup_p.add_argument("--output", "-o", default=None, help="Output file path (default: stdout)")
@@ -480,6 +491,9 @@ def main() -> None:
     elif args.command == "node":
         _cmd_node(args)
 
+    elif args.command == "spawn":
+        _cmd_spawn(args)
+
     elif args.command == "backup":
         _cmd_backup(args)
 
@@ -636,6 +650,117 @@ def _cmd_node(args) -> None:
             print(f"  Issued At:  {info['issued_at']}")
     else:
         print("  Usage: colony node {info}")
+
+
+def _cmd_spawn(args) -> None:
+    """Spawn a coding agent with Colony context.
+    
+    This command:
+    1. Optionally stores the task in Colony for shared context
+    2. SSH's to a coding server
+    3. Runs the coding agent with instructions to pull from Colony
+    
+    Configuration (via .env or environment):
+    - COLONY_SPAWN_HOST: Coding server hostname (default: localhost)
+    - COLONY_SPAWN_USER: SSH user (default: current user)
+    - COLONY_SPAWN_CONTACT: Default contact ID for context
+    - COLONY_SPAWN_MODEL: Default model for the agent
+    
+    Example:
+        colony spawn --store "Build a REST API endpoint"
+        colony spawn --host spark2 "Fix the bug in auth.py"
+        colony spawn --model glm/glm-5 "Refactor the database layer"
+    """
+    _load_dotenv()
+    
+    # Get task
+    if args.task_file:
+        task = Path(args.task_file).read_text().strip()
+    elif args.task:
+        task = " ".join(args.task)
+    else:
+        print("  Error: No task provided")
+        print("  Usage: colony spawn <task description>")
+        print("         colony spawn --task-file task.md")
+        return
+    
+    if not task:
+        print("  Error: Empty task")
+        return
+    
+    # Configuration
+    host = args.host or os.environ.get("COLONY_SPAWN_HOST")
+    contact_id = args.contact or os.environ.get("COLONY_SPAWN_CONTACT", os.environ.get("USER", "user"))
+    model = args.model or os.environ.get("COLONY_SPAWN_MODEL", "glm/glm-5")
+    agent = args.agent
+    
+    # Colony connection info
+    colony_url = os.environ.get("COLONY_SIDECAR_URL") or f"http://{os.environ.get('COLONY_SIDECAR_HOST', '127.0.0.1')}:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}"
+    api_key = os.environ.get("COLONY_API_KEY", "")
+    
+    if not host:
+        print("  Error: No spawn host configured")
+        print("  Set COLONY_SPAWN_HOST in .env or use --host")
+        print("  Example: COLONY_SPAWN_HOST=spark2")
+        return
+    
+    # Store task in Colony if requested
+    if args.store:
+        import httpx
+        try:
+            resp = httpx.post(
+                f"{colony_url}/v1/host/mind/facts",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "contact_id": contact_id,
+                    "fact": f"Task: {task}",
+                    "source": "shared_context",
+                },
+                timeout=10,
+            )
+            if resp.status_code in (200, 201):
+                fact_id = resp.json().get("id", "")
+                print(f"  ✅ Task stored in Colony (fact_id: {fact_id[:8]}...)")
+            else:
+                print(f"  ⚠️ Could not store task in Colony: {resp.status_code}")
+        except Exception as e:
+            print(f"  ⚠️ Colony not reachable: {e}")
+    
+    # Build the agent command
+    # Agent will pull context from Colony via MCP tools
+    agent_prompt = f"Use colony_lookup_facts to find relevant context for contact {contact_id}, then: {task}"
+    
+    if agent == "crush":
+        agent_cmd = f"~/.local/bin/crush run -m {model} \"{agent_prompt}\""
+    elif agent == "codex":
+        agent_cmd = f"codex \"{agent_prompt}\""
+    elif agent == "claude-code":
+        agent_cmd = f"claude \"{agent_prompt}\""
+    else:
+        print(f"  Error: Unknown agent: {agent}")
+        return
+    
+    # Build SSH command
+    ssh_user = os.environ.get("COLONY_SPAWN_USER", "")
+    ssh_target = f"{ssh_user}@{host}" if ssh_user else host
+    ssh_cmd = f"ssh {ssh_target} '{agent_cmd}'"
+    
+    if args.dry_run:
+        print(f"\n  Task: {task}")
+        print(f"  Host: {ssh_target}")
+        print(f"  Agent: {agent}")
+        print(f"  Model: {model}")
+        print(f"  Contact: {contact_id}")
+        print(f"\n  Command:\n    {ssh_cmd}\n")
+        return
+    
+    # Execute
+    print(f"\n  🚀 Spawning {agent} on {host}...")
+    print(f"  Task: {task[:60]}{'...' if len(task) > 60 else ''}")
+    print()
+    
+    result = subprocess.run(ssh_cmd, shell=True)
+    sys.exit(result.returncode)
 
 
 def _cmd_key(args) -> None:
