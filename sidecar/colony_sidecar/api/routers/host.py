@@ -3149,6 +3149,8 @@ async def autonomy_status() -> AutonomyStatusResponse:
         s = _autonomy_loop.status()
         return AutonomyStatusResponse(
             running=s.get("running", False),
+            mode=s.get("mode", "reactive"),
+            timezone=s.get("timezone", "UTC"),
             in_quiet_hours=s.get("in_quiet_hours", False),
             ticks=s.get("stats", {}).get("ticks", 0),
             events_processed=s.get("stats", {}).get("events_processed", 0),

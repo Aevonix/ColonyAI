@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
+from enum import Enum
+from zoneinfo import ZoneInfo
+
+
+class AutonomyMode(str, Enum):
+    """Autonomy loop operating mode."""
+    REACTIVE = "reactive"    # On-demand only (default)
+    PROACTIVE = "proactive"  # Timer-based
 
 
 @dataclass
@@ -12,6 +21,12 @@ class AutonomyConfig:
 
     All time values are in seconds unless noted.
     """
+
+    # Operating mode: reactive (on-demand) or proactive (timer-based)
+    mode: AutonomyMode = AutonomyMode.REACTIVE
+
+    # IANA timezone for quiet hours (e.g., "America/El_Salvador")
+    timezone: str = "UTC"
 
     # How long to sleep between ticks when no events wake the loop early.
     tick_interval_secs: float = 300.0
@@ -75,7 +90,21 @@ class AutonomyConfig:
             return getattr(autonomy_section, key, default)
 
         defaults = cls()
+
+        # Mode and timezone
+        mode_str = str(_get("mode", "reactive")).lower()
+        mode = AutonomyMode(mode_str) if mode_str in [m.value for m in AutonomyMode] else AutonomyMode.REACTIVE
+        timezone = str(_get("timezone", "UTC"))
+
+        # Validate timezone
+        try:
+            ZoneInfo(timezone)
+        except Exception:
+            timezone = "UTC"
+
         return cls(
+            mode=mode,
+            timezone=timezone,
             tick_interval_secs=float(_get("tick_interval_secs", defaults.tick_interval_secs)),
             initiative_confidence_threshold=float(_get(
                 "initiative_confidence_threshold",
@@ -113,6 +142,8 @@ class AutonomyConfig:
         All env vars are optional; unset vars fall back to field defaults.
 
         Environment variables:
+            COLONY_AUTONOMY_MODE
+            COLONY_TIMEZONE
             COLONY_AUTONOMY_TICK_INTERVAL_SECS
             COLONY_AUTONOMY_INITIATIVE_CONFIDENCE_THRESHOLD
             COLONY_AUTONOMY_MAX_ACTIONS_PER_HOUR
@@ -121,6 +152,30 @@ class AutonomyConfig:
             COLONY_AUTONOMY_ANOMALY_SEVERITY_THRESHOLD
             COLONY_AUTONOMY_GOAL_STALE_THRESHOLD_HOURS
         """
+        logger = logging.getLogger(__name__)
+
+        # Mode selection
+        mode_str = os.environ.get("COLONY_AUTONOMY_MODE", "reactive").lower()
+        mode = AutonomyMode(mode_str) if mode_str in [m.value for m in AutonomyMode] else AutonomyMode.REACTIVE
+
+        # Timezone
+        timezone = os.environ.get("COLONY_TIMEZONE", "UTC")
+        try:
+            ZoneInfo(timezone)
+        except Exception:
+            logger.warning("Invalid COLONY_TIMEZONE '%s', falling back to UTC", timezone)
+            timezone = "UTC"
+
+        # Legacy migration: if tick interval set without mode, assume proactive
+        legacy_tick = os.environ.get("COLONY_AUTONOMY_TICK_INTERVAL_SECS")
+        if legacy_tick and not os.environ.get("COLONY_AUTONOMY_MODE"):
+            logger.warning(
+                "COLONY_AUTONOMY_TICK_INTERVAL_SECS set without COLONY_AUTONOMY_MODE. "
+                "Defaulting to PROACTIVE mode to preserve existing behavior. "
+                "Add COLONY_AUTONOMY_MODE=proactive to make this explicit."
+            )
+            mode = AutonomyMode.PROACTIVE
+
         def _float(key: str, default: float) -> float:
             v = os.environ.get(key)
             return float(v) if v is not None else default
@@ -134,6 +189,8 @@ class AutonomyConfig:
 
         defaults = cls()
         return cls(
+            mode=mode,
+            timezone=timezone,
             tick_interval_secs=_float(
                 "COLONY_AUTONOMY_TICK_INTERVAL_SECS",
                 defaults.tick_interval_secs,
