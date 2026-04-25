@@ -25,12 +25,20 @@ Colony supports two integration paths:
     └───────────────┘                  └───────────────┘
 ```
 
-**Plugin Path** — For orchestrator agents (OpenClaw, Hermes):
+**Plugin Path** — For orchestrator agents:
+- OpenClaw: Plugin only
+- Hermes: Plugin + MCP (both paths available)
+
+Features:
 - Direct HTTP API access
 - Configured via plugin slots
 - Always-on context integration
 
-**MCP Path** — For coding agents (Crush, Codex, Claude Code, OpenCode):
+**MCP Path** — For coding agents:
+- Crush, Codex, Claude Code, OpenCode: MCP only
+- Hermes: MCP + Plugin (both paths available)
+
+Features:
 - Model Context Protocol via stdio/SSE
 - Configured via harness config files
 - On-demand tool access
@@ -65,18 +73,39 @@ colony init --agent-harness openclaw
 
 ### Hermes
 
-Hermes is a memory-augmented agent framework.
+Hermes is a memory-augmented agent framework that supports **both MCP and plugin integration**.
 
-**Setup:**
+**Setup (Plugin path):**
 ```bash
 colony init --agent-harness hermes
 ```
 
-**What gets configured:**
-1. Colony configured as MemoryProvider plugin
-2. Manual YAML config in `~/.hermes/config.yaml`
+**Setup (MCP path):**
+```bash
+colony mcp setup --harness hermes
+```
 
-**Note:** Hermes integration is plugin-based only — no skill directory.
+**What gets configured:**
+
+*Plugin path:*
+1. Colony configured as MemoryProvider plugin in `~/.hermes/config.yaml`
+2. Context injection before each turn
+
+*MCP path:*
+1. MCP server entry in `~/.hermes/config.yaml`:
+   ```yaml
+   mcp_servers:
+     colony:
+       command: colony
+       args: ["mcp"]
+       env:
+         COLONY_API_KEY: "${COLONY_API_KEY}"
+         COLONY_URL: "http://127.0.0.1:7777"
+         COLONY_MCP_CONTACT_ID: "user"
+         COLONY_MCP_SOURCE: "hermes"
+   ```
+
+**Note:** Hermes has no skill directory — uses plugin-based skills only.
 
 ---
 
@@ -326,12 +355,12 @@ colony doctor
 
 | Harness | Config File | Context File | Skill Directory |
 |---------|-------------|--------------|-----------------|
-| OpenClaw | `~/.openclaw/openclaw.json` | `~/.openclaw/workspace/COLONY.md` | `~/.openclaw/workspace/skills/colony-diagnose/` |
-| Crush | `~/.crush.json` | — | `~/.config/crush/skills/colony-diagnose/` |
-| Codex | `~/.codex/config.toml` | — | `~/.codex/skills/colony-diagnose/` |
-| Claude Code | `~/.claude.json` | — | `~/.codex/skills/colony-diagnose/` |
-| OpenCode | `~/.config/opencode/opencode.json` | — | `~/.config/opencode/skills/colony-diagnose/` |
-| Hermes | `~/.hermes/config.yaml` | — | — |
+| OpenClaw | `~/.openclaw/openclaw.json` (plugin) | `~/.openclaw/workspace/COLONY.md` | `~/.openclaw/workspace/skills/colony-diagnose/` |
+| Hermes | `~/.hermes/config.yaml` (MCP + plugin) | — | — |
+| Crush | `~/.crush.json` (MCP) | — | `~/.config/crush/skills/colony-diagnose/` |
+| Codex | `~/.codex/config.toml` (MCP) | — | `~/.codex/skills/colony-diagnose/` |
+| Claude Code | `~/.claude.json` (MCP) | — | `~/.codex/skills/colony-diagnose/` |
+| OpenCode | `~/.config/opencode/opencode.json` (MCP) | — | `~/.config/opencode/skills/colony-diagnose/` |
 
 ---
 
