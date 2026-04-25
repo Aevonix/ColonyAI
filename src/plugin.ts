@@ -54,6 +54,7 @@ import type {
 } from "openclaw/plugin-sdk";
 import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
 import { normalizeUsage } from "openclaw/plugin-sdk/agent-harness";
+import { readJsonBodyWithLimit } from "openclaw/plugin-sdk/webhook-request-guards";
 import type {
   AgentHarness,
   AgentHarnessAttemptParams,
@@ -2206,6 +2207,76 @@ export function createColonyPlugin(): unknown {
       // assistant text and forwards it to Colony's signal ingestion.
       api.on("message_received", messageReceivedHook(cache, api.logger));
       api.on("llm_output", llmOutputHook(cache, ctx, caps, api.logger));
+
+      // Register internal delivery endpoint for proactive messages from Colony sidecar
+      api.registerHttpRoute({
+        path: "/internal/deliver",
+        auth: "plugin",  // No gateway auth — we check our own
+        match: "exact",
+        handler: async (req, res) => {
+          // Parse JSON body
+          const bodyResult = await readJsonBodyWithLimit(req, { maxBytes: 64 * 1024 });
+          if (!bodyResult.ok) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Invalid request body" }));
+            return true;
+          }
+          
+          const { platform, chat_id, message, source } = bodyResult.value as Record<string, unknown>;
+
+          // Auth check - Authorization header or X-Colony-Api-Key
+          const colonyApiKey = api.pluginConfig?.apiKey as string | undefined;
+          const authHeader = req.headers["authorization"] as string | undefined;
+          const customHeader = req.headers["x-colony-api-key"] as string | undefined;
+          
+          const presentedKey = authHeader?.startsWith("Bearer ") 
+            ? authHeader.slice(7) 
+            : customHeader;
+          
+          if (presentedKey !== colonyApiKey) {
+            res.statusCode = 401;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Unauthorized" }));
+            return true;
+          }
+
+          // Validate required fields
+          if (typeof platform !== "string" || typeof chat_id !== "string" || typeof message !== "string") {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Missing required fields: platform, chat_id, message" }));
+            return true;
+          }
+
+          // Load channel adapter
+          const adapter = await api.runtime.channel.outbound.loadAdapter(platform);
+          if (!adapter?.sendText) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: `Platform ${platform} not available` }));
+            return true;
+          }
+
+          // Send message
+          try {
+            const result = await adapter.sendText({
+              cfg: api.config,
+              to: chat_id,
+              text: message,
+            });
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true, messageId: (result as { messageId?: string })?.messageId }));
+          } catch (err) {
+            api.logger.error?.(`Colony delivery failed: ${err}`);
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: String(err) }));
+          }
+          return true;
+        }
+      });
 
       api.logger.info(`[colony] plugin registered against ${ctx.config.sidecarUrl}`);
 

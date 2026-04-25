@@ -122,3 +122,40 @@ class SubsystemRegistry:
     def scheduler(self) -> Any:
         from colony_sidecar.api.routers.host import _scheduler
         return _scheduler
+
+    @property
+    def initiative_engine(self) -> Any:
+        """Get or create the InitiativeEngine (NOT MetaLearner)."""
+        if not hasattr(self, '_initiative_engine'):
+            try:
+                from colony_sidecar.intelligence.components.initiative_engine import InitiativeEngine
+                from colony_sidecar.api.routers.host import _graph
+
+                self._initiative_engine = InitiativeEngine(
+                    graph_client=_graph.driver if _graph and hasattr(_graph, 'driver') else None,
+                    event_bus=None,  # Not needed for rule-based generation
+                    mind_model=None,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Failed to create InitiativeEngine: %s", e)
+                self._initiative_engine = None
+        return self._initiative_engine
+
+    @property
+    def commitment_store(self) -> Any:
+        """Get the CommitmentStore."""
+        from colony_sidecar.api.routers.host import _commitment_store  # singular
+        return _commitment_store
+
+    @property
+    def affect_store(self) -> Any:
+        """Get the AffectStore."""
+        from colony_sidecar.api.routers.host import _affect_store
+        return _affect_store
+
+    @property
+    def pattern_store(self) -> Any:
+        """Get the PatternStore."""
+        from colony_sidecar.api.routers.host import _pattern_store
+        return _pattern_store
