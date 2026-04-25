@@ -359,12 +359,17 @@ class AutonomyLoop:
 
     async def _phase_initiative(self) -> None:
         """Run initiative engine to generate autonomous action proposals."""
-        try:
-            cognition = self._registry.cognition
-            if cognition is None or not hasattr(cognition, "generate_initiatives"):
-                return
+        engine = self._registry.initiative_engine
+        if engine is None:
+            return
 
-            initiatives = await cognition.generate_initiatives(
+        try:
+            engine.clear_context()
+            await self._feed_pending_tasks(engine)
+            await self._feed_neglected_contacts(engine)
+            await self._feed_commitment_reminders(engine)
+
+            initiatives = await engine.generate(
                 min_priority=self.config.initiative_confidence_threshold,
             )
 
@@ -381,41 +386,131 @@ class AutonomyLoop:
             self._pending_initiatives = []
 
     async def _phase_execute(self) -> None:
-        """Execute approved actions."""
+        """Execute approved actions via direct delivery."""
         for initiative in list(self._pending_initiatives):
             if self.stats.actions_this_hour >= self.config.max_actions_per_hour:
                 logger.warning("Hourly action limit reached")
                 break
 
-            action_hint = getattr(initiative, "action_hint", None)
-            if action_hint:
-                try:
-                    logger.info("Executing initiative: %s", getattr(initiative, "id", "?"))
+            delivery = self._registry.delivery
+            if delivery is None:
+                continue
+
+            home = delivery.resolve_home_channel()
+            if home is None:
+                logger.warning("No home channel configured — cannot deliver")
+                continue
+
+            try:
+                ok = await delivery.push_to_gateway(
+                    platform=home["platform"],
+                    chat_id=home["chat_id"],
+                    message=getattr(initiative, "description", ""),
+                    source="initiative",
+                )
+                if ok:
                     self.stats.actions_executed += 1
                     self.stats.actions_this_hour += 1
-                    _get_broadcast()({
-                        "type": "action_executed",
-                        "occurred_at": datetime.now(timezone.utc).isoformat(),
-                        "payload": {"action_hint": action_hint, "initiative_id": getattr(initiative, "id", "?")},
-                    })
-                except Exception as exc:
-                    logger.error("Failed to execute initiative: %s", exc)
-            elif self._registry.delivery is not None:
-                # Deliver via proactive delivery bridge
-                entity_id = getattr(initiative, "entity_id", None)
-                if entity_id:
-                    try:
-                        self._registry.delivery.deliver(
-                            person_id=entity_id,
-                            content=getattr(initiative, "description", ""),
-                            channel="push",
-                            urgency=getattr(initiative, "priority", 0.5),
-                            source="initiative",
-                        )
-                    except Exception as exc:
-                        logger.debug("Initiative delivery error: %s", exc)
+                    logger.info("Delivered initiative: %s", getattr(initiative, "id", "?"))
+            except Exception as exc:
+                logger.error("push_to_gateway failed: %s", exc)
 
         self._pending_initiatives = []
+
+    async def _feed_pending_tasks(self, engine: Any) -> None:
+        """Feed blocked goals as pending tasks."""
+        goals = self._registry.goals
+        if goals is None:
+            return
+
+        try:
+            blocked = goals.list_goals(status="blocked", limit=20) if hasattr(goals, "list_goals") else []
+            pending_tasks = []
+
+            for goal in blocked:
+                # Goal is a dataclass with attribute access
+                created = goal.created_at
+                days_pending = 0
+                if created:
+                    days_pending = (datetime.now(timezone.utc) - created).total_seconds() / 86400
+
+                pending_tasks.append({
+                    "description": goal.title or "blocked goal",
+                    "days_pending": days_pending,
+                    "entity_id": goal.context.get("contact_id") if goal.context else None,
+                })
+
+            if pending_tasks:
+                engine.add_context("pending_tasks", pending_tasks)
+        except Exception as e:
+            logger.warning("Failed to feed pending tasks: %s", e)
+
+    async def _feed_neglected_contacts(self, engine: Any) -> None:
+        """Feed contacts with declining affect."""
+        affect = self._registry.affect_store
+        if affect is None:
+            return
+
+        try:
+            # AffectStore.get_all_states() returns list of contact state dicts
+            states = affect.get_all_states() if hasattr(affect, "get_all_states") else []
+            neglected = []
+
+            for state in states[:20]:
+                contact_id = state.get("contact_id")
+                if not contact_id:
+                    continue
+
+                # Note: field is "current_valence", not "valence"
+                valence = state.get("current_valence", 0)
+                if valence < -0.3:
+                    neglected.append({
+                        "name": contact_id,
+                        "entity_id": contact_id,
+                        "days_since_contact": 0,
+                    })
+
+            if neglected:
+                engine.add_context("neglected_contacts", neglected)
+        except Exception as e:
+            logger.warning("Failed to feed neglected contacts: %s", e)
+
+    async def _feed_commitment_reminders(self, engine: Any) -> None:
+        """Feed upcoming commitments as scheduling opportunities."""
+        commitments = self._registry.commitment_store
+        if commitments is None:
+            return
+
+        try:
+            # CommitmentStore.list() returns {"commitments": [...], "total": N}
+            result = commitments.list(status=["pending"], limit=20) if hasattr(commitments, "list") else {"commitments": []}
+            active = result.get("commitments", [])
+
+            now = datetime.now(timezone.utc)
+            opportunities = []
+
+            for c in active:
+                due = c.get("due_at")
+                if not due:
+                    continue
+
+                if isinstance(due, str):
+                    due = datetime.fromisoformat(due.replace("Z", "+00:00"))
+
+                hours_until = (due - now).total_seconds() / 3600
+
+                if 0 < hours_until < 48:
+                    opportunities.append({
+                        "description": f"Commitment due: {c.get('description', 'untitled')}",
+                        "priority": 0.9 if hours_until < 4 else 0.6,
+                        "rationale": f"Due in {int(hours_until)}h",
+                        "action_hint": "remind_user",
+                    })
+
+            if opportunities:
+                engine.add_context("scheduling_opportunities", opportunities)
+        except Exception as e:
+            logger.warning("Failed to feed commitment reminders: %s", e)
 
     async def _phase_cognition(self) -> None:
         """Run cognition pipeline tick."""
