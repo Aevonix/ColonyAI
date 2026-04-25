@@ -330,7 +330,8 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
         print("  ⚠️ OpenClaw CLI not found in PATH")
         return False
 
-    sidecar_url = f"http://{values['COLONY_SIDECAR_HOST']}:{values['COLONY_SIDECAR_PORT']}"
+    # Plugin connects to sidecar via localhost (even if sidecar binds to 0.0.0.0)
+    plugin_sidecar_url = f"http://127.0.0.1:{values['COLONY_SIDECAR_PORT']}"
     api_key = values["COLONY_API_KEY"]
 
     try:
@@ -342,7 +343,7 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
             print("  Skipping plugin install — Colony sidecar will still work.")
             return False
         
-        # Check Node.js version (plugin requires >= 22.16.0)
+        # Check Node.js version (plugin requires >= 22)
         version_result = subprocess.run(
             ["node", "--version"],
             capture_output=True, text=True, timeout=5
@@ -351,7 +352,7 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
             node_version = version_result.stdout.strip().lstrip("v")
             major = int(node_version.split(".")[0])
             if major < 22:
-                print(f"  ⚠️ Node.js v{node_version} found, but Colony plugin requires v22.16+")
+                print(f"  ⚠️ Node.js v{node_version} found, but Colony plugin requires v22+")
                 print("     Upgrade with: nvm install 22 && nvm use 22")
                 print("     Or: brew install node@22")
                 print("  Skipping plugin install — Colony sidecar will still work.")
@@ -381,7 +382,7 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
                 pass
         
         if plugin_installed:
-            print("  ✅ Colony plugin already installed and loaded")
+            print("  ✅ Colony plugin already installed")
         else:
             # Install the plugin via OpenClaw CLI
             print("  Installing Colony plugin via OpenClaw...")
@@ -405,6 +406,7 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
                 return False
             else:
                 print("  ✅ Colony plugin installed")
+                plugin_installed = True
 
         # Set Colony as the active context engine
         print("  Configuring Colony as context engine...")
@@ -418,42 +420,31 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
             print("  ⚠️ Could not set context engine slot — set manually:")
             print("     openclaw config set plugins.slots.contextEngine colony")
 
-        print("")
-        print("  Colony plugin configuration:")
-        print(f"    sidecarUrl: {sidecar_url}")
-        print(f"    apiKey: {api_key[:8]}...{api_key[-4:]}")
-        
-        # Offer to restart gateway
-        print("")
-        print("  The OpenClaw gateway needs to be restarted to load the plugin.")
-        restart = _prompt("  Restart gateway now? [Y/n]", "Y", non_interactive)
-        if restart.lower() in ("y", "yes", ""):
-            restart_result = subprocess.run(
-                ["openclaw", "gateway", "restart"],
-                capture_output=True, text=True, timeout=30
+        # Write plugin config values (always, in case of reinstall with new key)
+        print("  Writing Colony plugin configuration...")
+        config_values = [
+            ("plugins.entries.colony.config.sidecarUrl", plugin_sidecar_url),
+            ("plugins.entries.colony.config.apiKey", api_key),
+            ("plugins.entries.colony.config.hostId", "openclaw"),
+            ("plugins.entries.colony.config.ownContextEngine", "true"),
+            ("plugins.entries.colony.config.ownMemoryCapability", "true"),
+        ]
+        config_errors = []
+        for key, value in config_values:
+            result = subprocess.run(
+                ["openclaw", "config", "set", key, value],
+                capture_output=True, text=True, timeout=10
             )
-            if restart_result.returncode == 0:
-                print("  ✅ Gateway restarted")
-                print("  Waiting for gateway to come back up...")
-                time.sleep(3)
-                # Check if gateway is healthy
-                for _ in range(10):
-                    health = subprocess.run(
-                        ["openclaw", "gateway", "status"],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if health.returncode == 0:
-                        print("  ✅ Gateway is running")
-                        break
-                    time.sleep(1)
-                else:
-                    print("  ⚠️ Gateway may still be starting — check with: openclaw gateway status")
-            else:
-                print(f"  ⚠️ Gateway restart failed: {restart_result.stderr.strip()[:100]}")
-                print("  Restart manually with: openclaw gateway restart")
+            if result.returncode != 0:
+                config_errors.append(key)
+
+        if config_errors:
+            print(f"  ⚠️ Could not write: {', '.join(config_errors)}")
+            print("  Set manually in ~/.openclaw/openclaw.json")
         else:
-            print("  Restart manually with: openclaw gateway restart")
+            print("  ✅ Plugin configuration written")
         
+        # Gateway restart is handled in Step 10c after sidecar starts
         return True
 
     except Exception as exc:
@@ -480,18 +471,6 @@ def _setup_mcp_harness(harness: str, api_key: str, sidecar_url: str, non_interac
         return configure_harness(harness, api_key, sidecar_url)
     except Exception as exc:
         print(f"  ⚠️ MCP config failed for {harness}: {exc}")
-        return False
-
-
-def _setup_agent_harness(harness: str, api_key: str, sidecar_url: str, non_interactive: bool = False) -> bool:
-    """Configure agent harness plugin."""
-    if harness == "openclaw":
-        # Use placeholder colony_root (not needed for plugin install)
-        return _configure_openclaw_plugin({"COLONY_API_KEY": api_key}, Path("."), non_interactive)
-    elif harness == "hermes":
-        return _setup_hermes_plugin(api_key, sidecar_url, non_interactive)
-    else:
-        print(f"  ⚠️ Unknown agent harness: {harness}")
         return False
 
 
@@ -681,6 +660,28 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     oc_ok = _check_openclaw()
     print(f"  OpenClaw: {'✅ found' if oc_ok else '⚪ not found'}")
 
+    # Check Node.js if OpenClaw is present (plugin requires v22+)
+    node_ok = False
+    node_version = ""
+    if oc_ok:
+        node_path = shutil.which("node")
+        if node_path:
+            try:
+                result = subprocess.run(
+                    ["node", "--version"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    node_version = result.stdout.strip().lstrip("v")
+                    major = int(node_version.split(".")[0])
+                    node_ok = major >= 22
+            except Exception:
+                pass
+        status = f"{node_version} " if node_version else ""
+        print(f"  Node.js: {status}{'✅' if node_ok else '❌ (need v22+ for plugin)'}")
+    else:
+        print(f"  Node.js: ⚪ (skipped — OpenClaw not found)")
+
     port = 7777
     port_taken = _check_port(port)
     print(f"  Port {port}: {'⚠️ in use' if port_taken else '✅ available'}")
@@ -760,21 +761,40 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print("    [3] Skip — run standalone")
         print()
         
-        choice = _prompt("  Choice [3]", "3", non_interactive)
-        
-        if choice == "1":
-            if _check_openclaw():
-                agent_harness = "openclaw"
+        # Loop until valid choice
+        while True:
+            choice = _prompt("  Choice [3]", "3", non_interactive)
+            
+            if choice == "1":
+                if not node_ok:
+                    print()
+                    print("  \u26a0\ufe0f Node.js v22+ required for OpenClaw plugin.")
+                    print("     Upgrade with: nvm install 22 && nvm use 22")
+                    print("     Or: brew install node@22")
+                    print("     Then re-run 'colony init'.")
+                    print()
+                    # Re-prompt
+                    print("  Choose another option:")
+                    continue
+                if _check_openclaw():
+                    agent_harness = "openclaw"
+                    break
+                else:
+                    print()
+                    print("  \u26a0\ufe0f OpenClaw CLI not found in PATH.")
+                    _show_openclaw_install_instructions()
+                    cont = _prompt("\n  Continue without OpenClaw? [Y/n]", "Y", non_interactive)
+                    if cont.lower() not in ("y", "yes", ""):
+                        return 1
+                    break
+            elif choice == "2":
+                agent_harness = "hermes"
+                break
+            elif choice == "3":
+                break  # standalone
             else:
-                print()
-                print("  \u26a0\ufe0f OpenClaw CLI not found in PATH.")
-                _show_openclaw_install_instructions()
-                cont = _prompt("\n  Continue without OpenClaw? [Y/n]", "Y", non_interactive)
-                if cont.lower() not in ("y", "yes", ""):
-                    return 1
-        elif choice == "2":
-            agent_harness = "hermes"
-        # choice == "3" means standalone (agent_harness stays None)
+                print("  Invalid choice. Enter 1, 2, or 3.")
+                continue
         
         # Get contact name if any harness is connected
         if mcp_harnesses or agent_harness:
@@ -1359,6 +1379,22 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         restart_now = _prompt("  Restart OpenClaw gateway now? [Y/n]", "Y", non_interactive)
         if restart_now.lower() in ("y", "yes", ""):
             try:
+                # Check if gateway is installed
+                status_result = subprocess.run(
+                    ["openclaw", "gateway", "status"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if "not installed" in status_result.stderr.lower() or "not installed" in status_result.stdout.lower():
+                    print("  Gateway service not installed. Installing...")
+                    install_result = subprocess.run(
+                        ["openclaw", "gateway", "install"],
+                        capture_output=True, text=True, timeout=60
+                    )
+                    if install_result.returncode != 0:
+                        print(f"  ⚠️ Gateway install failed: {install_result.stderr[:100]}")
+                        print("  Run manually: openclaw gateway install && openclaw gateway start")
+                        # Continue anyway, might work
+
                 result = subprocess.run(
                     ["openclaw", "gateway", "restart"],
                     capture_output=True, text=True, timeout=30,
@@ -1367,20 +1403,37 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     print("  ✅ Gateway restarted")
                     # Wait for it to come back up and verify plugin loaded
                     print("  Waiting for gateway to come back up...")
+                    plugin_loaded = False
                     for attempt in range(15):
                         time.sleep(2)
                         try:
+                            # Check plugin status via JSON
                             plugin_result = subprocess.run(
-                                ["openclaw", "plugin", "list"],
+                                ["openclaw", "plugins", "list", "--json"],
                                 capture_output=True, text=True, timeout=5,
                             )
-                            if plugin_result.returncode == 0 and "colony" in plugin_result.stdout.lower():
-                                print("  ✅ Colony plugin loaded in OpenClaw")
+                            if plugin_result.returncode == 0:
+                                try:
+                                    import json
+                                    data = json.loads(plugin_result.stdout)
+                                    for plugin in data.get("plugins", []):
+                                        if plugin.get("id") == "colony":
+                                            status = plugin.get("status", "")
+                                            if status in ("loaded", "enabled"):
+                                                print("  ✅ Colony plugin loaded and authenticated")
+                                                plugin_loaded = True
+                                                break
+                                except json.JSONDecodeError:
+                                    pass
+                            if plugin_loaded:
                                 break
                         except Exception:
                             pass
-                    else:
-                        print("  ⚠️ Could not verify plugin load. Check manually: openclaw plugin list")
+                    
+                    if not plugin_loaded:
+                        print("  ⚠️ Could not verify plugin load.")
+                        print("  Check logs: tail -50 /tmp/openclaw/openclaw-*.log | grep colony")
+                        print("  Look for: '[colony] chain verified' (success) or '401 Unauthorized' (fail)")
                 else:
                     print(f"  ⚠️ Gateway restart returned error: {result.stderr[:100]}")
                     print("  Restart manually: openclaw gateway restart")
