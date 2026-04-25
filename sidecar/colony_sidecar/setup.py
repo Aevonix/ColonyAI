@@ -143,7 +143,34 @@ def _check_docker() -> bool:
 
 def _check_openclaw() -> bool:
     """Check if OpenClaw CLI is available."""
-    return shutil.which("openclaw") is not None
+    # Try shutil.which first
+    if shutil.which("openclaw"):
+        return True
+    
+    # Try via login shell (for fnm/nvm PATH additions)
+    try:
+        result = subprocess.run(
+            ["bash", "-l", "-c", "which openclaw"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+    except Exception:
+        pass
+    
+    # Try common paths
+    home = Path.home()
+    common_paths = [
+        home / ".openclaw" / "bin" / "openclaw",
+        home / ".local" / "bin" / "openclaw",
+        Path("/opt/homebrew/bin/openclaw"),
+        Path("/usr/local/bin/openclaw"),
+    ]
+    for p in common_paths:
+        if p.exists():
+            return True
+    
+    return False
 
 
 def _detect_coding_harnesses() -> list[str]:
@@ -177,13 +204,26 @@ def _check_nodejs_stability() -> tuple[bool, str, str]:
         (is_stable, version, path) - is_stable is True if installed system-wide
     """
     node_path = shutil.which("node")
+    
+    # Try via login shell if not found
+    if not node_path:
+        try:
+            result = subprocess.run(
+                ["bash", "-l", "-c", "which node"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                node_path = result.stdout.strip()
+        except Exception:
+            pass
+    
     if not node_path:
         return False, "not found", ""
     
     # Get version
     try:
         result = subprocess.run(
-            ["node", "--version"],
+            [node_path, "--version"],
             capture_output=True, text=True, timeout=5
         )
         version = result.stdout.strip().lstrip("v") if result.returncode == 0 else "unknown"
@@ -336,8 +376,44 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
 
     try:
         # Check for Node.js (needed for OpenClaw plugins)
-        node_result = shutil.which("node")
-        if not node_result:
+        # Try shutil.which first, then shell PATH, then common paths
+        node_path = shutil.which("node")
+        if not node_path:
+            # Try via login shell (for fnm/nvm PATH additions)
+            try:
+                result = subprocess.run(
+                    ["bash", "-l", "-c", "which node"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    node_path = result.stdout.strip()
+            except Exception:
+                pass
+        
+        if not node_path:
+            # Try common fnm/nvm paths
+            home = Path.home()
+            fnm_paths = [
+                home / ".fnm" / "node-versions" / "installation" / "bin" / "node",
+                home / ".local" / "share" / "fnm" / "node-versions" / "installation" / "bin" / "node",
+            ]
+            nvm_base = home / ".nvm" / "versions" / "node"
+            for p in fnm_paths:
+                if p.exists():
+                    node_path = str(p)
+                    break
+            if not node_path and nvm_base.exists():
+                try:
+                    versions = sorted(nvm_base.iterdir(), reverse=True)
+                    for v in versions:
+                        candidate = v / "bin" / "node"
+                        if candidate.exists():
+                            node_path = str(candidate)
+                            break
+                except Exception:
+                    pass
+        
+        if not node_path:
             print("  ⚠️ Node.js not found — Colony plugin requires Node.js v22+.")
             print("     Install Node.js: https://nodejs.org/ or via nvm/brew")
             print("  Skipping plugin install — Colony sidecar will still work.")
@@ -345,7 +421,7 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
         
         # Check Node.js version (plugin requires >= 22)
         version_result = subprocess.run(
-            ["node", "--version"],
+            [node_path, "--version"],
             capture_output=True, text=True, timeout=5
         )
         if version_result.returncode == 0:
@@ -702,12 +778,50 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     # Check Node.js if OpenClaw is present (plugin requires v22+)
     node_ok = False
     node_version = ""
+    node_path = None
     if oc_ok:
+        # Try shutil.which first
         node_path = shutil.which("node")
-        if node_path:
+        
+        # If not found, try common fnm/nvm paths on macOS/Linux
+        if not node_path:
+            home = Path.home()
+            fnm_paths = [
+                home / ".fnm" / "node-versions" / "installation" / "bin" / "node",
+                home / ".local" / "share" / "fnm" / "node-versions" / "installation" / "bin" / "node",
+            ]
+            nvm_paths = [
+                home / ".nvm" / "versions" / "node",
+            ]
+            
+            # Check fnm paths
+            for p in fnm_paths:
+                if p.exists():
+                    node_path = str(p)
+                    break
+            
+            # Check nvm paths (need to find the version subdirectory)
+            if not node_path:
+                for nvm_base in nvm_paths:
+                    if nvm_base.exists():
+                        # Find the latest version directory
+                        try:
+                            versions = sorted(nvm_base.iterdir(), reverse=True)
+                            for v in versions:
+                                candidate = v / "bin" / "node"
+                                if candidate.exists():
+                                    node_path = str(candidate)
+                                    break
+                        except Exception:
+                            pass
+                        if node_path:
+                            break
+        
+        # If still not found, try running via shell (inherits shell PATH)
+        if not node_path:
             try:
                 result = subprocess.run(
-                    ["node", "--version"],
+                    ["bash", "-l", "-c", "node --version"],
                     capture_output=True, text=True, timeout=5
                 )
                 if result.returncode == 0:
@@ -716,8 +830,26 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     node_ok = major >= 22
             except Exception:
                 pass
-        status = f"{node_version} " if node_version else ""
-        print(f"  Node.js: {status}{'✅' if node_ok else '❌ (need v22+ for plugin)'}")
+        else:
+            # Found node, get version
+            try:
+                result = subprocess.run(
+                    [node_path, "--version"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    node_version = result.stdout.strip().lstrip("v")
+                    major = int(node_version.split(".")[0])
+                    node_ok = major >= 22
+            except Exception:
+                pass
+        
+        if node_version:
+            print(f"  Node.js: v{node_version} {'✅' if node_ok else '❌ (need v22+ for plugin)'}")
+        else:
+            print(f"  Node.js: ❌ not found (need v22+ for plugin)")
+            if node_path:
+                print(f"           Found at: {node_path} (but could not get version)")
     else:
         print(f"  Node.js: ⚪ (skipped — OpenClaw not found)")
 
