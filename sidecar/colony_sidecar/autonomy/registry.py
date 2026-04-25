@@ -159,3 +159,29 @@ class SubsystemRegistry:
         """Get the PatternStore."""
         from colony_sidecar.api.routers.host import _pattern_store
         return _pattern_store
+
+    # === Multi-Agent Properties (v0.7.0) ===
+
+    @property
+    def agent_store(self) -> Any:
+        """Get the AgentStore for multi-agent management."""
+        from colony_sidecar.api.routers.host import _agent_store
+        return _agent_store
+
+    @property
+    def initiative_store(self) -> Any:
+        """Get the InitiativeStore for initiative persistence."""
+        from colony_sidecar.api.routers.host import _initiative_store
+        return _initiative_store
+
+    @property
+    def assignment_engine(self) -> Any:
+        """Get the AssignmentEngine for initiative-to-agent matching."""
+        from colony_sidecar.api.routers.host import _assignment_engine
+        return _assignment_engine
+
+    @property
+    def websocket_manager(self) -> Any:
+        """Get the WebSocketManager for remote agent connections."""
+        from colony_sidecar.api.routers.host import _websocket_manager
+        return _websocket_manager

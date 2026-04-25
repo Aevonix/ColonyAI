@@ -266,6 +266,26 @@ class AutonomyLoop:
         # Phase 18: skill eviction
         await self._phase_skill_evict()
 
+        # === Multi-Agent Phases (v0.7.0) ===
+
+        # Phase 19: agent heartbeat (every tick)
+        await self._phase_agent_heartbeat()
+
+        # Phase 20: initiative timeout (every tick)
+        await self._phase_initiative_timeout()
+
+        # Phase 21: stale initiative cleanup (every 5 ticks)
+        if self.stats.ticks % 5 == 0:
+            await self._phase_stale_initiative_cleanup()
+
+        # Phase 22: ghost agent cleanup (every 10 ticks)
+        if self.stats.ticks % 10 == 0:
+            await self._phase_ghost_cleanup()
+
+        # Phase 23: database backup (every 100 ticks)
+        if self.stats.ticks % 100 == 0:
+            await self._phase_database_backup()
+
         elapsed = (datetime.now(timezone.utc) - tick_start).total_seconds()
         logger.debug("Tick #%d complete in %.2fs", self.stats.ticks, elapsed)
 
@@ -796,6 +816,145 @@ class AutonomyLoop:
                 self.stats.skills_evicted += evicted
         except Exception as exc:
             logger.debug("Phase skill_evict error (non-fatal): %s", exc)
+
+    # ------------------------------------------------------------------
+    # Multi-Agent Phases (v0.7.0)
+    # ------------------------------------------------------------------
+
+    async def _phase_agent_heartbeat(self) -> None:
+        """Check agent status and mark offline if heartbeat timeout."""
+        agent_store = self._registry.agent_store
+        if agent_store is None:
+            return
+        try:
+            # Get agents with old last_seen_at
+            from datetime import timedelta
+            threshold = datetime.now(timezone.utc) - timedelta(minutes=5)
+            
+            agents = agent_store.list(status=["online", "busy"])
+            for agent in agents:
+                if agent.last_seen_at and agent.last_seen_at < threshold:
+                    logger.info("Agent %s marked offline (no heartbeat)", agent.name)
+                    await agent_store.set_offline(agent.agent_id)
+                    
+                    # Reassign pending initiatives
+                    initiative_store = self._registry.initiative_store
+                    if initiative_store:
+                        reassigned = initiative_store.reassign_from_agent(
+                            agent.agent_id,
+                            only_pending=True,
+                        )
+                        if reassigned:
+                            logger.info("Reassigned %d initiatives from offline agent %s", reassigned, agent.name)
+        except Exception as exc:
+            logger.debug("Phase agent_heartbeat error (non-fatal): %s", exc)
+
+    async def _phase_initiative_timeout(self) -> None:
+        """Check for timed-out initiatives."""
+        initiative_store = self._registry.initiative_store
+        if initiative_store is None:
+            return
+        try:
+            now = datetime.now(timezone.utc)
+            timed_out = initiative_store.find_timed_out(now)
+            
+            for initiative in timed_out:
+                logger.warning(
+                    "Initiative %s timed out after %ds",
+                    initiative.id,
+                    initiative.timeout_seconds,
+                )
+                
+                initiative_store.update(
+                    initiative.id,
+                    status="failed",
+                    failed_at=now.isoformat(),
+                    failed_reason="timeout_exceeded",
+                )
+                
+                initiative_store.log_history(
+                    initiative.id,
+                    action="timed_out",
+                    agent_id=initiative.assigned_agent_id,
+                    details={"timeout_seconds": initiative.timeout_seconds},
+                )
+        except Exception as exc:
+            logger.debug("Phase initiative_timeout error (non-fatal): %s", exc)
+
+    async def _phase_stale_initiative_cleanup(self) -> None:
+        """Clean up initiatives stuck in acknowledged state."""
+        initiative_store = self._registry.initiative_store
+        agent_store = self._registry.agent_store
+        if initiative_store is None or agent_store is None:
+            return
+        try:
+            from datetime import timedelta
+            threshold = datetime.now(timezone.utc) - timedelta(hours=1)
+            
+            stale = initiative_store.find_stale_acknowledged(threshold)
+            
+            for initiative in stale:
+                agent = agent_store.get(initiative.assigned_agent_id)
+                
+                if agent is None or agent.status != "online":
+                    logger.warning(
+                        "Initiative %s stuck in acknowledged, reassigning",
+                        initiative.id,
+                    )
+                    initiative_store.update(
+                        initiative.id,
+                        status="pending",
+                        assigned_agent_id=None,
+                        stale_reason="agent_offline_with_acknowledged",
+                    )
+        except Exception as exc:
+            logger.debug("Phase stale_initiative_cleanup error (non-fatal): %s", exc)
+
+    async def _phase_ghost_cleanup(self) -> None:
+        """Remove agents that registered but never connected."""
+        agent_store = self._registry.agent_store
+        initiative_store = self._registry.initiative_store
+        if agent_store is None:
+            return
+        try:
+            from datetime import timedelta
+            threshold = datetime.now(timezone.utc) - timedelta(minutes=10)
+            
+            ghosts = agent_store.list_ghosts(registered_before=threshold)
+            
+            for ghost in ghosts:
+                # Reassign initiatives first
+                if initiative_store:
+                    initiatives = initiative_store.list(assigned_agent_id=ghost.agent_id)
+                    for init in initiatives:
+                        initiative_store.update(
+                            init.id,
+                            status="pending",
+                            assigned_agent_id=None,
+                            reassigned_reason="agent_ghost",
+                        )
+                
+                # Remove ghost
+                agent_store.delete(ghost.agent_id)
+                logger.info("Removed ghost agent %s", ghost.agent_id)
+        except Exception as exc:
+            logger.debug("Phase ghost_cleanup error (non-fatal): %s", exc)
+
+    async def _phase_database_backup(self) -> None:
+        """Periodic database backup for crash recovery."""
+        try:
+            agent_store = self._registry.agent_store
+            initiative_store = self._registry.initiative_store
+            
+            if agent_store and hasattr(agent_store, "backup"):
+                agent_store.backup()
+            
+            if initiative_store and hasattr(initiative_store, "backup"):
+                initiative_store.backup()
+            
+            logger.debug("Database backup complete")
+        except Exception as exc:
+            logger.warning("Phase database_backup error: %s", exc)
 
     # ------------------------------------------------------------------
     # Sleep / wake
