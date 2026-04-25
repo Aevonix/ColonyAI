@@ -2208,9 +2208,9 @@ export function createColonyPlugin(): unknown {
       api.on("message_received", messageReceivedHook(cache, api.logger));
       api.on("llm_output", llmOutputHook(cache, ctx, caps, api.logger));
 
-      // Register internal delivery endpoint for proactive messages from Colony sidecar
+      // Register internal initiative endpoint for proactive suggestions from Colony sidecar
       api.registerHttpRoute({
-        path: "/internal/deliver",
+        path: "/internal/initiative",
         auth: "plugin",  // No gateway auth — we check our own
         match: "exact",
         handler: async (req, res) => {
@@ -2222,18 +2222,14 @@ export function createColonyPlugin(): unknown {
             res.end(JSON.stringify({ error: "Invalid request body" }));
             return true;
           }
-          
-          const { platform, chat_id, message, source } = bodyResult.value as Record<string, unknown>;
 
-          // Auth check - Authorization header or X-Colony-Api-Key
+          const { initiative, source, timestamp } = bodyResult.value as Record<string, unknown>;
+
+          // Auth check
           const colonyApiKey = api.pluginConfig?.apiKey as string | undefined;
           const authHeader = req.headers["authorization"] as string | undefined;
-          const customHeader = req.headers["x-colony-api-key"] as string | undefined;
-          
-          const presentedKey = authHeader?.startsWith("Bearer ") 
-            ? authHeader.slice(7) 
-            : customHeader;
-          
+          const presentedKey = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
           if (presentedKey !== colonyApiKey) {
             res.statusCode = 401;
             res.setHeader("Content-Type", "application/json");
@@ -2241,35 +2237,38 @@ export function createColonyPlugin(): unknown {
             return true;
           }
 
-          // Validate required fields
-          if (typeof platform !== "string" || typeof chat_id !== "string" || typeof message !== "string") {
+          // Validate initiative structure
+          if (!initiative || typeof initiative !== "object") {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: "Missing required fields: platform, chat_id, message" }));
+            res.end(JSON.stringify({ error: "Missing initiative object" }));
             return true;
           }
 
-          // Load channel adapter
-          const adapter = await api.runtime.channel.outbound.loadAdapter(platform);
-          if (!adapter?.sendText) {
-            res.statusCode = 400;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: `Platform ${platform} not available` }));
-            return true;
-          }
+          const init = initiative as Record<string, unknown>;
 
-          // Send message
+          // Format as readable text for LLM
+          const text = formatInitiativeText(init);
+
+          // Enqueue as system event in main session
           try {
-            const result = await adapter.sendText({
-              cfg: api.config,
-              to: chat_id,
-              text: message,
+            const enqueued = api.runtime.system.enqueueSystemEvent(text, {
+              sessionKey: "main",
+              contextKey: `colony:initiative:${init.id}`,
+              trusted: true,
             });
+
+            if (!enqueued) {
+              api.logger.warn?.(`[colony] Duplicate initiative blocked: ${init.id}`);
+            }
+
             res.statusCode = 200;
             res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ ok: true, messageId: (result as { messageId?: string })?.messageId }));
+            res.end(JSON.stringify({ ok: true, enqueued, initiativeId: init.id }));
+
+            api.logger.info?.(`[colony] Initiative enqueued: ${init.id} (priority=${init.priority})`);
           } catch (err) {
-            api.logger.error?.(`Colony delivery failed: ${err}`);
+            api.logger.error?.(`[colony] Failed to enqueue initiative: ${err}`);
             res.statusCode = 500;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: String(err) }));
@@ -2342,6 +2341,39 @@ export function createColonyPlugin(): unknown {
       }
     },
   });
+}
+
+// Helper to format initiative as readable text for LLM
+function formatInitiativeText(init: Record<string, unknown>): string {
+  const lines = [
+    `[colony_initiative]`,
+    `ID: ${init.id ?? "unknown"}`,
+    `Type: ${init.type ?? "unknown"}`,
+    `Priority: ${init.priority ?? 0}`,
+    `Title: ${init.title ?? "(no title)"}`,
+    `Description: ${init.description ?? "(no description)"}`,
+    `Rationale: ${init.rationale ?? "(no rationale)"}`,
+    `Suggested action: ${init.suggested_action ?? "notify_user"}`,
+  ];
+
+  // Add context if present
+  const ctx = init.context as Record<string, unknown> | undefined;
+  if (ctx) {
+    if (ctx.pending_tasks && Array.isArray(ctx.pending_tasks) && ctx.pending_tasks.length > 0) {
+      const task = ctx.pending_tasks[0] as Record<string, unknown>;
+      lines.push(`Context - Pending task: ${task.description ?? "unknown"} (${task.days_pending ?? 0} days pending)`);
+    }
+    if (ctx.neglected_contacts && Array.isArray(ctx.neglected_contacts) && ctx.neglected_contacts.length > 0) {
+      const contact = ctx.neglected_contacts[0] as Record<string, unknown>;
+      lines.push(`Context - Neglected contact: ${contact.name ?? contact.entity_id ?? "unknown"}`);
+    }
+    if (ctx.scheduling_opportunities && Array.isArray(ctx.scheduling_opportunities) && ctx.scheduling_opportunities.length > 0) {
+      const opp = ctx.scheduling_opportunities[0] as Record<string, unknown>;
+      lines.push(`Context - Scheduling: ${opp.description ?? "unknown"}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 // Re-export internals for the smoke tests / programmatic consumers.
