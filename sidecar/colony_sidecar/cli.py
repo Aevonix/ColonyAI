@@ -61,9 +61,13 @@ def main() -> None:
     val_p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     # --- doctor ---
-    doctor_p = sub.add_parser("doctor", help="Diagnose and fix common issues")
+    doctor_p = sub.add_parser("doctor", help="Run integration health check and diagnose issues")
     doctor_p.add_argument("--fix", action="store_true", help="Automatically fix issues found")
     doctor_p.add_argument("--clean-orphans", action="store_true", help="Kill orphaned sidecar processes")
+    doctor_p.add_argument("--url", default=None, help="Sidecar URL (default: from .env)")
+    doctor_p.add_argument("--api-key", default=None, help="API key (default: from .env)")
+    doctor_p.add_argument("--verbose", "-v", action="store_true", help="Show detailed results")
+    doctor_p.add_argument("--full", action="store_true", help="Run all checks including heavy ones (reasoning, research)")
 
     # --- generate-types ---
     sub.add_parser("generate-types", help="Export OpenAPI spec (for TypeScript generation)")
@@ -87,9 +91,6 @@ def main() -> None:
     mm_p.add_argument("--model", default=None, help="Multimodal model ID (default: auto-detect from tier)")
     mm_p.add_argument("--storage", default="local", choices=["local", "embed_only"], help="Image storage mode")
 
-    # --- doctor ---
-    doc_p = sub.add_parser("doctor", help="Run integration health check against running sidecar")
-
     # --- mcp ---
     mcp_p = sub.add_parser("mcp", help="Colony MCP server and harness configuration")
     mcp_sub = mcp_p.add_subparsers(dest="mcp_command")
@@ -112,10 +113,6 @@ def main() -> None:
     mcp_remove.add_argument("--dry-run", action="store_true", help="Show changes without writing")
 
     mcp_sub.add_parser("detect", help="Detect installed coding harnesses")
-    doc_p.add_argument("--url", default=None, help="Sidecar URL (default: from .env)")
-    doc_p.add_argument("--api-key", default=None, help="API key (default: from .env)")
-    doc_p.add_argument("--verbose", "-v", action="store_true", help="Show detailed results")
-    doc_p.add_argument("--full", action="store_true", help="Run all checks including heavy ones (reasoning, research)")
 
     # --- key ---
     key_p = sub.add_parser("key", help="Manage Colony cryptographic identity")
