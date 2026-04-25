@@ -107,10 +107,78 @@ colony validate           # 5-step pipeline test, writes validation stamp
 
 -----
 
+## Multi-Agent (v0.7.0)
+
+Colony v0.7.0 introduces **multi-agent support**, enabling multiple OpenClaw instances, coding agents, and AI systems to connect to a central Colony and share unified context.
+
+### Why Multi-Agent?
+
+- **Unified context across devices** — Your laptop, desktop, and servers all see the same facts and goals
+- **Work distribution** — Colony assigns tasks to the best available agent based on capabilities and load
+- **Failover support** — If an agent goes offline, work is reassigned to another available agent
+- **Remote access** — Connect from anywhere via WebSocket, even behind NAT
+
+### Quick Start
+
+**On your Colony host:**
+```bash
+colony agent invite --capabilities messaging,calendar --primary
+```
+
+**On your remote machine:**
+```bash
+colony agent connect --setup-code COLONY-XXXX-XXXX-XXXX --colony-url https://your-colony.com
+```
+
+That's it! The OpenClaw plugin automatically detects the connection and routes initiatives via WebSocket.
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| Agent Registry | Track all connected agents, their capabilities and status |
+| Initiative Engine | Generate work items from goals, contacts, and schedules |
+| Assignment Engine | Match initiatives to best available agent |
+| WebSocket Delivery | Real-time push to remote agents, works behind NAT |
+| Load Balancing | Distribute work based on agent capacity and priority |
+| Failover | Reassign work when agents go offline |
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Colony (Central)                         │
+│                                                                  │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐  │
+│  │ Agent Store │  │ Initiative   │  │ Assignment Engine      │  │
+│  │             │  │ Store        │  │                        │  │
+│  └─────────────┘  └──────────────┘  └────────────────────────┘  │
+│                              ▲                                   │
+│              ┌───────────────┼───────────────┐                  │
+│              │               │               │                   │
+│         ┌────┴────┐    ┌────┴────┐    ┌────┴────┐              │
+│         │ Laptop  │    │ Desktop │    │ Server  │              │
+│         │ OpenClaw│    │ Hermes  │    │ Crush   │              │
+│         └─────────┘    └─────────┘    └─────────┘              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Documentation
+
+See [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md) for:
+- API reference
+- CLI commands
+- Agent SDK documentation
+- Security model
+- Troubleshooting
+
+-----
+
 ## Table of Contents
 
 - [What Is Colony](#what-is-colony)
 - [Quick Start](#quick-start)
+- [Multi-Agent (v0.7.0)](#multi-agent-v070)
 - [Why Colony](#why-colony)
 - [36 Wired Subsystems](#36-wired-subsystems)
 - [MCP Server](#mcp-server)

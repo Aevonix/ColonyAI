@@ -51,6 +51,12 @@ from colony_sidecar.api.routers.host import (
     set_pattern_store,
     set_surprise_store,
     set_tom_extractor,
+    # Multi-Agent v0.7.0
+    set_agent_store,
+    set_invite_store,
+    set_initiative_store,
+    set_assignment_engine,
+    set_websocket_manager,
     supported_capabilities,
 )
 
@@ -720,6 +726,41 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning("WorkerNode init failed — queued jobs will not execute: %s", exc, exc_info=True)
 
+    # --- 20c. Multi-Agent System (v0.7.0) ---
+    try:
+        from colony_sidecar.agents.store import AgentStore, InviteStore
+        from colony_sidecar.initiatives.store import InitiativeStore
+        from colony_sidecar.initiatives.assignment import AssignmentEngine
+        from colony_sidecar.agents.websocket import WebSocketManager
+
+        agents_db = state_dir / "colony-agents.db"
+        agent_store = AgentStore(db_path=agents_db)
+        invite_store = InviteStore(db_path=agents_db)
+        set_agent_store(agent_store)
+        set_invite_store(invite_store)
+        logger.info("AgentStore initialized (db=%s)", agents_db)
+
+        initiatives_db = state_dir / "colony-initiatives.db"
+        initiative_store = InitiativeStore(db_path=initiatives_db)
+        set_initiative_store(initiative_store)
+        logger.info("InitiativeStore initialized (db=%s)", initiatives_db)
+
+        assignment_engine = AssignmentEngine(
+            agent_store=agent_store,
+            initiative_store=initiative_store,
+        )
+        set_assignment_engine(assignment_engine)
+        logger.info("AssignmentEngine initialized")
+
+        websocket_manager = WebSocketManager(
+            agent_store=agent_store,
+            initiative_store=initiative_store,
+        )
+        set_websocket_manager(websocket_manager)
+        logger.info("WebSocketManager initialized")
+    except Exception as exc:
+        logger.warning("Multi-Agent System init failed: %s", exc)
+
     # --- 21. Autonomy loop ---
     try:
         from colony_sidecar.autonomy.loop import AutonomyLoop
@@ -856,6 +897,12 @@ async def lifespan(app: FastAPI):
     set_autonomy_loop(None)
     set_session_store(None)
     set_task_queue(None)
+    # Multi-Agent cleanup
+    set_agent_store(None)
+    set_invite_store(None)
+    set_initiative_store(None)
+    set_assignment_engine(None)
+    set_websocket_manager(None)
     logger.info("Sidecar shutdown complete")
 
 
