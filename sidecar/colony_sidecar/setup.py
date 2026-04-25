@@ -445,7 +445,11 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
             print("  ✅ Plugin configuration written")
         
         # Write Colony context to OpenClaw workspace
-        from colony_sidecar.harness_integration import write_colony_context, write_colony_skill
+        from colony_sidecar.harness_integration import (
+            write_colony_check_skill,
+            write_colony_context,
+            write_colony_skill,
+        )
         from colony_sidecar.harness_integration.detect import detect_openclaw_workspace
         
         workspace = detect_openclaw_workspace()
@@ -455,6 +459,9 @@ def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_in
             
             if write_colony_skill("openclaw", workspace):
                 print("  ✅ Colony diagnostic skill installed")
+            
+            if write_colony_check_skill(workspace):
+                print("  ✅ Colony check skill installed")
         else:
             print("  ⚠️ Could not detect OpenClaw workspace — context file not written")
             print("     Manually create: ~/.openclaw/workspace/COLONY.md")

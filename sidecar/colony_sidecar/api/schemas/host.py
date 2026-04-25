@@ -796,6 +796,8 @@ class SecretDeleteResponse(BaseModel):
 
 class AutonomyStatusResponse(BaseModel):
     running: bool = False
+    mode: str = "reactive"
+    timezone: str = "UTC"
     in_quiet_hours: bool = False
     ticks: int = 0
     events_processed: int = 0

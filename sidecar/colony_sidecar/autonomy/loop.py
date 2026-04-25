@@ -19,8 +19,9 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, List, Optional
+from zoneinfo import ZoneInfo
 
-from colony_sidecar.autonomy.config import AutonomyConfig
+from colony_sidecar.autonomy.config import AutonomyConfig, AutonomyMode
 from colony_sidecar.autonomy.registry import SubsystemRegistry
 from colony_sidecar.events.bus import EventBus
 from colony_sidecar.events.types import Event
@@ -147,12 +148,25 @@ class AutonomyLoop:
 
     async def start(self) -> None:
         """Start the autonomy loop. Runs until stop() is called."""
-        logger.info(
-            "Autonomy loop starting (tick_interval=%.0fs)",
-            self.config.tick_interval_secs,
-        )
         self._running = True
         self._stop_event.clear()
+
+        # Reactive mode: just mark as running, no timer
+        if self.config.mode == AutonomyMode.REACTIVE:
+            logger.info(
+                "Autonomy loop started in REACTIVE mode (on-demand only, tz=%s)",
+                self.config.timezone,
+            )
+            return
+
+        # Proactive mode: start timer loop
+        logger.info(
+            "Autonomy loop starting in PROACTIVE mode (tick=%.0fs, quiet=%s-%s %s)",
+            self.config.tick_interval_secs,
+            self.config.quiet_hours_start,
+            self.config.quiet_hours_end,
+            self.config.timezone,
+        )
 
         self._wake_sub = self.events.subscribe(
             handler=self._on_wake_signal,
@@ -805,7 +819,14 @@ class AutonomyLoop:
     # ------------------------------------------------------------------
 
     def _in_quiet_hours(self) -> bool:
-        now = datetime.now(timezone.utc)
+        """Check if current time is within quiet hours (in configured timezone)."""
+        try:
+            # Use configured timezone, fallback to UTC
+            tz = ZoneInfo(self.config.timezone)
+            now = datetime.now(tz)
+        except Exception:
+            now = datetime.now(timezone.utc)
+
         try:
             start_h, start_m = map(int, self.config.quiet_hours_start.split(":"))
             end_h, end_m = map(int, self.config.quiet_hours_end.split(":"))
@@ -816,9 +837,11 @@ class AutonomyLoop:
         end_minutes = end_h * 60 + end_m
         current_minutes = now.hour * 60 + now.minute
 
+        # Disabled if both are 00:00
         if start_minutes == 0 and end_minutes == 0:
             return False
 
+        # Handle overnight quiet hours (e.g., 22:00 - 07:00)
         if start_minutes > end_minutes:
             return current_minutes >= start_minutes or current_minutes < end_minutes
         return start_minutes <= current_minutes < end_minutes
@@ -844,8 +867,12 @@ class AutonomyLoop:
     def status(self) -> dict:
         return {
             "running": self._running,
+            "mode": self.config.mode.value,
+            "timezone": self.config.timezone,
             "in_quiet_hours": self._in_quiet_hours(),
             "config": {
+                "mode": self.config.mode.value,
+                "timezone": self.config.timezone,
                 "tick_interval_secs": self.config.tick_interval_secs,
                 "initiative_confidence_threshold": self.config.initiative_confidence_threshold,
                 "max_actions_per_hour": self.config.max_actions_per_hour,

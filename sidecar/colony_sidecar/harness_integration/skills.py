@@ -262,3 +262,101 @@ def _update_crush_skills_paths() -> bool:
         return True
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Colony Check Skill (for on-demand initiative checking)
+# ---------------------------------------------------------------------------
+
+COLONY_CHECK_SKILL = """---
+name: colony-check
+description: "On-demand Colony initiative checking. Use when user asks about blocked goals, neglected contacts, or pending initiatives."
+---
+
+# Colony Check Skill
+
+Check Colony for blocked goals, neglected contacts, and pending initiatives on-demand.
+
+## When to Use
+
+✅ **USE when:**
+- User asks \"are there any blocked goals?\"
+- User asks \"what needs attention?\"
+- Checking during heartbeats (add to HEARTBEAT.md)
+- Surfacing potential actions without full autonomy
+
+❌ **DON'T use when:**
+- Colony sidecar is not running
+- User hasn't asked about goals/initiatives
+
+## Commands
+
+### Trigger Autonomy Cycle
+
+```bash
+curl -X POST -H \"Authorization: Bearer colony\" \\
+  \"http://localhost:7777/v1/host/autonomy/cycle\"
+```
+
+Returns:
+```json
+{
+  \"completed\": true,
+  \"result\": {
+    \"running\": true,
+    \"mode\": \"reactive\",
+    \"initiatives_generated\": 2
+  }
+}
+```
+
+### Get Blocked Goals
+
+```bash
+curl -H \"Authorization: Bearer colony\" \\
+  \"http://localhost:7777/v1/host/goals?status=blocked\"
+```
+
+### Get Pending Commitments
+
+```bash
+curl -H \"Authorization: Bearer colony\" \\
+  \"http://localhost:7777/v1/host/commitments?status=pending\"
+```
+
+## Example Usage
+
+**User:** \"Is there anything blocked?\"
+
+**Agent:**
+1. Calls `/autonomy/cycle`
+2. Receives: `initiatives_generated: 1`
+3. Responds: \"You have 1 blocked goal. Want me to help unblock it?\"
+
+## Heartbeat Integration
+
+Add to `HEARTBEAT.md`:
+
+```markdown
+# Heartbeat Checks
+- [ ] Check Colony for blocked goals (if Colony sidecar configured)
+```
+"""
+
+
+def write_colony_check_skill(workspace_dir: Path) -> bool:
+    """Write colony-check skill to OpenClaw workspace skills directory.
+
+    Args:
+        workspace_dir: OpenClaw workspace directory
+
+    Returns:
+        True if written successfully, False otherwise
+    """
+    skill_dir = workspace_dir / "skills" / "colony-check"
+    try:
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(COLONY_CHECK_SKILL)
+        return True
+    except Exception:
+        return False

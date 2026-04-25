@@ -15,10 +15,12 @@ from .context import (
 )
 from .skills import (
     write_colony_skill,
+    write_colony_check_skill,
     remove_colony_skill,
     get_skill_path,
     get_skill_config_path,
     COLONY_DIAGNOSTIC_SKILL,
+    COLONY_CHECK_SKILL,
 )
 from .detect import (
     detect_openclaw_workspace,
@@ -27,10 +29,12 @@ from .detect import (
 __all__ = [
     "write_colony_context",
     "write_colony_skill",
+    "write_colony_check_skill",
     "remove_colony_skill",
     "get_skill_path",
     "get_skill_config_path",
     "detect_openclaw_workspace",
     "COLONY_CONTEXT_TEMPLATE",
     "COLONY_DIAGNOSTIC_SKILL",
+    "COLONY_CHECK_SKILL",
 ]
