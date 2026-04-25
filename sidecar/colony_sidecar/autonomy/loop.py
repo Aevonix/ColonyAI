@@ -380,40 +380,52 @@ class AutonomyLoop:
                 logger.info("Phase initiative: %d new proposals", len(initiatives))
             self._pending_initiatives = initiatives
             self.stats.initiatives_generated += len(initiatives)
+            
+            # Capture context for payload building in _phase_execute
+            self._last_initiative_context = dict(getattr(engine, "_context", {}))
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase initiative error: %s", exc, exc_info=True)
             self._pending_initiatives = []
 
     async def _phase_execute(self) -> None:
-        """Execute approved actions via direct delivery."""
+        """Push initiatives to OpenClaw for LLM decision-making."""
+        delivery = self._registry.delivery
+        if delivery is None:
+            return
+
         for initiative in list(self._pending_initiatives):
             if self.stats.actions_this_hour >= self.config.max_actions_per_hour:
                 logger.warning("Hourly action limit reached")
                 break
 
-            delivery = self._registry.delivery
-            if delivery is None:
-                continue
-
-            home = delivery.resolve_home_channel()
-            if home is None:
-                logger.warning("No home channel configured — cannot deliver")
-                continue
-
             try:
-                ok = await delivery.push_to_gateway(
-                    platform=home["platform"],
-                    chat_id=home["chat_id"],
-                    message=getattr(initiative, "description", ""),
-                    source="initiative",
-                )
+                # Build structured initiative payload
+                # Note: Initiative dataclass has: id, type, description, priority, rationale, action_hint, entity_id
+                # We add title (derived from description) and context (from engine state)
+                initiative_type = getattr(initiative, "type", "unknown")
+                type_value = initiative_type.value if hasattr(initiative_type, "value") else str(initiative_type)
+                
+                payload = {
+                    "id": getattr(initiative, "id", str(uuid.uuid4())),
+                    "type": type_value,
+                    "priority": getattr(initiative, "priority", 0.5),
+                    "title": getattr(initiative, "description", "").split(".")[0][:80] if getattr(initiative, "description", "") else "(no title)",
+                    "description": getattr(initiative, "description", ""),
+                    "rationale": getattr(initiative, "rationale", ""),
+                    "suggested_action": getattr(initiative, "action_hint", "notify_user") or "notify_user",
+                    "entity_id": getattr(initiative, "entity_id", None),
+                    "context": self._last_initiative_context if hasattr(self, "_last_initiative_context") else {},
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+                ok = await delivery.push_initiative(payload)
                 if ok:
                     self.stats.actions_executed += 1
                     self.stats.actions_this_hour += 1
-                    logger.info("Delivered initiative: %s", getattr(initiative, "id", "?"))
+                    logger.info("Pushed initiative: %s", payload["id"])
             except Exception as exc:
-                logger.error("push_to_gateway failed: %s", exc)
+                logger.error("Failed to push initiative: %s", exc)
 
         self._pending_initiatives = []
 

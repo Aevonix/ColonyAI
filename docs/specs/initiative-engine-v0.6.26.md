@@ -345,12 +345,15 @@ async def _phase_execute(self) -> None:
 COLONY_GATEWAY_INTERNAL_URL="http://127.0.0.1:18789"
 COLONY_API_KEY="<user-api-key>"
 
-# At least one home channel required:
-WHATSAPP_HOME_CHANNEL="<user-phone-or-chat-id>"
+# At least ONE home channel required (set whichever platform you use):
+WHATSAPP_HOME_CHANNEL="<chat-id>"
 # TELEGRAM_HOME_CHANNEL="<chat-id>"
 # DISCORD_HOME_CHANNEL="<channel-id>"
 # SLACK_HOME_CHANNEL="<channel-id>"
+# SIGNAL_HOME_CHANNEL="<chat-id>"
 ```
+
+The `resolve_home_channel()` method returns the **first configured platform** — it iterates through telegram, whatsapp, discord, slack, signal and picks whichever has a `*_HOME_CHANNEL` env var set.
 
 ---
 

@@ -225,6 +225,54 @@ class ProactiveDeliveryBridge:
             logger.warning("push_to_gateway failed: %s", exc)
             return False
 
+    async def push_initiative(self, initiative: Dict[str, Any]) -> bool:
+        """Push a structured initiative to OpenClaw for LLM decision-making.
+        
+        Returns True if gateway accepted, False otherwise.
+        """
+        try:
+            import aiohttp
+        except ImportError:
+            logger.warning("aiohttp not available — cannot push initiative")
+            return False
+
+        url = f"{self._gateway_url.rstrip('/')}/internal/initiative"
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if self._gateway_api_key:
+            headers["Authorization"] = f"Bearer {self._gateway_api_key}"
+
+        payload = {
+            "initiative": initiative,
+            "source": "autonomy_loop",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=5.0),
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info(
+                            "Initiative pushed to gateway: %s (type=%s, priority=%.2f)",
+                            initiative.get("id"),
+                            initiative.get("type"),
+                            initiative.get("priority", 0),
+                        )
+                        return True
+                    body = await resp.text()
+                    logger.warning(
+                        "Gateway /internal/initiative returned %d: %s",
+                        resp.status, body[:200]
+                    )
+                    return False
+        except Exception as exc:
+            logger.warning("push_initiative failed: %s", exc)
+            return False
+
     def get_pending(self, gateway_id: str = "", limit: int = 20) -> List[Dict[str, Any]]:
         """Return pending PUSH deliveries for the gateway to send.
 
