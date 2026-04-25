@@ -138,10 +138,10 @@ def main() -> None:
     spawn_p.add_argument("task", nargs="*", help="Task description (or use --task-file)")
     spawn_p.add_argument("--task-file", "-f", default=None, help="Read task from file")
     spawn_p.add_argument("--store", "-s", action="store_true", help="Store task in Colony before spawning")
-    spawn_p.add_argument("--host", default=None, help="Coding server hostname (default: from config or COLONY_SPAWN_HOST)")
-    spawn_p.add_argument("--agent", default="crush", choices=["crush", "codex", "claude-code"], help="Coding agent to use")
-    spawn_p.add_argument("--model", default=None, help="Model override for the agent")
-    spawn_p.add_argument("--contact", default=None, help="Contact ID for Colony context (default: from config)")
+    spawn_p.add_argument("--host", default=None, help="Coding server hostname (default: from COLONY_SPAWN_HOST)")
+    spawn_p.add_argument("--agent", default=None, choices=["crush", "codex", "claude-code"], help="Coding agent to use (default: from COLONY_SPAWN_AGENT or crush)")
+    spawn_p.add_argument("--model", default=None, help="Model for the agent (required for Crush)")
+    spawn_p.add_argument("--contact", default=None, help="Contact ID for Colony context (default: from COLONY_SPAWN_CONTACT)")
     spawn_p.add_argument("--dry-run", action="store_true", help="Print command without executing")
 
     # --- backup ---
@@ -661,15 +661,19 @@ def _cmd_spawn(args) -> None:
     3. Runs the coding agent with instructions to pull from Colony
     
     Configuration (via .env or environment):
-    - COLONY_SPAWN_HOST: Coding server hostname (default: localhost)
+    - COLONY_SPAWN_HOST: Coding server hostname (required)
     - COLONY_SPAWN_USER: SSH user (default: current user)
     - COLONY_SPAWN_CONTACT: Default contact ID for context
-    - COLONY_SPAWN_MODEL: Default model for the agent
+    - COLONY_SPAWN_MODEL: Model for the agent (required for Crush)
+    - COLONY_SPAWN_AGENT: Default agent: crush, codex, claude-code (default: crush)
+    - COLONY_SPAWN_CRUSH_PATH: Path to crush binary (default: ~/.local/bin/crush)
+    - COLONY_SPAWN_CODEX_PATH: Path to codex binary (default: codex)
+    - COLONY_SPAWN_CLAUDE_PATH: Path to claude binary (default: claude)
     
     Example:
         colony spawn --store "Build a REST API endpoint"
-        colony spawn --host spark2 "Fix the bug in auth.py"
-        colony spawn --model glm/glm-5 "Refactor the database layer"
+        colony spawn --host codingsrv "Fix the bug in auth.py"
+        colony spawn --agent codex "Refactor the database layer"
     """
     _load_dotenv()
     
@@ -688,11 +692,11 @@ def _cmd_spawn(args) -> None:
         print("  Error: Empty task")
         return
     
-    # Configuration
+    # Configuration (all via env or CLI flags - no hardcoded defaults)
     host = args.host or os.environ.get("COLONY_SPAWN_HOST")
     contact_id = args.contact or os.environ.get("COLONY_SPAWN_CONTACT", os.environ.get("USER", "user"))
-    model = args.model or os.environ.get("COLONY_SPAWN_MODEL", "glm/glm-5")
-    agent = args.agent
+    model = args.model or os.environ.get("COLONY_SPAWN_MODEL")
+    agent = args.agent or os.environ.get("COLONY_SPAWN_AGENT", "crush")
     
     # Colony connection info
     colony_url = os.environ.get("COLONY_SIDECAR_URL") or f"http://{os.environ.get('COLONY_SIDECAR_HOST', '127.0.0.1')}:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}"
@@ -700,8 +704,10 @@ def _cmd_spawn(args) -> None:
     
     if not host:
         print("  Error: No spawn host configured")
-        print("  Set COLONY_SPAWN_HOST in .env or use --host")
-        print("  Example: COLONY_SPAWN_HOST=spark2")
+        print("  Set COLONY_SPAWN_HOST in your Colony .env or use --host")
+        print("\n  Example .env:")
+        print("    COLONY_SPAWN_HOST=coding-server")
+        print("    COLONY_SPAWN_MODEL=your-model")
         return
     
     # Store task in Colony if requested
@@ -730,12 +736,23 @@ def _cmd_spawn(args) -> None:
     # Agent will pull context from Colony via MCP tools
     agent_prompt = f"Use colony_lookup_facts to find relevant context for contact {contact_id}, then: {task}"
     
+    # Agent binary paths (configurable via env)
+    crush_path = os.environ.get("COLONY_SPAWN_CRUSH_PATH", "~/.local/bin/crush")
+    codex_path = os.environ.get("COLONY_SPAWN_CODEX_PATH", "codex")
+    claude_path = os.environ.get("COLONY_SPAWN_CLAUDE_PATH", "claude")
+    
     if agent == "crush":
-        agent_cmd = f"~/.local/bin/crush run -m {model} \"{agent_prompt}\""
+        if not model:
+            print("  Error: No model specified for Crush")
+            print("  Set COLONY_SPAWN_MODEL in .env or use --model")
+            return
+        agent_cmd = f"{crush_path} run -m {model} \"{agent_prompt}\""
     elif agent == "codex":
-        agent_cmd = f"codex \"{agent_prompt}\""
+        model_flag = f"-m {model} " if model else ""
+        agent_cmd = f"{codex_path} {model_flag}\"{agent_prompt}\""
     elif agent == "claude-code":
-        agent_cmd = f"claude \"{agent_prompt}\""
+        model_flag = f"--model {model} " if model else ""
+        agent_cmd = f"{claude_path} {model_flag}\"{agent_prompt}\""
     else:
         print(f"  Error: Unknown agent: {agent}")
         return
