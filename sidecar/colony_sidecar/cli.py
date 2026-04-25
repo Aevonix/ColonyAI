@@ -143,6 +143,52 @@ def main() -> None:
     mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
     mm_p.add_argument("--skip-download", action="store_true", help="Skip model download")
 
+    # --- agent ---
+    agent_p = sub.add_parser("agent", help="Manage connected agents")
+    agent_sub = agent_p.add_subparsers(dest="agent_command")
+
+    agent_invite = agent_sub.add_parser("invite", help="Generate a setup code for remote agent")
+    agent_invite.add_argument("--expires", type=int, default=900, help="Invite expiry in seconds (default: 900)")
+    agent_invite.add_argument("--max-uses", type=int, default=1, help="Max uses (default: 1)")
+    agent_invite.add_argument("--capabilities", default="messaging", help="Grant capabilities (comma-separated)")
+    agent_invite.add_argument("--primary", action="store_true", help="Grant primary status")
+    agent_invite.add_argument("--label", default=None, help="Label for this invite")
+
+    agent_connect = agent_sub.add_parser("connect", help="Connect a remote agent using setup code")
+    agent_connect.add_argument("--setup-code", required=True, help="Setup code from colony agent invite")
+    agent_connect.add_argument("--colony-url", default=None, help="Colony URL (auto-detect if on Tailscale)")
+    agent_connect.add_argument("--name", default=None, help="Agent name (default: hostname)")
+    agent_connect.add_argument("--capabilities", default=None, help="Request capabilities (comma-separated)")
+
+    agent_list = agent_sub.add_parser("list", help="List registered agents")
+    agent_list.add_argument("--status", choices=["online", "busy", "offline", "suspended", "revoked"], default=None, help="Filter by status")
+    agent_list.add_argument("--capability", default=None, help="Filter by capability")
+
+    agent_show = agent_sub.add_parser("show", help="Show agent details")
+    agent_show.add_argument("agent_id", help="Agent ID")
+
+    agent_revoke = agent_sub.add_parser("revoke", help="Revoke an agent's access")
+    agent_revoke.add_argument("agent_id", help="Agent ID to revoke")
+    agent_revoke.add_argument("--reason", default=None, help="Reason for revocation")
+
+    agent_sub.add_parser("disconnect", help="Disconnect this agent from Colony")
+
+    # --- initiative ---
+    init_p = sub.add_parser("initiative", help="Manage initiatives")
+    init_sub = init_p.add_subparsers(dest="initiative_command")
+
+    init_list = init_sub.add_parser("list", help="List initiatives")
+    init_list.add_argument("--status", default=None, help="Filter by status (pending, assigned, acknowledged, completed, failed, cancelled)")
+    init_list.add_argument("--agent", default=None, help="Filter by assigned agent")
+    init_list.add_argument("--limit", type=int, default=20, help="Max results (default: 20)")
+
+    init_show = init_sub.add_parser("show", help="Show initiative details")
+    init_show.add_argument("initiative_id", help="Initiative ID")
+
+    init_cancel = init_sub.add_parser("cancel", help="Cancel an initiative")
+    init_cancel.add_argument("initiative_id", help="Initiative ID")
+    init_cancel.add_argument("--reason", default=None, help="Reason for cancellation")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -483,6 +529,12 @@ def main() -> None:
     elif args.command == "restore":
         _cmd_restore(args)
 
+    elif args.command == "agent":
+        _cmd_agent(args)
+
+    elif args.command == "initiative":
+        _cmd_initiative(args)
+
 
     else:
         parser.print_help()
@@ -567,6 +619,208 @@ def _cmd_restore(args) -> None:
     except ValueError as e:
         print(f"  Error: {e}")
         raise SystemExit(1)
+
+
+def _cmd_agent(args) -> None:
+    """Handle agent subcommands."""
+    _load_dotenv()
+
+    import httpx
+    host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+    port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+    api_key = os.environ.get("COLONY_API_KEY", "")
+    base_url = f"http://{host}:{port}/v1/host"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    if args.agent_command == "invite":
+        resp = httpx.post(
+            f"{base_url}/agents/invite",
+            json={
+                "expires_in_seconds": args.expires,
+                "max_uses": args.max_uses,
+                "granted_capabilities": args.capabilities.split(",") if args.capabilities else ["messaging"],
+                "granted_is_primary": args.primary,
+                "label": args.label,
+            },
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        data = resp.json()
+        print(f"Setup code: {data['code']}")
+        print(f"Expires at: {data['expires_at']}")
+        print(f"\nRun on remote agent:")
+        print(f"  {data['setup_command']}")
+
+    elif args.agent_command == "connect":
+        import socket
+        name = args.name or socket.gethostname()
+        resp = httpx.post(
+            f"{base_url}/agents/connect",
+            json={
+                "setup_code": args.setup_code,
+                "name": name,
+                "node_public_key": str(uuid.uuid4()),  # TODO: generate real keypair
+                "capabilities": args.capabilities.split(",") if args.capabilities else None,
+            },
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        data = resp.json()
+        # Save agent config
+        agent_dir = Path.home() / ".colony"
+        agent_dir.mkdir(exist_ok=True)
+        agent_config = agent_dir / "agent.json"
+        agent_config.write_text(json.dumps(data, indent=2))
+        print(f"Agent connected: {data['agent_id']}")
+        print(f"Node ID: {data['node_id']}")
+        print(f"Colony ID: {data['colony_id']}")
+        print(f"WebSocket URL: {data.get('websocket_url', 'N/A')}")
+        print(f"\nConfig saved to: {agent_config}")
+
+    elif args.agent_command == "list":
+        params = {}
+        if args.status:
+            params["status"] = args.status
+        if args.capability:
+            params["capability"] = args.capability
+        resp = httpx.get(f"{base_url}/agents", params=params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        data = resp.json()
+        agents = data.get("agents", [])
+        if not agents:
+            print("No agents found.")
+            return
+        print(f"{'Agent ID':<36} {'Name':<20} {'Status':<10} {'Capabilities'}")
+        print("-" * 100)
+        for a in agents:
+            caps = ", ".join(a.get("capabilities", []))
+            print(f"{a['agent_id']:<36} {a['name']:<20} {a['status']:<10} {caps}")
+
+    elif args.agent_command == "show":
+        resp = httpx.get(f"{base_url}/agents/{args.agent_id}", headers=headers, timeout=10)
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        a = resp.json()
+        print(f"Agent ID: {a['agent_id']}")
+        print(f"Node ID: {a['node_id']}")
+        print(f"Name: {a['name']}")
+        print(f"Colony ID: {a['colony_id']}")
+        print(f"Connection: {a['connection_mode']}")
+        print(f"Status: {a['status']}")
+        print(f"Primary: {a['is_primary']}")
+        print(f"Priority: {a['priority']}")
+        print(f"Capabilities: {', '.join(a['capabilities'])}")
+        print(f"Current assignments: {a['current_assignments']}")
+        print(f"Max concurrent: {a['max_concurrent']}")
+        print(f"Registered: {a['registered_at']}")
+        if a.get('last_seen_at'):
+            print(f"Last seen: {a['last_seen_at']}")
+
+    elif args.agent_command == "revoke":
+        resp = httpx.delete(f"{base_url}/agents/{args.agent_id}", headers=headers, timeout=10)
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        print(f"Agent {args.agent_id} revoked.")
+
+    elif args.agent_command == "disconnect":
+        # Read agent config to get agent_id
+        agent_config = Path.home() / ".colony" / "agent.json"
+        if not agent_config.exists():
+            print("No agent config found. Not connected?")
+            return
+        data = json.loads(agent_config.read_text())
+        agent_id = data.get("agent_id")
+        if agent_id:
+            resp = httpx.delete(f"{base_url}/agents/{agent_id}", headers=headers, timeout=10)
+            if resp.status_code == 200:
+                print(f"Disconnected agent {agent_id}")
+        # Remove config
+        agent_config.unlink(missing_ok=True)
+        print("Agent config removed.")
+
+    else:
+        print("Usage: colony agent [invite|connect|list|show|revoke|disconnect]")
+
+
+def _cmd_initiative(args) -> None:
+    """Handle initiative subcommands."""
+    _load_dotenv()
+
+    import httpx
+    host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+    port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+    api_key = os.environ.get("COLONY_API_KEY", "")
+    base_url = f"http://{host}:{port}/v1/host"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    if args.initiative_command == "list":
+        params = {"limit": args.limit}
+        if args.status:
+            params["status"] = args.status
+        if args.agent:
+            params["agent_id"] = args.agent
+        resp = httpx.get(f"{base_url}/initiatives", params=params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        data = resp.json()
+        initiatives = data.get("initiatives", [])
+        if not initiatives:
+            print("No initiatives found.")
+            return
+        print(f"{'ID':<36} {'Type':<15} {'Status':<12} {'Priority':<8} {'Description'}")
+        print("-" * 120)
+        for i in initiatives:
+            desc = i['description'][:60] + "..." if len(i['description']) > 60 else i['description']
+            print(f"{i['id']:<36} {i['initiative_type']:<15} {i['status']:<12} {i['priority']:<8} {desc}")
+
+    elif args.initiative_command == "show":
+        resp = httpx.get(f"{base_url}/initiatives/{args.initiative_id}", headers=headers, timeout=10)
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        i = resp.json()
+        print(f"Initiative ID: {i['id']}")
+        print(f"Type: {i['initiative_type']}")
+        print(f"Status: {i['status']}")
+        print(f"Priority: {i['priority']}")
+        print(f"Description: {i['description']}")
+        if i.get('assigned_agent_id'):
+            print(f"Assigned to: {i['assigned_agent_id']}")
+        if i.get('result'):
+            print(f"Result: {i['result']}")
+        if i.get('error_message'):
+            print(f"Error: {i['error_message']}")
+        print(f"Created: {i['created_at']}")
+        if i.get('completed_at'):
+            print(f"Completed: {i['completed_at']}")
+        if i.get('failed_at'):
+            print(f"Failed: {i['failed_at']}")
+
+    elif args.initiative_command == "cancel":
+        resp = httpx.post(
+            f"{base_url}/initiatives/{args.initiative_id}/cancel",
+            json={"reason": args.reason},
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        print(f"Initiative {args.initiative_id} cancelled.")
+
+    else:
+        print("Usage: colony initiative [list|show|cancel]")
 
 
 def _cmd_init(args) -> None:

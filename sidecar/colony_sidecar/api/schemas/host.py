@@ -1172,3 +1172,191 @@ class WorldStatsResponse(BaseModel):
     active_relationships: int = 0
     total_observations: int = 0
     merge_proposals_pending: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Multi-Agent — Agent Management (v0.7.0)
+# ---------------------------------------------------------------------------
+
+class AgentInviteRequest(BaseModel):
+    expires_in_seconds: int = Field(default=900, ge=60, le=86400)
+    max_uses: int = Field(default=1, ge=1, le=100)
+    granted_capabilities: List[str] = Field(default_factory=lambda: ["messaging"])
+    granted_is_primary: bool = False
+    granted_max_concurrent: int = Field(default=5, ge=1, le=100)
+    label: Optional[str] = None
+
+
+class AgentInviteResponse(BaseModel):
+    code: str
+    expires_at: str
+    max_uses: int
+    setup_command: str
+
+
+class AgentConnectRequest(BaseModel):
+    setup_code: str
+    node_id: Optional[str] = None
+    node_public_key: str
+    name: str
+    capabilities: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentNodeCert(BaseModel):
+    colony_id: str
+    node_id: str
+    public_key: str
+    signature: str
+    issued_at: str
+
+
+class AgentConnectResponse(BaseModel):
+    agent_id: str
+    node_id: str
+    colony_id: str
+    node_cert: AgentNodeCert
+    websocket_url: str
+    capabilities: List[str]
+    is_primary: bool
+    max_concurrent: int
+
+
+class AgentRegisterRequest(BaseModel):
+    agent_id: Optional[str] = None
+    node_id: Optional[str] = None
+    name: str
+    connection_mode: Literal["local", "remote"] = "local"
+    gateway_url: Optional[str] = None
+    capabilities: List[str] = Field(default_factory=list)
+    is_primary: bool = False
+    priority: int = Field(default=0, ge=0, le=100)
+    max_concurrent: int = Field(default=5, ge=1, le=100)
+    excluded_types: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRegisterResponse(BaseModel):
+    agent_id: str
+    node_id: str
+    colony_id: str
+    websocket_url: Optional[str] = None
+
+
+class AgentHeartbeatRequest(BaseModel):
+    status: Literal["online", "busy", "offline"] = "online"
+    current_assignments: int = Field(default=0, ge=0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentMetadataSchema(BaseModel):
+    hostname: Optional[str] = None
+    platform: Optional[str] = None
+    version: Optional[str] = None
+    harness: Optional[str] = None
+    timezone: Optional[str] = None
+
+
+class AgentResponse(BaseModel):
+    agent_id: str
+    node_id: Optional[str] = None
+    name: str
+    colony_id: str
+    connection_mode: Literal["local", "remote"]
+    gateway_url: Optional[str] = None
+    capabilities: List[str]
+    is_primary: bool
+    priority: int
+    max_concurrent: int
+    excluded_types: List[str]
+    status: Literal["online", "busy", "offline", "suspended", "revoked"]
+    current_assignments: int
+    metadata: AgentMetadataSchema = AgentMetadataSchema()
+    registered_at: str
+    last_seen_at: Optional[str] = None
+
+
+class AgentListResponse(BaseModel):
+    agents: List[AgentResponse]
+    total: int
+
+
+class AgentHealthResponse(BaseModel):
+    agents: List[Dict[str, Any]]
+    websocket_endpoint: str
+
+
+class AgentUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    capabilities: Optional[List[str]] = None
+    is_primary: Optional[bool] = None
+    priority: Optional[int] = None
+    max_concurrent: Optional[int] = None
+    excluded_types: Optional[List[str]] = None
+
+
+# ---------------------------------------------------------------------------
+# Multi-Agent — Initiative Management (v0.7.0)
+# ---------------------------------------------------------------------------
+
+class InitiativeCreateRequest(BaseModel):
+    initiative_type: Literal[
+        "PROACTIVE_MESSAGE", "CALENDAR_REMINDER", "TASK_SUGGESTION",
+        "RESEARCH_DEEP_DIVE", "SKILL_EVICT", "CODING"
+    ]
+    title: str
+    description: str
+    priority: int = Field(default=0, ge=0, le=100)
+    timeout_seconds: int = Field(default=3600, ge=60, le=86400)
+    context: Dict[str, Any] = Field(default_factory=dict)
+    target_agent_id: Optional[str] = None
+    dedup_key: Optional[str] = None
+
+
+class InitiativeResponse(BaseModel):
+    id: str
+    initiative_type: str
+    title: str
+    description: str
+    priority: int
+    status: Literal["pending", "acknowledged", "in_progress", "completed", "failed"]
+    timeout_seconds: int
+    context: Dict[str, Any]
+    target_agent_id: Optional[str]
+    assigned_agent_id: Optional[str]
+    dedup_key: Optional[str]
+    result: Optional[Dict[str, Any]]
+    error_message: Optional[str]
+    created_at: str
+    acknowledged_at: Optional[str]
+    completed_at: Optional[str]
+    failed_at: Optional[str]
+    expires_at: Optional[str]
+
+
+class InitiativeListResponse(BaseModel):
+    initiatives: List[InitiativeResponse]
+    total: int
+
+
+class InitiativeClaimRequest(BaseModel):
+    agent_id: str
+
+
+class InitiativeCompleteRequest(BaseModel):
+    agent_id: str
+    result: Dict[str, Any] = Field(default_factory=dict)
+
+
+class InitiativeFailRequest(BaseModel):
+    agent_id: str
+    error_message: str
+
+
+class InitiativeDelegateRequest(BaseModel):
+    target_agent_id: str
+    reason: Optional[str] = None
+
+
+class InitiativePriorityRequest(BaseModel):
+    priority: int = Field(ge=0, le=100)
