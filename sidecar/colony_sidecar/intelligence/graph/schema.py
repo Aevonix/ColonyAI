@@ -158,6 +158,9 @@ class EdgeType(str, Enum):
     # Memory → Person (memory about a person)
     ABOUT = "ABOUT"
 
+    # Memory → Person (ownership/assignment)
+    BELONGS_TO = "BELONGS_TO"
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Convenience exports

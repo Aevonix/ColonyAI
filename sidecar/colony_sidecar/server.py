@@ -466,17 +466,26 @@ async def lifespan(app: FastAPI):
         except Exception as exc2:
             logger.error("WorldModelStore fallback init also failed: %s", exc2)
 
-    # --- 11. Cognition (MetaLearner) ---
+    # --- 11. Cognition (CognitionPipeline) ---
+    cognition_pipeline = None
     try:
-        from colony_sidecar.intelligence.cognition.metalearner import MetaLearner
+        from colony_sidecar.intelligence.cognition.registry import CognitionPipeline
+        from colony_sidecar.events.bus import EventBus
+        
         if graph is not None:
-            metalearner = MetaLearner(graph=graph)
-            set_metalearner(metalearner)
-            logger.info("MetaLearner initialized")
+            # Create EventBus for real-time metrics
+            event_bus = EventBus()
+            
+            cognition_pipeline = CognitionPipeline(
+                graph=graph,
+                event_bus=event_bus,
+            )
+            set_metalearner(cognition_pipeline.meta_learner)
+            logger.info("CognitionPipeline initialized with all components wired")
         else:
-            logger.warning("MetaLearner skipped — ColonyGraph not available")
+            logger.warning("CognitionPipeline skipped — ColonyGraph not available")
     except Exception as exc:
-        logger.warning("MetaLearner init failed: %s", exc)
+        logger.warning("CognitionPipeline init failed: %s", exc, exc_info=True)
 
     # --- 12. Research pipeline ---
     try:
