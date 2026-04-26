@@ -1348,31 +1348,16 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     major = int(node_version.split(".")[0])
                     node_ok = major >= 22
                 else:
-                    # Direct execution failed, try via shell
-                    try:
-                        shell_result = subprocess.run(
-                            ["bash", "-l", "-c", f"'{node_path}' --version"],
-                            capture_output=True, text=True, timeout=5
-                        )
-                        if shell_result.returncode == 0:
-                            node_version = shell_result.stdout.strip().lstrip("v")
-                            major = int(node_version.split(".")[0])
-                            node_ok = major >= 22
-                    except Exception:
-                        pass
-            except Exception:
-                # Direct execution raised exception, try via shell
-                try:
-                    result = subprocess.run(
-                        ["bash", "-l", "-c", f"'{node_path}' --version"],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if result.returncode == 0:
-                        node_version = result.stdout.strip().lstrip("v")
-                        major = int(node_version.split(".")[0])
-                        node_ok = major >= 22
-                except Exception:
-                    pass
+                    # Debug: show why it failed
+                    import sys
+                    print(f"           Debug: node returned {result.returncode}", file=sys.stderr)
+                    if result.stderr:
+                        print(f"           Debug: stderr: {result.stderr}", file=sys.stderr)
+            except Exception as e:
+                # Debug: show exception
+                import sys
+                print(f"           Debug: exception: {e}", file=sys.stderr)
+                pass
         
         if node_version:
             print(f"  Node.js: v{node_version} {'✅' if node_ok else '❌ (need v22+ for plugin)'}")
