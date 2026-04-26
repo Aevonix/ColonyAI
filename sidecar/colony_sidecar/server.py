@@ -733,17 +733,15 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.initiatives.assignment import AssignmentEngine
         from colony_sidecar.agents.websocket import WebSocketManager
 
-        agents_db = state_dir / "colony-agents.db"
-        agent_store = AgentStore(db_path=agents_db)
-        invite_store = InviteStore(db_path=agents_db)
+        agent_store = AgentStore(state_dir=state_dir)
+        invite_store = InviteStore(state_dir=state_dir)
         set_agent_store(agent_store)
         set_invite_store(invite_store)
-        logger.info("AgentStore initialized (db=%s)", agents_db)
+        logger.info("AgentStore initialized (state_dir=%s)", state_dir)
 
-        initiatives_db = state_dir / "colony-initiatives.db"
-        initiative_store = InitiativeStore(db_path=initiatives_db)
+        initiative_store = InitiativeStore(state_dir=state_dir)
         set_initiative_store(initiative_store)
-        logger.info("InitiativeStore initialized (db=%s)", initiatives_db)
+        logger.info("InitiativeStore initialized (state_dir=%s)", state_dir)
 
         assignment_engine = AssignmentEngine(
             agent_store=agent_store,
