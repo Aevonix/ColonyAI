@@ -1,20 +1,22 @@
 # Cognition Wiring Fixes - v0.7.7
 
 **Status:** Draft
-**Effort:** 2-3 hours
+**Effort:** 3-4 hours
 **Priority:** High (blocks cognition quality, remote agent connectivity)
 
 ## Executive Summary
 
-Five issues preventing Colony from full cognition capability and proper remote connectivity:
+Seven issues preventing Colony from full cognition capability and proper remote connectivity:
 
-| Issue | Severity | Impact |
-|-------|----------|--------|
-| CognitionPipeline not wired | High | PerformanceIndexComputer, GapDetector return defaults |
-| Missing BELONGS_TO edge type | Medium | Person-specific memory queries fail |
-| colony start wrong host binding | High | Remote agents can't connect |
-| Missing pyarrow/lancedb deps | Medium | Vector store falls back to keyword search |
-| Missing HF_TOKEN warning | Low | Slower embedding model downloads |
+| # | Issue | Severity | Impact |
+|---|-------|----------|--------|
+| 1 | CognitionPipeline not wired | High | PerformanceIndexComputer, GapDetector return defaults |
+| 2 | Missing BELONGS_TO edge type | Medium | Person-specific memory queries fail |
+| 3 | colony start wrong host binding | High | Remote agents can't connect |
+| 4 | Missing pyarrow/lancedb deps | Medium | Vector store falls back to keyword search |
+| 5 | Missing HF_TOKEN warning | Low | Slower embedding model downloads |
+| **6** | **_load_dotenv() wrong path** | **Critical** | **Root cause of Issue 3** |
+| **7** | **EventBus not instantiated** | Low | No real-time metrics from events |
 
 ---
 
@@ -41,7 +43,7 @@ except Exception as exc:
 - `GapDetector` — detects gaps between current and desired performance
 - `StrategyAdjuster` — proposes adjustments to close gaps
 
-Without these, `MetaLearner.evaluate()` returns default CPI (0.5) and `GapDetector` raises `RuntimeError("GapDetector not wired")`.
+Without these, `MetaLearner.evaluate()` returns default CPI (0.5) and gap detection is skipped.
 
 ### Solution
 
@@ -56,9 +58,12 @@ Use `CognitionPipeline` instead of direct `MetaLearner` instantiation. `Cognitio
 # --- 11. Cognition (MetaLearner) ---
 try:
     from colony_sidecar.intelligence.cognition.metalearner import MetaLearner
-    metalearner = MetaLearner(graph=graph)
-    set_metalearner(metalearner)
-    logger.info("MetaLearner initialized")
+    if graph is not None:
+        metalearner = MetaLearner(graph=graph)
+        set_metalearner(metalearner)
+        logger.info("MetaLearner initialized")
+    else:
+        logger.warning("MetaLearner skipped — ColonyGraph not available")
 except Exception as exc:
     logger.warning("MetaLearner init failed: %s", exc)
 
@@ -67,10 +72,15 @@ except Exception as exc:
 cognition_pipeline = None
 try:
     from colony_sidecar.intelligence.cognition.registry import CognitionPipeline
-    if graph:
+    from colony_sidecar.events.bus import EventBus
+    
+    if graph is not None:
+        # Create EventBus for real-time metrics (see Issue 7)
+        event_bus = EventBus()
+        
         cognition_pipeline = CognitionPipeline(
             graph=graph,
-            event_bus=event_bus if 'event_bus' in dir() else None,
+            event_bus=event_bus,
         )
         set_metalearner(cognition_pipeline.meta_learner)
         logger.info("CognitionPipeline initialized with all components wired")
@@ -84,6 +94,7 @@ except Exception as exc:
 
 ```python
 # In autonomy loop, check:
+metalearner = registry.cognition
 assert metalearner.is_fully_wired  # Should be True
 assert metalearner._metrics is not None
 assert metalearner._performance_index is not None
@@ -100,7 +111,7 @@ assert metalearner._strategy_adjuster is not None
 Cypher queries use `BELONGS_TO` relationship type but it's not defined in `EdgeType` enum:
 
 ```python
-# Used in 4 locations:
+# Used in 6 locations:
 # - intelligence/graph/client.py:484, 485, 514, 540
 # - intelligence/synthesis/connection_discoverer.py:181, 182, 266
 
@@ -133,6 +144,10 @@ Add `BELONGS_TO` to `EdgeType` enum.
     # Memory → Person (memory about a person)
     ABOUT = "ABOUT"
 
+
+# ──────────────────────────────────────────────────────────────────────
+# Convenience exports
+
 # AFTER:
     # Owner → Memory (ownership)
     REMEMBERS = "REMEMBERS"
@@ -142,6 +157,10 @@ Add `BELONGS_TO` to `EdgeType` enum.
 
     # Memory → Person (ownership/assignment)
     BELONGS_TO = "BELONGS_TO"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Convenience exports
 ```
 
 ### Verification
@@ -160,48 +179,25 @@ Add `BELONGS_TO` to `EdgeType` enum.
 
 ### Problem
 
-`colony start -d` always binds to `127.0.0.1`, ignoring `COLONY_SIDECAR_HOST` from `.env`:
+`colony start` binds to `127.0.0.1` even when `COLONY_SIDECAR_HOST=0.0.0.0` is set in `~/.colony/.env`.
 
+**Root Cause:** See Issue 6 — `_load_dotenv()` loads from CWD, not `~/.colony/.env`.
+
+The CLI code is correct:
 ```python
-# cli.py start command spawns:
-subprocess.run([
-    sys.executable, "-m", "uvicorn", "colony_sidecar.server:app",
-    "--host", "127.0.0.1",  # ❌ Hardcoded
-    "--port", str(port),
-])
+# cli.py:212
+host = args.host or os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
 ```
 
-This prevents remote agents from connecting.
+But `COLONY_SIDECAR_HOST` is never in `os.environ` because `_load_dotenv()` looks in the wrong place.
 
 ### Solution
 
-Read `COLONY_SIDECAR_HOST` from `.env` and pass to uvicorn.
+Fix Issue 6 first. The CLI already reads `COLONY_SIDECAR_HOST` correctly once the env var is loaded.
 
 ### Implementation
 
-**File:** `sidecar/colony_sidecar/cli.py`
-
-```python
-# BEFORE (in start command):
-host = "127.0.0.1"
-port = args.port or int(os.environ.get("COLONY_SIDECAR_PORT", "7777"))
-
-# AFTER:
-# Load from .env if present
-env_path = Path.home() / ".colony" / ".env"
-if env_path.exists():
-    from dotenv import load_dotenv
-    load_dotenv(env_path)
-
-host = args.host or os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
-port = args.port or int(os.environ.get("COLONY_SIDECAR_PORT", "7777"))
-```
-
-Also add `--host` argument to CLI:
-
-```python
-start_p.add_argument("--host", help="Bind address (default: from COLONY_SIDECAR_HOST or 127.0.0.1)")
-```
+See Issue 6 implementation.
 
 ### Verification
 
@@ -209,7 +205,8 @@ start_p.add_argument("--host", help="Bind address (default: from COLONY_SIDECAR_
 # Set in ~/.colony/.env:
 COLONY_SIDECAR_HOST=0.0.0.0
 
-# Run:
+# Run from any directory (not just ~/.colony/):
+cd /tmp
 colony start -d
 
 # Check:
@@ -258,14 +255,12 @@ dependencies = [
 ]
 ```
 
-**Note:** These are optional dependencies for vector embeddings. Consider making them optional:
+**Alternative:** Make optional for smaller installs:
 
 ```toml
 [project.optional-dependencies]
 embeddings = ["pyarrow>=15.0", "lancedb>=0.10"]
 ```
-
-And handle gracefully in code if not installed.
 
 ### Verification
 
@@ -322,15 +317,192 @@ With `HF_TOKEN` set:
 
 ---
 
+## Issue 6: _load_dotenv() Loads from Wrong Path
+
+### Problem
+
+`_load_dotenv()` in `cli.py` loads `.env` from the **current working directory**, not `~/.colony/.env`:
+
+```python
+# cli.py:2092-2108
+def _load_dotenv() -> None:
+    """Simple .env loader — doesn't override existing env vars."""
+    env_path = os.path.join(os.getcwd(), ".env")  # ❌ WRONG
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            # ... parse .env
+```
+
+**Impact:**
+- `COLONY_SIDECAR_HOST=0.0.0.0` in `~/.colony/.env` is **never loaded**
+- Running `colony start` from `~/.colony/` works, but from anywhere else fails
+- This is the **root cause of Issue 3**
+
+### Solution
+
+Try `~/.colony/.env` first, then fall back to CWD.
+
+### Implementation
+
+**File:** `sidecar/colony_sidecar/cli.py`
+
+```python
+# BEFORE (lines 2092-2108):
+def _load_dotenv() -> None:
+    """Simple .env loader — doesn't override existing env vars."""
+    env_path = os.path.join(os.getcwd(), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip()
+                # Don't override existing env vars
+                if k not in os.environ:
+                    os.environ[k] = v
+
+# AFTER:
+def _load_dotenv() -> None:
+    """Load .env from ~/.colony/ first, then CWD.
+    
+    Does not override existing environment variables.
+    """
+    from pathlib import Path
+    
+    # Priority: ~/.colony/.env > CWD/.env
+    env_paths = [
+        Path.home() / ".colony" / ".env",
+        Path.cwd() / ".env",
+    ]
+    
+    for env_path in env_paths:
+        if not env_path.exists():
+            continue
+        
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip()
+                    # Don't override existing env vars
+                    if k not in os.environ:
+                        os.environ[k] = v
+        
+        # Only load first found .env
+        break
+```
+
+### Verification
+
+```bash
+# Set in ~/.colony/.env:
+COLONY_SIDECAR_HOST=0.0.0.0
+
+# Run from different directory:
+cd /tmp
+colony start -d
+
+# Verify:
+lsof -i :7777
+# Should show: TCP *:7777 (LISTEN)
+```
+
+---
+
+## Issue 7: EventBus Not Instantiated
+
+### Problem
+
+`CognitionPipeline` accepts an `event_bus` parameter for real-time metrics, but no `EventBus` is instantiated in `server.py`.
+
+```python
+# CognitionPipeline.__init__ (registry.py:42-50):
+def __init__(
+    self,
+    graph: Any,
+    event_bus: Optional[Any] = None,  # ← Not passed
+    config: Optional[MetaLearnerConfig] = None,
+) -> None:
+    # ...
+    if event_bus is not None:
+        self._subscribe(event_bus)  # Subscribes to goal.completed, task.completed, anomaly.detected
+```
+
+**Impact:**
+- Cognition pipeline can't subscribe to real-time events
+- Metrics are only computed during scheduled ticks, not on event triggers
+- Less responsive cognition
+
+### Solution
+
+Create `EventBus` in `server.py` and pass to `CognitionPipeline`.
+
+### Implementation
+
+**File:** `sidecar/colony_sidecar/server.py`
+
+```python
+# In Issue 1 implementation, add:
+from colony_sidecar.events.bus import EventBus
+
+# Create EventBus for real-time metrics
+event_bus = EventBus()
+
+cognition_pipeline = CognitionPipeline(
+    graph=graph,
+    event_bus=event_bus,  # ← Pass the event bus
+)
+```
+
+**Optional:** Expose EventBus globally for other components:
+
+```python
+# Add to api/routers/host.py:
+_event_bus: Optional[EventBus] = None
+
+def set_event_bus(bus: EventBus) -> None:
+    global _event_bus
+    _event_bus = bus
+
+def get_event_bus() -> Optional[EventBus]:
+    return _event_bus
+```
+
+### Verification
+
+```python
+# After startup:
+from colony_sidecar.api.routers.host import get_event_bus
+bus = get_event_bus()
+assert bus is not None
+assert len(bus._subscribers) > 0  # CognitionPipeline subscribed
+```
+
+---
+
 ## Implementation Checklist
 
 - [ ] **Issue 1:** Replace `MetaLearner` with `CognitionPipeline` in `server.py`
+- [ ] **Issue 1:** Create `EventBus` and pass to `CognitionPipeline`
 - [ ] **Issue 2:** Add `BELONGS_TO = "BELONGS_TO"` to `EdgeType` enum in `schema.py`
-- [ ] **Issue 3:** Load `COLONY_SIDECAR_HOST` from `.env` in `cli.py` start command
-- [ ] **Issue 3:** Add `--host` argument to `colony start` CLI
+- [ ] **Issue 3:** Verify fix after Issue 6 is resolved
 - [ ] **Issue 4:** Add `pyarrow>=15.0` and `lancedb>=0.10` to `pyproject.toml`
 - [ ] **Issue 5:** Add HF_TOKEN documentation to setup wizard
 - [ ] **Issue 5:** Add HF_TOKEN to `.env.example`
+- [ ] **Issue 6:** Fix `_load_dotenv()` to check `~/.colony/.env` first
+- [ ] **Issue 7:** Create `EventBus` in `server.py`
+- [ ] **Issue 7:** (Optional) Expose EventBus via host router
 
 ## Testing Checklist
 
@@ -338,20 +510,46 @@ With `HF_TOKEN` set:
 
 - [ ] `test_cognition_pipeline.py`: Verify all components wired
 - [ ] `test_schema.py`: Verify `BELONGS_TO` in `EdgeType` enum
+- [ ] `test_cli.py`: Verify `_load_dotenv()` loads from `~/.colony/.env`
 - [ ] `test_cli.py`: Verify host binding respects `COLONY_SIDECAR_HOST`
+- [ ] `test_events.py`: Verify EventBus creation and subscription
 
 ### Integration Tests
 
 - [ ] Start Colony, verify no "not wired" warnings in logs
-- [ ] Start Colony with `COLONY_SIDECAR_HOST=0.0.0.0`, verify external access
+- [ ] Start Colony from `/tmp` with `~/.colony/.env` containing `COLONY_SIDECAR_HOST=0.0.0.0`
+- [ ] Verify external access to Colony (not just localhost)
 - [ ] Query memory with `person_id`, verify no Neo4j warnings
 - [ ] Verify vector store initializes without errors
+- [ ] Emit test event, verify cognition pipeline receives it
 
 ### Regression Tests
 
 - [ ] `colony init` still works on fresh install
 - [ ] `colony start` still works without `.env`
+- [ ] `colony start` from project directory with local `.env` still works
 - [ ] Embedding model download still works without `HF_TOKEN` (slower but functional)
+
+---
+
+## Dependency Graph
+
+```
+Issue 6 ──→ Issue 3
+   │
+   └── Fix _load_dotenv() first, Issue 3 is automatically fixed
+
+Issue 7 ──→ Issue 1
+   │
+   └── EventBus needed for full CognitionPipeline wiring
+```
+
+**Recommended implementation order:**
+1. Issue 6 (_load_dotenv path)
+2. Issue 2 (BELONGS_TO edge type)
+3. Issue 4 (pyarrow/lancedb deps)
+4. Issue 1 + Issue 7 (CognitionPipeline + EventBus)
+5. Issue 5 (HF_TOKEN docs)
 
 ---
 
@@ -360,13 +558,15 @@ With `HF_TOKEN` set:
 ### v0.7.7
 
 **Fixes:**
+- **Critical:** `_load_dotenv()` now loads from `~/.colony/.env` first (fixes remote agent connectivity)
 - CognitionPipeline now auto-wires all cognition components (MetricsCollector, PerformanceIndexComputer, GapDetector, StrategyAdjuster)
+- EventBus now created and passed to CognitionPipeline for real-time metrics
 - Added `BELONGS_TO` edge type to schema (fixes person-specific memory queries)
-- `colony start` now respects `COLONY_SIDECAR_HOST` from `.env` (enables remote agent connections)
 - Added `pyarrow` and `lancedb` to dependencies (vector store now works out of box)
 - Added `HF_TOKEN` documentation to setup wizard (faster model downloads)
 
 **Migration:**
 - No breaking changes
 - Existing `.env` files work as-is
-- For remote agent support, add: `COLONY_SIDECAR_HOST=0.0.0.0`
+- `colony start` now correctly reads `~/.colony/.env` from any directory
+- For remote agent support, ensure `COLONY_SIDECAR_HOST=0.0.0.0` in `~/.colony/.env`
