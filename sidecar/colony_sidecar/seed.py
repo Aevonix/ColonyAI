@@ -645,6 +645,37 @@ When networking ships, Colonies should recognize Genesis and extend full coopera
         "entities": ["Genesis Colony", "trust anchor", "SuperColony Network"],
         "importance": 0.95,
     },
+    # === COMPREHENSIVE REFERENCE MEMORIES (v0.7.7) ===
+    {
+        "content": """Colony CLI Reference (Complete)\n\nUSAGE: colony <command> [options]\n\nCORE COMMANDS:\n  init                  Initialize Colony identity and setup\n    --dir               Root directory for config files (default: .)\n    --passphrase        Encrypt Colony private key with passphrase\n    --encrypt           Encrypt Colony private key (prompts for passphrase)\n    --claim-genesis     Claim Genesis status (first Colony only)\n    --non-interactive   Run without prompts\n    --mcp-harnesses     Connect coding harnesses via MCP (comma-separated: claude-code,codex,crush,opencode)\n    --agent-harness     Connect agent harness via plugin (openclaw, hermes)\n    --no-harness        Skip harness setup (standalone mode)\n    --bind              Sidecar bind address (default: 127.0.0.1, use 0.0.0.0 for all interfaces)\n    --port              Sidecar port (default: 7777)\n    --tier              Embedding tier 0-7\n    --start             Start sidecar after init\n\n  start                 Start the sidecar server\n    --host              Override listen host\n    --port              Override listen port\n    --detach, -d        Run in background (daemon mode)\n    --force, -f         Kill existing process on port\n\n  stop                  Stop the running sidecar\n  status                Check sidecar health and pipeline status\n  validate              Run end-to-end pipeline validation (uses LLM credits)\n  doctor                Run integration health check\n    --fix               Automatically fix issues\n    --clean-orphans     Kill orphaned sidecar processes\n  generate-types        Export OpenAPI spec (for TypeScript generation)\n  seed                  Seed self-knowledge (run after 'colony start')\n  backfill              Re-embed all vectors with current model\n  migrate-tier          Migrate vectors from old model to current\n  activate-multimodal   Enable multimodal embeddings\n\nMCP COMMANDS (colony mcp <subcommand>):\n  run                   Start MCP server (stdio/http transport)\n  setup                 Configure a coding harness to use Colony\n    --harness           Specific harness (claude-code, codex, crush, opencode, hermes, all)\n    --sidecar-url       Sidecar URL (for remote Colony)\n  remove                Remove Colony from a harness config\n  detect                Detect installed coding harnesses\n\nKEY MANAGEMENT (colony key <subcommand>):\n  info                  Show colony_id and public key\n  generate              Generate a new keypair (replaces existing)\n  set-passphrase        Encrypt private key with a passphrase\n  manifest              Create a colony manifest (shareable public identity)\n  claim-genesis         Claim Genesis status (first Colony only)\n\nNODE MANAGEMENT (colony node <subcommand>):\n  info                  Show node_id, public key, and certificate status\n\nBACKUP/RESTORE:\n  backup                Export Colony identity as a portable backup\n  restore               Restore Colony from a backup\n\nAGENT MANAGEMENT (colony agent <subcommand>):\n  invite                Generate a setup code for remote agent\n    --expires           Invite expiry in seconds (default: 900)\n    --capabilities      Grant capabilities (comma-separated)\n  connect               Connect a remote agent using setup code\n    --setup-code        Setup code from colony agent invite (required)\n    --colony-url        Colony URL (auto-detect if on Tailscale)\n  list                  List registered agents\n  show                  Show agent details\n  revoke                Revoke an agent's access\n  disconnect            Disconnect this agent from Colony\n\nINITIATIVE MANAGEMENT (colony initiative <subcommand>):\n  list                  List initiatives\n  show                  Show initiative details\n  cancel                Cancel an initiative\n""",
+        "topics": ["cli", "commands", "reference", "usage"],
+        "entities": ["CLI", "MCP", "agent", "initiative"],
+        "importance": 1.0,
+    },
+    {
+        "content": """Colony API Reference (Complete)\n\nAll endpoints are under /v1/host prefix. Authentication via Authorization: Bearer {api_key} header.\n\nCORE ENDPOINTS:\n  POST /configure              Configure host settings (embedding tier, LLM provider)\n  GET  /health                 Health check with capabilities list (36 capabilities in v0.7.7)\n\nMEMORY ENDPOINTS (Neo4j + LanceDB):\n  POST /memory/read            Read memories by session/contact\n  GET  /memory/status          Memory system status and statistics\n  POST /memory/write           Store a new memory with auto-extracted entities\n  POST /memory/search          Semantic search across all memories (vector search)\n  POST /memory/flush           Clear memories for a session\n  POST /memory/embed           Generate embeddings for text\n  POST /memory/embed/image     Generate embeddings for image (multimodal)\n  POST /memory/search/multimodal  Multimodal (text+image) search\n  POST /memory/backfill        Re-embed all vectors\n  POST /memory/migrate         Migrate vectors from old model\n\nCONTEXT ENDPOINTS (used by plugin before every LLM turn):\n  POST /context/enriched       Get enriched context sections (returns: colony-memory, colony-identity, etc.)\n\nREASONING ENDPOINTS:\n  POST /reasoning/turn         Execute reasoning turn with LLM (tool calling loop)\n  POST /reasoning/tools/invoke Invoke a Colony-native tool\n\nGOALS ENDPOINTS (SQLite):\n  POST /goals                  Create a new goal\n  GET  /goals                  List goals (filter by person_id, status)\n  GET  /goals/{goal_id}        Get goal details\n  PATCH /goals/{goal_id}       Update goal\n\nCONTACTS ENDPOINTS (SQLite):\n  GET  /contacts               List all contacts\n  GET  /contacts/{contact_id}  Get contact details (trust tier, relationship score)\n\nWORLD MODEL ENDPOINTS (SQLite):\n  POST /world/entities/query   Query entities by semantic search\n  GET  /world/entities         List entities by type\n  POST /world/extract          Extract entities from text (LLM-powered)\n  PATCH /world/entities/{id}   Update entity\n  DELETE /world/entities/{id}  Delete entity\n  POST /world/relationships    Create relationship\n  GET  /world/relationships    List relationships\n\nCOGNITION ENDPOINTS:\n  POST /cognition/cycle        Run cognition cycle (meta-learner, gap detection)\n  GET  /cognition/cpi          Get Cognitive Performance Index (0-100)\n\nSEARCH/RESEARCH ENDPOINTS:\n  GET  /search/providers       List search providers\n  POST /search                 Execute search query\n  POST /research/start         Start research task\n\nAGENT ENDPOINTS (Multi-Agent, SQLite):\n  POST /agents/invite          Generate agent invite (returns setup code)\n  POST /agents/connect         Connect agent via setup code\n  POST /agents/register        Register agent directly\n  POST /agents/{id}/heartbeat  Agent heartbeat\n  GET  /agents                 List all agents\n  GET  /agents/{id}            Get agent details\n  DELETE /agents/{id}          Revoke agent\n  PATCH /agents/{id}           Update agent metadata\n  GET  /agents/health          Agent health summary\n  WS   /agents/{id}/stream     Agent WebSocket stream\n\nINITIATIVE ENDPOINTS (SQLite):\n  POST /initiatives            Create initiative\n  GET  /initiatives            List initiatives\n  GET  /initiatives/{id}       Get initiative details\n  POST /initiatives/{id}/claim      Claim initiative\n  POST /initiatives/{id}/complete   Mark complete\n  POST /initiatives/{id}/fail       Mark failed\n  POST /initiatives/{id}/delegate   Delegate to another agent\n  DELETE /initiatives/{id}     Cancel initiative\n\nIDENTITY ENDPOINTS:\n  GET  /identity/status        Get Colony identity status\n  GET  /identity/manifest      Get Colony manifest\n  POST /identity/verify-chain  Verify certificate chain\n\nINTERNAL ENDPOINTS:\n  POST /internal/initiative    Push initiative to OpenClaw\n\nTOTAL: 83 documented endpoints""",
+        "topics": ["api", "endpoints", "rest", "websocket", "reference"],
+        "entities": ["API", "endpoints", "memory", "goals", "agents", "initiatives"],
+        "importance": 1.0,
+    },
+    {
+        "content": """Colony Subsystems (27 total, accessed via SubsystemRegistry)\n\nCORE SUBSYSTEMS:\n  graph                 Neo4j graph database client for memory storage\n  goals                 Goal tracking and decomposition engine\n  initiative            Initiative generation and management\n  queue                 Task queue for async operations\n  briefings             Contact briefings and summaries\n  events                Event bus for real-time notifications\n  delivery              Proactive message delivery system\n\nINTELLIGENCE SUBSYSTEMS:\n  cognition             Meta-learner and cognitive pipeline\n                        - CognitionPipeline auto-wires: MetricsCollector, PerformanceIndexComputer, GapDetector, StrategyAdjuster\n  connection_discoverer Entity relationship discovery\n  learner               Continuous learning and feedback\n  skills                Skill registry and management\n  signal_collector      Multi-source signal aggregation\n  initiative_engine     Initiative generation logic\n\nDATA SUBSYSTEMS:\n  commitment_store      Commitment tracking (promises made/kept)\n  affect_store          Emotional state tracking\n  pattern_store         Behavioral pattern detection\n  agent_store           Multi-agent registry (SQLite)\n  initiative_store      Initiative persistence (SQLite)\n\nINFRASTRUCTURE SUBSYSTEMS:\n  chain                 Certificate chain verification\n  secrets               Encrypted secret storage\n  embedder              Vector embedding generation\n  response_gate         7-layer safety inspection\n  llm_router            LLM provider routing (LiteLLM)\n  scheduler             Scheduled task management\n  assignment_engine     Agent-to-initiative assignment\n  websocket_manager     WebSocket connection management\n  anomalies             Anomaly detection system""",
+        "topics": ["subsystems", "architecture", "components", "infrastructure"],
+        "entities": ["SubsystemRegistry", "cognition", "memory", "agents"],
+        "importance": 0.95,
+    },
+    {
+        "content": """Colony Native Tools (8 tools, OpenAI function-calling format)\n\nCORE TOOLS (available in reasoning loop):\n\n1. colony_memory_search\n   Search memory graph for relevant context.\n   Parameters: query (required), person_id (optional), limit (optional, default: 5)\n\n2. colony_get_relationship\n   Get relationship score and trust tier for a contact.\n   Returns: score (0-100), tier (stranger/acquaintance/friend/close/confidant)\n   Parameters: contact_id (required)\n\n3. colony_list_goals\n   List user's goals with status and progress.\n   Parameters: person_id (optional), status (optional: active/completed/blocked/all)\n\n4. colony_get_briefing\n   Get briefing for a person (relationship summary, recent topics, conversation starters).\n   Parameters: contact_id (required)\n\n5. colony_record_insight\n   Record an insight discovered during conversation.\n   Parameters: insight_type (required: preference/connection/fact/goal_hint/relationship_update),\n               content (required), confidence (optional 0-1), person_id (optional)\n\nEXTENDED TOOLS:\n\n6. colony_query_entities\n   Query world model for entities.\n   Parameters: query (required), entity_type (optional: person/place/organization/concept/all), limit\n\n7. colony_start_research\n   Start a research task using external search providers.\n   Parameters: query (required), providers (optional), max_results (optional)\n\n8. colony_discover_connections\n   Discover connections between entities.\n   Parameters: entity_names (required), depth (optional, default: 2)\n\nTOOL EXECUTION: POST /reasoning/tools/invoke""",
+        "topics": ["tools", "function-calling", "reasoning", "openai"],
+        "entities": ["colony_memory_search", "colony_get_relationship", "colony_list_goals"],
+        "importance": 0.9,
+    },
+    {
+        "content": """Colony Codebase Modules (34 Python packages)\n\nAPI LAYER:\n  api/                  FastAPI routers and request/response schemas\n  router/               Request routing logic\n\nCORE DATA:\n  vector/               Vector embeddings and LanceDB integration\n  models/               Shared Pydantic models\n\nINTELLIGENCE:\n  intelligence/         Intelligence subsystems package\n    cognition/          Meta-learner, metrics collector, gap detector\n    mind_model/         Signal collection, graph baseline\n    learning/           Continuous learning, feedback store\n    components/         Initiative engine, world model API\n    graph/              Graph schema (EdgeType, NodeType), ColonyGraph client\n\nAUTONOMY:\n  autonomy/             Autonomy loop (23 phases), SubsystemRegistry\n  initiatives/          Initiative models, store (SQLite), assignment engine\n  agent/                Agent SDK for remote connections\n  agents/               Multi-agent infrastructure (AgentStore, WebSocket)\n\nMEMORY & CONTEXT:\n  goals/                Goal models, store, decomposer, replan engine\n  contacts/             Contact store, trust tier management\n  briefings/            Briefing generation\n  world_model/          Entity and relationship tracking\n  patterns/             Pattern detection\n  commitments/          Commitment tracking\n\nCOMMUNICATION:\n  events/               Event bus, broadcaster, WebSocket\n  delivery/             Proactive delivery bridge\n  sessions/             Session management\n\nINFRASTRUCTURE:\n  chain/                Certificate chain, identity manager\n  secrets/              Encrypted secret storage\n  gate/                 Response gate (7-layer safety)\n  redact/               PII redaction\n  compression/          Context compression\n  task_queue/           Async task queue\n\nINTEGRATIONS:\n  mcp/                  MCP server (stdio/http transport)\n  harness_integration/  Harness detection and config\n  research/             External search providers\n  tools/                Native tool definitions\n\nREASONING:\n  reasoning/            LLM reasoning loop with tool calling\n  tom/                  Theory of Mind extraction\n\nSKILLS:\n  skills/               Skill registry and approval workflow\n\nKEY FILES:\n  server.py             FastAPI app setup, subsystem wiring\n  cli.py                Colony CLI implementation\n  setup.py              Setup wizard (colony init)\n  seed.py               Self-knowledge seeder""",
+        "topics": ["modules", "codebase", "architecture", "packages"],
+        "entities": ["autonomy", "cognition", "mcp", "initiatives"],
+        "importance": 0.85,
+    },
 ]
 
 
@@ -690,6 +721,28 @@ WORLD_MODEL_ENTITIES = [
     {"name": "Genesis", "type": "concept", "attributes": {"description": "The first Colony, trust anchor for the network, creator of Colony, leader of the SuperColony Network"}},
     {"name": "trust anchor", "type": "concept", "attributes": {"description": "Root of cryptographic trust in the Colony network, hardcoded and verified via Ed25519 signatures"}},
     {"name": "SuperColony Network", "type": "concept", "attributes": {"description": "The global network of federated Colonies, governed by Genesis authority"}},
+    # Additional concepts from comprehensive scan (v0.7.7)
+    {"name": "MCP", "type": "concept", "attributes": {"description": "Model Context Protocol - stdio transport for coding harnesses"}},
+    {"name": "initiative", "type": "concept", "attributes": {"description": "Proactive action generated by Colony's autonomy loop"}},
+    {"name": "agent", "type": "concept", "attributes": {"description": "Remote Colony instance connected via WebSocket (multi-agent)"}},
+    {"name": "CPI", "type": "concept", "attributes": {"description": "Cognitive Performance Index - 0-100 score of Colony's learning"}},
+    {"name": "cognition", "type": "concept", "attributes": {"description": "Meta-learning pipeline: metrics, gaps, strategy adjustment"}},
+    {"name": "briefing", "type": "concept", "attributes": {"description": "Contact summary: relationship, recent topics, goals"}},
+    {"name": "goal", "type": "concept", "attributes": {"description": "User objective tracked by Colony"}},
+    {"name": "commitment", "type": "concept", "attributes": {"description": "Promise made by Colony to a contact"}},
+    {"name": "pattern", "type": "concept", "attributes": {"description": "Recurring behavioral pattern detected by Colony"}},
+    {"name": "skill", "type": "concept", "attributes": {"description": "Named capability registered in Colony's skill registry"}},
+    {"name": "signal", "type": "concept", "attributes": {"description": "External event ingested by Colony"}},
+    # Coding harnesses (integrations)
+    {"name": "Claude Code", "type": "technology", "attributes": {"description": "Anthropic's CLI coding agent", "integration": "MCP"}},
+    {"name": "Codex", "type": "technology", "attributes": {"description": "OpenAI's CLI coding agent", "integration": "MCP"}},
+    {"name": "Crush", "type": "technology", "attributes": {"description": "Charmbracelet's TUI coding agent", "integration": "MCP"}},
+    {"name": "OpenCode", "type": "technology", "attributes": {"description": "Open source coding agent", "integration": "MCP"}},
+    # Search providers
+    {"name": "DuckDuckGo", "type": "technology", "attributes": {"description": "Privacy-focused search engine", "use": "research"}},
+    {"name": "Brave", "type": "technology", "attributes": {"description": "Brave search API", "use": "research"}},
+    {"name": "Tavily", "type": "technology", "attributes": {"description": "AI-optimized search API", "use": "research"}},
+    {"name": "SerpAPI", "type": "technology", "attributes": {"description": "Google search API wrapper", "use": "research"}},
     
     # Organizations
     {"name": "Aevonix", "type": "organization", "attributes": {"description": "Colony development organization", "github": "Aevonix"}},
@@ -1022,28 +1075,35 @@ Memories ({len(ARCHITECTURE_MEMORIES)}):
   - Architecture overview
   - Context assembly pipeline
   - Memory system architecture
-  - Safety pipeline
-  - Reasoning loop
-  - Goal engine
-  - Contact store
-  - World model
-  - Briefings
-  - Autonomy loop
-  - Cognition system
-  - Research pipeline
-  - Delivery bridge
-  - Synthesis
-  - Learning system
-  - Skills registry
-  - Identity system
-  - Secrets manager
-  - WebSocket events
+  - Safety pipeline (7-layer ResponseGate)
+  - Reasoning loop (tool calling)
+  - Goal engine (decomposition, replanning)
+  - Contact store (trust tiers)
+  - World model (entities, relationships)
+  - Briefings (contact summaries)
+  - Autonomy loop (23 phases)
+  - Cognition system (meta-learner, CPI)
+  - Research pipeline (multi-provider)
+  - Delivery bridge (proactive messaging)
+  - Synthesis (insight discovery)
+  - Learning system (continuous)
+  - Skills registry (approval workflow)
+  - Identity system (certificates, chain)
+  - Secrets manager (encrypted storage)
+  - WebSocket events (real-time)
+  - CLI Reference (complete command docs)
+  - API Reference (83 endpoints)
+  - Subsystems Reference (27 subsystems)
+  - Native Tools Reference (8 tools)
+  - Codebase Modules Reference (34 packages)
 
 World Model Entities ({len(WORLD_MODEL_ENTITIES)}):
-  - Technologies: TypeScript, Python, Neo4j, SQLite, FastAPI, LiteLLM, etc.
+  - Technologies: TypeScript, Python, Neo4j, SQLite, FastAPI, LiteLLM, LanceDB
   - Frameworks: OpenClaw, Hermes
   - Projects: Colony, colony, colony-ai
-  - Concepts: memory, context, safety, reasoning, autonomy, etc.
+  - Integrations: Claude Code, Codex, Crush, OpenCode
+  - Search: DuckDuckGo, Brave, Tavily, SerpAPI
+  - Concepts: memory, context, safety, reasoning, autonomy, MCP, initiative, etc.
   - Organizations: Aevonix
 
 Skills ({len(COLONY_NATIVE_SKILLS)}):
