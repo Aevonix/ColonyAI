@@ -1,7 +1,9 @@
 # Cognition Wiring Fixes - v0.7.7
 
-**Status:** Draft
-**Effort:** 3-4 hours
+**Status:** ✅ Implemented
+**Commit:** 80f4784
+**Released:** 2026-04-26
+**Effort:** 2 hours
 **Priority:** High (blocks cognition quality, remote agent connectivity)
 
 ## Executive Summary
@@ -493,16 +495,16 @@ assert len(bus._subscribers) > 0  # CognitionPipeline subscribed
 
 ## Implementation Checklist
 
-- [ ] **Issue 1:** Replace `MetaLearner` with `CognitionPipeline` in `server.py`
-- [ ] **Issue 1:** Create `EventBus` and pass to `CognitionPipeline`
-- [ ] **Issue 2:** Add `BELONGS_TO = "BELONGS_TO"` to `EdgeType` enum in `schema.py`
-- [ ] **Issue 3:** Verify fix after Issue 6 is resolved
-- [ ] **Issue 4:** Add `pyarrow>=15.0` and `lancedb>=0.10` to `pyproject.toml`
-- [ ] **Issue 5:** Add HF_TOKEN documentation to setup wizard
-- [ ] **Issue 5:** Add HF_TOKEN to `.env.example`
-- [ ] **Issue 6:** Fix `_load_dotenv()` to check `~/.colony/.env` first
-- [ ] **Issue 7:** Create `EventBus` in `server.py`
-- [ ] **Issue 7:** (Optional) Expose EventBus via host router
+- [x] **Issue 1:** Replace `MetaLearner` with `CognitionPipeline` in `server.py`
+- [x] **Issue 1:** Create `EventBus` and pass to `CognitionPipeline`
+- [x] **Issue 2:** Add `BELONGS_TO = "BELONGS_TO"` to `EdgeType` enum in `schema.py`
+- [x] **Issue 3:** Verify fix after Issue 6 is resolved ✅ Host binding: `*:7777`
+- [x] **Issue 4:** Add `pyarrow>=15.0` and `lancedb>=0.10` to `pyproject.toml`
+- [x] **Issue 5:** Add HF_TOKEN documentation to setup wizard
+- [x] **Issue 5:** Add HF_TOKEN to `.env.example`
+- [x] **Issue 6:** Fix `_load_dotenv()` to check `~/.colony/.env` first
+- [x] **Issue 7:** Create `EventBus` in `server.py`
+- [x] **Issue 7:** (Optional) Expose EventBus via host router — skipped (not needed for MVP)
 
 ## Testing Checklist
 
