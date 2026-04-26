@@ -1347,8 +1347,32 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     node_version = result.stdout.strip().lstrip("v")
                     major = int(node_version.split(".")[0])
                     node_ok = major >= 22
+                else:
+                    # Direct execution failed, try via shell
+                    try:
+                        shell_result = subprocess.run(
+                            ["bash", "-l", "-c", f"'{node_path}' --version"],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if shell_result.returncode == 0:
+                            node_version = shell_result.stdout.strip().lstrip("v")
+                            major = int(node_version.split(".")[0])
+                            node_ok = major >= 22
+                    except Exception:
+                        pass
             except Exception:
-                pass
+                # Direct execution raised exception, try via shell
+                try:
+                    result = subprocess.run(
+                        ["bash", "-l", "-c", f"'{node_path}' --version"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0:
+                        node_version = result.stdout.strip().lstrip("v")
+                        major = int(node_version.split(".")[0])
+                        node_ok = major >= 22
+                except Exception:
+                    pass
         
         if node_version:
             print(f"  Node.js: v{node_version} {'✅' if node_ok else '❌ (need v22+ for plugin)'}")
