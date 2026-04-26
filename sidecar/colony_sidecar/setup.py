@@ -312,7 +312,7 @@ def _check_nodejs_stability() -> tuple[bool, str, str]:
         version = "unknown"
     
     # Check for version manager paths (unstable for production)
-    unstable_patterns = ["/.nvm/", "/.volta/", "/.asdf/", "/.local/share/nvm/", "/.fnm/"]
+    unstable_patterns = ["/.nvm/", "/.volta/", "/.asdf/", "/.local/share/nvm/", "/.fnm/", "/.local/share/mise/", "/.local/share/rtx/"]
     for pattern in unstable_patterns:
         if pattern in node_path:
             return False, version, node_path
@@ -1268,7 +1268,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         # Try shutil.which first
         node_path = shutil.which("node")
         
-        # If not found, try common fnm/nvm paths on macOS/Linux
+        # If not found, try common version manager paths on macOS/Linux
         if not node_path:
             home = Path.home()
             fnm_paths = [
@@ -1277,6 +1277,10 @@ def run_init(root_dir: str | None = None, args=None) -> int:
             ]
             nvm_paths = [
                 home / ".nvm" / "versions" / "node",
+            ]
+            mise_paths = [
+                home / ".local" / "share" / "mise" / "installs" / "node",
+                home / ".local" / "share" / "rtx" / "installs" / "node",  # rtx (old name)
             ]
             
             # Check fnm paths
@@ -1292,6 +1296,23 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                         # Find the latest version directory
                         try:
                             versions = sorted(nvm_base.iterdir(), reverse=True)
+                            for v in versions:
+                                candidate = v / "bin" / "node"
+                                if candidate.exists():
+                                    node_path = str(candidate)
+                                    break
+                        except Exception:
+                            pass
+                        if node_path:
+                            break
+            
+            # Check mise/rtx paths (need to find the version subdirectory)
+            if not node_path:
+                for mise_base in mise_paths:
+                    if mise_base.exists():
+                        # Find the latest version directory
+                        try:
+                            versions = sorted(mise_base.iterdir(), reverse=True)
                             for v in versions:
                                 candidate = v / "bin" / "node"
                                 if candidate.exists():
