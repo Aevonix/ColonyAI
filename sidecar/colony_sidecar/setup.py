@@ -2003,6 +2003,24 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     sidecar_started = True
                     caps = r.json().get("capabilities", [])
                     print(f"  ✅ Sidecar running — {len(caps)} capabilities")
+
+                    # ── Step 10a: Seed self-knowledge via API ────────────────
+                    # Now that sidecar is running, seed Neo4j memories
+                    try:
+                        api_key = values.get("COLONY_API_KEY", "colony")
+                        seed_r = httpx.post(
+                            f"{sidecar_url}/v1/host/seed",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            timeout=30,
+                        )
+                        if seed_r.status_code == 200:
+                            seed_data = seed_r.json()
+                            print(f"  ✅ Self-knowledge seeded (memories: {seed_data.get('memories', 0)}, entities: {seed_data.get('entities', 0)})")
+                        else:
+                            print(f"  ⚪ Seeding deferred (status {seed_r.status_code})")
+                    except Exception as seed_err:
+                        print(f"  ⚪ Seeding deferred: {seed_err}")
+
                     break
             except Exception:
                 pass
