@@ -949,11 +949,20 @@ async def seed_self_knowledge(
     goals_store: "GoalStore | None" = None,
     world_store: "WorldModelStore | None" = None,
     skills_registry: "SkillRegistry | None" = None,
+    force: bool = False,
 ) -> dict:
     """Seed Colony with comprehensive self-knowledge.
 
     This gives every new Colony instance a deep understanding of what it is,
     how it works, and what it can do — its "birth memory."
+
+    Args:
+        graph: Colony graph client for memory storage
+        contacts_store: Contact store (unused, kept for compatibility)
+        goals_store: Goals store (unused, kept for compatibility)
+        world_store: World model store for entities
+        skills_registry: Skills registry for native tools
+        force: If True, re-seed even if already seeded (updates existing)
 
     Returns a dict with counts of what was seeded.
     """
@@ -966,10 +975,26 @@ async def seed_self_knowledge(
         "entities": 0,
         "skills": 0,
         "insights": 0,
+        "skipped": [],
         "errors": [],
     }
 
     now = datetime.now(timezone.utc)
+
+    # Check if already seeded (unless force=True)
+    if graph is not None and not force:
+        try:
+            existing = await graph.search_memories("Colony CLI Reference", limit=1)
+            if existing and any(
+                m.metadata.get("source") == "colony_self_knowledge"
+                for m in existing
+                if hasattr(m, "metadata")
+            ):
+                logger.info("Already seeded with self-knowledge, skipping (use force=True to re-seed)")
+                results["skipped"].append("already_seeded")
+                return results
+        except Exception as e:
+            logger.warning("Could not check for existing seeds: %s", e)
 
     # Seed memories to graph
     if graph is not None:
@@ -983,6 +1008,7 @@ async def seed_self_knowledge(
                         "topics": mem["topics"],
                         "importance": mem["importance"],
                         "source": "colony_self_knowledge",
+                        "seeded_at": now.isoformat(),
                     },
                     importance=mem.get("importance", 0.8),
                     session_id="colony-init",
@@ -1031,7 +1057,8 @@ async def seed_self_knowledge(
                     input_schema=skill.get("parameters", {}),
                     trigger_patterns=[skill["id"]],
                 )
-                await skills_registry.register(manifest=manifest, skill_dir=None)
+                # Use upsert to handle re-seeding
+                await skills_registry.register_or_update(manifest=manifest, skill_dir=None)
                 results["skills"] += 1
             logger.info("Seeded %d skills", results["skills"])
         except Exception as e:

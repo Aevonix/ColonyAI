@@ -108,6 +108,60 @@ class SkillRegistry:
                 },
             )
 
+    async def register_or_update(
+        self, manifest: SkillManifest, skill_dir: Optional[pathlib.Path]
+    ) -> None:
+        """Register a skill or update if exists (upsert)."""
+        dir_str = str(skill_dir) if skill_dir is not None else (manifest.skill_dir or "")
+        with self._tx() as conn:
+            conn.execute(
+                """
+                INSERT INTO skills (
+                    skill_id, name, version, description, author_colony_id,
+                    status, tags, dependencies, entry_point,
+                    checksum_sha256, origin_task_id, parent_skill_id,
+                    trust_score, skill_dir,
+                    trigger_patterns, context_tokens_estimate, lazy_loader,
+                    created_at, updated_at
+                ) VALUES (
+                    :skill_id, :name, :version, :description, :author_colony_id,
+                    :status, :tags, :deps, :entry_point,
+                    :checksum, :origin_task_id, :parent_skill_id,
+                    :trust_score, :skill_dir,
+                    :trigger_patterns, :context_tokens_estimate, :lazy_loader,
+                    :created_at, :updated_at
+                )
+                ON CONFLICT(skill_id) DO UPDATE SET
+                    name = excluded.name,
+                    version = excluded.version,
+                    description = excluded.description,
+                    status = excluded.status,
+                    trigger_patterns = excluded.trigger_patterns,
+                    updated_at = excluded.updated_at
+                """,
+                {
+                    "skill_id": manifest.skill_id,
+                    "name": manifest.name,
+                    "version": manifest.version,
+                    "description": manifest.description,
+                    "author_colony_id": manifest.author_colony_id,
+                    "status": manifest.status.value,
+                    "tags": ",".join(manifest.tags),
+                    "deps": ",".join(manifest.dependencies),
+                    "entry_point": manifest.entry_point,
+                    "checksum": manifest.checksum_sha256,
+                    "origin_task_id": manifest.origin_task_id,
+                    "parent_skill_id": manifest.parent_skill_id,
+                    "trust_score": manifest.trust_score,
+                    "skill_dir": dir_str,
+                    "trigger_patterns": json.dumps(manifest.trigger_patterns),
+                    "context_tokens_estimate": manifest.context_tokens_estimate,
+                    "lazy_loader": manifest.lazy_loader,
+                    "created_at": manifest.created_at.isoformat(),
+                    "updated_at": manifest.updated_at.isoformat(),
+                },
+            )
+
     async def activate(self, skill_id: str) -> None:
         """Set skill status to ACTIVE."""
         with self._tx() as conn:
