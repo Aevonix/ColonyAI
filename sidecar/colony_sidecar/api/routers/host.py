@@ -3248,6 +3248,7 @@ class SeedResponse(BaseModel):
     skills: int = 0
     insights: int = 0
     errors: list[str] = []
+    skipped: list[str] = []  # Reasons for skipping (e.g., "already_seeded")
 
 
 # ---------------------------------------------------------------------------
@@ -3934,12 +3935,15 @@ async def extract_tom(body: TomExtractRequest) -> TomExtractResponse:
 
 
 @router.post("/seed", response_model=SeedResponse)
-async def seed_self_knowledge_endpoint() -> SeedResponse:
+async def seed_self_knowledge_endpoint(force: bool = Query(False, description="Force re-seeding even if already seeded")) -> SeedResponse:
     """Seed Colony with self-knowledge via API.
     
     This endpoint triggers the self-knowledge seeding process that populates
     Colony's memory, world model, and skills registry with deep understanding
     of its own architecture and capabilities.
+    
+    Args:
+        force: If True, re-seed even if already seeded (updates existing)
     """
     from colony_sidecar.seed import seed_self_knowledge
 
@@ -3963,6 +3967,7 @@ async def seed_self_knowledge_endpoint() -> SeedResponse:
         graph=_graph,
         world_store=ws,
         skills_registry=sr,
+        force=force,
     )
     
     return SeedResponse(
@@ -3971,6 +3976,7 @@ async def seed_self_knowledge_endpoint() -> SeedResponse:
         skills=results.get("skills", 0),
         insights=results.get("insights", 0),
         errors=results.get("errors", []),
+        skipped=results.get("skipped", []),
     )
 
 

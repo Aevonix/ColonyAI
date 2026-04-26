@@ -75,6 +75,7 @@ def main() -> None:
     # --- seed ---
     seed_p = sub.add_parser("seed", help="Seed self-knowledge (run after 'colony start')")
     seed_p.add_argument("--verify", action="store_true", help="Verify seeding completed")
+    seed_p.add_argument("--force", action="store_true", help="Force re-seeding even if already seeded")
 
     # --- backfill ---
     backfill_p = sub.add_parser("backfill", help="Re-embed all vectors with current model")
@@ -307,18 +308,23 @@ def main() -> None:
         import httpx
         try:
             # Seed via the /v1/host/seed endpoint (if available)
+            params = {"force": "true"} if args.force else {}
             resp = httpx.post(
                 f"http://{host}:{port}/v1/host/seed",
                 headers={"Authorization": f"Bearer {api_key}"},
+                params=params,
                 timeout=30,
             )
             if resp.status_code == 200:
                 data = resp.json()
-                print(f"✅ Seeding complete:")
-                print(f"   Memories: {data.get('memories', 0)}")
-                print(f"   Entities: {data.get('entities', 0)}")
-                print(f"   Skills: {data.get('skills', 0)}")
-                print(f"   Insights: {data.get('insights', 0)}")
+                if data.get("skipped"):
+                    print("✅ Already seeded (use --force to re-seed)")
+                else:
+                    print(f"✅ Seeding complete:")
+                    print(f"   Memories: {data.get('memories', 0)}")
+                    print(f"   Entities: {data.get('entities', 0)}")
+                    print(f"   Skills: {data.get('skills', 0)}")
+                    print(f"   Insights: {data.get('insights', 0)}")
             elif resp.status_code == 404:
                 print("⚠️ Seed endpoint not available.")
                 print("The sidecar may not support remote seeding.")
