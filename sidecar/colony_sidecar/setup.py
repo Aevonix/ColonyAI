@@ -1571,6 +1571,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     embed_model = existing.get("COLONY_EMBED_MODEL", "")
     embed_dims = existing.get("COLONY_EMBED_DIMS", "")
     reranker_model = existing.get("COLONY_RERANKER_MODEL", "")
+    tier = None  # Will be set if auto-detection runs
 
     if not embed_provider or not embed_model:
         try:
@@ -1819,7 +1820,9 @@ def run_init(root_dir: str | None = None, args=None) -> int:
             from colony_sidecar.vector.tiers import TIERS
             selected_tier = None
             for t in TIERS:
-                if t.text_embedder and t.text_embedder.model_id == embed_model or t.label == tier.label:
+                matches_model = t.text_embedder and t.text_embedder.model_id == embed_model
+                matches_label = tier and t.label == tier.label
+                if matches_model or matches_label:
                     selected_tier = t
                     break
 
