@@ -1783,6 +1783,15 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     elif embed_provider in ("cuda", "cpu", "mlx") and embed_model:
         print(_bold("Step 7: Download embedding model"))
         print()
+        
+        # Check for HF_TOKEN
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            print("  ⚠️ No HF_TOKEN set — downloads may be slower due to rate limits")
+            print("     Get a token at: https://huggingface.co/settings/tokens")
+            print("     Set it with: echo 'HF_TOKEN=hf_xxx' >> ~/.colony/.env")
+            print()
+        
         print(f"  Downloading {embed_model}...")
         print(f"  (This may take a while on first run — models are cached by HuggingFace)")
         try:

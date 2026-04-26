@@ -2090,22 +2090,37 @@ def _cmd_doctor(args) -> None:
 
 
 def _load_dotenv() -> None:
-    """Simple .env loader — doesn't override existing env vars."""
-    env_path = os.path.join(os.getcwd(), ".env")
-    if not os.path.exists(env_path):
-        return
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                k, v = line.split("=", 1)
-                k = k.strip()
-                v = v.strip()
-                # Don't override existing env vars
-                if k not in os.environ:
-                    os.environ[k] = v
+    """Load .env from ~/.colony/ first, then CWD.
+    
+    Does not override existing environment variables.
+    """
+    from pathlib import Path
+    
+    # Priority: ~/.colony/.env > CWD/.env
+    env_paths = [
+        Path.home() / ".colony" / ".env",
+        Path.cwd() / ".env",
+    ]
+    
+    for env_path in env_paths:
+        if not env_path.exists():
+            continue
+        
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip()
+                    # Don't override existing env vars
+                    if k not in os.environ:
+                        os.environ[k] = v
+        
+        # Only load first found .env
+        break
 
 
 if __name__ == "__main__":
