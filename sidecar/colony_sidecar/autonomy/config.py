@@ -16,6 +16,16 @@ class AutonomyMode(str, Enum):
 
 
 @dataclass
+class InitiativeConfig:
+    """Configuration for initiative deduplication and feedback (v0.7.10)."""
+    cooldown_hours: float = 24.0
+    cooldown_tasks: float = 12.0
+    cooldown_contacts: float = 72.0
+    max_snooze_hours: int = 168
+    feedback_enabled: bool = True
+
+
+@dataclass
 class AutonomyConfig:
     """Configuration for the Colony autonomy loop.
 

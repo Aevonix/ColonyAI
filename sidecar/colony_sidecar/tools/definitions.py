@@ -205,6 +205,98 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    # --- Task Management Tools (v0.7.10) ---
+    {
+        "name": "colony_task_complete",
+        "description": (
+            "Mark a task as completed. Use when you determine a task mentioned in an initiative is done."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task/goal identifier from the initiative context",
+                },
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "colony_task_snooze",
+        "description": (
+            "Snooze a task - don't generate initiatives for it for N hours. "
+            "Use when a task is valid but not actionable right now. Max 168 hours (1 week)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task/goal identifier",
+                },
+                "hours": {
+                    "type": "integer",
+                    "description": "Hours to snooze (1-168, default 24)",
+                    "default": 24,
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional reason for snooze",
+                    "default": "",
+                },
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "colony_task_dismiss",
+        "description": (
+            "Dismiss a task as no longer relevant. Use when the task is stale, abandoned, or no longer needed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task/goal identifier",
+                },
+                "reason": {
+                    "type": "string",
+                    "enum": ["stale", "completed", "abandoned", "not_applicable"],
+                    "description": "Why the task is being dismissed (default: stale)",
+                    "default": "stale",
+                },
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "colony_initiative_feedback",
+        "description": (
+            "Provide feedback on how an initiative was handled. "
+            "Action: acknowledged, actioned, dismissed, or snoozed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "initiative_id": {
+                    "type": "string",
+                    "description": "The initiative ID from the system message",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["acknowledged", "actioned", "dismissed", "snoozed"],
+                    "description": "How the initiative was handled",
+                },
+                "details": {
+                    "type": "object",
+                    "description": "Optional additional context",
+                },
+            },
+            "required": ["initiative_id", "action"],
+        },
+    },
 ]
 
 # All tools combined

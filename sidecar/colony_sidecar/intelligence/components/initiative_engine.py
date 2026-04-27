@@ -74,6 +74,7 @@ class InitiativeEngine:
         graph_client: Colony graph client for relationship/entity data
         event_bus: Colony event bus for subscribing to relevant events
         mind_model: Mind model for behavioral state awareness
+        goal_store: Optional GoalStore for initiative dedup cooldown
     """
 
     def __init__(
@@ -82,11 +83,13 @@ class InitiativeEngine:
         event_bus: Any,
         mind_model: Any,
         store: Optional[Any] = None,  # InitiativeStore for persistence
+        goal_store: Optional[Any] = None,  # GoalStore for dedup cooldown (v0.7.10)
     ) -> None:
         self.graph = graph_client
         self.events = event_bus
         self.mind_model = mind_model
-        self._store = store  # Optional: InitiativeStore for persistence
+        self._store = store
+        self._goal_store = goal_store
         self._initiatives: List[Initiative] = []
         self._context: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -130,15 +133,16 @@ class InitiativeEngine:
         self,
         types: Optional[List[InitiativeType]] = None,
         min_priority: float = 0.5,
+        cooldown_tasks: float = 12.0,
+        cooldown_contacts: float = 72.0,
     ) -> List[Initiative]:
-        """Generate proactive suggestions.
+        """Generate proactive suggestions with deduplication.
 
         Args:
             types: If provided, only generate these types. None = all types.
             min_priority: Minimum priority threshold (0-1)
-
-        Returns:
-            Initiatives above the priority threshold, sorted by priority (descending)
+            cooldown_tasks: Don't repeat task initiatives within N hours (default 12)
+            cooldown_contacts: Don't repeat contact initiatives within N hours (default 72)
         """
         initiatives: List[Initiative] = []
 
@@ -156,7 +160,52 @@ class InitiativeEngine:
             initiatives.extend(await self._generate_scheduling_suggestions())
 
         filtered = [i for i in initiatives if i.priority >= min_priority]
-        result = sorted(filtered, key=lambda i: i.priority, reverse=True)
+
+        # Dedup: filter by cooldown per entity (v0.7.10)
+        now = datetime.now(timezone.utc)
+        deduped = []
+        for init in filtered:
+            entity_id = getattr(init, "entity_id", None)
+            init_type = getattr(init, "type", InitiativeType.FOLLOW_UP)
+            type_val = init_type.value if hasattr(init_type, "value") else str(init_type)
+
+            # Use goal_store cooldown for task-type initiatives
+            if self._goal_store and entity_id and type_val == "follow_up":
+                try:
+                    goal = self._goal_store.get_goal(entity_id)
+                    if goal and goal.last_initiative_at:
+                        cooldown = timedelta(hours=cooldown_tasks)
+                        if (now - goal.last_initiative_at) < cooldown:
+                            logger.debug(
+                                "Skipping initiative for %s: last initiative %s ago (< %dh cooldown)",
+                                entity_id, now - goal.last_initiative_at, cooldown_tasks,
+                            )
+                            continue
+                except Exception:
+                    pass  # If goal not found, allow generation
+
+            # In-memory cooldown for non-task types (contacts, etc.)
+            # Uses dedup_key as cooldown tracker
+            if init.dedup_key and type_val != "follow_up":
+                cooldown = timedelta(hours=cooldown_contacts)
+                # Check initiative store for recent initiatives with same dedup_key
+                if self._store:
+                    try:
+                        existing = self._store.get_by_dedup_key(init.dedup_key)
+                        if existing and existing.is_active:
+                            existing_time = existing.created_at
+                            if existing_time and (now - existing_time) < cooldown:
+                                logger.debug(
+                                    "Skipping initiative for %s: within %dh cooldown",
+                                    init.dedup_key, cooldown_contacts,
+                                )
+                                continue
+                    except Exception:
+                        pass
+
+            deduped.append(init)
+
+        result = sorted(deduped, key=lambda i: i.priority, reverse=True)
 
         # Persist to store if available
         if self._store:
@@ -180,6 +229,13 @@ class InitiativeEngine:
                     )
                 except Exception as e:
                     logger.warning("Failed to persist initiative %s: %s", initiative.id, e)
+
+            # Mark initiative as generated on the goal (v0.7.10)
+            if self._goal_store and initiative.entity_id:
+                try:
+                    self._goal_store.mark_initiative_generated(initiative.entity_id)
+                except Exception as e:
+                    logger.debug("Failed to mark initiative generated for %s: %s", initiative.entity_id, e)
 
         logger.debug(
             "Generated %d initiatives (%d above threshold %.2f)",

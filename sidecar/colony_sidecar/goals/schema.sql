@@ -21,12 +21,21 @@ CREATE TABLE IF NOT EXISTS goals (
     replan_count    INTEGER NOT NULL DEFAULT 0,
     estimated_hours REAL,
     progress_pct    REAL NOT NULL DEFAULT 0.0,
+
+    -- Initiative management fields (v0.7.10)
+    last_initiative_at   TEXT,           -- ISO-8601: last time an initiative was generated for this goal
+    snoozed_until        TEXT,           -- ISO-8601: don't generate initiatives until this time
+    snooze_count         INTEGER NOT NULL DEFAULT 0,
+    dismissal_reason     TEXT,           -- Why the goal was dismissed (if applicable)
+
     FOREIGN KEY (parent_goal_id) REFERENCES goals(goal_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status);
 CREATE INDEX IF NOT EXISTS idx_goals_priority ON goals(priority DESC);
 CREATE INDEX IF NOT EXISTS idx_goals_deadline ON goals(deadline);
+CREATE INDEX IF NOT EXISTS idx_goals_last_initiative ON goals(last_initiative_at);
+CREATE INDEX IF NOT EXISTS idx_goals_snoozed_until ON goals(snoozed_until);
 
 CREATE TABLE IF NOT EXISTS subtasks (
     subtask_id          TEXT PRIMARY KEY,

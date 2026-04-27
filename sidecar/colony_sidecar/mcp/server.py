@@ -340,6 +340,42 @@ def create_server() -> FastMCP:
             data["context"] = context
         return await _post("/v1/host/surprises", data)
 
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    async def colony_task_complete(
+        task_id: str,
+    ) -> dict:
+        """Mark a task as completed. Call when an initiative mentions a task that's done."""
+        return await _post(f"/v1/host/tasks/{task_id}/complete", {})
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    async def colony_task_snooze(
+        task_id: str,
+        hours: int = 24,
+        reason: str = "",
+    ) -> dict:
+        """Snooze a task — don't generate initiatives for it for N hours (1-168). Call when a task is valid but not actionable right now."""
+        return await _post(f"/v1/host/tasks/{task_id}/snooze", {"hours": hours, "reason": reason})
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    async def colony_task_dismiss(
+        task_id: str,
+        reason: str = "stale",
+    ) -> dict:
+        """Dismiss a task as no longer relevant. Reason can be: stale, completed, abandoned, not_applicable. Call when a task is clearly outdated or irrelevant."""
+        return await _post(f"/v1/host/tasks/{task_id}/dismiss", {"reason": reason})
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    async def colony_initiative_feedback(
+        initiative_id: str,
+        action: str,
+        details: dict[str, Any] | None = None,
+    ) -> dict:
+        """Provide feedback on how an initiative was handled. Action can be: acknowledged, actioned, dismissed, snoozed. Call after handling a colony_initiative."""
+        data: dict[str, Any] = {"action": action}
+        if details:
+            data["details"] = details
+        return await _post(f"/v1/host/initiatives/{initiative_id}/respond", data)
+
     # --- Resources ---
 
     @mcp.resource("colony://status")

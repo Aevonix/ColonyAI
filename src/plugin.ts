@@ -2522,6 +2522,17 @@ function formatInitiativeText(init: Record<string, unknown>): string {
     }
   }
 
+  // v0.7.10: Add action hints for LLM task management
+  const taskId = (init.entity_id ?? (ctx as Record<string, unknown> | undefined)?.task_id) as string | undefined;
+  const entityType = init.entity_type as string | undefined;
+  if (taskId && (entityType === "follow_up" || entityType === "task")) {
+    lines.push("");
+    lines.push(`This is a pending task (ID: ${taskId}). You can:`);
+    lines.push(`- Mark complete: colony_task_complete("${taskId}")`);
+    lines.push(`- Snooze: colony_task_snooze("${taskId}", hours, reason)`);
+    lines.push(`- Dismiss: colony_task_dismiss("${taskId}", reason)`);
+  }
+
   return lines.join("\n");
 }
 
