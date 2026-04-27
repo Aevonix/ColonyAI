@@ -61,6 +61,8 @@ import type {
 import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
 import { normalizeUsage } from "openclaw/plugin-sdk/agent-harness";
 import { readJsonBodyWithLimit } from "openclaw/plugin-sdk/webhook-request-guards";
+import { resolveDefaultAgentId } from "openclaw/plugin-sdk/config-runtime";
+import { buildAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import type {
   AgentHarness,
   AgentHarnessAttemptParams,
@@ -2229,7 +2231,7 @@ export function createColonyPlugin(): unknown {
             return true;
           }
 
-          const { initiative, source, timestamp } = bodyResult.value as Record<string, unknown>;
+          const { initiative, source, timestamp, deliveryContext } = bodyResult.value as Record<string, unknown>;
 
           // Auth check
           const colonyApiKey = api.pluginConfig?.apiKey as string | undefined;
@@ -2253,14 +2255,64 @@ export function createColonyPlugin(): unknown {
 
           const init = initiative as Record<string, unknown>;
 
+          // Build correct session key using SDK helper
+          const cfg = api.runtime.config.loadConfig();
+          const agentId = resolveDefaultAgentId(cfg);
+          const dmScope = cfg.session?.dmScope ?? "main";
+
+          let sessionKey: string;
+          let normalizedDeliveryContext: { channel?: string; to?: string; accountId?: string } | undefined;
+
+          if (deliveryContext && typeof deliveryContext === "object") {
+            const dc = deliveryContext as { channel?: string; to?: string; accountId?: string };
+            normalizedDeliveryContext = {
+              channel: dc.channel?.toLowerCase(),
+              to: dc.to,
+              accountId: dc.accountId,
+            };
+
+            // Only build peer session if we have a valid peer ID (to)
+            // If to is empty/undefined, buildAgentSessionKey would use "unknown" as peerId
+            // which creates an invalid session key like agent:main:whatsapp:direct:unknown
+            const peerId = normalizedDeliveryContext.to?.trim();
+
+            if (peerId) {
+              // Use SDK helper to build correct session key for all dmScope variants
+              sessionKey = buildAgentSessionKey({
+                agentId,
+                channel: normalizedDeliveryContext.channel ?? "unknown",
+                accountId: normalizedDeliveryContext.accountId,
+                peer: { kind: "direct", id: peerId },
+                dmScope,
+              });
+            } else {
+              // No valid peer ID - fall back to main session
+              sessionKey = buildAgentSessionKey({
+                agentId,
+                channel: "unknown",
+                peer: undefined,
+                dmScope,
+              });
+            }
+          } else {
+            // No deliveryContext - fall back to main session key
+            sessionKey = buildAgentSessionKey({
+              agentId,
+              channel: "unknown",
+              peer: undefined,
+              dmScope,
+            });
+          }
+
           // Format as readable text for LLM
           const text = formatInitiativeText(init);
 
-          // Enqueue as system event in main session
+          // Enqueue with correct session key and delivery context
           try {
             const enqueued = api.runtime.system.enqueueSystemEvent(text, {
-              sessionKey: "main",
+              sessionKey,
               contextKey: `colony:initiative:${init.id}`,
+              deliveryContext: normalizedDeliveryContext,
               trusted: true,
             });
 
@@ -2268,11 +2320,27 @@ export function createColonyPlugin(): unknown {
               api.logger.warn?.(`[colony] Duplicate initiative blocked: ${init.id}`);
             }
 
+            // Trigger heartbeat to process immediately
+            // Note: fire-and-forget is intentional - don't block HTTP response on heartbeat
+            if (enqueued) {
+              api.runtime.system.runHeartbeatOnce({
+                sessionKey,
+                reason: "colony:initiative",
+              }).catch((err) => {
+                api.logger.warn?.(`[colony] runHeartbeatOnce failed: ${err}`);
+              });
+            }
+
             res.statusCode = 200;
             res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ ok: true, enqueued, initiativeId: init.id }));
+            res.end(JSON.stringify({
+              ok: true,
+              enqueued,
+              initiativeId: init.id as string,
+              sessionKey,
+            }));
 
-            api.logger.info?.(`[colony] Initiative enqueued: ${init.id} (priority=${init.priority})`);
+            api.logger.info?.(`[colony] Initiative enqueued: ${init.id} (priority=${init.priority}, session=${sessionKey})`);
           } catch (err) {
             api.logger.error?.(`[colony] Failed to enqueue initiative: ${err}`);
             res.statusCode = 500;
@@ -2361,7 +2429,20 @@ export function createColonyPlugin(): unknown {
             remoteClient.onInitiative = async (initiative: Initiative) => {
               api.logger.info?.(`[colony] Received initiative via WebSocket: ${initiative.id}`);
               
-              // Format and enqueue as system event (same as HTTP path)
+              // Build session key for this agent
+              const cfg = api.runtime.config.loadConfig();
+              const agentId = resolveDefaultAgentId(cfg);
+              const dmScope = cfg.session?.dmScope ?? "main";
+              
+              // Remote agent receives initiative - use main session for this agent
+              const sessionKey = buildAgentSessionKey({
+                agentId,
+                channel: "unknown",
+                peer: undefined,
+                dmScope,
+              });
+              
+              // Format and enqueue as system event
               const text = formatInitiativeText({
                 id: initiative.id,
                 type: initiative.type,
@@ -2373,15 +2454,23 @@ export function createColonyPlugin(): unknown {
               });
               
               const enqueued = api.runtime.system.enqueueSystemEvent(text, {
-                sessionKey: "main",
+                sessionKey,
                 contextKey: `colony:initiative:${initiative.id}`,
                 trusted: true,
               });
               
               if (enqueued) {
+                // Trigger heartbeat to process immediately
+                api.runtime.system.runHeartbeatOnce({
+                  sessionKey,
+                  reason: "colony:initiative:remote",
+                }).catch((err) => {
+                  api.logger.warn?.(`[colony] runHeartbeatOnce failed for remote initiative: ${err}`);
+                });
+                
                 // Acknowledge receipt
                 await remoteClient.acknowledge(initiative.id);
-                api.logger.info?.(`[colony] Initiative ${initiative.id} acknowledged`);
+                api.logger.info?.(`[colony] Initiative ${initiative.id} acknowledged (session=${sessionKey})`);
               }
             };
             

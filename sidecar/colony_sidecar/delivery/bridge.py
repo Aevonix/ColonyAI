@@ -115,9 +115,18 @@ class ProactiveDeliveryBridge:
         return channels
 
     def resolve_home_channel(self) -> Optional[Dict[str, str]]:
-        """Return the first configured home channel as {platform, chat_id}."""
+        """Resolve the first configured home channel.
+        
+        Returns:
+            Dict with platform, chat_id, account_id or None if not configured.
+            Platform is normalized to lowercase OpenClaw channel name.
+        """
         for platform, info in self._home_channels.items():
-            return {"platform": platform, "chat_id": info["chat_id"]}
+            return {
+                "platform": platform.lower(),  # whatsapp, telegram, discord, slack, signal
+                "chat_id": info["chat_id"],
+                "account_id": "default",  # Could be made configurable later
+            }
         return None
 
     # ------------------------------------------------------------------
@@ -241,10 +250,21 @@ class ProactiveDeliveryBridge:
         if self._gateway_api_key:
             headers["Authorization"] = f"Bearer {self._gateway_api_key}"
 
+        # Resolve home channel for delivery context
+        home = self.resolve_home_channel()
+        delivery_context = None
+        if home:
+            delivery_context = {
+                "channel": home.get("platform"),
+                "to": home.get("chat_id"),
+                "accountId": home.get("account_id"),
+            }
+
         payload = {
             "initiative": initiative,
             "source": "autonomy_loop",
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "deliveryContext": delivery_context,
         }
 
         try:
