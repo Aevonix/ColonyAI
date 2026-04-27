@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -405,6 +406,12 @@ class AutonomyLoop:
 
             initiatives = await engine.generate(
                 min_priority=self.config.initiative_confidence_threshold,
+                cooldown_tasks=float(os.environ.get(
+                    "COLONY_INITIATIVE_COOLDOWN_TASKS", "12",
+                )),
+                cooldown_contacts=float(os.environ.get(
+                    "COLONY_INITIATIVE_COOLDOWN_CONTACTS", "72",
+                )),
             )
 
             if self._in_quiet_hours():
@@ -449,6 +456,7 @@ class AutonomyLoop:
                     "rationale": getattr(initiative, "rationale", ""),
                     "suggested_action": getattr(initiative, "action_hint", "notify_user") or "notify_user",
                     "entity_id": getattr(initiative, "entity_id", None),
+                    "entity_type": type_value,  # v0.7.10: task, contact, commitment
                     "context": self._last_initiative_context if hasattr(self, "_last_initiative_context") else {},
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 }
@@ -464,27 +472,43 @@ class AutonomyLoop:
         self._pending_initiatives = []
 
     async def _feed_pending_tasks(self, engine: Any) -> None:
-        """Feed blocked goals as pending tasks."""
+        """Feed active goals as pending tasks, respecting cooldown."""
         goals = self._registry.goals
         if goals is None:
             return
 
         try:
-            blocked = goals.list_goals(status="blocked", limit=20) if hasattr(goals, "list_goals") else []
-            pending_tasks = []
+            # Use get_active_tasks which respects cooldown and snooze (v0.7.10)
+            cooldown_tasks = float(os.environ.get(
+                "COLONY_INITIATIVE_COOLDOWN_TASKS", "12",
+            ))
 
-            for goal in blocked:
-                # Goal is a dataclass with attribute access
-                created = goal.created_at
-                days_pending = 0
-                if created:
-                    days_pending = (datetime.now(timezone.utc) - created).total_seconds() / 86400
-
-                pending_tasks.append({
-                    "description": goal.title or "blocked goal",
-                    "days_pending": days_pending,
-                    "entity_id": goal.context.get("contact_id") if goal.context else None,
-                })
+            if hasattr(goals, "get_active_tasks"):
+                active = goals.get_active_tasks(cooldown_hours=cooldown_tasks)
+                pending_tasks = []
+                for goal in active:
+                    days_pending = 0
+                    if goal.created_at:
+                        days_pending = (datetime.now(timezone.utc) - goal.created_at).total_seconds() / 86400
+                    pending_tasks.append({
+                        "description": goal.title or "pending task",
+                        "days_pending": days_pending,
+                        "entity_id": goal.goal_id,
+                    })
+            else:
+                # Fallback for stores without get_active_tasks
+                blocked = goals.list_goals(status="blocked", limit=20) if hasattr(goals, "list_goals") else []
+                pending_tasks = []
+                for goal in blocked:
+                    created = goal.created_at
+                    days_pending = 0
+                    if created:
+                        days_pending = (datetime.now(timezone.utc) - created).total_seconds() / 86400
+                    pending_tasks.append({
+                        "description": goal.title or "blocked goal",
+                        "days_pending": days_pending,
+                        "entity_id": goal.context.get("contact_id") if goal.context else None,
+                    })
 
             if pending_tasks:
                 engine.add_context("pending_tasks", pending_tasks)

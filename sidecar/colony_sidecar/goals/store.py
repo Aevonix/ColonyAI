@@ -11,7 +11,7 @@ import logging
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 
@@ -188,8 +188,9 @@ class GoalStore:
                     tags_json, context_json,
                     created_at, updated_at, accepted_at, completed_at,
                     abandoned_at, abandon_reason,
-                    replan_count, estimated_hours, progress_pct
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    replan_count, estimated_hours, progress_pct,
+                    last_initiative_at, snoozed_until, snooze_count, dismissal_reason
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                     title=excluded.title,
                     description=excluded.description,
@@ -208,7 +209,11 @@ class GoalStore:
                     abandon_reason=excluded.abandon_reason,
                     replan_count=excluded.replan_count,
                     estimated_hours=excluded.estimated_hours,
-                    progress_pct=excluded.progress_pct
+                    progress_pct=excluded.progress_pct,
+                    last_initiative_at=excluded.last_initiative_at,
+                    snoozed_until=excluded.snoozed_until,
+                    snooze_count=excluded.snooze_count,
+                    dismissal_reason=excluded.dismissal_reason
                 """,
                 (
                     goal.goal_id,
@@ -231,6 +236,10 @@ class GoalStore:
                     goal.replan_count,
                     goal.estimated_hours,
                     goal.progress_pct,
+                    goal.last_initiative_at.isoformat() if goal.last_initiative_at else None,
+                    goal.snoozed_until.isoformat() if goal.snoozed_until else None,
+                    goal.snooze_count,
+                    goal.dismissal_reason,
                 ),
             )
         try:
@@ -311,6 +320,10 @@ class GoalStore:
             replan_count=row["replan_count"],
             estimated_hours=row["estimated_hours"],
             progress_pct=row["progress_pct"],
+            last_initiative_at=_parse_dt(row["last_initiative_at"]),
+            snoozed_until=_parse_dt(row["snoozed_until"]),
+            snooze_count=row["snooze_count"],
+            dismissal_reason=row["dismissal_reason"],
         )
 
     # ── Subtask CRUD ───────────────────────────────────────────────────────────
@@ -554,3 +567,115 @@ class GoalStore:
             )
             for r in rows
         ]
+
+    # ── Initiative Task Management (v0.7.10) ──────────────────────────────────
+
+    # Maximum snooze count before auto-dismissal
+    MAX_SNOOZE_COUNT = 3
+
+    def complete_task(self, goal_id: str) -> bool:
+        """Mark a goal/task as completed."""
+        try:
+            goal = self.get_goal(goal_id)
+        except GoalNotFoundError:
+            return False
+        goal.status = GoalStatus.COMPLETED
+        goal.completed_at = datetime.now(timezone.utc)
+        goal.updated_at = datetime.now(timezone.utc)
+        self.save_goal(goal)
+        self.log_transition(
+            goal_id, GoalStatus(goal.status.value if hasattr(goal.status, 'value') else goal.status),
+            GoalStatus.COMPLETED, trigger="llm_complete",
+        )
+        return True
+
+    def snooze_task(self, goal_id: str, hours: int, reason: str = "") -> bool:
+        """Snooze a goal/task for N hours.
+
+        If snooze_count >= MAX_SNOOZE_COUNT, auto-dismiss instead.
+        """
+        try:
+            goal = self.get_goal(goal_id)
+        except GoalNotFoundError:
+            return False
+
+        hours = min(hours, 168)  # Cap at 1 week
+
+        goal.snooze_count += 1
+        if goal.snooze_count >= self.MAX_SNOOZE_COUNT:
+            # Snooze fatigue: auto-dismiss after too many snoozes
+            goal.status = GoalStatus.ABANDONED
+            goal.abandoned_at = datetime.now(timezone.utc)
+            goal.abandon_reason = f"auto_dismissed: snoozed {goal.snooze_count} times"
+            goal.dismissal_reason = "snooze_fatigue"
+            goal.updated_at = datetime.now(timezone.utc)
+            self.save_goal(goal)
+            self.log_transition(
+                goal_id, goal.status, GoalStatus.ABANDONED,
+                trigger="snooze_fatigue",
+                metadata={"snooze_count": goal.snooze_count},
+            )
+            logger.info("Auto-dismissed goal %s after %d snoozes", goal_id, goal.snooze_count)
+            return True
+
+        goal.snoozed_until = datetime.now(timezone.utc) + timedelta(hours=hours)
+        goal.updated_at = datetime.now(timezone.utc)
+        self.save_goal(goal)
+        return True
+
+    def dismiss_task(self, goal_id: str, reason: str = "stale") -> bool:
+        """Dismiss a goal/task as no longer relevant."""
+        try:
+            goal = self.get_goal(goal_id)
+        except GoalNotFoundError:
+            return False
+
+        goal.status = GoalStatus.ABANDONED
+        goal.abandoned_at = datetime.now(timezone.utc)
+        goal.abandon_reason = reason
+        goal.dismissal_reason = reason
+        goal.updated_at = datetime.now(timezone.utc)
+        self.save_goal(goal)
+        self.log_transition(
+            goal_id, goal.status, GoalStatus.ABANDONED,
+            trigger="llm_dismiss", metadata={"reason": reason},
+        )
+        return True
+
+    def get_active_tasks(self, cooldown_hours: float = 12.0) -> List[Goal]:
+        """Get goals that should generate initiatives.
+
+        Filters out:
+        - Non-pending/proposed/accepted/active goals
+        - Snoozed goals (snoozed_until > now)
+        - Goals that had an initiative within cooldown period
+        """
+        now = datetime.now(timezone.utc)
+        cooldown_delta = timedelta(hours=cooldown_hours)
+
+        candidates = []
+        for status in (GoalStatus.PROPOSED, GoalStatus.ACCEPTED, GoalStatus.ACTIVE, GoalStatus.BLOCKED):
+            candidates.extend(self.list_goals(status=status, limit=200))
+
+        active = []
+        for goal in candidates:
+            # Skip snoozed
+            if goal.snoozed_until and goal.snoozed_until > now:
+                continue
+            # Skip if initiative generated within cooldown
+            if goal.last_initiative_at and (now - goal.last_initiative_at) < cooldown_delta:
+                continue
+            active.append(goal)
+
+        return active
+
+    def mark_initiative_generated(self, goal_id: str) -> bool:
+        """Mark that an initiative was just generated for this goal."""
+        try:
+            goal = self.get_goal(goal_id)
+        except GoalNotFoundError:
+            return False
+        goal.last_initiative_at = datetime.now(timezone.utc)
+        goal.updated_at = datetime.now(timezone.utc)
+        self.save_goal(goal)
+        return True

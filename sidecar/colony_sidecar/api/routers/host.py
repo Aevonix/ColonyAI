@@ -14,11 +14,11 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Body, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
 from colony_sidecar.goals.store import GoalNotFoundError
@@ -4882,6 +4882,70 @@ def _initiative_to_response(initiative) -> InitiativeResponse:
         failed_at=initiative.failed_at.isoformat() if initiative.failed_at else None,
         expires_at=initiative.expires_at.isoformat() if initiative.expires_at else None,
     )
+
+
+# --- Task Management Endpoints (v0.7.10) ---
+
+@router.post("/tasks/{task_id}/complete")
+async def complete_task(task_id: str) -> Dict[str, Any]:
+    """Mark a task/goal as completed."""
+    if _goals_store is None:
+        raise HTTPException(status_code=501, detail="Goals store not initialized")
+    success = _goals_store.complete_task(task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"success": True, "task_id": task_id}
+
+
+@router.post("/tasks/{task_id}/snooze")
+async def snooze_task(
+    task_id: str,
+    hours: int = Body(24, ge=1, le=168),
+    reason: str = Body(""),
+) -> Dict[str, Any]:
+    """Snooze a task for N hours (1-168)."""
+    if _goals_store is None:
+        raise HTTPException(status_code=501, detail="Goals store not initialized")
+    success = _goals_store.snooze_task(task_id, hours, reason)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    snoozed_until = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+    return {"success": True, "task_id": task_id, "snoozed_until": snoozed_until}
+
+
+@router.post("/tasks/{task_id}/dismiss")
+async def dismiss_task(
+    task_id: str,
+    reason: str = Body("stale"),
+) -> Dict[str, Any]:
+    """Dismiss a task as no longer relevant."""
+    if _goals_store is None:
+        raise HTTPException(status_code=501, detail="Goals store not initialized")
+    success = _goals_store.dismiss_task(task_id, reason)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"success": True, "task_id": task_id, "reason": reason}
+
+
+@router.post("/initiatives/{initiative_id}/respond")
+async def respond_to_initiative(
+    initiative_id: str,
+    action: str = Body(...),
+    details: Optional[dict] = Body(None),
+) -> Dict[str, Any]:
+    """Record LLM response to an initiative."""
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    _initiative_store.log_history(
+        initiative_id,
+        action=f"llm_{action}",
+        agent_id="openclaw",
+        details=details or {},
+    )
+    return {"success": True, "initiative_id": initiative_id}
 
 
 # --- WebSocket Endpoint ---

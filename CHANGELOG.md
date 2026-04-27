@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.10 (2026-04-27)
+
+Initiative deduplication and LLM feedback loop.
+
+### Added
+- `last_initiative_at`, `snoozed_until`, `snooze_count`, `dismissal_reason` fields on Goal model
+- `GoalStore.complete_task()`, `snooze_task()`, `dismiss_task()`, `get_active_tasks()`, `mark_initiative_generated()`
+- Snooze fatigue: auto-dismiss after 3 snoozes
+- Initiative engine dedup via GoalStore cooldown (no in-memory state, persists across restarts)
+- MCP tools: `colony_task_complete`, `colony_task_snooze`, `colony_task_dismiss`, `colony_initiative_feedback`
+- API endpoints: `/tasks/{id}/complete`, `/tasks/{id}/snooze`, `/tasks/{id}/dismiss`, `/initiatives/{id}/respond`
+- Native tool definitions for task management in `tools/definitions.py`
+- `InitiativeConfig` dataclass with configurable cooldowns
+- `entity_type` field in initiative payload
+- Action hints in `formatInitiativeText()` for LLM task management
+- Environment variables: `COLONY_INITIATIVE_COOLDOWN_TASKS` (default 12h), `COLONY_INITIATIVE_COOLDOWN_CONTACTS` (default 72h)
+
+### Changed
+- `_feed_pending_tasks()` now uses `get_active_tasks()` with cooldown awareness
+- Initiative generation accepts `cooldown_tasks` and `cooldown_contacts` parameters
+
 ## 0.6.21 (2026-04-24)
 
 Fixed port conflict handling in foreground mode.

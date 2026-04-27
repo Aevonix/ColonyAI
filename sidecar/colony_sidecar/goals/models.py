@@ -108,6 +108,12 @@ class Goal:
     estimated_hours: Optional[float] = None
     progress_pct: float = 0.0
 
+    # Initiative management fields (v0.7.10)
+    last_initiative_at: Optional[datetime] = None
+    snoozed_until: Optional[datetime] = None
+    snooze_count: int = 0
+    dismissal_reason: Optional[str] = None
+
     def is_terminal(self) -> bool:
         # Compare by string value so the check is robust if GoalStatus is patched
         # in a test environment (e.g. pytest-xdist workers that share sys.modules).
