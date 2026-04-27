@@ -354,7 +354,6 @@ def main() -> None:
                 data = resp.json()
                 task_id = data.get("task_id", "")
                 print(f"Backfill started (task_id={task_id})")
-                import time
                 while True:
                     time.sleep(2)
                     status_resp = httpx.get(
