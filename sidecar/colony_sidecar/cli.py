@@ -1007,7 +1007,6 @@ def _cmd_key(args) -> None:
 
 def _find_pid_on_port(port: int) -> int | None:
     """Find the PID of a process listening on the given port."""
-    import subprocess
     try:
         result = subprocess.run(
             ["lsof", "-ti", f":{port}"],
@@ -1028,7 +1027,6 @@ def _find_orphan_processes() -> list[int]:
     """
     orphans = []
     try:
-        import subprocess
         # Find all python processes running uvicorn or colony_sidecar
         result = subprocess.run(
             ["ps", "aux"],
@@ -1140,9 +1138,8 @@ def _neo4j_poll_health(password: str, timeout_s: int = 30) -> tuple[bool, str]:
 
 def _check_and_start_neo4j() -> bool:
     """Check if Neo4j is running, start it if needed. Returns True if Neo4j is available."""
-    import subprocess
     from pathlib import Path
-    
+
     # Check if Docker is available
     try:
         result = subprocess.run(["docker", "--version"], capture_output=True, timeout=5)
@@ -1280,8 +1277,6 @@ def _check_and_start_neo4j() -> bool:
 
 def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     """Start the sidecar as a background daemon."""
-    import subprocess
-
     # Clean up any orphaned processes first
     orphan_count = _cleanup_orphans(kill=True)
     if orphan_count:
