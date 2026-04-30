@@ -1349,13 +1349,11 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     node_ok = major >= 22
                 else:
                     # Debug: show why it failed
-                    import sys
                     print(f"           Debug: node returned {result.returncode}", file=sys.stderr)
                     if result.stderr:
                         print(f"           Debug: stderr: {result.stderr}", file=sys.stderr)
             except Exception as e:
                 # Debug: show exception
-                import sys
                 print(f"           Debug: exception: {e}", file=sys.stderr)
                 pass
         
@@ -1655,7 +1653,6 @@ def run_init(root_dir: str | None = None, args=None) -> int:
             # Try to detect high-RAM systems even without GPU info
             try:
                 # Simple RAM check without full scanner
-                import platform
                 system = platform.system().lower()
                 ram_gb = 8  # default
                 
@@ -1669,7 +1666,6 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     except Exception:
                         pass
                 elif system == "darwin":
-                    import subprocess
                     result = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5)
                     if result.returncode == 0:
                         ram_gb = int(result.stdout.strip()) // (1024 ** 3)
