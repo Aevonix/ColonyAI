@@ -612,9 +612,11 @@ async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
         # write as not persisted rather than raising 501.
         return MemoryWriteResponse(id="", accepted=False)
     try:
+        # Fallback to context.contact_id if person_id not provided
+        person_id = body.person_id or (body.context.contact_id if body.context else None)
         memory_id = await _graph.store_memory(
             content=body.content,
-            person_id=body.person_id,
+            person_id=person_id,
             memory_type=body.type or "episodic",
             entities=body.entities or [],
             importance=body.strength if body.strength is not None else 1.0,
