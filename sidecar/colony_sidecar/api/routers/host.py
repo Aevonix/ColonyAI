@@ -3555,7 +3555,11 @@ async def list_shared_facts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> SharedFactListResponse:
-    """List shared facts with optional filters."""
+    """List shared facts with optional filters.
+
+    Also searches the memory graph (Neo4j) for fact/preference/semantic
+    memories that haven't been synced to the SQLite facts store.
+    """
     if _facts_store is None:
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
     result = _facts_store.list_facts(
@@ -3565,9 +3569,37 @@ async def list_shared_facts(
         limit=limit,
         offset=offset,
     )
+    facts = result["facts"]
+
+    # Fallback: search memory graph for fact-type memories
+    if _graph is not None and contact_id and len(facts) < limit:
+        try:
+            memories = await _graph.recall(
+                query=f"facts about {contact_id}",
+                limit=limit - len(facts),
+            )
+            for mem in memories:
+                mem_type = mem.get("type", "")
+                if mem_type in ("fact", "preference", "semantic"):
+                    # Check if already in facts (avoid duplicates)
+                    mem_content = mem.get("content", "")
+                    if not any(f["fact"] == mem_content for f in facts):
+                        facts.append({
+                            "id": mem.get("id", ""),
+                            "contact_id": contact_id,
+                            "fact": mem_content,
+                            "source": "memory_graph",
+                            "confidence": mem.get("strength", 0.8),
+                            "created_at": mem.get("created_at", ""),
+                            "expires_at": None,
+                            "metadata": None,
+                        })
+        except Exception as exc:
+            logger.debug("Memory graph fallback search failed: %s", exc)
+
     return SharedFactListResponse(
-        facts=[SharedFactResponse(**f) for f in result["facts"]],
-        total=result["total"],
+        facts=[SharedFactResponse(**f) for f in facts],
+        total=len(facts),
         limit=result["limit"],
         offset=result["offset"],
     )
