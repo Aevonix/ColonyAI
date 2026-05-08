@@ -244,89 +244,191 @@ class InitiativeEngine:
             await asyncio.gather(*loaders, return_exceptions=True)
 
     async def _load_blocked_goals(self) -> None:
-        """Query graph for blocked goals."""
+        """Query graph for blocked/stuck goals.
+        
+        Schema-adaptive: tries multiple property names for compatibility
+        with different graph schemas (Colony, Hermes, custom).
+        """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
         
-        try:
-            query = """
-            MATCH (g:Goal {status: 'blocked'})
-            WHERE g.blocked_at < datetime() - duration({days: $days})
-            RETURN g.id as id, g.title as title, g.description as description,
-                   g.blocked_at as blocked_at, g.priority as priority
-            ORDER BY g.priority DESC, g.blocked_at ASC
-            """
-            
-            tasks = []
-            async with self.graph.driver.session(database=self.graph.database) as session:
-                result = await session.run(
-                    query,
-                    days=self._config.goal_block_threshold_days,
-                )
-                async for record in result:
-                    record = dict(record)
-                    blocked_at = self._parse_neo4j_datetime(record.get("blocked_at"))
-                    # Bug 13: max(0, ...) to prevent negative days
-                    days_pending = max(0, (datetime.now(timezone.utc) - blocked_at).days) if blocked_at else 0
-                    
-                    tasks.append({
-                        "entity_id": record["id"],
-                        "description": record.get("title", "Unknown goal"),
-                        "days_pending": days_pending,
-                        "priority": record.get("priority", 0.5),
-                    })
-            
-            self._context["pending_tasks"] = tasks
-            logger.debug("Loaded %d blocked goals", len(tasks))
-        except (OSError, ConnectionError, TimeoutError) as e:
-            logger.warning("Blocked goals query failed (connection): %s", e)
-            self._context.setdefault("pending_tasks", [])
-        except Exception as e:
-            logger.error("Blocked goals query failed (unexpected): %s", e)
+        # Try multiple query variants for schema compatibility
+        queries = [
+            # Colony schema (status='blocked', blocked_at)
+            {
+                "query": """
+                    MATCH (g:Goal {status: 'blocked'})
+                    WHERE g.blocked_at < datetime() - duration({days: $days})
+                    RETURN g.id as id, g.title as title, g.description as description,
+                           g.blocked_at as blocked_at, g.priority as priority
+                    ORDER BY g.priority DESC, g.blocked_at ASC
+                """,
+                "date_field": "blocked_at",
+            },
+            # Alternative: state='blocked', blocked_at
+            {
+                "query": """
+                    MATCH (g:Goal {state: 'blocked'})
+                    WHERE g.blocked_at < datetime() - duration({days: $days})
+                      OR g.blocked_at IS NULL
+                    RETURN g.id as id, g.title as title, g.description as description,
+                           g.blocked_at as blocked_at, g.priority as priority
+                    ORDER BY g.priority DESC, g.blocked_at ASC
+                """,
+                "date_field": "blocked_at",
+            },
+            # Alternative: status='blocked', updated_at (fallback)
+            {
+                "query": """
+                    MATCH (g:Goal)
+                    WHERE g.status = 'blocked' OR g.state = 'blocked'
+                    RETURN g.id as id, g.title as title, g.description as description,
+                           g.updated_at as blocked_at, g.priority as priority
+                    ORDER BY g.priority DESC, g.updated_at ASC
+                """,
+                "date_field": "updated_at",
+            },
+            # Fallback: any goal with low progress/high age
+            {
+                "query": """
+                    MATCH (g:Goal)
+                    WHERE g.progress < 10 OR g.progress IS NULL
+                    RETURN g.id as id, g.title as title, g.description as description,
+                           g.updated_at as blocked_at, g.priority as priority
+                    ORDER BY g.priority DESC, g.updated_at ASC
+                    LIMIT 20
+                """,
+                "date_field": "updated_at",
+            },
+        ]
+        
+        tasks = []
+        for variant in queries:
+            if tasks:  # Stop if we found data
+                break
+            try:
+                async with self.graph.driver.session(database=self.graph.database) as session:
+                    result = await session.run(
+                        variant["query"],
+                        days=self._config.goal_block_threshold_days,
+                    )
+                    async for record in result:
+                        record = dict(record)
+                        date_field = variant["date_field"]
+                        blocked_at = self._parse_neo4j_datetime(record.get(date_field))
+                        # Bug 13: max(0, ...) to prevent negative days
+                        days_pending = max(0, (datetime.now(timezone.utc) - blocked_at).days) if blocked_at else 0
+                        
+                        tasks.append({
+                            "entity_id": record["id"],
+                            "description": record.get("title", "Unknown goal"),
+                            "days_pending": days_pending,
+                            "priority": record.get("priority", 0.5),
+                        })
+                
+                if tasks:
+                    logger.debug("Loaded %d blocked goals using %s", len(tasks), date_field)
+            except Exception as e:
+                logger.debug("Blocked goals query variant failed: %s", e)
+                continue
+        
+        self._context["pending_tasks"] = tasks
+        if not tasks:
+            logger.debug("No blocked goals found with any schema variant")
             self._context.setdefault("pending_tasks", [])
 
     async def _load_neglected_contacts(self) -> None:
-        """Query graph for contacts with no recent interaction."""
+        """Query graph for contacts with no recent interaction.
+        
+        Schema-adaptive: tries multiple property names for compatibility
+        with different graph schemas.
+        """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
         
-        try:
-            query = """
-            MATCH (p:Person)
-            WHERE p.last_interaction < datetime() - duration({days: $days})
-              OR p.last_interaction IS NULL
-            RETURN p.id as id, p.name as name, p.last_interaction as last_interaction
-            ORDER BY p.last_interaction ASC
-            """
-            
-            contacts = []
-            async with self.graph.driver.session(database=self.graph.database) as session:
-                result = await session.run(
-                    query,
-                    days=self._config.contact_neglect_days,
-                )
-                async for record in result:
-                    record = dict(record)
-                    last_interaction = self._parse_neo4j_datetime(record.get("last_interaction"))
-                    # Bug 14: Use higher default for NULL last_interaction
-                    if last_interaction:
-                        days_since = max(0, (datetime.now(timezone.utc) - last_interaction).days)
-                    else:
-                        days_since = self._config.contact_neglect_days * 2
-                    
-                    contacts.append({
-                        "entity_id": record["id"],
-                        "name": record.get("name", "Unknown"),
-                        "days_since_contact": days_since,
-                    })
-            
-            self._context["neglected_contacts"] = contacts
-            logger.debug("Loaded %d neglected contacts", len(contacts))
-        except (OSError, ConnectionError, TimeoutError) as e:
-            logger.warning("Neglected contacts query failed (connection): %s", e)
-            self._context.setdefault("neglected_contacts", [])
-        except Exception as e:
-            logger.error("Neglected contacts query failed (unexpected): %s", e)
+        # Try multiple query variants for schema compatibility
+        queries = [
+            # Colony schema: last_interaction
+            {
+                "query": """
+                    MATCH (p:Person)
+                    WHERE p.last_interaction < datetime() - duration({days: $days})
+                      OR p.last_interaction IS NULL
+                    RETURN p.id as id, p.name as name, p.last_interaction as last_interaction
+                    ORDER BY p.last_interaction ASC
+                """,
+                "date_field": "last_interaction",
+            },
+            # Hermes schema: lastCommunication
+            {
+                "query": """
+                    MATCH (p:Person)
+                    WHERE p.lastCommunication < datetime() - duration({days: $days})
+                      OR p.lastCommunication IS NULL
+                    RETURN p.id as id, p.name as name, p.lastCommunication as last_interaction
+                    ORDER BY p.lastCommunication ASC
+                """,
+                "date_field": "last_interaction",  # aliased in RETURN
+            },
+            # Alternative: lastSeen
+            {
+                "query": """
+                    MATCH (p:Person)
+                    WHERE p.lastSeen < datetime() - duration({days: $days})
+                      OR p.lastSeen IS NULL
+                    RETURN p.id as id, p.name as name, p.lastSeen as last_interaction
+                    ORDER BY p.lastSeen ASC
+                """,
+                "date_field": "last_interaction",  # aliased in RETURN
+            },
+            # Fallback: any Person with no date field (use firstSeen as baseline)
+            {
+                "query": """
+                    MATCH (p:Person)
+                    WHERE p.last_interaction IS NULL
+                       AND p.lastCommunication IS NULL
+                       AND p.lastSeen IS NULL
+                    RETURN p.id as id, p.name as name, p.firstSeen as last_interaction
+                    ORDER BY p.firstSeen ASC
+                """,
+                "date_field": "last_interaction",  # aliased in RETURN
+            },
+        ]
+        
+        contacts = []
+        for variant in queries:
+            if contacts:  # Stop if we found data
+                break
+            try:
+                async with self.graph.driver.session(database=self.graph.database) as session:
+                    result = await session.run(
+                        variant["query"],
+                        days=self._config.contact_neglect_days,
+                    )
+                    async for record in result:
+                        record = dict(record)
+                        last_interaction = self._parse_neo4j_datetime(record.get("last_interaction"))
+                        # Bug 14: Use higher default for NULL last_interaction
+                        if last_interaction:
+                            days_since = max(0, (datetime.now(timezone.utc) - last_interaction).days)
+                        else:
+                            days_since = self._config.contact_neglect_days * 2
+                        
+                        contacts.append({
+                            "entity_id": record["id"],
+                            "name": record.get("name", "Unknown"),
+                            "days_since_contact": days_since,
+                        })
+                
+                if contacts:
+                    logger.debug("Loaded %d neglected contacts", len(contacts))
+            except Exception as e:
+                logger.debug("Neglected contacts query variant failed: %s", e)
+                continue
+        
+        self._context["neglected_contacts"] = contacts
+        if not contacts:
+            logger.debug("No neglected contacts found with any schema variant")
             self._context.setdefault("neglected_contacts", [])
 
     async def _load_health_trends(self) -> None:
@@ -439,52 +541,103 @@ class InitiativeEngine:
             logger.error("Pending signals query failed (unexpected): %s", e)
 
     async def _load_pending_research_tasks(self) -> None:
-        """Query graph for pending research tasks."""
+        """Query graph for pending research tasks.
+        
+        Schema-adaptive: tries multiple label/property combinations.
+        """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
         
-        try:
-            query = """
-            MATCH (t:Task {type: 'research', status: 'pending'})
-            WHERE t.created_at < datetime() - duration({days: $days})
-            RETURN t.id as id, t.title as title, t.description as description,
-                   t.priority as priority, t.created_at as created_at
-            ORDER BY t.priority DESC, t.created_at ASC
-            """
-            
-            # Add to pending_tasks context (research tasks are a type of pending task)
-            existing_tasks = self._context.get("pending_tasks", [])
-            task_count = 0
-            async with self.graph.driver.session(database=self.graph.database) as session:
-                result = await session.run(
-                    query,
-                    days=self._config.research_task_age_days,
-                )
-                async for record in result:
-                    record = dict(record)
-                    # Bug 12: Calculate actual days pending from created_at
-                    created_at = self._parse_neo4j_datetime(record.get("created_at"))
-                    if created_at:
-                        days_pending = max(0, (datetime.now(timezone.utc) - created_at).days)
-                    else:
-                        days_pending = self._config.research_task_age_days
-                    
-                    existing_tasks.append({
-                        "entity_id": record["id"],
-                        "description": f"Research: {record.get('title', 'Unknown')}",
-                        "days_pending": days_pending,
-                        "priority": record.get("priority", 0.5),
-                    })
-                    task_count += 1
-            
-            self._context["pending_tasks"] = existing_tasks
-            logger.debug("Loaded %d research tasks", task_count)
-        except (OSError, ConnectionError, TimeoutError) as e:
-            logger.warning("Research tasks query failed (connection): %s", e)
-            self._context.setdefault("pending_tasks", [])
-        except Exception as e:
-            logger.error("Research tasks query failed (unexpected): %s", e)
-            self._context.setdefault("pending_tasks", [])
+        # Try multiple query variants for schema compatibility
+        queries = [
+            # Colony schema: Task label with type='research'
+            {
+                "query": """
+                    MATCH (t:Task {type: 'research', status: 'pending'})
+                    WHERE t.created_at < datetime() - duration({days: $days})
+                    RETURN t.id as id, t.title as title, t.description as description,
+                           t.priority as priority, t.created_at as created_at
+                    ORDER BY t.priority DESC, t.created_at ASC
+                """,
+                "date_field": "created_at",
+            },
+            # Alternative: Task label with state='pending'
+            {
+                "query": """
+                    MATCH (t:Task {type: 'research', state: 'pending'})
+                    WHERE t.created_at < datetime() - duration({days: $days})
+                    RETURN t.id as id, t.title as title, t.description as description,
+                           t.priority as priority, t.created_at as created_at
+                    ORDER BY t.priority DESC, t.created_at ASC
+                """,
+                "date_field": "created_at",
+            },
+            # Alternative: Goal label with type='research'
+            {
+                "query": """
+                    MATCH (t:Goal {type: 'research'})
+                    WHERE t.status = 'pending' OR t.state = 'pending'
+                      OR t.progress < 10
+                    RETURN t.id as id, t.title as title, t.description as description,
+                           t.priority as priority, t.created_at as created_at
+                    ORDER BY t.priority DESC, t.created_at ASC
+                """,
+                "date_field": "created_at",
+            },
+            # Fallback: any node with 'research' in title/description
+            {
+                "query": """
+                    MATCH (t)
+                    WHERE (t:Task OR t:Goal)
+                      AND (t.title CONTAINS 'research' OR t.description CONTAINS 'research'
+                           OR t.type = 'research')
+                    RETURN t.id as id, t.title as title, t.description as description,
+                           t.priority as priority, t.created_at as created_at
+                    ORDER BY t.priority DESC, t.created_at ASC
+                    LIMIT 20
+                """,
+                "date_field": "created_at",
+            },
+        ]
+        
+        existing_tasks = self._context.get("pending_tasks", [])
+        task_count = 0
+        
+        for variant in queries:
+            if task_count > 0:  # Stop if we found data
+                break
+            try:
+                async with self.graph.driver.session(database=self.graph.database) as session:
+                    result = await session.run(
+                        variant["query"],
+                        days=self._config.research_task_age_days,
+                    )
+                    async for record in result:
+                        record = dict(record)
+                        # Bug 12: Calculate actual days pending from created_at
+                        created_at = self._parse_neo4j_datetime(record.get(variant["date_field"]))
+                        if created_at:
+                            days_pending = max(0, (datetime.now(timezone.utc) - created_at).days)
+                        else:
+                            days_pending = self._config.research_task_age_days
+                        
+                        existing_tasks.append({
+                            "entity_id": record["id"],
+                            "description": f"Research: {record.get('title', 'Unknown')}",
+                            "days_pending": days_pending,
+                            "priority": record.get("priority", 0.5),
+                        })
+                        task_count += 1
+                
+                if task_count > 0:
+                    logger.debug("Loaded %d research tasks", task_count)
+            except Exception as e:
+                logger.debug("Research tasks query variant failed: %s", e)
+                continue
+        
+        self._context["pending_tasks"] = existing_tasks
+        if task_count == 0:
+            logger.debug("No research tasks found with any schema variant")
 
     # ------------------------------------------------------------------
     # Generation
