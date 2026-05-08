@@ -7,6 +7,8 @@ Generates:
     - Scheduling recommendations
 """
 
+import asyncio
+import os
 import uuid as _uuid_module
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -16,6 +18,53 @@ from typing import Any, Dict, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class InitiativeConfig:
+    """Configuration for initiative generation thresholds."""
+    
+    # Contact neglect threshold (days)
+    contact_neglect_days: int = 7
+    
+    # Goal block threshold (days before generating initiative)
+    goal_block_threshold_days: int = 1
+    
+    # Health score threshold (below this generates alert)
+    health_score_threshold: float = 70.0
+    
+    # Calendar gap threshold (hours — gaps larger than this are opportunities)
+    calendar_gap_threshold_hours: float = 2.0
+    
+    # Research task age threshold (days — tasks older than this generate initiatives)
+    research_task_age_days: int = 1
+    
+    # Signal accumulation threshold (count — above this generates initiative)
+    signal_accumulation_threshold: int = 10
+    
+    @classmethod
+    def from_env(cls) -> "InitiativeConfig":
+        """Load configuration from environment variables."""
+        return cls(
+            contact_neglect_days=int(
+                os.getenv("COLONY_INITIATIVE_CONTACT_NEGLECT_DAYS", "7")
+            ),
+            goal_block_threshold_days=int(
+                os.getenv("COLONY_INITIATIVE_GOAL_BLOCK_DAYS", "1")
+            ),
+            health_score_threshold=float(
+                os.getenv("COLONY_INITIATIVE_HEALTH_THRESHOLD", "70.0")
+            ),
+            calendar_gap_threshold_hours=float(
+                os.getenv("COLONY_INITIATIVE_GAP_THRESHOLD", "2.0")
+            ),
+            research_task_age_days=int(
+                os.getenv("COLONY_INITIATIVE_RESEARCH_AGE_DAYS", "1")
+            ),
+            signal_accumulation_threshold=int(
+                os.getenv("COLONY_INITIATIVE_SIGNAL_THRESHOLD", "10")
+            ),
+        )
 
 
 class InitiativeType(str, Enum):
@@ -84,14 +133,19 @@ class InitiativeEngine:
         mind_model: Any,
         store: Optional[Any] = None,  # InitiativeStore for persistence
         goal_store: Optional[Any] = None,  # GoalStore for dedup cooldown (v0.7.10)
+        config: Optional[InitiativeConfig] = None,
     ) -> None:
         self.graph = graph_client
         self.events = event_bus
         self.mind_model = mind_model
         self._store = store
         self._goal_store = goal_store
+        self._config = config or InitiativeConfig.from_env()
         self._initiatives: List[Initiative] = []
         self._context: Dict[str, List[Dict[str, Any]]] = {}
+        
+        # Track last graph load to avoid redundant queries within same tick
+        self._last_graph_load: Optional[datetime] = None
 
     # ------------------------------------------------------------------
     # Context management
@@ -129,6 +183,250 @@ class InitiativeEngine:
     # Generation
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Graph context loading (NEW — fixes broken generation)
+    # ------------------------------------------------------------------
+
+    async def _load_graph_context(self) -> None:
+        """Load live data from graph and mind model into self._context.
+        
+        This is the core fix — it populates the context dict that
+        _generate_* methods read from. All queries are defensive:
+        if a subsystem is unavailable, that category is skipped.
+        """
+        # Avoid redundant loads within same tick
+        if self._last_graph_load and (
+            datetime.now(timezone.utc) - self._last_graph_load
+        ) < timedelta(seconds=10):
+            return
+        
+        self._last_graph_load = datetime.now(timezone.utc)
+        
+        # Load all data sources in parallel where possible
+        await asyncio.gather(
+            self._load_blocked_goals(),
+            self._load_neglected_contacts(),
+            self._load_health_trends(),
+            self._load_scheduling_opportunities(),
+            self._load_pending_signals(),
+            self._load_pending_research_tasks(),
+            return_exceptions=True,  # Don't let one failure kill others
+        )
+
+    async def _load_blocked_goals(self) -> None:
+        """Query graph for blocked goals."""
+        if self.graph is None:
+            return
+        
+        try:
+            query = """
+            MATCH (g:Goal {status: 'blocked'})
+            WHERE g.blocked_at < datetime() - duration('P%dD')
+            RETURN g.id as id, g.title as title, g.description as description,
+                   g.blocked_at as blocked_at, g.priority as priority
+            ORDER BY g.priority DESC, g.blocked_at ASC
+            """ % self._config.goal_block_threshold_days
+            
+            results = await self.graph.run_query(query)
+            
+            tasks = []
+            for record in results:
+                blocked_at = record.get("blocked_at")
+                days_pending = 0
+                if blocked_at:
+                    if isinstance(blocked_at, str):
+                        blocked_at = datetime.fromisoformat(blocked_at.replace('Z', '+00:00'))
+                    days_pending = (datetime.now(timezone.utc) - blocked_at).days
+                
+                tasks.append({
+                    "entity_id": record["id"],
+                    "description": record.get("title", "Unknown goal"),
+                    "days_pending": days_pending,
+                    "priority": record.get("priority", 0.5),
+                })
+            
+            self._context["pending_tasks"] = tasks
+            logger.debug("Loaded %d blocked goals", len(tasks))
+        except Exception as e:
+            logger.debug("Blocked goals query failed: %s", e)
+            self._context.setdefault("pending_tasks", [])
+
+    async def _load_neglected_contacts(self) -> None:
+        """Query graph for contacts with no recent interaction."""
+        if self.graph is None:
+            return
+        
+        try:
+            query = """
+            MATCH (p:Person)
+            WHERE p.last_interaction < datetime() - duration('P%dD')
+              OR p.last_interaction IS NULL
+            RETURN p.id as id, p.name as name, p.last_interaction as last_interaction
+            ORDER BY p.last_interaction ASC
+            """ % self._config.contact_neglect_days
+            
+            results = await self.graph.run_query(query)
+            
+            contacts = []
+            for record in results:
+                last_interaction = record.get("last_interaction")
+                days_since = self._config.contact_neglect_days
+                if last_interaction:
+                    if isinstance(last_interaction, str):
+                        last_interaction = datetime.fromisoformat(
+                            last_interaction.replace('Z', '+00:00')
+                        )
+                    days_since = (datetime.now(timezone.utc) - last_interaction).days
+                
+                contacts.append({
+                    "entity_id": record["id"],
+                    "name": record.get("name", "Unknown"),
+                    "days_since_contact": days_since,
+                })
+            
+            self._context["neglected_contacts"] = contacts
+            logger.debug("Loaded %d neglected contacts", len(contacts))
+        except Exception as e:
+            logger.debug("Neglected contacts query failed: %s", e)
+            self._context.setdefault("neglected_contacts", [])
+
+    async def _load_health_trends(self) -> None:
+        """Query mind model for health anomalies."""
+        if self.mind_model is None:
+            return
+        
+        try:
+            health_state = await self.mind_model.get_health_state()
+            alerts = []
+            
+            # Check sleep score
+            sleep_score = health_state.get("sleep_score")
+            if sleep_score is not None and sleep_score < self._config.health_score_threshold:
+                alerts.append({
+                    "metric": "sleep_score",
+                    "value": sleep_score,
+                    "target": self._config.health_score_threshold,
+                    "rationale": f"Sleep score ({sleep_score}) below threshold",
+                })
+            
+            # Check recovery score
+            recovery_score = health_state.get("recovery_score")
+            if recovery_score is not None and recovery_score < self._config.health_score_threshold:
+                alerts.append({
+                    "metric": "recovery_score",
+                    "value": recovery_score,
+                    "target": self._config.health_score_threshold,
+                    "rationale": f"Recovery score ({recovery_score}) below threshold",
+                })
+            
+            # Check HRV trend
+            hrv_trend = health_state.get("hrv_trend")
+            if hrv_trend is not None and hrv_trend < -10:
+                alerts.append({
+                    "metric": "hrv_trend",
+                    "value": hrv_trend,
+                    "target": 0,
+                    "rationale": f"HRV declining ({hrv_trend}%)",
+                })
+            
+            self._context["health_alerts"] = alerts
+            logger.debug("Loaded %d health alerts", len(alerts))
+        except Exception as e:
+            logger.debug("Health trends query failed: %s", e)
+            self._context.setdefault("health_alerts", [])
+
+    async def _load_scheduling_opportunities(self) -> None:
+        """Query mind model for calendar gaps and overdue commitments."""
+        if self.mind_model is None:
+            return
+        
+        try:
+            schedule_state = await self.mind_model.get_schedule_state()
+            opportunities = []
+            
+            # Check for calendar gaps > threshold hours
+            gaps = schedule_state.get("gaps", [])
+            for gap in gaps:
+                duration = gap.get("duration_hours", 0)
+                if duration > self._config.calendar_gap_threshold_hours:
+                    opportunities.append({
+                        "description": f"Free block: {duration:.1f} hours ({gap['start']} to {gap['end']})",
+                        "priority": 0.5,
+                        "rationale": "Good time for deep work or catching up",
+                        "action_hint": "schedule",
+                    })
+            
+            # Check for overdue commitments
+            overdue = schedule_state.get("overdue_commitments", [])
+            for commitment in overdue:
+                opportunities.append({
+                    "description": f"Overdue: {commitment.get('title', 'Unknown')}",
+                    "priority": 0.85,
+                    "rationale": f"{commitment.get('days_overdue', 0)} days overdue",
+                    "action_hint": "notify_user",
+                })
+            
+            self._context["scheduling_opportunities"] = opportunities
+            logger.debug("Loaded %d scheduling opportunities", len(opportunities))
+        except Exception as e:
+            logger.debug("Scheduling opportunities query failed: %s", e)
+            self._context.setdefault("scheduling_opportunities", [])
+
+    async def _load_pending_signals(self) -> None:
+        """Get count of unprocessed signals."""
+        if self.mind_model is None:
+            return
+        
+        try:
+            count = await self.mind_model.get_pending_signal_count()
+            if count > self._config.signal_accumulation_threshold:
+                # Add as a single "meta" opportunity
+                self._context.setdefault("scheduling_opportunities", []).append({
+                    "description": f"{count} unprocessed signals awaiting review",
+                    "priority": min(0.9, 0.5 + count * 0.01),
+                    "rationale": "Accumulated behavioral signals need processing",
+                    "action_hint": "process_signals",
+                })
+            logger.debug("Pending signals: %d", count)
+        except Exception as e:
+            logger.debug("Pending signals query failed: %s", e)
+
+    async def _load_pending_research_tasks(self) -> None:
+        """Query graph for pending research tasks."""
+        if self.graph is None:
+            return
+        
+        try:
+            query = """
+            MATCH (t:Task {type: 'research', status: 'pending'})
+            WHERE t.created_at < datetime() - duration('P%dD')
+            RETURN t.id as id, t.title as title, t.description as description,
+                   t.priority as priority, t.created_at as created_at
+            ORDER BY t.priority DESC, t.created_at ASC
+            """ % self._config.research_task_age_days
+            
+            results = await self.graph.run_query(query)
+            
+            # Add to pending_tasks context (research tasks are a type of pending task)
+            existing_tasks = self._context.get("pending_tasks", [])
+            for record in results:
+                existing_tasks.append({
+                    "entity_id": record["id"],
+                    "description": f"Research: {record.get('title', 'Unknown')}",
+                    "days_pending": self._config.research_task_age_days,
+                    "priority": record.get("priority", 0.5),
+                })
+            
+            self._context["pending_tasks"] = existing_tasks
+            logger.debug("Loaded %d research tasks", len(results))
+        except Exception as e:
+            logger.debug("Research tasks query failed: %s", e)
+            self._context.setdefault("pending_tasks", [])
+
+    # ------------------------------------------------------------------
+    # Generation
+    # ------------------------------------------------------------------
+
     async def generate(
         self,
         types: Optional[List[InitiativeType]] = None,
@@ -144,6 +442,9 @@ class InitiativeEngine:
             cooldown_tasks: Don't repeat task initiatives within N hours (default 12)
             cooldown_contacts: Don't repeat contact initiatives within N hours (default 72)
         """
+        # NEW: Load live data from graph before generating
+        await self._load_graph_context()
+        
         initiatives: List[Initiative] = []
 
         if not types or InitiativeType.FOLLOW_UP in types:
@@ -244,6 +545,51 @@ class InitiativeEngine:
             min_priority,
         )
         return result
+
+    async def complete(self, initiative_id: str, result: str = "") -> None:
+        """Mark an initiative as completed.
+        
+        Args:
+            initiative_id: ID of the initiative to complete
+            result: Optional result/description of what was done
+        """
+        self._initiatives = [i for i in self._initiatives if i.id != initiative_id]
+        
+        if self._store:
+            try:
+                self._store.update_status(
+                    initiative_id,
+                    status="completed",
+                    metadata={"result": result, "completed_at": datetime.now(timezone.utc).isoformat()},
+                )
+            except Exception as e:
+                logger.warning("Failed to mark initiative %s complete: %s", initiative_id, e)
+        
+        if self._goal_store:
+            try:
+                self._goal_store.complete_task(initiative_id, result=result)
+            except Exception as e:
+                logger.debug("Failed to complete goal %s: %s", initiative_id, e)
+        
+        logger.info("Completed initiative %s: %s", initiative_id, result)
+
+    async def acknowledge(self, initiative_id: str) -> None:
+        """Acknowledge an initiative (mark as seen but not acted on).
+        
+        Args:
+            initiative_id: ID of the initiative to acknowledge
+        """
+        if self._store:
+            try:
+                self._store.update_status(
+                    initiative_id,
+                    status="acknowledged",
+                    metadata={"acknowledged_at": datetime.now(timezone.utc).isoformat()},
+                )
+            except Exception as e:
+                logger.warning("Failed to acknowledge initiative %s: %s", initiative_id, e)
+        
+        logger.debug("Acknowledged initiative %s", initiative_id)
 
     async def dismiss(self, initiative_id: str) -> None:
         """Dismiss an initiative so it won't be surfaced from the active list.
