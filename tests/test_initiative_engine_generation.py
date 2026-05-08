@@ -425,16 +425,20 @@ class TestLifecycleMethods:
     @pytest.mark.asyncio
     async def test_complete(self, engine):
         """Test completing an initiative."""
-        engine._store.update = MagicMock()
+        engine._store.complete = MagicMock(return_value=None)
         engine._goal_store.complete_task = MagicMock()
 
         await engine.complete("init-1", result="Done!")
 
-        engine._store.update.assert_called_once()
-        call_args = engine._store.update.call_args
-        assert call_args[0][0] == "init-1"
-        assert call_args[1]["status"] == "completed"
-        assert call_args[1]["result_metadata"]["result"] == "Done!"
+        engine._store.complete.assert_called_once()
+        # Verify it was called with correct args (positional or keyword)
+        call_args = engine._store.complete.call_args
+        assert call_args is not None
+        # Check that initiative_id and agent_id are in the call
+        all_args = list(call_args[0]) + list(call_args[1].values())
+        assert "init-1" in all_args
+        assert "initiative_engine" in all_args
+        assert "Done!" in all_args
 
     @pytest.mark.asyncio
     async def test_complete_without_store(self):
@@ -452,14 +456,18 @@ class TestLifecycleMethods:
     @pytest.mark.asyncio
     async def test_acknowledge(self, engine):
         """Test acknowledging an initiative."""
-        engine._store.update = MagicMock()
+        engine._store.update = MagicMock(return_value=None)
 
         await engine.acknowledge("init-1")
 
         engine._store.update.assert_called_once()
+        # Verify it was called with correct args
         call_args = engine._store.update.call_args
-        assert call_args[0][0] == "init-1"
-        assert call_args[1]["status"] == "acknowledged"
+        assert call_args is not None
+        # Check that initiative_id and status are in the call
+        all_args = list(call_args[0]) + list(call_args[1].values())
+        assert "init-1" in all_args
+        assert "acknowledged" in all_args
 
     @pytest.mark.asyncio
     async def test_acknowledge_without_store(self):

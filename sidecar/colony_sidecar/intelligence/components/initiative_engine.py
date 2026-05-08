@@ -581,12 +581,22 @@ class InitiativeEngine:
         
         if self._store:
             try:
-                self._store.update(
-                    initiative_id,
-                    status="completed",
-                    completed_at=datetime.now(timezone.utc),
-                    result_metadata={"result": result},
-                )
+                # Use store's complete() method for proper validation and history logging
+                if hasattr(self._store, 'complete'):
+                    self._store.complete(
+                        initiative_id,
+                        agent_id="initiative_engine",
+                        result=result,
+                    )
+                else:
+                    # Fallback to update() if complete() not available
+                    self._store.update(
+                        initiative_id,
+                        status="completed",
+                        completed_at=datetime.now(timezone.utc),
+                        result=result,
+                        result_metadata={"result": result},
+                    )
             except Exception as e:
                 logger.warning("Failed to mark initiative %s complete: %s", initiative_id, e)
         
@@ -606,6 +616,9 @@ class InitiativeEngine:
         """
         if self._store:
             try:
+                # Note: Store's acknowledge() checks assigned_agent_id, but
+                # engine-created initiatives are never assigned. Use update()
+                # directly to set acknowledged status.
                 self._store.update(
                     initiative_id,
                     status="acknowledged",
