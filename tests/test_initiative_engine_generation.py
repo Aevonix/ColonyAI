@@ -170,12 +170,12 @@ class TestGraphContextLoading:
         engine.graph._records = [
             {
                 "id": "person-1",
-                "name": "Alice",
+                "name": "Alice Smith",
                 "last_interaction": None,
             },
             {
                 "id": "person-2",
-                "name": "Bob",
+                "name": "Bob Jones",
                 "last_interaction": (datetime.now(timezone.utc) - timedelta(days=10)).isoformat(),
             },
         ]
@@ -183,8 +183,8 @@ class TestGraphContextLoading:
         await engine._load_neglected_contacts()
 
         assert len(engine._context["neglected_contacts"]) == 2
-        assert engine._context["neglected_contacts"][0]["name"] == "Alice"
-        assert engine._context["neglected_contacts"][1]["name"] == "Bob"
+        assert engine._context["neglected_contacts"][0]["name"] == "Alice Smith"
+        assert engine._context["neglected_contacts"][1]["name"] == "Bob Jones"
 
     @pytest.mark.asyncio
     async def test_load_health_trends(self, engine):

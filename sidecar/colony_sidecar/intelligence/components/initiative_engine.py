@@ -414,11 +414,20 @@ class InitiativeEngine:
                         else:
                             days_since = self._config.contact_neglect_days * 2
                         
-                        contacts.append({
-                            "entity_id": record["id"],
-                            "name": record.get("name", "Unknown"),
-                            "days_since_contact": days_since,
-                        })
+                        name = record.get("name", "Unknown")
+                        # Skip non-human entries (single words, system nodes)
+                        if name and len(name.split()) >= 2 and name.lower() not in {
+                            'another', 'best', 'can', 'conversation', 'episodic',
+                            'gateway', 'has', 'high', 'hydrahost', 'infrastructure',
+                            'integration', 'local-llama', 'logged', 'memories', 'memory',
+                            'mind', 'openclaw', 'phase', 'process', 'session', 'should',
+                            'tmux', 'vllm', 'what'
+                        }:
+                            contacts.append({
+                                "entity_id": record["id"],
+                                "name": name,
+                                "days_since_contact": days_since,
+                            })
                 
                 if contacts:
                     logger.debug("Loaded %d neglected contacts", len(contacts))
