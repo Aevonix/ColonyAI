@@ -63,7 +63,9 @@ class InitiativeStore:
 
     def _connect(self) -> sqlite3.Connection:
         """Connect to database with WAL mode."""
-        conn = sqlite3.connect(self._db_path)
+        # check_same_thread=False allows TestClient to access the DB from
+        # a different thread (test thread vs event loop thread).
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
 
         # WAL mode for better crash recovery
