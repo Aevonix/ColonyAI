@@ -211,6 +211,9 @@ class InitiativeStore:
                 )
                 return existing
 
+        # Bug 26: Validate priority range
+        priority = max(0.0, min(1.0, priority))
+        
         initiative_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
 
