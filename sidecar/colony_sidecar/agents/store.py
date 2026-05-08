@@ -94,7 +94,10 @@ class AgentStore:
 
     def _connect(self) -> sqlite3.Connection:
         """Connect to database with WAL mode for reliability."""
-        conn = sqlite3.connect(self._db_path)
+        # check_same_thread=False allows TestClient to access the DB from
+        # a different thread (test thread vs event loop thread). This is
+        # safe for tests; production uses a single process/thread.
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
 
         # WAL mode for better crash recovery
@@ -268,6 +271,7 @@ class AgentStore:
         status: Optional[List[str]] = None,
         colony_id: Optional[str] = None,
         is_primary: Optional[bool] = None,
+        capability: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Agent]:
@@ -292,7 +296,12 @@ class AgentStore:
         params.extend([limit, offset])
 
         cursor = self._db.execute(query, params)
-        return [Agent.from_row(dict(row)) for row in cursor.fetchall()]
+        agents = [Agent.from_row(dict(row)) for row in cursor.fetchall()]
+
+        if capability:
+            agents = [a for a in agents if capability in a.capabilities]
+
+        return agents
 
     def update(self, agent_id: str, **updates) -> Optional[Agent]:
         """Update agent fields."""
@@ -582,7 +591,9 @@ class InviteStore:
 
     def _get_or_create_db(self) -> sqlite3.Connection:
         """Get or create database connection."""
-        conn = sqlite3.connect(self._db_path)
+        # check_same_thread=False allows TestClient to access the DB from
+        # a different thread (test thread vs event loop thread).
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")

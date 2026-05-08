@@ -4519,7 +4519,7 @@ async def agent_heartbeat(agent_id: str, body: AgentHeartbeatRequest) -> Dict[st
     # Update status and metadata
     updates = {
         "status": body.status,
-        "current_assignments": len(body.current_initiatives) if body.current_initiatives else 0,
+        "current_assignments": body.current_assignments,
         "last_seen_at": datetime.now(timezone.utc),
     }
     if body.metadata:
@@ -4879,7 +4879,7 @@ async def cancel_initiative(initiative_id: str) -> Dict[str, Any]:
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
     
-    _initiative_store.cancel(initiative_id)
+    _initiative_store.cancel(initiative_id, cancelled_by="api")
     
     return {"status": "cancelled", "initiative_id": initiative_id}
 
