@@ -320,6 +320,28 @@ class TestGraphContextLoading:
         assert call_count_after_first == call_count_after_second
 
     @pytest.mark.asyncio
+    async def test_clear_context_resets_graph_load(self, engine):
+        """Test that clear_context() resets _last_graph_load (Bug 37)."""
+        engine.graph._records = []
+        engine.mind_model.get_health_state.return_value = {}
+        engine.mind_model.get_schedule_state.return_value = {"gaps": [], "overdue_commitments": []}
+        engine.mind_model.get_pending_signal_count.return_value = 0
+
+        # First call should set _last_graph_load
+        await engine._load_graph_context()
+        assert engine._last_graph_load is not None
+        call_count_after_first = engine.graph.driver.session.call_count
+
+        # clear_context should reset _last_graph_load
+        engine.clear_context()
+        assert engine._last_graph_load is None
+
+        # Next call should reload (not use cache)
+        await engine._load_graph_context()
+        call_count_after_second = engine.graph.driver.session.call_count
+        assert call_count_after_second > call_count_after_first
+
+    @pytest.mark.asyncio
     async def test_load_graph_context_respects_manual_context(self, engine):
         """Test that graph loading skips categories with manually-fed context."""
         # Manually feed some context
@@ -426,19 +448,14 @@ class TestLifecycleMethods:
     async def test_complete(self, engine):
         """Test completing an initiative."""
         engine._store.complete = MagicMock(return_value=None)
+        engine._store.get = MagicMock(return_value=MagicMock(entity_id="goal-123"))
         engine._goal_store.complete_task = MagicMock()
 
         await engine.complete("init-1", result="Done!")
 
         engine._store.complete.assert_called_once()
-        # Verify it was called with correct args (positional or keyword)
-        call_args = engine._store.complete.call_args
-        assert call_args is not None
-        # Check that initiative_id and agent_id are in the call
-        all_args = list(call_args[0]) + list(call_args[1].values())
-        assert "init-1" in all_args
-        assert "initiative_engine" in all_args
-        assert "Done!" in all_args
+        # Bug 47: Verify goal_store.complete_task called with entity_id, not initiative_id
+        engine._goal_store.complete_task.assert_called_once_with("goal-123", result="Done!")
 
     @pytest.mark.asyncio
     async def test_complete_without_store(self):
@@ -516,6 +533,7 @@ class TestInitiativeGeneration:
                     "entity_id": "task-1",
                     "description": "Fix critical bug",
                     "days_pending": 3,
+                    "priority": 0.9,  # High graph priority
                 }
             ]
         }
@@ -525,7 +543,10 @@ class TestInitiativeGeneration:
         assert len(initiatives) == 1
         assert initiatives[0].type == InitiativeType.FOLLOW_UP
         assert "Fix critical bug" in initiatives[0].description
-        assert initiatives[0].priority > 0.5  # 0.4 + 3*0.1 = 0.7
+        # Bug 20: Priority should blend graph priority (0.9) with days (0.7)
+        # Expected: 0.7*0.6 + 0.9*0.4 = 0.78
+        assert initiatives[0].priority > 0.7
+        assert initiatives[0].priority <= 1.0
 
     @pytest.mark.asyncio
     async def test_relationship_from_neglected_contact(self, engine):
@@ -566,6 +587,27 @@ class TestInitiativeGeneration:
         assert len(initiatives) == 1
         assert initiatives[0].type == InitiativeType.HEALTH
         assert "sleep" in initiatives[0].description.lower()
+        # Bug 44: Verify entity_id and dedup_key are set
+        assert initiatives[0].entity_id == "sleep_score"
+        assert initiatives[0].dedup_key == "health:sleep_score"
+
+    @pytest.mark.asyncio
+    async def test_health_dedup_key_for_cooldown(self, engine):
+        """Test that health initiatives have dedup_key for cooldown tracking."""
+        engine._context = {
+            "health_alerts": [
+                {"metric": "sleep_score", "value": 65, "target": 70},
+                {"metric": "hrv_trend", "value": -15, "target": 0},
+            ]
+        }
+
+        initiatives = await engine._generate_health_suggestions()
+
+        assert len(initiatives) == 2
+        # Each should have unique dedup_key
+        assert initiatives[0].dedup_key != initiatives[1].dedup_key
+        assert initiatives[0].dedup_key.startswith("health:")
+        assert initiatives[1].dedup_key.startswith("health:")
 
     @pytest.mark.asyncio
     async def test_scheduling_from_opportunities(self, engine):
@@ -586,3 +628,6 @@ class TestInitiativeGeneration:
         assert len(initiatives) == 1
         assert initiatives[0].type == InitiativeType.SCHEDULING
         assert "Free block" in initiatives[0].description
+        # Bug 45: Verify dedup_key is set
+        assert initiatives[0].dedup_key is not None
+        assert initiatives[0].dedup_key.startswith("schedule:")

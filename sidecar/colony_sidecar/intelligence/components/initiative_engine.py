@@ -45,25 +45,27 @@ class InitiativeConfig:
     @classmethod
     def from_env(cls) -> "InitiativeConfig":
         """Load configuration from environment variables."""
+        def _int(env_var: str, default: int) -> int:
+            try:
+                return int(os.getenv(env_var, str(default)))
+            except ValueError:
+                logger.warning("Invalid %s, using default %d", env_var, default)
+                return default
+        
+        def _float(env_var: str, default: float) -> float:
+            try:
+                return float(os.getenv(env_var, str(default)))
+            except ValueError:
+                logger.warning("Invalid %s, using default %.1f", env_var, default)
+                return default
+        
         return cls(
-            contact_neglect_days=int(
-                os.getenv("COLONY_INITIATIVE_CONTACT_NEGLECT_DAYS", "7")
-            ),
-            goal_block_threshold_days=int(
-                os.getenv("COLONY_INITIATIVE_GOAL_BLOCK_DAYS", "1")
-            ),
-            health_score_threshold=float(
-                os.getenv("COLONY_INITIATIVE_HEALTH_THRESHOLD", "70.0")
-            ),
-            calendar_gap_threshold_hours=float(
-                os.getenv("COLONY_INITIATIVE_GAP_THRESHOLD", "2.0")
-            ),
-            research_task_age_days=int(
-                os.getenv("COLONY_INITIATIVE_RESEARCH_AGE_DAYS", "1")
-            ),
-            signal_accumulation_threshold=int(
-                os.getenv("COLONY_INITIATIVE_SIGNAL_THRESHOLD", "10")
-            ),
+            contact_neglect_days=_int("COLONY_INITIATIVE_CONTACT_NEGLECT_DAYS", 7),
+            goal_block_threshold_days=_int("COLONY_INITIATIVE_GOAL_BLOCK_DAYS", 1),
+            health_score_threshold=_float("COLONY_INITIATIVE_HEALTH_THRESHOLD", 70.0),
+            calendar_gap_threshold_hours=_float("COLONY_INITIATIVE_GAP_THRESHOLD", 2.0),
+            research_task_age_days=_int("COLONY_INITIATIVE_RESEARCH_AGE_DAYS", 1),
+            signal_accumulation_threshold=_int("COLONY_INITIATIVE_SIGNAL_THRESHOLD", 10),
         )
 
 
@@ -103,7 +105,7 @@ class Initiative:
     entity_id: Optional[str] = None
     dedup_key: Optional[str] = None
     expires_at: Optional[datetime] = None
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class InitiativeEngine:
@@ -178,13 +180,29 @@ class InitiativeEngine:
             self._context.pop(context_type, None)
         else:
             self._context.clear()
+        # Reset graph load cache so next generate() reloads from graph (Bug 37)
+        self._last_graph_load = None
 
     # ------------------------------------------------------------------
-    # Generation
+    # Neo4j datetime helper (Bug 50/51)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _parse_neo4j_datetime(value: Any) -> Optional[datetime]:
+        """Convert Neo4j datetime or string to Python datetime."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if hasattr(value, 'to_native'):
+            # neo4j.time.DateTime
+            return value.to_native()
+        if isinstance(value, datetime):
+            return value
+        return None
+
     # ------------------------------------------------------------------
-    # Graph context loading (NEW — fixes broken generation)
+    # Graph context loading
     # ------------------------------------------------------------------
 
     async def _load_graph_context(self) -> None:
@@ -207,7 +225,6 @@ class InitiativeEngine:
         self._last_graph_load = datetime.now(timezone.utc)
         
         # Only load categories that don't already have manually-fed context
-        # This prevents duplication when AutonomyLoop feeds context before generate()
         loaders = []
         if not self._context.get("pending_tasks"):
             loaders.append(self._load_blocked_goals())
@@ -218,6 +235,8 @@ class InitiativeEngine:
             loaders.append(self._load_health_trends())
         if not self._context.get("scheduling_opportunities"):
             loaders.append(self._load_scheduling_opportunities())
+        # Always check signals unless explicitly in context (Bug 40)
+        if not self._context.get("pending_signals"):
             loaders.append(self._load_pending_signals())
         
         if loaders:
@@ -245,12 +264,9 @@ class InitiativeEngine:
                 )
                 async for record in result:
                     record = dict(record)
-                    blocked_at = record.get("blocked_at")
-                    days_pending = 0
-                    if blocked_at:
-                        if isinstance(blocked_at, str):
-                            blocked_at = datetime.fromisoformat(blocked_at.replace('Z', '+00:00'))
-                        days_pending = (datetime.now(timezone.utc) - blocked_at).days
+                    blocked_at = self._parse_neo4j_datetime(record.get("blocked_at"))
+                    # Bug 13: max(0, ...) to prevent negative days
+                    days_pending = max(0, (datetime.now(timezone.utc) - blocked_at).days) if blocked_at else 0
                     
                     tasks.append({
                         "entity_id": record["id"],
@@ -287,14 +303,12 @@ class InitiativeEngine:
                 )
                 async for record in result:
                     record = dict(record)
-                    last_interaction = record.get("last_interaction")
-                    days_since = self._config.contact_neglect_days
+                    last_interaction = self._parse_neo4j_datetime(record.get("last_interaction"))
+                    # Bug 14: Use higher default for NULL last_interaction
                     if last_interaction:
-                        if isinstance(last_interaction, str):
-                            last_interaction = datetime.fromisoformat(
-                                last_interaction.replace('Z', '+00:00')
-                            )
-                        days_since = (datetime.now(timezone.utc) - last_interaction).days
+                        days_since = max(0, (datetime.now(timezone.utc) - last_interaction).days)
+                    else:
+                        days_since = self._config.contact_neglect_days * 2
                     
                     contacts.append({
                         "entity_id": record["id"],
@@ -433,10 +447,17 @@ class InitiativeEngine:
                 )
                 async for record in result:
                     record = dict(record)
+                    # Bug 12: Calculate actual days pending from created_at
+                    created_at = self._parse_neo4j_datetime(record.get("created_at"))
+                    if created_at:
+                        days_pending = max(0, (datetime.now(timezone.utc) - created_at).days)
+                    else:
+                        days_pending = self._config.research_task_age_days
+                    
                     existing_tasks.append({
                         "entity_id": record["id"],
                         "description": f"Research: {record.get('title', 'Unknown')}",
-                        "days_pending": self._config.research_task_age_days,
+                        "days_pending": days_pending,
                         "priority": record.get("priority", 0.5),
                     })
                     task_count += 1
@@ -457,6 +478,7 @@ class InitiativeEngine:
         min_priority: float = 0.5,
         cooldown_tasks: float = 12.0,
         cooldown_contacts: float = 72.0,
+        max_initiatives: int = 20,
     ) -> List[Initiative]:
         """Generate proactive suggestions with deduplication.
 
@@ -465,24 +487,37 @@ class InitiativeEngine:
             min_priority: Minimum priority threshold (0-1)
             cooldown_tasks: Don't repeat task initiatives within N hours (default 12)
             cooldown_contacts: Don't repeat contact initiatives within N hours (default 72)
+            max_initiatives: Maximum number of initiatives to generate (default 20)
         """
-        # NEW: Load live data from graph before generating
+        # Validate parameters (Bug 57, 58)
+        min_priority = max(0.0, min(1.0, min_priority))
+        cooldown_tasks = max(0.0, cooldown_tasks)
+        cooldown_contacts = max(0.0, cooldown_contacts)
+        max_initiatives = max(1, max_initiatives)
+        
+        # Load live data from graph before generating
         await self._load_graph_context()
         
-        initiatives: List[Initiative] = []
-
+        # Bug 33: Run generators in parallel with exception handling
+        generators = []
         if not types or InitiativeType.FOLLOW_UP in types:
-            initiatives.extend(await self._generate_follow_ups())
-            initiatives.extend(await self._generate_task_completion_follow_ups())
-
+            generators.append(self._generate_follow_ups())
+            generators.append(self._generate_task_completion_follow_ups())
         if not types or InitiativeType.RELATIONSHIP in types:
-            initiatives.extend(await self._generate_relationship_suggestions())
-
+            generators.append(self._generate_relationship_suggestions())
         if not types or InitiativeType.HEALTH in types:
-            initiatives.extend(await self._generate_health_suggestions())
-
+            generators.append(self._generate_health_suggestions())
         if not types or InitiativeType.SCHEDULING in types:
-            initiatives.extend(await self._generate_scheduling_suggestions())
+            generators.append(self._generate_scheduling_suggestions())
+        
+        initiatives: List[Initiative] = []
+        if generators:
+            results = await asyncio.gather(*generators, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.warning("Generator failed: %s", result)
+                else:
+                    initiatives.extend(result)
 
         filtered = [i for i in initiatives if i.priority >= min_priority]
 
@@ -510,10 +545,8 @@ class InitiativeEngine:
                     pass  # If goal not found, allow generation
 
             # In-memory cooldown for non-task types (contacts, etc.)
-            # Uses dedup_key as cooldown tracker
             if init.dedup_key and type_val != "follow_up":
                 cooldown = timedelta(hours=cooldown_contacts)
-                # Check initiative store for recent initiatives with same dedup_key
                 if self._store:
                     try:
                         existing = self._store.get_by_dedup_key(init.dedup_key)
@@ -531,6 +564,8 @@ class InitiativeEngine:
             deduped.append(init)
 
         result = sorted(deduped, key=lambda i: i.priority, reverse=True)
+        # Bug 43: Limit total initiatives
+        result = result[:max_initiatives]
 
         # Persist to store if available
         if self._store:
@@ -552,15 +587,22 @@ class InitiativeEngine:
                         source_type="autonomy",
                         created_by="initiative_engine",
                     )
+                    
+                    # Bug 11: Mark initiative as generated on the goal INSIDE the loop
+                    if self._goal_store and initiative.entity_id:
+                        try:
+                            self._goal_store.mark_initiative_generated(initiative.entity_id)
+                        except Exception as e:
+                            logger.debug("Failed to mark initiative generated for %s: %s", initiative.entity_id, e)
                 except Exception as e:
                     logger.warning("Failed to persist initiative %s: %s", initiative.id, e)
 
-            # Mark initiative as generated on the goal (v0.7.10)
-            if self._goal_store and initiative.entity_id:
-                try:
-                    self._goal_store.mark_initiative_generated(initiative.entity_id)
-                except Exception as e:
-                    logger.debug("Failed to mark initiative generated for %s: %s", initiative.entity_id, e)
+        # Bug 36: Add generated initiatives to in-memory list
+        self._initiatives.extend(result)
+        
+        # Trim in-memory list to prevent unbounded growth
+        if len(self._initiatives) > 1000:
+            self._initiatives = self._initiatives[-1000:]
 
         logger.debug(
             "Generated %d initiatives (%d above threshold %.2f)",
@@ -577,11 +619,27 @@ class InitiativeEngine:
             initiative_id: ID of the initiative to complete
             result: Optional result/description of what was done
         """
+        # Bug 47: Look up entity_id from store before completing goal
+        entity_id = None
+        if self._store:
+            try:
+                stored = self._store.get(initiative_id)
+                if stored:
+                    entity_id = stored.entity_id
+            except Exception:
+                pass
+        
+        # Fallback to in-memory list
+        if not entity_id:
+            for init in self._initiatives:
+                if init.id == initiative_id:
+                    entity_id = init.entity_id
+                    break
+        
         self._initiatives = [i for i in self._initiatives if i.id != initiative_id]
         
         if self._store:
             try:
-                # Use store's complete() method for proper validation and history logging
                 if hasattr(self._store, 'complete'):
                     self._store.complete(
                         initiative_id,
@@ -589,7 +647,6 @@ class InitiativeEngine:
                         result=result,
                     )
                 else:
-                    # Fallback to update() if complete() not available
                     self._store.update(
                         initiative_id,
                         status="completed",
@@ -600,11 +657,12 @@ class InitiativeEngine:
             except Exception as e:
                 logger.warning("Failed to mark initiative %s complete: %s", initiative_id, e)
         
-        if self._goal_store:
+        # Bug 47: Use entity_id (goal ID) not initiative_id
+        if self._goal_store and entity_id:
             try:
-                self._goal_store.complete_task(initiative_id, result=result)
+                self._goal_store.complete_task(entity_id, result=result)
             except Exception as e:
-                logger.debug("Failed to complete goal %s: %s", initiative_id, e)
+                logger.debug("Failed to complete goal %s: %s", entity_id, e)
         
         logger.info("Completed initiative %s: %s", initiative_id, result)
 
@@ -614,11 +672,11 @@ class InitiativeEngine:
         Args:
             initiative_id: ID of the initiative to acknowledge
         """
+        # Bug 22: Remove from in-memory list
+        self._initiatives = [i for i in self._initiatives if i.id != initiative_id]
+        
         if self._store:
             try:
-                # Note: Store's acknowledge() checks assigned_agent_id, but
-                # engine-created initiatives are never assigned. Use update()
-                # directly to set acknowledged status.
                 self._store.update(
                     initiative_id,
                     status="acknowledged",
@@ -637,7 +695,6 @@ class InitiativeEngine:
         """
         self._initiatives = [i for i in self._initiatives if i.id != initiative_id]
 
-        # Update store if available
         if self._store:
             try:
                 self._store.cancel(initiative_id, cancelled_by="initiative_engine", reason="dismissed")
@@ -652,38 +709,36 @@ class InitiativeEngine:
         Returns:
             Active initiatives sorted by priority (descending)
         """
-        # Load from store if available
+        now = datetime.now(timezone.utc)
+        
         if self._store:
             try:
                 stored = self._store.list(
                     status=["pending", "assigned", "acknowledged"],
                     limit=100,
                 )
-                # Convert StoredInitiative to Initiative
-                from datetime import datetime as dt
-                result = []
-                for s in stored:
-                    # Check expiry
-                    if s.expires_at and dt.now(timezone.utc) > s.expires_at:
-                        continue
-                    result.append(Initiative(
-                        id=s.id,
-                        type=InitiativeType(s.type),
-                        description=s.description,
-                        priority=s.priority,
-                        rationale=s.rationale or "",
-                        action_hint=s.action_hint,
-                        entity_id=s.entity_id,
-                        dedup_key=s.dedup_key,
-                        expires_at=s.expires_at,
-                        created_at=s.created_at,
-                    ))
-                return sorted(result, key=lambda i: i.priority, reverse=True)
+                if stored:  # Bug 54: Only use store result if not empty
+                    result = []
+                    for s in stored:
+                        if s.expires_at and now > s.expires_at:
+                            continue
+                        result.append(Initiative(
+                            id=s.id,
+                            type=InitiativeType(s.type),
+                            description=s.description,
+                            priority=s.priority,
+                            rationale=s.rationale or "",
+                            action_hint=s.action_hint,
+                            entity_id=s.entity_id,
+                            dedup_key=s.dedup_key,
+                            expires_at=s.expires_at,
+                            created_at=s.created_at,
+                        ))
+                    return sorted(result, key=lambda i: i.priority, reverse=True)
             except Exception as e:
                 logger.warning("Failed to load from store, using in-memory: %s", e)
 
         # Fallback to in-memory
-        now = datetime.now(timezone.utc)
         active = [
             i for i in self._initiatives
             if i.expires_at is None or i.expires_at > now
@@ -701,8 +756,11 @@ class InitiativeEngine:
             desc = item.get("description", "pending task")
             days = float(item.get("days_pending", 0))
             entity_id = item.get("entity_id")
-            # Priority grows with time pending, capped at 1.0
-            priority = min(1.0, 0.4 + days * 0.1)
+            # Bug 20: Blend graph priority with time-based priority
+            graph_priority = item.get("priority", 0.5)
+            days_priority = min(1.0, 0.4 + days * 0.1)
+            priority = min(1.0, days_priority * 0.6 + graph_priority * 0.4)
+            
             initiatives.append(
                 Initiative(
                     id=f"followup-{_uuid_module.uuid4().hex[:12]}",
@@ -731,7 +789,7 @@ class InitiativeEngine:
                     description=f"Task completed: {desc}",
                     priority=0.6,
                     rationale="Background task finished with result",
-                    action_hint=None,  # Deliver to user, don't auto-execute
+                    action_hint=None,
                     entity_id=entity_id,
                     dedup_key=f"task_done:{entity_id}" if entity_id else None,
                     expires_at=datetime.now(timezone.utc) + timedelta(hours=6),
@@ -776,6 +834,7 @@ class InitiativeEngine:
             else:
                 priority = 0.5
 
+            # Bug 44: Add entity_id and dedup_key for cooldown tracking
             initiatives.append(
                 Initiative(
                     id=f"health-{_uuid_module.uuid4().hex[:12]}",
@@ -784,6 +843,8 @@ class InitiativeEngine:
                     priority=priority,
                     rationale=f"{metric} is outside target range",
                     action_hint=f"Check and adjust {metric}",
+                    entity_id=metric,
+                    dedup_key=f"health:{metric}",
                     expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
                 )
             )
@@ -795,6 +856,8 @@ class InitiativeEngine:
         for slot in self._context.get("scheduling_opportunities", []):
             desc = slot.get("description", "scheduling opportunity")
             priority = float(slot.get("priority", 0.5))
+            # Bug 45: Add dedup_key based on description hash
+            dedup_key = f"schedule:{hash(desc) % 10000000}"
             initiatives.append(
                 Initiative(
                     id=f"schedule-{_uuid_module.uuid4().hex[:12]}",
@@ -803,6 +866,8 @@ class InitiativeEngine:
                     priority=min(1.0, priority),
                     rationale=slot.get("rationale", "Based on observed patterns"),
                     action_hint=slot.get("action_hint"),
+                    entity_id=dedup_key.split(":", 1)[1] if ":" in dedup_key else None,
+                    dedup_key=dedup_key,
                     expires_at=datetime.now(timezone.utc) + timedelta(days=1),
                 )
             )

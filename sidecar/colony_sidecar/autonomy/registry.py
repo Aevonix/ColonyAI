@@ -41,7 +41,8 @@ class SubsystemRegistry:
         from colony_sidecar.events.bus import EventBus
         if not hasattr(self, '_anomaly_detector'):
             graph_client = _graph.driver if _graph and hasattr(_graph, 'driver') else None
-            event_bus = EventBus()
+            # Bug 41: Use shared event bus instead of creating new one
+            event_bus = self.events or EventBus()
             self._anomaly_detector = AnomalyDetector(graph_client, event_bus)
         return self._anomaly_detector
 
