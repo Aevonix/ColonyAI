@@ -215,35 +215,39 @@ class InitiativeEngine:
 
     async def _load_blocked_goals(self) -> None:
         """Query graph for blocked goals."""
-        if self.graph is None:
+        if self.graph is None or not hasattr(self.graph, 'driver'):
             return
         
         try:
             query = """
             MATCH (g:Goal {status: 'blocked'})
-            WHERE g.blocked_at < datetime() - duration('P%dD')
+            WHERE g.blocked_at < datetime() - duration({days: $days})
             RETURN g.id as id, g.title as title, g.description as description,
                    g.blocked_at as blocked_at, g.priority as priority
             ORDER BY g.priority DESC, g.blocked_at ASC
-            """ % self._config.goal_block_threshold_days
-            
-            results = await self.graph.run_query(query)
+            """
             
             tasks = []
-            for record in results:
-                blocked_at = record.get("blocked_at")
-                days_pending = 0
-                if blocked_at:
-                    if isinstance(blocked_at, str):
-                        blocked_at = datetime.fromisoformat(blocked_at.replace('Z', '+00:00'))
-                    days_pending = (datetime.now(timezone.utc) - blocked_at).days
-                
-                tasks.append({
-                    "entity_id": record["id"],
-                    "description": record.get("title", "Unknown goal"),
-                    "days_pending": days_pending,
-                    "priority": record.get("priority", 0.5),
-                })
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(
+                    query,
+                    days=self._config.goal_block_threshold_days,
+                )
+                async for record in result:
+                    record = dict(record)
+                    blocked_at = record.get("blocked_at")
+                    days_pending = 0
+                    if blocked_at:
+                        if isinstance(blocked_at, str):
+                            blocked_at = datetime.fromisoformat(blocked_at.replace('Z', '+00:00'))
+                        days_pending = (datetime.now(timezone.utc) - blocked_at).days
+                    
+                    tasks.append({
+                        "entity_id": record["id"],
+                        "description": record.get("title", "Unknown goal"),
+                        "days_pending": days_pending,
+                        "priority": record.get("priority", 0.5),
+                    })
             
             self._context["pending_tasks"] = tasks
             logger.debug("Loaded %d blocked goals", len(tasks))
@@ -253,36 +257,40 @@ class InitiativeEngine:
 
     async def _load_neglected_contacts(self) -> None:
         """Query graph for contacts with no recent interaction."""
-        if self.graph is None:
+        if self.graph is None or not hasattr(self.graph, 'driver'):
             return
         
         try:
             query = """
             MATCH (p:Person)
-            WHERE p.last_interaction < datetime() - duration('P%dD')
+            WHERE p.last_interaction < datetime() - duration({days: $days})
               OR p.last_interaction IS NULL
             RETURN p.id as id, p.name as name, p.last_interaction as last_interaction
             ORDER BY p.last_interaction ASC
-            """ % self._config.contact_neglect_days
-            
-            results = await self.graph.run_query(query)
+            """
             
             contacts = []
-            for record in results:
-                last_interaction = record.get("last_interaction")
-                days_since = self._config.contact_neglect_days
-                if last_interaction:
-                    if isinstance(last_interaction, str):
-                        last_interaction = datetime.fromisoformat(
-                            last_interaction.replace('Z', '+00:00')
-                        )
-                    days_since = (datetime.now(timezone.utc) - last_interaction).days
-                
-                contacts.append({
-                    "entity_id": record["id"],
-                    "name": record.get("name", "Unknown"),
-                    "days_since_contact": days_since,
-                })
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(
+                    query,
+                    days=self._config.contact_neglect_days,
+                )
+                async for record in result:
+                    record = dict(record)
+                    last_interaction = record.get("last_interaction")
+                    days_since = self._config.contact_neglect_days
+                    if last_interaction:
+                        if isinstance(last_interaction, str):
+                            last_interaction = datetime.fromisoformat(
+                                last_interaction.replace('Z', '+00:00')
+                            )
+                        days_since = (datetime.now(timezone.utc) - last_interaction).days
+                    
+                    contacts.append({
+                        "entity_id": record["id"],
+                        "name": record.get("name", "Unknown"),
+                        "days_since_contact": days_since,
+                    })
             
             self._context["neglected_contacts"] = contacts
             logger.debug("Loaded %d neglected contacts", len(contacts))
@@ -393,32 +401,38 @@ class InitiativeEngine:
 
     async def _load_pending_research_tasks(self) -> None:
         """Query graph for pending research tasks."""
-        if self.graph is None:
+        if self.graph is None or not hasattr(self.graph, 'driver'):
             return
         
         try:
             query = """
             MATCH (t:Task {type: 'research', status: 'pending'})
-            WHERE t.created_at < datetime() - duration('P%dD')
+            WHERE t.created_at < datetime() - duration({days: $days})
             RETURN t.id as id, t.title as title, t.description as description,
                    t.priority as priority, t.created_at as created_at
             ORDER BY t.priority DESC, t.created_at ASC
-            """ % self._config.research_task_age_days
-            
-            results = await self.graph.run_query(query)
+            """
             
             # Add to pending_tasks context (research tasks are a type of pending task)
             existing_tasks = self._context.get("pending_tasks", [])
-            for record in results:
-                existing_tasks.append({
-                    "entity_id": record["id"],
-                    "description": f"Research: {record.get('title', 'Unknown')}",
-                    "days_pending": self._config.research_task_age_days,
-                    "priority": record.get("priority", 0.5),
-                })
+            task_count = 0
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(
+                    query,
+                    days=self._config.research_task_age_days,
+                )
+                async for record in result:
+                    record = dict(record)
+                    existing_tasks.append({
+                        "entity_id": record["id"],
+                        "description": f"Research: {record.get('title', 'Unknown')}",
+                        "days_pending": self._config.research_task_age_days,
+                        "priority": record.get("priority", 0.5),
+                    })
+                    task_count += 1
             
             self._context["pending_tasks"] = existing_tasks
-            logger.debug("Loaded %d research tasks", len(results))
+            logger.debug("Loaded %d research tasks", task_count)
         except Exception as e:
             logger.debug("Research tasks query failed: %s", e)
             self._context.setdefault("pending_tasks", [])
@@ -557,10 +571,11 @@ class InitiativeEngine:
         
         if self._store:
             try:
-                self._store.update_status(
+                self._store.update(
                     initiative_id,
                     status="completed",
-                    metadata={"result": result, "completed_at": datetime.now(timezone.utc).isoformat()},
+                    completed_at=datetime.now(timezone.utc),
+                    result_metadata={"result": result},
                 )
             except Exception as e:
                 logger.warning("Failed to mark initiative %s complete: %s", initiative_id, e)
@@ -581,10 +596,10 @@ class InitiativeEngine:
         """
         if self._store:
             try:
-                self._store.update_status(
+                self._store.update(
                     initiative_id,
                     status="acknowledged",
-                    metadata={"acknowledged_at": datetime.now(timezone.utc).isoformat()},
+                    acknowledged_at=datetime.now(timezone.utc),
                 )
             except Exception as e:
                 logger.warning("Failed to acknowledge initiative %s: %s", initiative_id, e)
