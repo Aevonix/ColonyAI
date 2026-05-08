@@ -504,10 +504,16 @@ class AutonomyLoop:
                     days_pending = 0
                     if created:
                         days_pending = (datetime.now(timezone.utc) - created).total_seconds() / 86400
+                    # Handle both dict and object representations
+                    if isinstance(goal, dict):
+                        entity_id = goal.get("context", {}).get("contact_id") if goal.get("context") else goal.get("goal_id")
+                    else:
+                        ctx = getattr(goal, "context", None)
+                        entity_id = ctx.get("contact_id") if ctx else getattr(goal, "goal_id", None)
                     pending_tasks.append({
                         "description": goal.title or "blocked goal",
                         "days_pending": days_pending,
-                        "entity_id": goal.context.get("contact_id") if goal.context else None,
+                        "entity_id": entity_id,
                     })
 
             if pending_tasks:

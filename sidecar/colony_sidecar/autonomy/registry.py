@@ -41,7 +41,8 @@ class SubsystemRegistry:
         from colony_sidecar.events.bus import EventBus
         if not hasattr(self, '_anomaly_detector'):
             graph_client = _graph.driver if _graph and hasattr(_graph, 'driver') else None
-            event_bus = EventBus()
+            # Bug 41: Use shared event bus instead of creating new one
+            event_bus = self.events or EventBus()
             self._anomaly_detector = AnomalyDetector(graph_client, event_bus)
         return self._anomaly_detector
 
@@ -129,12 +130,14 @@ class SubsystemRegistry:
         if not hasattr(self, '_initiative_engine'):
             try:
                 from colony_sidecar.intelligence.components.initiative_engine import InitiativeEngine
-                from colony_sidecar.api.routers.host import _graph
+                from colony_sidecar.api.routers.host import _graph, _initiative_store, _goals_store
 
                 self._initiative_engine = InitiativeEngine(
-                    graph_client=_graph.driver if _graph and hasattr(_graph, 'driver') else None,
+                    graph_client=_graph if _graph and hasattr(_graph, 'driver') else None,
                     event_bus=None,  # Not needed for rule-based generation
                     mind_model=None,
+                    store=_initiative_store,
+                    goal_store=_goals_store,
                 )
             except Exception as e:
                 import logging
