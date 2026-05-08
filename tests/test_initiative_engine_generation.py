@@ -319,6 +319,31 @@ class TestGraphContextLoading:
         # Should not have made additional driver calls
         assert call_count_after_first == call_count_after_second
 
+    @pytest.mark.asyncio
+    async def test_load_graph_context_respects_manual_context(self, engine):
+        """Test that graph loading skips categories with manually-fed context."""
+        # Manually feed some context
+        engine._context["pending_tasks"] = [{"description": "Manual task", "days_pending": 1}]
+        engine._context["neglected_contacts"] = [{"name": "Manual", "days_since_contact": 5}]
+        
+        # Set up graph to return data (should be ignored)
+        engine.graph._records = [{"id": "graph-1", "title": "Graph task"}]
+        engine.mind_model.get_health_state.return_value = {}
+        engine.mind_model.get_schedule_state.return_value = {"gaps": [], "overdue_commitments": []}
+        engine.mind_model.get_pending_signal_count.return_value = 0
+
+        await engine._load_graph_context()
+
+        # Manual context should be preserved, not overwritten
+        assert len(engine._context["pending_tasks"]) == 1
+        assert engine._context["pending_tasks"][0]["description"] == "Manual task"
+        assert len(engine._context["neglected_contacts"]) == 1
+        assert engine._context["neglected_contacts"][0]["name"] == "Manual"
+        
+        # Health and scheduling should still load (no manual context)
+        engine.mind_model.get_health_state.assert_called_once()
+        engine.mind_model.get_schedule_state.assert_called_once()
+
 
 class TestGenerateWithGraphContext:
     """Test that generate() properly uses loaded graph context."""

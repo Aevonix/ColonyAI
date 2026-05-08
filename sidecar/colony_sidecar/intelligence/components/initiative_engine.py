@@ -193,6 +193,10 @@ class InitiativeEngine:
         This is the core fix — it populates the context dict that
         _generate_* methods read from. All queries are defensive:
         if a subsystem is unavailable, that category is skipped.
+        
+        Respects manually-added context: if a category already has data
+        (e.g. from AutonomyLoop._feed_* methods), graph loading for that
+        category is skipped to avoid duplicates.
         """
         # Avoid redundant loads within same tick
         if self._last_graph_load and (
@@ -202,16 +206,22 @@ class InitiativeEngine:
         
         self._last_graph_load = datetime.now(timezone.utc)
         
-        # Load all data sources in parallel where possible
-        await asyncio.gather(
-            self._load_blocked_goals(),
-            self._load_neglected_contacts(),
-            self._load_health_trends(),
-            self._load_scheduling_opportunities(),
-            self._load_pending_signals(),
-            self._load_pending_research_tasks(),
-            return_exceptions=True,  # Don't let one failure kill others
-        )
+        # Only load categories that don't already have manually-fed context
+        # This prevents duplication when AutonomyLoop feeds context before generate()
+        loaders = []
+        if not self._context.get("pending_tasks"):
+            loaders.append(self._load_blocked_goals())
+            loaders.append(self._load_pending_research_tasks())
+        if not self._context.get("neglected_contacts"):
+            loaders.append(self._load_neglected_contacts())
+        if not self._context.get("health_alerts"):
+            loaders.append(self._load_health_trends())
+        if not self._context.get("scheduling_opportunities"):
+            loaders.append(self._load_scheduling_opportunities())
+            loaders.append(self._load_pending_signals())
+        
+        if loaders:
+            await asyncio.gather(*loaders, return_exceptions=True)
 
     async def _load_blocked_goals(self) -> None:
         """Query graph for blocked goals."""
