@@ -132,7 +132,7 @@ class SubsystemRegistry:
                 from colony_sidecar.api.routers.host import _graph
 
                 self._initiative_engine = InitiativeEngine(
-                    graph_client=_graph.driver if _graph and hasattr(_graph, 'driver') else None,
+                    graph_client=_graph if _graph and hasattr(_graph, 'driver') else None,
                     event_bus=None,  # Not needed for rule-based generation
                     mind_model=None,
                 )
