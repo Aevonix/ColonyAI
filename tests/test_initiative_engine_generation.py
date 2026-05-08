@@ -631,3 +631,119 @@ class TestInitiativeGeneration:
         # Bug 45: Verify dedup_key is set
         assert initiatives[0].dedup_key is not None
         assert initiatives[0].dedup_key.startswith("schedule:")
+
+    @pytest.mark.asyncio
+    async def test_signal_threshold_exact(self, engine):
+        """Test signal accumulation at exact threshold boundary."""
+        engine.mind_model.get_pending_signal_count.return_value = 10  # Exact threshold
+
+        await engine._load_pending_signals()
+
+        # Exactly at threshold should NOT generate (must be > threshold)
+        opportunities = engine._context.get("scheduling_opportunities", [])
+        signal_opps = [o for o in opportunities if "signals" in o["description"]]
+        assert len(signal_opps) == 0
+
+        # Now test one above threshold
+        engine._context.clear()
+        engine.mind_model.get_pending_signal_count.return_value = 11
+
+        await engine._load_pending_signals()
+
+        opportunities = engine._context.get("scheduling_opportunities", [])
+        signal_opps = [o for o in opportunities if "signals" in o["description"]]
+        assert len(signal_opps) == 1
+        assert "11 unprocessed signals" in signal_opps[0]["description"]
+
+    @pytest.mark.asyncio
+    async def test_max_initiatives_enforced(self, engine):
+        """Test that max_initiatives parameter limits output."""
+        # Create many pending tasks
+        engine._context = {
+            "pending_tasks": [
+                {"entity_id": f"task-{i}", "description": f"Task {i}", "days_pending": i}
+                for i in range(50)
+            ]
+        }
+
+        # Generate with max_initiatives=5
+        initiatives = await engine.generate(max_initiatives=5)
+
+        assert len(initiatives) <= 5
+
+    @pytest.mark.asyncio
+    async def test_priority_clamping(self, engine):
+        """Test that priority is clamped to [0, 1] range."""
+        # Test with extreme deviation
+        engine._context = {
+            "health_alerts": [
+                {"metric": "test", "value": -1000, "target": 100}
+            ]
+        }
+
+        initiatives = await engine._generate_health_suggestions()
+
+        assert len(initiatives) == 1
+        assert 0.0 <= initiatives[0].priority <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_goal_store_cooldown_path(self, engine):
+        """Test dedup with goal store cooldown."""
+        from datetime import timedelta
+
+        # Setup goal store with recent initiative
+        mock_goal = MagicMock()
+        mock_goal.last_initiative_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        engine._goal_store = MagicMock()
+        engine._goal_store.get_goal.return_value = mock_goal
+
+        engine._context = {
+            "pending_tasks": [
+                {"entity_id": "goal-1", "description": "Test goal", "days_pending": 5}
+            ]
+        }
+
+        initiatives = await engine.generate(cooldown_tasks=12)
+
+        # Should be blocked by cooldown (1 hour < 12 hour cooldown)
+        assert len(initiatives) == 0
+
+    @pytest.mark.asyncio
+    async def test_clear_context_partial(self, engine):
+        """Test that partial clear_context preserves other categories."""
+        engine._context = {
+            "pending_tasks": [{"description": "Task"}],
+            "health_alerts": [{"metric": "sleep"}],
+        }
+        engine._last_graph_load = datetime.now(timezone.utc)
+
+        engine.clear_context("pending_tasks")
+
+        assert "pending_tasks" not in engine._context
+        assert "health_alerts" in engine._context
+        # Partial clear should NOT reset _last_graph_load (only full clear does)
+        assert engine._last_graph_load is not None
+
+    @pytest.mark.asyncio
+    async def test_generate_empty_context(self, engine):
+        """Test generate() with completely empty context."""
+        engine.graph._records = []
+        engine.mind_model.get_health_state.return_value = {}
+        engine.mind_model.get_schedule_state.return_value = {"gaps": [], "overdue_commitments": []}
+        engine.mind_model.get_pending_signal_count.return_value = 0
+
+        initiatives = await engine.generate()
+
+        assert isinstance(initiatives, list)
+        assert len(initiatives) == 0
+
+    def test_initiative_config_invalid_env(self):
+        """Test config fallback on invalid env values."""
+        with patch.dict("os.environ", {
+            "COLONY_INITIATIVE_CONTACT_NEGLECT_DAYS": "not_a_number",
+            "COLONY_INITIATIVE_HEALTH_THRESHOLD": "also_invalid",
+        }):
+            config = InitiativeConfig.from_env()
+            # Should fall back to defaults
+            assert config.contact_neglect_days == 7
+            assert config.health_score_threshold == 70.0
