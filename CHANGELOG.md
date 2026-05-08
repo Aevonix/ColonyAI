@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.7.14 (2026-05-07)
+
+Initiative engine graph context loading and comprehensive bug fixes.
+
+### Added
+- `InitiativeEngine._load_graph_context()` — automatic graph + mind model queries before generation
+- Graph loaders: `_load_blocked_goals()`, `_load_neglected_contacts()`, `_load_health_trends()`, `_load_scheduling_opportunities()`, `_load_pending_signals()`, `_load_pending_research_tasks()`
+- `InitiativeConfig` dataclass with env var loading (`COLONY_INITIATIVE_*`)
+- 10-second graph context cache to avoid redundant queries within same tick
+- `clear_context()` resets `_last_graph_load` (Bug 37)
+- Priority blending: graph priority (40%) + time-based priority (60%) for follow-ups (Bug 20)
+- `entity_id` and `dedup_key` for health/scheduling initiatives (Bugs 44, 45)
+- `max_initiatives` parameter to limit output (default 20, Bug 43)
+- In-memory initiative list with 1000-item cap (Bug 36)
+- 38 comprehensive unit tests for initiative generation
+- Environment variables: `COLONY_INITIATIVE_CONTACT_NEGLECT_DAYS`, `COLONY_INITIATIVE_GOAL_BLOCK_DAYS`, `COLONY_INITIATIVE_HEALTH_THRESHOLD`, `COLONY_INITIATIVE_GAP_THRESHOLD`, `COLONY_INITIATIVE_RESEARCH_AGE_DAYS`, `COLONY_INITIATIVE_SIGNAL_THRESHOLD`
+
+### Fixed
+- **Critical**: `mark_initiative_generated()` now called for ALL initiatives inside persistence loop (Bug 11)
+- **Critical**: Research tasks use actual age from `created_at`, not threshold days (Bug 12)
+- **Critical**: `complete()` uses `entity_id` (goal ID) not initiative ID for goal store (Bug 47)
+- **Critical**: Neo4j `DateTime` objects handled via `_parse_neo4j_datetime()` (Bugs 50, 51)
+- **Critical**: `created_at` uses timezone-aware `datetime.now(timezone.utc)` (Bug 38)
+- Negative days prevented with `max(0, ...)` (Bug 13)
+- NULL `last_interaction` gets 2× threshold days (Bug 14)
+- `acknowledge()` removes from in-memory list (Bug 22)
+- Generators run in parallel with `asyncio.gather()` (Bug 33)
+- Signal loading separated from scheduling check (Bug 40)
+- `get_active()` only falls back on exception, not empty result (Bug 54)
+- Store validates priority range [0, 1] (Bug 26)
+- `SubsystemRegistry.anomalies` uses shared event bus (Bug 41)
+- Parameter validation in `generate()` (Bugs 57, 58)
+- Env var parsing with fallback on invalid values (Bug 59)
+
+### Changed
+- Exception handling: specific types for connection vs validation vs unexpected errors
+- `clear_context(context_type)` preserves `_last_graph_load` (only full clear resets)
+
 ## 0.7.10 (2026-04-27)
 
 Initiative deduplication and LLM feedback loop.
