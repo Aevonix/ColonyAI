@@ -178,10 +178,11 @@ class InitiativeEngine:
         """
         if context_type:
             self._context.pop(context_type, None)
+            # Partial clear doesn't reset graph load cache
         else:
             self._context.clear()
-        # Reset graph load cache so next generate() reloads from graph (Bug 37)
-        self._last_graph_load = None
+            # Reset graph load cache so next generate() reloads from graph (Bug 37)
+            self._last_graph_load = None
 
     # ------------------------------------------------------------------
     # Neo4j datetime helper (Bug 50/51)
@@ -277,8 +278,11 @@ class InitiativeEngine:
             
             self._context["pending_tasks"] = tasks
             logger.debug("Loaded %d blocked goals", len(tasks))
+        except (OSError, ConnectionError, TimeoutError) as e:
+            logger.warning("Blocked goals query failed (connection): %s", e)
+            self._context.setdefault("pending_tasks", [])
         except Exception as e:
-            logger.debug("Blocked goals query failed: %s", e)
+            logger.error("Blocked goals query failed (unexpected): %s", e)
             self._context.setdefault("pending_tasks", [])
 
     async def _load_neglected_contacts(self) -> None:
@@ -318,8 +322,11 @@ class InitiativeEngine:
             
             self._context["neglected_contacts"] = contacts
             logger.debug("Loaded %d neglected contacts", len(contacts))
+        except (OSError, ConnectionError, TimeoutError) as e:
+            logger.warning("Neglected contacts query failed (connection): %s", e)
+            self._context.setdefault("neglected_contacts", [])
         except Exception as e:
-            logger.debug("Neglected contacts query failed: %s", e)
+            logger.error("Neglected contacts query failed (unexpected): %s", e)
             self._context.setdefault("neglected_contacts", [])
 
     async def _load_health_trends(self) -> None:
@@ -363,8 +370,11 @@ class InitiativeEngine:
             
             self._context["health_alerts"] = alerts
             logger.debug("Loaded %d health alerts", len(alerts))
+        except (OSError, ConnectionError, TimeoutError) as e:
+            logger.warning("Health trends query failed (connection): %s", e)
+            self._context.setdefault("health_alerts", [])
         except Exception as e:
-            logger.debug("Health trends query failed: %s", e)
+            logger.error("Health trends query failed (unexpected): %s", e)
             self._context.setdefault("health_alerts", [])
 
     async def _load_scheduling_opportunities(self) -> None:
@@ -400,8 +410,11 @@ class InitiativeEngine:
             
             self._context["scheduling_opportunities"] = opportunities
             logger.debug("Loaded %d scheduling opportunities", len(opportunities))
+        except (OSError, ConnectionError, TimeoutError) as e:
+            logger.warning("Scheduling opportunities query failed (connection): %s", e)
+            self._context.setdefault("scheduling_opportunities", [])
         except Exception as e:
-            logger.debug("Scheduling opportunities query failed: %s", e)
+            logger.error("Scheduling opportunities query failed (unexpected): %s", e)
             self._context.setdefault("scheduling_opportunities", [])
 
     async def _load_pending_signals(self) -> None:
@@ -420,8 +433,10 @@ class InitiativeEngine:
                     "action_hint": "process_signals",
                 })
             logger.debug("Pending signals: %d", count)
+        except (OSError, ConnectionError, TimeoutError) as e:
+            logger.warning("Pending signals query failed (connection): %s", e)
         except Exception as e:
-            logger.debug("Pending signals query failed: %s", e)
+            logger.error("Pending signals query failed (unexpected): %s", e)
 
     async def _load_pending_research_tasks(self) -> None:
         """Query graph for pending research tasks."""
@@ -464,8 +479,11 @@ class InitiativeEngine:
             
             self._context["pending_tasks"] = existing_tasks
             logger.debug("Loaded %d research tasks", task_count)
+        except (OSError, ConnectionError, TimeoutError) as e:
+            logger.warning("Research tasks query failed (connection): %s", e)
+            self._context.setdefault("pending_tasks", [])
         except Exception as e:
-            logger.debug("Research tasks query failed: %s", e)
+            logger.error("Research tasks query failed (unexpected): %s", e)
             self._context.setdefault("pending_tasks", [])
 
     # ------------------------------------------------------------------
@@ -541,8 +559,10 @@ class InitiativeEngine:
                                 entity_id, now - goal.last_initiative_at, cooldown_tasks,
                             )
                             continue
+                except (AttributeError, KeyError, TypeError):
+                    pass  # Goal store API mismatch, allow generation
                 except Exception:
-                    pass  # If goal not found, allow generation
+                    logger.debug("Goal cooldown check failed for %s", entity_id)
 
             # In-memory cooldown for non-task types (contacts, etc.)
             if init.dedup_key and type_val != "follow_up":
@@ -558,8 +578,10 @@ class InitiativeEngine:
                                     init.dedup_key, cooldown_contacts,
                                 )
                                 continue
+                    except (AttributeError, KeyError, TypeError):
+                        pass  # Store API mismatch
                     except Exception:
-                        pass
+                        logger.debug("Dedup check failed for %s", init.dedup_key)
 
             deduped.append(init)
 
@@ -594,8 +616,10 @@ class InitiativeEngine:
                             self._goal_store.mark_initiative_generated(initiative.entity_id)
                         except Exception as e:
                             logger.debug("Failed to mark initiative generated for %s: %s", initiative.entity_id, e)
+                except (ValueError, TypeError) as e:
+                    logger.warning("Failed to persist initiative %s (validation): %s", initiative.id, e)
                 except Exception as e:
-                    logger.warning("Failed to persist initiative %s: %s", initiative.id, e)
+                    logger.error("Failed to persist initiative %s (unexpected): %s", initiative.id, e)
 
         # Bug 36: Add generated initiatives to in-memory list
         self._initiatives.extend(result)
@@ -626,8 +650,10 @@ class InitiativeEngine:
                 stored = self._store.get(initiative_id)
                 if stored:
                     entity_id = stored.entity_id
+            except (AttributeError, KeyError):
+                pass  # Store API mismatch
             except Exception:
-                pass
+                logger.debug("Failed to look up initiative %s in store", initiative_id)
         
         # Fallback to in-memory list
         if not entity_id:
@@ -654,15 +680,19 @@ class InitiativeEngine:
                         result=result,
                         result_metadata={"result": result},
                     )
+            except (ValueError, TypeError) as e:
+                logger.warning("Failed to mark initiative %s complete (validation): %s", initiative_id, e)
             except Exception as e:
-                logger.warning("Failed to mark initiative %s complete: %s", initiative_id, e)
+                logger.error("Failed to mark initiative %s complete (unexpected): %s", initiative_id, e)
         
         # Bug 47: Use entity_id (goal ID) not initiative_id
         if self._goal_store and entity_id:
             try:
                 self._goal_store.complete_task(entity_id, result=result)
+            except (AttributeError, KeyError) as e:
+                logger.debug("Failed to complete goal %s (API mismatch): %s", entity_id, e)
             except Exception as e:
-                logger.debug("Failed to complete goal %s: %s", entity_id, e)
+                logger.warning("Failed to complete goal %s (unexpected): %s", entity_id, e)
         
         logger.info("Completed initiative %s: %s", initiative_id, result)
 
@@ -682,8 +712,10 @@ class InitiativeEngine:
                     status="acknowledged",
                     acknowledged_at=datetime.now(timezone.utc),
                 )
+            except (ValueError, TypeError) as e:
+                logger.warning("Failed to acknowledge initiative %s (validation): %s", initiative_id, e)
             except Exception as e:
-                logger.warning("Failed to acknowledge initiative %s: %s", initiative_id, e)
+                logger.error("Failed to acknowledge initiative %s (unexpected): %s", initiative_id, e)
         
         logger.debug("Acknowledged initiative %s", initiative_id)
 
@@ -698,8 +730,10 @@ class InitiativeEngine:
         if self._store:
             try:
                 self._store.cancel(initiative_id, cancelled_by="initiative_engine", reason="dismissed")
+            except (ValueError, TypeError) as e:
+                logger.warning("Failed to dismiss initiative %s (validation): %s", initiative_id, e)
             except Exception as e:
-                logger.warning("Failed to dismiss initiative %s in store: %s", initiative_id, e)
+                logger.error("Failed to dismiss initiative %s (unexpected): %s", initiative_id, e)
 
         logger.debug("Dismissed initiative %s", initiative_id)
 
@@ -735,8 +769,10 @@ class InitiativeEngine:
                             created_at=s.created_at,
                         ))
                     return sorted(result, key=lambda i: i.priority, reverse=True)
+            except (OSError, ConnectionError) as e:
+                logger.warning("Store unavailable, using in-memory: %s", e)
             except Exception as e:
-                logger.warning("Failed to load from store, using in-memory: %s", e)
+                logger.error("Failed to load from store (unexpected): %s", e)
 
         # Fallback to in-memory
         active = [
