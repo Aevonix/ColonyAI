@@ -214,6 +214,48 @@ class TestAgentStore:
         assert agent.metadata.hostname == "test-host"
         assert agent.metadata.platform == "darwin"
 
+    def test_update_current_assignments(self, store: AgentStore) -> None:
+        """Regression test: update must persist current_assignments correctly.
+
+        Bug: host.py referenced `body.current_initiatives` (doesn't exist on
+        AgentHeartbeatRequest) instead of `body.current_assignments`, causing
+        AttributeError and 500 errors on every heartbeat.
+        """
+        store.create({
+            "agent_id": "agent-12",
+            "node_id": "node-12",
+            "colony_id": "colony-1",
+            "name": "test-agent",
+            "connection_mode": "local",
+            "current_assignments": 0,
+        })
+
+        # Update current_assignments via store (mirrors what host.py does)
+        updated = store.update("agent-12", current_assignments=3, status="busy")
+        assert updated is not None
+        assert updated.current_assignments == 3
+        assert updated.status == "busy"
+
+        # Verify persistence
+        agent = store.get("agent-12")
+        assert agent is not None
+        assert agent.current_assignments == 3
+        assert agent.status == "busy"
+
+    def test_update_current_assignments_defaults_to_zero(self, store: AgentStore) -> None:
+        """Test that current_assignments defaults to 0 when not specified."""
+        store.create({
+            "agent_id": "agent-13",
+            "node_id": "node-13",
+            "colony_id": "colony-1",
+            "name": "test-agent",
+            "connection_mode": "local",
+        })
+
+        agent = store.get("agent-13")
+        assert agent is not None
+        assert agent.current_assignments == 0
+
 
 class TestInviteStore:
     """Tests for InviteStore operations."""

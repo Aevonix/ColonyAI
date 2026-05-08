@@ -19,8 +19,9 @@ from colony_sidecar.initiatives.store import InitiativeStore
 from colony_sidecar.initiatives.assignment import AssignmentEngine
 from colony_sidecar.agents.websocket import WebSocketManager
 
-# Skip all tests in this module due to SQLite threading with TestClient
-pytestmark = pytest.mark.skip(reason="SQLite threading issue with TestClient")
+# Previously skipped due to SQLite threading with TestClient.
+# Fixed by adding check_same_thread=False to AgentStore._connect().
+# pytestmark = pytest.mark.skip(reason="SQLite threading issue with TestClient")
 
 
 class TestAgentEndpoints:
@@ -81,6 +82,7 @@ class TestAgentEndpoints:
             json={
                 "setup_code": "INVALID-CODE",
                 "name": "test-agent",
+                "node_public_key": "test-key",
             },
         )
 
@@ -105,6 +107,7 @@ class TestAgentEndpoints:
             json={
                 "setup_code": code,
                 "name": "test-agent",
+                "node_public_key": "test-key",
             },
         )
 
@@ -127,7 +130,9 @@ class TestAgentEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "agent_id" in data
-        assert data["is_primary"] is True
+        # Verify persistence via GET (response doesn't include is_primary)
+        agent = client.get(f"/v1/host/agents/{data['agent_id']}").json()
+        assert agent["is_primary"] is True
 
     def test_list_agents(self, client: TestClient) -> None:
         """Test GET /agents."""
@@ -191,7 +196,61 @@ class TestAgentEndpoints:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "online"
+        assert data["status"] == "ok"
+
+        # Verify agent status was updated
+        get_resp = client.get(f"/v1/host/agents/{agent_id}")
+        assert get_resp.json()["status"] == "online"
+
+    def test_agent_heartbeat_updates_assignments(self, client: TestClient) -> None:
+        """Regression test: heartbeat must update current_assignments from body.
+
+        Bug: host.py referenced `body.current_initiatives` (doesn't exist on
+        AgentHeartbeatRequest) instead of `body.current_assignments`, causing
+        AttributeError and 500 errors on every heartbeat.
+        """
+        # Register an agent
+        reg_resp = client.post(
+            "/v1/host/agents/register",
+            json={"name": "test-agent"},
+        )
+        agent_id = reg_resp.json()["agent_id"]
+
+        # Send heartbeat with explicit current_assignments
+        response = client.post(
+            f"/v1/host/agents/{agent_id}/heartbeat",
+            json={"status": "busy", "current_assignments": 3},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["agent_id"] == agent_id
+
+        # Verify the value was persisted
+        get_resp = client.get(f"/v1/host/agents/{agent_id}")
+        assert get_resp.status_code == 200
+        agent_data = get_resp.json()
+        assert agent_data["current_assignments"] == 3
+        assert agent_data["status"] == "busy"
+
+    def test_agent_heartbeat_default_assignments(self, client: TestClient) -> None:
+        """Test that heartbeat defaults current_assignments to 0 when omitted."""
+        reg_resp = client.post(
+            "/v1/host/agents/register",
+            json={"name": "test-agent"},
+        )
+        agent_id = reg_resp.json()["agent_id"]
+
+        # Send heartbeat without current_assignments
+        response = client.post(
+            f"/v1/host/agents/{agent_id}/heartbeat",
+            json={"status": "online"},
+        )
+        assert response.status_code == 200
+
+        # Verify default
+        get_resp = client.get(f"/v1/host/agents/{agent_id}")
+        assert get_resp.json()["current_assignments"] == 0
 
     def test_revoke_agent(self, client: TestClient) -> None:
         """Test DELETE /agents/{id}."""
@@ -258,7 +317,8 @@ class TestInitiativeEndpoints:
         data = response.json()
         assert "id" in data
         assert data["initiative_type"] == "PROACTIVE_MESSAGE"
-        assert data["title"] == "Test Initiative"
+        # title falls back to rationale or description[:50]
+        assert data["title"] == "Test initiative description"
 
     def test_list_initiatives(self, client: TestClient) -> None:
         """Test GET /initiatives."""
@@ -323,7 +383,7 @@ class TestInitiativeEndpoints:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] in ["pending", "acknowledged", "in_progress", "assigned"]
+        assert data["status"] in ["pending", "acknowledged", "in_progress", "assigned", "claimed"]
 
     def test_complete_initiative(self, client: TestClient) -> None:
         """Test POST /initiatives/{id}/complete."""
