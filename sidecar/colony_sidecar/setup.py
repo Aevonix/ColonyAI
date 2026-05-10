@@ -1631,6 +1631,12 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     print(f"  Reranker: {tier.text_reranker.model_id} ({tier.text_reranker.params})")
                 else:
                     print(f"  Reranker: none")
+                # Warn Apple Silicon users about MLX provider bug
+                if hw.gpu_type == "mlx":
+                    print()
+                    print("  ⚠️  Apple Silicon detected: using CPU provider for stability.")
+                    print("     (MLX provider has a known PyTorch MPS threading issue)")
+                    print("     See: https://github.com/Aevonix/ColonyAI/issues/17")
                 embed_mode = _prompt("  Choose: [1] Local model  [2] API embeddings  [3] Skip embeddings", "1", non_interactive)
                 if embed_mode == "2":
                     embed_provider = "openai_api"

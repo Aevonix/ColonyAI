@@ -196,8 +196,8 @@ TIERS: list[TierConfig] = [
         min_vram_gb=48,
         min_ram_gb=128,
         text_embedder=ModelSpec(
-            model_id="microsoft/harrier-oss-v1-27b",
-            params="27B", dims=5376, context=32768, license="MIT",
+            model_id="Qwen/Qwen3-Embedding-8B",
+            params="8B", dims=4096, context=32768, license="Apache-2.0",
         ),
         text_reranker=ModelSpec(
             model_id="Qwen/Qwen3-Reranker-8B",
@@ -222,8 +222,8 @@ TIERS: list[TierConfig] = [
         min_vram_gb=96,
         min_ram_gb=256,
         text_embedder=ModelSpec(
-            model_id="microsoft/harrier-oss-v1-27b",
-            params="27B", dims=5376, context=32768, license="MIT",
+            model_id="Qwen/Qwen3-Embedding-8B",
+            params="8B", dims=4096, context=32768, license="Apache-2.0",
         ),
         text_reranker=ModelSpec(
             model_id="Qwen/Qwen3-Reranker-8B",
