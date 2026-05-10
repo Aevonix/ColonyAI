@@ -306,19 +306,18 @@ async def lifespan(app: FastAPI):
     # --- 6b. Reranker pipeline ---
     if reranker_model and reranker_model.lower() not in ("none", "", "null"):
         try:
-            from colony_sidecar.vector.reranker import make_reranker_provider
+            from colony_sidecar.vector.reranker import MLXRerankerProvider, CPURerankerProvider, CUDARerankerProvider
             from colony_sidecar.vector.scanner import scan
             hw = scan()
-            reranker_provider = make_reranker_provider(
-                spec=None,  # We only have the model_id, not the full spec
-                gpu_type=hw.gpu_type,
-            )
-            # Override model_id since we only stored the string
-            if reranker_provider:
-                reranker_provider._model_id = reranker_model
-                await reranker_provider.warmup()
-                set_reranker(reranker_provider)
-                logger.info("Reranker initialized (model=%s)", reranker_model)
+            if hw.gpu_type == "mlx":
+                reranker_provider = MLXRerankerProvider(reranker_model)
+            elif hw.gpu_type == "cuda":
+                reranker_provider = CUDARerankerProvider(reranker_model)
+            else:
+                reranker_provider = CPURerankerProvider(reranker_model)
+            await reranker_provider.warmup()
+            set_reranker(reranker_provider)
+            logger.info("Reranker initialized (model=%s)", reranker_model)
         except Exception as exc:
             logger.warning("Reranker init failed: %s", exc)
     else:
