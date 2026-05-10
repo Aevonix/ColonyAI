@@ -85,6 +85,9 @@ from colony_sidecar.api.schemas.host import (
     MemorySearchResponse,
     MemoryWriteRequest,
     MemoryWriteResponse,
+    RerankRequest,
+    RerankResponse,
+    RerankResult,
     MigrateRequest,
     MigrateResponse,
     MultimodalSearchRequest,
@@ -695,6 +698,44 @@ async def memory_embed(body: MemoryEmbedRequest) -> MemoryEmbedResponse:
         raise
     except Exception as exc:
         logger.warning("memory_embed failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/memory/rerank", response_model=RerankResponse)
+async def memory_rerank(body: RerankRequest) -> RerankResponse:
+    """Rerank documents by relevance to a query.
+
+    Requires the reranker to be initialized (see COLONY_RERANKER_MODEL env var).
+    """
+    if _reranker is None:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Reranker not initialized. Set COLONY_RERANKER_MODEL to enable.",
+        )
+    try:
+        if not body.documents:
+            raise HTTPException(status_code=400, detail="No documents provided")
+        if len(body.documents) > 256:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Document count {len(body.documents)} exceeds limit of 256",
+            )
+        results = await _reranker.rerank(
+            query=body.query,
+            documents=body.documents,
+            top_k=body.top_k or 10,
+        )
+        return RerankResponse(
+            results=[
+                RerankResult(index=r.index, score=r.score, text=r.text)
+                for r in results
+            ],
+            model=getattr(_reranker, "_model_id", "unknown"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("memory_rerank failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
