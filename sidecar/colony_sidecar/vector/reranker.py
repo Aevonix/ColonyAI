@@ -118,12 +118,14 @@ class CPURerankerProvider(RerankerProvider):
 
 
 class MLXRerankerProvider(RerankerProvider):
-    """Apple MLX reranker (uses CPU path until MLX CrossEncoder exists)."""
+    """Apple MLX reranker (uses MPS path until MLX CrossEncoder exists).
+
+    NOTE: warmup() runs synchronously in the main thread to avoid
+    PyTorch MPS deadlocks in asyncio.run_in_executor (Issue #17).
+    """
 
     async def warmup(self) -> None:
-        # MLX doesn't have CrossEncoder yet — fall back to CPU
-        loop = asyncio.get_running_loop()
-        self._model = await loop.run_in_executor(None, self._load_model)
+        self._model = self._load_model()
 
     def _load_model(self):
         from sentence_transformers import CrossEncoder

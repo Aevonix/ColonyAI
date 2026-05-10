@@ -304,7 +304,7 @@ async def lifespan(app: FastAPI):
         logger.warning("EmbeddingPipeline init failed: %s", exc)
 
     # --- 6b. Reranker pipeline ---
-    if reranker_model:
+    if reranker_model and reranker_model.lower() not in ("none", "", "null"):
         try:
             from colony_sidecar.vector.reranker import make_reranker_provider
             from colony_sidecar.vector.scanner import scan
@@ -316,6 +316,7 @@ async def lifespan(app: FastAPI):
             # Override model_id since we only stored the string
             if reranker_provider:
                 reranker_provider._model_id = reranker_model
+                await reranker_provider.warmup()
                 set_reranker(reranker_provider)
                 logger.info("Reranker initialized (model=%s)", reranker_model)
         except Exception as exc:
