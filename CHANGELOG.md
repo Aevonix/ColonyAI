@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.16 (2026-05-10)
+
+MLX embedding provider fix and harrier model deprecation.
+
+### Fixed
+- **Critical**: MLX embedding provider no longer hangs on Apple Silicon during startup (#17)
+  - Root cause: PyTorch MPS backend deadlocked when model initialization ran in `asyncio.run_in_executor()` during FastAPI lifespan startup
+  - Fix: `MLXEmbeddingProvider.warmup()` now loads models synchronously in the main thread
+  - Startup is not serving requests yet, so brief blocking is acceptable
+
+### Changed
+- **Deprecated**: Removed non-functional `microsoft/harrier-oss-v1-27b` model from tiers 5 and 6
+  - Replaced with validated `Qwen/Qwen3-Embedding-8B` (8B params, 4096 dims)
+  - Affects 128GB+ RAM systems (Mac Studio Ultra, DGX Spark, servers)
+- Setup wizard now warns Apple Silicon users about MLX provider and directs them to CPU provider for stability
+
 ## 0.7.14 (2026-05-07)
 
 Initiative engine graph context loading and comprehensive bug fixes.
