@@ -105,6 +105,24 @@ class MemorySearchRequest(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class RerankRequest(BaseModel):
+    identity: HostIdentity
+    query: str
+    documents: List[str]
+    top_k: Optional[int] = 10
+
+
+class RerankResult(BaseModel):
+    index: int
+    score: float
+    text: str
+
+
+class RerankResponse(BaseModel):
+    results: List[RerankResult] = []
+    model: str = ""
+
+
 class MemorySearchResponse(BaseModel):
     entries: List[MemoryEntry] = []
 
