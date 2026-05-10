@@ -187,9 +187,13 @@ class MLXEmbeddingProvider(EmbeddingProvider):
         return self._config.dimensions
 
     async def warmup(self) -> None:
-        loop = asyncio.get_running_loop()
-        self._model = await loop.run_in_executor(None, self._load_model)
-        await loop.run_in_executor(None, self._model.encode, ["warmup"])
+        # PyTorch MPS backend deadlocks when model initialization runs in
+        # asyncio's ThreadPoolExecutor during FastAPI lifespan startup.
+        # Load synchronously in the main thread — startup is not serving
+        # requests yet, so brief blocking is acceptable.
+        # See: https://github.com/Aevonix/ColonyAI/issues/17
+        self._model = self._load_model()
+        self._model.encode(["warmup"])
 
     def _load_model(self):
         from sentence_transformers import SentenceTransformer
