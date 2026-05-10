@@ -3270,11 +3270,19 @@ async def autonomy_stop() -> AutonomyStatusResponse:
 
 @router.post("/autonomy/cycle", response_model=dict)
 async def autonomy_cycle() -> dict:
-    """Trigger a single autonomy cycle for testing."""
+    """Trigger a single autonomy tick for testing.
+
+    In reactive mode this runs _tick() directly.
+    In proactive mode it just wakes the loop early.
+    """
     if _autonomy_loop is None:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
-        _autonomy_loop.wake()
+        # In reactive mode the loop isn't actively ticking — run one directly
+        if getattr(_autonomy_loop, "config", None) and _autonomy_loop.config.mode.value == "reactive":
+            await _autonomy_loop._tick()
+        else:
+            _autonomy_loop.wake()
         status = _autonomy_loop.status()
         return {"completed": True, "result": status}
     except Exception as exc:
