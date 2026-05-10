@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.17 (2026-05-10)
+
+MLX reranker fix and new `/memory/rerank` endpoint.
+
+### Added
+- **POST /v1/host/memory/rerank** — rerank documents by relevance to a query
+  - Returns ranked results with `index`, `score`, `text`
+  - Supports up to 256 documents per request
+  - Returns 501 if reranker not initialized
+
+### Fixed
+- **MLX reranker** — same PyTorch MPS deadlock fix as embeddings (Issue #17)
+  - `MLXRerankerProvider.warmup()` now runs synchronously in main thread
+- **Reranker initialization** — `make_reranker_provider(spec=None)` returned None
+  - Now directly instantiates the correct provider class based on `hw.gpu_type`
+- **Reranker warmup** — was never called during lifespan startup, now explicitly awaited
+- **Health endpoint** — now exposes `rerank` capability when reranker is wired
+
 ## 0.7.16 (2026-05-10)
 
 MLX embedding provider fix and harrier model deprecation.
