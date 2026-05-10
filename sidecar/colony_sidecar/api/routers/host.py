@@ -335,6 +335,8 @@ def supported_capabilities() -> List[str]:
         caps.append("patterns")
     if _surprise_store is not None:
         caps.append("surprises")
+    if _reranker is not None:
+        caps.append("rerank")
     if _world_store is not None:
         caps.append("context")
         caps.append("world_model_api")
