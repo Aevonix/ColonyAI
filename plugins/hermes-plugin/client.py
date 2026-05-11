@@ -17,7 +17,12 @@ class ColonyClient:
 
     def __init__(self, url: str | None = None, api_key: str | None = None):
         self.url = url or os.environ.get("COLONY_URL", "http://127.0.0.1:7777")
-        self._api_key = api_key or os.environ.get("COLONY_API_KEY", "")
+        raw_key = api_key or os.environ.get("COLONY_API_KEY", "")
+        # Resolve unexpanded env-var placeholders like ${COLONY_API_KEY}
+        if raw_key and raw_key.startswith("${") and raw_key.endswith("}"):
+            env_name = raw_key[2:-1]
+            raw_key = os.environ.get(env_name, "")
+        self._api_key = raw_key
         self._async_client: Optional[httpx.AsyncClient] = None
 
     def _headers(self) -> dict[str, str]:
