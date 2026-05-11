@@ -86,6 +86,8 @@ _TIER_MATRIX = {
     "gpu-high": ("cuda", "Qwen/Qwen3-Embedding-8B", 4096, "fp8"),
     "gpu-balanced": ("cuda", "BAAI/bge-m3", 1024, None),
     "gpu-fast": ("cuda", "nomic-ai/nomic-embed-text-v1.5", 768, None),
+    "native-mlx-high": ("native_mlx", "Qwen/Qwen3-Embedding-8B", 4096, None),
+    "native-mlx-balanced": ("native_mlx", "BAAI/bge-m3", 1024, None),
     "mlx": ("mlx", "nomic-ai/nomic-embed-text-v1.5", 768, None),
     "cpu-quality": ("cpu", "nomic-ai/nomic-embed-text-v1.5", 768, "int8"),
     "cpu-lightweight": ("cpu", "BAAI/bge-small-en-v1.5", 384, None),
@@ -101,6 +103,11 @@ def _detect_tier(profile: HardwareProfile) -> str:
             return "gpu-balanced"
         return "gpu-fast"
     if profile.mlx_available:
+        # Use high tier for machines with 64GB+ unified memory
+        if profile.mlx_memory_gb >= 64:
+            return "native-mlx-high"
+        if profile.mlx_memory_gb >= 32:
+            return "native-mlx-balanced"
         return "mlx"
     if profile.cpu_ram_gb >= 16:
         return "cpu-quality"

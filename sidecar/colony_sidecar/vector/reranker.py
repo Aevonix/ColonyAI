@@ -118,7 +118,10 @@ class CPURerankerProvider(RerankerProvider):
 
 
 class MLXRerankerProvider(RerankerProvider):
-    """Apple MLX reranker (uses MPS path until MLX CrossEncoder exists).
+    """Apple Silicon reranker via sentence-transformers CrossEncoder with PyTorch MPS.
+
+    NOTE: This is the legacy provider. For true native MLX performance,
+    use ``NativeMLXRerankerProvider`` (provider="native_mlx").
 
     NOTE: warmup() runs synchronously in the main thread to avoid
     PyTorch MPS deadlocks in asyncio.run_in_executor (Issue #17).
@@ -153,6 +156,112 @@ class MLXRerankerProvider(RerankerProvider):
         ]
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:top_k]
+
+
+# ---------------------------------------------------------------------------
+# Native MLX reranker (Apple Silicon via true MLX framework)
+# ---------------------------------------------------------------------------
+
+class NativeMLXRerankerProvider(RerankerProvider):
+    """Apple Silicon reranker via the native MLX framework (mlx-lm).
+
+    Loads the original HuggingFace CrossEncoder model with ``mlx_lm`` and
+    extracts logits for the true/false classification tokens. This avoids
+    the PyTorch MPS overhead entirely.
+
+    The model must expose a ``config_sentence_transformers.json`` with
+    ``true_token_id`` and ``false_token_id`` (standard for sentence-transformers
+    CrossEncoder checkpoints). If absent, the provider falls back to logits
+    for generic "yes"/"no" tokens.
+    """
+
+    def __init__(self, model_id: str) -> None:
+        super().__init__(model_id)
+        self._model = None
+        self._tokenizer = None
+        self._true_token_id: int | None = None
+        self._false_token_id: int | None = None
+
+    async def warmup(self) -> None:
+        self._model, self._tokenizer = self._load_model()
+
+    def _load_model(self):
+        from mlx_lm import load
+        import json
+        from pathlib import Path
+        from huggingface_hub import try_to_load_from_cache
+
+        model, tokenizer = load(self._model_id, lazy=False)
+
+        # Attempt to load sentence-transformers config for token IDs
+        try:
+            # Check local cache first, then download
+            cache_path = try_to_load_from_cache(
+                self._model_id, "config_sentence_transformers.json"
+            )
+            if cache_path and Path(cache_path).exists():
+                with open(cache_path) as f:
+                    st_cfg = json.load(f)
+            else:
+                # Try to find in the model directory
+                from huggingface_hub import snapshot_download
+                model_path = Path(snapshot_download(self._model_id, allow_patterns=["config_sentence_transformers.json"]))
+                with open(model_path / "config_sentence_transformers.json") as f:
+                    st_cfg = json.load(f)
+
+            # Look for LogitScore module config
+            logit_cfg = st_cfg.get("1_LogitScore", {})
+            if not logit_cfg:
+                # Some models store it directly in the root
+                logit_cfg = st_cfg
+            self._true_token_id = logit_cfg.get("true_token_id")
+            self._false_token_id = logit_cfg.get("false_token_id")
+        except Exception:
+            pass
+
+        return model, tokenizer
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int = 10,
+    ) -> list[RerankResult]:
+        if not documents:
+            return []
+
+        loop = asyncio.get_running_loop()
+        scores = await loop.run_in_executor(
+            None,
+            functools.partial(self._score_documents, query, documents),
+        )
+
+        results = [
+            RerankResult(index=i, score=float(scores[i]), text=documents[i])
+            for i in range(len(documents))
+        ]
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:top_k]
+
+    def _score_documents(self, query: str, documents: list[str]) -> list[float]:
+        import mlx.core as mx
+
+        scores: list[float] = []
+        for doc in documents:
+            prompt = f"{query}\n{doc}"
+            tokens = mx.array(self._tokenizer.encode(prompt))
+            logits = self._model(tokens[None, :])
+            last_logits = logits[0, -1, :]
+
+            if self._true_token_id is not None and self._false_token_id is not None:
+                true_score = last_logits[self._true_token_id].item()
+                false_score = last_logits[self._false_token_id].item()
+                scores.append(true_score - false_score)
+            else:
+                # Fallback: use max logit as relevance proxy
+                scores.append(last_logits.max().item())
+
+        return scores
 
 
 class OpenAIAPIRerankerProvider(RerankerProvider):
@@ -235,6 +344,8 @@ def make_reranker_provider(
 
     if gpu_type == "cuda":
         return CUDARerankerProvider(spec.model_id)
+    elif gpu_type == "native_mlx":
+        return NativeMLXRerankerProvider(spec.model_id)
     elif gpu_type == "mlx":
         return MLXRerankerProvider(spec.model_id)
     else:

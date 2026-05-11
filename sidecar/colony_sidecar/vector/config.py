@@ -32,7 +32,12 @@ class HardwareProfile:
         if self.cuda_available:
             return "cuda"
         if self.mlx_available:
-            return "mlx"
+            # Prefer native MLX when the package is available
+            try:
+                import mlx_embeddings  # noqa: F401
+                return "native_mlx"
+            except ImportError:
+                return "mlx"
         return "cpu"
 
 
@@ -40,7 +45,7 @@ class HardwareProfile:
 class EmbeddingConfig:
     """Resolved at runtime from env/settings.  Never hardcoded."""
 
-    provider: str  # "cuda" | "cpu" | "mlx"
+    provider: str  # "cuda" | "cpu" | "mlx" | "native_mlx"
     model_id: str  # HuggingFace model ID
     dimensions: int  # output embedding dimension
     max_batch_size: int = 64

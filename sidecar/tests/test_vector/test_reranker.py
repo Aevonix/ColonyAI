@@ -6,6 +6,7 @@ from colony_sidecar.vector.reranker import (
     RerankerProvider,
     CUDARerankerProvider,
     CPURerankerProvider,
+    NativeMLXRerankerProvider,
     MLXRerankerProvider,
     OpenAIAPIRerankerProvider,
     make_reranker_provider,
@@ -38,6 +39,11 @@ class TestMakeRerankerProvider:
         spec = ModelSpec(model_id="BAAI/bge-reranker-v2-m3", params="568M", dims=0, context=8192, license="MIT")
         provider = make_reranker_provider(spec=spec, gpu_type="mlx")
         assert isinstance(provider, MLXRerankerProvider)
+
+    def test_native_mlx_provider(self):
+        spec = ModelSpec(model_id="Qwen/Qwen3-Reranker-8B", params="8B", dims=0, context=32768, license="Apache-2.0")
+        provider = make_reranker_provider(spec=spec, gpu_type="native_mlx")
+        assert isinstance(provider, NativeMLXRerankerProvider)
 
     def test_api_provider(self):
         spec = ModelSpec(model_id="rerank-model", params="1B", dims=0, context=8192, license="MIT")

@@ -1856,7 +1856,17 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
             spec = tier.text_embedder
             if spec:
-                embed_provider = "cuda" if hw.gpu_type == "cuda" else "cpu"
+                if hw.gpu_type == "cuda":
+                    embed_provider = "cuda"
+                elif hw.gpu_type == "mlx":
+                    # Prefer native MLX when the package is available
+                    try:
+                        import mlx_embeddings  # noqa: F401
+                        embed_provider = "native_mlx"
+                    except ImportError:
+                        embed_provider = "mlx"
+                else:
+                    embed_provider = "cpu"
                 embed_model = spec.model_id
                 embed_dims = str(spec.dims)
                 if tier.text_reranker:
@@ -1868,12 +1878,14 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     print(f"  Reranker: {tier.text_reranker.model_id} ({tier.text_reranker.params})")
                 else:
                     print(f"  Reranker: none")
-                # Warn Apple Silicon users about MLX provider bug
+                # Note for Apple Silicon users about native MLX
                 if hw.gpu_type == "mlx":
                     print()
-                    print("  ⚠️  Apple Silicon detected: using CPU provider for stability.")
-                    print("     (MLX provider has a known PyTorch MPS threading issue)")
-                    print("     See: https://github.com/Aevonix/ColonyAI/issues/17")
+                    if embed_provider == "native_mlx":
+                        print("  🎯 Apple Silicon detected: using native MLX framework (fastest path)")
+                    else:
+                        print("  ⚠️ Apple Silicon detected: using PyTorch MPS fallback.")
+                        print("     Install mlx-embeddings for native MLX: pip install mlx-embeddings mlx-lm")
                 embed_mode = _prompt("  Choose: [1] Local model  [2] API embeddings  [3] Skip embeddings", "1", non_interactive)
                 if embed_mode == "2":
                     embed_provider = "openai_api"
@@ -2013,13 +2025,13 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     print()
 
-    # ── Step 7: Download embedding + reranker models
+    # —— Step 7: Download embedding + reranker models
     if embed_provider == "skip":
         print(_bold("Step 7: Embeddings skipped"))
         print()
         print("  Colony will run without vector search. You can enable embeddings later")
         print("  by editing COLONY_EMBED_PROVIDER in .env and restarting.")
-    elif embed_provider in ("cuda", "cpu", "mlx") and embed_model:
+    elif embed_provider in ("cuda", "cpu", "mlx", "native_mlx") and embed_model:
         print(_bold("Step 7: Download embedding model"))
         print()
         
@@ -2034,8 +2046,12 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print(f"  Downloading {embed_model}...")
         print(f"  (This may take a while on first run — models are cached by HuggingFace)")
         try:
-            from sentence_transformers import SentenceTransformer
-            SentenceTransformer(embed_model)
+            if embed_provider == "native_mlx":
+                from mlx_embeddings import load
+                load(embed_model, lazy=False)
+            else:
+                from sentence_transformers import SentenceTransformer
+                SentenceTransformer(embed_model)
             print(f"  ✅ Embedding model downloaded and cached")
         except Exception as exc:
             print(f"  ⚠️ Model download failed: {exc}")
@@ -2044,8 +2060,12 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         if reranker_model:
             print(f"  Downloading reranker {reranker_model}...")
             try:
-                from sentence_transformers import CrossEncoder
-                CrossEncoder(reranker_model)
+                if embed_provider == "native_mlx":
+                    from mlx_lm import load as mlx_lm_load
+                    mlx_lm_load(reranker_model, lazy=False)
+                else:
+                    from sentence_transformers import CrossEncoder
+                    CrossEncoder(reranker_model)
                 print(f"  ✅ Reranker model downloaded and cached")
             except Exception as exc:
                 print(f"  ⚠️ Reranker download failed: {exc}")

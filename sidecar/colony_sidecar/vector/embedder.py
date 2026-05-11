@@ -1,9 +1,10 @@
 """Colony Vector Store — embedding providers and pipeline.
 
 Provides hardware-agnostic embedding via swappable backends:
-  - CUDAEmbeddingProvider  (NVIDIA GPU via sentence-transformers)
-  - CPUEmbeddingProvider   (CPU via sentence-transformers)
-  - MLXEmbeddingProvider   (Apple Silicon via mlx-lm)
+  - CUDAEmbeddingProvider     (NVIDIA GPU via sentence-transformers)
+  - CPUEmbeddingProvider      (CPU via sentence-transformers)
+  - MLXEmbeddingProvider      (Apple Silicon via PyTorch MPS — legacy)
+  - NativeMLXEmbeddingProvider (Apple Silicon via native MLX framework)
 
 EmbeddingPipeline wraps a provider and adds LRU caching + latency monitoring.
 """
@@ -176,7 +177,11 @@ class CPUEmbeddingProvider(EmbeddingProvider):
 # ---------------------------------------------------------------------------
 
 class MLXEmbeddingProvider(EmbeddingProvider):
-    """Apple Silicon embedding via sentence-transformers with MLX backend."""
+    """Apple Silicon embedding via sentence-transformers with PyTorch MPS backend.
+
+    NOTE: This is the legacy provider. For true native MLX performance,
+    use ``NativeMLXEmbeddingProvider`` (provider="native_mlx").
+    """
 
     def __init__(self, config: EmbeddingConfig) -> None:
         super().__init__(config)
@@ -233,13 +238,88 @@ class MLXEmbeddingProvider(EmbeddingProvider):
 
 
 # ---------------------------------------------------------------------------
+# Native MLX provider (Apple Silicon via true MLX framework)
+# ---------------------------------------------------------------------------
+
+class NativeMLXEmbeddingProvider(EmbeddingProvider):
+    """Apple Silicon embedding via the native MLX framework (mlx-embeddings).
+
+    Uses ``mlx_embeddings`` to load models directly into MLX arrays, avoiding
+    the PyTorch MPS overhead. Supports both original HuggingFace models
+    (converted on-the-fly) and pre-converted ``mlx-community`` checkpoints.
+    """
+
+    def __init__(self, config: EmbeddingConfig) -> None:
+        super().__init__(config)
+        self._model = None
+        self._tokenizer = None
+
+    @property
+    def dimensions(self) -> int:
+        return self._config.dimensions
+
+    async def warmup(self) -> None:
+        # MLX model loading can trigger lazy weight evaluation; keep it
+        # synchronous in the main thread just like the MPS provider.
+        self._model, self._tokenizer = self._load_model()
+        self._warmup_inference()
+
+    def _load_model(self):
+        from mlx_embeddings import load
+
+        kwargs: dict = {"lazy": False}
+        if self._config.cache_dir:
+            kwargs["cache_dir"] = self._config.cache_dir
+        model, tokenizer = load(self._config.model_id, **kwargs)
+        return model, tokenizer
+
+    def _warmup_inference(self):
+        from mlx_embeddings import generate
+
+        generate(self._model, self._tokenizer, "warmup", max_length=512)
+
+    async def embed(self, text: str) -> list[float]:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                self._infer, [text], max_length=512
+            ),
+        )
+        return result[0]
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                self._infer, texts, max_length=512
+            ),
+        )
+        return result
+
+    def _infer(self, texts, max_length: int = 512):
+        from mlx_embeddings import generate
+
+        outputs = generate(self._model, self._tokenizer, texts, max_length=max_length)
+        # text_embeds is an mx.array of shape (batch, dims)
+        return outputs.text_embeds.tolist()
+
+    async def close(self) -> None:
+        self._model = None
+        self._tokenizer = None
+
+
+# ---------------------------------------------------------------------------
 # Provider factory
 # ---------------------------------------------------------------------------
 
 def make_provider(config: EmbeddingConfig) -> EmbeddingProvider:
     """Instantiate the correct provider for the given config.
 
-    Supported providers: cuda, cpu, mlx, openai_api.
+    Supported providers: cuda, cpu, mlx, native_mlx, openai_api.
     """
     from colony_sidecar.vector.openai_provider import OpenAIAPIEmbeddingProvider
 
@@ -247,6 +327,7 @@ def make_provider(config: EmbeddingConfig) -> EmbeddingProvider:
         "cuda": CUDAEmbeddingProvider,
         "cpu": CPUEmbeddingProvider,
         "mlx": MLXEmbeddingProvider,
+        "native_mlx": NativeMLXEmbeddingProvider,
         "openai_api": OpenAIAPIEmbeddingProvider,
     }
     provider_cls = providers.get(config.provider)
