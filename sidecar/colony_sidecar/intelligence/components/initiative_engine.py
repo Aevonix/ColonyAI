@@ -987,8 +987,10 @@ class InitiativeEngine:
             entity_id = item.get("entity_id")
             # Bug 20: Blend graph priority with time-based priority
             graph_priority = item.get("priority", 0.5)
-            days_priority = min(1.0, 0.4 + days * 0.1)
+            days_priority = min(1.0, 0.5 + days * 0.1)
             priority = min(1.0, days_priority * 0.6 + graph_priority * 0.4)
+            # Floor: pending tasks (blocked goals, research) should never drop below threshold
+            priority = max(priority, 0.72)
             
             initiatives.append(
                 Initiative(
