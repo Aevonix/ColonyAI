@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.18 (2026-05-11)
+
+Hermes integration suite, autonomy bridge, and initiative engine hardening.
+
+### Added
+- **Colony-Hermes integration suite** — full plugin for Hermes agent context injection
+  - Graph memory MCP server with Neo4j-backed entity/relationship queries
+  - Contact reminders via Hermes todo system with neglected-contact detection
+  - Context assembly endpoint for agent prompt enrichment
+  - Setup wizard (`colony setup --hermes`) for one-command installation
+- **Colony autonomy bridge** — Hermes-native initiative tools
+  - `initiatives_list` tool for querying pending initiatives
+  - `initiative_acknowledge` / `initiative_complete` / `initiative_snooze` lifecycle tools
+  - `autonomy_cycle` tool for triggering reactive autonomy ticks
+- **Initiative engine hardening**
+  - Name deduplication for Person nodes (first + last → canonical full name)
+  - Junk contact filtering — skips nodes missing both name and email
+  - Graph cleanup — removes stale `:HAS_CONTACT` relationships for non-Person nodes
+  - `entity_id` and `dedup_key` fields on health/scheduling initiatives
+
+### Fixed
+- **`/autonomy/cycle` reactive mode** — now runs `_tick()` directly instead of scheduling a background task (#23)
+- **Schema-adaptive graph queries** — handles `lastCommunication` vs `last_interaction` property variants gracefully
+
 ## 0.7.17 (2026-05-10)
 
 MLX reranker fix and new `/memory/rerank` endpoint.
