@@ -9,6 +9,8 @@ Generates:
 
 import asyncio
 import os
+import re
+import unicodedata
 import uuid as _uuid_module
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -127,6 +129,64 @@ class InitiativeEngine:
         mind_model: Mind model for behavioral state awareness
         goal_store: Optional GoalStore for initiative dedup cooldown
     """
+
+    # Common suffixes that create false duplicates (e.g. "Craig Wiener" vs "Craig Wiener US")
+    _NAME_SUFFIXES = {"us", "usa", "uk", "jr", "sr", "ii", "iii", "iv", "dr", "mr", "ms"}
+
+    @staticmethod
+    def _normalize_contact_name(name: str) -> str:
+        """Normalize a contact name for deduplication.
+        
+        Steps:
+        1. Strip leading/trailing whitespace
+        2. Lowercase
+        3. Remove accents (NFKD decomposition)
+        4. Remove common location/professional suffixes
+        5. Collapse multiple spaces
+        """
+        if not name or not isinstance(name, str):
+            return ""
+        name = name.strip().lower()
+        # Decompose accents: "João" → "Joao", "López" → "Lopez"
+        name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+        # Remove common suffixes like " US", " USA", " Jr." etc.
+        parts = name.split()
+        filtered = []
+        for part in parts:
+            clean = part.strip(".,")
+            if clean not in InitiativeEngine._NAME_SUFFIXES:
+                filtered.append(clean)
+        name = " ".join(filtered)
+        # Collapse multiple spaces
+        name = re.sub(r"\s+", " ", name).strip()
+        return name
+
+    @staticmethod
+    def _is_meaningful_contact(name: str) -> bool:
+        """Filter out junk/system nodes that shouldn't generate initiatives."""
+        if not name or not isinstance(name, str):
+            return False
+        name = name.strip()
+        if len(name) < 3:
+            return False
+        # Single word names are suspicious (unless they're known mononyms)
+        words = name.split()
+        if len(words) < 2:
+            return False
+        # Block known system/junk names
+        blocked = {
+            "another", "best", "can", "conversation", "episodic",
+            "gateway", "has", "high", "hydrahost", "infrastructure",
+            "integration", "local-llama", "logged", "memories", "memory",
+            "mind", "openclaw", "phase", "process", "session", "should",
+            "tmux", "vllm", "what", "unknown", "default", "none",
+        }
+        if name.lower() in blocked:
+            return False
+        # Block phone numbers and UUID-like strings
+        if re.match(r"^\+?\d", name) or re.match(r"^[a-f0-9-]{8,}$", name.replace("-", "")):
+            return False
+        return True
 
     def __init__(
         self,
@@ -340,104 +400,75 @@ class InitiativeEngine:
     async def _load_neglected_contacts(self) -> None:
         """Query graph for contacts with no recent interaction.
         
-        Schema-adaptive: tries multiple property names for compatibility
-        with different graph schemas.
+        Uses a single unified Cypher query that checks all date fields in
+        priority order (lastCommunication → last_interaction → lastSeen).
+        Only returns contacts that are genuinely neglected (no date OR
+        date is older than threshold), not every node in the graph.
         """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
         
-        # Try multiple query variants for schema compatibility
-        queries = [
-            # Colony schema: last_interaction
-            {
-                "query": """
-                    MATCH (p:Person)
-                    WHERE p.last_interaction < datetime() - duration({days: $days})
-                      OR p.last_interaction IS NULL
-                    RETURN p.id as id, p.name as name, p.last_interaction as last_interaction
-                    ORDER BY p.last_interaction ASC
-                """,
-                "date_field": "last_interaction",
-            },
-            # Hermes schema: lastCommunication
-            {
-                "query": """
-                    MATCH (p:Person)
-                    WHERE p.lastCommunication < datetime() - duration({days: $days})
-                      OR p.lastCommunication IS NULL
-                    RETURN p.id as id, p.name as name, p.lastCommunication as last_interaction
-                    ORDER BY p.lastCommunication ASC
-                """,
-                "date_field": "last_interaction",  # aliased in RETURN
-            },
-            # Alternative: lastSeen
-            {
-                "query": """
-                    MATCH (p:Person)
-                    WHERE p.lastSeen < datetime() - duration({days: $days})
-                      OR p.lastSeen IS NULL
-                    RETURN p.id as id, p.name as name, p.lastSeen as last_interaction
-                    ORDER BY p.lastSeen ASC
-                """,
-                "date_field": "last_interaction",  # aliased in RETURN
-            },
-            # Fallback: any Person with no date field (use firstSeen as baseline)
-            {
-                "query": """
-                    MATCH (p:Person)
-                    WHERE p.last_interaction IS NULL
-                       AND p.lastCommunication IS NULL
-                       AND p.lastSeen IS NULL
-                    RETURN p.id as id, p.name as name, p.firstSeen as last_interaction
-                    ORDER BY p.firstSeen ASC
-                """,
-                "date_field": "last_interaction",  # aliased in RETURN
-            },
-        ]
+        # Unified query: checks all date fields with proper EXISTS guards.
+        # COALESCE picks the first non-null date; nodes with no dates at all
+        # are matched by the fallback branch using firstSeen.
+        query = """
+            MATCH (p:Person)
+            WITH p,
+                 CASE
+                   WHEN p.lastCommunication IS NOT NULL 
+                        AND p.lastCommunication < datetime() - duration({days: $days})
+                     THEN duration.inDays(p.lastCommunication, datetime()).days
+                   WHEN p.last_interaction IS NOT NULL 
+                        AND p.last_interaction < datetime() - duration({days: $days})
+                     THEN duration.inDays(p.last_interaction, datetime()).days
+                   WHEN p.lastSeen IS NOT NULL 
+                        AND p.lastSeen < datetime() - duration({days: $days})
+                     THEN duration.inDays(p.lastSeen, datetime()).days
+                   WHEN p.lastCommunication IS NULL 
+                        AND p.last_interaction IS NULL 
+                        AND p.lastSeen IS NULL
+                     THEN $fallback_days
+                   ELSE null
+                 END AS days_since
+            WHERE days_since IS NOT NULL
+            RETURN p.id as id, p.name as name, days_since
+            ORDER BY days_since DESC
+            LIMIT $limit
+        """
         
         contacts = []
-        for variant in queries:
-            if contacts:  # Stop if we found data
-                break
-            try:
-                async with self.graph.driver.session(database=self.graph.database) as session:
-                    result = await session.run(
-                        variant["query"],
-                        days=self._config.contact_neglect_days,
-                    )
-                    async for record in result:
-                        record = dict(record)
-                        last_interaction = self._parse_neo4j_datetime(record.get("last_interaction"))
-                        # Bug 14: Use higher default for NULL last_interaction
-                        if last_interaction:
-                            days_since = max(0, (datetime.now(timezone.utc) - last_interaction).days)
-                        else:
-                            days_since = self._config.contact_neglect_days * 2
-                        
-                        name = record.get("name", "Unknown")
-                        # Skip non-human entries (single words, system nodes)
-                        if name and len(name.split()) >= 2 and name.lower() not in {
-                            'another', 'best', 'can', 'conversation', 'episodic',
-                            'gateway', 'has', 'high', 'hydrahost', 'infrastructure',
-                            'integration', 'local-llama', 'logged', 'memories', 'memory',
-                            'mind', 'openclaw', 'phase', 'process', 'session', 'should',
-                            'tmux', 'vllm', 'what'
-                        }:
-                            contacts.append({
-                                "entity_id": record["id"],
-                                "name": name,
-                                "days_since_contact": days_since,
-                            })
-                
-                if contacts:
-                    logger.debug("Loaded %d neglected contacts", len(contacts))
-            except Exception as e:
-                logger.debug("Neglected contacts query variant failed: %s", e)
-                continue
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(
+                    query,
+                    days=self._config.contact_neglect_days,
+                    fallback_days=self._config.contact_neglect_days * 2,
+                    limit=100,
+                )
+                async for record in result:
+                    record = dict(record)
+                    name = record.get("name", "Unknown")
+                    entity_id = record.get("id")
+                    days_since = record.get("days_since")
+                    
+                    # Skip junk/system nodes
+                    if not self._is_meaningful_contact(name):
+                        logger.debug("Skipping junk contact: %s (%s)", name, entity_id)
+                        continue
+                    
+                    if entity_id is not None and days_since is not None:
+                        contacts.append({
+                            "entity_id": entity_id,
+                            "name": name,
+                            "days_since_contact": int(days_since),
+                        })
+            
+            logger.debug("Loaded %d genuinely neglected contacts", len(contacts))
+        except Exception as e:
+            logger.warning("Neglected contacts query failed: %s", e)
         
         self._context["neglected_contacts"] = contacts
         if not contacts:
-            logger.debug("No neglected contacts found with any schema variant")
             self._context.setdefault("neglected_contacts", [])
 
     async def _load_health_trends(self) -> None:
@@ -996,9 +1027,34 @@ class InitiativeEngine:
         return initiatives
 
     async def _generate_relationship_suggestions(self) -> List[Initiative]:
-        """Generate relationship maintenance suggestions from neglected contacts."""
+        """Generate relationship maintenance suggestions from neglected contacts.
+        
+        Deduplicates by normalized name: if the same person has multiple
+        Person nodes (e.g. "Marc Seal" and "Marc Andrew Seal"), only the
+        one with the most recent contact is kept.
+        """
         initiatives: List[Initiative] = []
-        for contact in self._context.get("neglected_contacts", []):
+        contacts = self._context.get("neglected_contacts", [])
+        
+        # Deduplicate by normalized name: keep the entry with fewest days
+        # since contact (i.e. the most recent data).
+        seen: Dict[str, Dict[str, Any]] = {}
+        for contact in contacts:
+            name = contact.get("name", "")
+            if not self._is_meaningful_contact(name):
+                continue
+            norm = self._normalize_contact_name(name)
+            if not norm:
+                continue
+            existing = seen.get(norm)
+            if existing is None:
+                seen[norm] = contact
+            else:
+                # Keep the one with fewer days (more recent contact)
+                if contact.get("days_since_contact", 9999) < existing.get("days_since_contact", 9999):
+                    seen[norm] = contact
+        
+        for contact in seen.values():
             name = contact.get("name", "contact")
             days = float(contact.get("days_since_contact", 0))
             entity_id = contact.get("entity_id")
