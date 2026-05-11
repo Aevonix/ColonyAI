@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.0 (2026-05-11)
+
+Native MLX embedding and reranker providers for Apple Silicon.
+
+### Added
+- **NativeMLXEmbeddingProvider** — true Apple Silicon MLX support via `mlx-embeddings`
+  - Loads models directly into MLX arrays, bypassing PyTorch MPS overhead
+  - Supports original HuggingFace models (on-the-fly conversion) and pre-converted `mlx-community` checkpoints
+  - Recommended models: `Qwen/Qwen3-Embedding-8B` (4096 dims), `BAAI/bge-m3` (1024 dims)
+- **NativeMLXRerankerProvider** — native MLX CrossEncoder via `mlx-lm`
+  - Extracts true/false token logits for relevance scoring
+  - Supports `Qwen/Qwen3-Reranker-8B` and `BAAI/bge-reranker-v2-m3`
+- **Hardware tier matrix** — new `native-mlx-high` (64GB+) and `native-mlx-balanced` (32GB+) tiers
+- **Auto-detection** — server and wizard now prefer `native_mlx` when `mlx-embeddings` is installed
+- **Setup wizard** — supports `native_mlx` provider selection and model pre-download via MLX loaders
+
+### Changed
+- Legacy `MLXEmbeddingProvider` and `MLXRerankerProvider` docstrings clarified: they use PyTorch MPS, not true MLX
+
 ## 0.7.18 (2026-05-11)
 
 Hermes integration suite, autonomy bridge, and initiative engine hardening.
