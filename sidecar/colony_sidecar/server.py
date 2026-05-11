@@ -200,7 +200,17 @@ async def lifespan(app: FastAPI):
             tier = get_tier_by_memory(hw.vram_gb, hw.ram_gb)
             spec = tier.text_embedder
             if spec:
-                embed_provider = embed_provider or ("cuda" if hw.gpu_type == "cuda" else "cpu")
+                if hw.gpu_type == "cuda":
+                    embed_provider = embed_provider or "cuda"
+                elif hw.gpu_type == "mlx":
+                    # Prefer native MLX when the package is available
+                    try:
+                        import mlx_embeddings  # noqa: F401
+                        embed_provider = embed_provider or "native_mlx"
+                    except ImportError:
+                        embed_provider = embed_provider or "mlx"
+                else:
+                    embed_provider = embed_provider or "cpu"
                 embed_model = embed_model or spec.model_id
                 embed_dims = embed_dims or str(spec.dims)
                 reranker_model = reranker_model or (tier.text_reranker.model_id if tier.text_reranker else "")
@@ -306,11 +316,21 @@ async def lifespan(app: FastAPI):
     # --- 6b. Reranker pipeline ---
     if reranker_model and reranker_model.lower() not in ("none", "", "null"):
         try:
-            from colony_sidecar.vector.reranker import MLXRerankerProvider, CPURerankerProvider, CUDARerankerProvider
+            from colony_sidecar.vector.reranker import (
+                NativeMLXRerankerProvider,
+                MLXRerankerProvider,
+                CPURerankerProvider,
+                CUDARerankerProvider,
+            )
             from colony_sidecar.vector.scanner import scan
             hw = scan()
             if hw.gpu_type == "mlx":
-                reranker_provider = MLXRerankerProvider(reranker_model)
+                # Prefer native MLX when the package is available
+                try:
+                    import mlx_lm  # noqa: F401
+                    reranker_provider = NativeMLXRerankerProvider(reranker_model)
+                except ImportError:
+                    reranker_provider = MLXRerankerProvider(reranker_model)
             elif hw.gpu_type == "cuda":
                 reranker_provider = CUDARerankerProvider(reranker_model)
             else:
