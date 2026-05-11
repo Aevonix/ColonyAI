@@ -3,7 +3,8 @@ version: 0.2.0
 description: |
   Colony general plugin for Hermes. Registers native Colony tools, WebSocket
   event subscriber for proactive events, slash commands (/colony status, goals,
-  context), and pre_llm_call hooks for event injection.
+  context, autonomy), and pre_llm_call hooks for event injection. Includes the
+  Colony Autonomy Bridge for acting on initiatives autonomously via cron.
 author: Aevonix
 entry_point: __init__.py
 category: general
