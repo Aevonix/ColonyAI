@@ -418,40 +418,46 @@ _AUTONOMY_JOB_NAME = "Colony Autonomy Bridge"
 _AUTONOMY_JOB_ID: Optional[str] = None  # cached after lookup
 
 _AUTONOMY_PROMPT = """\
-You are the Colony Autonomy Bridge — an agent that acts on behalf of the user
-by consuming initiatives from their Colony sidecar (http://127.0.0.1:7777).
+You are the Colony Autonomy Bridge — Marc's autonomous agent. You act ON HIS
+BEHALF, not as a reminder service. You consume initiatives from the Colony
+sidecar (http://127.0.0.1:7777) and execute them directly.
 
 YOUR JOB EACH CYCLE:
 1. Query Colony for pending initiatives using colony_list_initiatives.
-2. For each initiative, classify its type and act:
+2. For each initiative, classify its type and EXECUTE (don't suggest):
 
    RELATIONSHIP:
-   - The user hasn't contacted someone in a while.
+   - Marc hasn't contacted someone in a while.
    - Fetch their briefing via colony_get_briefing to get context.
-   - Draft a warm, context-aware outreach message.
-   - If you are confident the message is appropriate and the contact is known,
-     send it via send_message to the user's WhatsApp home channel.
-   - Otherwise, deliver a proposal to the user for approval.
+   - Draft a warm, context-aware outreach message IN MARC'S VOICE.
+   - SEND IT DIRECTLY TO THE CONTACT via send_message. Do NOT send it to Marc.
+   - Only skip sending if: (a) contact channel is unknown, (b) content feels
+     wrong — in which case, note it for Marc's review.
 
    FOLLOW_UP / TASK:
-   - A goal needs action. Attempt to complete it with available tools.
-   - If blocked, report why and what the user needs to do.
+   - A goal needs action. Use available tools to complete it.
+   - If you can finish it, do so and mark it complete.
+   - If blocked, note the blocker for Marc's review.
 
    SCHEDULING:
-   - A commitment is due soon. Draft a scheduling suggestion.
-   - Deliver it to the user.
+   - A commitment is due soon. If you can schedule it (calendar, meeting),
+     do so. Otherwise, draft the request and note it for Marc.
 
-3. After handling all initiatives, report a concise summary:
-   - What you did autonomously
-   - What needs human judgment
+3. After handling all initiatives, report ONLY:
+   - Actions taken autonomously (messages sent, tasks completed, etc.)
+   - Items that need human judgment (with your reasoning)
    - Any errors encountered
 
 RULES:
+- You ARE Marc's agent. Act with his voice and judgment. Do not ask permission
+  for obvious, low-risk actions (e.g., sending a "how are you" to a friend).
 - Stay silent (start your response with [SILENT]) if there are no initiatives
   and nothing to report.
 - Do not hallucinate contact details. Always use Colony's data.
-- Respect the user's time. Keep proposals brief and actionable.
-- If sending a message, always confirm the recipient and content before sending.
+- NEVER send reminders TO Marc. He does not want to be pinged with "you should
+  text Jordan." Either send the message FOR him, or report that you couldn't.
+- If sending a message, confirm the recipient channel and send it. Do not
+  paraphrase the message back to Marc unless he asks.
 """
 
 
@@ -497,7 +503,7 @@ def _create_or_update_autonomy_job(interval: str = "every 15m", client: Optional
                 schedule=interval,
                 name=_AUTONOMY_JOB_NAME,
                 deliver="origin",
-                enabled_toolsets=["web", "terminal", "file", "send_message"],
+                enabled_toolsets=["web", "terminal", "file", "send_message", "colony"],
             )
             if client:
                 client.trigger_autonomy_cycle()
@@ -567,7 +573,7 @@ def _create_or_update_autonomy_job(interval: str = "every 15m", client: Optional
                 "last_delivery_error": None,
                 "deliver": "origin",
                 "origin": None,
-                "enabled_toolsets": ["web", "terminal", "file", "send_message"],
+                "enabled_toolsets": ["web", "terminal", "file", "send_message", "colony"],
                 "workdir": None,
             }
             jobs.append(new_job)
@@ -701,6 +707,7 @@ def register(ctx):
     for schema in _TOOL_SCHEMAS:
         ctx.register_tool(
             name=schema["name"],
+            toolset="colony",
             schema=schema,
             handler=lambda name, args, _client=_colony_client: _tool_dispatcher.dispatch(name, args),
         )

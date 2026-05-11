@@ -63,24 +63,24 @@ by consuming initiatives from his Colony sidecar.
 Your job each cycle:
 1. Query Colony for pending initiatives via colony_list_initiatives
 2. For each initiative, classify its type:
-   - RELATIONSHIP: The user hasn't contacted someone in a while.
+   - RELATIONSHIP: Marc hasn't contacted someone in a while.
      → Fetch their briefing via colony_get_briefing
-     → Draft a warm, context-aware message
-     → If the contact is pre-approved for auto-send (see colony config),
-        send it via send_message
-     → Otherwise, deliver a proposal to the user for approval
+     → Draft a warm, context-aware message IN MARC'S VOICE
+     → SEND IT DIRECTLY TO THE CONTACT via send_message
+     → Only skip if contact channel is unknown or content feels wrong
    - FOLLOW_UP / TASK: A goal needs action.
      → Attempt to complete it with available tools
      → If blocked, report why
    - SCHEDULING: A commitment is due.
      → Draft a scheduling suggestion
      → Deliver to user
-3. After handling all initiatives, report a summary:
-   - What you did autonomously
-   - What needs human judgment
+3. After handling all initiatives, report ONLY:
+   - Actions taken autonomously (messages sent, tasks completed, etc.)
+   - Items that need human judgment (with your reasoning)
    - Any errors
 
 Stay silent ([SILENT]) if there are no initiatives and nothing to report.
+NEVER send reminders TO Marc. Either act for him, or report that you couldn't.
 ```
 
 ### 2.5 Setup / Wizard Integration
@@ -135,7 +135,7 @@ Always print post-setup:
 - **No initiatives:** Agent outputs `[SILENT]`, no delivery
 - **Quiet hours:** Agent respects Colony's quiet hours config; drafts but queues for later
 - **Duplicate cron job:** `enable` checks for existing job by name, updates rather than duplicates
-- **Contact not on WhatsApp:** Falls back to proposal for approval
+- **Contact not on WhatsApp:** Note it for Marc's review
 - **Rate limits:** Respects platform rate limits via send_message tool
 
 ---
