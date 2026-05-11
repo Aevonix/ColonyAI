@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.20 (2026-05-11)
+
+Qwen3 reranker token config fallback.
+
+### Fixed
+- **NativeMLXRerankerProvider** now falls back to `1_LogitScore/config.json` when token IDs are not found in `config_sentence_transformers.json`
+  - Qwen3 rerankers (e.g. `Qwen/Qwen3-Reranker-0.6B`, `Qwen/Qwen3-Reranker-8B`) store `true_token_id` and `false_token_id` in a separate config file
+  - Without this fallback the provider silently used raw max-logit scoring, producing incorrect relevance scores
+
 ## 0.7.19 (2026-05-11)
 
 Native MLX embedding and reranker providers for Apple Silicon.
