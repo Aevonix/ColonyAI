@@ -196,9 +196,10 @@ class ContactStore(ABC):
 class SQLiteContactStore(ContactStore):
     """SQLite-backed implementation of ContactStore."""
 
-    def __init__(self, config: Optional[ContactsConfig] = None) -> None:
+    def __init__(self, config: Optional[ContactsConfig] = None, graph=None) -> None:
         self._config = config or ContactsConfig()
         self._db: Optional[aiosqlite.Connection] = None
+        self._graph = graph  # Optional ColonyGraph for score sync
 
     async def connect(self) -> None:
         path = self._config.sqlite_path
@@ -308,6 +309,40 @@ class SQLiteContactStore(ContactStore):
                 results.append((sim, c))
         results.sort(key=lambda x: x[0], reverse=True)
         return [c for _, c in results]
+
+    async def find_by_person_node_id(self, person_node_id: str) -> Optional[Contact]:
+        """Fetch a contact by its linked Neo4j Person node ID."""
+        db = self._require_db()
+        async with db.execute(
+            "SELECT * FROM contacts WHERE person_node_id = ? AND deleted_at IS NULL",
+            (person_node_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        return Contact.from_row(dict(row))
+
+    async def find_discovered_by_handle(
+        self, gateway: str, address: str
+    ) -> Optional[Contact]:
+        """Find a discovered (world_model) contact that owns a given handle."""
+        db = self._require_db()
+        norm = _normalize_email(address) if gateway == "email" else _normalize_phone(address) if gateway in ("imessage", "sms", "signal") else address
+        async with db.execute(
+            """
+            SELECT c.* FROM contacts c
+            JOIN contact_handles h ON h.contact_id = c.contact_id
+            WHERE c.import_source = 'world_model'
+              AND c.deleted_at IS NULL
+              AND h.gateway = ? AND h.address = ?
+            LIMIT 1
+            """,
+            (gateway, norm),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        return Contact.from_row(dict(row))
 
     # ── Write ops ─────────────────────────────────────────────────────────────
 
@@ -449,6 +484,16 @@ class SQLiteContactStore(ContactStore):
             (score, _now_iso(), contact_id),
         )
         await db.commit()
+        # Sync to graph if linked
+        if self._graph is not None:
+            try:
+                contact = await self.get(contact_id)
+                if contact and contact.person_node_id:
+                    await self._graph.update_person(
+                        contact.person_node_id, score=score,
+                    )
+            except Exception as exc:
+                logger.debug("Score sync to graph failed for %s: %s", contact_id, exc)
 
     async def update_interaction_allowed(
         self, contact_id: str, allowed: bool, performed_by: str = "operator"

@@ -666,6 +666,71 @@ class ColonyGraph:
             records = await result.values()
             return [r[0] for r in records if r[0]]
 
+    async def delete_person(self, person_id: str) -> bool:
+        """Permanently delete a Person node and all attached relationships."""
+        t0 = time.monotonic()
+        try:
+            async with self.driver.session(database=self.database) as session:
+                result = await session.run(
+                    "MATCH (p:Person {id: $person_id}) DETACH DELETE p RETURN count(p) AS deleted",
+                    person_id=person_id,
+                )
+                record = await result.single()
+                deleted = record["deleted"] if record else 0
+                logger.debug(
+                    "delete_person %s deleted=%d %.1fms",
+                    person_id, deleted, (time.monotonic() - t0) * 1000,
+                )
+                return deleted > 0
+        except Exception as exc:
+            logger.error("delete_person failed for %s: %s", person_id, exc)
+            return False
+
+    async def get_people_with_substance(
+        self,
+        min_signals: int = 2,
+        min_memories: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Return Person nodes that have enough substance to become contacts.
+
+        A person has substance if they have:
+        - a name AND (a phone or email)  
+        - OR a name AND (>= min_signals OR >= min_memories)
+        """
+        t0 = time.monotonic()
+        try:
+            async with self.driver.session(database=self.database) as session:
+                result = await session.run(
+                    """
+                    MATCH (p:Person)
+                    WHERE p.name IS NOT NULL
+                    OPTIONAL MATCH (p)-[:EXHIBITED]->(s:Signal)
+                    OPTIONAL MATCH (m:Memory)-[:ABOUT]->(p)
+                    WITH p, count(s) AS sigs, count(m) AS mems
+                    WHERE p.phone IS NOT NULL OR p.email IS NOT NULL
+                       OR sigs >= $min_signals OR mems >= $min_memories
+                    RETURN p.id AS id,
+                           p.name AS name,
+                           p.phone AS phone,
+                           p.email AS email,
+                           coalesce(p.score, 0.0) AS score,
+                           coalesce(p.tier, 'regular') AS tier,
+                           sigs,
+                           mems
+                    """,
+                    min_signals=min_signals,
+                    min_memories=min_memories,
+                )
+                people = [dict(r) async for r in result]
+                logger.debug(
+                    "get_people_with_substance count=%d %.1fms",
+                    len(people), (time.monotonic() - t0) * 1000,
+                )
+                return people
+        except Exception as exc:
+            logger.error("get_people_with_substance failed: %s", exc)
+            return []
+
     # ------------------------------------------------------------------
     # Signal & relationship methods (required by SignalCollector,
     # BaselineStore, and RelationshipScorer)
@@ -786,6 +851,7 @@ class ColonyGraph:
         new_tier: str,
         old_score: float,
         reason: str,
+        store = None,  # Optional SQLiteContactStore for reverse sync
     ) -> None:
         """Persist a relationship score change with audit trail."""
         from colony_sidecar.intelligence.graph.queries import RECORD_SCORE_CHANGE
@@ -805,6 +871,14 @@ class ColonyGraph:
                 "record_score_change person=%s %.1f→%.1f (%s) %.1fms",
                 person_id, old_score, new_score, new_tier, (time.monotonic() - t0) * 1000,
             )
+            # Sync to SQLite if linked contact exists
+            if store is not None:
+                try:
+                    contact = await store.find_by_person_node_id(person_id)
+                    if contact:
+                        await store.update_relationship_score(contact.contact_id, new_score)
+                except Exception as exc:
+                    logger.debug("Score sync to SQLite failed for %s: %s", person_id, exc)
         except Exception as exc:
             logger.error("record_score_change failed for person %s: %s", person_id, exc)
 

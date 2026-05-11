@@ -413,14 +413,31 @@ async def lifespan(app: FastAPI):
         logger.warning("ToM Extractor init failed: %s", exc)
 
     # --- 8. Contacts ---
+    contacts_store = None
     try:
         from colony_sidecar.contacts.store import SQLiteContactStore
-        contacts_store = SQLiteContactStore()
+        contacts_store = SQLiteContactStore(graph=graph)
         await contacts_store.connect()
         set_contacts_store(contacts_store)
         logger.info("ContactsStore initialized")
     except Exception as exc:
         logger.warning("ContactsStore init failed: %s", exc)
+
+    # --- 8b. Contact-World Model Bridge ---
+    if contacts_store is not None and graph is not None:
+        try:
+            from colony_sidecar.contacts.world_bridge import WorldModelContactBridge
+            bridge = WorldModelContactBridge(graph=graph, store=contacts_store)
+            # Backfill all substantive Person nodes on startup
+            backfill_stats = await bridge.backfill_all_people()
+            logger.info(
+                "WorldModelContactBridge initialized — backfill created=%d linked=%d skipped=%d",
+                backfill_stats["created"], backfill_stats["linked"], backfill_stats["skipped"],
+            )
+        except Exception as exc:
+            logger.warning("WorldModelContactBridge init failed: %s", exc)
+    else:
+        logger.info("WorldModelContactBridge skipped — contacts_store or graph unavailable")
 
     # --- 9. Briefings ---
     try:

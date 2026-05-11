@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS contacts (
                         CHECK(relationship_score >= 0.0 AND relationship_score <= 1.0),
   trust_tier          TEXT NOT NULL DEFAULT 'unknown'
                         CHECK(trust_tier IN ('inner_circle','trusted','regular',
-                                             'peripheral','silenced','unknown')),
+                                             'peripheral','silenced','acquaintance','unknown')),
   interaction_allowed INTEGER NOT NULL DEFAULT 1
                         CHECK(interaction_allowed IN (0,1)),
   tags_json           TEXT NOT NULL DEFAULT '[]',  -- JSON array of strings
