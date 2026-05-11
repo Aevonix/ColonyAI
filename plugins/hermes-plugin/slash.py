@@ -68,10 +68,45 @@ async def _handle_sync(client: "ColonyClient", args: str) -> str:
     return "Use /colony sync via the CLI or turn-level sync."
 
 
+async def _handle_autonomy_enable(client: "ColonyClient", args: str) -> str:
+    from colony import _create_or_update_autonomy_job
+    result = _create_or_update_autonomy_job(interval=args.strip() or "every 15m", client=client)
+    if result.get("success"):
+        return f"✅ {result['message']}\nSchedule: {result.get('schedule', 'every 15m')}"
+    return f"❌ Failed: {result.get('error', 'unknown error')}"
+
+
+async def _handle_autonomy_disable(client: "ColonyClient", args: str) -> str:
+    from colony import _remove_autonomy_job
+    result = _remove_autonomy_job()
+    if result.get("success"):
+        return f"✅ {result['message']}"
+    return f"❌ Failed: {result.get('error', 'unknown error')}"
+
+
+async def _handle_autonomy_status(client: "ColonyClient", args: str) -> str:
+    from colony import _get_autonomy_status
+    result = _get_autonomy_status(client=client)
+    lines = ["🤖 Colony Autonomy Bridge"]
+    lines.append(f"   Active: {'yes' if result.get('autonomy_active') else 'no'}")
+    job = result.get("job", {})
+    if job.get("job_id"):
+        lines.append(f"   Job ID: {job['job_id']}")
+        lines.append(f"   Next run: {job.get('next_run') or 'pending'}")
+        lines.append(f"   Last run: {job.get('last_run') or 'never'}")
+    colony = result.get("colony", {})
+    lines.append(f"   Sidecar: {colony.get('sidecar', 'unknown')}")
+    lines.append(f"   Pending initiatives: {colony.get('pending_initiatives', 'unknown')}")
+    return "\n".join(lines)
+
+
 SLASH_COMMANDS = {
     "status": _handle_status,
     "goals": _handle_goals,
     "context": _handle_context,
     "events": _handle_events,
     "sync": _handle_sync,
+    "autonomy enable": _handle_autonomy_enable,
+    "autonomy disable": _handle_autonomy_disable,
+    "autonomy status": _handle_autonomy_status,
 }

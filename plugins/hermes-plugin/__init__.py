@@ -157,6 +157,70 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "required": ["initiative_id", "action"],
         },
     },
+    {
+        "name": "colony_list_initiatives",
+        "description": (
+            "List Colony's pending initiatives — relationship reminders, task follow-ups, "
+            "and scheduling suggestions. Returns initiatives with type, priority, status, "
+            "and entity_id. Use this to discover what Colony wants the agent to act on."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "assigned", "acknowledged", "completed", "failed", "cancelled"],
+                    "description": "Filter by status (omit for all)",
+                },
+                "limit": {"type": "integer", "default": 50},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "colony_get_initiative",
+        "description": "Get full details of a single initiative by ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "initiative_id": {"type": "string"},
+            },
+            "required": ["initiative_id"],
+        },
+    },
+    {
+        "name": "colony_autonomy_enable",
+        "description": (
+            "Enable the Colony autonomy bridge. Creates a cron job that polls Colony "
+            "every 15 minutes and acts on initiatives autonomously (drafts messages, "
+            "completes tasks, proposes scheduling). Reports back only when action is taken."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "interval": {"type": "string", "default": "every 15m"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "colony_autonomy_disable",
+        "description": "Disable the Colony autonomy bridge. Removes the cron job.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "colony_autonomy_status",
+        "description": "Check if the Colony autonomy bridge is active and show recent activity.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
 ]
 
 
@@ -291,6 +355,52 @@ class _ToolDispatcher:
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
+    def _handle_colony_list_initiatives(self, args: dict) -> str:
+        try:
+            initiatives = self._client.list_initiatives(
+                status=args.get("status"),
+                limit=args.get("limit", 50),
+            )
+            return json.dumps({"initiatives": initiatives, "total": len(initiatives)})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _handle_colony_get_initiative(self, args: dict) -> str:
+        try:
+            initiative = self._client.get_initiative(args["initiative_id"])
+            if initiative is None:
+                return json.dumps({"error": "Initiative not found"})
+            return json.dumps(initiative)
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _handle_colony_autonomy_enable(self, args: dict) -> str:
+        try:
+            result = _create_or_update_autonomy_job(
+                interval=args.get("interval", "every 15m"),
+                client=self._client,
+            )
+            return json.dumps(result)
+        except Exception as exc:
+            logger.warning("autonomy_enable failed: %s", exc)
+            return json.dumps({"error": str(exc)})
+
+    def _handle_colony_autonomy_disable(self, args: dict) -> str:
+        try:
+            result = _remove_autonomy_job()
+            return json.dumps(result)
+        except Exception as exc:
+            logger.warning("autonomy_disable failed: %s", exc)
+            return json.dumps({"error": str(exc)})
+
+    def _handle_colony_autonomy_status(self, args: dict) -> str:
+        try:
+            result = _get_autonomy_status(client=self._client)
+            return json.dumps(result)
+        except Exception as exc:
+            logger.warning("autonomy_status failed: %s", exc)
+            return json.dumps({"error": str(exc)})
+
 
 # ---------------------------------------------------------------------------
 # Plugin registration
@@ -300,6 +410,280 @@ _colony_client: Optional[ColonyClient] = None
 _event_subscriber: Optional[ColonyEventSubscriber] = None
 _tool_dispatcher: Optional[_ToolDispatcher] = None
 
+# ---------------------------------------------------------------------------
+# Autonomy bridge helpers
+# ---------------------------------------------------------------------------
+
+_AUTONOMY_JOB_NAME = "Colony Autonomy Bridge"
+_AUTONOMY_JOB_ID: Optional[str] = None  # cached after lookup
+
+_AUTONOMY_PROMPT = """\
+You are the Colony Autonomy Bridge — an agent that acts on behalf of the user
+by consuming initiatives from their Colony sidecar (http://127.0.0.1:7777).
+
+YOUR JOB EACH CYCLE:
+1. Query Colony for pending initiatives using colony_list_initiatives.
+2. For each initiative, classify its type and act:
+
+   RELATIONSHIP:
+   - The user hasn't contacted someone in a while.
+   - Fetch their briefing via colony_get_briefing to get context.
+   - Draft a warm, context-aware outreach message.
+   - If you are confident the message is appropriate and the contact is known,
+     send it via send_message to the user's WhatsApp home channel.
+   - Otherwise, deliver a proposal to the user for approval.
+
+   FOLLOW_UP / TASK:
+   - A goal needs action. Attempt to complete it with available tools.
+   - If blocked, report why and what the user needs to do.
+
+   SCHEDULING:
+   - A commitment is due soon. Draft a scheduling suggestion.
+   - Deliver it to the user.
+
+3. After handling all initiatives, report a concise summary:
+   - What you did autonomously
+   - What needs human judgment
+   - Any errors encountered
+
+RULES:
+- Stay silent (start your response with [SILENT]) if there are no initiatives
+  and nothing to report.
+- Do not hallucinate contact details. Always use Colony's data.
+- Respect the user's time. Keep proposals brief and actionable.
+- If sending a message, always confirm the recipient and content before sending.
+"""
+
+
+def _find_autonomy_job() -> Optional[dict]:
+    """Find the existing Colony autonomy cron job, if any."""
+    try:
+        from cron.jobs import load_jobs
+        jobs = load_jobs()
+        for job in jobs:
+            if job.get("name") == _AUTONOMY_JOB_NAME:
+                return job
+    except Exception as exc:
+        logger.debug("Could not load cron jobs for lookup: %s", exc)
+    return None
+
+
+def _create_or_update_autonomy_job(interval: str = "every 15m", client: Optional[ColonyClient] = None) -> dict:
+    """Create or update the autonomy cron job."""
+    existing = _find_autonomy_job()
+
+    # Try using the proper cron API first
+    try:
+        from cron.jobs import create_job, update_job
+        if existing:
+            updated = update_job(existing["id"], {
+                "enabled": True,
+                "state": "scheduled",
+                "schedule": interval,
+            })
+            if updated:
+                # Trigger a Colony cycle so initiatives are fresh
+                if client:
+                    client.trigger_autonomy_cycle()
+                return {
+                    "success": True,
+                    "message": "Colony autonomy bridge re-enabled.",
+                    "job_id": existing["id"],
+                    "schedule": interval,
+                }
+        else:
+            job = create_job(
+                prompt=_AUTONOMY_PROMPT,
+                schedule=interval,
+                name=_AUTONOMY_JOB_NAME,
+                deliver="origin",
+                enabled_toolsets=["web", "terminal", "file", "send_message"],
+            )
+            if client:
+                client.trigger_autonomy_cycle()
+            return {
+                "success": True,
+                "message": "Colony autonomy bridge enabled.",
+                "job_id": job["id"],
+                "schedule": interval,
+            }
+    except Exception as exc:
+        logger.warning("cron.jobs API failed (%s), falling back to direct JSON write", exc)
+
+    # Fallback: direct JSON manipulation
+    try:
+        import json
+        import uuid
+        from datetime import datetime, timezone
+        from pathlib import Path
+        from hermes_constants import get_hermes_home
+
+        hermes_home = Path(get_hermes_home())
+        jobs_file = hermes_home / "cron" / "jobs.json"
+        jobs_file.parent.mkdir(parents=True, exist_ok=True)
+
+        jobs_data = {"jobs": []}
+        if jobs_file.exists():
+            with open(jobs_file, "r", encoding="utf-8") as f:
+                jobs_data = json.load(f)
+
+        jobs = jobs_data.get("jobs", [])
+        now = datetime.now(timezone.utc).isoformat()
+
+        if existing:
+            for j in jobs:
+                if j.get("id") == existing["id"]:
+                    j["enabled"] = True
+                    j["state"] = "scheduled"
+                    j["schedule"] = {"kind": "interval", "minutes": 15, "display": interval}
+                    j["schedule_display"] = interval
+                    break
+        else:
+            job_id = uuid.uuid4().hex[:12]
+            new_job = {
+                "id": job_id,
+                "name": _AUTONOMY_JOB_NAME,
+                "prompt": _AUTONOMY_PROMPT,
+                "skills": [],
+                "skill": None,
+                "model": None,
+                "provider": None,
+                "base_url": None,
+                "script": None,
+                "no_agent": False,
+                "context_from": None,
+                "schedule": {"kind": "interval", "minutes": 15, "display": interval},
+                "schedule_display": interval,
+                "repeat": {"times": None, "completed": 0},
+                "enabled": True,
+                "state": "scheduled",
+                "paused_at": None,
+                "paused_reason": None,
+                "created_at": now,
+                "next_run_at": None,
+                "last_run_at": None,
+                "last_status": None,
+                "last_error": None,
+                "last_delivery_error": None,
+                "deliver": "origin",
+                "origin": None,
+                "enabled_toolsets": ["web", "terminal", "file", "send_message"],
+                "workdir": None,
+            }
+            jobs.append(new_job)
+
+        with open(jobs_file, "w", encoding="utf-8") as f:
+            json.dump({"jobs": jobs, "updated_at": now}, f, indent=2)
+
+        if client:
+            client.trigger_autonomy_cycle()
+
+        return {
+            "success": True,
+            "message": "Colony autonomy bridge enabled (fallback mode).",
+            "schedule": interval,
+        }
+    except Exception as exc2:
+        return {"success": False, "error": f"Failed to create cron job: {exc2}"}
+
+
+def _remove_autonomy_job() -> dict:
+    """Remove or disable the autonomy cron job."""
+    existing = _find_autonomy_job()
+    if not existing:
+        return {"success": True, "message": "Colony autonomy bridge was not active."}
+
+    try:
+        from cron.jobs import update_job
+        update_job(existing["id"], {"enabled": False, "state": "paused"})
+        return {
+            "success": True,
+            "message": "Colony autonomy bridge disabled.",
+            "job_id": existing["id"],
+        }
+    except Exception as exc:
+        logger.warning("cron.jobs update failed (%s), falling back to direct JSON", exc)
+
+    try:
+        import json
+        from pathlib import Path
+        from hermes_constants import get_hermes_home
+
+        hermes_home = Path(get_hermes_home())
+        jobs_file = hermes_home / "cron" / "jobs.json"
+        if not jobs_file.exists():
+            return {"success": True, "message": "No cron jobs file found."}
+
+        with open(jobs_file, "r", encoding="utf-8") as f:
+            jobs_data = json.load(f)
+
+        jobs = jobs_data.get("jobs", [])
+        for j in jobs:
+            if j.get("id") == existing["id"]:
+                j["enabled"] = False
+                j["state"] = "paused"
+                break
+
+        with open(jobs_file, "w", encoding="utf-8") as f:
+            json.dump(jobs_data, f, indent=2)
+
+        return {
+            "success": True,
+            "message": "Colony autonomy bridge disabled (fallback mode).",
+            "job_id": existing["id"],
+        }
+    except Exception as exc2:
+        return {"success": False, "error": f"Failed to disable: {exc2}"}
+
+
+def _get_autonomy_status(client: Optional[ColonyClient] = None) -> dict:
+    """Return the current autonomy bridge status."""
+    existing = _find_autonomy_job()
+    job_status = {
+        "active": False,
+        "job_id": None,
+        "next_run": None,
+        "last_run": None,
+        "last_status": None,
+    }
+    if existing:
+        job_status["active"] = existing.get("enabled", False) and existing.get("state") == "scheduled"
+        job_status["job_id"] = existing.get("id")
+        job_status["next_run"] = existing.get("next_run_at")
+        job_status["last_run"] = existing.get("last_run_at")
+        job_status["last_status"] = existing.get("last_status")
+
+    colony_status = {}
+    if client:
+        try:
+            health = client.health()
+            colony_status["sidecar"] = health.get("status", "unknown")
+            colony_status["capabilities_count"] = len(health.get("capabilities", []))
+        except Exception:
+            colony_status["sidecar"] = "unreachable"
+
+        try:
+            initiatives = client.list_initiatives(status="pending", limit=20)
+            colony_status["pending_initiatives"] = len(initiatives)
+        except Exception:
+            colony_status["pending_initiatives"] = "unknown"
+
+    return {
+        "success": True,
+        "autonomy_active": job_status["active"],
+        "job": job_status,
+        "colony": colony_status,
+        "message": (
+            "Colony autonomy bridge is active."
+            if job_status["active"]
+            else "Colony autonomy bridge is inactive. Run colony_autonomy_enable to activate."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plugin registration
+# ---------------------------------------------------------------------------
 
 def register(ctx):
     """Register the Colony general plugin with Hermes."""
@@ -371,3 +755,7 @@ def register(ctx):
         logger.warning("Colony event subscriber failed to start: %s", exc)
 
     logger.info("Colony general plugin registered (url=%s)", url)
+    logger.info(
+        "Colony Autonomy Bridge available. Run '/colony autonomy enable' to "
+        "activate background initiative handling."
+    )

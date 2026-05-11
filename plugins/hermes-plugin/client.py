@@ -78,6 +78,38 @@ class ColonyClient:
             logger.debug("get_briefings failed: %s", exc)
             return []
 
+    def list_initiatives(self, status: Optional[str] = None, limit: int = 50) -> List[dict]:
+        try:
+            # NOTE: The API status filter is unreliable (store expects list,
+            # router passes string). Fetch all and filter client-side.
+            resp = self.get("/v1/host/initiatives", params={"limit": limit}, timeout=5)
+            resp.raise_for_status()
+            initiatives = resp.json().get("initiatives", [])
+            if status:
+                initiatives = [i for i in initiatives if i.get("status") == status]
+            return initiatives
+        except Exception as exc:
+            logger.debug("list_initiatives failed: %s", exc)
+            return []
+
+    def get_initiative(self, initiative_id: str) -> Optional[dict]:
+        try:
+            resp = self.get(f"/v1/host/initiatives/{initiative_id}", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            logger.debug("get_initiative failed: %s", exc)
+            return None
+
+    def trigger_autonomy_cycle(self) -> dict:
+        try:
+            resp = self.post("/v1/host/autonomy/cycle", timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            logger.debug("trigger_autonomy_cycle failed: %s", exc)
+            return {"completed": False, "error": str(exc)}
+
     def assemble_context(self, query: str, contact_id: str, session_id: str = "") -> dict:
         try:
             resp = self.post(
