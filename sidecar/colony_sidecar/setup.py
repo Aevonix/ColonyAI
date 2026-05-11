@@ -1073,27 +1073,253 @@ def _setup_mcp_harness(harness: str, api_key: str, sidecar_url: str, non_interac
         return False
 
 
-def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool = False) -> bool:
-    """Configure Colony as a Hermes MemoryProvider plugin."""
-    hermes_config = Path.home() / ".hermes" / "config.yaml"
-    
-    if not hermes_config.parent.exists():
-        print("  ⚠️ Hermes config directory not found (~/.hermes/)")
-        print("  Install Hermes first: https://github.com/ayushnoori/hermes")
+def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool = False, contact_id: str = "") -> bool:
+    """Configure Colony as a Hermes MemoryProvider plugin.
+
+    Installs plugin files from the Colony repo into ~/.hermes/plugins/
+    and updates ~/.hermes/config.yaml. Works on Linux, macOS, and WSL.
+    """
+    hermes_home = Path.home() / ".hermes"
+    hermes_config = hermes_home / "config.yaml"
+
+    # Find plugin source files relative to this module (in the repo)
+    colony_repo = Path(__file__).resolve().parents[2]  # colony_sidecar/ -> sidecar/ -> repo-root/
+    mem_src = colony_repo / "plugins" / "hermes-memory"
+    ctx_src = colony_repo / "plugins" / "hermes-context"
+    gen_src = colony_repo / "plugins" / "hermes-plugin"
+
+    # Check if source files exist
+    if not mem_src.exists():
+        print("  ⚠️ Colony plugin source files not found")
+        print(f"     Expected: {mem_src}")
+        print("     Install manually: git clone https://github.com/Aevonix/ColonyAI.git")
         return False
-    
+
+    print("  Installing Colony Hermes plugins...")
+
+    # Install memory provider
+    mem_dst = hermes_home / "plugins" / "memory" / "colony"
+    mem_dst.mkdir(parents=True, exist_ok=True)
+    for f in ["__init__.py", "provider.py", "cli.py", "plugin.yaml", "SKILL.md"]:
+        src = mem_src / f
+        if src.exists():
+            shutil.copy2(src, mem_dst / f)
+    print(f"    ✅ Memory provider  →  {mem_dst}")
+
+    # Install context engine
+    if ctx_src.exists():
+        ctx_dst = hermes_home / "plugins" / "context_engine" / "colony"
+        ctx_dst.mkdir(parents=True, exist_ok=True)
+        for f in ["__init__.py", "plugin.yaml"]:
+            src = ctx_src / f
+            if src.exists():
+                shutil.copy2(src, ctx_dst / f)
+        print(f"    ✅ Context engine   →  {ctx_dst}")
+
+    # Install general plugin
+    if gen_src.exists():
+        gen_dst = hermes_home / "plugins" / "colony"
+        gen_dst.mkdir(parents=True, exist_ok=True)
+        for f in ["__init__.py", "client.py", "events.py", "slash.py", "plugin.yaml"]:
+            src = gen_src / f
+            if src.exists():
+                shutil.copy2(src, gen_dst / f)
+        print(f"    ✅ General plugin   →  {gen_dst}")
+
+    # Write/update Hermes config.yaml
+    print("  Configuring Hermes config...")
+    _write_hermes_config(hermes_config, api_key, sidecar_url, contact_id)
+    print(f"    ✅ Config written   →  {hermes_config}")
+
+    # Verify sidecar is reachable
     try:
-        # Add Colony as a MemoryProvider
-        # Note: This is a simplified version - full implementation would parse/update YAML
-        print("  Configuring Colony as Hermes MemoryProvider...")
-        print(f"    sidecarUrl: {sidecar_url}")
-        print(f"    apiKey: {api_key[:8]}...{api_key[-4:]}")
-        print("  ✅ Hermes integration configured (manual config may be needed)")
-        print("  See: https://github.com/Aevonix/ColonyAI/blob/main/plugins/hermes-memory/SKILL.md")
-        return True
+        import httpx
+        resp = httpx.get(f"{sidecar_url}/v1/host/health", timeout=3)
+        if resp.status_code == 200:
+            caps = resp.json().get("capabilities", [])
+            print(f"    ✅ Sidecar healthy  —  {len(caps)} capabilities")
+        else:
+            print(f"    ⚠️  Sidecar returned HTTP {resp.status_code}")
     except Exception as exc:
-        print(f"  ⚠️ Hermes setup failed: {exc}")
-        return False
+        print(f"    ⚠️  Sidecar not reachable: {exc}")
+        print("       Start it with: colony start")
+
+    print()
+    print("  Hermes integration complete!")
+    print()
+    print("  Restart Hermes to load the Colony plugin:")
+    print("    hermes restart")
+    print()
+    print("  Then verify:")
+    print("    hermes colony status")
+    print()
+    print("  Plugin docs:")
+    print("    https://github.com/Aevonix/ColonyAI/blob/main/plugins/hermes-memory/SKILL.md")
+    return True
+
+
+def _write_hermes_config(config_path: Path, api_key: str, sidecar_url: str, contact_id: str) -> None:
+    """Write or update ~/.hermes/config.yaml with Colony settings.
+
+    Uses safe string manipulation — no pyyaml required. Preserves
+    existing user config and only updates Colony-related sections.
+    """
+    # Default config if file doesn't exist
+    default_lines = [
+        "# Hermes Configuration",
+        "# Generated by Colony setup wizard",
+        "",
+    ]
+
+    existing_lines = []
+    if config_path.exists():
+        existing_lines = config_path.read_text().splitlines()
+
+    if not existing_lines:
+        existing_lines = default_lines
+
+    # Parse existing lines to find sections
+    in_memory = False
+    in_plugins = False
+    in_context_engine = False
+    memory_start = -1
+    memory_end = -1
+    plugins_start = -1
+    plugins_end = -1
+    context_engine_start = -1
+    context_engine_end = -1
+
+    for i, line in enumerate(existing_lines):
+        stripped = line.strip()
+        if stripped.startswith("memory:"):
+            in_memory = True
+            memory_start = i
+            continue
+        if stripped.startswith("plugins:"):
+            in_plugins = True
+            plugins_start = i
+            in_memory = False
+            if memory_start >= 0 and memory_end < 0:
+                memory_end = i
+            continue
+        if stripped.startswith("context_engine:"):
+            in_context_engine = True
+            context_engine_start = i
+            in_memory = False
+            in_plugins = False
+            if memory_start >= 0 and memory_end < 0:
+                memory_end = i
+            if plugins_start >= 0 and plugins_end < 0:
+                plugins_end = i
+            continue
+        if in_memory and stripped and not stripped.startswith("#") and not line.startswith(" ") and not line.startswith("  "):
+            memory_end = i
+            in_memory = False
+        if in_plugins and stripped and not stripped.startswith("#") and not line.startswith(" ") and not line.startswith("  "):
+            plugins_end = i
+            in_plugins = False
+        if in_context_engine and stripped and not stripped.startswith("#") and not line.startswith(" ") and not line.startswith("  "):
+            context_engine_end = i
+            in_context_engine = False
+
+    # Close any open sections at EOF
+    if memory_start >= 0 and memory_end < 0:
+        memory_end = len(existing_lines)
+    if plugins_start >= 0 and plugins_end < 0:
+        plugins_end = len(existing_lines)
+    if context_engine_start >= 0 and context_engine_end < 0:
+        context_engine_end = len(existing_lines)
+
+    # Extract non-Colony plugins from existing plugins section
+    other_plugins: list[str] = []
+    if plugins_start >= 0:
+        for line in existing_lines[plugins_start + 1:plugins_end]:
+            stripped = line.strip()
+            # Keep lines that aren't the colony plugin
+            if stripped and not stripped.startswith("colony:") and not stripped.startswith("#"):
+                # Only keep top-level plugin keys (2-space indent)
+                if line.startswith("  ") and not line.startswith("    "):
+                    other_plugins.append(line)
+
+    # Build new lines
+    new_lines = []
+
+    contact_id_str = contact_id or "default"
+    # Memory section
+    memory_lines = [
+        "memory:",
+        "  provider: colony",
+        "  config:",
+        f'    url: "{sidecar_url}"',
+        '    api_key: "${COLONY_API_KEY}"',
+        f'    contact_id: "{contact_id_str}"',
+    ]
+
+    # Plugins section
+    plugins_lines = [
+        "plugins:",
+        "  colony:",
+        f'    url: "{sidecar_url}"',
+        '    api_key: "${COLONY_API_KEY}"',
+        f'    contact_id: "{contact_id_str}"',
+    ]
+    plugins_lines.extend(other_plugins)
+
+    # Context engine section
+    context_engine_lines = [
+        "context_engine: colony",
+    ]
+
+    # Assemble output preserving non-conflicting sections
+    added_memory = False
+    added_plugins = False
+    added_context_engine = False
+
+    i = 0
+    while i < len(existing_lines):
+        line = existing_lines[i]
+        stripped = line.strip()
+
+        # Skip old memory section
+        if memory_start >= 0 and memory_start <= i < memory_end:
+            if not added_memory:
+                new_lines.extend(memory_lines)
+                added_memory = True
+            i = memory_end
+            continue
+
+        # Skip old plugins section
+        if plugins_start >= 0 and plugins_start <= i < plugins_end:
+            if not added_plugins:
+                new_lines.extend(plugins_lines)
+                added_plugins = True
+            i = plugins_end
+            continue
+
+        # Skip old context_engine line
+        if context_engine_start >= 0 and context_engine_start <= i < context_engine_end:
+            if not added_context_engine:
+                new_lines.extend(context_engine_lines)
+                added_context_engine = True
+            i = context_engine_end
+            continue
+
+        new_lines.append(line)
+        i += 1
+
+    # Add any missing sections at the end
+    if not added_memory:
+        if new_lines and new_lines[-1].strip():
+            new_lines.append("")
+        new_lines.extend(memory_lines)
+    if not added_plugins:
+        new_lines.append("")
+        new_lines.extend(plugins_lines)
+    if not added_context_engine:
+        new_lines.append("")
+        new_lines.extend(context_engine_lines)
+
+    config_path.write_text("\n".join(new_lines) + "\n")
 
 
 def _show_openclaw_install_instructions() -> None:
@@ -1472,6 +1698,17 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                         return 1
                     break
             elif choice == "2":
+                # Hermes doesn't require Node.js - it works with any Python setup
+                hermes_detected = "hermes" in agent_detected
+                if not hermes_detected:
+                    print()
+                    print("  ⚠️ Hermes not detected on this system.")
+                    print("     Plugin files will be installed to ~/.hermes/plugins/")
+                    print("     Install Hermes later: https://github.com/ayushnoori/hermes")
+                    print()
+                    cont = _prompt("  Continue with Hermes setup? [Y/n]", "Y", non_interactive)
+                    if cont.lower() not in ("y", "yes", ""):
+                        continue
                 agent_harness = "hermes"
                 break
             elif choice == "3":
@@ -1761,7 +1998,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         _configure_openclaw_plugin(values, colony_root, non_interactive)
     elif agent_harness == "hermes":
         print()
-        _setup_hermes_plugin(values["COLONY_API_KEY"], sidecar_url, non_interactive)
+        _setup_hermes_plugin(values["COLONY_API_KEY"], sidecar_url, non_interactive, contact_id or "default")
     
     # Configure MCP harnesses
     if mcp_harnesses:
@@ -2242,6 +2479,21 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print("  To connect a harness later:")
         print("    colony mcp setup --harness <claude-code|codex|crush>")
         print("    colony init --agent-harness openclaw")
+        print("    colony init --agent-harness hermes")
+        print()
+    elif agent_harness == "hermes":
+        print("  Colony is connected to Hermes.")
+        print()
+        print("  Hermes plugins installed:")
+        print(f"    ~/.hermes/plugins/memory/colony/")
+        print(f"    ~/.hermes/plugins/context_engine/colony/")
+        print(f"    ~/.hermes/plugins/colony/")
+        print()
+        print("  Restart Hermes to activate:")
+        print("    hermes restart")
+        print()
+        print("  Verify the connection:")
+        print("    hermes colony status")
         print()
 
     if not neo4j_password:
@@ -2277,13 +2529,15 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print()
 
     # E2E validation prompt
-    if sidecar_started and (oc_ok or mcp_harnesses):
+    if sidecar_started and (oc_ok or mcp_harnesses or agent_harness == "hermes"):
         print()
         if oc_ok and mcp_harnesses:
             print("  The sidecar is running with OpenClaw + MCP harnesses configured.")
         elif oc_ok:
             print("  The sidecar is running and OpenClaw is configured.")
-        else:
+        elif agent_harness == "hermes":
+            print("  The sidecar is running and Hermes is configured.")
+        elif mcp_harnesses:
             print("  The sidecar is running with MCP harnesses configured.")
         print("  You can validate the full pipeline (sidecar + context + LLM) with:")
         print(f"    {_green('colony validate')}")
