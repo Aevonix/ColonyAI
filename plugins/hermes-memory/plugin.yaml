@@ -1,0 +1,13 @@
+name: colony
+version: 0.2.0
+description: |
+  Colony cognitive memory provider for Hermes. Injects commitments, affect, facts,
+  patterns, and world model into Hermes conversations. Syncs turns back for extraction.
+  Exposes Colony tools (colony_check_commitments, colony_list_goals, colony_write_memory, etc.)
+  and lifecycle hooks for session rotation, memory mirroring, and pre-compression.
+author: Aevonix
+entry_point: __init__.py
+category: memory
+requires:
+  - httpx
+  - pydantic

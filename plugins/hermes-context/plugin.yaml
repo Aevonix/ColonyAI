@@ -1,0 +1,12 @@
+name: colony
+version: 0.2.0
+description: |
+  Colony context engine for Hermes. Replaces the built-in compressor with
+  Colony's cognitive summarization, keeping commitments, facts, and decisions
+  while discarding noise.
+author: Aevonix
+entry_point: __init__.py
+category: context_engine
+requires:
+  - httpx
+  - pydantic
