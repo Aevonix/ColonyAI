@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 (2026-05-11)
+## 0.7.19 (2026-05-11)
 
 Native MLX embedding and reranker providers for Apple Silicon.
 
