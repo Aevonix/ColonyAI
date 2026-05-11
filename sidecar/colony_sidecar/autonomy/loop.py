@@ -269,10 +269,13 @@ class AutonomyLoop:
 
         # === Multi-Agent Phases (v0.7.0) ===
 
-        # Phase 19: agent heartbeat (every tick)
+        # Phase 19: startup re-push (first tick only)
+        await self._phase_startup_repush()
+
+        # Phase 20: agent heartbeat (every tick)
         await self._phase_agent_heartbeat()
 
-        # Phase 20: initiative timeout (every tick)
+        # Phase 21: initiative timeout (every tick)
         await self._phase_initiative_timeout()
 
         # Phase 21: stale initiative cleanup (every 5 ticks)
@@ -879,6 +882,84 @@ class AutonomyLoop:
         except Exception as exc:
             logger.debug("Phase agent_heartbeat error (non-fatal): %s", exc)
 
+    async def _phase_startup_repush(self) -> None:
+        """On first tick: prune orphaned initiatives and re-push pending to delivery."""
+        if self.stats.ticks != 1:
+            return
+
+        initiative_store = self._registry.initiative_store
+        delivery = self._registry.delivery
+        graph = self._registry.graph
+
+        if initiative_store is None:
+            return
+
+        try:
+            # 1. Cancel initiatives whose entity no longer exists in graph
+            if graph is not None and hasattr(graph, "driver"):
+                pending = initiative_store.list(status=["pending"], limit=1000)
+                pruned = 0
+                for initiative in pending:
+                    entity_id = initiative.entity_id
+                    if not entity_id:
+                        continue
+                    try:
+                        async with graph.driver.session(database=graph.database) as session:
+                            result = await session.run(
+                                "MATCH (n {id: $id}) RETURN count(n) as c",
+                                {"id": entity_id},
+                            )
+                            record = await result.single()
+                            if record is None or record["c"] == 0:
+                                initiative_store.cancel(
+                                    initiative.id,
+                                    cancelled_by="autonomy_loop",
+                                    reason="entity_no_longer_exists",
+                                )
+                                pruned += 1
+                                logger.info(
+                                    "Pruned orphaned initiative %s (entity %s not in graph)",
+                                    initiative.id,
+                                    entity_id,
+                                )
+                    except Exception as exc:
+                        logger.debug("Graph check failed for %s: %s", entity_id, exc)
+
+                if pruned:
+                    logger.info("Pruned %d orphaned initiatives on startup", pruned)
+
+            # 2. Re-push remaining pending initiatives to delivery bridge
+            if delivery is not None:
+                pending = initiative_store.list(status=["pending"], limit=100)
+                repushed = 0
+                for initiative in pending:
+                    payload = {
+                        "id": initiative.id,
+                        "type": initiative.type,
+                        "priority": initiative.priority,
+                        "title": initiative.description.split(".")[0][:80] if initiative.description else "(no title)",
+                        "description": initiative.description,
+                        "rationale": initiative.rationale or "",
+                        "suggested_action": initiative.action_hint or "notify_user",
+                        "entity_id": initiative.entity_id,
+                        "entity_type": initiative.type,
+                        "context": {},
+                        "generated_at": initiative.created_at.isoformat() if initiative.created_at else datetime.now(timezone.utc).isoformat(),
+                    }
+                    try:
+                        ok = await delivery.push_initiative(payload)
+                        if ok:
+                            repushed += 1
+                    except Exception as exc:
+                        logger.debug("Failed to re-push initiative %s: %s", initiative.id, exc)
+
+                if repushed:
+                    logger.info("Re-pushed %d pending initiatives to delivery bridge", repushed)
+
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Startup re-push phase error: %s", exc, exc_info=True)
+
     async def _phase_initiative_timeout(self) -> None:
         """Check for timed-out initiatives."""
         initiative_store = self._registry.initiative_store
@@ -887,21 +968,21 @@ class AutonomyLoop:
         try:
             now = datetime.now(timezone.utc)
             timed_out = initiative_store.find_timed_out(now)
-            
+
             for initiative in timed_out:
                 logger.warning(
                     "Initiative %s timed out after %ds",
                     initiative.id,
                     initiative.timeout_seconds,
                 )
-                
+
                 initiative_store.update(
                     initiative.id,
                     status="failed",
                     failed_at=now.isoformat(),
                     failed_reason="timeout_exceeded",
                 )
-                
+
                 initiative_store.log_history(
                     initiative.id,
                     action="timed_out",

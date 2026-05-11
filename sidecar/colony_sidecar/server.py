@@ -434,6 +434,10 @@ async def lifespan(app: FastAPI):
                 "WorldModelContactBridge initialized — backfill created=%d linked=%d skipped=%d",
                 backfill_stats["created"], backfill_stats["linked"], backfill_stats["skipped"],
             )
+            # Prune shadow contacts whose Person node no longer exists
+            pruned = await bridge.prune_orphaned_shadows()
+            if pruned:
+                logger.info("Pruned %d orphaned shadow contacts", pruned)
         except Exception as exc:
             logger.warning("WorldModelContactBridge init failed: %s", exc)
     else:
