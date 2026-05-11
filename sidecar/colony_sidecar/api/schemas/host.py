@@ -1355,7 +1355,7 @@ class InitiativeResponse(BaseModel):
     title: str
     description: str
     priority: int
-    status: Literal["pending", "acknowledged", "in_progress", "completed", "failed"]
+    status: Literal["pending", "acknowledged", "in_progress", "completed", "failed", "cancelled"]
     timeout_seconds: int
     context: Dict[str, Any]
     target_agent_id: Optional[str]
