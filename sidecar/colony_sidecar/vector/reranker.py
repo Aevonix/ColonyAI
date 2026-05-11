@@ -219,6 +219,31 @@ class NativeMLXRerankerProvider(RerankerProvider):
         except Exception:
             pass
 
+        # Qwen3 rerankers store token IDs in 1_LogitScore/config.json
+        # rather than inside config_sentence_transformers.json.
+        if self._true_token_id is None or self._false_token_id is None:
+            try:
+                cache_path = try_to_load_from_cache(
+                    self._model_id, "1_LogitScore/config.json"
+                )
+                if cache_path and Path(cache_path).exists():
+                    with open(cache_path) as f:
+                        logit_cfg = json.load(f)
+                else:
+                    from huggingface_hub import snapshot_download
+
+                    model_path = Path(
+                        snapshot_download(
+                            self._model_id, allow_patterns=["1_LogitScore/config.json"]
+                        )
+                    )
+                    with open(model_path / "1_LogitScore" / "config.json") as f:
+                        logit_cfg = json.load(f)
+                self._true_token_id = logit_cfg.get("true_token_id")
+                self._false_token_id = logit_cfg.get("false_token_id")
+            except Exception:
+                pass
+
         return model, tokenizer
 
     async def rerank(
