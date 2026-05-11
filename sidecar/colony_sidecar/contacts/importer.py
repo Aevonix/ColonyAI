@@ -128,9 +128,15 @@ class ContactImporter(ABC):
 class SQLiteContactImporter(ContactImporter):
     """ContactImporter backed by SQLiteContactStore."""
 
-    def __init__(self, store: SQLiteContactStore, config: Optional[ContactsConfig] = None) -> None:
+    def __init__(
+        self,
+        store: SQLiteContactStore,
+        config: Optional[ContactsConfig] = None,
+        bridge = None,  # Optional[WorldModelContactBridge]
+    ) -> None:
         self._store = store
         self._config = config or ContactsConfig()
+        self._bridge = bridge
 
     async def import_raw(self, records: List[RawContactRecord], source: str) -> BatchImportResult:
         result = BatchImportResult(source=source, total=len(records))
@@ -180,6 +186,9 @@ class SQLiteContactImporter(ContactImporter):
                         contact_id=existing_id,
                         merged_into_id=existing_id,
                     ))
+                    # Absorb any discovered contacts with overlapping handles
+                    if self._bridge:
+                        await self._absorb_discovered_for(existing_id, norm_phones, norm_emails)
                 elif candidates and candidates[0][0] >= proposal_threshold:
                     # Below auto-merge but above proposal threshold — create and propose
                     contact = await self._store.create(
@@ -200,6 +209,8 @@ class SQLiteContactImporter(ContactImporter):
                         outcome=ImportOutcome.CREATED,
                         contact_id=contact.contact_id,
                     ))
+                    if self._bridge:
+                        await self._absorb_discovered_for(contact.contact_id, norm_phones, norm_emails)
                 else:
                     # No match — create new contact
                     contact = await self._store.create(
@@ -219,6 +230,8 @@ class SQLiteContactImporter(ContactImporter):
                         outcome=ImportOutcome.CREATED,
                         contact_id=contact.contact_id,
                     ))
+                    if self._bridge:
+                        await self._absorb_discovered_for(contact.contact_id, norm_phones, norm_emails)
             except Exception as exc:
                 logger.warning(
                     "Failed to import record (name_hash=%s): %s",
@@ -231,6 +244,26 @@ class SQLiteContactImporter(ContactImporter):
                     error=type(exc).__name__,
                 ))
         return result
+
+    async def _absorb_discovered_for(
+        self,
+        curated_contact_id: str,
+        norm_phones: List[str],
+        norm_emails: List[str],
+    ) -> None:
+        """Find discovered contacts with overlapping handles and absorb them."""
+        if not self._bridge:
+            return
+        for phone in norm_phones:
+            discovered = await self._store.find_discovered_by_handle("imessage", phone)
+            if discovered:
+                await self._bridge.absorb_discovered_contact(curated_contact_id, discovered)
+                return
+        for email in norm_emails:
+            discovered = await self._store.find_discovered_by_handle("email", email)
+            if discovered:
+                await self._bridge.absorb_discovered_contact(curated_contact_id, discovered)
+                return
 
     async def import_from_macos_contacts(self) -> BatchImportResult:
         from .importers.macos_contacts import MacOSContactsImporter

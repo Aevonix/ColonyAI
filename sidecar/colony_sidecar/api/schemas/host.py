@@ -493,15 +493,33 @@ class GoalListResponse(BaseModel):
 # --- Contacts ---------------------------------------------------------------
 
 class ContactResponse(BaseModel):
-    id: str
-    name: Optional[str] = None
+    contact_id: str
+    display_name: Optional[str] = None
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+    organization: Optional[str] = None
+    relationship_score: float = 0.0
     trust_tier: Optional[str] = None
-    style_notes: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    interaction_allowed: bool = True
+    tags: List[str] = Field(default_factory=list)
+    privacy_level: Optional[str] = None
+    person_node_id: Optional[str] = None
+    notes: Optional[str] = None
+    import_source: Optional[str] = None
+    first_seen_at: Optional[str] = None
+    last_interaction_at: Optional[str] = None
+    interaction_count: int = 0
+    enrichment_source: List[str] = Field(default_factory=list)
+    enrichment_last_at: Optional[str] = None
+    deleted_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class ContactListResponse(BaseModel):
     contacts: List[ContactResponse] = []
+    source_filter: Optional[str] = None
+    total: int = 0
 
 
 class ContactStyleRequest(BaseModel):

@@ -1874,12 +1874,57 @@ def set_contacts_store(store) -> None:
 
 
 @router.get("/contacts", response_model=ContactListResponse)
-async def list_contacts() -> ContactListResponse:
+async def list_contacts(
+    source: Optional[str] = None,
+    trust_tier: Optional[str] = None,
+    include_discovered: bool = True,
+    limit: int = 100,
+) -> ContactListResponse:
     if _contacts_store is None:
         return ContactListResponse(contacts=[])
     try:
-        contacts = await _contacts_store.list()
-        return ContactListResponse(contacts=[ContactResponse(**c) for c in contacts])
+        contacts: List[Any] = []
+
+        # Determine which sources to include
+        include_curated = source in (None, "all", "curated")
+        include_world = source in (None, "all", "world_model")
+        if source is None:
+            include_world = include_discovered
+
+        if include_curated:
+            curated = await _contacts_store.list(
+                trust_tier=trust_tier,
+                limit=limit,
+            )
+            contacts.extend(curated)
+
+        if include_world:
+            world = await _contacts_store.list(
+                trust_tier=trust_tier or "acquaintance",
+                limit=limit,
+            )
+            # Exclude already-included curated contacts
+            curated_ids = {c.contact_id for c in contacts}
+            for c in world:
+                if c.contact_id not in curated_ids and c.import_source == "world_model":
+                    contacts.append(c)
+
+        # Sort: curated first (by trust tier rank desc), then world model
+        from colony_sidecar.contacts.models import _TIER_RANK
+        def _sort_key(c):
+            is_curated = 1 if c.import_source != "world_model" else 0
+            tier_rank = _TIER_RANK.get(c.trust_tier, 0)
+            last_int = c.last_interaction_at or ""
+            return (is_curated, tier_rank, last_int)
+
+        contacts.sort(key=_sort_key, reverse=True)
+        contacts = contacts[:limit]
+
+        return ContactListResponse(
+            contacts=[ContactResponse(**c.to_dict()) for c in contacts],
+            source_filter=source or "all",
+            total=len(contacts),
+        )
     except Exception as exc:
         logger.warning("list_contacts failed: %s", exc)
         return ContactListResponse(contacts=[])
@@ -1893,7 +1938,7 @@ async def get_contact(contact_id: str) -> ContactResponse:
         contact = await _contacts_store.get(contact_id)
         if contact is None:
             raise HTTPException(status_code=404, detail="Contact not found")
-        return ContactResponse(**contact)
+        return ContactResponse(**contact.to_dict())
     except HTTPException:
         raise
     except Exception as exc:

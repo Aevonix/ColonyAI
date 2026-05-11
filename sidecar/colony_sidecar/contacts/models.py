@@ -10,10 +10,10 @@ from typing import Any, Dict, List, Optional
 
 # ── Trust tiers ──────────────────────────────────────────────────────────────
 
-TRUST_TIERS = ("inner_circle", "trusted", "regular", "peripheral", "silenced", "unknown")
+TRUST_TIERS = ("inner_circle", "trusted", "regular", "peripheral", "silenced", "acquaintance", "unknown")
 
 # Higher index = more permissive
-_TIER_RANK = {t: i for i, t in enumerate(("unknown", "silenced", "peripheral", "regular", "trusted", "inner_circle"))}
+_TIER_RANK = {t: i for i, t in enumerate(("unknown", "acquaintance", "silenced", "peripheral", "regular", "trusted", "inner_circle"))}
 
 PRIVACY_LEVELS = ("public", "private", "restricted")
 GATEWAYS = ("imessage", "telegram", "email", "sms", "signal", "custom", "internal")
@@ -25,6 +25,7 @@ TIER_DEFAULT_INTERACTION: Dict[str, bool] = {
     "regular": True,
     "peripheral": False,
     "silenced": False,
+    "acquaintance": False,
     "unknown": True,
 }
 
