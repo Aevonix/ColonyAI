@@ -126,7 +126,7 @@ class ColonyEventSubscriber:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
-        async with websockets.connect(ws_url, extra_headers=headers) as ws:
+        async with websockets.connect(ws_url, additional_headers=headers) as ws:
             # Auth handshake
             await ws.send(json.dumps({
                 "type": "auth",
