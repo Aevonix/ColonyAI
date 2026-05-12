@@ -290,12 +290,12 @@ class ProactiveDeliveryBridge:
                     )
                     # Fallback: broadcast via WebSocket so Hermes subscribers still receive it
                     self._broadcast_fallback(initiative)
-                    return False
+                    return True
         except Exception as exc:
             logger.warning("push_initiative failed: %s", exc)
             # Fallback: broadcast via WebSocket so Hermes subscribers still receive it
             self._broadcast_fallback(initiative)
-            return False
+            return True
 
     def _broadcast_fallback(self, initiative: Dict[str, Any]) -> None:
         """Broadcast an initiative via WebSocket when HTTP push fails.
