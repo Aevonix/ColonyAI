@@ -1,8 +1,8 @@
 {
   "id": "colony",
   "name": "Colony",
-  "description": "Colony intelligence sidecar — graph memory, context assembly, safety pipeline, autonomy loop. Mounts into OpenClaw as context engine and memory capability provider.",
-  "version": "0.7.3",
+  "description": "Colony intelligence sidecar \u2014 graph memory, context assembly, safety pipeline, autonomy loop. Mounts into OpenClaw as context engine and memory capability provider.",
+  "version": "0.7.4",
   "contracts": {
     "contextEngine": true,
     "memory": true

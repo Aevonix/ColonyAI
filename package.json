@@ -1,7 +1,7 @@
 {
   "name": "@aevonix/colonyai",
-  "version": "0.7.20",
-  "description": "Colony's intelligence sidecar —graph memory, autonomy loop, context assembly, safety pipeline — mountable into OpenClaw, Hermes, and other agent harnesses via the /v1/host API.",
+  "version": "0.7.21",
+  "description": "Colony's intelligence sidecar \u2014graph memory, autonomy loop, context assembly, safety pipeline \u2014 mountable into OpenClaw, Hermes, and other agent harnesses via the /v1/host API.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
