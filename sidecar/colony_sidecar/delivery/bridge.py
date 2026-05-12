@@ -288,10 +288,28 @@ class ProactiveDeliveryBridge:
                         "Gateway /internal/initiative returned %d: %s",
                         resp.status, body[:200]
                     )
+                    # Fallback: broadcast via WebSocket so Hermes subscribers still receive it
+                    self._broadcast_fallback(initiative)
                     return False
         except Exception as exc:
             logger.warning("push_initiative failed: %s", exc)
+            # Fallback: broadcast via WebSocket so Hermes subscribers still receive it
+            self._broadcast_fallback(initiative)
             return False
+
+    def _broadcast_fallback(self, initiative: Dict[str, Any]) -> None:
+        """Broadcast an initiative via WebSocket when HTTP push fails.
+
+        This ensures Hermes and other WebSocket subscribers still receive
+        the initiative even if the gateway's /internal/initiative endpoint
+        is unavailable or unregistered.
+        """
+        try:
+            from colony_sidecar.events.broadcaster import emit
+            emit("initiative", initiative)
+            logger.info("Initiative broadcast via WebSocket fallback: %s", initiative.get("id"))
+        except Exception:
+            logger.debug("WebSocket fallback broadcast failed for initiative %s", initiative.get("id"), exc_info=True)
 
     def get_pending(self, gateway_id: str = "", limit: int = 20) -> List[Dict[str, Any]]:
         """Return pending PUSH deliveries for the gateway to send.

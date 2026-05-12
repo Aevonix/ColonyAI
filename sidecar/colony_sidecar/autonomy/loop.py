@@ -469,6 +469,16 @@ class AutonomyLoop:
                     self.stats.actions_executed += 1
                     self.stats.actions_this_hour += 1
                     logger.info("Pushed initiative: %s", payload["id"])
+                # Also broadcast via WebSocket so Hermes and other subscribers receive it
+                try:
+                    broadcast = _get_broadcast()
+                    broadcast({
+                        "type": "initiative",
+                        "occurred_at": datetime.now(timezone.utc).isoformat(),
+                        "payload": payload,
+                    })
+                except Exception:
+                    logger.debug("WebSocket broadcast for initiative %s failed", payload.get("id"), exc_info=True)
             except Exception as exc:
                 logger.error("Failed to push initiative: %s", exc)
 

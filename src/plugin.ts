@@ -2233,8 +2233,8 @@ export function createColonyPlugin(): unknown {
 
           const { initiative, source, timestamp, deliveryContext } = bodyResult.value as Record<string, unknown>;
 
-          // Auth check
-          const colonyApiKey = api.pluginConfig?.apiKey as string | undefined;
+          // Auth check — accept both camelCase (manifest) and snake_case (normalized)
+          const colonyApiKey = (api.pluginConfig?.apiKey ?? api.pluginConfig?.api_key) as string | undefined;
           const authHeader = req.headers["authorization"] as string | undefined;
           const presentedKey = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
