@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.21 (2026-05-12)
+
+Bug-fix release: initiative delivery via WebSocket and plugin apiKey compatibility.
+
+### Fixed
+- **Autonomy loop** now broadcasts `initiative` events via WebSocket in addition to HTTP push, ensuring Hermes subscribers receive them in real time.
+- **ProactiveDeliveryBridge** falls back to WebSocket broadcast when the gateway's `/internal/initiative` endpoint is unreachable or returns an error.
+- **OpenClaw plugin** auth check now accepts both `apiKey` (manifest) and `api_key` (normalized) for compatibility across OpenClaw versions.
+
+
 ## 0.7.20 (2026-05-11)
 
 Qwen3 reranker token config fallback.

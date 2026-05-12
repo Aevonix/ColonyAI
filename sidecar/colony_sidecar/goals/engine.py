@@ -271,6 +271,28 @@ class GoalEngine:
             ))
         return summaries
 
+    # ── Task Management (v0.7.10) ─────────────────────────────────────────────
+
+    def complete_task(self, goal_id: str) -> bool:
+        """Mark a goal/task as completed."""
+        return self._store.complete_task(goal_id)
+
+    def snooze_task(self, goal_id: str, hours: int, reason: str = "") -> bool:
+        """Snooze a goal/task for N hours."""
+        return self._store.snooze_task(goal_id, hours, reason)
+
+    def dismiss_task(self, goal_id: str, reason: str = "stale") -> bool:
+        """Dismiss a goal/task as no longer relevant."""
+        return self._store.dismiss_task(goal_id, reason)
+
+    def get_active_tasks(self, cooldown_hours: float = 12.0) -> List[Goal]:
+        """Get goals that should generate initiatives."""
+        return self._store.get_active_tasks(cooldown_hours)
+
+    def mark_initiative_generated(self, goal_id: str) -> bool:
+        """Mark that an initiative was just generated for this goal."""
+        return self._store.mark_initiative_generated(goal_id)
+
     # ── Event Handlers ─────────────────────────────────────────────────────────
 
     def on_job_completed(self, job_result: JobResult) -> None:
