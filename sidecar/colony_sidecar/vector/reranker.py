@@ -192,6 +192,30 @@ class NativeMLXRerankerProvider(RerankerProvider):
         from huggingface_hub import try_to_load_from_cache
 
         model, tokenizer = load(self._model_id, lazy=False)
+        self._instruction = None
+
+        # Load instruction / prompt from sentence-transformers config
+        try:
+            cache_path = try_to_load_from_cache(
+                self._model_id, "config_sentence_transformers.json"
+            )
+            if cache_path and Path(cache_path).exists():
+                with open(cache_path) as f:
+                    st_cfg = json.load(f)
+            else:
+                from huggingface_hub import snapshot_download
+                model_path = Path(snapshot_download(self._model_id, allow_patterns=["config_sentence_transformers.json"]))
+                with open(model_path / "config_sentence_transformers.json") as f:
+                    st_cfg = json.load(f)
+
+            prompts = st_cfg.get("prompts", {})
+            default_name = st_cfg.get("default_prompt_name")
+            if default_name and default_name in prompts:
+                self._instruction = prompts[default_name]
+            elif prompts:
+                self._instruction = next(iter(prompts.values()))
+        except Exception:
+            pass
 
         # Attempt to load sentence-transformers config for token IDs
         try:
@@ -273,7 +297,27 @@ class NativeMLXRerankerProvider(RerankerProvider):
 
         scores: list[float] = []
         for doc in documents:
-            prompt = f"{query}\n{doc}"
+            # Use chat template if available (Qwen3 rerankers require this)
+            if (
+                hasattr(self._tokenizer, "apply_chat_template")
+                and self._tokenizer.chat_template
+            ):
+                instruction = (
+                    self._instruction
+                    or "Given a web search query, retrieve relevant passages that answer the query"
+                )
+                messages = [
+                    {"role": "system", "content": instruction},
+                    {"role": "query", "content": query},
+                    {"role": "document", "content": doc},
+                ]
+                prompt = self._tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+            else:
+                # Fallback for models without a chat template
+                prompt = f"{query}\n{doc}"
+
             tokens = mx.array(self._tokenizer.encode(prompt))
             logits = self._model(tokens[None, :])
             last_logits = logits[0, -1, :]
