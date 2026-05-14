@@ -409,6 +409,10 @@ class _ToolDispatcher:
 _colony_client: Optional[ColonyClient] = None
 _event_subscriber: Optional[ColonyEventSubscriber] = None
 _tool_dispatcher: Optional[_ToolDispatcher] = None
+_contact_id: str = "default"
+
+# Mutable state captured across hooks (agent:start → on_session_end)
+_session_state: dict = {}
 
 # ---------------------------------------------------------------------------
 # Autonomy bridge helpers
@@ -693,12 +697,13 @@ def _get_autonomy_status(client: Optional[ColonyClient] = None) -> dict:
 
 def register(ctx):
     """Register the Colony general plugin with Hermes."""
-    global _colony_client, _event_subscriber, _tool_dispatcher
+    global _colony_client, _event_subscriber, _tool_dispatcher, _contact_id
 
     config = ctx.config.get("plugins", {}).get("colony", {})
     url = config.get("url", os.environ.get("COLONY_URL", "http://127.0.0.1:7777"))
     api_key = config.get("api_key", os.environ.get("COLONY_API_KEY", ""))
     contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
+    _contact_id = contact_id
 
     _colony_client = ColonyClient(url=url, api_key=api_key)
     _tool_dispatcher = _ToolDispatcher(_colony_client)
@@ -738,7 +743,15 @@ def register(ctx):
 
     ctx.register_hook("pre_llm_call", _pre_llm_call)
 
-    # 4. Register on_session_end hook
+    # 4. Register agent:start hook to capture session metadata for turns/sync
+    def _on_agent_start(hook_ctx: dict) -> None:
+        _session_state["session_id"] = hook_ctx.get("session_id", "")
+        _session_state["platform"] = hook_ctx.get("platform", "")
+        _session_state["user_id"] = hook_ctx.get("user_id", "")
+
+    ctx.register_hook("agent:start", _on_agent_start)
+
+    # 5. Register on_session_end hook — stop subscriber AND sync turn to Colony
     def _on_session_end(messages: list) -> None:
         if _event_subscriber is not None:
             try:
@@ -747,9 +760,42 @@ def register(ctx):
             except RuntimeError:
                 pass
 
+        # Sync session summary to Colony (plugin-only telemetry)
+        if _colony_client is None:
+            return
+        session_id = _session_state.get("session_id", "")
+        if not session_id:
+            return
+
+        user_msg = ""
+        assistant_msg = ""
+        for msg in reversed(messages):
+            role = msg.get("role", "")
+            if role == "assistant" and not assistant_msg:
+                assistant_msg = msg.get("content", "")
+            elif role == "user" and not user_msg:
+                user_msg = msg.get("content", "")
+            if user_msg and assistant_msg:
+                break
+
+        summary = ""
+        if user_msg and assistant_msg:
+            summary = f"User: {user_msg[:300]}\nAgent: {assistant_msg[:300]}"
+
+        try:
+            _colony_client.sync_turn(
+                session_id=session_id,
+                contact_id=_contact_id,
+                user_message=user_msg[:2000],
+                assistant_message=assistant_msg[:2000],
+                summary=summary[:1000],
+            )
+        except Exception as exc:
+            logger.debug("sync_turn in on_session_end failed: %s", exc)
+
     ctx.register_hook("on_session_end", _on_session_end)
 
-    # 5. Start WebSocket event subscriber (best-effort)
+    # 6. Start WebSocket event subscriber (best-effort)
     try:
         _event_subscriber = ColonyEventSubscriber(
             url=url,
