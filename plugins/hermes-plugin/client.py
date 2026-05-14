@@ -165,3 +165,49 @@ class ColonyClient:
         except Exception as exc:
             logger.debug("replay_events failed: %s", exc)
             return []
+
+    def sync_turn(
+        self,
+        session_id: str,
+        contact_id: str,
+        user_message: str = "",
+        assistant_message: str = "",
+        tools_used: Optional[List[str]] = None,
+        topics: Optional[List[str]] = None,
+        entities: Optional[List[str]] = None,
+        summary: str = "",
+    ) -> bool:
+        """POST turn summary to Colony's turns/sync endpoint.
+
+        This is the primary telemetry channel for the Colony plugin.
+        It requires zero Hermes core patches — just a plugin-side call.
+        """
+        try:
+            payload: dict[str, Any] = {
+                "identity": {"host_id": "hermes"},
+                "context": {
+                    "session_id": session_id,
+                    "contact_id": contact_id,
+                },
+            }
+            if user_message:
+                payload["user_message"] = {"role": "user", "content": user_message}
+            if assistant_message:
+                payload["assistant_message"] = {"role": "assistant", "content": assistant_message}
+            if tools_used:
+                payload["tools_used"] = tools_used
+            if topics:
+                payload["topics"] = topics
+            if entities:
+                payload["entities"] = entities
+            if summary:
+                payload["summary"] = summary
+
+            resp = self.post("/v1/host/turns/sync", json=payload, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            logger.debug("turns/sync accepted=%s", data.get("accepted"))
+            return data.get("accepted", False)
+        except Exception as exc:
+            logger.debug("sync_turn failed: %s", exc)
+            return False

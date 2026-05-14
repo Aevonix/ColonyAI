@@ -205,13 +205,37 @@ class InitiativeStore:
         # Check dedup
         if dedup_key:
             existing = self.get_by_dedup_key(dedup_key)
-            if existing and existing.is_active:
+            if existing:
+                if existing.is_active:
+                    logger.info(
+                        "Initiative with dedup_key %s already exists: %s",
+                        dedup_key,
+                        existing.id,
+                    )
+                    return existing
+                # Reactivate failed/completed/cancelled initiatives so they
+                # can be retried instead of crashing on UNIQUE constraint.
                 logger.info(
-                    "Initiative with dedup_key %s already exists: %s",
-                    dedup_key,
+                    "Reactivating initiative %s with dedup_key %s",
                     existing.id,
+                    dedup_key,
                 )
-                return existing
+                return self.update(
+                    existing.id,
+                    status=InitiativeStatus.PENDING.value,
+                    failed_at=None,
+                    failed_reason=None,
+                    completed_at=None,
+                    result=None,
+                    attempt_count=0,
+                    assigned_agent_id=None,
+                    assigned_agent_name=None,
+                    assigned_at=None,
+                    acknowledged_at=None,
+                    cancelled_at=None,
+                    cancelled_by=None,
+                    cancelled_reason=None,
+                )
 
         # Bug 26: Validate priority range
         priority = max(0.0, min(1.0, priority))
