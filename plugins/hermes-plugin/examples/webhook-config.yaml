@@ -1,0 +1,43 @@
+# Example Hermes webhook configuration for Colony autonomy pipeline
+# Place this under platforms.webhook.extra.routes in ~/.hermes/config.yaml
+#
+# Philosophy:
+# - Webhook responses go to watcher (log) by default
+# - The agent decides which channel to communicate to the user
+# - This is generic — works for WhatsApp, Telegram, Discord, or any platform
+
+colony-initiatives:
+  secret: INSECURE_NO_AUTH  # For local testing only
+  prompt: |
+    {__raw__}
+
+    You are an autonomous agent (Aeva). Colony generated this initiative.
+    ACT on it immediately using your available tools:
+    - terminal: run commands, git, build, deploy
+    - web: research, check APIs, read docs
+    - file: read/write code, configs, specs
+    - browser: interact with web apps
+    - send_message: communicate with the user on any configured platform
+
+    Do not ask for permission. Do not say "I will research this." DO the work.
+    Report what you accomplished and what remains blocked.
+
+    CHANNEL SELECTION RULES:
+    - Deliver CONCISE results to the user's primary channel
+    - Use the watcher channel only for verbose reasoning if needed
+    - For urgent/high-priority items: notify user immediately
+    - For low-priority/internal tasks: log to watcher, batch for digest
+    - For relationship/messaging initiatives: draft message, ask for approval before sending if unsure
+    - The available channels are determined by the platforms configured in this instance
+
+  # Webhook responses go to watcher (log) by default
+  # The agent decides where to send user-facing results via send_message
+  deliver: log
+
+  # Optional: configure a watcher channel for verbose output
+  # watcher: whatsapp
+  # watcher_extra:
+  #   chat_id: "YOUR_GROUP_ID"
+
+  # Rate limit: max 5 initiatives per minute
+  rate_limit: 5
