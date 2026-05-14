@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.22 (2026-05-14)
+
+Initiative dedup fix and Hermes turns/sync telemetry.
+
+### Fixed
+- **InitiativeStore.create()** now reactivates failed/completed/cancelled initiatives when a duplicate `dedup_key` is submitted, instead of crashing on the SQLite UNIQUE constraint.
+- **Hermes plugin websockets 15 compat** — `extra_headers` → `additional_headers`.
+- **Autonomy follow-up generator** now handles `priority=None` gracefully.
+
+### Added
+- **ColonyClient.sync_turn()** — POSTs session summaries to `/v1/host/turns/sync`.
+- **`agent:start` hook** in the Hermes plugin captures `session_id` for cross-turn state.
+- **`on_session_end` hook** extracts last user/assistant messages and syncs them to Colony automatically.
+- Zero Hermes core patches required — all telemetry is plugin-side.
+
 ## 0.7.21 (2026-05-12)
 
 Bug-fix release: initiative delivery via WebSocket and plugin apiKey compatibility.
