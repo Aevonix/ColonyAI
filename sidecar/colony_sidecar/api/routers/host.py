@@ -615,7 +615,7 @@ async def health() -> HostHealthResponse:
                 "initiative": float(os.environ.get("COLONY_STALE_INITIATIVE_HOURS", "48.0")),
                 "prefetch": float(os.environ.get("COLONY_STALE_PREFETCH_HOURS", "2.0")),
             }
-            temporal_data = _telemetry.to_dict(thresholds)
+            temporal_data = await _telemetry.to_dict(thresholds)
             if temporal_data.get("stale_flags"):
                 health_status = "degraded"
             from colony_sidecar.api.schemas.host import TemporalMetrics
