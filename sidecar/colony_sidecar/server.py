@@ -926,7 +926,7 @@ async def lifespan(app: FastAPI):
             checkin_interval = max(600, int(autonomy_config.owner_check_in_silent_hours * 1800))
             scheduler.register(
                 "owner_check_in",
-                lambda: _checkin_task.run(),
+                _checkin_task.run,
                 interval_seconds=checkin_interval,
                 metadata={"description": "Check for initiative silence and reach out to owner if needed"},
             )
