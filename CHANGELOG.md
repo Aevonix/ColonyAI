@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.24 (2026-05-15)
+
+Anti-spam initiative delivery and autonomy pipeline spec.
+
+### Fixed
+- **Initiative dedup reactivation** — only FAILED initiatives are reactivated on duplicate `dedup_key`. Completed and cancelled initiatives stay terminal, eliminating infinite-loop follow-up spam.
+
+### Added
+- **`docs/autonomy-pipeline-spec.md`** — full spec for Colony-Hermes autonomy without Hermes source changes.
+- **`plugins/hermes-plugin/examples/colony-initiative-poller.py`** — production poller with `dedup_key` tracking, `delivery_context` injection, and env-var configuration.
+- **`plugins/hermes-plugin/examples/hook-handler.py`** — example Hermes hook handler with nested payload support.
+
+
+# Changelog
+
 ## 0.7.22 (2026-05-14)
 
 Initiative dedup fix and Hermes turns/sync telemetry.
