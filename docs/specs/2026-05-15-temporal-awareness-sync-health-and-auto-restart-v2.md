@@ -371,6 +371,13 @@ Every initiative payload now includes:
 | `~/.hermes/.colony_seen_dedup` | Dedup by dedup_key | Poller | Truncate if file mtime > 90 days |
 | `~/.hermes/.colony_last_health` | Last health response JSON | Poller | Overwrite each run |
 | `~/.hermes/.colony_last_user_message` | Timestamp of last user message | Provider | Overwrite each sync |
+| `~/.hermes/.colony_wake_up_flag` | Tracks if wake-up was sent on previous cycle | Poller | Deleted on successful health |
+
+**Wake-up state logic:**
+1. Health fails → check if `~/.hermes/.colony_wake_up_flag` exists
+2. Flag exists → wake-up was sent on previous cycle and sidecar is still down → **fire alert**
+3. Flag missing → first time seeing failure → send `launchctl start`, create flag, skip initiatives
+4. Health succeeds → delete flag (if present), proceed with initiatives
 
 **Pruning logic:** on poller startup, if a state file's modification time is older than 90 days, truncate it. This is simpler than parsing entry timestamps and is sufficient for v1.
 
