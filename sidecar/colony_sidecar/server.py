@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -57,6 +58,7 @@ from colony_sidecar.api.routers.host import (
     set_initiative_store,
     set_assignment_engine,
     set_websocket_manager,
+    set_telemetry,
     supported_capabilities,
 )
 
@@ -872,6 +874,13 @@ async def lifespan(app: FastAPI):
         logger.info("AutonomyLoop auto-start scheduled")
     except Exception as exc:
         logger.warning("AutonomyLoop init failed: %s", exc)
+
+    from colony_sidecar.telemetry import TelemetryStore
+    telemetry = TelemetryStore()
+    telemetry.started_at = datetime.now(timezone.utc)
+    app.state.telemetry = telemetry
+    set_telemetry(telemetry)
+    logger.info("TelemetryStore initialized")
 
     logger.info("Sidecar capabilities: %s", supported_capabilities())
     yield

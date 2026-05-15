@@ -47,11 +47,22 @@ class HostMessage(BaseModel):
 
 # --- Health -----------------------------------------------------------------
 
+class TemporalMetrics(BaseModel):
+    started_at: Optional[str] = None
+    last_sync_at: Optional[str] = None
+    last_tick_at: Optional[str] = None
+    last_initiative_at: Optional[str] = None
+    last_prefetch_at: Optional[str] = None
+    silence_hours: Dict[str, Optional[float]] = Field(default_factory=dict)
+    stale_flags: List[str] = Field(default_factory=list)
+
+
 class HostHealthResponse(BaseModel):
     status: Literal["ok", "degraded", "starting", "stopping"]
     api_version: str = "1.0.0"
     capabilities: List[str] = []
     notes: Optional[Dict[str, str]] = None
+    temporal: Optional[TemporalMetrics] = None
 
 
 # --- Memory -----------------------------------------------------------------

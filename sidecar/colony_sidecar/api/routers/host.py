@@ -284,6 +284,14 @@ def set_llm_router(router) -> None:
     _llm_router = router
 
 
+_telemetry = None
+
+
+def set_telemetry(telemetry) -> None:
+    global _telemetry
+    _telemetry = telemetry
+
+
 def supported_capabilities() -> List[str]:
     """Return the list of capabilities this sidecar advertises."""
     caps: list[str] = []
@@ -596,10 +604,29 @@ async def health() -> HostHealthResponse:
     if model_mismatch:
         health_status = "degraded"
 
+    # Build temporal metrics
+    temporal = None
+    try:
+        if _telemetry is not None:
+            thresholds = {
+                "sync": float(os.environ.get("COLONY_STALE_SYNC_HOURS", "2.0")),
+                "tick": float(os.environ.get("COLONY_STALE_TICK_HOURS", "24.0")),
+                "initiative": float(os.environ.get("COLONY_STALE_INITIATIVE_HOURS", "72.0")),
+                "prefetch": float(os.environ.get("COLONY_STALE_PREFETCH_HOURS", "2.0")),
+            }
+            temporal_data = await _telemetry.to_dict(thresholds)
+            if temporal_data.get("stale_flags"):
+                health_status = "degraded"
+            from colony_sidecar.api.schemas.host import TemporalMetrics
+            temporal = TemporalMetrics(**temporal_data)
+    except Exception:
+        pass
+
     return HostHealthResponse(
         status=health_status,
         capabilities=caps,
         notes=notes,
+        temporal=temporal,
     )
 
 
@@ -1451,6 +1478,12 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.warning("context_assemble surprises failed: %s", exc)
 
+    if _telemetry is not None:
+        try:
+            await _telemetry.touch("last_prefetch_at")
+        except Exception:
+            pass
+
     return ContextAssembleResponse(sections=sections)
 
 
@@ -1657,6 +1690,12 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
             ))
     except Exception:
         logger.debug("ToM extraction from turn_sync failed", exc_info=True)
+
+    if _telemetry is not None:
+        try:
+            await _telemetry.touch("last_sync_at")
+        except Exception:
+            pass
 
     return TurnSyncResponse(accepted=True, continuity_updated=graph_ok, skipped_reason=None if graph_ok else "no_graph_store")
 
@@ -4847,6 +4886,12 @@ async def create_initiative(body: InitiativeCreateRequest) -> InitiativeResponse
         preferred_agent_id=body.target_agent_id,
         # Extra context stored separately if needed
     )
+
+    if _telemetry is not None:
+        try:
+            await _telemetry.touch("last_initiative_at")
+        except Exception:
+            pass
     
     return _initiative_to_response(initiative)
 
