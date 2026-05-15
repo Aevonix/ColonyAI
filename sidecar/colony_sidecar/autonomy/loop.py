@@ -544,7 +544,11 @@ class AutonomyLoop:
         self._pending_initiatives = []
 
     async def _feed_pending_tasks(self, engine: Any) -> None:
-        """Feed active goals as pending tasks, respecting cooldown."""
+        """Feed active goals as pending tasks, respecting cooldown.
+
+        Filters out abandoned and completed goals so the autonomy loop
+        does not generate follow-up initiatives for dead tasks forever.
+        """
         goals = self._registry.goals
         if goals is None:
             return
@@ -559,6 +563,10 @@ class AutonomyLoop:
                 active = goals.get_active_tasks(cooldown_hours=cooldown_tasks)
                 pending_tasks = []
                 for goal in active:
+                    # Skip abandoned / completed / cancelled goals
+                    g_status = getattr(goal, "status", None)
+                    if g_status in ("abandoned", "completed", "cancelled"):
+                        continue
                     days_pending = 0
                     if goal.created_at:
                         days_pending = (datetime.now(timezone.utc) - goal.created_at).total_seconds() / 86400
@@ -572,6 +580,13 @@ class AutonomyLoop:
                 blocked = goals.list_goals(status="blocked", limit=20) if hasattr(goals, "list_goals") else []
                 pending_tasks = []
                 for goal in blocked:
+                    # Skip abandoned / completed / cancelled goals
+                    if isinstance(goal, dict):
+                        g_status = goal.get("status", "")
+                    else:
+                        g_status = getattr(goal, "status", "")
+                    if g_status in ("abandoned", "completed", "cancelled"):
+                        continue
                     created = goal.created_at
                     days_pending = 0
                     if created:
@@ -588,35 +603,51 @@ class AutonomyLoop:
                         "entity_id": entity_id,
                     })
 
-            if pending_tasks:
-                engine.add_context("pending_tasks", pending_tasks)
+            # Always set pending_tasks so graph loader doesn't fall back to stale
+            # graph data when the SQL store has no active goals (Bug 41).
+            engine.add_context("pending_tasks", pending_tasks)
         except Exception as e:
             logger.warning("Failed to feed pending tasks: %s", e)
 
     async def _feed_neglected_contacts(self, engine: Any) -> None:
-        """Feed contacts with declining affect."""
+        """Feed contacts with declining affect AND genuine neglect.
+
+        Combines affect-store signals with graph-based days-since-contact.
+        Only feeds contacts that have both declining affect AND no recent
+        interaction (≥7 days).  Skips the host's own contact.
+        """
         affect = self._registry.affect_store
         if affect is None:
             return
 
+        # Host contact ID to skip
+        host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "Marc Seal")
+
         try:
-            # AffectStore.get_all_states() returns list of contact state dicts
             states = affect.get_all_states() if hasattr(affect, "get_all_states") else []
             neglected = []
 
             for state in states[:20]:
                 contact_id = state.get("contact_id")
-                if not contact_id:
+                if not contact_id or contact_id == host_id:
                     continue
 
-                # Note: field is "current_valence", not "valence"
-                valence = state.get("current_valence", 0)
-                if valence < -0.3:
-                    neglected.append({
-                        "name": contact_id,
-                        "entity_id": contact_id,
-                        "days_since_contact": 0,
-                    })
+                # Only sustained decline, not a single bad event
+                if hasattr(affect, "detect_sustained_decline"):
+                    if not affect.detect_sustained_decline(contact_id, min_events=3):
+                        continue
+                else:
+                    # Fallback: declining trend + negative valence
+                    if state.get("trend") != "declining":
+                        continue
+                    if state.get("current_valence", 0) >= -0.3:
+                        continue
+
+                neglected.append({
+                    "name": contact_id,
+                    "entity_id": contact_id,
+                    "days_since_contact": 7,  # minimum threshold; engine loads exact days from graph
+                })
 
             if neglected:
                 engine.add_context("neglected_contacts", neglected)

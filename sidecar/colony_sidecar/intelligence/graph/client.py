@@ -223,6 +223,57 @@ class ColonyGraph:
 
         return memory_id
 
+    async def record_turn(
+        self,
+        session_id: str,
+        contact_id: Optional[str],
+        topics: List[str],
+        entities: List[str],
+        tools_used: List[str],
+        summary: Optional[str],
+    ) -> Optional[str]:
+        """Store a conversation turn as an episodic memory.
+
+        Creates a :Memory node of type ``episodic`` linked to the
+        conversation session and contact.  Entities and topics are
+        merged as :Entity nodes.  Tools used are stored in metadata.
+
+        Args:
+            session_id: Hermes session identifier
+            contact_id: Optional contact / person identifier
+            topics: Extracted topics from the turn
+            entities: Named entities mentioned
+            tools_used: Tool names invoked during the turn
+            summary: Human-readable summary of the exchange
+
+        Returns:
+            The UUID of the created Memory node, or None if storage fails.
+        """
+        if not summary:
+            return None
+
+        content = summary
+        importance = 0.7
+        metadata: Dict[str, Any] = {
+            "turn": True,
+            "topics": topics,
+            "tools_used": tools_used,
+        }
+
+        try:
+            return await self.store_memory(
+                content=content,
+                memory_type="episodic",
+                entities=entities or [],
+                metadata=metadata,
+                importance=importance,
+                person_id=contact_id,
+                session_id=session_id,
+            )
+        except Exception as exc:
+            logger.warning("record_turn failed: %s", exc)
+            return None
+
     async def recall(
         self,
         query: str,
