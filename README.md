@@ -18,7 +18,7 @@ Colony is not another agent. It is infrastructure. A sidecar process with a unif
 
 **For OpenClaw:** Colony mounts as a plugin. The sidecar runs alongside the gateway, communicating via HTTP/WebSocket. Context assembly, commitment tracking, affect state, and all 36 subsystems are available as part of every conversation turn.
 
-**For Hermes:** Colony ships a MemoryProvider plugin that injects cognitive context before each turn and syncs turns back for extraction. Hermes also connects via MCP for direct tool access.
+**For Hermes:** Colony ships a MemoryProvider plugin that injects cognitive context before each turn and syncs turns back for extraction. An initiative poller enables Colony to run autonomously — generating tasks, research, and relationship actions on your behalf. Hermes also connects via MCP for direct tool access.
 
 **For coding harnesses (Claude Code, Codex, Crush, OpenCode):** Colony exposes an MCP server with 14 tools, 4+ resources, and 3 prompts. Your coding tools can check commitments, look up facts, record affect, search the world model, and write back new knowledge, all through the standard MCP protocol.
 
@@ -39,7 +39,7 @@ colony init
 
 That one command handles dependencies, Neo4j, hardware scan, model download, plugin config, sidecar start, health verify, and doctor check.
 
-### With Hermes (experimental)
+### With Hermes
 
 ```bash
 pip install colonyai
@@ -48,11 +48,16 @@ pip install pyyaml        # Required for Hermes YAML config
 colony mcp setup          # Writes MCP config to ~/.hermes/config.yaml
 ```
 
-Colony also ships a MemoryProvider plugin for Hermes that injects cognitive context before each turn and syncs turns back for extraction. Install it:
+Deploy the Hermes plugin stack:
 
 ```bash
-bash plugins/hermes-memory/install.sh
+cd plugins/hermes-plugin
+./install.sh --memory --poller
 ```
+
+This installs:
+- **Memory provider** to `~/.hermes/plugins/colony-memory/` — injects Colony context before each turn, syncs turns back for extraction
+- **Initiative poller** to `~/.hermes/scripts/` — polls Colony for autonomous initiatives and fires them to the Hermes webhook
 
 Then add to `~/.hermes/config.yaml`:
 
@@ -65,7 +70,17 @@ memory:
     contact_id: "default"
 ```
 
-### With Claude Code, Codex, Crush, or OpenCode (experimental)
+Schedule the poller via Hermes cron:
+
+```bash
+hermes cron create \
+    --name colony-initiative-poller \
+    --schedule "every 1m" \
+    --script colony-initiative-poller.py \
+    --no-agent
+```
+
+### With Claude Code, Codex, Crush, or OpenCode
 
 ```bash
 pip install colonyai
@@ -98,12 +113,70 @@ docker compose up -d     # Neo4j + Colony sidecar
 ### Verify
 
 ```bash
-colony status             # Sidecar health + E2E validation status
+colony service status      # Sidecar service status (launchd)
 colony doctor             # Full subsystem check (34 checks)
 colony validate           # 5-step pipeline test, writes validation stamp
 ```
 
 **Prerequisites:** Python 3.11+, Docker (auto-installed by `colony init` if missing). For OpenClaw: an LLM key configured. For Hermes: PyYAML installed. For coding harnesses: the harness installed locally.
+
+-----
+
+## Temporal Awareness, Sync Health & Auto-Restart (v0.8.x)
+
+Colony v0.8.x introduces production-grade resilience for the autonomy pipeline. The sidecar now tracks its own temporal health, recovers automatically from crashes, and surfaces diagnostics when things go wrong.
+
+### Sidecar Telemetry
+
+The sidecar maintains a `TelemetryStore` that tracks:
+- `started_at` — when the sidecar started
+- `last_sync_at` — last turn sync received
+- `last_tick_at` — last autonomy loop tick
+- `last_initiative_at` — last initiative created
+
+The health endpoint (`/v1/host/health`) returns these as `temporal` metrics, plus `silence_hours` and `stale_flags`. Status degrades to `degraded` when thresholds are exceeded:
+
+| Threshold | Env Var | Default |
+|-----------|---------|---------|
+| Sync staleness | `COLONY_STALE_SYNC_HOURS` | 2.0 hours |
+| Tick staleness | `COLONY_STALE_TICK_HOURS` | 24.0 hours |
+| Initiative staleness | `COLONY_STALE_INITIATIVE_HOURS` | 48.0 hours |
+
+### Auto-Restart via launchd
+
+On macOS, Colony can run as a launchd service:
+
+```bash
+colony service install     # Generate plist and load service
+colony service start       # Start the service
+colony service stop        # Stop the service
+colony service restart     # Restart (unload/load, not stop/start)
+colony service status      # Check service + sidecar health
+colony service uninstall   # Remove plist and unload
+```
+
+The plist uses `KeepAlive` and `RunAtLoad` for automatic restart on crash and boot. Runtime environment variables are loaded from `~/.colony/.env` — no credentials are frozen in the plist.
+
+### Initiative Poller Resilience
+
+The Hermes initiative poller (run every 60s) now:
+1. **Health preflight** — checks sidecar health before fetching initiatives
+2. **Auto wake-up** — on connection failure, sends `launchctl start` to restart the sidecar
+3. **State tracking** — `~/.hermes/.colony_wake_up_flag` prevents infinite wake-up loops
+4. **Alert routing** — if wake-up fails twice, fires an `"alert"` to the log channel only (never DMs)
+5. **Deduplication** — skips initiatives by `dedup_key` to prevent spam
+
+### Provider Resilience
+
+The Hermes memory provider now includes:
+- **Circuit breaker** — opens after 3 `ConnectError`/`OSError` failures, closes after 60s
+- **Retry with backoff** — 3 attempts, 0.5s delay (connection errors only; HTTP 4xx/5xx don't count)
+- **WARNING-level logging** — connection failures logged at WARNING (was DEBUG)
+- **Diagnostics** — `get_diagnostics()` returns circuit state, failure count, last sync attempt/error
+
+### Temporal Awareness for Agents
+
+The provider's system prompt block instructs the LLM to prefer host-provided current time over stored timestamps. This prevents fabricated narratives from stale data — when Colony says "last talked 3 days ago," the agent knows to verify against the actual current time.
 
 -----
 
@@ -178,6 +251,7 @@ See [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md) for:
 
 - [What Is Colony](#what-is-colony)
 - [Quick Start](#quick-start)
+- [Temporal Awareness, Sync Health & Auto-Restart](#temporal-awareness-sync-health--auto-restart-v08x)
 - [Multi-Agent (v0.7.0)](#multi-agent-v070)
 - [Why Colony](#why-colony)
 - [36 Wired Subsystems](#36-wired-subsystems)
@@ -207,6 +281,8 @@ Most agent memory is session-scoped. When the conversation ends, the context is 
 
 **Degrades gracefully.** An unwired subsystem returns empty results instead of errors. Use what you need, skip what you don't.
 
+**Autonomous.** Colony doesn't just store memory — it acts on it. The autonomy loop detects stale commitments, overdue tasks, relationship gaps, and surprise events, then generates initiatives for your agent to execute.
+
 -----
 
 ## 36 Wired Subsystems
@@ -228,6 +304,7 @@ Everything below works now.
 | Identity | Ed25519 cryptographic identity with Colony + Node layers, Genesis trust anchor, backup/restore |
 | Secrets | Encrypted vault for sensitive configuration |
 | Sessions | Isolated session management |
+| Telemetry | Temporal health tracking with stale detection and auto-restart |
 
 ### Goals and Planning
 
@@ -236,6 +313,7 @@ Everything below works now.
 | Goals | DAG-based goal decomposition and tracking |
 | Commitment Tracking | LLM-extracted commitments with status transitions, overdue detection, and cognition triggers |
 | Research | Background research pipeline with configurable depth |
+| Initiative Engine | Generate autonomous work items from goals, contacts, schedules, and surprise events |
 
 ### Relationships
 
@@ -288,6 +366,8 @@ Everything below works now.
 
 **Multi-harness by design.** Colony is not tied to one runtime. OpenClaw talks HTTP. Hermes talks HTTP with a MemoryProvider plugin. Claude Code, OpenCode, Codex, and Crush talk MCP. All share the same intelligence layer. Add harnesses selectively. Run them simultaneously.
 
+**Autonomous by default.** The autonomy loop runs every 60 seconds, scanning for stale commitments, overdue goals, relationship gaps, and surprise events. When it finds work, it generates an initiative and pushes it to the connected harness. Colony doesn't just remember — it acts.
+
 **No LLM keys required locally.** Colony inherits LLM credentials from its host at runtime. For standalone use or plugin development, supply them in `.env` to exercise the sidecar directly.
 
 **Retrieval auto-configures.** `colony init` scans your hardware and picks the right embedding and reranker models for your tier, from a 4GB laptop to a 256GB workstation.
@@ -296,7 +376,7 @@ Everything below works now.
 
 **Types stay in sync.** Python Pydantic schemas export an OpenAPI spec. TypeScript types generate from the spec. No client/server drift.
 
-**Authenticated by default.** When `COLONY_API_KEY` is set, all API endpoints require Bearer token authentication. Without it, the API runs in open dev mode.
+**Authenticated by default.** When `COLONY_API_KEY` is set, all API endpoints require `X-API-Key` header authentication. Without it, the API runs in open dev mode.
 
 -----
 
@@ -402,6 +482,11 @@ Two deployable units. A thin TypeScript plugin that loads into OpenClaw, and a P
 │  │  Crush  │  │ OpenCode │        │                                     │
 │  │  (MCP)  │  │  (MCP)   │────────┘                                     │
 │  └─────────┘  └──────────┘                                              │
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ Initiative Poller (cron) → Webhook → Agent Run                  │    │
+│  │ MemoryProvider → Prefetch / Sync Turn                           │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────┬──────────────────────────────────────────┘
                                │
             ┌──────────────────┴──────────────────┐
@@ -412,10 +497,12 @@ Two deployable units. A thin TypeScript plugin that loads into OpenClaw, and a P
 ┌──────────────────────────────┴──────────────────────────────────────────┐
 │ Colony Sidecar                                                          │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │ FastAPI Server + MCP Server                                      │  │
+│  │ FastAPI Server + MCP Server + TelemetryStore                     │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │ SubsystemRegistry (36 subsystems)                                │  │
+│  │  - Autonomy Loop (initiative generation)                         │  │
+│  │  - Telemetry (temporal health tracking)                          │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────┬──────────────────────────────────────────┘
                                │
@@ -430,6 +517,8 @@ Two deployable units. A thin TypeScript plugin that loads into OpenClaw, and a P
 ### Communication
 
 OpenClaw to sidecar: HTTP POST to `/v1/host/*` endpoints, WebSocket `/v1/host/events` for real-time events.
+
+Hermes to sidecar: HTTP via MemoryProvider plugin (prefetch + turn sync), plus HTTP via initiative poller (health check + initiative fetch), plus MCP for direct tool access.
 
 Coding harnesses to sidecar: MCP protocol over stdio or HTTP, proxied through the same API internally.
 
@@ -471,6 +560,15 @@ COLONY_MULTIMODAL=false
 COLONY_MCP_SOURCE=
 COLONY_MCP_CONTACT_ID=
 
+# Telemetry thresholds (v0.8.x)
+COLONY_STALE_SYNC_HOURS=2.0
+COLONY_STALE_TICK_HOURS=24.0
+COLONY_STALE_INITIATIVE_HOURS=48.0
+
+# Hermes poller config (v0.8.x)
+COLONY_LOG_CHANNEL=            # Log channel for alerts (e.g. whatsapp:GROUP_ID)
+COLONY_PLATFORM=whatsapp       # Platform identifier
+
 LOG_LEVEL=info
 ```
 
@@ -487,7 +585,7 @@ Full configuration reference in `docs/configuration.md`.
 | `colony init` | Full first-run setup: deps, Neo4j, hardware scan, model pre-download, identity, harness selection, sidecar start, verify, doctor |
 | `colony start` | Start the sidecar server (`--host`, `--port`, `--detach`) |
 | `colony stop` | Stop a detached sidecar process |
-| `colony status` | Check sidecar health, subsystem wiring, and E2E validation |
+| `colony service status` | Check sidecar health, subsystem wiring, and service state |
 | `colony validate` | Run 5-step pipeline test, writes `.colony-e2e-validated` stamp |
 | `colony seed` | Seed self-knowledge (run after `colony init` if skipped) |
 | `colony doctor` | Run integration health check against running sidecar (`--url`, `--api-key`, `-v`) |
@@ -495,6 +593,17 @@ Full configuration reference in `docs/configuration.md`.
 | `colony backfill` | Re-embed all vectors with current model |
 | `colony migrate-tier` | Migrate vectors from old embedding model to current |
 | `colony activate-multimodal` | Enable multimodal embeddings and reranking |
+
+### Service Management (v0.8.x)
+
+| Command | Description |
+|---|---|
+| `colony service install` | Install launchd plist and load service |
+| `colony service start` | Start the launchd service |
+| `colony service stop` | Stop the launchd service (unload) |
+| `colony service restart` | Restart the launchd service (unload/load) |
+| `colony service status` | Check service loaded state + sidecar health |
+| `colony service uninstall` | Unload and remove launchd plist |
 
 ### MCP Commands
 
@@ -551,7 +660,7 @@ colony restore                       # Interactive: file + passphrase
 
 Base URL: `http://localhost:7777/v1/host`
 
-All endpoints require Bearer authentication (`Authorization: Bearer $COLONY_API_KEY`). Unauthenticated requests receive 401. The health endpoint (`/v1/host/health`) and OpenAPI spec (`/openapi.json`) are accessible without auth.
+All endpoints require `X-API-Key` authentication when `COLONY_API_KEY` is set. Unauthenticated requests receive 401. The health endpoint (`/v1/host/health`) and OpenAPI spec (`/openapi.json`) are accessible without auth.
 
 Full OpenAPI spec:
 
@@ -563,7 +672,7 @@ curl http://localhost:7777/openapi.json
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/health` | Health check and capabilities |
+| GET | `/health` | Health check with temporal metrics and capabilities |
 | POST | `/context/assemble` | Assemble multi-source context for LLM injection |
 | POST | `/turns/sync` | Sync a conversation turn (triggers extraction, pattern detection, cognition) |
 | GET | `/events` | WebSocket endpoint for real-time event stream |
@@ -616,11 +725,15 @@ curl http://localhost:7777/openapi.json
 | POST | `/surprises` | Record a surprise (expectation violation) |
 | GET | `/surprises` | Query recorded surprises |
 
-### Cognition
+### Cognition and Autonomy
 
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/cognition/trigger` | Trigger cognition cycle (throttled, auto-fires on turn sync) |
+| GET | `/initiatives` | List pending initiatives |
+| POST | `/initiatives` | Create an initiative (autonomy loop or external) |
+| GET | `/initiatives/{id}` | Get initiative by ID |
+| PATCH | `/initiatives/{id}` | Update initiative status |
 
 ### Goals, Skills, and Identity
 
@@ -651,27 +764,32 @@ Colony is not a vector database. It uses Neo4j for graph storage and has an embe
 
 Colony is not an agent framework. It does not run agents. It provides the infrastructure that makes agents smarter: shared memory, commitment tracking, affect modeling, pattern detection, and world knowledge that persists across sessions and flows across tools.
 
+Colony is not a reminder service. When the autonomy loop detects work, it generates an initiative and pushes it to your agent. The agent acts on your behalf — it doesn't tell you what to do.
+
 -----
 
 ## Roadmap
 
-### Now (v0.6.0)
+### Now (v0.8.x)
 
 - 36 wired subsystems, 57+ API endpoints
-- MCP server for Claude Code, Codex, Crush
+- Temporal awareness and sync health monitoring
+- Auto-restart via launchd with telemetry tracking
+- Initiative poller with health preflight and alert routing
+- Memory provider with circuit breaker, retry, and diagnostics
+- MCP server for Claude Code, Codex, Crush, Hermes
 - Multi-harness shared intelligence layer
 - Neo4j + SQLite world model backends
-- Cognitive architecture: commitments, affect, shared facts, patterns, surprise
+- Cognitive architecture: commitments, affect, shared facts, patterns, surprise, autonomy
 - Event journal with replay
 - Adaptive context compression
-- Full lifecycle CLI (start/stop/status/validate/doctor)
+- Full lifecycle CLI (start/stop/service/validate/doctor)
 
 ### Next
 
-- More MCP tools as cognitive subsystems grow
-- Remote MCP transport for CI and team setups
 - Enhanced provenance tracking across all stores
 - Response gate PII and injection interception testing
+- Remote MCP transport for CI and team setups
 - SuperColony Network architecture spec
 
 ### Future
@@ -693,21 +811,21 @@ cd ColonyAI/sidecar
 
 # Python
 pip install -e ".[dev]"
-pytest tests/ -v                    # 245 unit tests
-COLONY_API_KEY=test pytest tests/e2e/ -v   # 77 E2E tests (needs sidecar)
+pytest tests/ -v                    # Unit tests
+COLONY_API_KEY=test pytest tests/e2e/ -v   # E2E tests (needs sidecar)
 
 # TypeScript
 cd ../
 npm install
 npm run build                       # Compiles + type-checks
-npm test                            # 151 TypeScript tests
+npm test                            # TypeScript tests
 ```
 
 ### Test Counts
 
 | Suite | Count |
 |---|---|
-| Python unit tests | 245 |
+| Python unit tests | 695+ |
 | TypeScript tests | 151 |
 | E2E integration tests | 77 |
 | MCP unit tests | 51 |
