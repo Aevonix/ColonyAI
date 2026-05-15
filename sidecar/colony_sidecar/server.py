@@ -13,6 +13,26 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Load ~/.colony/.env before any config reads (mirrors CLI behaviour for
+# service/standalone launches that skip the CLI entrypoint).
+_env_loaded = False
+if not _env_loaded:
+    for _env_path in (Path.home() / ".colony" / ".env", Path.cwd() / ".env"):
+        if _env_path.exists():
+            with open(_env_path) as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if not _line or _line.startswith("#"):
+                        continue
+                    if "=" in _line:
+                        _k, _v = _line.split("=", 1)
+                        _k = _k.strip()
+                        _v = _v.strip()
+                        if _k not in os.environ:
+                            os.environ[_k] = _v
+            break
+    _env_loaded = True
+
 from fastapi import FastAPI
 
 from colony_sidecar.api.routers.host import (
