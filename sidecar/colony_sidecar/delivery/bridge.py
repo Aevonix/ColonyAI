@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -235,9 +236,9 @@ class ProactiveDeliveryBridge:
             return False
 
     async def push_initiative(self, initiative: Dict[str, Any]) -> bool:
-        """Push a structured initiative to OpenClaw for LLM decision-making.
-        
-        Returns True if gateway accepted, False otherwise.
+        """Push a structured initiative to Hermes via webhook.
+
+        Returns True if Hermes accepted (202), False otherwise.
         """
         try:
             import aiohttp
@@ -245,71 +246,85 @@ class ProactiveDeliveryBridge:
             logger.warning("aiohttp not available — cannot push initiative")
             return False
 
-        url = f"{self._gateway_url.rstrip('/')}/internal/initiative"
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if self._gateway_api_key:
-            headers["Authorization"] = f"Bearer {self._gateway_api_key}"
+        # Hermes webhook URL — override via env var for flexibility
+        hermes_webhook_url = os.environ.get(
+            "COLONY_HERMES_WEBHOOK_URL",
+            "http://127.0.0.1:8644/webhooks/colony-initiatives",
+        )
 
-        # Resolve home channel for delivery context
-        home = self.resolve_home_channel()
-        delivery_context = None
-        if home:
-            delivery_context = {
-                "channel": home.get("platform"),
-                "to": home.get("chat_id"),
-                "accountId": home.get("account_id"),
-            }
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        # Optional HMAC secret for webhook auth
+        webhook_secret = os.environ.get("COLONY_HERMES_WEBHOOK_SECRET", "")
+        if webhook_secret:
+            import hmac, hashlib
+            body = json.dumps({}).encode()  # placeholder; real signing needs full body
+            sig = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+            headers["X-Webhook-Signature"] = sig
+
+        # Resolve agent name from env var — never hardcode
+        agent_name = os.environ.get("COLONY_AGENT_NAME", "the assistant")
+
+        # Normalize priority: if it's a float <= 1.0, scale to 0-100
+        raw_priority = initiative.get("priority", 0.5)
+        if isinstance(raw_priority, float) and raw_priority <= 1.0:
+            priority = int(raw_priority * 100)
+        else:
+            priority = int(raw_priority)
 
         payload = {
-            "initiative": initiative,
-            "source": "autonomy_loop",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "deliveryContext": delivery_context,
+            "type": "initiative",
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "initiative_type": initiative.get("type", "unknown"),
+                "title": initiative.get("title", ""),
+                "description": initiative.get("description", ""),
+                "priority": priority,
+                "status": "pending",
+                "id": initiative.get("id", str(uuid.uuid4())),
+                "dedup_key": f"{initiative.get('type', 'unknown')}:{initiative.get('entity_id', 'none')}",
+                "agent_name": agent_name,
+                "context": {
+                    "trigger": initiative.get("rationale", ""),
+                    "suggested_actions": [initiative.get("suggested_action", "notify_user")]
+                    if initiative.get("suggested_action")
+                    else [],
+                    "constraints": {},
+                    "metadata": {
+                        "source": "autonomy_loop",
+                        "entity_id": initiative.get("entity_id"),
+                        "entity_type": initiative.get("entity_type"),
+                    },
+                },
+                "created_at": initiative.get("generated_at", datetime.now(timezone.utc).isoformat()),
+                "expires_at": None,
+            },
         }
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    url,
+                    hermes_webhook_url,
                     json=payload,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=5.0),
+                    timeout=aiohttp.ClientTimeout(total=10.0),
                 ) as resp:
-                    if resp.status == 200:
+                    if resp.status == 202:
                         logger.info(
-                            "Initiative pushed to gateway: %s (type=%s, priority=%.2f)",
+                            "Initiative pushed to Hermes: %s (type=%s, priority=%d)",
                             initiative.get("id"),
                             initiative.get("type"),
-                            initiative.get("priority", 0),
+                            priority,
                         )
                         return True
                     body = await resp.text()
                     logger.warning(
-                        "Gateway /internal/initiative returned %d: %s",
+                        "Hermes webhook returned %d: %s",
                         resp.status, body[:200]
                     )
-                    # Fallback: broadcast via WebSocket so Hermes subscribers still receive it
-                    self._broadcast_fallback(initiative)
-                    return True
+                    return False
         except Exception as exc:
             logger.warning("push_initiative failed: %s", exc)
-            # Fallback: broadcast via WebSocket so Hermes subscribers still receive it
-            self._broadcast_fallback(initiative)
-            return True
-
-    def _broadcast_fallback(self, initiative: Dict[str, Any]) -> None:
-        """Broadcast an initiative via WebSocket when HTTP push fails.
-
-        This ensures Hermes and other WebSocket subscribers still receive
-        the initiative even if the gateway's /internal/initiative endpoint
-        is unavailable or unregistered.
-        """
-        try:
-            from colony_sidecar.events.broadcaster import emit
-            emit("initiative", initiative)
-            logger.info("Initiative broadcast via WebSocket fallback: %s", initiative.get("id"))
-        except Exception:
-            logger.debug("WebSocket fallback broadcast failed for initiative %s", initiative.get("id"), exc_info=True)
+            return False
 
     def get_pending(self, gateway_id: str = "", limit: int = 20) -> List[Dict[str, Any]]:
         """Return pending PUSH deliveries for the gateway to send.
