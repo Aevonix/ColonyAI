@@ -213,29 +213,34 @@ class InitiativeStore:
                         existing.id,
                     )
                     return existing
-                # Reactivate failed/completed/cancelled initiatives so they
-                # can be retried instead of crashing on UNIQUE constraint.
+                # Only reactivate FAILED initiatives so they can be retried.
+                # Completed and cancelled initiatives are terminal — do NOT
+                # resurrect them, or the autonomy loop will spam the agent
+                # with stale follow-ups forever.
+                if existing.status == InitiativeStatus.FAILED.value:
+                    logger.info(
+                        "Reactivating failed initiative %s with dedup_key %s",
+                        existing.id,
+                        dedup_key,
+                    )
+                    return self.update(
+                        existing.id,
+                        status=InitiativeStatus.PENDING.value,
+                        failed_at=None,
+                        failed_reason=None,
+                        attempt_count=0,
+                        assigned_agent_id=None,
+                        assigned_agent_name=None,
+                        assigned_at=None,
+                        acknowledged_at=None,
+                    )
+                # Terminal state (completed/cancelled) — return as-is.
                 logger.info(
-                    "Reactivating initiative %s with dedup_key %s",
+                    "Dedup hit on terminal initiative %s (status=%s), not reactivating",
                     existing.id,
-                    dedup_key,
+                    existing.status,
                 )
-                return self.update(
-                    existing.id,
-                    status=InitiativeStatus.PENDING.value,
-                    failed_at=None,
-                    failed_reason=None,
-                    completed_at=None,
-                    result=None,
-                    attempt_count=0,
-                    assigned_agent_id=None,
-                    assigned_agent_name=None,
-                    assigned_at=None,
-                    acknowledged_at=None,
-                    cancelled_at=None,
-                    cancelled_by=None,
-                    cancelled_reason=None,
-                )
+                return existing
 
         # Bug 26: Validate priority range
         priority = max(0.0, min(1.0, priority))
