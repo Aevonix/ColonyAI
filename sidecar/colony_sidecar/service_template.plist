@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.aevonix.colony-sidecar</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{uvicorn_path}</string>
+        <string>colony_sidecar.server:app</string>
+        <string>--host</string>
+        <string>{host}</string>
+        <string>--port</string>
+        <string>{port}</string>
+        <string>--log-level</string>
+        <string>{log_level}</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{working_dir}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{home}</string>
+        <key>PATH</key>
+        <string>{path}</string>
+        <key>COLONY_STATE_DIR</key>
+        <string>{state_dir}</string>
+        <key>COLONY_SIDECAR_HOST</key>
+        <string>{host}</string>
+        <key>COLONY_SIDECAR_PORT</key>
+        <string>{port}</string>
+        <key>PYTHONPATH</key>
+        <string>{pythonpath}</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>{log_path}</string>
+    <key>StandardErrorPath</key>
+    <string>{log_path}</string>
+</dict>
+</plist>

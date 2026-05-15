@@ -207,6 +207,14 @@ class AutonomyLoop:
         self._reset_hour_bucket()
         tick_start = datetime.now(timezone.utc)
 
+        # Telemetry touch
+        try:
+            from colony_sidecar.api.routers.host import _telemetry
+            if _telemetry is not None:
+                await _telemetry.touch("last_tick_at")
+        except Exception:
+            pass
+
         logger.debug("Tick #%d starting", self.stats.ticks)
 
         # Phase 0: evaluate skill triggers
