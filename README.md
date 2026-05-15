@@ -366,7 +366,7 @@ Everything below works now.
 
 **Multi-harness by design.** Colony is not tied to one runtime. OpenClaw talks HTTP. Hermes talks HTTP with a MemoryProvider plugin. Claude Code, OpenCode, Codex, and Crush talk MCP. All share the same intelligence layer. Add harnesses selectively. Run them simultaneously.
 
-**Autonomous by default.** The autonomy loop runs every 60 seconds, scanning for stale commitments, overdue goals, relationship gaps, and surprise events. When it finds work, it generates an initiative and pushes it to the connected harness. Colony doesn't just remember — it acts.
+**Autonomous by default.** The autonomy loop runs every 60 seconds, scanning for stale commitments, overdue goals, relationship gaps, and surprise events. When it finds work, it generates an initiative and pushes it to the connected harness. If the loop goes quiet, a scheduler task checks in with the owner — not as a reminder, but as an agent-initiated touchpoint to see if anything is needed. Colony doesn't just remember — it acts.
 
 **No LLM keys required locally.** Colony inherits LLM credentials from its host at runtime. For standalone use or plugin development, supply them in `.env` to exercise the sidecar directly.
 
@@ -564,6 +564,12 @@ COLONY_MCP_CONTACT_ID=
 COLONY_STALE_SYNC_HOURS=2.0
 COLONY_STALE_TICK_HOURS=24.0
 COLONY_STALE_INITIATIVE_HOURS=48.0
+
+# Owner check-in (v0.8.3)
+COLONY_OWNER_CHECK_IN_ENABLED=true
+COLONY_OWNER_CHECK_IN_SILENT_HOURS=1.0
+COLONY_OWNER_CHECK_IN_COOLDOWN_HOURS=4.0
+COLONY_OWNER_CONTACT_ID=           # Optional: override auto-resolved owner
 
 # Hermes poller config (v0.8.x)
 COLONY_LOG_CHANNEL=            # Log channel for alerts (e.g. whatsapp:GROUP_ID)
@@ -778,6 +784,7 @@ Colony is not a reminder service. When the autonomy loop detects work, it genera
 - Initiative poller with health preflight and alert routing
 - Memory provider with circuit breaker, retry, and diagnostics
 - MCP server for Claude Code, Codex, Crush, Hermes
+- Silence-triggered owner check-in — agent-initiated touchpoint when autonomy goes quiet
 - Multi-harness shared intelligence layer
 - Neo4j + SQLite world model backends
 - Cognitive architecture: commitments, affect, shared facts, patterns, surprise, autonomy

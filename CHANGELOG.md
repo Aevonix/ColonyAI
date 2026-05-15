@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.3 (2026-05-15)
+
+Silence-triggered owner check-in and telemetry fix.
+
+### Added
+- **Owner Check-In scheduler task** — detects when the autonomy loop has not generated an initiative for a configurable period (default: 1 hour), then emits a `proactive_message` initiative asking the owner if anything is needed
+  - `OwnerCheckInTask` with file-backed persistence (`~/.colony/data/autonomy_checkin.json`) so state survives restarts
+  - Owner resolution: config override (`COLONY_OWNER_CONTACT_ID`) → identity manager → highest-scored non-stranger contact
+  - Safety guards: quiet hours (23:00–07:00), cooldown (default 4h), disabled if telemetry missing
+  - Configurable via `COLONY_OWNER_CHECK_IN_ENABLED`, `COLONY_OWNER_CHECK_IN_SILENT_HOURS`, `COLONY_OWNER_CHECK_IN_COOLDOWN_HOURS`
+  - Runs as a scheduler task independent of the autonomy loop tick interval
+
+### Fixed
+- **`AutonomyLoop._phase_execute()`** now touches `TelemetryStore.last_initiative_at` when initiatives are successfully pushed, fixing `silence_hours("initiative")` which previously reported infinite silence even during active loop operation
+
 ## 0.7.24 (2026-05-15)
 
 Anti-spam initiative delivery and autonomy pipeline spec.
