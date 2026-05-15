@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Colony ↔ Hermes Plugin Installer
-# Usage: ./install.sh [--autonomy] [--force]
+# Usage: ./install.sh [--autonomy] [--force] [--memory] [--poller]
 #
 # Deploys the Colony general plugin into ~/.hermes/plugins/colony/
 # and optionally enables the Autonomy Bridge cron job.
@@ -12,11 +12,15 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PLUGIN_DIR="$HERMES_HOME/plugins/colony"
 FORCE=0
 ENABLE_AUTONOMY=0
+INSTALL_MEMORY=0
+INSTALL_POLLER=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --autonomy) ENABLE_AUTONOMY=1 ; shift ;;
     --force)    FORCE=1 ; shift ;;
+    --memory)   INSTALL_MEMORY=1 ; shift ;;
+    --poller)   INSTALL_POLLER=1 ; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -48,13 +52,41 @@ cp "$SCRIPT_DIR/plugin.yaml" "$PLUGIN_DIR/"
 
 echo "   Plugin files deployed."
 
+# Deploy memory provider
+if [[ "$INSTALL_MEMORY" -eq 1 ]]; then
+  MEMORY_DIR="$HERMES_HOME/plugins/colony-memory"
+  mkdir -p "$MEMORY_DIR"
+  cp "$SCRIPT_DIR/memory_provider/provider.py" "$MEMORY_DIR/"
+  cat > "$MEMORY_DIR/__init__.py" << 'EOF'
+from .provider import ColonyMemoryProvider
+__all__ = ["ColonyMemoryProvider"]
+EOF
+  cat > "$MEMORY_DIR/plugin.yaml" << 'EOF'
+name: colony-memory
+description: Colony memory provider for Hermes
+entrypoint: provider:ColonyMemoryProvider
+EOF
+  echo "   Memory provider deployed to $MEMORY_DIR"
+fi
+
+# Deploy poller
+if [[ "$INSTALL_POLLER" -eq 1 ]]; then
+  SCRIPTS_DIR="$HERMES_HOME/scripts"
+  mkdir -p "$SCRIPTS_DIR"
+  cp "$SCRIPT_DIR/poller/colony-initiative-poller.py" "$SCRIPTS_DIR/"
+  chmod +x "$SCRIPTS_DIR/colony-initiative-poller.py"
+  echo "   Initiative poller deployed to $SCRIPTS_DIR/colony-initiative-poller.py"
+  echo "   Schedule with: hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
+fi
+
 # Check if plugin is enabled
 if command -v hermes &>/dev/null; then
   echo ""
   echo "📋 Next steps:"
   echo "   1. Ensure Colony sidecar is running on port 7777"
   echo "   2. Enable the plugin:   hermes plugins enable colony"
-  echo "   3. Start a new session: hermes"
+  [[ "$INSTALL_MEMORY" -eq 1 ]] && echo "   3. Configure memory:    hermes memory setup colony"
+  [[ "$INSTALL_POLLER" -eq 1 ]] && echo "   4. Start the poller:    hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
   echo ""
 
   # Autonomy wizard prompt
