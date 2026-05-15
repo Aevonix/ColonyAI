@@ -432,6 +432,65 @@ class AutonomyLoop:
             logger.error("Phase initiative error: %s", exc, exc_info=True)
             self._pending_initiatives = []
 
+    def _build_initiative_context(self, initiative: Any, type_value: str) -> dict:
+        """Build a focused, per-initiative context dict.
+
+        Instead of dumping the entire engine state (which leaks internal
+        context like all pending tasks, all neglected contacts, etc.), we
+        look up only the item relevant to this specific initiative.
+        """
+        raw_ctx = getattr(self, "_last_initiative_context", {})
+        entity_id = getattr(initiative, "entity_id", None)
+        desc = getattr(initiative, "description", "")
+
+        if type_value == "follow_up":
+            for item in raw_ctx.get("pending_tasks", []):
+                if item.get("entity_id") == entity_id:
+                    return {
+                        "blocked_goal": {
+                            "goal_id": entity_id,
+                            "title": item.get("description", desc),
+                            "days_pending": item.get("days_pending", 0),
+                        }
+                    }
+            return {}
+
+        if type_value == "relationship":
+            for contact in raw_ctx.get("neglected_contacts", []):
+                if contact.get("entity_id") == entity_id:
+                    return {
+                        "neglected_contact": {
+                            "contact_id": entity_id,
+                            "days_since_contact": contact.get("days_since_contact", 0),
+                        }
+                    }
+            return {}
+
+        if type_value == "scheduling":
+            for slot in raw_ctx.get("scheduling_opportunities", []):
+                if slot.get("description") == desc:
+                    return {
+                        "upcoming_commitment": {
+                            "description": slot.get("description", ""),
+                            "hours_until_due": 0,  # not stored in opportunity dict
+                        }
+                    }
+            return {}
+
+        if type_value == "health":
+            for alert in raw_ctx.get("health_alerts", []):
+                if alert.get("metric") == entity_id:
+                    return {
+                        "health_alert": {
+                            "metric": entity_id,
+                            "value": alert.get("value"),
+                            "target": alert.get("target"),
+                        }
+                    }
+            return {}
+
+        return {}
+
     async def _phase_execute(self) -> None:
         """Push initiatives to OpenClaw for LLM decision-making."""
         delivery = self._registry.delivery
@@ -449,7 +508,7 @@ class AutonomyLoop:
                 # We add title (derived from description) and context (from engine state)
                 initiative_type = getattr(initiative, "type", "unknown")
                 type_value = initiative_type.value if hasattr(initiative_type, "value") else str(initiative_type)
-                
+
                 payload = {
                     "id": getattr(initiative, "id", str(uuid.uuid4())),
                     "type": type_value,
@@ -460,7 +519,7 @@ class AutonomyLoop:
                     "suggested_action": getattr(initiative, "action_hint", "notify_user") or "notify_user",
                     "entity_id": getattr(initiative, "entity_id", None),
                     "entity_type": type_value,  # v0.7.10: task, contact, commitment
-                    "context": self._last_initiative_context if hasattr(self, "_last_initiative_context") else {},
+                    "context": self._build_initiative_context(initiative, type_value),
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 }
 
