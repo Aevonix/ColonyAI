@@ -825,7 +825,7 @@ This prevents killing a process that launchd will immediately restart.
 curl -s http://127.0.0.1:7777/v1/host/health | python3 -m json.tool
 
 # Via CLI
-colony status
+colony service status
 
 # Via launchd
 launchctl list ai.aevonix.colony-sidecar
