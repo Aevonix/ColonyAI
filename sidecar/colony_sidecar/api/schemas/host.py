@@ -864,6 +864,23 @@ class HostConfigureResponse(BaseModel):
     models: Optional[Dict[str, str]] = None
 
 
+# --- Models (local LLM discovery) -------------------------------------------
+
+class ModelInfo(BaseModel):
+    id: str
+    provider: Optional[str] = None
+    size: Optional[int] = None
+    owned_by: Optional[str] = None
+
+
+class ModelListResponse(BaseModel):
+    provider: str = ""
+    base_url: Optional[str] = None
+    models: List[ModelInfo] = []
+    discovered: bool = False
+    error: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Commitment Tracking
 # ---------------------------------------------------------------------------

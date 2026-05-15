@@ -115,6 +115,21 @@ class ColonyClient:
             logger.debug("trigger_autonomy_cycle failed: %s", exc)
             return {"completed": False, "error": str(exc)}
 
+    def list_models(self) -> dict:
+        """List available LLM models from the Colony sidecar.
+
+        Returns a dict with ``provider``, ``models``, and ``discovered`` keys.
+        Only returns meaningful data when the sidecar is configured with a
+        local provider (ollama, local, custom).
+        """
+        try:
+            resp = self.get("/v1/host/models", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            logger.debug("list_models failed: %s", exc)
+            return {"provider": "", "models": [], "discovered": False, "error": str(exc)}
+
     def assemble_context(self, query: str, contact_id: str, session_id: str = "") -> dict:
         try:
             resp = self.post(
