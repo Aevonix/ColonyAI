@@ -22,6 +22,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, WebSocket, WebSocketD
 from pydantic import BaseModel
 
 from colony_sidecar.goals.store import GoalNotFoundError
+from colony_sidecar import get_state_dir
 
 from colony_sidecar.api.schemas.host import (
     HostConfigureRequest,
@@ -403,7 +404,7 @@ async def configure_host(body: HostConfigureRequest) -> HostConfigureResponse:
         try:
             import json
             from pathlib import Path
-            config_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-llm-config.json"
+            config_path = get_state_dir() / ".colony-llm-config.json"
             config_path.write_text(json.dumps(body.llm, indent=2))
             logger.info("LLM config persisted to %s", config_path)
         except Exception as exc:
@@ -433,7 +434,7 @@ async def list_models() -> ModelListResponse:
     from colony_sidecar.router.tiers import discover_local_models
     import json
 
-    config_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-llm-config.json"
+    config_path = get_state_dir() / ".colony-llm-config.json"
     provider = ""
     base_url = ""
     api_key = ""
