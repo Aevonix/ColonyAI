@@ -243,7 +243,7 @@ colony service status
 **Implementation:**
 - `colony service install` writes the plist from a template, substitutes real paths from env/config, creates `~/.colony/logs/`, validates that `~/.colony-venv/bin/uvicorn` exists, and runs `launchctl load` (checks `launchctl list` first to avoid "already loaded" errors)
 - `colony service start` runs `launchctl load` (checks `list` first; if already loaded, unloads then reloads)
-- `colony service stop` runs `launchctl unload` (fully disables; to temporarily pause without unloading, use `launchctl stop`)
+- `colony service stop` runs `launchctl unload` (fully disables)
 - `colony service restart` runs `launchctl unload` then `launchctl load`
 - `colony service status` runs `launchctl list` and parses PID / LastExitStatus
 
