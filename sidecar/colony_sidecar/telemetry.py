@@ -22,8 +22,16 @@ class TelemetryStore:
             setattr(self, key, datetime.now(timezone.utc))
 
     async def silence_hours(self, key: str) -> Optional[float]:
+        """Return hours since the last event of the given type."""
+        attr_map = {
+            "sync": "last_sync_at",
+            "tick": "last_tick_at",
+            "initiative": "last_initiative_at",
+            "prefetch": "last_prefetch_at",
+        }
+        attr = attr_map.get(key, key)
         async with self._lock:
-            ts = getattr(self, key)
+            ts = getattr(self, attr, None)
             if ts is None:
                 return None
             return (datetime.now(timezone.utc) - ts).total_seconds() / 3600
