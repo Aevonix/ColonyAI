@@ -1368,22 +1368,30 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
         print(f"  Cleaned up {orphan_count} orphan process(es)")
 
     # Check if port is already in use
-    existing_pid = _find_pid_on_port(port)
-    if existing_pid:
+    existing_pids = _find_pids_on_port(port)
+    if existing_pids:
         if force:
-            print(f"  Killing existing process {existing_pid} on port {port}...")
-            try:
-                os.kill(existing_pid, 15)  # SIGTERM
-                time.sleep(2)
-                # Check if it died
-                if _find_pid_on_port(port):
-                    os.kill(existing_pid, 9)  # SIGKILL
-                    time.sleep(1)
-                print(f"  ✅ Process killed")
-            except ProcessLookupError:
-                pass
+            for pid in existing_pids:
+                print(f"  Killing existing process {pid} on port {port}...")
+                try:
+                    os.kill(pid, 15)  # SIGTERM
+                except ProcessLookupError:
+                    pass
+            # Wait up to 5s for all to die
+            for _ in range(10):
+                if not _find_pids_on_port(port):
+                    break
+                time.sleep(0.5)
+            # Escalate to SIGKILL for any survivors
+            for pid in _find_pids_on_port(port):
+                try:
+                    os.kill(pid, 9)  # SIGKILL
+                except ProcessLookupError:
+                    pass
+            time.sleep(0.5)
+            print(f"  ✅ Process(es) killed")
         else:
-            print(f"  ⚠️ Port {port} is already in use (PID {existing_pid})")
+            print(f"  ⚠️ Port {port} is already in use (PIDs {existing_pids})")
             try:
                 answer = input("  Kill existing process and restart? [Y/n] ").strip().lower()
             except EOFError:
@@ -1391,15 +1399,22 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
             if answer in ("n", "no"):
                 print("  Cancelled.")
                 return
-            try:
-                os.kill(existing_pid, 15)
-                time.sleep(2)
-                if _find_pid_on_port(port):
-                    os.kill(existing_pid, 9)
-                    time.sleep(1)
-                print(f"  ✅ Process killed")
-            except ProcessLookupError:
-                pass
+            for pid in existing_pids:
+                try:
+                    os.kill(pid, 15)
+                except ProcessLookupError:
+                    pass
+            for _ in range(10):
+                if not _find_pids_on_port(port):
+                    break
+                time.sleep(0.5)
+            for pid in _find_pids_on_port(port):
+                try:
+                    os.kill(pid, 9)
+                except ProcessLookupError:
+                    pass
+            time.sleep(0.5)
+            print(f"  ✅ Process(es) killed")
 
     # Build env from .env values
     env = {**os.environ}
@@ -1427,26 +1442,60 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     pid_path.write_text(str(proc.pid))
 
     # Wait for health check
-    import httpx
-    for attempt in range(20):
-        time.sleep(1)
+    _load_dotenv()
+    api_key = os.environ.get("COLONY_API_KEY", "dev-mode-no-key")
+    if _wait_for_sidecar(host, port, api_key, timeout=20.0):
+        import httpx
         try:
-            r = httpx.get(f"http://{host}:{port}/v1/host/health", timeout=2)
-            if r.status_code == 200:
-                data = r.json()
-                caps = len(data.get("capabilities", []))
-                print(f"  ✅ Sidecar running (PID {proc.pid}, {caps} capabilities)")
-                # Check E2E validation status
-                stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
-                if not stamp.exists():
-                    print(f"  ⚠️ E2E pipeline not validated — run 'colony validate' to test")
-                return
+            r = httpx.get(
+                f"http://{host}:{port}/v1/host/health",
+                headers={"X-API-Key": api_key},
+                timeout=2,
+            )
+            data = r.json()
+            caps = len(data.get("capabilities", []))
+            print(f"  ✅ Sidecar running (PID {proc.pid}, {caps} capabilities)")
+            # Check E2E validation status
+            stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
+            if not stamp.exists():
+                print(f"  ⚠️ E2E pipeline not validated — run 'colony validate' to test")
+            return
         except Exception:
             pass
+    else:
+        print(f"  ❌ Sidecar didn't become healthy within 20s")
+        # Print log tail
+        if log_path.exists():
+            try:
+                lines = log_path.read_text().splitlines()
+                tail = lines[-20:] if len(lines) > 20 else lines
+                print(f"\n  Last log lines:")
+                for line in tail:
+                    print(f"    {line}")
+            except Exception:
+                pass
+        print(f"  PID: {proc.pid}")
+        sys.exit(1)
 
-    print(f"  ⚠️ Sidecar didn't respond within 20s")
-    print(f"  Check logs: {log_path}")
-    print(f"  PID: {proc.pid}")
+
+def _wait_for_sidecar(host: str, port: int, api_key: str, timeout: float = 10.0) -> bool:
+    """Poll /health until the sidecar responds or timeout."""
+    import httpx
+    headers = {"X-API-Key": api_key}
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            resp = httpx.get(
+                f"http://{host}:{port}/v1/host/health",
+                headers=headers,
+                timeout=2,
+            )
+            if resp.status_code == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
 
 
 def _cmd_stop() -> None:
