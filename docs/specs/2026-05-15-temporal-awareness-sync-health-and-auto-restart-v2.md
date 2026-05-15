@@ -266,8 +266,8 @@ The poller only calls `launchctl start` as a one-time recovery attempt if Layer 
 
 ### 5.2 Enhanced poller responsibilities
 
-1. **Health check first** — `GET /v1/host/health` before fetching initiatives
-2. **Detect sidecar down** — if health check fails (connection refused, timeout)
+1. **Health check first** — `GET /v1/host/health` (with `X-API-Key` header) before fetching initiatives
+2. **Detect sidecar down** — if health check fails (connection refused, timeout, 5xx)
 3. **Attempt service wake-up** — `launchctl start` if service is installed but not running; skip initiatives this cycle and let the next poll verify health
 4. **Alert on persistent failure** — if sidecar is still down on the next poll cycle (after wake-up was sent), fire an alert
 5. **Inject temporal context** — add `colony_state` to every payload
@@ -374,10 +374,11 @@ Every initiative payload now includes:
 | `~/.hermes/.colony_wake_up_flag` | Tracks if wake-up was sent on previous cycle | Poller | Deleted on successful health |
 
 **Wake-up state logic:**
-1. Health fails → check if `~/.hermes/.colony_wake_up_flag` exists
-2. Flag exists → wake-up was sent on previous cycle and sidecar is still down → **fire alert**
-3. Flag missing → first time seeing failure → send `launchctl start`, create flag, skip initiatives
-4. Health succeeds → delete flag (if present), proceed with initiatives
+1. On poller startup, unconditionally delete `~/.hermes/.colony_wake_up_flag` (prevents stale flags from previous sessions causing immediate false alerts)
+2. Health fails → check if `~/.hermes/.colony_wake_up_flag` exists
+3. Flag exists → wake-up was sent on previous cycle and sidecar is still down → **fire alert**
+4. Flag missing → first time seeing failure → send `launchctl start`, create flag, skip initiatives
+5. Health succeeds → delete flag (if present), proceed with initiatives
 
 **Pruning logic:** on poller startup, if a state file's modification time is older than 90 days, truncate it. This is simpler than parsing entry timestamps and is sufficient for v1.
 
@@ -550,7 +551,7 @@ def _sync():
         except httpx.HTTPStatusError as exc:
             logger.debug("Colony turn sync HTTP error: %s", exc)
             return  # Don't retry or count toward breaker — sidecar is reachable
-        except Exception:
+        except Exception as exc:
             logger.debug("Colony turn sync unexpected error: %s", exc)
             return  # Don't retry or count toward breaker
     # Only reached if all connection retries failed
@@ -592,6 +593,10 @@ def _is_circuit_open(self) -> bool:
         self._persist_circuit_state()
         return False
     return True
+
+# NOTE: _is_circuit_open() and _persist_circuit_state() are not thread-safe.
+# Hermes processes one message at a time per provider, so concurrent access
+# is unlikely. If the provider is ever used concurrently, add a threading.Lock.
 
 # In _sync(), after all retries fail:
 if self._consecutive_failures >= 3:
