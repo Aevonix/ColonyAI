@@ -692,6 +692,103 @@ def _get_autonomy_status(client: Optional[ColonyClient] = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Colony LLM auto-configuration
+# ---------------------------------------------------------------------------
+
+def _detect_ollama_models() -> dict[str, str] | None:
+    """Query Ollama for available models and return tier mappings."""
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://localhost:11434/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read().decode())
+        models = [m["name"] for m in data.get("models", [])]
+        if not models:
+            return None
+        # Prefer larger models for LARGE tier if name hints at size
+        size_hints = {"70b": 3, "32b": 2, "13b": 1, "8b": 0, "7b": 0, "3b": -1, "1b": -2}
+        def score(m: str) -> int:
+            return sum(size_hints.get(k, 0) for k in size_hints if k in m.lower())
+        models_sorted = sorted(models, key=score, reverse=True)
+        return {
+            "large": f"ollama/{models_sorted[0]}",
+            "medium": f"ollama/{models_sorted[len(models_sorted)//2]}" if len(models_sorted) > 1 else f"ollama/{models_sorted[0]}",
+            "small": f"ollama/{models_sorted[-1]}",
+        }
+    except Exception:
+        return None
+
+
+def _configure_colony_llm(client: ColonyClient, plugin_config: dict) -> None:
+    """Push LLM config to Colony sidecar so it can use local models.
+
+    Priority:
+      1. Explicit plugin config (llm_provider, llm_base_url, llm_models)
+      2. Environment variables (COLONY_LLM_*)
+      3. Auto-detect Ollama on localhost:11434
+      4. Skip if nothing found
+    """
+    provider = plugin_config.get("llm_provider", os.environ.get("COLONY_LLM_PROVIDER", "")).lower()
+    base_url = plugin_config.get("llm_base_url", os.environ.get("COLONY_LLM_BASE_URL", ""))
+    models_env = os.environ.get("COLONY_LLM_MODELS", "")
+    models: dict[str, str] = {}
+
+    # Parse explicit model mappings
+    if models_env:
+        try:
+            models = json.loads(models_env)
+        except json.JSONDecodeError:
+            logger.warning("Invalid COLONY_LLM_MODELS JSON, ignoring")
+    for tier in ("small", "medium", "large"):
+        env_key = f"COLONY_LLM_{tier.upper()}"
+        val = os.environ.get(env_key, "")
+        if val:
+            models[tier] = val
+        cfg_key = f"llm_{tier}"
+        if cfg_key in plugin_config:
+            models[tier] = plugin_config[cfg_key]
+
+    # Auto-detect Ollama if no explicit config
+    if not provider and not models:
+        detected = _detect_ollama_models()
+        if detected:
+            provider = "ollama"
+            models = detected
+            base_url = base_url or "http://localhost:11434"
+            logger.info("Auto-detected Ollama models for Colony: %s", models)
+
+    if not provider and not models:
+        logger.debug("No Colony LLM config found — skipping sidecar configuration")
+        return
+
+    # Default provider to "local" if models are set but provider isn't
+    provider = provider or "local"
+
+    payload = {
+        "identity": {"host_id": "hermes"},
+        "llm": {
+            "provider": provider,
+            "baseUrl": base_url,
+            "models": models,
+        },
+    }
+
+    try:
+        resp = client.post("/v1/host/configure", json=payload, timeout=10)
+        if resp.status_code < 300:
+            data = resp.json()
+            logger.info(
+                "Colony LLM configured (provider=%s, models=%s)",
+                data.get("provider", provider),
+                data.get("models", models),
+            )
+        else:
+            logger.warning("Colony LLM configure failed: %s %s", resp.status_code, resp.text[:200])
+    except Exception as exc:
+        logger.warning("Colony LLM configure request failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Plugin registration
 # ---------------------------------------------------------------------------
 
@@ -707,6 +804,9 @@ def register(ctx):
 
     _colony_client = ColonyClient(url=url, api_key=api_key)
     _tool_dispatcher = _ToolDispatcher(_colony_client)
+
+    # 0. Configure Colony LLM (auto-detect local models or use explicit config)
+    _configure_colony_llm(_colony_client, config)
 
     # 1. Register native Colony tools
     for schema in _TOOL_SCHEMAS:

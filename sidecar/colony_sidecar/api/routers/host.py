@@ -26,6 +26,8 @@ from colony_sidecar.goals.store import GoalNotFoundError
 from colony_sidecar.api.schemas.host import (
     HostConfigureRequest,
     HostConfigureResponse,
+    ModelInfo,
+    ModelListResponse,
     AutonomyStatusResponse,
     BackfillRequest,
     BackfillResponse,
@@ -416,6 +418,69 @@ async def configure_host(body: HostConfigureRequest) -> HostConfigureResponse:
     except Exception as exc:
         logger.error("configure_host failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/models", response_model=ModelListResponse)
+async def list_models() -> ModelListResponse:
+    """List available LLM models for the currently configured provider.
+
+    For local providers (Ollama, vLLM, LM Studio, etc.), this queries the
+    local server and returns the actual models that are installed.  For
+    cloud providers an empty list is returned — the host is expected to
+    know which cloud models exist.
+    """
+    # Load persisted host config to know the current provider/base_url
+    from colony_sidecar.router.tiers import discover_local_models
+    import json
+
+    config_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-llm-config.json"
+    provider = ""
+    base_url = ""
+    api_key = ""
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text())
+            provider = cfg.get("provider", "")
+            base_url = cfg.get("baseUrl", "")
+            api_key = cfg.get("apiKey", "")
+        except Exception as exc:
+            logger.debug("Could not read persisted LLM config: %s", exc)
+
+    if not provider:
+        return ModelListResponse(
+            provider="",
+            error="No LLM provider configured. Call POST /v1/host/configure first.",
+        )
+
+    if provider not in ("ollama", "local", "custom", "lmstudio", "vllm"):
+        return ModelListResponse(
+            provider=provider,
+            error="Model listing is only supported for local providers (ollama, local, custom, lmstudio, vllm).",
+        )
+
+    discovered = discover_local_models(provider, base_url, api_key)
+    if discovered:
+        return ModelListResponse(
+            provider=provider,
+            base_url=base_url or None,
+            models=[
+                ModelInfo(
+                    id=m.get("name") or m.get("id", ""),
+                    provider=provider,
+                    size=m.get("size"),
+                    owned_by=m.get("owned_by"),
+                )
+                for m in discovered
+                if (m.get("name") or m.get("id"))
+            ],
+            discovered=True,
+        )
+
+    return ModelListResponse(
+        provider=provider,
+        base_url=base_url or None,
+        error="Could not discover models from the local server. Is it running?",
+    )
 
 
 # ---------------------------------------------------------------------------
