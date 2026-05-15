@@ -191,8 +191,6 @@ The sidecar takes ~3 minutes for MLX model warmup. If `ThrottleInterval` is too 
         <string>127.0.0.1</string>
         <key>COLONY_SIDECAR_PORT</key>
         <string>7777</string>
-        <key>COLONY_API_KEY</key>
-        <string>dev-mode-no-key</string>
         <key>PYTHONPATH</key>
         <string>/Users/kurcide/colony-work/sidecar</string>
     </dict>
@@ -219,7 +217,7 @@ The sidecar takes ~3 minutes for MLX model warmup. If `ThrottleInterval` is too 
 </plist>
 ```
 
-**Note:** `NEO4J_PASSWORD` is intentionally **NOT** in the plist. The sidecar loads it from `~/.colony/.env` at runtime. Putting it in the plist would override the .env value and silently break auth if the password changes.
+**Note:** `NEO4J_PASSWORD` and `COLONY_API_KEY` are intentionally **NOT** in the plist. The sidecar loads them from `~/.colony/.env` at runtime. Putting them in the plist would override the .env values and silently break auth if they change.
 
 ### 4.4 CLI integration
 
@@ -243,9 +241,10 @@ colony service status
 ```
 
 **Implementation:**
-- `colony service install` writes the plist from a template, substitutes real paths from env/config, creates `~/.colony/logs/`, and runs `launchctl load`
-- `colony service start` runs `launchctl load` (idempotent if already loaded)
-- `colony service stop` runs `launchctl unload`
+- `colony service install` writes the plist from a template, substitutes real paths from env/config, creates `~/.colony/logs/`, validates that `~/.colony-venv/bin/uvicorn` exists, and runs `launchctl load` (checks `launchctl list` first to avoid "already loaded" errors)
+- `colony service start` runs `launchctl load` (checks `list` first; if already loaded, unloads then reloads)
+- `colony service stop` runs `launchctl unload` (fully disables; to temporarily pause without unloading, use `launchctl stop`)
+- `colony service restart` runs `launchctl unload` then `launchctl load`
 - `colony service status` runs `launchctl list` and parses PID / LastExitStatus
 
 **Files:**
@@ -294,9 +293,9 @@ def attempt_wake_up():
         capture_output=True, timeout=10,
     )
 
-    # Wait up to 3 minutes for MLX warmup
-    for attempt in range(18):  # 18 × 10s = 180s
-        time.sleep(10)
+    # Wait up to 30 seconds for MLX warmup
+    for attempt in range(6):  # 6 × 5s = 30s
+        time.sleep(5)
         if health_check_passes():
             return True
     return False
@@ -326,7 +325,7 @@ When the sidecar is down and wake-up fails:
 
 The webhook route prompt handles `alert` differently from `initiative`:
 - `initiative` → act autonomously, max one DM
-- `alert` → route to log channel only. DM only if severity == "critical" AND Marc has sent a message in the last 15 minutes (indicating he is active)
+- `alert` → route to log channel **only**. Never DM for alerts regardless of severity — Marc can check the log channel.
 
 ### 5.5 Temporal context injection
 
@@ -368,7 +367,7 @@ Every initiative payload now includes:
 | `~/.hermes/.colony_last_health` | Last health response JSON | Poller | Overwrite each run |
 | `~/.hermes/.colony_last_user_message` | Timestamp of last user message | Provider | Overwrite each sync |
 
-**Pruning logic:** on poller startup, remove lines from `.colony_seen_initiatives` and `.colony_seen_dedup` where the initiative `created_at` is older than 90 days.
+**Pruning logic:** on poller startup, if a state file's modification time is older than 90 days, truncate it. This is simpler than parsing entry timestamps and is sufficient for v1.
 
 ---
 
@@ -401,11 +400,11 @@ class TelemetryStore:
         async with self._lock:
             setattr(self, key, datetime.now(timezone.utc))
 
-    async def silence_hours(self, key: str) -> float:
+    async def silence_hours(self, key: str) -> Optional[float]:
         async with self._lock:
             ts = getattr(self, key)
             if ts is None:
-                return float('inf')
+                return None
             return (datetime.now(timezone.utc) - ts).total_seconds() / 3600
 
     async def stale_flags(self, thresholds: Dict[str, float]) -> List[str]:
@@ -517,6 +516,8 @@ except httpx.HTTPStatusError as exc:
 
 ```python
 def _sync():
+    if self._is_circuit_open():
+        return
     for attempt in range(3):
         try:
             with httpx.Client(timeout=8) as client:
@@ -709,14 +710,23 @@ def _is_service_loaded() -> bool:
     return result.returncode == 0
 ```
 
-If loaded, warn the user:
+If loaded, **error out** with exit code 1:
 > "The launchd service is managing this sidecar. Use `colony service stop` and `colony service start` instead, or `launchctl unload` first."
+
+The `--force` flag does **not** override this check — it prevents a port collision race where launchd restarts the sidecar within 60s of a SIGKILL while `colony start` is trying to bind the same port.
+
+### 9.4 Service-aware stop
+
+`colony stop` should check if the launchd service is loaded. If so, print:
+> "Sidecar is managed by launchd. Use `colony service stop` instead."
+
+This prevents killing a process that launchd will immediately restart.
 
 ---
 
 ## 10. Implementation Plan (Reordered)
 
-### Phase 1: launchd Service (2-3 hours)
+### Phase 1: launchd Service (3-4 hours)
 - [ ] Create plist template (`service_template.plist`)
 - [ ] Add `colony service` subcommand (install/uninstall/start/stop/status)
 - [ ] `colony service install` creates `~/.colony/logs/` directory
@@ -726,7 +736,7 @@ If loaded, warn the user:
 
 **PR:** `feature/launchd-service`
 
-### Phase 2: Sidecar Telemetry (2-4 hours)
+### Phase 2: Sidecar Telemetry (3-5 hours)
 - [ ] Create `colony_sidecar/telemetry.py` (async-safe)
 - [ ] Update `HostHealthResponse` schema with `TemporalMetrics`
 - [ ] Update `/health` endpoint to compute silence hours and stale flags
@@ -735,10 +745,10 @@ If loaded, warn the user:
 
 **PR:** `feature/sidecar-telemetry`
 
-### Phase 3: Poller Health & Alerting (2-3 hours)
+### Phase 3: Poller Health & Alerting (3-4 hours)
 - [ ] Add `GET /health` pre-flight check to poller
 - [ ] Add `launchctl start` wake-up logic (service-aware, no CLI restart)
-- [ ] Add 3-minute wait for MLX warmup after wake-up
+- [ ] Add 30-second wait for MLX warmup after wake-up
 - [ ] Add `alert` payload type with severity routing rules
 - [ ] Inject `colony_state` + `computed` into every payload
 - [ ] Add state file retention pruning (90 days)
@@ -821,8 +831,11 @@ cat ~/.hermes/.colony_last_health | python3 -m json.tool
 ### Disable auto-restart temporarily
 
 ```bash
-# Stop the launchd service without uninstalling
+# Stop the launchd service without uninstalling (legacy syntax)
 launchctl unload ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
+
+# Modern macOS alternative
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
 
 # Re-enable
 launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
@@ -838,27 +851,30 @@ launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
 - [ ] Killing the sidecar process causes launchd to restart it within 60s (not 5s)
 - [ ] Logs are captured to `~/.colony/logs/sidecar.log`
 - [ ] `colony start` warns if launchd service is managing the sidecar
+- [ ] `colony start` errors out if the launchd service is loaded (prevents port collision)
 
 ### Sidecar Telemetry
 - [ ] `GET /health` returns `temporal` block with all timestamps and `silence_hours`
 - [ ] `status` is `"degraded"` if any silence exceeds threshold
 - [ ] `POST /turns/sync` updates `last_sync_at`
 - [ ] Autonomy tick updates `last_tick_at`
-- [ ] TelemetryStore is thread-safe under concurrent sync calls
+- [ ] TelemetryStore is async-safe under concurrent sync calls
+- [ ] Missing timestamps report `null` in JSON, not `Infinity`
 
 ### Poller
 - [ ] Poller calls `GET /health` before fetching initiatives
 - [ ] When sidecar is down, poller attempts `launchctl start` (not CLI restart)
-- [ ] Poller waits up to 3 minutes for sidecar to become healthy after wake-up
+- [ ] Poller waits up to 30 seconds for sidecar to become healthy after wake-up
 - [ ] If sidecar remains down, poller fires `alert` payload to log channel
 - [ ] Every initiative payload includes `colony_state` + `computed` timestamps
-- [ ] State files are pruned of entries older than 90 days
+- [ ] State files older than 90 days (by mtime) are truncated
 
 ### Provider
 - [ ] Connection failures log at `WARNING`
 - [ ] Retries up to 3 times with exponential backoff
 - [ ] After 3 consecutive failures, circuit breaker opens for 60s
 - [ ] Circuit breaker state persists across Hermes sessions
+- [ ] `_sync()` short-circuits immediately if the circuit breaker is open
 - [ ] `get_sync_status()` returns diagnostic dict
 
 ### Agent
@@ -878,7 +894,7 @@ launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
 
 1. **Auto-restart:** The poller does NOT restart the sidecar. Layer 1 (launchd `KeepAlive`) handles all restarts. The poller only calls `launchctl start` as a wake-up if the service exists but is not running.
 
-2. **Critical alert DMs:** `critical` alerts go to the log channel only. They DM Marc only if he has sent a message in the last 15 minutes (indicating he is active and might want immediate awareness).
+2. **Alert routing:** All alerts go to the log channel only. Never DM for alerts regardless of severity — Marc can check the log channel.
 
 3. **No Neo4j Turn nodes (v1):** TelemetryStore is sufficient for temporal health. Adding `:Turn` nodes would grow the graph unbounded without a cleanup job. Deferred to v2 if Marc wants historical analytics.
 
