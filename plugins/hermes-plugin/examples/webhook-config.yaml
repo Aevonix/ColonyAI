@@ -1,0 +1,42 @@
+# Example Hermes webhook configuration for Colony autonomy pipeline
+# Place this under platforms.webhook.extra.routes in ~/.hermes/config.yaml
+#
+# Philosophy:
+# - Webhook responses go to watcher (log) by default
+# - The agent decides which channel to communicate to the user via send_message
+# - This is generic — works for WhatsApp, Telegram, Discord, or any platform
+
+colony-initiatives:
+  secret: INSECURE_NO_AUTH  # For local testing only
+  prompt: |
+    Colony initiative received:
+
+    Type: {payload.initiative_type}
+    Title: {payload.title}
+    Description: {payload.description}
+    Priority: {payload.priority}
+    Suggested actions: {payload.context.suggested_actions}
+
+    You are {payload.agent_name}, an autonomous agent. Act on this initiative immediately.
+
+    DELIVERY RULES:
+    - Your FULL response (detailed reasoning, tool outputs, findings) goes to LOGS only.
+    - If you need to notify the user of the outcome, use `send_message` with
+      target "{payload.delivery_context.user_chat}".
+    - Send AT MOST ONE message to the user per initiative. Make it concise
+      — one or two sentences max.
+    - Do NOT send multiple follow-up messages. Do NOT send "still working" updates.
+    - If the initiative requires user input or is blocked, send ONE message
+      asking what they want to do.
+    - If you can complete the initiative autonomously, send ONE message
+      summarizing what you did.
+
+  deliver: log
+
+  # Optional: configure a watcher channel for verbose output
+  # watcher: whatsapp
+  # watcher_extra:
+  #   chat_id: "YOUR_GROUP_ID"
+
+  # Rate limit: max 5 initiatives per minute
+  rate_limit: 5
