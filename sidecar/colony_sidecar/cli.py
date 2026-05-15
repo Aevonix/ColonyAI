@@ -56,6 +56,16 @@ def main() -> None:
     # --- status ---
     sub.add_parser("status", help="Check sidecar health and pipeline status")
 
+    # --- service ---
+    service_p = sub.add_parser("service", help="Manage launchd service")
+    service_sub = service_p.add_subparsers(dest="service_command")
+    service_sub.add_parser("install", help="Install the launchd service")
+    service_sub.add_parser("uninstall", help="Uninstall the launchd service")
+    service_sub.add_parser("start", help="Start the launchd service")
+    service_sub.add_parser("stop", help="Stop the launchd service")
+    service_sub.add_parser("restart", help="Restart the launchd service")
+    service_sub.add_parser("status", help="Show launchd service status")
+
     # --- validate ---
     val_p = sub.add_parser("validate", help="Run end-to-end pipeline validation (uses LLM credits)")
     val_p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
@@ -213,6 +223,13 @@ def main() -> None:
         host = args.host or os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
         port = args.port or int(os.environ.get("COLONY_SIDECAR_PORT", "7777"))
 
+        # Service-aware: error out if launchd is managing the sidecar
+        if _is_service_loaded():
+            print("❌ The launchd service is managing this sidecar.")
+            print("  Use 'colony service stop' and 'colony service start' instead,")
+            print("  or 'launchctl unload' first.")
+            sys.exit(1)
+
         # Check and start Neo4j if needed (both foreground and daemon mode)
         _check_and_start_neo4j()
 
@@ -255,11 +272,34 @@ def main() -> None:
 
     elif args.command == "stop":
         _load_dotenv()
+        # Service-aware: error out if launchd is managing the sidecar
+        if _is_service_loaded():
+            print("❌ Sidecar is managed by launchd.")
+            print("  Use 'colony service stop' instead.")
+            sys.exit(1)
         _cmd_stop()
 
     elif args.command == "status":
         _load_dotenv()
         _cmd_status()
+
+    elif args.command == "service":
+        if not hasattr(args, "service_command") or not args.service_command:
+            print("❌ No service subcommand given")
+            print("  Usage: colony service {install|uninstall|start|stop|restart|status}")
+            sys.exit(1)
+        elif args.service_command == "install":
+            _cmd_service_install()
+        elif args.service_command == "uninstall":
+            _cmd_service_uninstall()
+        elif args.service_command == "start":
+            _cmd_service_start()
+        elif args.service_command == "stop":
+            _cmd_service_stop()
+        elif args.service_command == "restart":
+            _cmd_service_restart()
+        elif args.service_command == "status":
+            _cmd_service_status()
 
     elif args.command == "generate-types":
         _load_dotenv()
@@ -1006,16 +1046,61 @@ def _cmd_key(args) -> None:
 
 
 def _find_pid_on_port(port: int) -> int | None:
-    """Find the PID of a process listening on the given port."""
+    """Find the PID of a process listening on the given port.
+    
+    NOTE: This only finds LISTEN sockets, not client connections.
+    """
+    pids = _find_pids_on_port(port)
+    return pids[0] if pids else None
+
+
+def _find_pids_on_port(port: int) -> list[int]:
+    """Find ALL PIDs in LISTEN state on the given port."""
     try:
         result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
+            ["lsof", "-ti", f":{port}", "-sTCP:LISTEN"],
             capture_output=True, text=True, timeout=5,
         )
-        pids = result.stdout.strip().splitlines()
-        return int(pids[0]) if pids and pids[0].isdigit() else None
+        return [int(p) for p in result.stdout.strip().splitlines() if p.isdigit()]
     except Exception:
-        return None
+        return []
+
+
+def _is_service_loaded() -> bool:
+    """Check if the launchd service is currently loaded and running."""
+    result = subprocess.run(
+        ["launchctl", "list", "ai.aevonix.colony-sidecar"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return False  # Label not known to launchd
+    # Output format: "PID\tStatus\tLabel" or "-\tStatus\tLabel"
+    parts = result.stdout.strip().split()
+    return len(parts) >= 1 and parts[0].isdigit()
+
+
+def _get_plist_path() -> Path:
+    """Return the path to the launchd plist file."""
+    return Path.home() / "Library" / "LaunchAgents" / "ai.aevonix.colony-sidecar.plist"
+
+
+def _get_uvicorn_path() -> str:
+    """Return the path to the uvicorn executable."""
+    venv_uvicorn = Path.home() / ".colony-venv" / "bin" / "uvicorn"
+    if venv_uvicorn.exists():
+        return str(venv_uvicorn)
+    # Fallback: find in PATH
+    for path_dir in os.environ.get("PATH", "/usr/bin:/bin").split(":"):
+        candidate = Path(path_dir) / "uvicorn"
+        if candidate.exists():
+            return str(candidate)
+    return "uvicorn"
+
+
+def _get_state_dir() -> Path:
+    """Return the Colony state directory."""
+    from colony_sidecar import get_state_dir
+    return get_state_dir()
 
 
 def _find_orphan_processes() -> list[int]:
@@ -1461,6 +1546,153 @@ def _cmd_status() -> None:
             print(f"  No process on port {port}")
             print(f"  Start with: colony start")
         sys.exit(1)
+
+
+def _cmd_service_install() -> None:
+    """Install the launchd service."""
+    plist_path = _get_plist_path()
+    log_dir = _get_state_dir().parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Validate uvicorn exists
+    uvicorn_path = _get_uvicorn_path()
+    if not Path(uvicorn_path).exists():
+        print(f"❌ uvicorn not found at {uvicorn_path}")
+        print("Make sure the Colony virtual environment is set up.")
+        sys.exit(1)
+
+    _load_dotenv()
+    host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+    port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+    log_level = os.environ.get("LOG_LEVEL", "info").lower()
+    working_dir = str(Path(__file__).parent.parent)
+    home = str(Path.home())
+    state_dir = str(_get_state_dir())
+    pythonpath = working_dir
+
+    # Build PATH with venv first
+    venv_bin = str(Path.home() / ".colony-venv" / "bin")
+    path_env = f"{venv_bin}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+    # Read template
+    template_path = Path(__file__).parent / "service_template.plist"
+    if not template_path.exists():
+        print(f"❌ Template not found: {template_path}")
+        sys.exit(1)
+    template = template_path.read_text()
+
+    plist_content = template.format(
+        uvicorn_path=uvicorn_path,
+        host=host,
+        port=port,
+        log_level=log_level,
+        working_dir=working_dir,
+        home=home,
+        path=path_env,
+        state_dir=state_dir,
+        pythonpath=pythonpath,
+        log_path=str(log_dir / "sidecar.log"),
+    )
+
+    plist_path.write_text(plist_content)
+    print(f"✅ Plist written to {plist_path}")
+
+    # Check if already loaded
+    result = subprocess.run(
+        ["launchctl", "list", "ai.aevonix.colony-sidecar"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        print("  Service already loaded, reloading...")
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+        time.sleep(0.5)
+
+    subprocess.run(["launchctl", "load", str(plist_path)], check=True)
+    print("✅ Service loaded")
+    print(f"  Logs: {log_dir / 'sidecar.log'}")
+    print(f"  Check status: colony service status")
+
+
+def _cmd_service_uninstall() -> None:
+    """Uninstall the launchd service."""
+    plist_path = _get_plist_path()
+    if plist_path.exists():
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+        plist_path.unlink()
+        print(f"✅ Service uninstalled: {plist_path}")
+    else:
+        print("ℹ️  Service not installed")
+
+
+def _cmd_service_start() -> None:
+    """Start the launchd service."""
+    plist_path = _get_plist_path()
+    if not plist_path.exists():
+        print("❌ Service not installed. Run: colony service install")
+        sys.exit(1)
+
+    # Check if already loaded
+    if _is_service_loaded():
+        print("ℹ️  Service already loaded and running")
+        return
+
+    subprocess.run(["launchctl", "load", str(plist_path)], check=True)
+    print("✅ Service started")
+
+
+def _cmd_service_stop() -> None:
+    """Stop the launchd service (unload)."""
+    plist_path = _get_plist_path()
+    if not plist_path.exists():
+        print("ℹ️  Service not installed")
+        return
+
+    subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+    print("✅ Service stopped")
+
+
+def _cmd_service_restart() -> None:
+    """Restart the launchd service."""
+    plist_path = _get_plist_path()
+    if not plist_path.exists():
+        print("❌ Service not installed. Run: colony service install")
+        sys.exit(1)
+
+    subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+    time.sleep(0.5)
+    subprocess.run(["launchctl", "load", str(plist_path)], check=True)
+    print("✅ Service restarted")
+
+
+def _cmd_service_status() -> None:
+    """Show launchd service status."""
+    result = subprocess.run(
+        ["launchctl", "list", "ai.aevonix.colony-sidecar"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print("🔴 Service not installed or not loaded")
+        print("  Install: colony service install")
+        return
+
+    lines = result.stdout.strip().splitlines()
+    if not lines:
+        print("⚠️  Unexpected output from launchctl")
+        return
+
+    parts = lines[0].split()
+    if len(parts) >= 3:
+        pid_str, status, label = parts[0], parts[1], parts[2]
+        if pid_str == "-":
+            print(f"🟡 Service loaded but not running")
+            print(f"  Label: {label}")
+            print(f"  Status: {status}")
+        else:
+            print(f"🟢 Service running")
+            print(f"  PID: {pid_str}")
+            print(f"  Label: {label}")
+    else:
+        print(f"⚠️  Unexpected format: {lines[0]}")
 
 
 def _cmd_mcp(args) -> None:
