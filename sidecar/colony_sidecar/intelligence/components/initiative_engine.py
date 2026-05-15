@@ -287,17 +287,17 @@ class InitiativeEngine:
         
         # Only load categories that don't already have manually-fed context
         loaders = []
-        if not self._context.get("pending_tasks"):
+        if "pending_tasks" not in self._context:
             loaders.append(self._load_blocked_goals())
             loaders.append(self._load_pending_research_tasks())
-        if not self._context.get("neglected_contacts"):
+        if "neglected_contacts" not in self._context:
             loaders.append(self._load_neglected_contacts())
-        if not self._context.get("health_alerts"):
+        if "health_alerts" not in self._context:
             loaders.append(self._load_health_trends())
-        if not self._context.get("scheduling_opportunities"):
+        if "scheduling_opportunities" not in self._context:
             loaders.append(self._load_scheduling_opportunities())
         # Always check signals unless explicitly in context (Bug 40)
-        if not self._context.get("pending_signals"):
+        if "pending_signals" not in self._context:
             loaders.append(self._load_pending_signals())
         
         if loaders:
@@ -305,20 +305,26 @@ class InitiativeEngine:
 
     async def _load_blocked_goals(self) -> None:
         """Query graph for blocked/stuck goals.
-        
+
         Schema-adaptive: tries multiple property names for compatibility
-        with different graph schemas (Colony, Hermes, custom).
+        with different graph schemas. Filters out terminal states
+        (abandoned, completed, cancelled) so dead goals don't generate
+        follow-up initiatives forever.
         """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
-        
-        # Try multiple query variants for schema compatibility
+
+        # Try multiple query variants for schema compatibility.
+        # All variants exclude terminal goal states.
         queries = [
             # Colony schema (status='blocked', blocked_at)
             {
                 "query": """
-                    MATCH (g:Goal {status: 'blocked'})
-                    WHERE g.blocked_at < datetime() - duration({days: $days})
+                    MATCH (g:Goal)
+                    WHERE g.status = 'blocked'
+                      AND NOT coalesce(g.state, '') IN ['abandoned', 'completed', 'cancelled']
+                      AND NOT coalesce(g.status, '') IN ['abandoned', 'completed', 'cancelled']
+                      AND g.blocked_at < datetime() - duration({days: $days})
                     RETURN g.id as id, g.title as title, g.description as description,
                            g.blocked_at as blocked_at, g.priority as priority
                     ORDER BY g.priority DESC, g.blocked_at ASC
@@ -328,40 +334,33 @@ class InitiativeEngine:
             # Alternative: state='blocked', blocked_at
             {
                 "query": """
-                    MATCH (g:Goal {state: 'blocked'})
-                    WHERE g.blocked_at < datetime() - duration({days: $days})
-                      OR g.blocked_at IS NULL
+                    MATCH (g:Goal)
+                    WHERE g.state = 'blocked'
+                      AND NOT coalesce(g.state, '') IN ['abandoned', 'completed', 'cancelled']
+                      AND NOT coalesce(g.status, '') IN ['abandoned', 'completed', 'cancelled']
+                      AND (g.blocked_at < datetime() - duration({days: $days})
+                           OR g.blocked_at IS NULL)
                     RETURN g.id as id, g.title as title, g.description as description,
                            g.blocked_at as blocked_at, g.priority as priority
                     ORDER BY g.priority DESC, g.blocked_at ASC
                 """,
                 "date_field": "blocked_at",
             },
-            # Alternative: status='blocked', updated_at (fallback)
+            # Fallback: status='blocked', updated_at
             {
                 "query": """
                     MATCH (g:Goal)
-                    WHERE g.status = 'blocked' OR g.state = 'blocked'
+                    WHERE (g.status = 'blocked' OR g.state = 'blocked')
+                      AND NOT coalesce(g.state, '') IN ['abandoned', 'completed', 'cancelled']
+                      AND NOT coalesce(g.status, '') IN ['abandoned', 'completed', 'cancelled']
                     RETURN g.id as id, g.title as title, g.description as description,
                            g.updated_at as blocked_at, g.priority as priority
                     ORDER BY g.priority DESC, g.updated_at ASC
-                """,
-                "date_field": "updated_at",
-            },
-            # Fallback: any goal with low progress/high age
-            {
-                "query": """
-                    MATCH (g:Goal)
-                    WHERE g.progress < 10 OR g.progress IS NULL
-                    RETURN g.id as id, g.title as title, g.description as description,
-                           g.updated_at as blocked_at, g.priority as priority
-                    ORDER BY g.priority DESC, g.updated_at ASC
-                    LIMIT 20
                 """,
                 "date_field": "updated_at",
             },
         ]
-        
+
         tasks = []
         for variant in queries:
             if tasks:  # Stop if we found data
@@ -378,20 +377,20 @@ class InitiativeEngine:
                         blocked_at = self._parse_neo4j_datetime(record.get(date_field))
                         # Bug 13: max(0, ...) to prevent negative days
                         days_pending = max(0, (datetime.now(timezone.utc) - blocked_at).days) if blocked_at else 0
-                        
+
                         tasks.append({
                             "entity_id": record["id"],
                             "description": record.get("title", "Unknown goal"),
                             "days_pending": days_pending,
                             "priority": record.get("priority", 0.5),
                         })
-                
+
                 if tasks:
                     logger.debug("Loaded %d blocked goals using %s", len(tasks), date_field)
             except Exception as e:
                 logger.debug("Blocked goals query variant failed: %s", e)
                 continue
-        
+
         self._context["pending_tasks"] = tasks
         if not tasks:
             logger.debug("No blocked goals found with any schema variant")
@@ -399,35 +398,31 @@ class InitiativeEngine:
 
     async def _load_neglected_contacts(self) -> None:
         """Query graph for contacts with no recent interaction.
-        
-        Uses a single unified Cypher query that checks all date fields in
-        priority order (lastCommunication → last_interaction → lastSeen).
-        Only returns contacts that are genuinely neglected (no date OR
-        date is older than threshold), not every node in the graph.
+
+        Only returns contacts that have an explicit interaction date
+        older than the threshold. Nodes with no dates at all are NOT
+        treated as neglected — they are likely uninitialised or system
+        nodes. Skips the host's own contact.
         """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
-        
-        # Unified query: checks all date fields with proper EXISTS guards.
-        # COALESCE picks the first non-null date; nodes with no dates at all
-        # are matched by the fallback branch using firstSeen.
+
+        import os
+        host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "Jane Doe")
+
         query = """
             MATCH (p:Person)
             WITH p,
                  CASE
-                   WHEN p.lastCommunication IS NOT NULL 
+                   WHEN p.lastCommunication IS NOT NULL
                         AND p.lastCommunication < datetime() - duration({days: $days})
                      THEN duration.inDays(p.lastCommunication, datetime()).days
-                   WHEN p.last_interaction IS NOT NULL 
+                   WHEN p.last_interaction IS NOT NULL
                         AND p.last_interaction < datetime() - duration({days: $days})
                      THEN duration.inDays(p.last_interaction, datetime()).days
-                   WHEN p.lastSeen IS NOT NULL 
+                   WHEN p.lastSeen IS NOT NULL
                         AND p.lastSeen < datetime() - duration({days: $days})
                      THEN duration.inDays(p.lastSeen, datetime()).days
-                   WHEN p.lastCommunication IS NULL 
-                        AND p.last_interaction IS NULL 
-                        AND p.lastSeen IS NULL
-                     THEN $fallback_days
                    ELSE null
                  END AS days_since
             WHERE days_since IS NOT NULL
@@ -435,14 +430,13 @@ class InitiativeEngine:
             ORDER BY days_since DESC
             LIMIT $limit
         """
-        
+
         contacts = []
         try:
             async with self.graph.driver.session(database=self.graph.database) as session:
                 result = await session.run(
                     query,
                     days=self._config.contact_neglect_days,
-                    fallback_days=self._config.contact_neglect_days * 2,
                     limit=100,
                 )
                 async for record in result:
@@ -450,23 +444,25 @@ class InitiativeEngine:
                     name = record.get("name", "Unknown")
                     entity_id = record.get("id")
                     days_since = record.get("days_since")
-                    
-                    # Skip junk/system nodes
+
+                    # Skip host and junk/system nodes
+                    if entity_id == host_id or name == host_id:
+                        continue
                     if not self._is_meaningful_contact(name):
                         logger.debug("Skipping junk contact: %s (%s)", name, entity_id)
                         continue
-                    
+
                     if entity_id is not None and days_since is not None:
                         contacts.append({
                             "entity_id": entity_id,
                             "name": name,
                             "days_since_contact": int(days_since),
                         })
-            
+
             logger.debug("Loaded %d genuinely neglected contacts", len(contacts))
         except Exception as e:
             logger.warning("Neglected contacts query failed: %s", e)
-        
+
         self._context["neglected_contacts"] = contacts
         if not contacts:
             self._context.setdefault("neglected_contacts", [])
