@@ -108,8 +108,8 @@ The `colony start --force` command in `cli.py` does work (time is imported at li
 │                                                                          │
 │  Program: ~/.colony-venv/bin/uvicorn colony_sidecar.server:app           │
 │  WorkingDirectory: ~/colony-work/sidecar                                 │
-│  Environment: COLONY_STATE_DIR, NEO4J_URI, COLONY_API_KEY, etc.         │
-│  (NO NEO4J_PASSWORD — loaded from ~/.colony/.env at runtime)            │
+│  Environment: COLONY_STATE_DIR, COLONY_SIDECAR_HOST, COLONY_SIDECAR_PORT │
+│  (NO NEO4J_PASSWORD / COLONY_API_KEY — loaded from ~/.colony/.env)      │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -293,12 +293,12 @@ def attempt_wake_up():
         capture_output=True, timeout=10,
     )
 
-    # Wait up to 30 seconds for MLX warmup
-    for attempt in range(6):  # 6 × 5s = 30s
-        time.sleep(5)
-        if health_check_passes():
-            return True
-    return False
+    # Layer 1 (launchd) manages the actual restart with KeepAlive.
+    # ThrottleInterval may delay the restart by up to 60s, so we do NOT
+    # block-wait here. The next poll cycle (5 min) will verify health.
+    # If still down then, the alert fires — avoiding false positives
+    # during the throttle window.
+    return True
 ```
 
 ### 5.4 Alert payload
@@ -362,8 +362,8 @@ Every initiative payload now includes:
 
 | File | Purpose | Updated by | Retention |
 |------|---------|------------|-----------|
-| `~/.hermes/.colony_seen_initiatives` | Dedup by initiative ID | Poller | Prune entries older than 90 days |
-| `~/.hermes/.colony_seen_dedup` | Dedup by dedup_key | Poller | Prune entries older than 90 days |
+| `~/.hermes/.colony_seen_initiatives` | Dedup by initiative ID | Poller | Truncate if file mtime > 90 days |
+| `~/.hermes/.colony_seen_dedup` | Dedup by dedup_key | Poller | Truncate if file mtime > 90 days |
 | `~/.hermes/.colony_last_health` | Last health response JSON | Poller | Overwrite each run |
 | `~/.hermes/.colony_last_user_message` | Timestamp of last user message | Provider | Overwrite each sync |
 
@@ -411,7 +411,7 @@ class TelemetryStore:
         flags = []
         for key, threshold in thresholds.items():
             silence = await self.silence_hours(key)
-            if silence > threshold:
+            if silence is not None and silence > threshold:
                 flags.append(key)
         return flags
 
@@ -530,6 +530,8 @@ def _sync():
         except (httpx.ConnectError, OSError):
             if attempt < 2:
                 time.sleep(2 ** attempt)  # 1s, 2s
+                # NOTE: If this method is async, use await asyncio.sleep() instead.
+                # If called from async context, run _sync() in a thread pool.
         except Exception:
             break  # Don't retry on non-connection errors
     self._consecutive_failures += 1
@@ -611,7 +613,7 @@ prompt: |
   Type: {payload.initiative_type}
   Title: {payload.title}
   Description: {payload.description}
-  Occurred at: {occurred_at}
+  Occurred at: {payload.occurred_at}
   Age: {payload.computed.initiative_age_hours}h
 
   DELIVERY RULES:
@@ -674,6 +676,7 @@ def _kill_processes(pids: list[int], port: int) -> None:
             os.kill(pid, 9)
         except ProcessLookupError:
             pass
+    time.sleep(0.5)  # Give kernel time to release the port
 ```
 
 ### 9.2 Startup validation
@@ -681,12 +684,13 @@ def _kill_processes(pids: list[int], port: int) -> None:
 After starting the daemon, poll `/health` for up to 10 seconds:
 
 ```python
-def _wait_for_sidecar(host: str, port: int, timeout: float = 10.0) -> bool:
+def _wait_for_sidecar(host: str, port: int, api_key: str, timeout: float = 10.0) -> bool:
     import httpx
+    headers = {"X-API-Key": api_key}
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            resp = httpx.get(f"http://{host}:{port}/v1/host/health", timeout=2)
+            resp = httpx.get(f"http://{host}:{port}/v1/host/health", headers=headers, timeout=2)
             if resp.status_code == 200:
                 return True
         except Exception:
@@ -730,8 +734,8 @@ This prevents killing a process that launchd will immediately restart.
 - [ ] Create plist template (`service_template.plist`)
 - [ ] Add `colony service` subcommand (install/uninstall/start/stop/status)
 - [ ] `colony service install` creates `~/.colony/logs/` directory
-- [ ] Update `colony start` to detect service conflicts and warn
-- [ ] Update `colony stop` to handle both foreground and service modes
+- [ ] Update `colony start` to detect service conflicts and **error out**
+- [ ] Update `colony stop` to error out if the launchd service is loaded
 - [ ] Documentation
 
 **PR:** `feature/launchd-service`
@@ -747,8 +751,7 @@ This prevents killing a process that launchd will immediately restart.
 
 ### Phase 3: Poller Health & Alerting (3-4 hours)
 - [ ] Add `GET /health` pre-flight check to poller
-- [ ] Add `launchctl start` wake-up logic (service-aware, no CLI restart)
-- [ ] Add 30-second wait for MLX warmup after wake-up
+- [ ] Add `launchctl start` wake-up logic (service-aware, no CLI restart, defers alert to next poll cycle)
 - [ ] Add `alert` payload type with severity routing rules
 - [ ] Inject `colony_state` + `computed` into every payload
 - [ ] Add state file retention pruning (90 days)
@@ -801,8 +804,8 @@ launchctl list ai.aevonix.colony-sidecar
 
 ```bash
 # If service is installed:
-launchctl stop ai.aevonix.colony-sidecar
-launchctl start ai.aevonix.colony-sidecar
+launchctl unload ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
+launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
 
 # If service is NOT installed:
 colony start --force
@@ -864,7 +867,7 @@ launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
 ### Poller
 - [ ] Poller calls `GET /health` before fetching initiatives
 - [ ] When sidecar is down, poller attempts `launchctl start` (not CLI restart)
-- [ ] Poller waits up to 30 seconds for sidecar to become healthy after wake-up
+- [ ] Poller sends `launchctl start` wake-up and defers alert to the next poll cycle (avoids false positives during launchd ThrottleInterval)
 - [ ] If sidecar remains down, poller fires `alert` payload to log channel
 - [ ] Every initiative payload includes `colony_state` + `computed` timestamps
 - [ ] State files older than 90 days (by mtime) are truncated
