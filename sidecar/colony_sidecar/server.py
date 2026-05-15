@@ -867,30 +867,6 @@ async def lifespan(app: FastAPI):
             metadata={"description": "Bundle and deliver accumulated DIGEST-channel items"},
         )
 
-        # Register owner check-in task (silence-triggered proactive outreach)
-        if autonomy_config.owner_check_in_enabled:
-            from colony_sidecar.autonomy.checkin import OwnerCheckInTask
-            _checkin_task = OwnerCheckInTask(
-                registry=registry,
-                config=autonomy_config,
-                event_bus=autonomy_loop.events if hasattr(autonomy_loop, "events") else None,
-                telemetry=telemetry,
-            )
-            # Run every 30 minutes (half the default silence threshold of 1 hour)
-            checkin_interval = max(600, int(autonomy_config.owner_check_in_silent_hours * 1800))
-            scheduler.register(
-                "owner_check_in",
-                lambda: _checkin_task.run(),
-                interval_seconds=checkin_interval,
-                metadata={"description": "Check for initiative silence and reach out to owner if needed"},
-            )
-            logger.info(
-                "Owner check-in registered (silent_threshold=%.1fh, cooldown=%.1fh, interval=%ds)",
-                autonomy_config.owner_check_in_silent_hours,
-                autonomy_config.owner_check_in_cooldown_hours,
-                checkin_interval,
-            )
-
         logger.info(
             "AutonomyLoop initialized (tick=%ds, scheduler=%d tasks)",
             autonomy_config.tick_interval_secs,
