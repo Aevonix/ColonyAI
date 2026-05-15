@@ -536,6 +536,13 @@ class AutonomyLoop:
                     self.stats.actions_executed += 1
                     self.stats.actions_this_hour += 1
                     logger.info("Pushed initiative: %s", payload["id"])
+                    # Update telemetry so silence detection works
+                    try:
+                        from colony_sidecar.api.routers.host import _telemetry
+                        if _telemetry is not None:
+                            await _telemetry.touch("last_initiative_at")
+                    except Exception:
+                        pass
                 # Also broadcast via WebSocket so Hermes and other subscribers receive it
                 try:
                     broadcast = _get_broadcast()

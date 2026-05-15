@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from typing import Any, Callable, List, Optional
 from enum import Enum
 from zoneinfo import ZoneInfo
 
@@ -66,6 +67,13 @@ class AutonomyConfig:
 
     # How often to run the self-reflection component (days).
     self_reflection_interval_days: int = 7
+
+    # ── Owner check-in (silence-triggered proactive outreach) ──────────
+    # When no initiatives fire for this many hours, reach out to the owner.
+    owner_check_in_enabled: bool = True
+    owner_check_in_silent_hours: float = 1.0
+    owner_check_in_cooldown_hours: float = 4.0
+    owner_contact_id: Optional[str] = None  # None = resolve from identity
 
     # ── class methods ──────────────────────────────────────────────────
 
@@ -143,6 +151,16 @@ class AutonomyConfig:
                 "self_reflection_interval_days",
                 defaults.self_reflection_interval_days,
             )),
+            owner_check_in_enabled=bool(_get("owner_check_in_enabled", defaults.owner_check_in_enabled)),
+            owner_check_in_silent_hours=float(_get(
+                "owner_check_in_silent_hours",
+                defaults.owner_check_in_silent_hours,
+            )),
+            owner_check_in_cooldown_hours=float(_get(
+                "owner_check_in_cooldown_hours",
+                defaults.owner_check_in_cooldown_hours,
+            )),
+            owner_contact_id=_get("owner_contact_id", defaults.owner_contact_id),
         )
 
     @classmethod
@@ -197,6 +215,14 @@ class AutonomyConfig:
         def _str(key: str, default: str) -> str:
             return os.environ.get(key, default)
 
+        def _bool(key: str, default: bool) -> bool:
+            v = os.environ.get(key, "").lower()
+            if v == "true":
+                return True
+            if v == "false":
+                return False
+            return default
+
         defaults = cls()
         return cls(
             mode=mode,
@@ -240,5 +266,21 @@ class AutonomyConfig:
             self_reflection_interval_days=_int(
                 "COLONY_AUTONOMY_SELF_REFLECTION_INTERVAL_DAYS",
                 defaults.self_reflection_interval_days,
+            ),
+            owner_check_in_enabled=_bool(
+                "COLONY_OWNER_CHECK_IN_ENABLED",
+                defaults.owner_check_in_enabled,
+            ),
+            owner_check_in_silent_hours=_float(
+                "COLONY_OWNER_CHECK_IN_SILENT_HOURS",
+                defaults.owner_check_in_silent_hours,
+            ),
+            owner_check_in_cooldown_hours=_float(
+                "COLONY_OWNER_CHECK_IN_COOLDOWN_HOURS",
+                defaults.owner_check_in_cooldown_hours,
+            ),
+            owner_contact_id=os.environ.get(
+                "COLONY_OWNER_CONTACT_ID",
+                defaults.owner_contact_id,
             ),
         )
