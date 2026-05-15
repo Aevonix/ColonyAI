@@ -268,16 +268,19 @@ The poller only calls `launchctl start` as a one-time recovery attempt if Layer 
 
 1. **Health check first** — `GET /v1/host/health` before fetching initiatives
 2. **Detect sidecar down** — if health check fails (connection refused, timeout)
-3. **Attempt service wake-up** — `launchctl start` if service is installed but not running
-4. **Alert on persistent failure** — if sidecar remains down after wake-up attempt
+3. **Attempt service wake-up** — `launchctl start` if service is installed but not running; skip initiatives this cycle and let the next poll verify health
+4. **Alert on persistent failure** — if sidecar is still down on the next poll cycle (after wake-up was sent), fire an alert
 5. **Inject temporal context** — add `colony_state` to every payload
 
 ### 5.3 Restart logic (service-aware only)
 
 ```python
 def attempt_wake_up():
-    """If launchd service is installed but not running, wake it up.
-    Returns True if health passes after wake-up."""
+    """If launchd service is installed but not running, send a wake-up.
+    Does NOT block-wait for the sidecar to become healthy — Layer 1
+    (launchd) manages the restart, which may be delayed by up to 60s
+    due to ThrottleInterval. The caller should skip initiatives this
+    cycle and let the next poll verify health."""
     # Check if service is installed
     result = subprocess.run(
         ["launchctl", "list", "ai.aevonix.colony-sidecar"],
@@ -312,8 +315,8 @@ When the sidecar is down and wake-up fails:
     "alert_type": "colony_sidecar_down",
     "severity": "critical",
     "message": "Colony sidecar is down and could not be restarted via launchd.",
-    "last_seen_at": "2026-05-15T05:00:00Z",
-    "suggested_action": "Run: launchctl start ai.aevonix.colony-sidecar  or  colony service start"
+    "last_seen_at": "2026-05-15T05:00:00Z",  // last time poller got a healthy /health response
+    "suggested_action": "Run: colony service start  or  launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist"
   },
   "delivery_context": {
     "user_chat": "whatsapp:000000000000000@lid",
@@ -326,6 +329,8 @@ When the sidecar is down and wake-up fails:
 The webhook route prompt handles `alert` differently from `initiative`:
 - `initiative` → act autonomously, max one DM
 - `alert` → route to log channel **only**. Never DM for alerts regardless of severity — Marc can check the log channel.
+
+**Note:** The `colony-initiatives` webhook route must accept both `"initiative"` and `"alert"` payload types. If the route currently validates `type == "initiative"`, update it to pass through `"alert"` payloads so the prompt can handle routing.
 
 ### 5.5 Temporal context injection
 
@@ -518,6 +523,8 @@ except httpx.HTTPStatusError as exc:
 def _sync():
     if self._is_circuit_open():
         return
+    self._last_sync_attempt = datetime.now(timezone.utc)
+    connection_failed = False
     for attempt in range(3):
         try:
             with httpx.Client(timeout=8) as client:
@@ -525,17 +532,24 @@ def _sync():
                 resp.raise_for_status()
                 self._last_sync_success = datetime.now(timezone.utc)
                 self._consecutive_failures = 0
-                self._persist_circuit_state()  # Save to file
+                self._persist_circuit_state()
                 return
         except (httpx.ConnectError, OSError):
+            connection_failed = True
             if attempt < 2:
                 time.sleep(2 ** attempt)  # 1s, 2s
                 # NOTE: If this method is async, use await asyncio.sleep() instead.
                 # If called from async context, run _sync() in a thread pool.
+        except httpx.HTTPStatusError as exc:
+            logger.debug("Colony turn sync HTTP error: %s", exc)
+            return  # Don't retry or count toward breaker — sidecar is reachable
         except Exception:
-            break  # Don't retry on non-connection errors
-    self._consecutive_failures += 1
-    self._persist_circuit_state()
+            logger.debug("Colony turn sync unexpected error: %s", exc)
+            return  # Don't retry or count toward breaker
+    # Only reached if all connection retries failed
+    if connection_failed:
+        self._consecutive_failures += 1
+        self._persist_circuit_state()
 ```
 
 ### 7.3 Circuit breaker (persists across sessions)
@@ -707,11 +721,16 @@ Update `colony start` to detect if the launchd service is loaded:
 
 ```python
 def _is_service_loaded() -> bool:
+    """Check if the launchd service is currently loaded and running."""
     result = subprocess.run(
         ["launchctl", "list", "ai.aevonix.colony-sidecar"],
         capture_output=True, text=True,
     )
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False  # Label not known to launchd
+    # Output format: "PID\tStatus\tLabel" or "-\tStatus\tLabel"
+    parts = result.stdout.strip().split()
+    return len(parts) >= 1 and parts[0].isdigit()
 ```
 
 If loaded, **error out** with exit code 1:
@@ -776,7 +795,7 @@ This prevents killing a process that launchd will immediately restart.
 **PR:** `feature/agent-time-awareness`
 
 ### Phase 6: CLI Robustness (1-2 hours)
-- [ ] Fix `_find_pid_on_port` to use `lsof -sTCP:LISTEN`
+- [ ] Fix `_find_pids_on_port` to use `lsof -sTCP:LISTEN`
 - [ ] Kill ALL listener PIDs, not just the first
 - [ ] Add `_wait_for_sidecar` startup validation
 - [ ] Print log tail on startup failure
@@ -851,9 +870,9 @@ launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
 ### launchd Service
 - [ ] `colony service install` creates plist, loads it, and creates `~/.colony/logs/`
 - [ ] `colony service status` shows PID and running state
+- [ ] `colony service restart` performs unload then load
 - [ ] Killing the sidecar process causes launchd to restart it within 60s (not 5s)
 - [ ] Logs are captured to `~/.colony/logs/sidecar.log`
-- [ ] `colony start` warns if launchd service is managing the sidecar
 - [ ] `colony start` errors out if the launchd service is loaded (prevents port collision)
 
 ### Sidecar Telemetry
