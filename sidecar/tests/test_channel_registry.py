@@ -184,6 +184,37 @@ class TestChannelRegistryLoad:
         ch = registry.resolve("owner", "dm")
         assert ch.chat_id == "+5551234567"
 
+    def test_owner_contact_id_alias(self, temp_json_path, monkeypatch):
+        """COLONY_CHANNEL_DM_owner resolves for the owner's contact UUID."""
+        monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-test-12345-owner")
+        monkeypatch.setenv("COLONY_CHANNEL_DM_owner", "whatsapp:+1555ZZZZZZZ")
+        registry = ChannelRegistry.load(json_path=temp_json_path)
+        # Should resolve by UUID
+        ch = registry.resolve("cid-test-12345-owner", "dm")
+        assert ch is not None
+        assert ch.platform == "whatsapp"
+        assert ch.chat_id == "+1555ZZZZZZZ"
+        # Should also resolve by "owner" alias directly
+        ch2 = registry.resolve("owner", "dm")
+        assert ch2 == ch
+
+    def test_async_get_handles_skipped_in_sync_resolve(self, temp_json_path):
+        """Async get_handles is never called from sync resolve — no crash, no warning."""
+
+        class AsyncStore:
+            async def get_handles(self, contact_id):
+                return []
+
+        store = AsyncStore()
+        registry = ChannelRegistry.load(
+            json_path=temp_json_path,
+            handle_inference=True,
+            contacts_store=store,
+        )
+        # Must not crash — returns None gracefully
+        ch = registry.resolve("owner", "dm")
+        assert ch is None
+
     def test_system_initiative_no_dm(self, temp_json_path):
         """System initiatives (no person_id) should not try DM."""
         registry = ChannelRegistry.load(json_path=temp_json_path)

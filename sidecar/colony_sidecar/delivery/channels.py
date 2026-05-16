@@ -9,6 +9,7 @@ Resolution priority (highest first):
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -49,6 +50,7 @@ class ChannelRegistry:
         handle_inference: bool,
         gateway_map: Dict[str, str],
         contacts_store: Optional[Any] = None,
+        owner_contact_id: Optional[str] = None,
     ) -> None:
         self._env = env_channels
         self._json = json_channels
@@ -57,6 +59,7 @@ class ChannelRegistry:
         self._gateway_map = gateway_map
         self._contacts_store = contacts_store
         self._json_path_value: str = ""
+        self._owner_contact_id = self._normalize_person_id(owner_contact_id) if owner_contact_id else None
 
     # ------------------------------------------------------------------
     # Public API
@@ -85,10 +88,22 @@ class ChannelRegistry:
         if channel_type in env_person:
             return env_person[channel_type]
 
+        # 1b. Owner alias — if person_id matches owner contact ID, also check "owner"
+        if self._owner_contact_id and normalized_id == self._owner_contact_id:
+            env_owner = self._env.get("owner", {})
+            if channel_type in env_owner:
+                return env_owner[channel_type]
+
         # 2. JSON config (contacts section)
         json_person = self._json.get(normalized_id, {})
         if channel_type in json_person:
             return json_person[channel_type]
+
+        # 2b. Owner alias for JSON
+        if self._owner_contact_id and normalized_id == self._owner_contact_id:
+            json_owner = self._json.get("owner", {})
+            if channel_type in json_owner:
+                return json_owner[channel_type]
 
         # 3. JSON fallback
         if channel_type in self._fallback:
@@ -118,6 +133,8 @@ class ChannelRegistry:
             json_path=self._json_path(),
             env_prefix=env_prefix,
         )
+        raw = os.environ.get("COLONY_OWNER_CONTACT_ID", "")
+        self._owner_contact_id = self._normalize_person_id(raw) if raw else None
         logger.info("ChannelRegistry reloaded")
 
     # ------------------------------------------------------------------
@@ -166,6 +183,8 @@ class ChannelRegistry:
 
         env_channels, json_channels, fallback = cls._load_sources(json_path, env_prefix)
 
+        owner_contact_id = os.environ.get("COLONY_OWNER_CONTACT_ID", "")
+
         registry = cls(
             env_channels=env_channels,
             json_channels=json_channels,
@@ -173,6 +192,7 @@ class ChannelRegistry:
             handle_inference=handle_inference,
             gateway_map=gateway_map,
             contacts_store=contacts_store,
+            owner_contact_id=owner_contact_id or None,
         )
         registry._json_path_value = json_path  # stash for reload()
 
@@ -324,13 +344,30 @@ class ChannelRegistry:
         return None
 
     def _infer_from_handles(self, person_id: str) -> Optional[Channel]:
-        """Infer DM channel from contact handles."""
+        """Infer DM channel from contact handles.
+
+        Gracefully skips when the store's ``get_handles`` is async and we're
+        called from a synchronous ``resolve()`` context (e.g. inside an
+        already-running event loop).  In those cases env-vars / JSON config
+        should already have covered the owner.
+        """
         if self._contacts_store is None:
             return None
 
+        method = getattr(self._contacts_store, "get_handles", None)
+        if method is None:
+            return None
+
+        # Avoid creating an unawaited coroutine object — check asyncness first
+        if inspect.iscoroutinefunction(method):
+            logger.debug(
+                "Skipping handle inference for %s — async store called from sync context",
+                person_id,
+            )
+            return None
+
         try:
-            # Try to get handles for this contact
-            handles = self._contacts_store.get_handles(person_id)
+            handles = method(person_id)
         except Exception:
             return None
 
