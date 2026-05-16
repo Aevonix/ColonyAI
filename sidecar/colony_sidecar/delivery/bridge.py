@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
+from colony_sidecar.delivery.channels import ChannelRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ class ProactiveDeliveryBridge:
         rate_limiter: Optional[DeliveryRateLimiter] = None,
         gateway_url: Optional[str] = None,
         gateway_api_key: Optional[str] = None,
+        channel_registry: Optional[ChannelRegistry] = None,
     ) -> None:
         if rate_limiter is None:
             # Persist rate-limit state so a crashloop can't reset the daily
@@ -86,6 +88,9 @@ class ProactiveDeliveryBridge:
             gateway_api_key
             or os.environ.get("COLONY_API_KEY", "")
         )
+
+        # Channel registry for per-person delivery routing
+        self._channel_registry = channel_registry or ChannelRegistry.load()
 
         # Home channel config read from env vars — used to resolve
         # platform/chat_id when only person_id is available.
@@ -299,6 +304,28 @@ class ProactiveDeliveryBridge:
                 "expires_at": None,
             },
         }
+
+        # Populate delivery_context for channel routing
+        person_id = initiative.get("entity_id", "")
+        channel_hint = initiative.get("channel_hint", "home")
+
+        if not person_id:
+            # System initiative — no DM, always home
+            user_channel = None
+            home_channel = self._channel_registry.resolve("__system__", "home")
+        else:
+            user_channel = self._channel_registry.resolve(person_id, "dm")
+            home_channel = self._channel_registry.resolve(person_id, "home")
+
+        delivery_context = {}
+        if user_channel:
+            delivery_context["user_chat"] = f"{user_channel.platform}:{user_channel.chat_id}"
+        if home_channel:
+            delivery_context["home_chat"] = f"{home_channel.platform}:{home_channel.chat_id}"
+
+        if delivery_context:
+            payload["delivery_context"] = delivery_context
+            payload["channel_hint"] = channel_hint
 
         try:
             async with aiohttp.ClientSession() as session:

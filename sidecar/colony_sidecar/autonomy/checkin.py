@@ -230,6 +230,7 @@ class OwnerCheckInTask:
             payload = {
                 "id": f"checkin-{datetime.now(timezone.utc).isoformat()}",
                 "type": "proactive_message",
+                "channel_hint": "dm",
                 "priority": 0.5,
                 "title": "Owner check-in",
                 "description": (
