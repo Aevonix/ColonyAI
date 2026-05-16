@@ -606,9 +606,11 @@ async def lifespan(app: FastAPI):
     # --- 13. Delivery bridge ---
     try:
         from colony_sidecar.delivery.bridge import ProactiveDeliveryBridge
-        delivery = ProactiveDeliveryBridge()
+        from colony_sidecar.delivery.channels import ChannelRegistry
+        channel_registry = ChannelRegistry.load(contacts_store=contacts_store)
+        delivery = ProactiveDeliveryBridge(channel_registry=channel_registry)
         set_delivery_bridge(delivery)
-        logger.info("ProactiveDeliveryBridge initialized")
+        logger.info("Delivery bridge initialized")
     except Exception as exc:
         logger.warning("ProactiveDeliveryBridge init failed: %s", exc)
 
