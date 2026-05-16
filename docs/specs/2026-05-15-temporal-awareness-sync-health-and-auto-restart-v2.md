@@ -166,7 +166,7 @@ The sidecar takes ~3 minutes for MLX model warmup. If `ThrottleInterval` is too 
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/kurcide/.colony-venv/bin/uvicorn</string>
+        <string>~/.colony-venv/bin/uvicorn</string>
         <string>colony_sidecar.server:app</string>
         <string>--host</string>
         <string>127.0.0.1</string>
@@ -177,22 +177,22 @@ The sidecar takes ~3 minutes for MLX model warmup. If `ThrottleInterval` is too 
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/kurcide/colony-work/sidecar</string>
+    <string>~/colony-work/sidecar</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
-        <string>/Users/kurcide</string>
+        <string>~</string>
         <key>PATH</key>
-        <string>/Users/kurcide/.colony-venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>~/.colony-venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>COLONY_STATE_DIR</key>
-        <string>/Users/kurcide/.colony</string>
+        <string>~/.colony</string>
         <key>COLONY_SIDECAR_HOST</key>
         <string>127.0.0.1</string>
         <key>COLONY_SIDECAR_PORT</key>
         <string>7777</string>
         <key>PYTHONPATH</key>
-        <string>/Users/kurcide/colony-work/sidecar</string>
+        <string>~/colony-work/sidecar</string>
     </dict>
 
     <key>RunAtLoad</key>
@@ -210,9 +210,9 @@ The sidecar takes ~3 minutes for MLX model warmup. If `ThrottleInterval` is too 
     <integer>60</integer>
 
     <key>StandardOutPath</key>
-    <string>/Users/kurcide/.colony/logs/sidecar.log</string>
+    <string>~/.colony/logs/sidecar.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/kurcide/.colony/logs/sidecar.log</string>
+    <string>~/.colony/logs/sidecar.log</string>
 </dict>
 </plist>
 ```
@@ -319,8 +319,8 @@ When the sidecar is down and wake-up fails:
     "suggested_action": "Run: colony service start  or  launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist"
   },
   "delivery_context": {
-    "user_chat": "whatsapp:122037267910729@lid",
-    "log_channel": "whatsapp:120363425135486141@g.us",
+    "user_chat": "whatsapp:USER_LID@lid",
+    "log_channel": "whatsapp:GROUP_CHAT_ID@g.us",
     "platform": "whatsapp"
   }
 }
