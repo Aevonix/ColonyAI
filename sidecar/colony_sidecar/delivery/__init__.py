@@ -11,5 +11,6 @@ Components:
 
 from colony_sidecar.delivery.bridge import ProactiveDeliveryBridge
 from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
+from colony_sidecar.delivery.channels import ChannelRegistry
 
-__all__ = ["ProactiveDeliveryBridge", "DeliveryRateLimiter"]
+__all__ = ["ProactiveDeliveryBridge", "DeliveryRateLimiter", "ChannelRegistry"]
