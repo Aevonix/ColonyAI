@@ -48,7 +48,7 @@ class ChannelRegistry:
     Resolution priority (highest first):
     1. Environment variables (COLONY_CHANNEL_*)
     2. JSON config file ({COLONY_STATE_DIR}/data/channels.json)
-    3. Contact handles (phone → whatsapp DM inference, configurable mapping)
+    3. Contact handles (phone → chat platform DM inference, configurable mapping)
     4. Home channel fallback (WHATSAPP_HOME_CHANNEL, TELEGRAM_HOME_CHANNEL, etc.)
     """
     
@@ -130,7 +130,7 @@ If no DM channel is resolved, the registry falls back to the global home channel
 
 | Platform | Env Var | Example Value |
 |----------|---------|---------------|
-| WhatsApp | `WHATSAPP_HOME_CHANNEL` | `1203634...@g.us` or `+1555...` |
+| WhatsApp | `WHATSAPP_HOME_CHANNEL` | `GROUP_ID@g.us` or `+1555...` |
 | Telegram | `TELEGRAM_HOME_CHANNEL` | `@groupname` or numeric ID |
 | Discord | `DISCORD_HOME_CHANNEL` | `#channel-name` or numeric ID |
 
@@ -153,8 +153,8 @@ This requires zero new configuration for existing deployments — the env vars a
 
 - `Channel` dataclass
 - `ChannelRegistry` class with the 4 resolution sources
-- `channel_registry_from_env()` helper
-- Config-backed resolution — reads from env vars + JSON file at startup; optional `reload()` method to re-read without restart
+- `ChannelRegistry.load()` classmethod — idempotent, logs which sources were loaded
+- Optional `reload()` method to re-read config without restart
 
 ### 4.2 Server Startup Integration
 
@@ -184,7 +184,7 @@ def __init__(
     gateway_api_key: Optional[str] = None,
     channel_registry: Optional[ChannelRegistry] = None,
 ) -> None:
-    self._channel_registry = channel_registry or ChannelRegistry()
+    self._channel_registry = channel_registry or ChannelRegistry.load()
 ```
 
 **Modify `push_initiative()` to populate `delivery_context`:**
@@ -231,10 +231,19 @@ payload = {
 Add `channel_hint="dm"` for personal goals and `channel_hint="home"` for system-level goals:
 
 ```python
-# When creating a goal for a specific person
+# Personal goal → DM
 payload = {
     "type": "proactive_message",
-    "channel_hint": "dm",  # <-- NEW: personal goal goes to DM
+    "channel_hint": "dm",
+    "entity_id": goal.person_id,
+    ...
+}
+
+# System-wide goal → home
+payload = {
+    "type": "proactive_message",
+    "channel_hint": "home",
+    # no entity_id — system initiative
     ...
 }
 ```
@@ -263,7 +272,7 @@ colony-initiatives:
     DELIVERY RULES:
     - Your FULL response (detailed reasoning, tool outputs, findings) goes to LOGS only.
     - If you need to notify the user of the outcome:
-      • For PERSONAL initiatives (channel_hint=dm or owner-directed), use `send_message` with target "{payload.delivery_context.user_chat}".
+      • For PERSONAL initiatives (channel_hint=dm), use `send_message` with target "{payload.delivery_context.user_chat}".
       • For SYSTEM initiatives (channel_hint=home or no hint), use `send_message` with target "{payload.delivery_context.home_chat}".
       • If the preferred channel is missing, fall back to the other channel.
       • If BOTH channels are missing (CLI-only deployment), log the result and do not attempt to send a message.
@@ -339,7 +348,7 @@ Add optional fields:
   "payload": { ... },
   "delivery_context": {
     "user_chat": "telegram:@username",
-    "home_chat": "discord:#general"
+    "home_chat": "telegram:@groupname"
   }
 }
 ```
@@ -366,7 +375,7 @@ If no chat platform is configured (no `*_HOME_CHANNEL` env vars), both `user_cha
 3. `ChannelRegistry` — case-insensitive person_id matching
 4. `ProactiveDeliveryBridge.push_initiative()` — delivery_context populated correctly
 5. `ProactiveDeliveryBridge.push_initiative()` — fallback when no DM configured
-6. `ChannelRegistry` — home channel guaranteed present via env fallback
+6. `ChannelRegistry` — home channel resolved when env var present; absent in CLI-only mode
 
 ### 8.2 Integration Test
 
