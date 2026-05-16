@@ -75,6 +75,13 @@ class AutonomyConfig:
     owner_check_in_cooldown_hours: float = 4.0
     owner_contact_id: Optional[str] = None  # None = resolve from identity
 
+    # ── Conversation synthesis (periodic memory scan for goals) ─────────
+    # Scans stored conversation memories for implicit goals and commitments.
+    conversation_synthesis_enabled: bool = True
+    conversation_synthesis_interval_secs: float = 1800.0  # 30 min
+    conversation_synthesis_lookback_hours: float = 2.0
+    conversation_synthesis_min_confidence: float = 0.35
+
     # ── class methods ──────────────────────────────────────────────────
 
     @classmethod
@@ -161,6 +168,22 @@ class AutonomyConfig:
                 defaults.owner_check_in_cooldown_hours,
             )),
             owner_contact_id=_get("owner_contact_id", defaults.owner_contact_id),
+            conversation_synthesis_enabled=bool(_get(
+                "conversation_synthesis_enabled",
+                defaults.conversation_synthesis_enabled,
+            )),
+            conversation_synthesis_interval_secs=float(_get(
+                "conversation_synthesis_interval_secs",
+                defaults.conversation_synthesis_interval_secs,
+            )),
+            conversation_synthesis_lookback_hours=float(_get(
+                "conversation_synthesis_lookback_hours",
+                defaults.conversation_synthesis_lookback_hours,
+            )),
+            conversation_synthesis_min_confidence=float(_get(
+                "conversation_synthesis_min_confidence",
+                defaults.conversation_synthesis_min_confidence,
+            )),
         )
 
     @classmethod
@@ -282,5 +305,21 @@ class AutonomyConfig:
             owner_contact_id=os.environ.get(
                 "COLONY_OWNER_CONTACT_ID",
                 defaults.owner_contact_id,
+            ),
+            conversation_synthesis_enabled=_bool(
+                "COLONY_CONVERSATION_SYNTHESIS_ENABLED",
+                defaults.conversation_synthesis_enabled,
+            ),
+            conversation_synthesis_interval_secs=_float(
+                "COLONY_CONVERSATION_SYNTHESIS_INTERVAL_SECS",
+                defaults.conversation_synthesis_interval_secs,
+            ),
+            conversation_synthesis_lookback_hours=_float(
+                "COLONY_CONVERSATION_SYNTHESIS_LOOKBACK_HOURS",
+                defaults.conversation_synthesis_lookback_hours,
+            ),
+            conversation_synthesis_min_confidence=_float(
+                "COLONY_CONVERSATION_SYNTHESIS_MIN_CONFIDENCE",
+                defaults.conversation_synthesis_min_confidence,
             ),
         )
