@@ -939,6 +939,37 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Owner check-in registration failed: %s", exc)
 
+    # Register conversation synthesis task (periodic memory scan for goals)
+    try:
+        if (
+            autonomy_config is not None
+            and getattr(autonomy_config, "conversation_synthesis_enabled", True)
+            and registry is not None
+            and scheduler is not None
+        ):
+            from colony_sidecar.autonomy.synthesis import ConversationSynthesisTask
+            _synthesis_task = ConversationSynthesisTask(
+                registry=registry,
+                lookback_hours=getattr(autonomy_config, "conversation_synthesis_lookback_hours", 2.0),
+                min_confidence=getattr(autonomy_config, "conversation_synthesis_min_confidence", 0.35),
+                telemetry=telemetry,
+            )
+            synthesis_interval = int(getattr(autonomy_config, "conversation_synthesis_interval_secs", 1800.0))
+            scheduler.register(
+                "conversation_synthesis",
+                _synthesis_task.run,
+                interval_seconds=synthesis_interval,
+                metadata={"description": "Scan conversation memories for implicit goals and commitments"},
+            )
+            logger.info(
+                "Conversation synthesis registered (lookback=%.1fh, interval=%ds, min_conf=%.2f)",
+                getattr(autonomy_config, "conversation_synthesis_lookback_hours", 2.0),
+                synthesis_interval,
+                getattr(autonomy_config, "conversation_synthesis_min_confidence", 0.35),
+            )
+    except Exception as exc:
+        logger.warning("Conversation synthesis registration failed: %s", exc)
+
     logger.info("Sidecar capabilities: %s", supported_capabilities())
     yield
 
