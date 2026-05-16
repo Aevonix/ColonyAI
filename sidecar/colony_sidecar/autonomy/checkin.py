@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from colony_sidecar.autonomy.config import AutonomyConfig
-from colony_sidecar.events.types import Event
+from colony_sidecar.events.types import Event, PersonEvent
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +200,7 @@ class OwnerCheckInTask:
         contacts = getattr(self._registry, "contacts", None)
         if contacts is not None and hasattr(contacts, "list_contacts"):
             try:
-                all_contacts = contacts.list_contacts(limit=50)
+                all_contacts = await contacts.list_contacts(limit=50)
                 # Filter to contacts with at least one interaction and non-stranger tier
                 scored = []
                 for c in all_contacts:
@@ -250,11 +250,11 @@ class OwnerCheckInTask:
                 logger.info("Check-in: pushed initiative to %s", owner_id)
                 # Also emit event for audit trail
                 if self._event_bus is not None:
-                    event = Event(
+                    event = PersonEvent(
                         id=payload["id"],
                         event_type="proactive_message",
                         person_id=owner_id,
-                        payload={
+                        context={
                             "content": payload["description"],
                             "source": "autonomy_check_in",
                             "delivered": True,
