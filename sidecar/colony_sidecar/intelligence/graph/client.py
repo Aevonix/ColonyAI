@@ -532,8 +532,8 @@ class ColonyGraph:
             """,
 
         # ConnectionDiscoverer._find_temporal_patterns (with person_id)
-        "MATCH (m1:Memory)-[:BELONGS_TO]->(p:Person {id: $person_id})\n"
-        "MATCH (m2:Memory)-[:BELONGS_TO]->(p)\n"
+        "MATCH (m1:Memory)-[:ABOUT]->(p:Person {id: $person_id})\n"
+        "MATCH (m2:Memory)-[:ABOUT]->(p)\n"
         "WHERE m1.id < m2.id\n"
         "  AND abs(duration.between(m1.created_at, m2.created_at).hours) <= $window_hours\n"
         "  AND m1.created_at >= datetime() - duration({days: $lookback_days})\n"
@@ -562,7 +562,7 @@ class ColonyGraph:
         "LIMIT 20",
 # ConnectionDiscoverer._find_entity_patterns
         "MATCH (e:Entity)<-[:MENTIONS]-(m:Memory)\n"
-        "WHERE ($person_id IS NULL OR (m)-[:BELONGS_TO]->(:Person {id: $person_id}))\n"
+        "WHERE ($person_id IS NULL OR (m)-[:ABOUT]->(:Person {id: $person_id}))\n"
         "WITH e, collect(DISTINCT m.id) AS mems\n"
         "WITH e, mems, size(mems) AS mem_count\n"
         "WHERE mem_count >= 2\n"
