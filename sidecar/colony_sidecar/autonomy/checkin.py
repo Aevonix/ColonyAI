@@ -220,36 +220,50 @@ class OwnerCheckInTask:
         return None
 
     async def _emit_check_in(self, owner_id: str) -> bool:
-        """Emit a proactive_message event via the event bus."""
-        if self._event_bus is None:
-            logger.warning("Check-in: event bus not available")
+        """Push a check-in initiative directly to the delivery bridge."""
+        delivery = getattr(self._registry, "delivery", None)
+        if delivery is None:
+            logger.warning("Check-in: delivery bridge not available")
             return False
 
         try:
-            message = (
-                "Nothing urgent has surfaced recently. "
-                "Do you need anything, or should I keep monitoring?"
-            )
+            payload = {
+                "id": f"checkin-{datetime.now(timezone.utc).isoformat()}",
+                "type": "proactive_message",
+                "priority": 0.5,
+                "title": "Owner check-in",
+                "description": (
+                    "Nothing urgent has surfaced recently. "
+                    "Do you need anything, or should I keep monitoring?"
+                ),
+                "rationale": "Autonomy loop silence detected",
+                "suggested_action": "notify_user",
+                "entity_id": owner_id,
+                "entity_type": "owner",
+                "context": {},
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
 
-            event = Event(
-                id=f"checkin-{datetime.now(timezone.utc).isoformat()}",
-                event_type="proactive_message",
-                person_id=owner_id,
-                payload={
-                    "content": message,
-                    "source": "autonomy_check_in",
-                    "silence_hours": None,  # filled by consumer if needed
-                },
-            )
-
-            # Use async emit if available
-            if hasattr(self._event_bus, "emit_async"):
-                await self._event_bus.emit_async(event)
-            else:
-                self._event_bus.emit(event)
-
-            logger.info("Check-in: emitted proactive_message to %s", owner_id)
-            return True
+            ok = await delivery.push_initiative(payload)
+            if ok:
+                logger.info("Check-in: pushed initiative to %s", owner_id)
+                # Also emit event for audit trail
+                if self._event_bus is not None:
+                    event = Event(
+                        id=payload["id"],
+                        event_type="proactive_message",
+                        person_id=owner_id,
+                        payload={
+                            "content": payload["description"],
+                            "source": "autonomy_check_in",
+                            "delivered": True,
+                        },
+                    )
+                    if hasattr(self._event_bus, "emit_async"):
+                        await self._event_bus.emit_async(event)
+                    else:
+                        self._event_bus.emit(event)
+            return ok
         except Exception as exc:
-            logger.error("Check-in: failed to emit event: %s", exc)
+            logger.error("Check-in: failed to push initiative: %s", exc)
             return False
