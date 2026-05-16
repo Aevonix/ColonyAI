@@ -417,9 +417,9 @@ class InitiativeEngine:
                    WHEN p.lastCommunication IS NOT NULL
                         AND p.lastCommunication < datetime() - duration({days: $days})
                      THEN duration.inDays(p.lastCommunication, datetime()).days
-                   WHEN p.last_interaction IS NOT NULL
-                        AND p.last_interaction < datetime() - duration({days: $days})
-                     THEN duration.inDays(p.last_interaction, datetime()).days
+                   WHEN p.lastInteraction IS NOT NULL
+                        AND p.lastInteraction < datetime() - duration({days: $days})
+                     THEN duration.inDays(p.lastInteraction, datetime()).days
                    WHEN p.lastSeen IS NOT NULL
                         AND p.lastSeen < datetime() - duration({days: $days})
                      THEN duration.inDays(p.lastSeen, datetime()).days

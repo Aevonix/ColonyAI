@@ -178,8 +178,8 @@ class ConnectionDiscoverer:
         """
         if person_id is not None:
             cypher = textwrap.dedent("""
-            MATCH (m1:Memory)-[:BELONGS_TO]->(p:Person {id: $person_id})
-            MATCH (m2:Memory)-[:BELONGS_TO]->(p)
+            MATCH (m1:Memory)-[:ABOUT]->(p:Person {id: $person_id})
+            MATCH (m2:Memory)-[:ABOUT]->(p)
             WHERE m1.id < m2.id
               AND abs(duration.between(m1.created_at, m2.created_at).hours) <= $window_hours
               AND m1.created_at >= datetime() - duration({days: $lookback_days})
@@ -263,7 +263,7 @@ class ConnectionDiscoverer:
         """
         cypher = textwrap.dedent("""
         MATCH (e:Entity)<-[:MENTIONS]-(m:Memory)
-        WHERE ($person_id IS NULL OR (m)-[:BELONGS_TO]->(:Person {id: $person_id}))
+        WHERE ($person_id IS NULL OR (m)-[:ABOUT]->(:Person {id: $person_id}))
         WITH e, collect(DISTINCT m.id) AS mems
         WITH e, mems, size(mems) AS mem_count
         WHERE mem_count >= 2
