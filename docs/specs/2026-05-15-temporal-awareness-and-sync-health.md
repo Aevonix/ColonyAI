@@ -149,8 +149,8 @@ If any silence exceeds its threshold, `status` becomes `"degraded"` and the flag
        "temporal": { ... }
      },
      "delivery_context": {
-       "user_chat": "whatsapp:000000000000000@lid",
-       "log_channel": "whatsapp:120363425135486141@g.us",
+       "user_chat": "whatsapp:USER_LID@lid",
+       "log_channel": "whatsapp:GROUP_CHAT_ID@g.us",
        "platform": "whatsapp"
      }
    }
