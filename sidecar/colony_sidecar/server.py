@@ -952,6 +952,7 @@ async def lifespan(app: FastAPI):
                 registry=registry,
                 lookback_hours=getattr(autonomy_config, "conversation_synthesis_lookback_hours", 2.0),
                 min_confidence=getattr(autonomy_config, "conversation_synthesis_min_confidence", 0.35),
+                telemetry=telemetry,
             )
             synthesis_interval = int(getattr(autonomy_config, "conversation_synthesis_interval_secs", 1800.0))
             scheduler.register(
