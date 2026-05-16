@@ -527,6 +527,7 @@ class AutonomyLoop:
                     "suggested_action": getattr(initiative, "action_hint", "notify_user") or "notify_user",
                     "entity_id": getattr(initiative, "entity_id", None),
                     "entity_type": type_value,  # v0.7.10: task, contact, commitment
+                    "channel_hint": "dm" if type_value in ("relationship", "proactive_message") else "home",
                     "context": self._build_initiative_context(initiative, type_value),
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 }
