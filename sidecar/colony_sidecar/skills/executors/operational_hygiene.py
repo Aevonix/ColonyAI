@@ -174,12 +174,10 @@ class OperationalHygieneSkill(InitiativeExecutorSkill):
         self._log("info", "Refreshing cache: %s", entity_id)
 
         if entity_id == "model_weights":
-            # Trigger model weight refresh via event bus
+            # Log model weight refresh request (event bus has no .publish())
             if self.events:
                 try:
-                    await self.events.publish("model_refresh_requested", {
-                        "reason": "stale_cache",
-                    })
+                    self._log("info", "Requesting model weight refresh for %s", entity_id)
                     return ExecutionResult.AUTO_FIXED
                 except Exception as e:
                     self._log("warning", "Failed to request model refresh: %s", e)

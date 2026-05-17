@@ -36,6 +36,9 @@ class SkillRegistry:
             "colony_sidecar.skills.executors.subsystem_health",
             "colony_sidecar.skills.executors.data_quality",
             "colony_sidecar.skills.executors.operational_hygiene",
+            "colony_sidecar.skills.executors.capability_gap",
+            "colony_sidecar.skills.executors.knowledge_acquisition",
+            "colony_sidecar.skills.executors.behavioral_correction",
         ]
 
         for module_path in builtin_skills:

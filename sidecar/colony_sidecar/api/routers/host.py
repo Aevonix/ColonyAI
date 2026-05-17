@@ -400,7 +400,10 @@ async def configure_host(body: HostConfigureRequest) -> HostConfigureResponse:
 
         # Re-wire the reasoning loop with the new router
         if _reasoning_loop is not None:
-            _reasoning_loop = ReasoningLoop(model=new_router, tools=ToolExecutor())
+            _reasoning_loop = ReasoningLoop(
+                model=new_router,
+                tools=ToolExecutor(graph_client=_graph),
+            )
 
             set_reasoning_loop(_reasoning_loop)
             logger.info(
