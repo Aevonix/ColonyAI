@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.1 (2026-05-17)
+
+Self-initiative execution fix and new initiative types.
+
+### Fixed
+- **Critical (4 bugs shipped in v0.11.0):**
+  - `execute_initiative()` skill name mapping was a no-op (`.replace("_", "_")`) — now uses proper `_SKILL_NAME_MAP`
+  - `execute_initiative()` never passed `entity_type` to `InitiativeExecutionContext` — now extracted from `trigger_data`
+  - `AutonomyLoop._phase_execute()` bypassed execution entirely — now auto-executes self-initiatives via `engine.execute_initiative()` before pushing to delivery; auto-fixed initiatives skip delivery
+  - `data_quality` and `operational_hygiene` skills called non-existent `.publish()` on EventBus — rewritten to use `.emit()`
+- **Dependency injection** — `ToolExecutor` now accepts `graph_client` via constructor, eliminating circular imports between `reasoning/` and `api/routers/`
+
+### Added
+- **New graph schema types**: `Concept` and `Preference` nodes with full fields
+- **Extended schema**: `Capability` gets `status`, `failure_count`, `last_failure_at`; `Pattern` gets `pattern_type`, `trigger`, `action`, `recurrence_count`, `last_triggered_at`, `is_active`
+- **New context loaders**: `_load_capability_gaps()`, `_load_knowledge_gaps()`, `_load_behavioral_patterns()` — wired into `InitiativeEngine._load_graph_context()`
+- **New initiative generators**: `_generate_capability_gap_initiatives()`, `_generate_knowledge_acquisition_initiatives()`, `_generate_behavioral_correction_initiatives()`
+- **New executor skills**: `CapabilityGapSkill`, `KnowledgeAcquisitionSkill` (proposal-only), `BehavioralCorrectionSkill` (proposal-only, stores preferences to graph)
+- **`trigger_data` field** added to `Initiative` dataclass so context flows end-to-end from generator → execution
+- **`_build_initiative_context()`** extended for `capability_gap`, `knowledge_acquisition`, `behavioral_correction` types
+
 ## 0.8.3 (2026-05-15)
 
 Silence-triggered owner check-in and telemetry fix.

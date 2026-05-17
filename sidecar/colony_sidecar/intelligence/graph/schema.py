@@ -71,6 +71,9 @@ class Capability(BaseModel):
     name: str
     description: Optional[str] = None
     available: bool = True
+    status: str = "available"  # available | deprecated | missing | planned
+    failure_count: int = 0
+    last_failure_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -114,7 +117,40 @@ class Pattern(BaseModel):
     description: Optional[str] = None
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     occurrences: int = 0
+    pattern_type: str = "behavioral"  # behavioral | workflow | preference | correction
+    trigger: Optional[str] = None
+    action: Optional[str] = None
+    recurrence_count: int = 0
+    last_triggered_at: Optional[datetime] = None
+    is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Concept(BaseModel):
+    """A knowledge domain or concept Colony has encountered."""
+
+    id: str = Field(..., description="Unique concept identifier")
+    name: str
+    domain: str = "general"  # e.g., "technology", "science", "person"
+    description: Optional[str] = None
+    confidence_score: float = 0.0  # 0 = unknown, 1 = expert
+    encounter_count: int = 0
+    last_researched_at: Optional[datetime] = None
+    last_encountered_at: Optional[datetime] = None
+    source: Optional[str] = None  # "web_search", "tool_failure", "owner_query"
+    status: str = "open"  # open | researching | learned | archived
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Preference(BaseModel):
+    """A learned preference or behavioral rule."""
+
+    id: str = Field(..., description="Unique preference identifier")
+    trigger: str
+    expected: str
+    source: str = "behavioral_correction"  # behavioral_correction, owner_config, inferred
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
 
 
 class InitiativeCategory(BaseModel):
@@ -296,6 +332,6 @@ class EdgeType(str, Enum):
 
 NODE_TYPES = (
     Owner, Person, Memory, Entity, Signal, Context, ScoreEvent, Prediction,
-    Agent, Subsystem, Capability, Project, Goal, Task, Pattern, InitiativeCategory,
+    Agent, Subsystem, Capability, Project, Goal, Task, Pattern, Concept, Preference, InitiativeCategory,
 )
 EDGE_TYPES = tuple(EdgeType)

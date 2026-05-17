@@ -497,26 +497,69 @@ class AutonomyLoop:
                     }
             return {}
 
+        if type_value == "capability_gap":
+            for gap in raw_ctx.get("capability_gaps", []):
+                if gap.get("id") == entity_id:
+                    return {"capability_gap": gap}
+            return {}
+
+        if type_value == "knowledge_acquisition":
+            for gap in raw_ctx.get("knowledge_gaps", []):
+                if gap.get("id") == entity_id:
+                    return {"knowledge_gap": gap}
+            return {}
+
+        if type_value == "behavioral_correction":
+            for pattern in raw_ctx.get("behavioral_patterns", []):
+                if pattern.get("id") == entity_id:
+                    return {"behavioral_pattern": pattern}
+            return {}
+
         return {}
 
     async def _phase_execute(self) -> None:
-        """Push initiatives to OpenClaw for LLM decision-making."""
+        """Execute self-initiatives in the sidecar, then push remaining to delivery."""
+        engine = self._registry.initiative_engine
         delivery = self._registry.delivery
-        if delivery is None:
-            return
 
         for initiative in list(self._pending_initiatives):
             if self.stats.actions_this_hour >= self.config.max_actions_per_hour:
                 logger.warning("Hourly action limit reached")
                 break
 
-            try:
-                # Build structured initiative payload
-                # Note: Initiative dataclass has: id, type, description, priority, rationale, action_hint, entity_id
-                # We add title (derived from description) and context (from engine state)
-                initiative_type = getattr(initiative, "type", "unknown")
-                type_value = initiative_type.value if hasattr(initiative_type, "value") else str(initiative_type)
+            initiative_type = getattr(initiative, "type", "unknown")
+            type_value = initiative_type.value if hasattr(initiative_type, "value") else str(initiative_type)
 
+            is_self_initiative = type_value in {
+                "subsystem_health", "data_quality", "operational",
+                "capability_gap", "knowledge_acquisition", "behavioral_correction",
+            }
+
+            # Try auto-execute for self-initiatives
+            if is_self_initiative and engine is not None:
+                try:
+                    exec_result = await engine.execute_initiative(initiative.id)
+                    result_status = exec_result.get("status")
+                    skill_result = exec_result.get("result")
+
+                    if result_status == "executed" and skill_result == "auto_fixed":
+                        self.stats.actions_executed += 1
+                        self.stats.actions_this_hour += 1
+                        logger.info("Auto-fixed initiative: %s", initiative.id)
+                        continue  # Don't push to delivery
+
+                    if result_status == "executed" and skill_result == "proposal_created":
+                        # Still push to delivery, but mark as proposed
+                        pass
+
+                    if result_status in ("no_skill", "not_self_initiative"):
+                        # No skill matched — push to delivery for human decision
+                        pass
+                except Exception as exc:
+                    logger.error("Auto-execution failed for %s: %s", initiative.id, exc)
+
+            # Build and push payload
+            try:
                 payload = {
                     "id": getattr(initiative, "id", str(uuid.uuid4())),
                     "type": type_value,
@@ -526,25 +569,28 @@ class AutonomyLoop:
                     "rationale": getattr(initiative, "rationale", ""),
                     "suggested_action": getattr(initiative, "action_hint", "notify_user") or "notify_user",
                     "entity_id": getattr(initiative, "entity_id", None),
-                    "entity_type": type_value,  # v0.7.10: task, contact, commitment
-                    "channel_hint": "dm" if type_value in ("relationship", "proactive_message") else "home",
+                    "entity_type": type_value,
+                    "channel_hint": "home" if is_self_initiative else (
+                        "dm" if type_value in ("relationship", "proactive_message") else "home"
+                    ),
                     "context": self._build_initiative_context(initiative, type_value),
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 }
 
-                ok = await delivery.push_initiative(payload)
-                if ok:
-                    self.stats.actions_executed += 1
-                    self.stats.actions_this_hour += 1
-                    logger.info("Pushed initiative: %s", payload["id"])
-                    # Update telemetry so silence detection works
-                    try:
-                        from colony_sidecar.api.routers.host import _telemetry
-                        if _telemetry is not None:
-                            await _telemetry.touch("last_initiative_at")
-                    except Exception:
-                        pass
-                # Also broadcast via WebSocket so Hermes and other subscribers receive it
+                if delivery:
+                    ok = await delivery.push_initiative(payload)
+                    if ok:
+                        self.stats.actions_executed += 1
+                        self.stats.actions_this_hour += 1
+                        logger.info("Pushed initiative: %s", payload["id"])
+                        try:
+                            from colony_sidecar.api.routers.host import _telemetry
+                            if _telemetry is not None:
+                                await _telemetry.touch("last_initiative_at")
+                        except Exception:
+                            pass
+
+                # WebSocket broadcast
                 try:
                     broadcast = _get_broadcast()
                     broadcast({
@@ -553,7 +599,7 @@ class AutonomyLoop:
                         "payload": payload,
                     })
                 except Exception:
-                    logger.debug("WebSocket broadcast for initiative %s failed", payload.get("id"), exc_info=True)
+                    pass
             except Exception as exc:
                 logger.error("Failed to push initiative: %s", exc)
 

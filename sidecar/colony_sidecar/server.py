@@ -158,6 +158,14 @@ async def lifespan(app: FastAPI):
         )
         graph = ColonyGraph(graph_config)
         set_graph(graph)
+        # Wire graph into ToolExecutor for capability-gap detection
+        try:
+            import colony_sidecar.api.routers.host as _host_router
+            te = _host_router._tool_executor
+            if te is not None:
+                te._graph = graph
+        except Exception:
+            pass
         logger.info("ColonyGraph initialized (uri=%s db=%s)", neo4j_uri, neo4j_db)
 
         # Ensure Colony self-representation in graph (v0.11.0)

@@ -90,7 +90,7 @@ class ColonyGraph:
                 await session.run("""
                     MERGE (a:Agent {id: 'colony-sidecar'})
                     SET a.name = 'Colony',
-                        a.version = '0.11.0',
+                        a.version = '0.11.1',
                         a.status = 'active',
                         a.created_at = coalesce(a.created_at, datetime())
                 """)

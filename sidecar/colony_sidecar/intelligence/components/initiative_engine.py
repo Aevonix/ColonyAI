@@ -119,6 +119,7 @@ class Initiative:
     dedup_key: Optional[str] = None
     expires_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    trigger_data: Optional[Dict[str, Any]] = None
 
 
 class InitiativeEngine:
@@ -329,6 +330,13 @@ class InitiativeEngine:
             loaders.append(self._load_operational_tasks())
         if "initiative_categories" not in self._context:
             loaders.append(self._load_initiative_categories())
+        # New self-initiative loaders (v0.11.1)
+        if "capability_gaps" not in self._context:
+            loaders.append(self._load_capability_gaps())
+        if "knowledge_gaps" not in self._context:
+            loaders.append(self._load_knowledge_gaps())
+        if "behavioral_patterns" not in self._context:
+            loaders.append(self._load_behavioral_patterns())
         
         if loaders:
             await asyncio.gather(*loaders, return_exceptions=True)
@@ -871,8 +879,120 @@ class InitiativeEngine:
         if not categories:
             self._context.setdefault("initiative_categories", [])
 
+    async def _load_capability_gaps(self) -> None:
+        """Query graph for tools that have failed repeatedly."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
+            return
+
+        query = """
+            MATCH (a:Agent)-[r:NEEDS_CAPABILITY]->(c:Capability)
+            WHERE r.failure_count >= 3
+              AND r.last_failure_at > datetime() - duration({hours: 24})
+            RETURN c.name as name, c.id as id, r.failure_count as failure_count,
+                   r.last_failure_at as last_failure, r.failure_mode as failure_mode
+            ORDER BY r.failure_count DESC
+            LIMIT 10
+        """
+
+        gaps = []
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query)
+                async for record in result:
+                    record = dict(record)
+                    gaps.append({
+                        "id": record.get("id", "unknown"),
+                        "name": record.get("name", "Unknown"),
+                        "failure_count": record.get("failure_count", 0),
+                        "failure_mode": record.get("failure_mode", "unknown"),
+                        "last_failure": record.get("last_failure"),
+                        "entity_type": "capability_gap",
+                    })
+            logger.debug("Loaded %d capability gaps", len(gaps))
+        except Exception as e:
+            logger.warning("Capability gap query failed: %s", e)
+
+        self._context["capability_gaps"] = gaps
+        if not gaps:
+            self._context.setdefault("capability_gaps", [])
+
+    async def _load_knowledge_gaps(self) -> None:
+        """Query graph for low-confidence concepts."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
+            return
+
+        query = """
+            MATCH (c:Concept)
+            WHERE c.confidence_score < 0.5
+              AND c.status IN ['open', 'researching']
+            RETURN c.id as id, c.name as name, c.confidence_score as confidence_score,
+                   c.encounter_count as encounter_count, c.domain as domain
+            ORDER BY c.confidence_score ASC, c.encounter_count DESC
+            LIMIT 10
+        """
+
+        gaps = []
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query)
+                async for record in result:
+                    record = dict(record)
+                    gaps.append({
+                        "id": record.get("id", "unknown"),
+                        "name": record.get("name", "Unknown"),
+                        "confidence_score": record.get("confidence_score", 0.0),
+                        "encounter_count": record.get("encounter_count", 0),
+                        "domain": record.get("domain", "general"),
+                        "entity_type": "knowledge_gap",
+                    })
+            logger.debug("Loaded %d knowledge gaps", len(gaps))
+        except Exception as e:
+            logger.warning("Knowledge gap query failed: %s", e)
+
+        self._context["knowledge_gaps"] = gaps
+        if not gaps:
+            self._context.setdefault("knowledge_gaps", [])
+
+    async def _load_behavioral_patterns(self) -> None:
+        """Query graph for active correction patterns."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
+            return
+
+        query = """
+            MATCH (p:Pattern)
+            WHERE p.pattern_type = 'correction'
+              AND p.is_active = true
+              AND p.recurrence_count >= 2
+            RETURN p.id as id, p.trigger as trigger, p.action as action,
+                   p.recurrence_count as recurrence_count, p.confidence as confidence
+            ORDER BY p.recurrence_count DESC, p.confidence DESC
+            LIMIT 10
+        """
+
+        patterns = []
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query)
+                async for record in result:
+                    record = dict(record)
+                    patterns.append({
+                        "id": record.get("id", "unknown"),
+                        "trigger": record.get("trigger", ""),
+                        "action": record.get("action", ""),
+                        "recurrence_count": record.get("recurrence_count", 0),
+                        "confidence": record.get("confidence", 0.5),
+                        "entity_type": "behavioral_pattern",
+                    })
+            logger.debug("Loaded %d behavioral patterns", len(patterns))
+        except Exception as e:
+            logger.warning("Behavioral pattern query failed: %s", e)
+
+        self._context["behavioral_patterns"] = patterns
+        if not patterns:
+            self._context.setdefault("behavioral_patterns", [])
+
     # ------------------------------------------------------------------
-    # Generation
+    # Self-initiative generators (v0.11.0)
     # ------------------------------------------------------------------
 
     async def generate(
@@ -1046,12 +1166,22 @@ class InitiativeEngine:
             category_id=initiative.type.value,
             category_name=initiative.type.value,
             entity_id=initiative.entity_id,
-            trigger_data={"description": initiative.description, "rationale": initiative.rationale},
+            entity_type=(initiative.trigger_data or {}).get("entity_type"),
+            trigger_data=initiative.trigger_data or {},
             priority=initiative.priority,
         )
 
         # Find matching skill
-        category = {"executor_skill": initiative.type.value.replace("_", "_")}
+        _SKILL_NAME_MAP = {
+            "subsystem_health": "subsystem_health",
+            "data_quality": "data_quality",
+            "operational": "operational_hygiene",
+            "capability_gap": "capability_gap",
+            "knowledge_acquisition": "knowledge_acquisition",
+            "behavioral_correction": "behavioral_correction",
+        }
+        skill_name = _SKILL_NAME_MAP.get(initiative.type.value, initiative.type.value)
+        category = {"executor_skill": skill_name}
         skill = await self._skills.find_skill_for_category(category, {})
 
         if not skill:
@@ -1257,6 +1387,7 @@ class InitiativeEngine:
                     entity_id=entity_id,
                     dedup_key=f"subsystem:{entity_id}",
                     expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                    trigger_data={**issue},
                 )
             )
         return initiatives
@@ -1285,6 +1416,7 @@ class InitiativeEngine:
                     entity_id=entity_id,
                     dedup_key=f"dataquality:{entity_id}",
                     expires_at=datetime.now(timezone.utc) + timedelta(hours=4),
+                    trigger_data={**issue},
                 )
             )
         return initiatives
@@ -1311,30 +1443,87 @@ class InitiativeEngine:
                     entity_id=entity_id,
                     dedup_key=f"operational:{entity_id}",
                     expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+                    trigger_data={**task},
                 )
             )
         return initiatives
 
     async def _generate_capability_gap_initiatives(self) -> List[Initiative]:
-        """Generate self-initiatives for missing capabilities.
+        """Generate self-initiatives for missing capabilities."""
+        initiatives: List[Initiative] = []
+        for gap in self._context.get("capability_gaps", []):
+            entity_id = gap.get("id", "unknown")
+            name = gap.get("name", "Unknown capability")
+            failure_count = gap.get("failure_count", 0)
+            failure_mode = gap.get("failure_mode", "unknown")
 
-        Currently a placeholder — will be populated by analyzing
-        failed tool invocations and owner corrections.
-        """
-        return []
+            priority = min(1.0, 0.5 + failure_count / 10)
+
+            initiatives.append(
+                Initiative(
+                    id=f"capgap-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                    type=InitiativeType.CAPABILITY_GAP,
+                    description=f"Capability gap: {name}",
+                    priority=priority,
+                    rationale=f"Failed {failure_count} times ({failure_mode})",
+                    action_hint="Register or fix missing capability",
+                    entity_id=entity_id,
+                    dedup_key=f"capgap:{entity_id}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=6),
+                    trigger_data={**gap},
+                )
+            )
+        return initiatives
 
     async def _generate_knowledge_acquisition_initiatives(self) -> List[Initiative]:
-        """Generate self-initiatives for low-confidence knowledge areas.
+        """Generate self-initiatives for low-confidence knowledge areas."""
+        initiatives: List[Initiative] = []
+        for gap in self._context.get("knowledge_gaps", []):
+            entity_id = gap.get("id", "unknown")
+            name = gap.get("name", "Unknown concept")
+            confidence = gap.get("confidence_score", 0.0)
+            encounter_count = gap.get("encounter_count", 0)
 
-        Currently a placeholder — will be populated by analyzing
-        project context and query patterns.
-        """
-        return []
+            priority = min(1.0, 1.0 - confidence)
+
+            initiatives.append(
+                Initiative(
+                    id=f"knowgap-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                    type=InitiativeType.KNOWLEDGE_ACQUISITION,
+                    description=f"Knowledge gap: {name}",
+                    priority=priority,
+                    rationale=f"Confidence {confidence:.2f} after {encounter_count} encounters",
+                    action_hint="Queue research task",
+                    entity_id=entity_id,
+                    dedup_key=f"knowgap:{entity_id}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=3),
+                    trigger_data={**gap},
+                )
+            )
+        return initiatives
 
     async def _generate_behavioral_correction_initiatives(self) -> List[Initiative]:
-        """Generate self-initiatives for recurring correction patterns.
+        """Generate self-initiatives for recurring correction patterns."""
+        initiatives: List[Initiative] = []
+        for pattern in self._context.get("behavioral_patterns", []):
+            entity_id = pattern.get("id", "unknown")
+            trigger = pattern.get("trigger", "")
+            recurrence = pattern.get("recurrence_count", 0)
 
-        Currently a placeholder — will be populated by analyzing
-        memory tags and explicit corrections.
-        """
-        return []
+            priority = min(1.0, 0.5 + recurrence / 10)
+
+            initiatives.append(
+                Initiative(
+                    id=f"behav-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                    type=InitiativeType.BEHAVIORAL_CORRECTION,
+                    description=f"Behavioral pattern: {trigger[:80]}",
+                    priority=priority,
+                    rationale=f"Recurred {recurrence} times",
+                    action_hint="Apply learned preference",
+                    entity_id=entity_id,
+                    dedup_key=f"behav:{entity_id}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
+                    trigger_data={**pattern},
+                )
+            )
+        return initiatives

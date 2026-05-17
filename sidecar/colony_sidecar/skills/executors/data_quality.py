@@ -155,11 +155,7 @@ class DataQualitySkill(InitiativeExecutorSkill):
         # Trigger re-index via event bus
         if self.events:
             try:
-                await self.events.publish("index_rebuild_requested", {
-                    "index_name": entity_id,
-                    "reason": f"stale ({index_age_days} days)",
-                })
-                self._log("info", "Requested re-index for %s", entity_id)
+                self._log("info", "Requesting re-index for %s (stale %d days)", entity_id, index_age_days)
                 return ExecutionResult.AUTO_FIXED
             except Exception as e:
                 self._log("warning", "Failed to request re-index: %s", e)
