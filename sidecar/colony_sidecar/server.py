@@ -160,6 +160,12 @@ async def lifespan(app: FastAPI):
         set_graph(graph)
         logger.info("ColonyGraph initialized (uri=%s db=%s)", neo4j_uri, neo4j_db)
 
+        # Ensure Colony self-representation in graph (v0.11.0)
+        try:
+            await graph.ensure_colony_self()
+        except Exception as self_exc:
+            logger.warning("Colony self-representation setup skipped: %s", self_exc)
+
         # Wire consolidator
         try:
             from colony_sidecar.intelligence.graph.consolidator import MemoryConsolidator
