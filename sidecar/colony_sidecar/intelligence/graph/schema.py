@@ -39,6 +39,104 @@ class Owner(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Agent(BaseModel):
+    """An autonomous entity (Colony itself, or other agents/bots)."""
+
+    id: str = Field(..., description="Unique agent identifier")
+    name: str
+    version: Optional[str] = None
+    status: str = "active"
+    capabilities: List[str] = Field(default_factory=list)
+    health_score: float = Field(default=1.0, ge=0.0, le=1.0)
+    last_tick_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Subsystem(BaseModel):
+    """A Colony component that can be monitored and restarted."""
+
+    id: str = Field(..., description="Unique subsystem identifier")
+    name: str
+    status: str = "active"
+    latency_ms: Optional[float] = None
+    error_rate: Optional[float] = None
+    last_check_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Capability(BaseModel):
+    """A tool or skill that Colony has or needs."""
+
+    id: str = Field(..., description="Unique capability identifier")
+    name: str
+    description: Optional[str] = None
+    available: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Project(BaseModel):
+    """An active work item."""
+
+    id: str = Field(..., description="Unique project identifier")
+    name: str
+    description: Optional[str] = None
+    status: str = "active"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Goal(BaseModel):
+    """A goal or objective."""
+
+    id: str = Field(..., description="Unique goal identifier")
+    title: str
+    description: Optional[str] = None
+    status: str = "active"
+    priority: float = Field(default=0.5, ge=0.0, le=1.0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Task(BaseModel):
+    """An actionable work unit."""
+
+    id: str = Field(..., description="Unique task identifier")
+    title: str
+    description: Optional[str] = None
+    status: str = "pending"
+    priority: float = Field(default=0.5, ge=0.0, le=1.0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Pattern(BaseModel):
+    """A recurring behavioral pattern."""
+
+    id: str = Field(..., description="Unique pattern identifier")
+    name: str
+    description: Optional[str] = None
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    occurrences: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class InitiativeCategory(BaseModel):
+    """A dynamic self-initiative category registered at runtime."""
+
+    id: str = Field(..., description="Unique category identifier")
+    name: str
+    description: Optional[str] = None
+    trigger_query: Optional[str] = None
+    action_type: str = "auto_fix"  # auto_fix, propose, research, notify
+    executor_skill: str
+    priority_formula: Optional[str] = None
+    cooldown_minutes: int = 30
+    auto_execute: bool = True
+    requires_approval: bool = False
+    effectiveness_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    total_triggered: int = 0
+    total_successful: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
+
+
 class Person(BaseModel):
     """A person in the owner's relationship network."""
 
@@ -158,10 +256,46 @@ class EdgeType(str, Enum):
     # Memory → Person (memory about a person)
     ABOUT = "ABOUT"
 
+    # Agent → Person (agent manages relationship with person)
+    MANAGES = "MANAGES"
+
+    # Person → Project (person owns/works on project)
+    OWNS = "OWNS"
+
+    # Subsystem → Subsystem (component dependency)
+    DEPENDS_ON = "DEPENDS_ON"
+
+    # Agent → Capability (agent has tool)
+    HAS_CAPABILITY = "HAS_CAPABILITY"
+
+    # Agent → Capability (agent lacks tool)
+    NEEDS_CAPABILITY = "NEEDS_CAPABILITY"
+
+    # Agent → Initiative (agent created initiative)
+    GENERATED = "GENERATED"
+
+    # Initiative → Subsystem (initiative targets component)
+    TARGETS = "TARGETS"
+
+    # Task → Project (task belongs to project)
+    BELONGS_TO = "BELONGS_TO"
+
+    # Goal → Goal (goal blocks another)
+    BLOCKS = "BLOCKS"
+
+    # Person → Pattern (person exhibits pattern)
+    EXHIBITS = "EXHIBITS"
+
+    # Pattern → InitiativeCategory (pattern triggers category)
+    TRIGGERS = "TRIGGERS"
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Convenience exports
 # ──────────────────────────────────────────────────────────────────────
 
-NODE_TYPES = (Owner, Person, Memory, Entity, Signal, Context, ScoreEvent, Prediction)
+NODE_TYPES = (
+    Owner, Person, Memory, Entity, Signal, Context, ScoreEvent, Prediction,
+    Agent, Subsystem, Capability, Project, Goal, Task, Pattern, InitiativeCategory,
+)
 EDGE_TYPES = tuple(EdgeType)

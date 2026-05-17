@@ -307,10 +307,18 @@ class ProactiveDeliveryBridge:
 
         # Populate delivery_context for channel routing
         person_id = initiative.get("entity_id", "")
-        channel_hint = initiative.get("channel_hint", "home")
+        
+        # Self-initiatives always route to home channel (v0.11.0)
+        initiative_type = initiative.get("type", "")
+        is_self_initiative = initiative_type in {
+            "subsystem_health", "data_quality", "operational",
+            "capability_gap", "knowledge_acquisition", "behavioral_correction",
+        }
+        
+        channel_hint = initiative.get("channel_hint", "home" if is_self_initiative else "user")
 
-        if not person_id:
-            # System initiative — no DM, always home
+        if not person_id or is_self_initiative:
+            # System/self initiative — no DM, always home
             user_channel = None
             home_channel = self._channel_registry.resolve("__system__", "home")
         else:
