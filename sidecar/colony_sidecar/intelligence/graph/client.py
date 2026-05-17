@@ -78,6 +78,51 @@ class ColonyGraph:
         """Verify connectivity to Neo4j."""
         await self.driver.verify_connectivity()
 
+    async def ensure_colony_self(self) -> None:
+        """Ensure Colony's self-representation exists in the graph (v0.11.0).
+
+        Creates an Agent node for Colony with DEPENDS_ON edges to
+        known Subsystem nodes. Idempotent — safe to call multiple times.
+        """
+        try:
+            async with self.driver.session(database=self.database) as session:
+                # Create Agent node
+                await session.run("""
+                    MERGE (a:Agent {id: 'colony-sidecar'})
+                    SET a.name = 'Colony',
+                        a.version = '0.11.0',
+                        a.status = 'active',
+                        a.created_at = coalesce(a.created_at, datetime())
+                """)
+
+                # Create Subsystem nodes for known components
+                subsystems = [
+                    ("embed_pipeline", "Embedding Pipeline"),
+                    ("delivery_bridge", "Delivery Bridge"),
+                    ("event_bus", "Event Bus"),
+                    ("graph_client", "Graph Client"),
+                    ("initiative_engine", "Initiative Engine"),
+                    ("mind_model", "Mind Model"),
+                ]
+                for sub_id, sub_name in subsystems:
+                    await session.run("""
+                        MERGE (s:Subsystem {id: $id})
+                        SET s.name = $name,
+                            s.status = coalesce(s.status, 'active'),
+                            s.created_at = coalesce(s.created_at, datetime())
+                    """, id=sub_id, name=sub_name)
+
+                    # Create DEPENDS_ON edge from Agent to Subsystem
+                    await session.run("""
+                        MATCH (a:Agent {id: 'colony-sidecar'}), (s:Subsystem {id: $id})
+                        MERGE (a)-[r:DEPENDS_ON]->(s)
+                        SET r.created_at = coalesce(r.created_at, datetime())
+                    """, id=sub_id)
+
+                logger.info("Colony self-representation verified in graph")
+        except Exception as e:
+            logger.warning("Failed to ensure Colony self-representation: %s", e)
+
     async def close(self) -> None:
         """Cleanly shut down the driver."""
         await self.driver.close()

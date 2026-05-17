@@ -19,6 +19,9 @@ from typing import Any, Dict, List, Optional
 
 import logging
 
+from colony_sidecar.skills.base import ExecutionResult, InitiativeExecutionContext
+from colony_sidecar.skills.registry import SkillRegistry
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,6 +82,14 @@ class InitiativeType(str, Enum):
     HEALTH = "health"
     SCHEDULING = "scheduling"
     CODING = "coding"  # Code execution / refactoring tasks
+
+    # Self-initiative types (v0.11.0)
+    SUBSYSTEM_HEALTH = "subsystem_health"
+    DATA_QUALITY = "data_quality"
+    OPERATIONAL = "operational"
+    CAPABILITY_GAP = "capability_gap"
+    KNOWLEDGE_ACQUISITION = "knowledge_acquisition"
+    BEHAVIORAL_CORRECTION = "behavioral_correction"
 
 
 @dataclass
@@ -196,6 +207,7 @@ class InitiativeEngine:
         store: Optional[Any] = None,  # InitiativeStore for persistence
         goal_store: Optional[Any] = None,  # GoalStore for dedup cooldown (v0.7.10)
         config: Optional[InitiativeConfig] = None,
+        skill_registry: Optional[SkillRegistry] = None,
     ) -> None:
         self.graph = graph_client
         self.events = event_bus
@@ -206,8 +218,17 @@ class InitiativeEngine:
         self._initiatives: List[Initiative] = []
         self._context: Dict[str, List[Dict[str, Any]]] = {}
         
+        # Skill registry for self-initiative execution (v0.11.0)
+        self._skills = skill_registry or SkillRegistry(
+            graph_client=graph_client,
+            event_bus=event_bus,
+        )
+        
         # Track last graph load to avoid redundant queries within same tick
         self._last_graph_load: Optional[datetime] = None
+        
+        # Track last self-initiative execution per category for cooldown
+        self._last_self_initiative_at: Dict[str, datetime] = {}
 
     # ------------------------------------------------------------------
     # Context management
@@ -299,6 +320,15 @@ class InitiativeEngine:
         # Always check signals unless explicitly in context (Bug 40)
         if "pending_signals" not in self._context:
             loaders.append(self._load_pending_signals())
+        # Self-initiative context loaders (v0.11.0)
+        if "subsystem_health" not in self._context:
+            loaders.append(self._load_subsystem_health())
+        if "data_quality_issues" not in self._context:
+            loaders.append(self._load_data_quality_issues())
+        if "operational_tasks" not in self._context:
+            loaders.append(self._load_operational_tasks())
+        if "initiative_categories" not in self._context:
+            loaders.append(self._load_initiative_categories())
         
         if loaders:
             await asyncio.gather(*loaders, return_exceptions=True)
@@ -362,6 +392,7 @@ class InitiativeEngine:
         ]
 
         tasks = []
+        date_field = "blocked_at"  # default
         for variant in queries:
             if tasks:  # Stop if we found data
                 break
@@ -468,171 +499,159 @@ class InitiativeEngine:
             self._context.setdefault("neglected_contacts", [])
 
     async def _load_health_trends(self) -> None:
-        """Query mind model for health anomalies."""
-        if self.mind_model is None:
+        """Query graph for health signals and score trends."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
             return
-        
+
+        query = """
+            MATCH (s:Signal)
+            WHERE s.metric IN ['energy', 'sleep', 'focus', 'mood']
+              AND s.confidence > 0.7
+            RETURN s.metric as metric, avg(s.value) as avg_value,
+                   max(s.timestamp) as last_seen
+            ORDER BY last_seen DESC
+        """
+
+        alerts = []
         try:
-            health_state = await self.mind_model.get_health_state()
-            alerts = []
-            
-            # Check sleep score
-            sleep_score = health_state.get("sleep_score")
-            if sleep_score is not None and sleep_score < self._config.health_score_threshold:
-                alerts.append({
-                    "metric": "sleep_score",
-                    "value": sleep_score,
-                    "target": self._config.health_score_threshold,
-                    "rationale": f"Sleep score ({sleep_score}) below threshold",
-                })
-            
-            # Check recovery score
-            recovery_score = health_state.get("recovery_score")
-            if recovery_score is not None and recovery_score < self._config.health_score_threshold:
-                alerts.append({
-                    "metric": "recovery_score",
-                    "value": recovery_score,
-                    "target": self._config.health_score_threshold,
-                    "rationale": f"Recovery score ({recovery_score}) below threshold",
-                })
-            
-            # Check HRV trend
-            hrv_trend = health_state.get("hrv_trend")
-            if hrv_trend is not None and hrv_trend < -10:
-                alerts.append({
-                    "metric": "hrv_trend",
-                    "value": hrv_trend,
-                    "target": 0,
-                    "rationale": f"HRV declining ({hrv_trend}%)",
-                })
-            
-            self._context["health_alerts"] = alerts
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query)
+                async for record in result:
+                    record = dict(record)
+                    metric = record.get("metric")
+                    avg_value = record.get("avg_value", 0.0)
+                    if avg_value is not None and avg_value < self._config.health_score_threshold:
+                        alerts.append({
+                            "metric": metric,
+                            "value": float(avg_value),
+                            "target": self._config.health_score_threshold,
+                        })
             logger.debug("Loaded %d health alerts", len(alerts))
-        except (OSError, ConnectionError, TimeoutError) as e:
-            logger.warning("Health trends query failed (connection): %s", e)
-            self._context.setdefault("health_alerts", [])
         except Exception as e:
-            logger.error("Health trends query failed (unexpected): %s", e)
+            logger.debug("Health trends query failed: %s", e)
+
+        self._context["health_alerts"] = alerts
+        if not alerts:
             self._context.setdefault("health_alerts", [])
 
     async def _load_scheduling_opportunities(self) -> None:
-        """Query mind model for calendar gaps and overdue commitments."""
-        if self.mind_model is None:
+        """Query graph for scheduling gaps and opportunities."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
             return
-        
+
+        query = """
+            MATCH (o:Owner)
+            OPTIONAL MATCH (o)-[:HAS_CALENDAR]->(c:Calendar)
+            WITH o, c
+            WHERE c IS NULL OR c.last_synced < datetime() - duration({hours: 24})
+            RETURN 'calendar_sync' as opportunity,
+                   CASE WHEN c IS NULL THEN 0.9 ELSE 0.7 END as priority
+            LIMIT 5
+        """
+
+        opportunities = []
         try:
-            schedule_state = await self.mind_model.get_schedule_state()
-            opportunities = []
-            
-            # Check for calendar gaps > threshold hours
-            gaps = schedule_state.get("gaps", [])
-            for gap in gaps:
-                duration = gap.get("duration_hours", 0)
-                if duration > self._config.calendar_gap_threshold_hours:
-                    opportunities.append({
-                        "description": f"Free block: {duration:.1f} hours ({gap['start']} to {gap['end']})",
-                        "priority": 0.5,
-                        "rationale": "Good time for deep work or catching up",
-                        "action_hint": "schedule",
-                    })
-            
-            # Check for overdue commitments
-            overdue = schedule_state.get("overdue_commitments", [])
-            for commitment in overdue:
-                opportunities.append({
-                    "description": f"Overdue: {commitment.get('title', 'Unknown')}",
-                    "priority": 0.85,
-                    "rationale": f"{commitment.get('days_overdue', 0)} days overdue",
-                    "action_hint": "notify_user",
-                })
-            
-            self._context["scheduling_opportunities"] = opportunities
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query)
+                async for record in result:
+                    record = dict(record)
+                    opp_type = record.get("opportunity")
+                    if opp_type == "calendar_sync":
+                        opportunities.append({
+                            "description": "Calendar hasn't synced in 24+ hours",
+                            "priority": float(record.get("priority", 0.7)),
+                            "rationale": "Missing recent calendar data may cause scheduling gaps",
+                            "action_hint": "Sync calendar to get latest availability",
+                        })
             logger.debug("Loaded %d scheduling opportunities", len(opportunities))
-        except (OSError, ConnectionError, TimeoutError) as e:
-            logger.warning("Scheduling opportunities query failed (connection): %s", e)
-            self._context.setdefault("scheduling_opportunities", [])
         except Exception as e:
-            logger.error("Scheduling opportunities query failed (unexpected): %s", e)
+            logger.debug("Scheduling opportunities query failed: %s", e)
+
+        self._context["scheduling_opportunities"] = opportunities
+        if not opportunities:
             self._context.setdefault("scheduling_opportunities", [])
 
     async def _load_pending_signals(self) -> None:
-        """Get count of unprocessed signals."""
-        if self.mind_model is None:
+        """Query graph for signals awaiting processing."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
             return
-        
+
+        query = """
+            MATCH (s:Signal)
+            WHERE s.processed = false OR s.processed IS NULL
+            RETURN count(s) as pending_count
+        """
+
         try:
-            count = await self.mind_model.get_pending_signal_count()
-            if count > self._config.signal_accumulation_threshold:
-                # Add as a single "meta" opportunity
-                self._context.setdefault("scheduling_opportunities", []).append({
-                    "description": f"{count} unprocessed signals awaiting review",
-                    "priority": min(0.9, 0.5 + count * 0.01),
-                    "rationale": "Accumulated behavioral signals need processing",
-                    "action_hint": "process_signals",
-                })
-            logger.debug("Pending signals: %d", count)
-        except (OSError, ConnectionError, TimeoutError) as e:
-            logger.warning("Pending signals query failed (connection): %s", e)
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query)
+                record = await result.single()
+                if record:
+                    count = record.get("pending_count", 0)
+                    if count > self._config.signal_accumulation_threshold:
+                        self._context.setdefault("pending_signals", []).append({
+                            "metric": "pending_signals",
+                            "value": int(count),
+                            "target": self._config.signal_accumulation_threshold,
+                        })
+                        logger.debug("Signal accumulation: %d pending", count)
         except Exception as e:
-            logger.error("Pending signals query failed (unexpected): %s", e)
+            logger.debug("Pending signals query failed: %s", e)
 
     async def _load_pending_research_tasks(self) -> None:
-        """Query graph for pending research tasks.
+        """Query graph for open research tasks that haven't been acted on.
         
-        Schema-adaptive: tries multiple label/property combinations.
+        Schema-adaptive: tries multiple property names for compatibility.
+        Tasks without a due date or with a past due date are considered pending.
         """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
         
-        # Try multiple query variants for schema compatibility
         queries = [
-            # Colony schema: Task label with type='research'
+            # Schema variant: Task with status='open' and due_at
             {
                 "query": """
-                    MATCH (t:Task {type: 'research', status: 'pending'})
-                    WHERE t.created_at < datetime() - duration({days: $days})
+                    MATCH (t:Task)
+                    WHERE t.status = 'open'
+                      AND t.type = 'research'
+                      AND (t.due_at < datetime() - duration({days: $days})
+                           OR t.due_at IS NULL)
                     RETURN t.id as id, t.title as title, t.description as description,
-                           t.priority as priority, t.created_at as created_at
-                    ORDER BY t.priority DESC, t.created_at ASC
-                """,
-                "date_field": "created_at",
-            },
-            # Alternative: Task label with state='pending'
-            {
-                "query": """
-                    MATCH (t:Task {type: 'research', state: 'pending'})
-                    WHERE t.created_at < datetime() - duration({days: $days})
-                    RETURN t.id as id, t.title as title, t.description as description,
-                           t.priority as priority, t.created_at as created_at
-                    ORDER BY t.priority DESC, t.created_at ASC
-                """,
-                "date_field": "created_at",
-            },
-            # Alternative: Goal label with type='research'
-            {
-                "query": """
-                    MATCH (t:Goal {type: 'research'})
-                    WHERE t.status = 'pending' OR t.state = 'pending'
-                      OR t.progress < 10
-                    RETURN t.id as id, t.title as title, t.description as description,
-                           t.priority as priority, t.created_at as created_at
-                    ORDER BY t.priority DESC, t.created_at ASC
-                """,
-                "date_field": "created_at",
-            },
-            # Fallback: any node with 'research' in title/description
-            {
-                "query": """
-                    MATCH (t)
-                    WHERE (t:Task OR t:Goal)
-                      AND (t.title CONTAINS 'research' OR t.description CONTAINS 'research'
-                           OR t.type = 'research')
-                    RETURN t.id as id, t.title as title, t.description as description,
-                           t.priority as priority, t.created_at as created_at
-                    ORDER BY t.priority DESC, t.created_at ASC
+                           t.due_at as due_at, t.priority as priority
+                    ORDER BY t.priority DESC, t.due_at ASC
                     LIMIT 20
                 """,
-                "date_field": "created_at",
+                "date_field": "due_at",
+            },
+            # Schema variant: Task with state='open' and updated_at
+            {
+                "query": """
+                    MATCH (t:Task)
+                    WHERE t.state = 'open'
+                      AND (t.type = 'research' OR t.tags CONTAINS 'research')
+                      AND (t.updated_at < datetime() - duration({days: $days})
+                           OR t.updated_at IS NULL)
+                    RETURN t.id as id, t.title as title, t.description as description,
+                           t.updated_at as due_at, t.priority as priority
+                    ORDER BY t.priority DESC, t.updated_at ASC
+                    LIMIT 20
+                """,
+                "date_field": "updated_at",
+            },
+            # Fallback: any open task with 'research' in the description
+            {
+                "query": """
+                    MATCH (t:Task)
+                    WHERE (t.status = 'open' OR t.state = 'open')
+                      AND (t.type = 'research' OR t.description CONTAINS 'research'
+                           OR coalesce(t.tags, '') CONTAINS 'research')
+                    RETURN t.id as id, t.title as title, t.description as description,
+                           coalesce(t.due_at, t.updated_at, datetime()) as due_at,
+                           t.priority as priority
+                    ORDER BY t.priority DESC, due_at ASC
+                    LIMIT 20
+                """,
+                "date_field": "due_at",
             },
         ]
         
@@ -640,7 +659,7 @@ class InitiativeEngine:
         task_count = 0
         
         for variant in queries:
-            if task_count > 0:  # Stop if we found data
+            if task_count > 0:
                 break
             try:
                 async with self.graph.driver.session(database=self.graph.database) as session:
@@ -650,23 +669,21 @@ class InitiativeEngine:
                     )
                     async for record in result:
                         record = dict(record)
-                        # Bug 12: Calculate actual days pending from created_at
-                        created_at = self._parse_neo4j_datetime(record.get(variant["date_field"]))
-                        if created_at:
-                            days_pending = max(0, (datetime.now(timezone.utc) - created_at).days)
-                        else:
-                            days_pending = self._config.research_task_age_days
+                        date_field = variant["date_field"]
+                        due_at = self._parse_neo4j_datetime(record.get(date_field))
+                        days_pending = max(0, (datetime.now(timezone.utc) - due_at).days) if due_at else 0
                         
                         existing_tasks.append({
                             "entity_id": record["id"],
-                            "description": f"Research: {record.get('title', 'Unknown')}",
+                            "description": record.get("title", "Unknown research task"),
                             "days_pending": days_pending,
                             "priority": record.get("priority", 0.5),
+                            "is_research": True,
                         })
                         task_count += 1
-                
+                        
                 if task_count > 0:
-                    logger.debug("Loaded %d research tasks", task_count)
+                    logger.debug("Loaded %d research tasks using %s", task_count, date_field)
             except Exception as e:
                 logger.debug("Research tasks query variant failed: %s", e)
                 continue
@@ -674,6 +691,185 @@ class InitiativeEngine:
         self._context["pending_tasks"] = existing_tasks
         if task_count == 0:
             logger.debug("No research tasks found with any schema variant")
+
+    # ------------------------------------------------------------------
+    # Self-initiative context loaders (v0.11.0)
+    # ------------------------------------------------------------------
+
+    async def _load_subsystem_health(self) -> None:
+        """Query graph for degraded Colony subsystems."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
+            return
+
+        query = """
+            MATCH (s:Subsystem)
+            WHERE s.status <> 'active'
+               OR (s.latency_ms IS NOT NULL AND s.latency_ms > 1000)
+               OR (s.error_rate IS NOT NULL AND s.error_rate > 0.1)
+            RETURN s.id as id, s.name as name, s.status as status,
+                   s.latency_ms as latency, s.error_rate as error_rate
+            ORDER BY s.error_rate DESC, s.latency_ms DESC
+            LIMIT 10
+        """
+
+        issues = []
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query)
+                async for record in result:
+                    record = dict(record)
+                    issues.append({
+                        "entity_id": record.get("id") or record.get("name"),
+                        "name": record.get("name", "Unknown"),
+                        "status": record.get("status", "unknown"),
+                        "latency_ms": record.get("latency"),
+                        "error_rate": record.get("error_rate"),
+                    })
+            logger.debug("Loaded %d subsystem health issues", len(issues))
+        except Exception as e:
+            logger.debug("Subsystem health query failed: %s", e)
+
+        self._context["subsystem_health"] = issues
+        if not issues:
+            self._context.setdefault("subsystem_health", [])
+
+    async def _load_data_quality_issues(self) -> None:
+        """Query graph for schema drift and orphan detection."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
+            return
+
+        issues = []
+
+        # Check for Memory nodes without :ABOUT edges
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run("""
+                    MATCH (m:Memory)
+                    WHERE NOT (m)-[:ABOUT]->(:Person)
+                    RETURN count(m) as orphan_count
+                """)
+                record = await result.single()
+                if record and record.get("orphan_count", 0) > 0:
+                    issues.append({
+                        "entity_id": "orphan_memories",
+                        "entity_type": "orphan_nodes",
+                        "count": record.get("orphan_count"),
+                        "description": f"{record.get('orphan_count')} Memory nodes without :ABOUT edges",
+                    })
+        except Exception as e:
+            logger.debug("Orphan detection query failed: %s", e)
+
+        # Check for schema drift: queries referencing non-existent relationships
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run("""
+                    CALL db.schema.visualization() YIELD nodes, relationships
+                    RETURN [r IN relationships | type(r)] as rel_types
+                """)
+                record = await result.single()
+                if record:
+                    rel_types = record.get("rel_types", [])
+                    # Check if BELONGS_TO exists (it shouldn't if schema is clean)
+                    if "BELONGS_TO" in rel_types:
+                        issues.append({
+                            "entity_id": "belongs_to_drift",
+                            "entity_type": "schema_drift",
+                            "description": "BELONGS_TO relationship exists but is deprecated",
+                        })
+        except Exception as e:
+            logger.debug("Schema drift query failed: %s", e)
+
+        self._context["data_quality_issues"] = issues
+        if not issues:
+            self._context.setdefault("data_quality_issues", [])
+
+    async def _load_operational_tasks(self) -> None:
+        """Check for operational hygiene needs (backups, disk space, etc.)."""
+        import os
+        from pathlib import Path
+
+        tasks = []
+
+        # Check backup age
+        backup_dir = Path(os.path.expanduser("~/.colony/backups"))
+        if backup_dir.exists():
+            backups = sorted(backup_dir.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if backups:
+                newest_age_days = (datetime.now(timezone.utc).timestamp() - backups[0].stat().st_mtime) / 86400
+                if newest_age_days > 7:
+                    tasks.append({
+                        "entity_id": "database_backup",
+                        "entity_type": "backup",
+                        "description": f"Last backup was {newest_age_days:.0f} days ago",
+                        "age_days": newest_age_days,
+                    })
+            else:
+                tasks.append({
+                    "entity_id": "database_backup",
+                    "entity_type": "backup",
+                    "description": "No backups found",
+                    "age_days": 999,
+                })
+
+        # Check log sizes
+        log_dir = Path(os.path.expanduser("~/.colony/logs"))
+        if log_dir.exists():
+            total_size_mb = sum(f.stat().st_size for f in log_dir.glob("*.log") if f.is_file()) / (1024 * 1024)
+            if total_size_mb > 100:
+                tasks.append({
+                    "entity_id": "log_rotation",
+                    "entity_type": "log_rotation",
+                    "description": f"Log files total {total_size_mb:.1f} MB",
+                    "threshold_mb": 100,
+                })
+
+        self._context["operational_tasks"] = tasks
+        if not tasks:
+            self._context.setdefault("operational_tasks", [])
+
+    async def _load_initiative_categories(self) -> None:
+        """Load dynamic initiative categories from the graph."""
+        if self.graph is None or not hasattr(self.graph, 'driver'):
+            return
+
+        query = """
+            MATCH (c:InitiativeCategory)
+            WHERE c.auto_execute = true
+              AND (c.last_triggered IS NULL
+                   OR c.last_triggered < datetime() - duration({minutes: c.cooldown_minutes}))
+            RETURN c.id as id, c.name as name, c.description as description,
+                   c.trigger_query as trigger_query, c.action_type as action_type,
+                   c.executor_skill as executor_skill, c.priority_formula as priority_formula,
+                   c.cooldown_minutes as cooldown_minutes, c.auto_execute as auto_execute,
+                   c.requires_approval as requires_approval
+            LIMIT 20
+        """
+
+        categories = []
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query)
+                async for record in result:
+                    record = dict(record)
+                    categories.append({
+                        "id": record.get("id"),
+                        "name": record.get("name"),
+                        "description": record.get("description"),
+                        "trigger_query": record.get("trigger_query"),
+                        "action_type": record.get("action_type"),
+                        "executor_skill": record.get("executor_skill"),
+                        "priority_formula": record.get("priority_formula"),
+                        "cooldown_minutes": record.get("cooldown_minutes", 30),
+                        "auto_execute": record.get("auto_execute", True),
+                        "requires_approval": record.get("requires_approval", False),
+                    })
+            logger.debug("Loaded %d initiative categories", len(categories))
+        except Exception as e:
+            logger.debug("Initiative category query failed: %s", e)
+
+        self._context["initiative_categories"] = categories
+        if not categories:
+            self._context.setdefault("initiative_categories", [])
 
     # ------------------------------------------------------------------
     # Generation
@@ -716,6 +912,19 @@ class InitiativeEngine:
             generators.append(self._generate_health_suggestions())
         if not types or InitiativeType.SCHEDULING in types:
             generators.append(self._generate_scheduling_suggestions())
+        # Self-initiative generators (v0.11.0)
+        if not types or InitiativeType.SUBSYSTEM_HEALTH in types:
+            generators.append(self._generate_subsystem_health_initiatives())
+        if not types or InitiativeType.DATA_QUALITY in types:
+            generators.append(self._generate_data_quality_initiatives())
+        if not types or InitiativeType.OPERATIONAL in types:
+            generators.append(self._generate_operational_initiatives())
+        if not types or InitiativeType.CAPABILITY_GAP in types:
+            generators.append(self._generate_capability_gap_initiatives())
+        if not types or InitiativeType.KNOWLEDGE_ACQUISITION in types:
+            generators.append(self._generate_knowledge_acquisition_initiatives())
+        if not types or InitiativeType.BEHAVIORAL_CORRECTION in types:
+            generators.append(self._generate_behavioral_correction_initiatives())
         
         initiatives: List[Initiative] = []
         if generators:
@@ -739,362 +948,254 @@ class InitiativeEngine:
             # Use goal_store cooldown for task-type initiatives
             if self._goal_store and entity_id and type_val == "follow_up":
                 try:
-                    goal = self._goal_store.get_goal(entity_id)
-                    if goal and goal.last_initiative_at:
-                        cooldown = timedelta(hours=cooldown_tasks)
-                        if (now - goal.last_initiative_at) < cooldown:
-                            logger.debug(
-                                "Skipping initiative for %s: last initiative %s ago (< %dh cooldown)",
-                                entity_id, now - goal.last_initiative_at, cooldown_tasks,
-                            )
-                            continue
-                except (AttributeError, KeyError, TypeError):
-                    pass  # Goal store API mismatch, allow generation
+                    recent = self._goal_store.list_recent(
+                        entity_type="initiative",
+                        entity_id=entity_id,
+                        hours=cooldown_tasks,
+                    )
+                    if recent:
+                        continue  # Still in cooldown
                 except Exception:
-                    logger.debug("Goal cooldown check failed for %s", entity_id)
-
-            # In-memory cooldown for non-task types (contacts, etc.)
-            if init.dedup_key and type_val != "follow_up":
-                cooldown = timedelta(hours=cooldown_contacts)
-                if self._store:
-                    try:
-                        existing = self._store.get_by_dedup_key(init.dedup_key)
-                        if existing and existing.is_active:
-                            existing_time = existing.created_at
-                            if existing_time and (now - existing_time) < cooldown:
-                                logger.debug(
-                                    "Skipping initiative for %s: within %dh cooldown",
-                                    init.dedup_key, cooldown_contacts,
-                                )
-                                continue
-                    except (AttributeError, KeyError, TypeError):
-                        pass  # Store API mismatch
-                    except Exception:
-                        logger.debug("Dedup check failed for %s", init.dedup_key)
-
+                    pass  # goal_store unavailable, skip cooldown check
+            
+            # Use goal_store cooldown for contact-type initiatives
+            elif self._goal_store and entity_id and type_val == "relationship":
+                try:
+                    recent = self._goal_store.list_recent(
+                        entity_type="initiative",
+                        entity_id=entity_id,
+                        hours=cooldown_contacts,
+                    )
+                    if recent:
+                        continue  # Still in cooldown
+                except Exception:
+                    pass
+            
             deduped.append(init)
 
-        result = sorted(deduped, key=lambda i: i.priority, reverse=True)
-        # Bug 43: Limit total initiatives
-        result = result[:max_initiatives]
-
-        # Persist to store if available
-        if self._store:
-            for initiative in result:
-                try:
-                    # Generate dedup_key from entity_id if not set
-                    if not initiative.dedup_key and initiative.entity_id:
-                        initiative.dedup_key = f"{initiative.type.value}:{initiative.entity_id}"
-
-                    self._store.create(
-                        type=initiative.type.value,
-                        description=initiative.description,
-                        priority=initiative.priority,
-                        rationale=initiative.rationale,
-                        action_hint=initiative.action_hint,
-                        entity_id=initiative.entity_id,
-                        dedup_key=initiative.dedup_key,
-                        expires_at=initiative.expires_at,
-                        source_type="autonomy",
-                        created_by="initiative_engine",
-                    )
-                    
-                    # Bug 11: Mark initiative as generated on the goal INSIDE the loop
-                    if self._goal_store and initiative.entity_id:
-                        try:
-                            self._goal_store.mark_initiative_generated(initiative.entity_id)
-                        except Exception as e:
-                            logger.debug("Failed to mark initiative generated for %s: %s", initiative.entity_id, e)
-                except (ValueError, TypeError) as e:
-                    logger.warning("Failed to persist initiative %s (validation): %s", initiative.id, e)
-                except Exception as e:
-                    logger.error("Failed to persist initiative %s (unexpected): %s", initiative.id, e)
-
-        # Bug 36: Add generated initiatives to in-memory list
-        self._initiatives.extend(result)
+        # Sort by priority desc
+        deduped.sort(key=lambda i: i.priority, reverse=True)
         
-        # Trim in-memory list to prevent unbounded growth
-        if len(self._initiatives) > 1000:
-            self._initiatives = self._initiatives[-1000:]
-
-        logger.debug(
-            "Generated %d initiatives (%d above threshold %.2f)",
-            len(initiatives),
-            len(result),
+        # Cap to max
+        self._initiatives = deduped[:max_initiatives]
+        
+        logger.info(
+            "Generated %d initiatives (requested max %d, min_priority %.2f)",
+            len(self._initiatives),
+            max_initiatives,
             min_priority,
         )
-        return result
-
-    async def complete(self, initiative_id: str, result: str = "") -> None:
-        """Mark an initiative as completed.
         
-        Args:
-            initiative_id: ID of the initiative to complete
-            result: Optional result/description of what was done
+        return self._initiatives
+
+    def get_initiatives(self) -> List[Initiative]:
+        """Return current initiatives."""
+        return self._initiatives.copy()
+
+    def get_initiative(self, initiative_id: str) -> Optional[Initiative]:
+        """Get a specific initiative by ID."""
+        for initiative in self._initiatives:
+            if initiative.id == initiative_id:
+                return initiative
+        return None
+
+    def remove_initiative(self, initiative_id: str) -> bool:
+        """Remove an initiative by ID.
+        
+        Returns:
+            True if removed, False if not found.
         """
-        # Bug 47: Look up entity_id from store before completing goal
-        entity_id = None
-        if self._store:
-            try:
-                stored = self._store.get(initiative_id)
-                if stored:
-                    entity_id = stored.entity_id
-            except (AttributeError, KeyError):
-                pass  # Store API mismatch
-            except Exception:
-                logger.debug("Failed to look up initiative %s in store", initiative_id)
-        
-        # Fallback to in-memory list
-        if not entity_id:
-            for init in self._initiatives:
-                if init.id == initiative_id:
-                    entity_id = init.entity_id
-                    break
-        
-        self._initiatives = [i for i in self._initiatives if i.id != initiative_id]
-        
-        if self._store:
-            try:
-                if hasattr(self._store, 'complete'):
-                    self._store.complete(
-                        initiative_id,
-                        agent_id="initiative_engine",
-                        result=result,
-                    )
-                else:
-                    self._store.update(
-                        initiative_id,
-                        status="completed",
-                        completed_at=datetime.now(timezone.utc),
-                        result=result,
-                        result_metadata={"result": result},
-                    )
-            except (ValueError, TypeError) as e:
-                logger.warning("Failed to mark initiative %s complete (validation): %s", initiative_id, e)
-            except Exception as e:
-                logger.error("Failed to mark initiative %s complete (unexpected): %s", initiative_id, e)
-        
-        # Bug 47: Use entity_id (goal ID) not initiative_id
-        if self._goal_store and entity_id:
-            try:
-                self._goal_store.complete_task(entity_id, result=result)
-            except (AttributeError, KeyError) as e:
-                logger.debug("Failed to complete goal %s (API mismatch): %s", entity_id, e)
-            except Exception as e:
-                logger.warning("Failed to complete goal %s (unexpected): %s", entity_id, e)
-        
-        logger.info("Completed initiative %s: %s", initiative_id, result)
+        for i, initiative in enumerate(self._initiatives):
+            if initiative.id == initiative_id:
+                del self._initiatives[i]
+                logger.debug("Removed initiative %s", initiative_id)
+                return True
+        return False
 
-    async def acknowledge(self, initiative_id: str) -> None:
-        """Acknowledge an initiative (mark as seen but not acted on).
-        
-        Args:
-            initiative_id: ID of the initiative to acknowledge
-        """
-        # Bug 22: Remove from in-memory list
-        self._initiatives = [i for i in self._initiatives if i.id != initiative_id]
-        
-        if self._store:
-            try:
-                self._store.update(
-                    initiative_id,
-                    status="acknowledged",
-                    acknowledged_at=datetime.now(timezone.utc),
-                )
-            except (ValueError, TypeError) as e:
-                logger.warning("Failed to acknowledge initiative %s (validation): %s", initiative_id, e)
-            except Exception as e:
-                logger.error("Failed to acknowledge initiative %s (unexpected): %s", initiative_id, e)
-        
-        logger.debug("Acknowledged initiative %s", initiative_id)
-
-    async def dismiss(self, initiative_id: str) -> None:
-        """Dismiss an initiative so it won't be surfaced from the active list.
+    async def execute_initiative(self, initiative_id: str) -> Dict[str, Any]:
+        """Execute a self-initiative using the skill registry (v0.11.0).
 
         Args:
-            initiative_id: ID of the initiative to dismiss
-        """
-        self._initiatives = [i for i in self._initiatives if i.id != initiative_id]
-
-        if self._store:
-            try:
-                self._store.cancel(initiative_id, cancelled_by="initiative_engine", reason="dismissed")
-            except (ValueError, TypeError) as e:
-                logger.warning("Failed to dismiss initiative %s (validation): %s", initiative_id, e)
-            except Exception as e:
-                logger.error("Failed to dismiss initiative %s (unexpected): %s", initiative_id, e)
-
-        logger.debug("Dismissed initiative %s", initiative_id)
-
-    async def get_active(self) -> List[Initiative]:
-        """Get all non-expired active initiatives.
+            initiative_id: ID of the initiative to execute
 
         Returns:
-            Active initiatives sorted by priority (descending)
+            Dict with "status", "result", and "initiative" keys
         """
-        now = datetime.now(timezone.utc)
-        
-        if self._store:
-            try:
-                stored = self._store.list(
-                    status=["pending", "assigned", "acknowledged"],
-                    limit=100,
-                )
-                if stored:  # Bug 54: Only use store result if not empty
-                    result = []
-                    for s in stored:
-                        if s.expires_at and now > s.expires_at:
-                            continue
-                        result.append(Initiative(
-                            id=s.id,
-                            type=InitiativeType(s.type),
-                            description=s.description,
-                            priority=s.priority,
-                            rationale=s.rationale or "",
-                            action_hint=s.action_hint,
-                            entity_id=s.entity_id,
-                            dedup_key=s.dedup_key,
-                            expires_at=s.expires_at,
-                            created_at=s.created_at,
-                        ))
-                    return sorted(result, key=lambda i: i.priority, reverse=True)
-            except (OSError, ConnectionError) as e:
-                logger.warning("Store unavailable, using in-memory: %s", e)
-            except Exception as e:
-                logger.error("Failed to load from store (unexpected): %s", e)
+        initiative = self.get_initiative(initiative_id)
+        if not initiative:
+            return {"status": "not_found", "result": None, "initiative": None}
 
-        # Fallback to in-memory
-        active = [
-            i for i in self._initiatives
-            if i.expires_at is None or i.expires_at > now
-        ]
-        return sorted(active, key=lambda i: i.priority, reverse=True)
+        # Only self-initiative types can be auto-executed
+        if initiative.type not in {
+            InitiativeType.SUBSYSTEM_HEALTH,
+            InitiativeType.DATA_QUALITY,
+            InitiativeType.OPERATIONAL,
+            InitiativeType.CAPABILITY_GAP,
+            InitiativeType.KNOWLEDGE_ACQUISITION,
+            InitiativeType.BEHAVIORAL_CORRECTION,
+        }:
+            return {
+                "status": "not_self_initiative",
+                "result": None,
+                "initiative": initiative,
+            }
+
+        # Build execution context
+        exec_context = InitiativeExecutionContext(
+            initiative_id=initiative.id,
+            category_id=initiative.type.value,
+            category_name=initiative.type.value,
+            entity_id=initiative.entity_id,
+            trigger_data={"description": initiative.description, "rationale": initiative.rationale},
+            priority=initiative.priority,
+        )
+
+        # Find matching skill
+        category = {"executor_skill": initiative.type.value.replace("_", "_")}
+        skill = await self._skills.find_skill_for_category(category, {})
+
+        if not skill:
+            return {
+                "status": "no_skill",
+                "result": None,
+                "initiative": initiative,
+            }
+
+        # Execute
+        try:
+            result = await skill.execute(exec_context)
+            return {
+                "status": "executed",
+                "result": result,
+                "initiative": initiative,
+            }
+        except Exception as e:
+            logger.error("Initiative execution failed: %s", e)
+            return {
+                "status": "failed",
+                "result": str(e),
+                "initiative": initiative,
+            }
 
     # ------------------------------------------------------------------
-    # Generators
+    # Initiative generators
     # ------------------------------------------------------------------
 
     async def _generate_follow_ups(self) -> List[Initiative]:
-        """Generate follow-up suggestions from pending tasks in context."""
+        """Generate follow-up initiatives from pending task context."""
         initiatives: List[Initiative] = []
-        for item in self._context.get("pending_tasks", []):
-            desc = item.get("description", "pending task")
-            days = float(item.get("days_pending", 0))
-            entity_id = item.get("entity_id")
-            # Bug 20: Blend graph priority with time-based priority
-            graph_priority = item.get("priority") or 0.5
-            days_priority = min(1.0, 0.5 + days * 0.1)
-            priority = min(1.0, days_priority * 0.6 + graph_priority * 0.4)
-            # Floor: pending tasks (blocked goals, research) should never drop below threshold
-            priority = max(priority, 0.72)
+        for task in self._context.get("pending_tasks", []):
+            # Only generate follow-ups for truly blocked tasks
+            days_pending = task.get("days_pending", 0)
+            if days_pending < self._config.goal_block_threshold_days:
+                continue
+            
+            desc = task.get("description", "Unknown task")
+            entity_id = task.get("entity_id")
+            priority = float(task.get("priority", 0.5))
             
             initiatives.append(
                 Initiative(
-                    id=f"followup-{_uuid_module.uuid4().hex[:12]}",
+                    id=f"followup-{entity_id or _uuid_module.uuid4().hex[:12]}",
                     type=InitiativeType.FOLLOW_UP,
                     description=f"Follow up on: {desc}",
-                    priority=priority,
-                    rationale=f"Task has been pending for {days:.0f} day(s)",
-                    action_hint=f"Review status of '{desc}'",
+                    priority=min(1.0, 0.5 + (days_pending / 14.0)),  # escalate over time
+                    rationale=f"Task has been pending for {days_pending} days",
+                    action_hint="Check status and unblock if possible",
                     entity_id=entity_id,
-                    dedup_key=f"follow_up:{entity_id}" if entity_id else None,
-                    expires_at=datetime.now(timezone.utc) + timedelta(days=3),
-                )
-            )
-        return initiatives
-
-    async def _generate_task_completion_follow_ups(self) -> List[Initiative]:
-        """Generate follow-up initiatives for recently completed background tasks (Gap C)."""
-        initiatives: List[Initiative] = []
-        for task in self._context.get("completed_tasks", []):
-            desc = task.get("description", "background task")
-            entity_id = task.get("entity_id")
-            initiatives.append(
-                Initiative(
-                    id=f"task-done-{_uuid_module.uuid4().hex[:8]}",
-                    type=InitiativeType.FOLLOW_UP,
-                    description=f"Task completed: {desc}",
-                    priority=0.6,
-                    rationale="Background task finished with result",
-                    action_hint=None,
-                    entity_id=entity_id,
-                    dedup_key=f"task_done:{entity_id}" if entity_id else None,
-                    expires_at=datetime.now(timezone.utc) + timedelta(hours=6),
-                )
-            )
-        return initiatives
-
-    async def _generate_relationship_suggestions(self) -> List[Initiative]:
-        """Generate relationship maintenance suggestions from neglected contacts.
-        
-        Deduplicates by normalized name: if the same person has multiple
-        Person nodes (e.g. "Jane Doe" and "Jane Ann Doe"), only the
-        one with the most recent contact is kept.
-        """
-        initiatives: List[Initiative] = []
-        contacts = self._context.get("neglected_contacts", [])
-        
-        # Deduplicate by normalized name: keep the entry with fewest days
-        # since contact (i.e. the most recent data).
-        seen: Dict[str, Dict[str, Any]] = {}
-        for contact in contacts:
-            name = contact.get("name", "")
-            if not self._is_meaningful_contact(name):
-                continue
-            norm = self._normalize_contact_name(name)
-            if not norm:
-                continue
-            existing = seen.get(norm)
-            if existing is None:
-                seen[norm] = contact
-            else:
-                # Keep the one with fewer days (more recent contact)
-                if contact.get("days_since_contact", 9999) < existing.get("days_since_contact", 9999):
-                    seen[norm] = contact
-        
-        for contact in seen.values():
-            name = contact.get("name", "contact")
-            days = float(contact.get("days_since_contact", 0))
-            entity_id = contact.get("entity_id")
-            priority = min(1.0, 0.3 + days * 0.05)
-            initiatives.append(
-                Initiative(
-                    id=f"relationship-{_uuid_module.uuid4().hex[:12]}",
-                    type=InitiativeType.RELATIONSHIP,
-                    description=f"Reach out to {name}",
-                    priority=priority,
-                    rationale=f"No contact with {name} for {days:.0f} day(s)",
-                    action_hint=f"Send a quick message to {name}",
-                    entity_id=entity_id,
-                    dedup_key=f"relationship:{entity_id}" if entity_id else None,
+                    dedup_key=f"followup:{entity_id}",
                     expires_at=datetime.now(timezone.utc) + timedelta(days=7),
                 )
             )
         return initiatives
 
-    async def _generate_health_suggestions(self) -> List[Initiative]:
-        """Generate health-related suggestions from health alert context."""
+    async def _generate_task_completion_follow_ups(self) -> List[Initiative]:
+        """Generate Gap C follow-ups: tasks marked complete but with no result captured.
+
+        Scans ``completed_tasks`` context (populated externally e.g. by
+        AutonomyLoop) and produces ``FOLLOW_UP`` initiatives asking the
+        user to document the outcome.
+        """
         initiatives: List[Initiative] = []
-        for alert in self._context.get("health_alerts", []):
-            metric = alert.get("metric", "health metric")
-            value = alert.get("value")
-            target = alert.get("target")
-
-            if value is not None and target is not None and target != 0:
-                deviation = abs(float(value) - float(target)) / abs(float(target))
-                priority = min(1.0, 0.4 + deviation * 0.6)
-            else:
-                priority = 0.5
-
-            # Bug 44: Add entity_id and dedup_key for cooldown tracking
+        for task in self._context.get("completed_tasks", []):
+            desc = task.get("description", "a completed task")
+            entity_id = task.get("entity_id")
             initiatives.append(
                 Initiative(
-                    id=f"health-{_uuid_module.uuid4().hex[:12]}",
+                    id=f"gapc-{entity_id or _uuid_module.uuid4().hex[:12]}",
+                    type=InitiativeType.FOLLOW_UP,
+                    description=f"Document outcome for: {desc}",
+                    priority=0.6,
+                    rationale="Task completed but no result was captured",
+                    action_hint="Record what was accomplished and any next steps",
+                    entity_id=entity_id,
+                    dedup_key=f"gapc:{entity_id}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=3),
+                )
+            )
+        return initiatives
+
+    async def _generate_relationship_suggestions(self) -> List[Initiative]:
+        """Generate relationship maintenance suggestions.
+
+        Gates relationship initiatives behind:
+        1. Colony has a MANAGES edge to the Person
+        2. Colony has at least one communication channel to the Person
+        """
+        initiatives: List[Initiative] = []
+        for contact in self._context.get("neglected_contacts", []):
+            entity_id = contact.get("entity_id")
+            name = contact.get("name", "Unknown")
+            days = contact.get("days_since_contact", 0)
+
+            # Gate: check if Colony MANAGES this person
+            has_manages = False
+            if self.graph and entity_id:
+                try:
+                    async with self.graph.driver.session(database=self.graph.database) as session:
+                        result = await session.run(
+                            "MATCH (:Agent)-[:MANAGES]->(p:Person {id: $id}) RETURN count(p) as cnt",
+                            id=entity_id,
+                        )
+                        record = await result.single()
+                        has_manages = record is not None and record.get("cnt", 0) > 0
+                except Exception:
+                    pass
+
+            if not has_manages:
+                logger.debug("Skipping relationship initiative for %s: no MANAGES edge", name)
+                continue
+
+            initiatives.append(
+                Initiative(
+                    id=f"rel-{entity_id or _uuid_module.uuid4().hex[:12]}",
+                    type=InitiativeType.RELATIONSHIP,
+                    description=f"Check in with {name}",
+                    priority=min(1.0, 0.4 + (days / 14.0)),
+                    rationale=f"No contact for {days} days",
+                    action_hint="Send a message or schedule a call",
+                    entity_id=entity_id,
+                    dedup_key=f"relationship:{entity_id}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=3),
+                )
+            )
+        return initiatives
+
+    async def _generate_health_suggestions(self) -> List[Initiative]:
+        """Generate health insights from signal context."""
+        initiatives: List[Initiative] = []
+        for alert in self._context.get("health_alerts", []):
+            metric = alert.get("metric", "health")
+            value = alert.get("value", 0.0)
+            target = alert.get("target", 70.0)
+            initiatives.append(
+                Initiative(
+                    id=f"health-{metric}-{_uuid_module.uuid4().hex[:8]}",
                     type=InitiativeType.HEALTH,
-                    description=f"Review {metric}: current={value}, target={target}",
-                    priority=priority,
-                    rationale=f"{metric} is outside target range",
-                    action_hint=f"Check and adjust {metric}",
+                    description=f"{metric.title()} is low ({value:.0f}% / target {target:.0f}%)",
+                    priority=0.7,
+                    rationale=f"{metric} below target for sustained period",
+                    action_hint=f"Review {metric} patterns and adjust habits",
                     entity_id=metric,
                     dedup_key=f"health:{metric}",
                     expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
@@ -1124,3 +1225,116 @@ class InitiativeEngine:
                 )
             )
         return initiatives
+
+    # ------------------------------------------------------------------
+    # Self-initiative generators (v0.11.0)
+    # ------------------------------------------------------------------
+
+    async def _generate_subsystem_health_initiatives(self) -> List[Initiative]:
+        """Generate self-initiatives for degraded subsystems."""
+        initiatives: List[Initiative] = []
+        for issue in self._context.get("subsystem_health", []):
+            entity_id = issue.get("entity_id", "unknown")
+            name = issue.get("name", "Unknown")
+            status = issue.get("status", "unknown")
+            latency = issue.get("latency_ms")
+            error_rate = issue.get("error_rate")
+
+            priority = 0.6
+            if latency and latency > 1000:
+                priority = min(1.0, 0.6 + (latency - 1000) / 2000)
+            if error_rate and error_rate > 0.1:
+                priority = min(1.0, priority + error_rate)
+
+            initiatives.append(
+                Initiative(
+                    id=f"subsys-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                    type=InitiativeType.SUBSYSTEM_HEALTH,
+                    description=f"Subsystem {name} is {status}",
+                    priority=priority,
+                    rationale=f"Latency: {latency}ms, Error rate: {error_rate}" if latency or error_rate else "Status degraded",
+                    action_hint=f"Diagnose and restart {name}" if status != "active" else "Investigate latency spike",
+                    entity_id=entity_id,
+                    dedup_key=f"subsystem:{entity_id}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                )
+            )
+        return initiatives
+
+    async def _generate_data_quality_initiatives(self) -> List[Initiative]:
+        """Generate self-initiatives for data quality issues."""
+        initiatives: List[Initiative] = []
+        for issue in self._context.get("data_quality_issues", []):
+            entity_id = issue.get("entity_id", "unknown")
+            entity_type = issue.get("entity_type", "unknown")
+            description = issue.get("description", "Data quality issue")
+            count = issue.get("count", 0)
+
+            priority = 0.5
+            if count > 10:
+                priority = min(1.0, 0.5 + count / 100)
+
+            initiatives.append(
+                Initiative(
+                    id=f"dq-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                    type=InitiativeType.DATA_QUALITY,
+                    description=description,
+                    priority=priority,
+                    rationale=f"Detected {count} affected items" if count else "Schema drift detected",
+                    action_hint="Run data quality fix" if entity_type == "orphan_nodes" else "Review schema migration",
+                    entity_id=entity_id,
+                    dedup_key=f"dataquality:{entity_id}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=4),
+                )
+            )
+        return initiatives
+
+    async def _generate_operational_initiatives(self) -> List[Initiative]:
+        """Generate self-initiatives for operational hygiene."""
+        initiatives: List[Initiative] = []
+        for task in self._context.get("operational_tasks", []):
+            entity_id = task.get("entity_id", "unknown")
+            entity_type = task.get("entity_type", "unknown")
+            description = task.get("description", "Operational task")
+            age_days = task.get("age_days", 0)
+
+            priority = min(1.0, 0.4 + age_days / 14)
+
+            initiatives.append(
+                Initiative(
+                    id=f"ops-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                    type=InitiativeType.OPERATIONAL,
+                    description=description,
+                    priority=priority,
+                    rationale=f"Operational hygiene: {entity_type}",
+                    action_hint="Execute maintenance task",
+                    entity_id=entity_id,
+                    dedup_key=f"operational:{entity_id}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+                )
+            )
+        return initiatives
+
+    async def _generate_capability_gap_initiatives(self) -> List[Initiative]:
+        """Generate self-initiatives for missing capabilities.
+
+        Currently a placeholder — will be populated by analyzing
+        failed tool invocations and owner corrections.
+        """
+        return []
+
+    async def _generate_knowledge_acquisition_initiatives(self) -> List[Initiative]:
+        """Generate self-initiatives for low-confidence knowledge areas.
+
+        Currently a placeholder — will be populated by analyzing
+        project context and query patterns.
+        """
+        return []
+
+    async def _generate_behavioral_correction_initiatives(self) -> List[Initiative]:
+        """Generate self-initiatives for recurring correction patterns.
+
+        Currently a placeholder — will be populated by analyzing
+        memory tags and explicit corrections.
+        """
+        return []
