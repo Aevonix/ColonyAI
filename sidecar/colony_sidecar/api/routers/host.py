@@ -1760,7 +1760,16 @@ async def events_ws(ws: WebSocket) -> None:
             return
         token = msg.get("token", "")
         expected = os.environ.get("COLONY_API_KEY", "")
-        if expected and not hmac.compare_digest(
+        if not expected:
+            # Fail closed: without a configured key we cannot authenticate
+            # event-stream subscribers, and this socket carries live state
+            # changes. Operators must set COLONY_API_KEY to enable it.
+            await ws.close(
+                code=4003,
+                reason="COLONY_API_KEY not set on server",
+            )
+            return
+        if not hmac.compare_digest(
             token.encode("utf-8"), expected.encode("utf-8")
         ):
             await ws.close(code=4003, reason="Invalid API key")
@@ -5024,7 +5033,6 @@ async def delegate_initiative(
     _initiative_store.update(
         initiative_id,
         assigned_agent_id=body.target_agent_id,
-        delegated_reason=body.reason,
     )
     _initiative_store.log_history(
         initiative_id,
@@ -5071,7 +5079,7 @@ async def retry_initiative(initiative_id: str) -> Dict[str, Any]:
         initiative_id,
         status="pending",
         assigned_agent_id=None,
-        error_message=None,
+        failed_reason=None,
         failed_at=None,
     )
     _initiative_store.log_history(initiative_id, action="retry", agent_id=None)

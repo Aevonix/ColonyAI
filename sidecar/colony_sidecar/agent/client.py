@@ -179,12 +179,15 @@ class AgentClient:
 
     async def _heartbeat_loop(self) -> None:
         """Send periodic heartbeats."""
+        # The colony side tracks current_assignments via the agents table
+        # (incremented/decremented when initiatives are assigned/completed),
+        # so the heartbeat does not need to carry it — the server only uses
+        # this message to update last_seen_at.
         while self._running and self._ws:
             try:
                 await self._send({
                     "type": "heartbeat",
                     "status": "online",
-                    "current_assignments": 0,  # TODO: track actual assignments
                 })
                 await asyncio.sleep(30)
             except Exception:

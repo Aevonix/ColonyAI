@@ -28,8 +28,13 @@ class TestAgentEndpoints:
     """Tests for agent management API endpoints."""
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> TestClient:
-        """Create a test client with stores injected."""
+    def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        """Create a test client with stores injected.
+
+        Sets COLONY_API_KEY so /agents/register and /agents/connect — which
+        live under _ALWAYS_AUTH_REQUIRED in middleware.py — are reachable.
+        Without a key those endpoints (correctly) return 503 in dev mode.
+        """
         from colony_sidecar.api.routers.host import (
             set_agent_store,
             set_invite_store,
@@ -39,6 +44,8 @@ class TestAgentEndpoints:
         )
         from colony_sidecar.server import create_app
 
+        monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+
         agent_store = AgentStore(state_dir=tmp_path)
         invite_store = InviteStore(state_dir=tmp_path)
         initiative_store = InitiativeStore(state_dir=tmp_path)
@@ -46,15 +53,17 @@ class TestAgentEndpoints:
         set_agent_store(agent_store)
         set_invite_store(invite_store)
         set_initiative_store(initiative_store)
-        
+
         assignment_engine = AssignmentEngine(agent_store, initiative_store)
         set_assignment_engine(assignment_engine)
-        
+
         websocket_manager = WebSocketManager(agent_store, initiative_store)
         set_websocket_manager(websocket_manager)
 
         app = create_app()
-        return TestClient(app)
+        client = TestClient(app)
+        client.headers.update({"Authorization": "Bearer test-api-key"})
+        return client
 
     def test_invite_agent(self, client: TestClient) -> None:
         """Test POST /agents/invite."""
@@ -273,8 +282,13 @@ class TestInitiativeEndpoints:
     """Tests for initiative management API endpoints."""
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> TestClient:
-        """Create a test client with stores injected."""
+    def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        """Create a test client with stores injected.
+
+        Sets COLONY_API_KEY so /agents/register and /agents/connect — which
+        live under _ALWAYS_AUTH_REQUIRED in middleware.py — are reachable.
+        Without a key those endpoints (correctly) return 503 in dev mode.
+        """
         from colony_sidecar.api.routers.host import (
             set_agent_store,
             set_invite_store,
@@ -284,6 +298,8 @@ class TestInitiativeEndpoints:
         )
         from colony_sidecar.server import create_app
 
+        monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+
         agent_store = AgentStore(state_dir=tmp_path)
         invite_store = InviteStore(state_dir=tmp_path)
         initiative_store = InitiativeStore(state_dir=tmp_path)
@@ -291,15 +307,17 @@ class TestInitiativeEndpoints:
         set_agent_store(agent_store)
         set_invite_store(invite_store)
         set_initiative_store(initiative_store)
-        
+
         assignment_engine = AssignmentEngine(agent_store, initiative_store)
         set_assignment_engine(assignment_engine)
-        
+
         websocket_manager = WebSocketManager(agent_store, initiative_store)
         set_websocket_manager(websocket_manager)
 
         app = create_app()
-        return TestClient(app)
+        client = TestClient(app)
+        client.headers.update({"Authorization": "Bearer test-api-key"})
+        return client
 
     def test_create_initiative(self, client: TestClient) -> None:
         """Test POST /initiatives."""

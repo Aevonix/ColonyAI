@@ -1204,7 +1204,7 @@ class AutonomyLoop:
                             init.id,
                             status="pending",
                             assigned_agent_id=None,
-                            reassigned_reason="agent_ghost",
+                            recovery_reason="agent_ghost",
                         )
                 
                 # Remove ghost

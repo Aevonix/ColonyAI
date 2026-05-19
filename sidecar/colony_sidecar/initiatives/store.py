@@ -196,7 +196,7 @@ class InitiativeStore:
     ) -> StoredInitiative:
         """Create a new initiative."""
         # Check pending limit
-        pending_count = self.count(status="pending")
+        pending_count = self.count(status=["pending"])
         if pending_count >= MAX_PENDING_INITIATIVES:
             raise ValueError(
                 f"Too many pending initiatives (max {MAX_PENDING_INITIATIVES})"
@@ -300,10 +300,35 @@ class InitiativeStore:
             return StoredInitiative.from_row(dict(row))
         return None
 
+    # Columns accepted by update(). Kept in sync with _create_tables() so a
+    # typo or a renamed column fails loudly at the API boundary instead of
+    # being swallowed by an outer except clause that calls the failure
+    # "non-fatal" (see autonomy/loop.py:_phase_ghost_cleanup for the bug class
+    # this whitelist was added to prevent).
+    _UPDATABLE_COLUMNS = frozenset({
+        "dedup_key", "type", "description", "priority", "rationale",
+        "action_hint", "entity_id", "source_type", "source_id", "created_by",
+        "status", "assigned_agent_id", "assigned_agent_name", "assigned_at",
+        "acknowledged_at", "completed_at", "cancelled_at", "cancelled_by",
+        "cancelled_reason", "failed_at", "failed_reason",
+        "attempt_count", "max_attempts", "timeout_seconds", "last_attempt_at",
+        "expires_at",
+        "delivery_mode", "delivery_attempts", "last_delivery_at",
+        "delivery_failed_at", "delivery_failed_reason",
+        "result", "result_metadata",
+        "preferred_agent_id", "stale_reason", "recovery_reason",
+    })
+
     def update(self, initiative_id: str, **updates) -> Optional[StoredInitiative]:
         """Update initiative fields."""
         if not updates:
             return self.get(initiative_id)
+
+        unknown = set(updates) - self._UPDATABLE_COLUMNS
+        if unknown:
+            raise ValueError(
+                f"Unknown initiative column(s): {sorted(unknown)}"
+            )
 
         # Build SET clause
         set_parts = []
@@ -781,6 +806,28 @@ class InitiativeStore:
             [agent_id, limit, offset],
         )
         return [AssignmentHistory.from_row(dict(row)) for row in cursor.fetchall()]
+
+    def count_agent_assignments_since(
+        self,
+        agent_id: str,
+        since: datetime,
+    ) -> int:
+        """Count `assigned` history rows for ``agent_id`` newer than ``since``.
+
+        Used by the assignment engine's hourly rate limit. Counts only the
+        ``assigned`` action so reassignment churn (e.g. ghost cleanup) does
+        not eat into an agent's hourly budget.
+        """
+        cursor = self._db.execute(
+            """
+            SELECT COUNT(*) FROM assignment_history
+            WHERE agent_id = ?
+              AND action = 'assigned'
+              AND timestamp > ?
+            """,
+            [agent_id, since.isoformat()],
+        )
+        return cursor.fetchone()[0]
 
     # ------------------------------------------------------------------
     # Dead Letter Queue
