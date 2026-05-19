@@ -98,7 +98,7 @@ class ChainManager:
                     reason=f"nonce {tx.nonce} <= last accepted {persisted_nonce}",
                 )
 
-        validator = TransactionValidator(state)
+        validator = TransactionValidator(state, chain_store=self.store)
         result = validator.validate(tx)
         if not result.ok:
             return SubmitResult(accepted=False, tx_id=tx.tx_id, reason=result.reason)

@@ -134,11 +134,12 @@ class ChainStateMachine:
         if handler is None:
             logger.warning("Unknown tx type %s — skipping", tx.type)
             return state
-        try:
-            return handler(state, tx, block_index)
-        except Exception as exc:
-            logger.error("Error applying tx %s type %s: %s", tx.tx_id, tx.type, exc)
-            return state
+        # Handler exceptions must propagate: silently returning the unmodified
+        # state on a handler bug would mean different replicas could disagree
+        # on which transactions actually applied, breaking consensus
+        # invariants. If a handler raises, fail the whole apply_block so the
+        # operator sees the corruption and can stop the node.
+        return handler(state, tx, block_index)
 
     def _apply_colony_register(
         self, state: ChainState, tx: Transaction, height: int
