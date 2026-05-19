@@ -121,21 +121,20 @@ class TransactionValidator:
         defence-in-depth layer for callers that use TransactionValidator directly
         (e.g. federation sync, offline verification tools).
 
-        If no ChainStore is injected the check is skipped and a warning is logged
-        so that misconfigured callers are visible in logs.
+        Fails closed when no ChainStore is injected: a missing store means replay
+        protection cannot be enforced, and validating without it would let
+        offline/federation callers accept replayed transactions.
         """
         if tx.type == TxType.COLONY_REGISTER:
             # Genesis registrations have no prior nonce to compare against.
             return ValidationResult.success()
 
         if self._chain_store is None:
-            logger.warning(
-                "TransactionValidator: chain_store not injected; skipping nonce check "
-                "for tx %s from %s. Inject chain_store= to enable replay protection.",
-                tx.tx_id,
-                tx.from_colony_id,
+            return ValidationResult.fail(
+                "TransactionValidator: chain_store not injected; cannot verify "
+                "nonce replay protection. Inject chain_store= when constructing "
+                "the validator."
             )
-            return ValidationResult.success()
 
         last_nonce = self._chain_store.get_nonce(tx.from_colony_id)
         if tx.nonce <= last_nonce:
