@@ -2415,81 +2415,116 @@ export function createColonyPlugin(): unknown {
       }
 
       // --- Remote Agent WebSocket Connection (v0.7.0) ---
-      // If this plugin is running as a remote agent (connected via `colony agent connect`),
-      // establish WebSocket connection for initiative delivery.
-      (async () => {
-        try {
-          const agentConfig = await loadAgentConfig();
-          if (agentConfig?.connection_mode === "remote" && agentConfig.websocket_url) {
-            api.logger.info?.(`[colony] Remote agent detected, connecting WebSocket to ${agentConfig.websocket_url}`);
-            
-            const remoteClient = new RemoteAgentClient(agentConfig, api.logger);
-            
-            // Handle initiatives pushed from Colony
-            remoteClient.onInitiative = async (initiative: Initiative) => {
-              api.logger.info?.(`[colony] Received initiative via WebSocket: ${initiative.id}`);
-              
-              // Build session key for this agent
-              const cfg = api.runtime.config.loadConfig();
-              const agentId = resolveDefaultAgentId(cfg);
-              const dmScope = cfg.session?.dmScope ?? "main";
-              
-              // Remote agent receives initiative - use main session for this agent
-              const sessionKey = buildAgentSessionKey({
-                agentId,
-                channel: "unknown",
-                peer: undefined,
-                dmScope,
-              });
-              
-              // Format and enqueue as system event
-              const text = formatInitiativeText({
-                id: initiative.id,
-                type: initiative.type,
-                priority: initiative.priority,
-                title: "",  // Not in Initiative type
-                description: initiative.description,
-                rationale: "",  // Not in Initiative type
-                suggested_action: "notify_user",
-              });
-              
-              const enqueued = api.runtime.system.enqueueSystemEvent(text, {
-                sessionKey,
-                contextKey: `colony:initiative:${initiative.id}`,
-                trusted: true,
-              });
-              
-              if (enqueued) {
-                // Trigger heartbeat to process immediately
-                api.runtime.system.runHeartbeatOnce({
-                  sessionKey,
-                  reason: "colony:initiative:remote",
-                }).catch((err) => {
-                  api.logger.warn?.(`[colony] runHeartbeatOnce failed for remote initiative: ${err}`);
-                });
-                
-                // Acknowledge receipt
-                await remoteClient.acknowledge(initiative.id);
-                api.logger.info?.(`[colony] Initiative ${initiative.id} acknowledged (session=${sessionKey})`);
-              }
-            };
-            
-            remoteClient.onDisconnect = (reason: string) => {
-              api.logger.warn?.(`[colony] Remote agent WebSocket disconnected: ${reason}`);
-            };
-            
-            remoteClient.onConnect = () => {
-              api.logger.info?.(`[colony] Remote agent WebSocket connected`);
-            };
-            
-            await remoteClient.connect();
-          }
-        } catch (err) {
-          api.logger.warn?.(`[colony] Remote agent setup failed: ${String(err)}`);
-        }
-      })();
+      // If this plugin is running as a remote agent (connected via `colony
+      // agent connect`), establish WebSocket connection for initiative
+      // delivery. Registered as a lifecycle service so the WS + heartbeat
+      // interval get torn down on plugin stop instead of leaking for the
+      // lifetime of the host process.
+      api.registerService(remoteAgentLifecycleService(api));
     },
   });
+}
+
+function remoteAgentLifecycleService(api: OpenClawPluginApi) {
+  let remoteClient: RemoteAgentClient | null = null;
+
+  return {
+    id: "colony-remote-agent",
+    async start() {
+      try {
+        const agentConfig = await loadAgentConfig();
+        if (
+          agentConfig?.connection_mode !== "remote" ||
+          !agentConfig.websocket_url
+        ) {
+          return;
+        }
+        api.logger.info?.(
+          `[colony] Remote agent detected, connecting WebSocket to ${agentConfig.websocket_url}`,
+        );
+
+        const client = new RemoteAgentClient(agentConfig, api.logger);
+
+        client.onInitiative = async (initiative: Initiative) => {
+          api.logger.info?.(
+            `[colony] Received initiative via WebSocket: ${initiative.id}`,
+          );
+
+          const cfg = api.runtime.config.loadConfig();
+          const agentId = resolveDefaultAgentId(cfg);
+          const dmScope = cfg.session?.dmScope ?? "main";
+
+          const sessionKey = buildAgentSessionKey({
+            agentId,
+            channel: "unknown",
+            peer: undefined,
+            dmScope,
+          });
+
+          const text = formatInitiativeText({
+            id: initiative.id,
+            type: initiative.type,
+            priority: initiative.priority,
+            description: initiative.description,
+            suggested_action: "notify_user",
+          });
+
+          const enqueued = api.runtime.system.enqueueSystemEvent(text, {
+            sessionKey,
+            contextKey: `colony:initiative:${initiative.id}`,
+            trusted: true,
+          });
+
+          if (enqueued) {
+            api.runtime.system
+              .runHeartbeatOnce({
+                sessionKey,
+                reason: "colony:initiative:remote",
+              })
+              .catch((err) => {
+                api.logger.warn?.(
+                  `[colony] runHeartbeatOnce failed for remote initiative: ${err}`,
+                );
+              });
+
+            await client.acknowledge(initiative.id);
+            api.logger.info?.(
+              `[colony] Initiative ${initiative.id} acknowledged (session=${sessionKey})`,
+            );
+          }
+        };
+
+        client.onDisconnect = (reason: string) => {
+          api.logger.warn?.(
+            `[colony] Remote agent WebSocket disconnected: ${reason}`,
+          );
+        };
+
+        client.onConnect = () => {
+          api.logger.info?.("[colony] Remote agent WebSocket connected");
+        };
+
+        await client.connect();
+        remoteClient = client;
+      } catch (err) {
+        api.logger.warn?.(
+          `[colony] Remote agent setup failed: ${String(err)}`,
+        );
+      }
+    },
+    async stop() {
+      if (remoteClient) {
+        try {
+          await remoteClient.disconnect();
+        } catch (err) {
+          api.logger.warn?.(
+            `[colony] Remote agent disconnect failed: ${String(err)}`,
+          );
+        }
+        remoteClient = null;
+      }
+    },
+  };
 }
 
 // Helper to format initiative as readable text for LLM
