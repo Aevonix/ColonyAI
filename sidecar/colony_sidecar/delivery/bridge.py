@@ -258,13 +258,7 @@ class ProactiveDeliveryBridge:
         )
 
         headers: Dict[str, str] = {"Content-Type": "application/json"}
-        # Optional HMAC secret for webhook auth
         webhook_secret = os.environ.get("COLONY_HERMES_WEBHOOK_SECRET", "")
-        if webhook_secret:
-            import hmac, hashlib
-            body = json.dumps({}).encode()  # placeholder; real signing needs full body
-            sig = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
-            headers["X-Webhook-Signature"] = sig
 
         # Resolve agent name from env var — never hardcode
         agent_name = os.environ.get("COLONY_AGENT_NAME", "the assistant")
@@ -335,11 +329,23 @@ class ProactiveDeliveryBridge:
             payload["delivery_context"] = delivery_context
             payload["channel_hint"] = channel_hint
 
+        # Serialize the payload exactly once and sign the bytes that go on the
+        # wire. Sending `json=payload` would let aiohttp re-serialize, so the
+        # HMAC could disagree with the receiver's view of the body.
+        body_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        if webhook_secret:
+            import hmac
+            import hashlib
+            sig = hmac.new(
+                webhook_secret.encode("utf-8"), body_bytes, hashlib.sha256
+            ).hexdigest()
+            headers["X-Webhook-Signature"] = sig
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     hermes_webhook_url,
-                    json=payload,
+                    data=body_bytes,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10.0),
                 ) as resp:
