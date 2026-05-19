@@ -8,7 +8,7 @@ Provides:
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -240,7 +240,24 @@ class AssignmentEngine:
         if agent.current_assignments >= agent.max_concurrent:
             return False
 
-        # Check rate limit (initiatives per hour)
-        # This would require querying the initiative store for recent assignments
-        # For now, just check max_concurrent
+        # Check hourly rate limit. The agents table carries a
+        # max_initiatives_per_hour column (default 10) that previously had no
+        # enforcement — counting `assigned` rows from the assignment_history
+        # within the last hour closes that gap. A value of 0 disables the
+        # limit; <0 is treated as 0 (off).
+        max_per_hour = getattr(agent, "max_initiatives_per_hour", 0) or 0
+        if max_per_hour > 0:
+            try:
+                since = datetime.now(timezone.utc) - timedelta(hours=1)
+                recent = self._initiative_store.count_agent_assignments_since(
+                    agent.agent_id, since
+                )
+                if recent >= max_per_hour:
+                    return False
+            except (AttributeError, TypeError):
+                # Store does not expose the counter (older deployments or
+                # unit-test doubles) — fall back to the max_concurrent gate
+                # rather than blocking all assignments.
+                pass
+
         return True

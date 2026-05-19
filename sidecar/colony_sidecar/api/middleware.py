@@ -27,9 +27,14 @@ _DEV_MODE_ALLOWED = frozenset({
 
 # Routes that must never be served without an API key, regardless of
 # COLONY_API_KEY presence — these accept or return credential-grade state
-# and must never be anonymously reachable.
+# and must never be anonymously reachable. Agent registration / connect
+# endpoints accept caller-supplied `is_primary` and capability lists, so
+# they must fail closed in dev mode rather than letting an unauthenticated
+# caller register a fully-privileged primary agent.
 _ALWAYS_AUTH_REQUIRED = frozenset({
     "/v1/host/configure",
+    "/v1/host/agents/register",
+    "/v1/host/agents/connect",
 })
 
 
