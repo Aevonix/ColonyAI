@@ -575,69 +575,78 @@ class SQLiteBackend:
         executed_by: str,
         proposal_id: Optional[str] = None,
     ) -> str:
-        """Repoint all relationships from retired_id to surviving_id."""
-        # Count relationships to update
-        async with self._db.execute(
-            "SELECT COUNT(*) FROM wm_relationships WHERE source_id = ? OR target_id = ?",
-            (retired_id, retired_id),
-        ) as cur:
-            row = await cur.fetchone()
-            rel_count = row[0] if row else 0
+        """Repoint all relationships from retired_id to surviving_id.
 
-        # Repoint source references
-        await self._db.execute(
-            "UPDATE wm_relationships SET source_id = ? WHERE source_id = ?",
-            (surviving_id, retired_id),
-        )
-        # Repoint target references
-        await self._db.execute(
-            "UPDATE wm_relationships SET target_id = ? WHERE target_id = ?",
-            (surviving_id, retired_id),
-        )
+        All writes are wrapped in a SAVEPOINT so a failure midway through
+        (e.g. the DELETE or audit INSERT raising) rolls back the relationship
+        repoint and alias merge as a unit.
+        """
+        await self._db.execute("SAVEPOINT execute_merge")
+        try:
+            # Read both entities up-front; bail out before mutating if either
+            # was deleted by a concurrent merge.
+            surviving = await self.get_entity(surviving_id)
+            retired = await self.get_entity(retired_id)
 
-        # Merge aliases: add retired_id as alias and copy aliases
-        surviving = await self.get_entity(surviving_id)
-        retired = await self.get_entity(retired_id)
-        props_updated = 0
-        if surviving and retired:
-            new_aliases = surviving.aliases.copy()
-            if retired_id not in new_aliases:
-                new_aliases.append(retired_id)
-            for alias in retired.aliases:
-                if alias not in new_aliases:
-                    new_aliases.append(alias)
+            async with self._db.execute(
+                "SELECT COUNT(*) FROM wm_relationships WHERE source_id = ? OR target_id = ?",
+                (retired_id, retired_id),
+            ) as cur:
+                row = await cur.fetchone()
+                rel_count = row[0] if row else 0
+
             await self._db.execute(
-                "UPDATE wm_entities SET aliases = ?, updated_at = ? WHERE id = ?",
-                (json.dumps(new_aliases), _now_iso(), surviving_id),
+                "UPDATE wm_relationships SET source_id = ? WHERE source_id = ?",
+                (surviving_id, retired_id),
             )
-            props_updated = len(new_aliases) - len(surviving.aliases)
+            await self._db.execute(
+                "UPDATE wm_relationships SET target_id = ? WHERE target_id = ?",
+                (surviving_id, retired_id),
+            )
 
-        # Delete retired entity (CASCADE handles obs/proposals)
-        await self._db.execute(
-            "DELETE FROM wm_entities WHERE id = ?", (retired_id,)
-        )
+            props_updated = 0
+            if surviving and retired:
+                new_aliases = surviving.aliases.copy()
+                if retired_id not in new_aliases:
+                    new_aliases.append(retired_id)
+                for alias in retired.aliases:
+                    if alias not in new_aliases:
+                        new_aliases.append(alias)
+                await self._db.execute(
+                    "UPDATE wm_entities SET aliases = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(new_aliases), _now_iso(), surviving_id),
+                )
+                props_updated = len(new_aliases) - len(surviving.aliases)
 
-        # Write audit record
-        audit_id = _generate_id(MERGE_AUDIT_ID_PREFIX)
-        await self._db.execute(
-            """
-            INSERT INTO wm_merge_log
-              (id, surviving_id, retired_id, relationships_repointed,
-               properties_updated, executed_by, merge_proposal_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                audit_id,
-                surviving_id,
-                retired_id,
-                rel_count,
-                props_updated,
-                executed_by,
-                proposal_id,
-            ),
-        )
-        await self._db.commit()
-        return audit_id
+            await self._db.execute(
+                "DELETE FROM wm_entities WHERE id = ?", (retired_id,)
+            )
+
+            audit_id = _generate_id(MERGE_AUDIT_ID_PREFIX)
+            await self._db.execute(
+                """
+                INSERT INTO wm_merge_log
+                  (id, surviving_id, retired_id, relationships_repointed,
+                   properties_updated, executed_by, merge_proposal_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    audit_id,
+                    surviving_id,
+                    retired_id,
+                    rel_count,
+                    props_updated,
+                    executed_by,
+                    proposal_id,
+                ),
+            )
+            await self._db.execute("RELEASE SAVEPOINT execute_merge")
+            await self._db.commit()
+            return audit_id
+        except Exception:
+            await self._db.execute("ROLLBACK TO SAVEPOINT execute_merge")
+            await self._db.execute("RELEASE SAVEPOINT execute_merge")
+            raise
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 

@@ -249,7 +249,18 @@ class PostgresBackend:
 
     async def get_entity(self, entity_id: str) -> Optional[BaseEntity]:
         async with self._pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM wm_entities WHERE id = $1", entity_id)
+            return await self._get_entity_in_conn(conn, entity_id)
+
+    async def _get_entity_in_conn(
+        self, conn: Any, entity_id: str
+    ) -> Optional[BaseEntity]:
+        """Read an entity using an already-acquired connection.
+
+        Lets callers participate in an outer transaction (see ``execute_merge``)
+        instead of opening a second pool connection that would be unable to
+        see the in-flight writes.
+        """
+        row = await conn.fetchrow("SELECT * FROM wm_entities WHERE id = $1", entity_id)
         return _record_to_entity(row) if row else None
 
     async def get_entity_by_external_id(self, key: str, value: str) -> Optional[BaseEntity]:
@@ -579,43 +590,52 @@ class PostgresBackend:
         executed_by: str,
         proposal_id: Optional[str] = None,
     ) -> str:
+        # Wrap the whole merge in a single Postgres transaction: asyncpg
+        # auto-commits each statement otherwise, so a failure between the
+        # relationship repoint and the DELETE would leave dangling references
+        # to a half-retired entity with no audit row.
         async with self._pool.acquire() as conn:
-            # Count relationships to repoint
-            rel_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM wm_relationships WHERE source_id = $1 OR target_id = $1",
-                retired_id,
-            )
+            async with conn.transaction():
+                # Read both entities up-front so we fail before mutating if
+                # either is missing — and so a concurrent merge cannot delete
+                # one of them between our reads and writes.
+                surviving = await self._get_entity_in_conn(conn, surviving_id)
+                retired = await self._get_entity_in_conn(conn, retired_id)
 
-            # Repoint
-            await conn.execute("UPDATE wm_relationships SET source_id = $1 WHERE source_id = $2", surviving_id, retired_id)
-            await conn.execute("UPDATE wm_relationships SET target_id = $1 WHERE target_id = $2", surviving_id, retired_id)
-
-            # Merge aliases
-            surviving = await self.get_entity(surviving_id)
-            retired = await self.get_entity(retired_id)
-            props_updated = 0
-            if surviving and retired:
-                new_aliases = surviving.aliases.copy()
-                if retired_id not in new_aliases:
-                    new_aliases.append(retired_id)
-                for alias in retired.aliases:
-                    if alias not in new_aliases:
-                        new_aliases.append(alias)
-                props_updated = len(new_aliases) - len(surviving.aliases)
-                await conn.execute(
-                    "UPDATE wm_entities SET aliases = $1::jsonb, updated_at = $2 WHERE id = $3",
-                    json.dumps(new_aliases), _now_iso(), surviving_id,
+                # Count relationships to repoint
+                rel_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM wm_relationships WHERE source_id = $1 OR target_id = $1",
+                    retired_id,
                 )
 
-            # Delete retired entity
-            await conn.execute("DELETE FROM wm_entities WHERE id = $1", retired_id)
+                # Repoint
+                await conn.execute("UPDATE wm_relationships SET source_id = $1 WHERE source_id = $2", surviving_id, retired_id)
+                await conn.execute("UPDATE wm_relationships SET target_id = $1 WHERE target_id = $2", surviving_id, retired_id)
 
-            # Audit record
-            audit_id = _generate_id(MERGE_AUDIT_ID_PREFIX)
-            await conn.execute(
-                "INSERT INTO wm_merge_log (id, surviving_id, retired_id, relationships_repointed, properties_updated, executed_by, merge_proposal_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                audit_id, surviving_id, retired_id, rel_count, props_updated, executed_by, proposal_id,
-            )
+                # Merge aliases
+                props_updated = 0
+                if surviving and retired:
+                    new_aliases = surviving.aliases.copy()
+                    if retired_id not in new_aliases:
+                        new_aliases.append(retired_id)
+                    for alias in retired.aliases:
+                        if alias not in new_aliases:
+                            new_aliases.append(alias)
+                    props_updated = len(new_aliases) - len(surviving.aliases)
+                    await conn.execute(
+                        "UPDATE wm_entities SET aliases = $1::jsonb, updated_at = $2 WHERE id = $3",
+                        json.dumps(new_aliases), _now_iso(), surviving_id,
+                    )
+
+                # Delete retired entity
+                await conn.execute("DELETE FROM wm_entities WHERE id = $1", retired_id)
+
+                # Audit record
+                audit_id = _generate_id(MERGE_AUDIT_ID_PREFIX)
+                await conn.execute(
+                    "INSERT INTO wm_merge_log (id, surviving_id, retired_id, relationships_repointed, properties_updated, executed_by, merge_proposal_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                    audit_id, surviving_id, retired_id, rel_count, props_updated, executed_by, proposal_id,
+                )
         return audit_id
 
     # ── Stats ─────────────────────────────────────────────────────────────────
