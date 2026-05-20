@@ -172,7 +172,7 @@ Add `BELONGS_TO` to `EdgeType` enum.
    ```bash
    curl -X POST http://localhost:7777/v1/host/memory/search \
      -H "Authorization: Bearer colony" \
-     -d '{"identity": {"host_id": "test"}, "query": "test", "person_id": "marc"}'
+     -d '{"identity": {"host_id": "test"}, "query": "test", "person_id": "owner"}'
    ```
 
 ---

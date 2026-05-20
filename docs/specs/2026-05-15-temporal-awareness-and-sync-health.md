@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-15  
 **Author:** Aeva (Hermes agent)  
-**Status:** Draft — awaiting Marc review  
+**Status:** Draft — awaiting owner review  
 **Version:** Targets ColonyAI v0.7.25
 
 ---
@@ -205,7 +205,7 @@ prompt: |
 If Hermes does not support global webhook template variables, we instead enrich the payload in the poller (which we already control) and reference them as `{payload.colony_state.last_sync_at}`.
 
 **Additional rule in prompt:**
-> "Before acting on any initiative, check `occurred_at`. If the initiative is older than 24 hours, evaluate whether it is still relevant. Stale initiatives (older than 72 hours) should be summarized briefly in the log channel and cancelled in Colony via the API — do not act on them unless Marc explicitly confirms."
+> "Before acting on any initiative, check `occurred_at`. If the initiative is older than 24 hours, evaluate whether it is still relevant. Stale initiatives (older than 72 hours) should be summarized briefly in the log channel and cancelled in Colony via the API — do not act on them unless the owner explicitly confirms."
 
 ---
 
@@ -253,7 +253,7 @@ All five are independent and can be reviewed in parallel. Phase 3 depends on Pha
 
 ## 6. Open Questions
 
-1. **Should the poller attempt auto-restart?** If the sidecar is down, the poller could run `colony start --force` or `~/.colony-venv/bin/uvicorn ...` directly. However, auto-restart might mask the root cause of crashes (OOM, Neo4j disconnect). **Recommendation:** alert only; let Marc decide to restart. We can add auto-restart as a configurable opt-in later.
+1. **Should the poller attempt auto-restart?** If the sidecar is down, the poller could run `colony start --force` or `~/.colony-venv/bin/uvicorn ...` directly. However, auto-restart might mask the root cause of crashes (OOM, Neo4j disconnect). **Recommendation:** alert only; let the owner decide to restart. We can add auto-restart as a configurable opt-in later.
 
 2. **How does Hermes inject `{now}` into webhook prompts?** If the gateway does not support global template variables, we rely entirely on poller payload enrichment. Need to verify `gateway/run.py` template resolution.
 

@@ -221,7 +221,7 @@ It is worse to record a non-commitment than to miss a real one.
   "trigger_type": "turn_sync" | "signal_ingest" | "anomaly" | "manual",
   "context": {
     "conversation_text": "...",
-    "person_id": "marc",
+    "person_id": "owner",
     "session_id": "abc123"
   },
   "priority": "high" | "normal" | "low"

@@ -78,7 +78,7 @@ When affect is available for a contact, inject a section:
 {
   "id": "colony-affect",
   "title": "Emotional Context",
-  "body": "Marc's mood: slightly positive (0.3), stable trend. Last shift 2h ago (positive reaction to Colony release progress).",
+  "body": "User's mood: slightly positive (0.3), stable trend. Last shift 2h ago (positive reaction to Colony release progress).",
   "priority": 80
 }
 ```
@@ -128,8 +128,8 @@ DELETE /v1/host/mind/facts/{id}           — delete a fact
 ```json
 {
   "id": "colony-shared-facts",
-  "title": "Shared Knowledge with Marc",
-  "body": "Things Marc knows: Colony v0.3.0 shipped today, Spark cluster is running, cognition substrate is live. Things only you know: Marc's API key for Moonshot, the digest channel config details.",
+  "title": "Shared Knowledge with User",
+  "body": "Things user knows: Colony v0.3.0 shipped today, Spark cluster is running, cognition substrate is live. Things only you know: User's API key for Moonshot, the digest channel config details.",
   "priority": 70
 }
 ```

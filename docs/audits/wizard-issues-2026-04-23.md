@@ -14,13 +14,13 @@ Tested on Spark 1 (DGX Spark, Ubuntu 24.04, aarch64) with Colony v0.6.7.
 **Status:** ✅ FIXED (EOF handling in _prompt)
 **Location:** `sidecar/colony_sidecar/setup.py` — `_prompt()` function
 
-**Problem:** The wizard uses `input()` for all prompts. When piping input via SSH (e.g., `printf "3\nmarc\n\n6\nY\n" | colony init`), only the first few prompts receive input. Later prompts get `EOFError` and crash.
+**Problem:** The wizard uses `input()` for all prompts. When piping input via SSH (e.g., `printf "3\nowner\n\n6\nY\n" | colony init`), only the first few prompts receive input. Later prompts get `EOFError` and crash.
 
 **Observed:**
 ```
 Step 3: Host framework
   Choose [1-6] [1]:   Colony will connect to Claude Code via MCP.
-  What should Colony call you? [aevonix]: 
+  What should Colony call you? [user]: 
 Step 5: Neo4j graph memory
   Neo4j password: 
 Step 6: Writing configuration
@@ -41,7 +41,7 @@ Start the Colony sidecar now? [Y/n] [Y]: Traceback (most recent call last):
 - CI/CD impossible
 
 **Fix options:**
-1. Accept CLI flags for all prompts (`--host-framework 3 --contact-name marc --tier 6 --start`)
+1. Accept CLI flags for all prompts (`--host-framework 3 --contact-name owner --tier 6 --start`)
 2. Accept a config file path (`--config colony.yaml`) that pre-populates all values
 3. Gracefully handle EOF: treat it as "use default" instead of crashing
 4. Add `--non-interactive` mode that requires all values via flags/config
@@ -91,13 +91,13 @@ Select tier [0-7] [6]: Warning: You are sending unauthenticated requests to the 
 ```
 $ ls ~/.colony/
 total 28
-drwxrwxr-x  3 aevonix aevonix  4096 Apr 23 11:57 .
-drwxr-x--- 46 aevonix aevonix  4096 Apr 23 11:58 ..
+drwxrwxr-x  3 user user  4096 Apr 23 11:57 .
+drwxr-x--- 46 user user  4096 Apr 23 11:58 ..
 drwxrwxr-x  5    7474    7474  4096 Apr 23 11:42 neo4j-data
--rw-rw-r--   aevonix aevonix 12762 Apr 23 11:51 sidecar.log
+-rw-rw-r--   user user 12762 Apr 23 11:51 sidecar.log
 
 $ cat ~/.colony/config.yaml
-cat: /home/aevonix/.colony/config.yaml: No such file or directory
+cat: /home/user/.colony/config.yaml: No such file or directory
 ```
 
 **Impact:**
@@ -168,14 +168,14 @@ Step 5: Neo4j graph memory
 **Problem:** Multiple SQLite databases are created in `~/` instead of `~/.colony/`:
 
 ```
-/home/aevonix/colony-affect.db
-/home/aevonix/colony-commitments.db
-/home/aevonix/colony-delivery-rate-limit.db
-/home/aevonix/colony-facts.db
-/home/aevonix/colony-goals.db
-/home/aevonix/colony-patterns.db
-/home/aevonix/colony-surprise.db
-/home/aevonix/colony_world_model.db
+/home/user/colony-affect.db
+/home/user/colony-commitments.db
+/home/user/colony-delivery-rate-limit.db
+/home/user/colony-facts.db
+/home/user/colony-goals.db
+/home/user/colony-patterns.db
+/home/user/colony-surprise.db
+/home/user/colony_world_model.db
 ```
 
 **Impact:**

@@ -735,7 +735,7 @@ class CapabilityGapSkill(InitiativeExecutorSkill):
         return ExecutionResult.PROPOSAL_CREATED
 ```
 
-**Note:** The skill does not attempt to register new tools or restart broken ones without owner approval. Both outcomes produce a `PROPOSAL_CREATED` with context for Marc to decide.
+**Note:** The skill does not attempt to register new tools or restart broken ones without owner approval. Both outcomes produce a `PROPOSAL_CREATED` with context for the owner to decide.
 
 ### 8.2 `BehavioralCorrectionSkill`
 
@@ -904,7 +904,7 @@ class KnowledgeAcquisitionSkill(InitiativeExecutorSkill):
         return ExecutionResult.PROPOSAL_CREATED
 ```
 
-**Note:** v0.11.1 does not auto-run the 6-stage `ResearchPipeline` from a skill because the pipeline is heavy (web search + synthesis + review) and should not block initiative execution. The proposal includes context so Marc can trigger research manually or approve auto-research in v0.11.2.
+**Note:** v0.11.1 does not auto-run the 6-stage `ResearchPipeline` from a skill because the pipeline is heavy (web search + synthesis + review) and should not block initiative execution. The proposal includes context so The owner can trigger research manually or approve auto-research in v0.11.2.
 
 ### 8.4 Register new skills
 

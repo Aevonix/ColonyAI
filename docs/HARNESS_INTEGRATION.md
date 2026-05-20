@@ -278,12 +278,12 @@ Authentication: `Authorization: Bearer {api_key}`
 curl -X POST http://127.0.0.1:7777/v1/host/mind/facts \
   -H "Authorization: Bearer colony" \
   -H "Content-Type: application/json" \
-  -d '{"contact_id": "marc", "fact": "Prefers dark mode", "source": "preference"}'
+  -d '{"contact_id": "owner", "fact": "Prefers dark mode", "source": "preference"}'
 ```
 
 **Get context:**
 ```bash
-curl "http://127.0.0.1:7777/v1/host/context/assemble?contact_id=marc" \
+curl "http://127.0.0.1:7777/v1/host/context/assemble?contact_id=owner" \
   -H "Authorization: Bearer colony"
 ```
 

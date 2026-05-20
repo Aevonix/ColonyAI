@@ -22,12 +22,12 @@ class TestPatternCreate:
     def test_create_basic(self, store):
         result = store.create_pattern(
             pattern_type="entity_cooccurrence",
-            description="Marc and ColonyAI appear together",
-            pattern_key="cooc:Marc→ColonyAI",
+            description="User and ColonyAI appear together",
+            pattern_key="cooc:User→ColonyAI",
             confidence=0.7,
         )
         assert result["pattern_type"] == "entity_cooccurrence"
-        assert result["description"] == "Marc and ColonyAI appear together"
+        assert result["description"] == "User and ColonyAI appear together"
         assert result["frequency"] == 1
         assert result["confidence"] == 0.7
         assert result["id"]

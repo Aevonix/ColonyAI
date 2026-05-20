@@ -88,7 +88,7 @@ Step 3b: Additional Harnesses
 
   Which should Colony connect? (comma-separated, e.g. 1,2 or 'all') [all]: 1
 
-  What should Colony call you? [marc]
+  What should Colony call you? [owner]
 
   Configuring Claude Code... ✅ (source: claude-code)
   Skipped Codex (not selected)
@@ -118,7 +118,7 @@ Step 3b: Additional Harnesses
 
   Which should Colony connect? (comma-separated, or 'all') [all]: 1,2
 
-  What should Colony call you? [marc]
+  What should Colony call you? [owner]
 
   Configuring Claude Code... ✅ (source: claude-code)
   Configuring Codex... ✅ (source: codex)
@@ -141,7 +141,7 @@ Get assembled context for a contact/project. Returns the same sections the OpenC
 **Input:**
 ```json
 {
-  "contact_id": "marc",       // optional — defaults to COLONY_MCP_CONTACT_ID from env
+  "contact_id": "owner",       // optional — defaults to COLONY_MCP_CONTACT_ID from env
   "message": "What should I work on next?"  // optional — mapped to incoming_message.content in the API
 }
 ```
@@ -173,7 +173,7 @@ List or search commitments.
 ```json
 {
   "status": "pending",        // pending | fulfilled | cancelled | overdue (optional)
-  "person_id": "marc",        // optional — defaults to COLONY_MCP_CONTACT_ID
+  "person_id": "owner",        // optional — defaults to COLONY_MCP_CONTACT_ID
   "limit": 10                 // max results (optional, default 10)
 }
 ```
@@ -182,7 +182,7 @@ List or search commitments.
 ```json
 {
   "commitments": [
-    {"id": "abc-123", "person_id": "marc", "description": "Ship v0.6.0", "status": "pending", "due_at": "2026-04-25T00:00:00Z", "priority": 3}
+    {"id": "abc-123", "person_id": "owner", "description": "Ship v0.6.0", "status": "pending", "due_at": "2026-04-25T00:00:00Z", "priority": 3}
   ],
   "total": 1
 }
@@ -198,7 +198,7 @@ Create a new commitment.
 **Input:**
 ```json
 {
-  "person_id": "marc",        // optional — defaults to COLONY_MCP_CONTACT_ID
+  "person_id": "owner",        // optional — defaults to COLONY_MCP_CONTACT_ID
   "description": "Fix the auth bug by Friday",
   "due_at": "2026-04-25T00:00:00Z",  // ISO 8601 (optional)
   "priority": 2                        // 1-5 (optional, default 2)
@@ -244,7 +244,7 @@ Store a fact about a person, project, or concept.
 **Input:**
 ```json
 {
-  "contact_id": "marc",       // optional — defaults to COLONY_MCP_CONTACT_ID
+  "contact_id": "owner",       // optional — defaults to COLONY_MCP_CONTACT_ID
   "fact": "Prefers dark mode and async communication",
   "category": "preference",   // preference | role | context | decision | constraint (optional)
   "confidence": 0.9           // 0-1 (optional, default 0.8)
@@ -269,7 +269,7 @@ Retrieve facts about a contact or topic.
 **Input:**
 ```json
 {
-  "contact_id": "marc",       // optional — defaults to COLONY_MCP_CONTACT_ID
+  "contact_id": "owner",       // optional — defaults to COLONY_MCP_CONTACT_ID
   "category": "preference",   // optional filter
   "limit": 10
 }
@@ -294,7 +294,7 @@ Record an emotional state or mood observation.
 **Input:**
 ```json
 {
-  "contact_id": "marc",       // optional — defaults to COLONY_MCP_CONTACT_ID
+  "contact_id": "owner",       // optional — defaults to COLONY_MCP_CONTACT_ID
   "valence": 0.7,             // -1 (negative) to 1 (positive)
   "arousal": 0.5,             // 0 (calm) to 1 (energetic)
   "trigger": "Feature shipped successfully"
@@ -319,7 +319,7 @@ Get current affect state for a contact.
 **Input:**
 ```json
 {
-  "contact_id": "marc"        // optional — defaults to COLONY_MCP_CONTACT_ID
+  "contact_id": "owner"        // optional — defaults to COLONY_MCP_CONTACT_ID
 }
 ```
 
@@ -354,7 +354,7 @@ Search the world model for entities or relationships.
 ```json
 {
   "entities": [
-    {"name": "AuthService", "entity_type": "component", "properties": {"status": "broken", "owner": "marc"}}
+    {"name": "AuthService", "entity_type": "component", "properties": {"status": "broken", "owner": "user"}}
   ],
   "relationships": [
     {"from": "AuthService", "type": "depends_on", "to": "UserDB"}
@@ -602,7 +602,7 @@ The MCP server runs as a subprocess of the CLI harness. Colony sidecar must alre
       "env": {
         "COLONY_API_KEY": "${COLONY_API_KEY}",
         "COLONY_URL": "http://127.0.0.1:7777",
-        "COLONY_MCP_CONTACT_ID": "marc",
+        "COLONY_MCP_CONTACT_ID": "owner",
         "COLONY_MCP_SOURCE": "claude-code"
       }
     }
@@ -615,7 +615,7 @@ The MCP server runs as a subprocess of the CLI harness. Colony sidecar must alre
 [mcp_servers.colony]
 command = "colony"
 args = ["mcp"]
-env = { COLONY_API_KEY = "${COLONY_API_KEY}", COLONY_URL = "http://127.0.0.1:7777", COLONY_MCP_CONTACT_ID = "marc", COLONY_MCP_SOURCE = "codex" }
+env = { COLONY_API_KEY = "${COLONY_API_KEY}", COLONY_URL = "http://127.0.0.1:7777", COLONY_MCP_CONTACT_ID = "owner", COLONY_MCP_SOURCE = "codex" }
 ```
 
 ### streamable HTTP (for remote/CI use — Phase 2)

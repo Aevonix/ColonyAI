@@ -250,7 +250,7 @@ CREATE TABLE agent_invites (
     
     -- Metadata
     created_by_agent_id TEXT,              -- Who created the invite
-    label TEXT,                            -- "Marc's laptop"
+    label TEXT,                            -- "Owner's laptop"
     
     FOREIGN KEY (colony_id) REFERENCES colonies(colony_id)
 );
@@ -649,7 +649,7 @@ Request:
     "granted_capabilities": ["messaging", "calendar"],
     "granted_is_primary": false,
     "granted_max_concurrent": 5,
-    "label": "Marc's laptop"
+    "label": "Owner's laptop"
 }
 
 Response:

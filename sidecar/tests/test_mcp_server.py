@@ -118,8 +118,8 @@ class TestContactIdResolution:
 class TestRequireContact:
     def test_with_explicit(self):
         from colony_sidecar.mcp.server import _require_contact
-        cid, err = _require_contact("marc")
-        assert cid == "marc"
+        cid, err = _require_contact("owner")
+        assert cid == "owner"
         assert err == {}
 
     def test_with_env(self):

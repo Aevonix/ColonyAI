@@ -43,7 +43,7 @@ But the Hermes hook handler (`~/.hermes/hooks/colony-initiatives/handler.py`) se
 
 ### 1.3 The Delivery Gap (Critical)
 
-The webhook route has **no `deliver` config**. After the agent generates a response, the webhook's `send()` method checks delivery info and falls back to `log`. The response never reaches Marc.
+The webhook route has **no `deliver` config**. After the agent generates a response, the webhook's `send()` method checks delivery info and falls back to `log`. The response never reaches the owner.
 
 ```yaml
 colony-initiatives:
@@ -267,13 +267,13 @@ Current initiatives are just titles. Rich initiatives include:
 {
   "initiative_type": "research",
   "title": "Research calendar AI integration options",
-  "description": "Marc's goal 'Research calendar AI integration options' has been pending for 11 days. He previously asked about Google Calendar API, Notion calendar, and Calendly.",
+  "description": "The owner's goal 'Research calendar AI integration options' has been pending for 11 days. He previously asked about Google Calendar API, Notion calendar, and Calendly.",
   "context": {
     "goal_id": "af47b77e-...",
     "goal_created_at": "2026-05-10T02:41:34Z",
     "days_pending": 11,
     "related_memories": [
-      "Marc mentioned wanting calendar integration on May 10",
+      "The owner mentioned wanting calendar integration on May 10",
       "He already has Google Workspace skills loaded"
     ],
     "suggested_actions": [

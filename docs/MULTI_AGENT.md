@@ -214,7 +214,7 @@ Colony pushes initiative:
   "initiative": {
     "id": "init-123",
     "type": "notification",
-    "description": "Remind Marc about meeting",
+    "description": "Remind the owner about meeting",
     "priority": 0.8,
     "assigned_at": "2026-04-25T15:00:00Z"
   }

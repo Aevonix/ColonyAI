@@ -90,7 +90,7 @@ class TestJsonConfig:
         config_path.write_text("{}")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            diff = add_to_harness("claude-code", "marc")
+            diff = add_to_harness("claude-code", "owner")
             assert diff is not None
 
             data = json.loads(config_path.read_text())
@@ -99,7 +99,7 @@ class TestJsonConfig:
             colony = data["mcpServers"]["colony"]
             assert colony["command"] == "colony"
             assert colony["args"] == ["mcp"]
-            assert colony["env"]["COLONY_MCP_CONTACT_ID"] == "marc"
+            assert colony["env"]["COLONY_MCP_CONTACT_ID"] == "owner"
             assert colony["env"]["COLONY_MCP_SOURCE"] == "claude-code"
 
     def test_add_preserves_existing_servers(self, tmp_path):
@@ -111,7 +111,7 @@ class TestJsonConfig:
         }))
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("claude-code", "marc")
+            add_to_harness("claude-code", "owner")
 
             data = json.loads(config_path.read_text())
             assert "other" in data["mcpServers"]
@@ -121,9 +121,9 @@ class TestJsonConfig:
         config_path = tmp_path / "claude.json"
         # Write a config that matches what add_to_harness would produce
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("claude-code", "marc")
+            add_to_harness("claude-code", "owner")
             # Second call should return None
-            diff = add_to_harness("claude-code", "marc")
+            diff = add_to_harness("claude-code", "owner")
             assert diff is None
 
     def test_add_dry_run_does_not_write(self, tmp_path):
@@ -132,7 +132,7 @@ class TestJsonConfig:
         original = config_path.read_text()
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            diff = add_to_harness("claude-code", "marc", dry_run=True)
+            diff = add_to_harness("claude-code", "owner", dry_run=True)
             assert diff is not None
             assert config_path.read_text() == original
 
@@ -140,7 +140,7 @@ class TestJsonConfig:
         config_path = tmp_path / "claude.json"
         # First add
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("claude-code", "marc")
+            add_to_harness("claude-code", "owner")
             # Verify it's there
             data = json.loads(config_path.read_text())
             assert "colony" in data["mcpServers"]
@@ -160,7 +160,7 @@ class TestJsonConfig:
         }))
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("claude-code", "marc")
+            add_to_harness("claude-code", "owner")
             remove_from_harness("claude-code")
 
             data = json.loads(config_path.read_text())
@@ -179,7 +179,7 @@ class TestJsonConfig:
         config_path = tmp_path / "claude.json"
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("claude-code", "marc")
+            add_to_harness("claude-code", "owner")
             content_before = config_path.read_text()
             remove_from_harness("claude-code", dry_run=True)
             # Config should not have changed
@@ -196,21 +196,21 @@ class TestTomlConfig:
         config_path.write_text("[settings]\nkey = \"value\"\n")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            diff = add_to_harness("codex", "marc")
+            diff = add_to_harness("codex", "owner")
             assert diff is not None
 
             content = config_path.read_text()
             assert "[mcp_servers.colony]" in content
             assert 'command = "colony"' in content
             assert "COLONY_MCP_SOURCE = \"codex\"" in content
-            assert "COLONY_MCP_CONTACT_ID = \"marc\"" in content
+            assert "COLONY_MCP_CONTACT_ID = \"owner\"" in content
 
     def test_add_to_toml_preserves_existing(self, tmp_path):
         config_path = tmp_path / "config.toml"
         config_path.write_text("[settings]\nkey = \"value\"\n")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("codex", "marc")
+            add_to_harness("codex", "owner")
             content = config_path.read_text()
             assert "[settings]" in content
             assert 'key = "value"' in content
@@ -220,8 +220,8 @@ class TestTomlConfig:
         config_path.write_text("")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("codex", "marc")
-            diff = add_to_harness("codex", "marc")
+            add_to_harness("codex", "owner")
+            diff = add_to_harness("codex", "owner")
             assert diff is None
 
     def test_remove_from_toml(self, tmp_path):
@@ -229,7 +229,7 @@ class TestTomlConfig:
         config_path.write_text("[settings]\nkey = \"value\"\n")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("codex", "marc")
+            add_to_harness("codex", "owner")
             # Verify it's there
             assert "[mcp_servers.colony]" in config_path.read_text()
             # Remove
@@ -245,7 +245,7 @@ class TestTomlConfig:
         config_path.write_text("")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("codex", "marc")
+            add_to_harness("codex", "owner")
             content_before = config_path.read_text()
             remove_from_harness("codex", dry_run=True)
             assert config_path.read_text() == content_before
@@ -257,7 +257,7 @@ class TestTomlConfig:
 
 class TestUnknownHarness:
     def test_add_unknown_returns_error(self):
-        diff = add_to_harness("unknown-harness", "marc")
+        diff = add_to_harness("unknown-harness", "owner")
         assert "Unknown harness" in diff
 
     def test_remove_unknown_returns_error(self):
@@ -275,7 +275,7 @@ class TestOpenCodeConfig:
         config_path.write_text("{}")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            diff = add_to_harness("opencode", "marc")
+            diff = add_to_harness("opencode", "owner")
             assert diff is not None
 
             data = json.loads(config_path.read_text())
@@ -292,7 +292,7 @@ class TestOpenCodeConfig:
         config_path.write_text("{}")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("claude-code", "marc")
+            add_to_harness("claude-code", "owner")
 
             data = json.loads(config_path.read_text())
             assert "mcpServers" in data
@@ -305,7 +305,7 @@ class TestOpenCodeConfig:
         config_path.write_text("{}")
 
         with patch.object(Path, "expanduser", return_value=config_path):
-            add_to_harness("opencode", "marc")
+            add_to_harness("opencode", "owner")
             assert "colony" in json.loads(config_path.read_text())["mcp"]
             remove_from_harness("opencode")
             assert "colony" not in json.loads(config_path.read_text()).get("mcp", {})
