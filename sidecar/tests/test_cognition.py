@@ -18,11 +18,11 @@ class TestCognitionPrompt:
             trigger_type="turn_sync",
             context={
                 "conversation_text": "I'll check on the cluster by Friday",
-                "person_id": "marc",
+                "person_id": "owner",
             },
         )
         assert "turn_sync" in prompt
-        assert "marc" in prompt
+        assert "owner" in prompt
         assert "cluster" in prompt
 
     def test_turn_sync_with_existing_commitments(self):
@@ -32,7 +32,7 @@ class TestCognitionPrompt:
         ]
         prompt = build_cognition_prompt(
             trigger_type="turn_sync",
-            context={"conversation_text": "Test", "person_id": "marc"},
+            context={"conversation_text": "Test", "person_id": "owner"},
             existing_commitments=existing,
         )
         assert "Existing pending" in prompt

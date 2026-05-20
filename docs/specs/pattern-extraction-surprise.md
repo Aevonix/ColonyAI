@@ -55,7 +55,7 @@ POST   /v1/host/patterns/extract         — trigger extraction run
 
 ### Pattern Types
 
-- **entity_cooccurrence**: Two entities frequently appear together (e.g., "Marc" + "ColonyAI")
+- **entity_cooccurrence**: Two entities frequently appear together (e.g., "User" + "ColonyAI")
 - **relation_frequency**: A relationship type appears often (e.g., "person→works_on→project")
 - **temporal_sequence**: Events follow a temporal pattern (e.g., "commit → CI run → deploy")
 - **attribute_cluster**: Entities share attribute patterns (e.g., all projects have "status" and "priority")
@@ -126,7 +126,7 @@ GET    /v1/host/surprises/unresolved     — get unresolved high-score surprises
 {
   "id": "colony-surprises",
   "title": "Noteworthy Observations",
-  "body": "Unexpected: 'Marc mentioned a new project called BlueBio' (surprise: 0.8, no prior pattern). Unresolved surprises: 2.",
+  "body": "Unexpected: 'User mentioned a new project called BlueBio' (surprise: 0.8, no prior pattern). Unresolved surprises: 2.",
   "priority": 75
 }
 ```

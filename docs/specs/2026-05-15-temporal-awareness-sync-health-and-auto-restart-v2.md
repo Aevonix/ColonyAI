@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-15
 **Author:** Aeva (Hermes agent)
-**Status:** Draft — awaiting Marc review
+**Status:** Draft — awaiting owner review
 **Version:** Targets ColonyAI v0.7.25
 **Replaces:** `2026-05-15-temporal-awareness-and-sync-health.md`
 
@@ -14,7 +14,7 @@ The `turns_sync` endpoint is **not broken**. Verified live — it returns `200 O
 
 The **real** problems are systemic:
 
-1. **Silent failure** — when the sidecar crashes or stops, Hermes continues calling `/turns/sync` into a dead port. The Colony memory provider swallows all exceptions at `DEBUG` level. No one notices until Marc asks "is the sidecar running?"
+1. **Silent failure** — when the sidecar crashes or stops, Hermes continues calling `/turns/sync` into a dead port. The Colony memory provider swallows all exceptions at `DEBUG` level. No one notices until the owner asks "is the sidecar running?"
 2. **No temporal ground truth** — neither Colony nor Hermes tracks *when* things last happened. We cannot answer "how long since the last successful sync?" or "how stale is this initiative?"
 3. **Agent time blindness** — I have no concept of elapsed time between messages, initiatives, or my own actions. I treat every state snapshot as "right now" regardless of whether it is 5 minutes or 5 days old.
 4. **No auto-recovery** — when the sidecar dies, nothing restarts it. There is no launchd service, no watchdog, no health-check loop.
@@ -77,7 +77,7 @@ The `colony start --force` command in `cli.py` does work (time is imported at li
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           MARC (USER)                                    │
+|                           USER                                           |
 │                    WhatsApp DM ←→ Hermes Gateway                         │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -101,7 +101,7 @@ The `colony start --force` command in `cli.py` does work (time is imported at li
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  LAYER 1 — OS SERVICE (macOS launchd)                                    │
 │                                                                          │
-│  Label: ai.aevonix.colony-sidecar                                        │
+│  Label: com.example.colony-sidecar                                        │
 │  KeepAlive.SuccessfulExit: false ← restart on crash, not clean exit     │
 │  RunAtLoad: true      ← starts on boot/login                             │
 │  ThrottleInterval: 60 ← waits 60s between restart attempts (MLX warmup) │
@@ -154,7 +154,7 @@ The sidecar takes ~3 minutes for MLX model warmup. If `ThrottleInterval` is too 
 
 **Solution:** `ThrottleInterval: 60` and `KeepAlive` with `SuccessfulExit: false` so launchd only restarts on crashes, not on clean exits.
 
-### 4.3 New plist: `~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist`
+### 4.3 New plist: `~/Library/LaunchAgents/com.example.colony-sidecar.plist`
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -162,7 +162,7 @@ The sidecar takes ~3 minutes for MLX model warmup. If `ThrottleInterval` is too 
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>ai.aevonix.colony-sidecar</string>
+    <string>com.example.colony-sidecar</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -283,7 +283,7 @@ def attempt_wake_up():
     cycle and let the next poll verify health."""
     # Check if service is installed
     result = subprocess.run(
-        ["launchctl", "list", "ai.aevonix.colony-sidecar"],
+        ["launchctl", "list", "com.example.colony-sidecar"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -292,7 +292,7 @@ def attempt_wake_up():
 
     # Service exists but may be stopped — try to start it
     subprocess.run(
-        ["launchctl", "start", "ai.aevonix.colony-sidecar"],
+        ["launchctl", "start", "com.example.colony-sidecar"],
         capture_output=True, timeout=10,
     )
 
@@ -316,7 +316,7 @@ When the sidecar is down and wake-up fails:
     "severity": "critical",
     "message": "Colony sidecar is down and could not be restarted via launchd.",
     "last_seen_at": "2026-05-15T05:00:00Z",  // last time poller got a healthy /health response
-    "suggested_action": "Run: colony service start  or  launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist"
+    "suggested_action": "Run: colony service start  or  launchctl load ~/Library/LaunchAgents/com.example.colony-sidecar.plist"
   },
   "delivery_context": {
     "user_chat": "whatsapp:USER_LID@lid",
@@ -328,7 +328,7 @@ When the sidecar is down and wake-up fails:
 
 The webhook route prompt handles `alert` differently from `initiative`:
 - `initiative` → act autonomously, max one DM
-- `alert` → route to log channel **only**. Never DM for alerts regardless of severity — Marc can check the log channel.
+- `alert` → route to log channel **only**. Never DM for alerts regardless of severity — the owner can check the log channel.
 
 **Note:** The `colony-initiatives` webhook route must accept both `"initiative"` and `"alert"` payload types. If the route currently validates `type == "initiative"`, update it to pass through `"alert"` payloads so the prompt can handle routing.
 
@@ -505,7 +505,7 @@ If any silence exceeds its threshold, `status` becomes `"degraded"`.
 
 ### 6.4 No Neo4j Turn persistence (v1)
 
-Creating a `:Turn` node on every sync would grow the graph unbounded (36,500 nodes/year at 100 turns/day). TelemetryStore provides sufficient temporal ground truth for health monitoring. If Marc wants historical analytics later, we can add a time-series backend or a monthly `:Turn` cleanup job. **Not in v1.**
+Creating a `:Turn` node on every sync would grow the graph unbounded (36,500 nodes/year at 100 turns/day). TelemetryStore provides sufficient temporal ground truth for health monitoring. If the owner wants historical analytics later, we can add a time-series backend or a monthly `:Turn` cleanup job. **Not in v1.**
 
 ---
 
@@ -644,7 +644,7 @@ prompt: |
 
   DELIVERY RULES:
   - Your FULL response goes to LOGS only.
-  - If you need to notify Marc, use send_message with target "{payload.delivery_context.user_chat}".
+  - If you need to notify the owner, use send_message with target "{payload.delivery_context.user_chat}".
   - Send AT MOST ONE message per initiative. Concise — one or two sentences.
   - Before acting, check the initiative age. If older than 24h, evaluate relevance.
   - If older than 72h, summarize briefly in the log channel.
@@ -735,7 +735,7 @@ Update `colony start` to detect if the launchd service is loaded:
 def _is_service_loaded() -> bool:
     """Check if the launchd service is currently loaded and running."""
     result = subprocess.run(
-        ["launchctl", "list", "ai.aevonix.colony-sidecar"],
+        ["launchctl", "list", "com.example.colony-sidecar"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -828,15 +828,15 @@ curl -s http://127.0.0.1:7777/v1/host/health | python3 -m json.tool
 colony service status
 
 # Via launchd
-launchctl list ai.aevonix.colony-sidecar
+launchctl list com.example.colony-sidecar
 ```
 
 ### Manual restart
 
 ```bash
 # If service is installed:
-launchctl unload ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
-launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
+launchctl unload ~/Library/LaunchAgents/com.example.colony-sidecar.plist
+launchctl load ~/Library/LaunchAgents/com.example.colony-sidecar.plist
 
 # If service is NOT installed:
 colony start --force
@@ -866,13 +866,13 @@ cat ~/.hermes/.colony_last_health | python3 -m json.tool
 
 ```bash
 # Stop the launchd service without uninstalling (legacy syntax)
-launchctl unload ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
+launchctl unload ~/Library/LaunchAgents/com.example.colony-sidecar.plist
 
 # Modern macOS alternative
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.example.colony-sidecar.plist
 
 # Re-enable
-launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
+launchctl load ~/Library/LaunchAgents/com.example.colony-sidecar.plist
 ```
 
 ---
@@ -928,9 +928,9 @@ launchctl load ~/Library/LaunchAgents/ai.aevonix.colony-sidecar.plist
 
 1. **Auto-restart:** The poller does NOT restart the sidecar. Layer 1 (launchd `KeepAlive`) handles all restarts. The poller only calls `launchctl start` as a wake-up if the service exists but is not running.
 
-2. **Alert routing:** All alerts go to the log channel only. Never DM for alerts regardless of severity — Marc can check the log channel.
+2. **Alert routing:** All alerts go to the log channel only. Never DM for alerts regardless of severity — the owner can check the log channel.
 
-3. **No Neo4j Turn nodes (v1):** TelemetryStore is sufficient for temporal health. Adding `:Turn` nodes would grow the graph unbounded without a cleanup job. Deferred to v2 if Marc wants historical analytics.
+3. **No Neo4j Turn nodes (v1):** TelemetryStore is sufficient for temporal health. Adding `:Turn` nodes would grow the graph unbounded without a cleanup job. Deferred to v2 if the owner wants historical analytics.
 
 4. **Computed values in poller:** All time computations (`now`, `initiative_age_hours`, `sidecar_uptime_hours`) happen in the poller, not the gateway. This avoids modifying Hermes.
 

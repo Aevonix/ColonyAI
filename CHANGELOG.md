@@ -395,7 +395,7 @@ Colony init wizard: non-interactive mode and all piped input issues fixed.
 ```bash
 colony init --non-interactive \\
   --host-framework claude-code \\
-  --contact-name marc \\
+  --contact-name owner \\
   --bind 0.0.0.0 \\
   --port 7777 \\
   --tier 6 \\

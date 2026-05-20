@@ -164,7 +164,7 @@ If writes are desired (API endpoints), that should be a v2 feature.
 **Location:** §8.2, line 291
 
 **Current:**
-> 1. Configure `COLONY_CHANNEL_DM_marc=whatsapp:+1555XXXXXXX`
+> 1. Configure `COLONY_CHANNEL_DM_owner=whatsapp:+1555XXXXXXX`
 
 **Fix:**
 > 1. Configure `COLONY_CHANNEL_DM_owner=whatsapp:+1555XXXXXXX`
@@ -251,7 +251,7 @@ if not person_id:
 
 ### Gap 3: Hermes Config Change Scope
 
-The spec says update `~/.hermes/config.yaml` but doesn't show the FULL prompt — only the delta. The reviewer (Marc) needs to see the complete prompt to evaluate it.
+The spec says update `~/.hermes/config.yaml` but doesn't show the FULL prompt — only the delta. The reviewer (the owner) needs to see the complete prompt to evaluate it.
 
 **Fix:** Add an appendix with the full proposed prompt.
 
@@ -265,7 +265,7 @@ The spec says update `~/.hermes/config.yaml` but doesn't show the FULL prompt �
 3. **Fix prompt fallback wording** (§5.1) — remove `"whatsapp"` string fallback
 4. **Define gateway-to-platform mapping** (§3.2, §6.3) — make inference generic and configurable
 5. **Remove `label` field** (§3.1) — redundant with `channel_type`
-6. **Fix integration test PII** (§8.2) — `marc` → `owner`
+6. **Fix integration test PII** (§8.2) — `owner` → `owner` (already generic)
 7. **Fix `++` double-plus bug** (§6.3) — `++1555` → `+1555`
 
 ### Deferred to v2
@@ -323,5 +323,5 @@ The spec says update `~/.hermes/config.yaml` but doesn't show the FULL prompt �
 
 **Recommended path:**
 1. Revise spec to v0.2.0 addressing all BLOCKER and HIGH issues
-2. Re-review with Marc
+2. Re-review with the owner
 3. Then implement

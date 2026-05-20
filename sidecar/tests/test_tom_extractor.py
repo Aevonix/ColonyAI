@@ -72,10 +72,10 @@ class TestParseAffectJson:
 
 class TestParseFactArray:
     def test_valid_array(self):
-        raw = '[{"fact": "Marc knows about v0.5.0", "source": "told_to_contact", "confidence": 0.9}]'
+        raw = '[{"fact": "User knows about v0.5.0", "source": "told_to_contact", "confidence": 0.9}]'
         result = _parse_fact_array(raw)
         assert len(result) == 1
-        assert result[0]["fact"] == "Marc knows about v0.5.0"
+        assert result[0]["fact"] == "User knows about v0.5.0"
         assert result[0]["source"] == "told_to_contact"
 
     def test_with_code_fence(self):
@@ -116,40 +116,40 @@ class TestTomExtractor:
             '{"valence": 0.6, "arousal": 0.7, "trigger": "release success", "confidence": 0.85}'
         ])
         extractor = TomExtractor(router)
-        result = await extractor.extract_affect("Great, v0.5.0 is live!", "marc")
+        result = await extractor.extract_affect("Great, v0.5.0 is live!", "owner")
         assert result is not None
         assert result["valence"] == 0.6
         assert result["source"] == "inferred"
-        assert result["contact_id"] == "marc"
+        assert result["contact_id"] == "owner"
 
     async def test_extract_affect_neutral(self):
         router = FakeRouter([
             '{"valence": 0.0, "arousal": 0.3, "trigger": null, "confidence": 0.5}'
         ])
         extractor = TomExtractor(router)
-        result = await extractor.extract_affect("ok sure", "marc")
+        result = await extractor.extract_affect("ok sure", "owner")
         assert result is None  # Neutral skipped
 
     async def test_extract_affect_empty(self):
         router = FakeRouter([])
         extractor = TomExtractor(router)
-        result = await extractor.extract_affect("", "marc")
+        result = await extractor.extract_affect("", "owner")
         assert result is None
 
     async def test_extract_facts(self):
         router = FakeRouter([
-            '[{"fact": "Marc knows Colony v0.5.0 shipped", "source": "told_to_contact", "confidence": 0.9}]'
+            '[{"fact": "User knows Colony v0.5.0 shipped", "source": "told_to_contact", "confidence": 0.9}]'
         ])
         extractor = TomExtractor(router)
-        result = await extractor.extract_facts("v0.5.0 is released with pattern extraction", "marc")
+        result = await extractor.extract_facts("v0.5.0 is released with pattern extraction", "owner")
         assert len(result) == 1
-        assert result[0]["fact"] == "Marc knows Colony v0.5.0 shipped"
-        assert result[0]["contact_id"] == "marc"
+        assert result[0]["fact"] == "User knows Colony v0.5.0 shipped"
+        assert result[0]["contact_id"] == "owner"
 
     async def test_extract_facts_empty(self):
         router = FakeRouter(["[]"])
         extractor = TomExtractor(router)
-        result = await extractor.extract_facts("ok", "marc")
+        result = await extractor.extract_facts("ok", "owner")
         assert result == []
 
     async def test_throttle_per_contact(self):
@@ -159,10 +159,10 @@ class TestTomExtractor:
         ])
         extractor = TomExtractor(router)
         # First extraction should work
-        result1 = await extractor.extract_affect("happy", "marc")
+        result1 = await extractor.extract_affect("happy", "owner")
         assert result1 is not None
         # Second extraction for same contact should be throttled
-        result2 = await extractor.extract_affect("still happy", "marc")
+        result2 = await extractor.extract_affect("still happy", "owner")
         assert result2 is None
         # Different contact should work
         result3 = await extractor.extract_affect("happy", "alice")
@@ -173,7 +173,7 @@ class TestTomExtractor:
             async def complete(self, **kwargs):
                 raise RuntimeError("LLM down")
         extractor = TomExtractor(FailRouter())
-        result = await extractor.extract_affect("test", "marc")
+        result = await extractor.extract_affect("test", "owner")
         assert result is None
-        facts = await extractor.extract_facts("test", "marc")
+        facts = await extractor.extract_facts("test", "owner")
         assert facts == []
