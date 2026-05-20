@@ -570,9 +570,7 @@ class AutonomyLoop:
                     "suggested_action": getattr(initiative, "action_hint", "notify_user") or "notify_user",
                     "entity_id": getattr(initiative, "entity_id", None),
                     "entity_type": type_value,
-                    "channel_hint": "home" if is_self_initiative else (
-                        "dm" if type_value in ("relationship", "proactive_message") else "home"
-                    ),
+                    "channel_hint": "home" if is_self_initiative else "dm",
                     "context": self._build_initiative_context(initiative, type_value),
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 }
