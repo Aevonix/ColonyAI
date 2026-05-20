@@ -339,9 +339,9 @@ class TestSessionContextModel:
     """Test SessionContext data model."""
 
     def test_basic_construction(self):
-        ctx = SessionContext(session_id="s-1", user_id="marc")
+        ctx = SessionContext(session_id="s-1", user_id="owner")
         assert ctx.session_id == "s-1"
-        assert ctx.user_id == "marc"
+        assert ctx.user_id == "owner"
         assert ctx.topics == []
         assert ctx.entities == []
         assert ctx.pending_tasks == []
@@ -349,7 +349,7 @@ class TestSessionContextModel:
     def test_with_data(self):
         ctx = SessionContext(
             session_id="s-2",
-            user_id="marc",
+            user_id="owner",
             topics=["peptides", "health"],
             entities=["person-jeff"],
         )
@@ -363,24 +363,24 @@ class TestSessionContinuity:
     @pytest.mark.asyncio
     async def test_start_new_session(self, mock_graph, mock_event_bus):
         sc = SessionContinuity(mock_graph, mock_event_bus)
-        ctx = await sc.start_session("marc")
+        ctx = await sc.start_session("owner")
 
-        assert ctx.user_id == "marc"
-        assert "marc" in ctx.session_id
+        assert ctx.user_id == "owner"
+        assert "owner" in ctx.session_id
 
     @pytest.mark.asyncio
     async def test_resumes_existing_session(self, mock_graph, mock_event_bus):
         sc = SessionContinuity(mock_graph, mock_event_bus)
 
-        ctx1 = await sc.start_session("marc")
-        ctx2 = await sc.start_session("marc")
+        ctx1 = await sc.start_session("owner")
+        ctx2 = await sc.start_session("owner")
 
         assert ctx1.session_id == ctx2.session_id
 
     @pytest.mark.asyncio
     async def test_update_context_adds_topics(self, mock_graph, mock_event_bus):
         sc = SessionContinuity(mock_graph, mock_event_bus)
-        ctx = await sc.start_session("marc")
+        ctx = await sc.start_session("owner")
 
         await sc.update_context(ctx.session_id, topics=["ai", "peptides"])
         await sc.update_context(ctx.session_id, topics=["ai", "health"])
@@ -394,7 +394,7 @@ class TestSessionContinuity:
     @pytest.mark.asyncio
     async def test_update_context_deduplicates_entities(self, mock_graph, mock_event_bus):
         sc = SessionContinuity(mock_graph, mock_event_bus)
-        ctx = await sc.start_session("marc")
+        ctx = await sc.start_session("owner")
 
         await sc.update_context(ctx.session_id, entities=["person-jeff"])
         await sc.update_context(ctx.session_id, entities=["person-jeff", "person-ingrid"])
@@ -411,14 +411,14 @@ class TestSessionContinuity:
     @pytest.mark.asyncio
     async def test_end_session(self, mock_graph, mock_event_bus):
         sc = SessionContinuity(mock_graph, mock_event_bus)
-        ctx = await sc.start_session("marc")
+        ctx = await sc.start_session("owner")
 
         ended = await sc.end_session(ctx.session_id)
         assert ended is not None
         assert ended.session_id == ctx.session_id
 
         # Should now create a new session
-        ctx2 = await sc.start_session("marc")
+        ctx2 = await sc.start_session("owner")
         assert ctx2.session_id != ctx.session_id
 
 
@@ -615,14 +615,14 @@ class TestAnomalyDetector:
     async def test_update_and_get_baseline(self, mock_graph, mock_event_bus):
         ad = AnomalyDetector(mock_graph, mock_event_bus)
 
-        await ad.update_baseline("person-marc", "sleep_score", 85)
-        value = await ad.get_baseline("person-marc", "sleep_score")
+        await ad.update_baseline("person-owner", "sleep_score", 85)
+        value = await ad.get_baseline("person-owner", "sleep_score")
         assert value == 85
 
     @pytest.mark.asyncio
     async def test_get_missing_baseline(self, mock_graph, mock_event_bus):
         ad = AnomalyDetector(mock_graph, mock_event_bus)
-        value = await ad.get_baseline("person-marc", "nonexistent")
+        value = await ad.get_baseline("person-owner", "nonexistent")
         assert value is None
 
     @pytest.mark.asyncio
