@@ -50,6 +50,13 @@ cp "$SCRIPT_DIR/slash.py" "$PLUGIN_DIR/"
 cp "$SCRIPT_DIR/events.py" "$PLUGIN_DIR/"
 cp "$SCRIPT_DIR/plugin.yaml" "$PLUGIN_DIR/"
 
+# Deploy examples for reference
+if [[ -d "$SCRIPT_DIR/examples" ]]; then
+  mkdir -p "$PLUGIN_DIR/examples"
+  cp "$SCRIPT_DIR/examples/"* "$PLUGIN_DIR/examples/" 2>/dev/null || true
+  echo "   Examples deployed to $PLUGIN_DIR/examples"
+fi
+
 echo "   Plugin files deployed."
 
 # Deploy memory provider
@@ -76,7 +83,23 @@ if [[ "$INSTALL_POLLER" -eq 1 ]]; then
   cp "$SCRIPT_DIR/poller/colony-initiative-poller.py" "$SCRIPTS_DIR/"
   chmod +x "$SCRIPTS_DIR/colony-initiative-poller.py"
   echo "   Initiative poller deployed to $SCRIPTS_DIR/colony-initiative-poller.py"
-  echo "   Schedule with: hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
+
+  # Create cron job if hermes CLI is available
+  if command -v hermes &>/dev/null; then
+    if hermes cron list 2>/dev/null | grep -q "colony-initiative-poller"; then
+      echo "   Poller cron job already exists. Skipping creation."
+    else
+      echo "   Creating poller cron job..."
+      hermes cron create \
+        --name colony-initiative-poller \
+        --schedule 'every 1m' \
+        --script colony-initiative-poller.py \
+        --no-agent \
+        || echo "   ⚠️  Failed to create cron job. Create manually with: hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
+    fi
+  else
+    echo "   Schedule with: hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
+  fi
 fi
 
 # Check if plugin is enabled
@@ -86,7 +109,8 @@ if command -v hermes &>/dev/null; then
   echo "   1. Ensure Colony sidecar is running on port 7777"
   echo "   2. Enable the plugin:   hermes plugins enable colony"
   [[ "$INSTALL_MEMORY" -eq 1 ]] && echo "   3. Configure memory:    hermes memory setup colony"
-  [[ "$INSTALL_POLLER" -eq 1 ]] && echo "   4. Start the poller:    hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
+  [[ "$INSTALL_POLLER" -eq 1 ]] && echo "   4. Poller cron job should be active (check: hermes cron list)"
+  echo "   5. Aeva worker (v0.13): Set up scripts/aeva_worker.py via cron every 5 min for AGENT_ACTION jobs"
   echo ""
 
   # Autonomy wizard prompt
