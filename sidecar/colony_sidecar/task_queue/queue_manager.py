@@ -521,6 +521,37 @@ class QueueManager:
             )
         await self._db.commit()
 
+    async def update_job_status(
+        self,
+        job_id: str,
+        status: JobStatus,
+        reason: str = "",
+        tags: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        """Update a job's status and optionally merge new tags.
+
+        Returns True if the job was found and updated.
+        """
+        assert self._db is not None
+        job = await self.get_job(job_id)
+        if job is None or job.is_terminal():
+            return False
+        old_status = job.status.value
+        if tags:
+            job.tags.update(tags)
+            await self._db.execute(
+                "UPDATE jobs SET status = ?, tags = ? WHERE job_id = ?",
+                (status.value, json.dumps(job.tags), job_id),
+            )
+        else:
+            await self._db.execute(
+                "UPDATE jobs SET status = ? WHERE job_id = ?",
+                (status.value, job_id),
+            )
+        await self._audit(job_id, old_status, status.value, reason=reason)
+        await self._db.commit()
+        return True
+
     async def cancel_job(self, job_id: str, reason: str = "") -> bool:
         """Cancel a job from any non-terminal state. Returns True if cancelled."""
         assert self._db is not None

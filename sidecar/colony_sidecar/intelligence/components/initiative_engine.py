@@ -1048,6 +1048,9 @@ class InitiativeEngine:
             generators.append(self._generate_knowledge_acquisition_initiatives())
         if not types or InitiativeType.BEHAVIORAL_CORRECTION in types:
             generators.append(self._generate_behavioral_correction_initiatives())
+        # Agent-action generators (v0.13.0)
+        if not types or InitiativeType.AGENT_ACTION in types:
+            generators.append(self._generate_agent_action_initiatives())
         
         initiatives: List[Initiative] = []
         if generators:
@@ -1533,4 +1536,71 @@ class InitiativeEngine:
                     trigger_data={**pattern},
                 )
             )
+        return initiatives
+
+    async def _generate_agent_action_initiatives(self) -> List[Initiative]:
+        """Generate agent-actionable initiatives for autonomous execution (v0.13.0).
+
+        These initiatives are routed to the task queue instead of the delivery
+        bridge, and claimed by the Aeva cron worker.
+        """
+        initiatives: List[Initiative] = []
+
+        # 1. Repo status check — generated periodically
+        if "repo_status" not in self._context:
+            initiatives.append(
+                Initiative(
+                    id=f"repo-check-{_uuid_module.uuid4().hex[:8]}",
+                    type=InitiativeType.AGENT_ACTION,
+                    description="Check colony-work repo for uncommitted changes",
+                    priority=0.4,
+                    rationale="Periodic hygiene check to prevent stale work",
+                    action_hint="agent_check_repo_status",
+                    entity_id="colony-work",
+                    dedup_key="agent_action:agent_check_repo_status:colony-work",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=4),
+                )
+            )
+
+        # 2. Health check initiatives from subsystem health context
+        for issue in self._context.get("subsystem_health", [])[:3]:
+            entity_id = issue.get("entity_id", "unknown")
+            name = issue.get("name", "Unknown")
+            status_val = issue.get("status", "unknown")
+            if status_val != "active":
+                initiatives.append(
+                    Initiative(
+                        id=f"agent-health-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                        type=InitiativeType.AGENT_ACTION,
+                        description=f"Investigate degraded subsystem: {name}",
+                        priority=min(1.0, 0.7 + (issue.get("error_rate", 0) or 0)),
+                        rationale=f"Subsystem {name} is {status_val}",
+                        action_hint="agent_investigate_subsystem",
+                        entity_id=entity_id,
+                        dedup_key=f"agent_action:agent_investigate_subsystem:{entity_id}",
+                        expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
+                        trigger_data={**issue},
+                    )
+                )
+
+        # 3. Data quality — auto-fixable issues
+        for issue in self._context.get("data_quality_issues", [])[:2]:
+            entity_id = issue.get("entity_id", "unknown")
+            entity_type = issue.get("entity_type", "unknown")
+            if entity_type == "orphan_nodes":
+                initiatives.append(
+                    Initiative(
+                        id=f"agent-dq-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                        type=InitiativeType.AGENT_ACTION,
+                        description=f"Clean up orphan nodes in {entity_id}",
+                        priority=0.5,
+                        rationale="Auto-fixable data quality issue",
+                        action_hint="agent_cleanup_orphans",
+                        entity_id=entity_id,
+                        dedup_key=f"agent_action:agent_cleanup_orphans:{entity_id}",
+                        expires_at=datetime.now(timezone.utc) + timedelta(hours=6),
+                        trigger_data={**issue},
+                    )
+                )
+
         return initiatives
