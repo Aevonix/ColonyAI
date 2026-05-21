@@ -126,10 +126,22 @@ class InitiativeStore:
                 
                 preferred_agent_id TEXT,
                 stale_reason TEXT,
-                recovery_reason TEXT
+                recovery_reason TEXT,
+                job_id TEXT  -- v0.13.0: linked task-queue job
             )
             """
         )
+
+        # v0.13.0 migration: add job_id column if missing
+        try:
+            cursor = conn.execute("PRAGMA table_info(initiatives)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "job_id" not in columns:
+                conn.execute("ALTER TABLE initiatives ADD COLUMN job_id TEXT")
+                conn.commit()
+                logger.info("Migrated initiatives table: added job_id column")
+        except Exception as exc:
+            logger.warning("Initiative migration check failed (non-fatal): %s", exc)
 
         # Indexes
         conn.execute(
@@ -192,6 +204,7 @@ class InitiativeStore:
         timeout_seconds: int = 300,
         expires_at: Optional[datetime] = None,
         preferred_agent_id: Optional[str] = None,
+        job_id: Optional[str] = None,
         **extra,
     ) -> StoredInitiative:
         """Create a new initiative."""
@@ -253,8 +266,8 @@ class InitiativeStore:
             INSERT INTO initiatives (
                 id, dedup_key, type, description, priority, rationale,
                 action_hint, entity_id, source_type, source_id, created_by,
-                timeout_seconds, expires_at, preferred_agent_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                timeout_seconds, expires_at, preferred_agent_id, job_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 initiative_id,
@@ -271,6 +284,7 @@ class InitiativeStore:
                 timeout_seconds,
                 expires_at.isoformat() if expires_at else None,
                 preferred_agent_id,
+                job_id,
                 now.isoformat(),
             ],
         )
@@ -316,7 +330,7 @@ class InitiativeStore:
         "delivery_mode", "delivery_attempts", "last_delivery_at",
         "delivery_failed_at", "delivery_failed_reason",
         "result", "result_metadata",
-        "preferred_agent_id", "stale_reason", "recovery_reason",
+        "preferred_agent_id", "stale_reason", "recovery_reason", "job_id",
     })
 
     def update(self, initiative_id: str, **updates) -> Optional[StoredInitiative]:
@@ -374,6 +388,7 @@ class InitiativeStore:
         status: Optional[List[str]] = None,
         type: Optional[str] = None,
         assigned_agent_id: Optional[str] = None,
+        job_id: Optional[str] = None,
         created_before: Optional[datetime] = None,
         created_after: Optional[datetime] = None,
         acknowledged_before: Optional[datetime] = None,
@@ -397,6 +412,10 @@ class InitiativeStore:
             query += " AND assigned_agent_id = ?"
             params.append(assigned_agent_id)
 
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+
         if created_before:
             query += " AND created_at < ?"
             params.append(created_before.isoformat())
@@ -419,6 +438,7 @@ class InitiativeStore:
         self,
         status: Optional[List[str]] = None,
         assigned_agent_id: Optional[str] = None,
+        job_id: Optional[str] = None,
     ) -> int:
         """Count initiatives with filters."""
         query = "SELECT COUNT(*) FROM initiatives WHERE 1=1"
@@ -432,6 +452,10 @@ class InitiativeStore:
         if assigned_agent_id:
             query += " AND assigned_agent_id = ?"
             params.append(assigned_agent_id)
+
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
 
         cursor = self._db.execute(query, params)
         return cursor.fetchone()[0]
