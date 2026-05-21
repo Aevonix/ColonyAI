@@ -842,7 +842,10 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 resp = client.post(
                     f"{self.sidecar_url}/v1/host/queue/jobs/claim",
                     headers=self._headers(),
-                    json={},
+                    json={
+                        "node_id": args.get("worker_id", "aeva-worker"),
+                        "capabilities": args.get("capabilities", ["agent_action"]),
+                    },
                     timeout=5,
                 )
                 resp.raise_for_status()
