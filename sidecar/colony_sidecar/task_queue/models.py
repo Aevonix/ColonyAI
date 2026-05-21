@@ -49,6 +49,7 @@ class JobType(str, Enum):
     DESKTOP = "desktop"
     BROWSER = "browser"
     CUSTOM = "custom"
+    AGENT_ACTION = "agent_action"  # NEW: Hermes agent-executable initiatives (v0.13.0)
 
 
 @dataclass

@@ -91,6 +91,9 @@ class InitiativeType(str, Enum):
     KNOWLEDGE_ACQUISITION = "knowledge_acquisition"
     BEHAVIORAL_CORRECTION = "behavioral_correction"
 
+    # Agent-actionable initiatives (v0.13.0)
+    AGENT_ACTION = "agent_action"
+
 
 @dataclass
 class Initiative:
