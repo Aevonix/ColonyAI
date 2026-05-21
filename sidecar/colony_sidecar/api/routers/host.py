@@ -1704,8 +1704,8 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # Track last user message for concurrent-session safety (v0.13.0)
     if body.user_message is not None:
         try:
-            from colony_sidecar.api.routers.task_queue import _save_last_user_message_at
-            _save_last_user_message_at()
+            from colony_sidecar.util.session_safety import save_last_user_message_at
+            save_last_user_message_at()
         except Exception:
             pass
 

@@ -23,40 +23,14 @@ from colony_sidecar.task_queue.models import (
     WorkerCapabilities,
 )
 from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+from colony_sidecar.util.session_safety import (
+    load_last_user_message_at,
+    save_last_user_message_at,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/host/queue", tags=["task_queue"])
-
-# ---------------------------------------------------------------------------
-# Session-safety tracking (v0.13.0)
-# ---------------------------------------------------------------------------
-
-_LAST_MSG_PATH = os.path.expanduser("~/.colony/last_user_message_at.json")
-
-
-def _load_last_user_message_at() -> Optional[str]:
-    try:
-        import json
-        with open(_LAST_MSG_PATH) as f:
-            return json.load(f).get("timestamp")
-    except Exception:
-        return None
-
-
-def _save_last_user_message_at() -> None:
-    try:
-        import json
-        os.makedirs(os.path.dirname(_LAST_MSG_PATH), exist_ok=True)
-        with open(_LAST_MSG_PATH, "w") as f:
-            json.dump({"timestamp": datetime.now(timezone.utc).isoformat()}, f)
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
 
 class WorkerRegisterRequest(BaseModel):
     node_id: str
@@ -293,7 +267,12 @@ async def fail_job(job_id: str, body: JobFailRequest) -> Dict[str, Any]:
 async def job_heartbeat(job_id: str, body: JobHeartbeatRequest) -> Dict[str, Any]:
     """Update job progress heartbeat."""
     queue = _get_queue()
-    await queue.queue.job_heartbeat(job_id)
+    job = await queue.queue.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    worker_id = job.claimed_by or "unknown"
+    progress = {job_id: body.progress} if body.progress is not None else None
+    await queue.queue.send_heartbeat(worker_id, [job_id], progress=progress)
     return {"success": True, "job_id": job_id}
 
 
@@ -343,7 +322,7 @@ async def queue_stats() -> Dict[str, Any]:
         "by_type": stats.by_type,
         "total_workers": stats.total_workers,
         "available_workers": stats.available_workers,
-        "last_user_message_at": _load_last_user_message_at(),
+        "last_user_message_at": load_last_user_message_at(),
     }
 
 

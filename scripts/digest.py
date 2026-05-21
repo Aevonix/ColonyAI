@@ -57,18 +57,16 @@ def main() -> int:
     message = "\n".join(lines)
     logger.info("Digest:\n%s", message)
 
-    # Push to delivery bridge if available
+    # Push to delivery bridge via existing initiative endpoint
     try:
         payload = {
-            "type": "digest",
-            "title": "Colony Digest — 6h",
+            "initiative_type": "digest",
             "description": message,
             "priority": 0.5,
-            "channel_hint": "dm",
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "dedup_key": f"digest:{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H')}",
         }
         push_resp = httpx.post(
-            f"{COLONY_URL}/v1/host/initiatives/push",
+            f"{COLONY_URL}/v1/host/initiatives",
             headers=_HEADERS,
             json=payload,
             timeout=10,

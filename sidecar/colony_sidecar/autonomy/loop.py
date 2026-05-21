@@ -577,7 +577,8 @@ class AutonomyLoop:
                             getattr(initiative, "dedup_key", None),
                         )
                         # If dedup hit and initiative is still active, skip dispatch
-                        if stored and stored.is_active and stored.id != getattr(initiative, "id", stored.id):
+                        original_id = getattr(initiative, "id", None)
+                        if stored and stored.is_active and (original_id is None or stored.id != original_id):
                             logger.info("Initiative dedup hit, skipping dispatch: %s", stored.id)
                             continue
                         # Use the persisted id for the payload
@@ -709,9 +710,7 @@ class AutonomyLoop:
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(
                         None,
-                        store.update,
-                        initiative_id,
-                        {"job_id": job_id, "status": "assigned"},
+                        lambda sid=initiative_id, jid=job_id: store.update(sid, job_id=jid, status="assigned"),
                     )
                 except Exception as exc:
                     logger.warning("Failed to link initiative %s to job %s: %s", initiative_id, job_id, exc)
@@ -744,8 +743,10 @@ class AutonomyLoop:
                         "generated_at": datetime.now(timezone.utc).isoformat(),
                     })
 
-            self.stats.actions_executed += 1
-            self.stats.actions_this_hour += 1
+            # Only count as executed if the job was not blocked awaiting approval
+            if not (is_destructive and not auto_approve):
+                self.stats.actions_executed += 1
+                self.stats.actions_this_hour += 1
         except Exception as exc:
             logger.error("Failed to post agent_action to queue: %s", exc)
 
