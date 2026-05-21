@@ -1095,6 +1095,10 @@ def create_app() -> FastAPI:
 
     app.include_router(host_router)
 
+    # Task queue router (v0.13.0)
+    from colony_sidecar.api.routers import task_queue as task_queue_router
+    app.include_router(task_queue_router.router)
+
     # MCP streamable HTTP endpoint
     try:
         from colony_sidecar.mcp.server import create_server
