@@ -1,0 +1,321 @@
+"""Task Queue API — ``/v1/host/queue`` endpoints for distributed job scheduling.
+
+Exposes the TaskQueueManager / QueueManager surface to external workers
+(including Aeva's cron-driven agent worker).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+from colony_sidecar.task_queue.models import (
+    Job,
+    JobCapabilityRequirement,
+    JobPriority,
+    JobStatus,
+    JobType,
+    WorkerCapabilities,
+)
+from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/v1/host/queue", tags=["task_queue"])
+
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
+class WorkerRegisterRequest(BaseModel):
+    node_id: str
+    capabilities: List[str] = []
+    capacity: Optional[Dict[str, float]] = None
+    max_concurrent: int = 4
+    job_types: List[str] = []
+    available: bool = True
+    load: float = 0.0
+
+
+class WorkerHeartbeatRequest(BaseModel):
+    job_ids: List[str] = []
+    progress: Optional[Dict[str, float]] = None
+    load: Optional[float] = None
+
+
+class JobPostRequest(BaseModel):
+    job_type: str = "agent_action"
+    payload: Dict[str, Any] = {}
+    priority: str = "normal"
+    capabilities: Optional[List[Dict[str, Any]]] = None
+    deadline: Optional[str] = None
+    max_retries: int = 3
+    timeout_secs: float = 3600.0
+    depends_on: List[str] = []
+    tags: Optional[Dict[str, str]] = None
+
+
+class JobClaimRequest(BaseModel):
+    node_id: str
+    capabilities: Optional[List[str]] = None
+    capacity: Optional[Dict[str, float]] = None
+    max_concurrent: int = 4
+    job_types: Optional[List[str]] = None
+
+
+class JobCompleteRequest(BaseModel):
+    output: Dict[str, Any] = {}
+    started_at: Optional[str] = None
+
+
+class JobFailRequest(BaseModel):
+    error: str
+    started_at: Optional[str] = None
+
+
+class JobHeartbeatRequest(BaseModel):
+    progress: Optional[float] = None
+    log_lines: Optional[List[str]] = None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _get_queue() -> TaskQueueManager:
+    try:
+        return TaskQueueManager.get_instance()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Task queue not initialized")
+
+
+def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _job_to_dict(job: Job) -> Dict[str, Any]:
+    return {
+        "job_id": job.job_id,
+        "job_type": job.job_type.value,
+        "payload": job.payload,
+        "priority": job.priority.value,
+        "status": job.status.value,
+        "claimed_by": job.claimed_by,
+        "claimed_at": job.claimed_at.isoformat() if job.claimed_at else None,
+        "posted_at": job.posted_at.isoformat() if job.posted_at else None,
+        "deadline": job.deadline.isoformat() if job.deadline else None,
+        "max_retries": job.max_retries,
+        "retry_count": job.retry_count,
+        "timeout_secs": job.timeout_secs,
+        "depends_on": job.depends_on,
+        "tags": job.tags,
+        "result": {
+            "output": job.result.output,
+            "error": job.result.error,
+            "started_at": job.result.started_at.isoformat() if job.result and job.result.started_at else None,
+            "completed_at": job.result.completed_at.isoformat() if job.result and job.result.completed_at else None,
+            "duration_seconds": job.result.duration_seconds if job.result else None,
+        } if job.result else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Worker endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/workers/register")
+async def register_worker(body: WorkerRegisterRequest) -> Dict[str, Any]:
+    """Register a worker node with the scheduler."""
+    queue = _get_queue()
+    caps = WorkerCapabilities(
+        node_id=body.node_id,
+        capabilities=set(body.capabilities),
+        capacity=body.capacity or {},
+        max_concurrent=body.max_concurrent,
+        job_types={JobType(jt) for jt in body.job_types},
+        available=body.available,
+        load=body.load,
+    )
+    await queue.queue.register_worker(caps)
+    logger.info("Worker registered: %s (types=%s)", body.node_id, body.job_types)
+    return {"success": True, "node_id": body.node_id}
+
+
+@router.post("/workers/{node_id}/heartbeat")
+async def worker_heartbeat(node_id: str, body: WorkerHeartbeatRequest) -> Dict[str, Any]:
+    """Receive a worker heartbeat."""
+    queue = _get_queue()
+    await queue.queue.worker_heartbeat(
+        node_id=node_id,
+        job_ids=body.job_ids,
+        progress=body.progress or {},
+    )
+    if body.load is not None:
+        await queue.queue.update_worker_load(node_id, body.load)
+    return {"success": True, "node_id": node_id}
+
+
+@router.post("/workers/{node_id}/deregister")
+async def deregister_worker(node_id: str) -> Dict[str, Any]:
+    """Remove a worker from the scheduler."""
+    queue = _get_queue()
+    await queue.queue.deregister_worker(node_id)
+    logger.info("Worker deregistered: %s", node_id)
+    return {"success": True, "node_id": node_id}
+
+
+# ---------------------------------------------------------------------------
+# Job endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/jobs")
+async def post_job(body: JobPostRequest) -> Dict[str, Any]:
+    """Post a new job to the queue."""
+    queue = _get_queue()
+    job_type = JobType(body.job_type) if body.job_type else JobType.AGENT_ACTION
+    priority = JobPriority(body.priority.upper()) if body.priority else JobPriority.NORMAL
+
+    caps: List[JobCapabilityRequirement] = []
+    if body.capabilities:
+        for c in body.capabilities:
+            caps.append(JobCapabilityRequirement(
+                name=c["name"],
+                minimum=c.get("minimum"),
+                preferred=c.get("preferred", False),
+            ))
+
+    job = Job(
+        job_type=job_type,
+        payload=body.payload,
+        priority=priority,
+        capabilities=caps,
+        deadline=_parse_dt(body.deadline),
+        max_retries=body.max_retries,
+        timeout_secs=body.timeout_secs,
+        depends_on=body.depends_on,
+        tags=body.tags or {},
+        posted_by="api",
+    )
+    job_id = await queue.queue.post(job)
+    return {"success": True, "job_id": job_id}
+
+
+@router.post("/jobs/claim")
+async def claim_job(body: JobClaimRequest) -> Optional[Dict[str, Any]]:
+    """Atomically claim the highest-priority eligible job."""
+    queue = _get_queue()
+    caps = WorkerCapabilities(
+        node_id=body.node_id,
+        capabilities=set(body.capabilities or []),
+        capacity=body.capacity or {},
+        max_concurrent=body.max_concurrent,
+        job_types={JobType(jt) for jt in (body.job_types or [])},
+        available=True,
+        load=0.0,
+    )
+    job = await queue.queue.claim_job(body.node_id, caps)
+    if job is None:
+        return None
+    return _job_to_dict(job)
+
+
+@router.post("/jobs/{job_id}/complete")
+async def complete_job(job_id: str, body: JobCompleteRequest) -> Dict[str, Any]:
+    """Mark a job as completed."""
+    queue = _get_queue()
+    job = await queue.queue.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    worker_id = job.claimed_by or "unknown"
+    await queue.queue.complete_job(
+        job_id=job_id,
+        worker_id=worker_id,
+        output=body.output,
+        started_at=_parse_dt(body.started_at),
+    )
+    return {"success": True, "job_id": job_id}
+
+
+@router.post("/jobs/{job_id}/fail")
+async def fail_job(job_id: str, body: JobFailRequest) -> Dict[str, Any]:
+    """Mark a job as failed."""
+    queue = _get_queue()
+    job = await queue.queue.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    worker_id = job.claimed_by or "unknown"
+    await queue.queue.fail_job(
+        job_id=job_id,
+        worker_id=worker_id,
+        error=body.error,
+        started_at=_parse_dt(body.started_at),
+    )
+    return {"success": True, "job_id": job_id}
+
+
+@router.post("/jobs/{job_id}/heartbeat")
+async def job_heartbeat(job_id: str, body: JobHeartbeatRequest) -> Dict[str, Any]:
+    """Update job progress heartbeat."""
+    queue = _get_queue()
+    await queue.queue.job_heartbeat(job_id)
+    return {"success": True, "job_id": job_id}
+
+
+@router.get("/jobs/pending")
+async def list_pending_jobs(
+    limit: int = Query(50, ge=1, le=200),
+    task_type: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """List pending (queued + claimed + running) jobs."""
+    queue = _get_queue()
+    jobs: List[Job] = []
+    jobs.extend(await queue.queue.get_jobs_by_status(JobStatus.QUEUED))
+    jobs.extend(await queue.queue.get_jobs_by_status(JobStatus.CLAIMED))
+    jobs.extend(await queue.queue.get_jobs_by_status(JobStatus.RUNNING))
+
+    items = []
+    for job in jobs:
+        if task_type and job.job_type.value != task_type:
+            continue
+        items.append(_job_to_dict(job))
+    return items[:limit]
+
+
+@router.get("/jobs/completed")
+async def list_completed_jobs(
+    since: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=200),
+) -> List[Dict[str, Any]]:
+    """List completed jobs since a timestamp."""
+    queue = _get_queue()
+    since_dt = _parse_dt(since) or datetime.min.replace(tzinfo=timezone.utc)
+    completed = await queue.queue.get_completed_jobs_since(since_dt, limit=limit)
+    return completed
+
+
+# ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
+@router.get("/stats")
+async def queue_stats() -> Dict[str, Any]:
+    """Return queue statistics."""
+    queue = _get_queue()
+    stats = await queue.queue.stats()
+    return {
+        "by_status": stats.by_status,
+        "by_type": stats.by_type,
+        "total_workers": stats.total_workers,
+        "available_workers": stats.available_workers,
+    }

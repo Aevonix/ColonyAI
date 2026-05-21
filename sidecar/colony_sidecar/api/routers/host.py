@@ -1359,6 +1359,24 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.warning("context_assemble goals failed: %s", exc)
 
+    # --- Pending Initiatives (v0.13.0) ---
+    if body.include_initiatives and _initiative_store is not None:
+        try:
+            pending = _initiative_store.list(status=["pending"], limit=10)
+            if pending:
+                body_text = "\n".join(
+                    f"• [{i.type}] {i.description} (priority: {i.priority:.0%})"
+                    for i in pending
+                )
+                sections.append(ContextSection(
+                    id="colony-initiatives",
+                    title="Pending Initiatives",
+                    body=body_text,
+                    priority=50,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble initiatives failed: %s", exc)
+
     # --- Contact Briefing ---
     if _briefings_engine is not None and body.context and body.context.contact_id:
         try:
