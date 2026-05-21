@@ -1546,8 +1546,13 @@ class InitiativeEngine:
         """
         initiatives: List[Initiative] = []
 
-        # 1. Repo status check — generated periodically
-        if "repo_status" not in self._context:
+        # 1. Repo status check — generated at most once every 4 hours
+        now = datetime.now(timezone.utc)
+        last_repo_check = self._last_self_initiative_at.get("repo_status")
+        if last_repo_check and (now - last_repo_check) < timedelta(hours=4):
+            pass  # Still within cooldown
+        else:
+            self._last_self_initiative_at["repo_status"] = now
             initiatives.append(
                 Initiative(
                     id=f"repo-check-{_uuid_module.uuid4().hex[:8]}",
@@ -1558,7 +1563,7 @@ class InitiativeEngine:
                     action_hint="agent_check_repo_status",
                     entity_id="colony-work",
                     dedup_key="agent_action:agent_check_repo_status:colony-work",
-                    expires_at=datetime.now(timezone.utc) + timedelta(hours=4),
+                    expires_at=now + timedelta(hours=4),
                 )
             )
 

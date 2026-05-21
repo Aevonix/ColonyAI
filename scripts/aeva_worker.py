@@ -56,10 +56,9 @@ def _register() -> bool:
             headers=_HEADERS,
             json={
                 "node_id": WORKER_ID,
-                "capabilities": {
-                    "job_types": ["agent_action"],
-                    "max_parallel_jobs": 1,
-                },
+                "capabilities": ["agent_action"],
+                "job_types": ["agent_action"],
+                "max_concurrent": 1,
             },
             timeout=10,
         )
@@ -116,7 +115,7 @@ def _claim_job() -> Optional[Dict[str, Any]]:
         resp = httpx.post(
             f"{COLONY_URL}/v1/host/queue/jobs/claim",
             headers=_HEADERS,
-            json={"worker_id": WORKER_ID, "capabilities": ["agent_action"]},
+            json={"node_id": WORKER_ID, "capabilities": ["agent_action"], "job_types": ["agent_action"]},
             timeout=10,
         )
         resp.raise_for_status()
@@ -198,6 +197,20 @@ def _exec_cleanup_orphans(payload: Dict[str, Any]) -> Dict[str, Any]:
 # Result reporting
 # ---------------------------------------------------------------------------
 
+def _release_job(job_id: str) -> None:
+    """Release a claimed job back to the queue so another worker can pick it up."""
+    try:
+        resp = httpx.post(
+            f"{COLONY_URL}/v1/host/queue/jobs/{job_id}/release",
+            headers=_HEADERS,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.info("Released job %s back to queue", job_id)
+    except Exception as exc:
+        logger.error("Failed to release job %s: %s", job_id, exc)
+
+
 def _complete_job(job_id: str, output: Dict[str, Any]) -> None:
     try:
         resp = httpx.post(
@@ -244,7 +257,17 @@ def main() -> int:
     job_id = job["job_id"]
     logger.info("Claimed job %s", job_id)
 
-    # Send heartbeat to mark RUNNING
+    # Mark as RUNNING
+    try:
+        httpx.post(
+            f"{COLONY_URL}/v1/host/queue/jobs/{job_id}/start",
+            headers=_HEADERS,
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+    # Send heartbeat to mark progress
     try:
         httpx.post(
             f"{COLONY_URL}/v1/host/queue/jobs/{job_id}/heartbeat",
@@ -260,8 +283,7 @@ def main() -> int:
     if result.get("status") == "completed":
         _complete_job(job_id, result)
     elif result.get("status") == "skipped":
-        # Re-queue for later
-        logger.info("Job %s skipped, leaving for next worker", job_id)
+        _release_job(job_id)
     else:
         _fail_job(job_id, result.get("error", "execution failed"))
 

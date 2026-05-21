@@ -155,10 +155,11 @@ async def register_worker(body: WorkerRegisterRequest) -> Dict[str, Any]:
 async def worker_heartbeat(node_id: str, body: WorkerHeartbeatRequest) -> Dict[str, Any]:
     """Receive a worker heartbeat."""
     queue = _get_queue()
-    await queue.queue.worker_heartbeat(
-        node_id=node_id,
+    progress = body.progress or {}
+    await queue.queue.send_heartbeat(
+        worker_id=node_id,
         job_ids=body.job_ids,
-        progress=body.progress or {},
+        progress=progress,
     )
     if body.load is not None:
         await queue.queue.update_worker_load(node_id, body.load)
@@ -229,6 +230,18 @@ async def claim_job(body: JobClaimRequest) -> Optional[Dict[str, Any]]:
     return _job_to_dict(job)
 
 
+@router.post("/jobs/{job_id}/start")
+async def start_job(job_id: str) -> Dict[str, Any]:
+    """Transition a claimed job to RUNNING."""
+    queue = _get_queue()
+    job = await queue.queue.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    worker_id = job.claimed_by or "unknown"
+    await queue.queue.start_job(job_id, worker_id)
+    return {"success": True, "job_id": job_id}
+
+
 @router.post("/jobs/{job_id}/complete")
 async def complete_job(job_id: str, body: JobCompleteRequest) -> Dict[str, Any]:
     """Mark a job as completed."""
@@ -276,17 +289,29 @@ async def job_heartbeat(job_id: str, body: JobHeartbeatRequest) -> Dict[str, Any
     return {"success": True, "job_id": job_id}
 
 
+@router.post("/jobs/{job_id}/release")
+async def release_job(job_id: str) -> Dict[str, Any]:
+    """Release a claimed job back to the queue."""
+    queue = _get_queue()
+    job = await queue.queue.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await queue.queue.release_job(job_id)
+    return {"success": True, "job_id": job_id}
+
+
 @router.get("/jobs/pending")
 async def list_pending_jobs(
     limit: int = Query(50, ge=1, le=200),
     task_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """List pending (queued + claimed + running) jobs."""
+    """List pending (queued + claimed + running + blocked) jobs."""
     queue = _get_queue()
     jobs: List[Job] = []
     jobs.extend(await queue.queue.get_jobs_by_status(JobStatus.QUEUED))
     jobs.extend(await queue.queue.get_jobs_by_status(JobStatus.CLAIMED))
     jobs.extend(await queue.queue.get_jobs_by_status(JobStatus.RUNNING))
+    jobs.extend(await queue.queue.get_jobs_by_status(JobStatus.BLOCKED))
 
     items = []
     for job in jobs:
@@ -316,7 +341,7 @@ async def list_completed_jobs(
 async def queue_stats() -> Dict[str, Any]:
     """Return queue statistics."""
     queue = _get_queue()
-    stats = await queue.queue.stats()
+    stats = await queue.queue.get_queue_stats()
     return {
         "by_status": stats.by_status,
         "by_type": stats.by_type,
