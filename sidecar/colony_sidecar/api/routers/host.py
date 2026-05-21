@@ -1701,6 +1701,14 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     except Exception:
         logger.debug("cognition trigger from turn_sync failed", exc_info=True)
 
+    # Track last user message for concurrent-session safety (v0.13.0)
+    if body.user_message is not None:
+        try:
+            from colony_sidecar.api.routers.task_queue import _save_last_user_message_at
+            _save_last_user_message_at()
+        except Exception:
+            pass
+
     # ToM LLM extraction (best-effort, non-blocking)
     try:
         if _tom_extractor is not None and _affect_store is not None and _facts_store is not None:

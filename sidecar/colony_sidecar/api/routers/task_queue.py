@@ -28,6 +28,31 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/host/queue", tags=["task_queue"])
 
+# ---------------------------------------------------------------------------
+# Session-safety tracking (v0.13.0)
+# ---------------------------------------------------------------------------
+
+_LAST_MSG_PATH = os.path.expanduser("~/.colony/last_user_message_at.json")
+
+
+def _load_last_user_message_at() -> Optional[str]:
+    try:
+        import json
+        with open(_LAST_MSG_PATH) as f:
+            return json.load(f).get("timestamp")
+    except Exception:
+        return None
+
+
+def _save_last_user_message_at() -> None:
+    try:
+        import json
+        os.makedirs(os.path.dirname(_LAST_MSG_PATH), exist_ok=True)
+        with open(_LAST_MSG_PATH, "w") as f:
+            json.dump({"timestamp": datetime.now(timezone.utc).isoformat()}, f)
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -318,4 +343,5 @@ async def queue_stats() -> Dict[str, Any]:
         "by_type": stats.by_type,
         "total_workers": stats.total_workers,
         "available_workers": stats.available_workers,
+        "last_user_message_at": _load_last_user_message_at(),
     }
