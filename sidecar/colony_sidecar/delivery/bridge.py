@@ -18,7 +18,7 @@ import os
 import uuid
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -408,11 +408,16 @@ class ProactiveDeliveryBridge:
     def get_in_session_context(self, person_id: str) -> Optional[str]:
         """Return pending IN_SESSION deliveries formatted for prompt injection.
 
-        Marks them as consumed after returning.
+        Does NOT mark them as consumed — they survive until explicitly
+        acknowledged or expired (see expire_in_session_deliveries).
         """
+        now = datetime.now(timezone.utc)
         in_session = [
             d for d in self._pending
-            if d.person_id == person_id and d.channel == "in_session" and not d.sent
+            if d.person_id == person_id
+            and d.channel == "in_session"
+            and not d.sent
+            and (now - d.queued_at).total_seconds() < 86400  # 24h max age
         ]
         if not in_session:
             return None
@@ -420,10 +425,37 @@ class ProactiveDeliveryBridge:
         lines = ["[Things to mention this session]"]
         for d in in_session:
             lines.append(f"• {d.content}")
-            d.sent = True
-            self._rate_limiter.record_delivery(d.person_id)
 
         return "\n".join(lines)
+
+    def expire_in_session_deliveries(self, max_age_hours: float = 24) -> int:
+        """Mark IN_SESSION deliveries older than max_age_hours as sent (expired).
+
+        Returns the count expired.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        expired = 0
+        for d in self._pending:
+            if d.channel == "in_session" and not d.sent and d.queued_at < cutoff:
+                d.sent = True
+                self._rate_limiter.record_delivery(d.person_id)
+                expired += 1
+        if expired:
+            logger.info("Expired %d stale in_session deliveries", expired)
+        return expired
+
+    def acknowledge_delivery(self, initiative_id: str) -> bool:
+        """Mark any pending delivery matching initiative_id as sent.
+
+        Called when the agent explicitly acknowledges an initiative.
+        """
+        for d in self._pending:
+            if d.initiative_id == initiative_id and not d.sent:
+                d.sent = True
+                self._rate_limiter.record_delivery(d.person_id)
+                logger.info("Delivery %s acknowledged (initiative=%s)", d.delivery_id, initiative_id)
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # DIGEST channel

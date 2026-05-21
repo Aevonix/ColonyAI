@@ -5191,13 +5191,31 @@ async def respond_to_initiative(
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
+
+    # Update status based on action
+    status_map = {
+        "acknowledged": "acknowledged",
+        "dismissed": "cancelled",
+        "snoozed": "pending",
+        "approved": "acknowledged",
+        "actioned": "completed",
+    }
+    new_status = status_map.get(action)
+    if new_status:
+        _initiative_store.update(initiative_id, status=new_status)
+
+    # If acknowledged, also clear from delivery bridge
+    if action == "acknowledged" and _delivery_bridge is not None:
+        if hasattr(_delivery_bridge, "acknowledge_delivery"):
+            _delivery_bridge.acknowledge_delivery(initiative_id)
+
     _initiative_store.log_history(
         initiative_id,
         action=f"llm_{action}",
         agent_id="openclaw",
         details=details or {},
     )
-    return {"success": True, "initiative_id": initiative_id}
+    return {"success": True, "initiative_id": initiative_id, "status": new_status or initiative.status}
 
 
 # --- WebSocket Endpoint ---

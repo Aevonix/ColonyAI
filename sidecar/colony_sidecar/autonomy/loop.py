@@ -560,8 +560,36 @@ class AutonomyLoop:
 
             # Build and push payload
             try:
+                # Persist initiative before dispatch so it survives restarts
+                store = getattr(self._registry, "initiative_store", None)
+                if store:
+                    try:
+                        loop = asyncio.get_event_loop()
+                        stored = await loop.run_in_executor(
+                            None,
+                            store.create,
+                            type_value,
+                            getattr(initiative, "description", ""),
+                            getattr(initiative, "priority", 0.5),
+                            getattr(initiative, "rationale", ""),
+                            getattr(initiative, "action_hint", None),
+                            getattr(initiative, "entity_id", None),
+                            getattr(initiative, "dedup_key", None),
+                        )
+                        # If dedup hit and initiative is still active, skip dispatch
+                        if stored and stored.is_active and stored.id != getattr(initiative, "id", stored.id):
+                            logger.info("Initiative dedup hit, skipping dispatch: %s", stored.id)
+                            continue
+                        # Use the persisted id for the payload
+                        initiative_id = stored.id if stored else getattr(initiative, "id", str(uuid.uuid4()))
+                    except Exception as exc:
+                        logger.error("Failed to persist initiative, skipping dispatch: %s", exc)
+                        continue
+                else:
+                    initiative_id = getattr(initiative, "id", str(uuid.uuid4()))
+
                 payload = {
-                    "id": getattr(initiative, "id", str(uuid.uuid4())),
+                    "id": initiative_id,
                     "type": type_value,
                     "priority": getattr(initiative, "priority", 0.5),
                     "title": getattr(initiative, "description", "").split(".")[0][:80] if getattr(initiative, "description", "") else "(no title)",
@@ -576,6 +604,17 @@ class AutonomyLoop:
                 }
 
                 if delivery:
+                    # Rate-limit check before push (v0.13.0)
+                    person_id = payload.get("entity_id") or os.environ.get("COLONY_OWNER_CONTACT_ID", "owner")
+                    urgency = float(payload.get("priority", 0.5))
+                    if hasattr(delivery, "_rate_limiter") and delivery._rate_limiter is not None:
+                        allowed, reason = delivery._rate_limiter.can_deliver(person_id, urgency=urgency)
+                        if not allowed:
+                            logger.debug(
+                                "Initiative push rate-limited for %s: %s (urgency=%.2f)",
+                                person_id, reason, urgency,
+                            )
+                            continue  # Keep in store for retry next tick
                     ok = await delivery.push_initiative(payload)
                     if ok:
                         self.stats.actions_executed += 1
@@ -1208,6 +1247,13 @@ class AutonomyLoop:
                 # Remove ghost
                 agent_store.delete(ghost.agent_id)
                 logger.info("Removed ghost agent %s", ghost.agent_id)
+
+            # Also expire stale in_session deliveries (v0.13.0)
+            delivery = getattr(self._registry, "delivery", None)
+            if delivery and hasattr(delivery, "expire_in_session_deliveries"):
+                expired = delivery.expire_in_session_deliveries(max_age_hours=24)
+                if expired:
+                    logger.info("Expired %d stale in_session deliveries", expired)
         except Exception as exc:
             logger.debug("Phase ghost_cleanup error (non-fatal): %s", exc)
 
