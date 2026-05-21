@@ -588,6 +588,19 @@ class AutonomyLoop:
                 else:
                     initiative_id = getattr(initiative, "id", str(uuid.uuid4()))
 
+                # --- v0.13.0: Route AGENT_ACTION initiatives to task queue ---
+                action_hint = getattr(initiative, "action_hint", None) or ""
+                is_agent_action = (
+                    type_value == "agent_action"
+                    or action_hint.startswith("agent_")
+                )
+
+                if is_agent_action:
+                    await self._post_agent_action_to_queue(
+                        initiative, initiative_id, type_value, action_hint
+                    )
+                    continue  # Do NOT push to delivery bridge
+
                 payload = {
                     "id": initiative_id,
                     "type": type_value,
@@ -595,7 +608,7 @@ class AutonomyLoop:
                     "title": getattr(initiative, "description", "").split(".")[0][:80] if getattr(initiative, "description", "") else "(no title)",
                     "description": getattr(initiative, "description", ""),
                     "rationale": getattr(initiative, "rationale", ""),
-                    "suggested_action": getattr(initiative, "action_hint", "notify_user") or "notify_user",
+                    "suggested_action": action_hint or "notify_user",
                     "entity_id": getattr(initiative, "entity_id", None),
                     "entity_type": type_value,
                     "channel_hint": "home" if is_self_initiative else "dm",
@@ -641,6 +654,100 @@ class AutonomyLoop:
                 logger.error("Failed to push initiative: %s", exc)
 
         self._pending_initiatives = []
+
+    async def _post_agent_action_to_queue(
+        self,
+        initiative: Any,
+        initiative_id: str,
+        type_value: str,
+        action_hint: str,
+    ) -> None:
+        """Post an AGENT_ACTION initiative to the task queue (v0.13.0).
+
+        Destructive actions are posted as BLOCKED awaiting owner approval.
+        Non-destructive actions are posted as QUEUED for immediate claiming.
+        """
+        task_queue = getattr(self._registry, "task_queue", None)
+        if task_queue is None:
+            logger.warning("No task_queue available, skipping agent_action: %s", initiative_id)
+            return
+
+        # Destructive action classification
+        DESTRUCTIVE_HINTS = {
+            "agent_git_push", "agent_git_commit", "agent_service_restart",
+            "agent_file_delete", "agent_deploy",
+        }
+        is_destructive = any(
+            action_hint.startswith(h) for h in DESTRUCTIVE_HINTS
+        )
+        auto_approve = os.environ.get("COLONY_AGENT_AUTO_APPROVE", "false").lower() == "true"
+
+        job_payload = {
+            "initiative_id": initiative_id,
+            "action_hint": action_hint,
+            "description": getattr(initiative, "description", ""),
+            "entity_id": getattr(initiative, "entity_id", None),
+            "destructive": is_destructive,
+            "auto_approve": auto_approve,
+            "context": self._build_initiative_context(initiative, type_value),
+        }
+
+        try:
+            job_result = await task_queue.submit(
+                task_type="agent_action",
+                priority="high" if getattr(initiative, "priority", 0.5) > 0.7 else "normal",
+                params=job_payload,
+                idempotency_key=f"agent_action:{action_hint}:{getattr(initiative, 'entity_id', 'global')}",
+            )
+            job_id = job_result.get("id")
+            logger.info("Posted agent_action job %s for initiative %s", job_id, initiative_id)
+
+            # Update initiative with job_id
+            store = getattr(self._registry, "initiative_store", None)
+            if store and job_id:
+                try:
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        None,
+                        store.update,
+                        initiative_id,
+                        {"job_id": job_id, "status": "assigned"},
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to link initiative %s to job %s: %s", initiative_id, job_id, exc)
+
+            # If destructive and not auto-approved, block the job
+            if is_destructive and not auto_approve and job_id:
+                queue_mgr = task_queue.queue
+                from colony_sidecar.task_queue.models import JobStatus
+                await queue_mgr.update_job_status(
+                    job_id,
+                    JobStatus.BLOCKED,
+                    reason="awaiting_owner_approval",
+                    tags={"blocked_reason": "awaiting_owner_approval"},
+                )
+                logger.info("Blocked destructive job %s awaiting owner approval", job_id)
+                # Push approval request to delivery
+                delivery = self._registry.delivery
+                if delivery and hasattr(delivery, "push_initiative"):
+                    await delivery.push_initiative({
+                        "id": initiative_id,
+                        "type": "agent_action",
+                        "priority": getattr(initiative, "priority", 0.5),
+                        "title": f"Approval required: {getattr(initiative, 'description', '')[:60]}",
+                        "description": getattr(initiative, "description", ""),
+                        "rationale": getattr(initiative, "rationale", ""),
+                        "suggested_action": "colony_approve_initiative",
+                        "entity_id": getattr(initiative, "entity_id", None),
+                        "channel_hint": "dm",
+                        "context": {"job_id": job_id, "action_hint": action_hint},
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+
+            self.stats.actions_executed += 1
+            self.stats.actions_this_hour += 1
+        except Exception as exc:
+            logger.error("Failed to post agent_action to queue: %s", exc)
 
     async def _feed_pending_tasks(self, engine: Any) -> None:
         """Feed active goals as pending tasks, respecting cooldown.
