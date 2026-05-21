@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.12.0 (2026-05-21)
+
+Agent work queue v0.13.0 — distributed job scheduling for autonomous agent execution.
+
+### Added
+- **Task Queue API** (`/v1/host/queue`) — 14 endpoints for job lifecycle:
+  - Worker registration, heartbeat, deregistration
+  - Job post, claim, start, complete, fail, release, heartbeat
+  - Pending/completed listing, queue stats, digest generation
+- **SQLite-backed persistent queue** with WAL mode, atomic claims, retry logic, job audit trail
+- **Aeva cron worker** (`scripts/aeva_worker.py`) — claims and executes `AGENT_ACTION` jobs every 5 min
+  - Safety: skips destructive actions when owner is in active session
+  - Handles `agent_check_repo_status`, `agent_investigate_subsystem`, `agent_cleanup_orphans`
+  - Graceful shutdown with SIGTERM/SIGINT deregistration
+- **Digest script** (`scripts/digest.py`) — generates Colony Digest initiative from completed/failed jobs
+- **Loop integration** — `_post_agent_action_to_queue()` routes `AGENT_ACTION` initiatives to task queue instead of delivery bridge
+  - Destructive actions posted as `BLOCKED` with approval fallback to delivery bridge
+  - Non-destructive actions posted as `QUEUED` for immediate worker claiming
+- **Initiative engine** — `_generate_agent_action_initiatives()` with 4h cooldown and dedup keys
+- **Provider schema** — `colony_claim_task` tool exposed to LLM with `worker_id` and `capabilities` params
+- **`job_id` field** on Initiative model + store updatable column for task-queue linkage
+
+### Fixed
+- **11 runtime bugs** from spec review:
+  - Digest payload used invalid `initiative_type` and float priority
+  - Worker registration sent dict for capabilities instead of `List[str]`
+  - Worker claim used `"worker_id"` key instead of `"node_id"`
+  - Worker crashed on empty queue (null JSON response)
+  - `worker_heartbeat` called non-existent `queue.worker_heartbeat()`
+  - `queue_stats` called non-existent `queue.stats()`
+  - `get_digest_jobs` referenced non-existent `completed_at` SQL column
+  - Missing `/start` and `/release` endpoints
+  - `colony_claim_task` tool schema had empty properties
+  - Skipped jobs stayed `CLAIMED` instead of returning to `QUEUED`
+  - `repo_status` initiative generated every tick (no cooldown)
+
 ## 0.11.1 (2026-05-17)
 
 Self-initiative execution fix and new initiative types.
