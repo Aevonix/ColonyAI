@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -344,4 +344,36 @@ async def queue_stats() -> Dict[str, Any]:
         "total_workers": stats.total_workers,
         "available_workers": stats.available_workers,
         "last_user_message_at": _load_last_user_message_at(),
+    }
+
+
+@router.get("/digest")
+async def queue_digest(
+    hours: int = Query(6, ge=1, le=48),
+) -> Dict[str, Any]:
+    """Return a digest of completed and failed jobs in the last N hours."""
+    queue = _get_queue()
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    digest = await queue.queue.get_digest_jobs(since)
+
+    completed_lines = []
+    for job in digest.get("completed", []):
+        payload = job.get("payload", {})
+        desc = payload.get("description", job["job_id"])
+        completed_lines.append(f"✓ {desc}")
+
+    failed_lines = []
+    for job in digest.get("failed", []):
+        payload = job.get("payload", {})
+        desc = payload.get("description", job["job_id"])
+        err = job.get("error", "unknown error")
+        failed_lines.append(f"⚠ {desc} — {err}")
+
+    return {
+        "period_hours": hours,
+        "since": since.isoformat(),
+        "completed_count": len(digest.get("completed", [])),
+        "failed_count": len(digest.get("failed", [])),
+        "completed": completed_lines,
+        "failed": failed_lines,
     }
