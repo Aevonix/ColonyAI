@@ -261,7 +261,19 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
         ),
         "parameters": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "worker_id": {
+                    "type": "string",
+                    "description": "Optional worker node ID (default: aeva-worker)",
+                    "default": "aeva-worker",
+                },
+                "capabilities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional capability tags (default: [agent_action])",
+                    "default": ["agent_action"],
+                },
+            },
             "required": [],
         },
     },

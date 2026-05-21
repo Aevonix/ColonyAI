@@ -60,9 +60,10 @@ def main() -> int:
     # Push to delivery bridge via existing initiative endpoint
     try:
         payload = {
-            "initiative_type": "digest",
+            "initiative_type": "PROACTIVE_MESSAGE",
+            "title": "Colony Digest",
             "description": message,
-            "priority": 0.5,
+            "priority": 50,
             "dedup_key": f"digest:{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H')}",
         }
         push_resp = httpx.post(

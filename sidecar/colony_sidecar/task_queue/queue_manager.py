@@ -521,6 +521,23 @@ class QueueManager:
             )
         await self._db.commit()
 
+    async def release_job(self, job_id: str) -> None:
+        """Transition CLAIMED/RUNNING → QUEUED, clearing the worker claim."""
+        assert self._db is not None
+        await self._db.execute(
+            """
+            UPDATE jobs
+            SET status = ?, claimed_by = NULL, claimed_at = NULL
+            WHERE job_id = ? AND status IN (?, ?)
+            """,
+            (JobStatus.QUEUED.value, job_id, JobStatus.CLAIMED.value, JobStatus.RUNNING.value),
+        )
+        await self._audit(
+            job_id, JobStatus.CLAIMED.value, JobStatus.QUEUED.value,
+            reason="released_by_worker",
+        )
+        await self._db.commit()
+
     async def update_job_status(
         self,
         job_id: str,
@@ -811,47 +828,58 @@ class QueueManager:
         assert self._db is not None
         since_iso = since.isoformat()
 
-        # Completed jobs
+        # Completed jobs — completed_at is stored inside the result JSON blob,
+        # not as a table column, so we filter by posted_at and parse result.
         cur = await self._db.execute(
             """
-            SELECT job_id, job_type, payload, result, completed_at, tags
+            SELECT job_id, job_type, payload, result, tags, posted_at
             FROM jobs
             WHERE status = 'completed'
-              AND (completed_at > ? OR posted_at > ?)
-            ORDER BY completed_at DESC
+              AND posted_at > ?
+            ORDER BY posted_at DESC
             LIMIT ?
             """,
-            (since_iso, since_iso, limit),
+            (since_iso, limit),
         )
         completed = []
         for row in await cur.fetchall():
             result_blob = row["result"]
             result_dict = {}
+            completed_at = None
             if result_blob:
                 try:
                     result_dict = json.loads(result_blob)
+                    completed_at = result_dict.get("completed_at")
                 except Exception:
+                    pass
+            # Skip if result JSON says completed before *since*
+            if completed_at:
+                try:
+                    ca_dt = datetime.fromisoformat(completed_at)
+                    if ca_dt < since:
+                        continue
+                except (ValueError, TypeError):
                     pass
             completed.append({
                 "job_id": row["job_id"],
                 "job_type": row["job_type"],
                 "payload": json.loads(row["payload"]) if row["payload"] else {},
                 "result": result_dict,
-                "completed_at": row["completed_at"],
+                "completed_at": completed_at,
                 "tags": json.loads(row["tags"]) if row["tags"] else {},
             })
 
         # Failed / abandoned jobs
         cur = await self._db.execute(
             """
-            SELECT job_id, job_type, payload, result, tags
+            SELECT job_id, job_type, payload, result, tags, posted_at
             FROM jobs
             WHERE status IN ('failed', 'abandoned')
-              AND (claimed_at > ? OR posted_at > ?)
-            ORDER BY claimed_at DESC
+              AND posted_at > ?
+            ORDER BY posted_at DESC
             LIMIT ?
             """,
-            (since_iso, since_iso, limit),
+            (since_iso, limit),
         )
         failed = []
         for row in await cur.fetchall():
