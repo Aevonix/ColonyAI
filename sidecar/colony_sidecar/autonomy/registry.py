@@ -188,3 +188,9 @@ class SubsystemRegistry:
         """Get the WebSocketManager for remote agent connections."""
         from colony_sidecar.api.routers.host import _websocket_manager
         return _websocket_manager
+
+    @property
+    def task_queue(self) -> Any:
+        """Get the TaskQueueManager for distributed job scheduling."""
+        from colony_sidecar.api.routers.host import _task_queue
+        return _task_queue

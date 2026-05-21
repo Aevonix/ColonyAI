@@ -1359,6 +1359,24 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.warning("context_assemble goals failed: %s", exc)
 
+    # --- Pending Initiatives (v0.13.0) ---
+    if body.include_initiatives and _initiative_store is not None:
+        try:
+            pending = _initiative_store.list(status=["pending"], limit=10)
+            if pending:
+                body_text = "\n".join(
+                    f"• [{i.type}] {i.description} (priority: {i.priority:.0%})"
+                    for i in pending
+                )
+                sections.append(ContextSection(
+                    id="colony-initiatives",
+                    title="Pending Initiatives",
+                    body=body_text,
+                    priority=50,
+                ))
+        except Exception as exc:
+            logger.warning("context_assemble initiatives failed: %s", exc)
+
     # --- Contact Briefing ---
     if _briefings_engine is not None and body.context and body.context.contact_id:
         try:
@@ -1682,6 +1700,14 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
             ))
     except Exception:
         logger.debug("cognition trigger from turn_sync failed", exc_info=True)
+
+    # Track last user message for concurrent-session safety (v0.13.0)
+    if body.user_message is not None:
+        try:
+            from colony_sidecar.util.session_safety import save_last_user_message_at
+            save_last_user_message_at()
+        except Exception:
+            pass
 
     # ToM LLM extraction (best-effort, non-blocking)
     try:
@@ -5191,13 +5217,31 @@ async def respond_to_initiative(
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
+
+    # Update status based on action
+    status_map = {
+        "acknowledged": "acknowledged",
+        "dismissed": "cancelled",
+        "snoozed": "pending",
+        "approved": "acknowledged",
+        "actioned": "completed",
+    }
+    new_status = status_map.get(action)
+    if new_status:
+        _initiative_store.update(initiative_id, status=new_status)
+
+    # If acknowledged, also clear from delivery bridge
+    if action == "acknowledged" and _delivery_bridge is not None:
+        if hasattr(_delivery_bridge, "acknowledge_delivery"):
+            _delivery_bridge.acknowledge_delivery(initiative_id)
+
     _initiative_store.log_history(
         initiative_id,
         action=f"llm_{action}",
         agent_id="openclaw",
         details=details or {},
     )
-    return {"success": True, "initiative_id": initiative_id}
+    return {"success": True, "initiative_id": initiative_id, "status": new_status or initiative.status}
 
 
 # --- WebSocket Endpoint ---

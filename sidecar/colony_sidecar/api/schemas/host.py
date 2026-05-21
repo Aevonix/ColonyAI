@@ -146,6 +146,7 @@ class ContextAssembleRequest(BaseModel):
     incoming_message: HostMessage
     available_tools: Optional[List[str]] = None
     citations_mode: Optional[Literal["off", "inline", "appendix"]] = None
+    include_initiatives: Optional[bool] = None  # v0.13.0
 
 
 class ContextSection(BaseModel):

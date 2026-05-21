@@ -91,6 +91,9 @@ class InitiativeType(str, Enum):
     KNOWLEDGE_ACQUISITION = "knowledge_acquisition"
     BEHAVIORAL_CORRECTION = "behavioral_correction"
 
+    # Agent-actionable initiatives (v0.13.0)
+    AGENT_ACTION = "agent_action"
+
 
 @dataclass
 class Initiative:
@@ -1045,6 +1048,9 @@ class InitiativeEngine:
             generators.append(self._generate_knowledge_acquisition_initiatives())
         if not types or InitiativeType.BEHAVIORAL_CORRECTION in types:
             generators.append(self._generate_behavioral_correction_initiatives())
+        # Agent-action generators (v0.13.0)
+        if not types or InitiativeType.AGENT_ACTION in types:
+            generators.append(self._generate_agent_action_initiatives())
         
         initiatives: List[Initiative] = []
         if generators:
@@ -1065,31 +1071,35 @@ class InitiativeEngine:
             init_type = getattr(init, "type", InitiativeType.FOLLOW_UP)
             type_val = init_type.value if hasattr(init_type, "value") else str(init_type)
 
-            # Use goal_store cooldown for task-type initiatives
-            if self._goal_store and entity_id and type_val == "follow_up":
+            # Use initiative_store cooldown for task-type initiatives
+            if self._store and entity_id and type_val == "follow_up":
                 try:
-                    recent = self._goal_store.list_recent(
-                        entity_type="initiative",
-                        entity_id=entity_id,
-                        hours=cooldown_tasks,
+                    cutoff = now - timedelta(hours=cooldown_tasks)
+                    recent = self._store.list(
+                        status=["pending", "assigned", "acknowledged"],
+                        type=type_val,
+                        created_after=cutoff,
+                        limit=1,
                     )
                     if recent:
                         continue  # Still in cooldown
-                except Exception:
-                    pass  # goal_store unavailable, skip cooldown check
+                except Exception as exc:
+                    logger.warning("Dedup cooldown check failed for follow_up: %s", exc)
             
-            # Use goal_store cooldown for contact-type initiatives
-            elif self._goal_store and entity_id and type_val == "relationship":
+            # Use initiative_store cooldown for contact-type initiatives
+            elif self._store and entity_id and type_val == "relationship":
                 try:
-                    recent = self._goal_store.list_recent(
-                        entity_type="initiative",
-                        entity_id=entity_id,
-                        hours=cooldown_contacts,
+                    cutoff = now - timedelta(hours=cooldown_contacts)
+                    recent = self._store.list(
+                        status=["pending", "assigned", "acknowledged"],
+                        type=type_val,
+                        created_after=cutoff,
+                        limit=1,
                     )
                     if recent:
                         continue  # Still in cooldown
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Dedup cooldown check failed for relationship: %s", exc)
             
             deduped.append(init)
 
@@ -1526,4 +1536,76 @@ class InitiativeEngine:
                     trigger_data={**pattern},
                 )
             )
+        return initiatives
+
+    async def _generate_agent_action_initiatives(self) -> List[Initiative]:
+        """Generate agent-actionable initiatives for autonomous execution (v0.13.0).
+
+        These initiatives are routed to the task queue instead of the delivery
+        bridge, and claimed by the Aeva cron worker.
+        """
+        initiatives: List[Initiative] = []
+
+        # 1. Repo status check — generated at most once every 4 hours
+        now = datetime.now(timezone.utc)
+        last_repo_check = self._last_self_initiative_at.get("repo_status")
+        if last_repo_check and (now - last_repo_check) < timedelta(hours=4):
+            pass  # Still within cooldown
+        else:
+            self._last_self_initiative_at["repo_status"] = now
+            initiatives.append(
+                Initiative(
+                    id=f"repo-check-{_uuid_module.uuid4().hex[:8]}",
+                    type=InitiativeType.AGENT_ACTION,
+                    description="Check colony-work repo for uncommitted changes",
+                    priority=0.4,
+                    rationale="Periodic hygiene check to prevent stale work",
+                    action_hint="agent_check_repo_status",
+                    entity_id="colony-work",
+                    dedup_key="agent_action:agent_check_repo_status:colony-work",
+                    expires_at=now + timedelta(hours=4),
+                )
+            )
+
+        # 2. Health check initiatives from subsystem health context
+        for issue in self._context.get("subsystem_health", [])[:3]:
+            entity_id = issue.get("entity_id", "unknown")
+            name = issue.get("name", "Unknown")
+            status_val = issue.get("status", "unknown")
+            if status_val != "active":
+                initiatives.append(
+                    Initiative(
+                        id=f"agent-health-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                        type=InitiativeType.AGENT_ACTION,
+                        description=f"Investigate degraded subsystem: {name}",
+                        priority=min(1.0, 0.7 + (issue.get("error_rate", 0) or 0)),
+                        rationale=f"Subsystem {name} is {status_val}",
+                        action_hint="agent_investigate_subsystem",
+                        entity_id=entity_id,
+                        dedup_key=f"agent_action:agent_investigate_subsystem:{entity_id}",
+                        expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
+                        trigger_data={**issue},
+                    )
+                )
+
+        # 3. Data quality — auto-fixable issues
+        for issue in self._context.get("data_quality_issues", [])[:2]:
+            entity_id = issue.get("entity_id", "unknown")
+            entity_type = issue.get("entity_type", "unknown")
+            if entity_type == "orphan_nodes":
+                initiatives.append(
+                    Initiative(
+                        id=f"agent-dq-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                        type=InitiativeType.AGENT_ACTION,
+                        description=f"Clean up orphan nodes in {entity_id}",
+                        priority=0.5,
+                        rationale="Auto-fixable data quality issue",
+                        action_hint="agent_cleanup_orphans",
+                        entity_id=entity_id,
+                        dedup_key=f"agent_action:agent_cleanup_orphans:{entity_id}",
+                        expires_at=datetime.now(timezone.utc) + timedelta(hours=6),
+                        trigger_data={**issue},
+                    )
+                )
+
         return initiatives

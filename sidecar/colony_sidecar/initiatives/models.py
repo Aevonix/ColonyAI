@@ -103,6 +103,9 @@ class StoredInitiative:
     # === Preferred agent (hint) ===
     preferred_agent_id: Optional[str] = None
 
+    # === Task queue link (v0.13.0) ===
+    job_id: Optional[str] = None
+
     # === Stale/cleanup tracking ===
     stale_reason: Optional[str] = None
     recovery_reason: Optional[str] = None
@@ -193,6 +196,7 @@ class StoredInitiative:
             result=row.get("result"),
             result_metadata=result_metadata,
             preferred_agent_id=row.get("preferred_agent_id"),
+            job_id=row.get("job_id"),
             stale_reason=row.get("stale_reason"),
             recovery_reason=row.get("recovery_reason"),
         )
@@ -239,6 +243,7 @@ class StoredInitiative:
             "result": self.result,
             "result_metadata": self.result_metadata,
             "preferred_agent_id": self.preferred_agent_id,
+            "job_id": self.job_id,
             "stale_reason": self.stale_reason,
             "recovery_reason": self.recovery_reason,
         }
