@@ -800,6 +800,78 @@ class QueueManager:
         row = await cur.fetchone()
         return _job_from_row(row) if row else None
 
+    # -- v0.13.0 digest helpers ------------------------------------------------
+
+    async def get_digest_jobs(
+        self,
+        since: datetime,
+        limit: int = 50,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Return completed and failed jobs since *since* for digest generation."""
+        assert self._db is not None
+        since_iso = since.isoformat()
+
+        # Completed jobs
+        cur = await self._db.execute(
+            """
+            SELECT job_id, job_type, payload, result, completed_at, tags
+            FROM jobs
+            WHERE status = 'completed'
+              AND (completed_at > ? OR posted_at > ?)
+            ORDER BY completed_at DESC
+            LIMIT ?
+            """,
+            (since_iso, since_iso, limit),
+        )
+        completed = []
+        for row in await cur.fetchall():
+            result_blob = row["result"]
+            result_dict = {}
+            if result_blob:
+                try:
+                    result_dict = json.loads(result_blob)
+                except Exception:
+                    pass
+            completed.append({
+                "job_id": row["job_id"],
+                "job_type": row["job_type"],
+                "payload": json.loads(row["payload"]) if row["payload"] else {},
+                "result": result_dict,
+                "completed_at": row["completed_at"],
+                "tags": json.loads(row["tags"]) if row["tags"] else {},
+            })
+
+        # Failed / abandoned jobs
+        cur = await self._db.execute(
+            """
+            SELECT job_id, job_type, payload, result, tags
+            FROM jobs
+            WHERE status IN ('failed', 'abandoned')
+              AND (claimed_at > ? OR posted_at > ?)
+            ORDER BY claimed_at DESC
+            LIMIT ?
+            """,
+            (since_iso, since_iso, limit),
+        )
+        failed = []
+        for row in await cur.fetchall():
+            result_blob = row["result"]
+            error = ""
+            if result_blob:
+                try:
+                    error = json.loads(result_blob).get("error", "")
+                except Exception:
+                    pass
+            failed.append({
+                "job_id": row["job_id"],
+                "job_type": row["job_type"],
+                "payload": json.loads(row["payload"]) if row["payload"] else {},
+                "error": error,
+                "tags": json.loads(row["tags"]) if row["tags"] else {},
+            })
+
+        return {"completed": completed, "failed": failed}
+
     async def get_queued_jobs_sorted(self, now: datetime) -> List[Job]:
         """Return QUEUED jobs ordered by composite priority key."""
         assert self._db is not None
