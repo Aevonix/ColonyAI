@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
@@ -45,11 +46,45 @@ READ_HINTS = {
     "agent_cleanup_orphans",
 }
 
+
+# ---------------------------------------------------------------------------
+# Graceful shutdown
+# ---------------------------------------------------------------------------
+
+_registered = False
+
+def _deregister() -> None:
+    global _registered
+    if not _registered:
+        return
+    try:
+        resp = httpx.post(
+            f"{COLONY_URL}/v1/host/queue/workers/{WORKER_ID}/deregister",
+            headers=_HEADERS,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.info("Deregistered worker %s", WORKER_ID)
+    except Exception as exc:
+        logger.warning("Worker deregister failed: %s", exc)
+    _registered = False
+
+
+def _handle_signal(signum: int, _frame: Any) -> None:
+    logger.info("Received signal %d, shutting down gracefully", signum)
+    _deregister()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, _handle_signal)
+signal.signal(signal.SIGINT, _handle_signal)
+
 # ---------------------------------------------------------------------------
 # Worker registration
 # ---------------------------------------------------------------------------
 
 def _register() -> bool:
+    global _registered
     try:
         resp = httpx.post(
             f"{COLONY_URL}/v1/host/queue/workers/register",
@@ -63,6 +98,7 @@ def _register() -> bool:
             timeout=10,
         )
         resp.raise_for_status()
+        _registered = True
         logger.info("Registered worker %s", WORKER_ID)
         return True
     except Exception as exc:
@@ -244,50 +280,53 @@ def _fail_job(job_id: str, error: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    if not _heartbeat():
-        if not _register():
-            logger.error("Cannot register worker; aborting")
-            return 1
+    try:
+        if not _heartbeat():
+            if not _register():
+                logger.error("Cannot register worker; aborting")
+                return 1
 
-    job = _claim_job()
-    if not job:
-        logger.info("No jobs available")
+        job = _claim_job()
+        if not job:
+            logger.info("No jobs available")
+            return 0
+
+        job_id = job["job_id"]
+        logger.info("Claimed job %s", job_id)
+
+        # Mark as RUNNING
+        try:
+            httpx.post(
+                f"{COLONY_URL}/v1/host/queue/jobs/{job_id}/start",
+                headers=_HEADERS,
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+        # Send heartbeat to mark progress
+        try:
+            httpx.post(
+                f"{COLONY_URL}/v1/host/queue/jobs/{job_id}/heartbeat",
+                headers=_HEADERS,
+                json={"progress": 0.0},
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+        result = _execute_job(job)
+
+        if result.get("status") == "completed":
+            _complete_job(job_id, result)
+        elif result.get("status") == "skipped":
+            _release_job(job_id)
+        else:
+            _fail_job(job_id, result.get("error", "execution failed"))
+
         return 0
-
-    job_id = job["job_id"]
-    logger.info("Claimed job %s", job_id)
-
-    # Mark as RUNNING
-    try:
-        httpx.post(
-            f"{COLONY_URL}/v1/host/queue/jobs/{job_id}/start",
-            headers=_HEADERS,
-            timeout=10,
-        )
-    except Exception:
-        pass
-
-    # Send heartbeat to mark progress
-    try:
-        httpx.post(
-            f"{COLONY_URL}/v1/host/queue/jobs/{job_id}/heartbeat",
-            headers=_HEADERS,
-            json={"progress": 0.0},
-            timeout=10,
-        )
-    except Exception:
-        pass
-
-    result = _execute_job(job)
-
-    if result.get("status") == "completed":
-        _complete_job(job_id, result)
-    elif result.get("status") == "skipped":
-        _release_job(job_id)
-    else:
-        _fail_job(job_id, result.get("error", "execution failed"))
-
-    return 0
+    finally:
+        _deregister()
 
 
 if __name__ == "__main__":

@@ -180,7 +180,7 @@ async def deregister_worker(node_id: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.post("/jobs")
-async def post_job(body: JobPostRequest) -> Dict[str, Any]:
+async def create_job(body: JobPostRequest) -> Dict[str, Any]:
     """Post a new job to the queue."""
     queue = _get_queue()
     job_type = JobType(body.job_type) if body.job_type else JobType.AGENT_ACTION
@@ -352,7 +352,7 @@ async def queue_stats() -> Dict[str, Any]:
 
 
 @router.get("/digest")
-async def queue_digest(
+async def get_digest(
     hours: int = Query(6, ge=1, le=48),
 ) -> Dict[str, Any]:
     """Return a digest of completed and failed jobs in the last N hours."""
