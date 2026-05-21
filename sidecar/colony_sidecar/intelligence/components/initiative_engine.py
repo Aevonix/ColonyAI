@@ -1065,31 +1065,35 @@ class InitiativeEngine:
             init_type = getattr(init, "type", InitiativeType.FOLLOW_UP)
             type_val = init_type.value if hasattr(init_type, "value") else str(init_type)
 
-            # Use goal_store cooldown for task-type initiatives
-            if self._goal_store and entity_id and type_val == "follow_up":
+            # Use initiative_store cooldown for task-type initiatives
+            if self._store and entity_id and type_val == "follow_up":
                 try:
-                    recent = self._goal_store.list_recent(
-                        entity_type="initiative",
-                        entity_id=entity_id,
-                        hours=cooldown_tasks,
+                    cutoff = now - timedelta(hours=cooldown_tasks)
+                    recent = self._store.list(
+                        status=["pending", "assigned", "acknowledged"],
+                        type=type_val,
+                        created_after=cutoff,
+                        limit=1,
                     )
                     if recent:
                         continue  # Still in cooldown
-                except Exception:
-                    pass  # goal_store unavailable, skip cooldown check
+                except Exception as exc:
+                    logger.warning("Dedup cooldown check failed for follow_up: %s", exc)
             
-            # Use goal_store cooldown for contact-type initiatives
-            elif self._goal_store and entity_id and type_val == "relationship":
+            # Use initiative_store cooldown for contact-type initiatives
+            elif self._store and entity_id and type_val == "relationship":
                 try:
-                    recent = self._goal_store.list_recent(
-                        entity_type="initiative",
-                        entity_id=entity_id,
-                        hours=cooldown_contacts,
+                    cutoff = now - timedelta(hours=cooldown_contacts)
+                    recent = self._store.list(
+                        status=["pending", "assigned", "acknowledged"],
+                        type=type_val,
+                        created_after=cutoff,
+                        limit=1,
                     )
                     if recent:
                         continue  # Still in cooldown
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Dedup cooldown check failed for relationship: %s", exc)
             
             deduped.append(init)
 
