@@ -120,7 +120,7 @@ def _claim_job() -> Optional[Dict[str, Any]]:
         )
         resp.raise_for_status()
         data = resp.json()
-        if data.get("job_id"):
+        if data and data.get("job_id"):
             return data
     except Exception as exc:
         logger.warning("Claim job failed: %s", exc)
