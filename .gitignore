@@ -13,3 +13,6 @@ dist/
 sidecar/*.db
 sidecar/events/
 sidecar/build/
+events/
+sidecar.log
+sidecar.pid

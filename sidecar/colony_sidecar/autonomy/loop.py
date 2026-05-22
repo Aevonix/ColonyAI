@@ -828,7 +828,7 @@ class AutonomyLoop:
             return
 
         # Host contact ID to skip
-        host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "Marc Seal")
+        host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "owner")
 
         try:
             states = affect.get_all_states() if hasattr(affect, "get_all_states") else []

@@ -5332,16 +5332,16 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
     now = datetime.now(timezone.utc)
     outreach_at = now.isoformat()
     if _telemetry is not None:
-        await _telemetry.touch("last_aeva_outreach_at")
-        if _telemetry.last_aeva_outreach_at is not None:
-            outreach_at = _telemetry.last_aeva_outreach_at.isoformat()
+        await _telemetry.touch("last_agent_outreach_at")
+        if _telemetry.last_agent_outreach_at is not None:
+            outreach_at = _telemetry.last_agent_outreach_at.isoformat()
     logger.info(
         "Aeva outreach recorded: agent=%s channel=%s reason=%s",
         body.agent_id, body.channel, body.reason,
     )
     return RecordOutreachResponse(
         recorded_at=now.isoformat(),
-        last_aeva_outreach_at=outreach_at,
+        last_agent_outreach_at=outreach_at,
     )
 
 

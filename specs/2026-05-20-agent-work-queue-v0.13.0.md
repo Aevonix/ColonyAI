@@ -96,7 +96,7 @@ The loop calls `delivery.push_initiative(payload)` directly. The bridge keeps it
 **Location:** `sidecar/colony_sidecar/autonomy/loop.py:684`
 
 ```python
-host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "Marc Seal")
+host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "owner")
 ```
 
 **Fix:** Remove the default. If the env var is unset, log a warning and skip the feed.
@@ -344,10 +344,10 @@ Colony's mesh model already defines:
 - `NodeRole.REGENT` — Backup brain, can assume sovereignty if needed
 - `NodeRole.VASSAL` — Worker node, handles delegated tasks
 
-**Aeva's role:** SOVEREIGN — She is the primary external agent that Marc interacts with. She can:
+**The owner's role:** SOVEREIGN — She is the primary external agent that the owner interacts with. She can:
 - Claim and execute jobs from the task queue
 - Post new jobs back to Colony for other workers
-- Escalate to Marc when decisions are needed
+- Escalate to the owner when decisions are needed
 
 **Future workers:** Additional VASSAL nodes can register with specific capabilities:
 - A coding specialist node (claims `JobType.CUSTOM` with `capabilities={"code", "review"}`)
@@ -410,7 +410,7 @@ class JobType(str, Enum):
 
 ### 10.3 Cross-Node Trust — Bearer Auth Now, Mesh Crypto Later
 
-**Phase 1 (now):** Use the existing Bearer token auth for queue API endpoints. All nodes in Marc's trusted local mesh share the same `COLONY_API_KEY`. Simple, works today, no crypto changes needed.
+**Phase 1 (now):** Use the existing Bearer token auth for queue API endpoints. All nodes in the trusted local mesh share the same `COLONY_API_KEY`. Simple, works today, no crypto changes needed.
 
 **Phase 2 (future):** When VASSAL workers are added and the mesh crypto is hardened (real keypairs instead of `f"sig-{uuid}"` placeholders), migrate to request signing:
 - Each worker generates an Ed25519 keypair

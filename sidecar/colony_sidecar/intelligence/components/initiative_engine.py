@@ -450,7 +450,7 @@ class InitiativeEngine:
             return
 
         import os
-        host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "Marc Seal")
+        host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "owner")
 
         query = """
             MATCH (p:Person)
