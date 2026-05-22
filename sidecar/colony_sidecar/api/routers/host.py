@@ -3310,6 +3310,28 @@ def set_session_report_store(store) -> None:
     _session_report_store = store
 
 
+def _map_initiative_to_schema(i) -> AgentSnapshotInitiative:
+    """Map an Initiative model to the AgentSnapshotInitiative schema."""
+    return AgentSnapshotInitiative(
+        id=i.id,
+        type=i.type,
+        description=i.description,
+        priority=i.priority,
+        status=i.status,
+        rationale=i.rationale,
+        action_hint=i.action_hint,
+        entity_id=i.entity_id,
+        dedup_key=i.dedup_key,
+        created_at=i.created_at.isoformat() if i.created_at else "",
+        expires_at=i.expires_at.isoformat() if i.expires_at else None,
+        assigned_agent_id=i.assigned_agent_id,
+        acknowledged_at=i.acknowledged_at.isoformat() if i.acknowledged_at else None,
+        completed_at=i.completed_at.isoformat() if i.completed_at else None,
+        failed_at=i.failed_at.isoformat() if i.failed_at else None,
+        failed_reason=i.failed_reason,
+    )
+
+
 @router.post("/secrets/list", response_model=SecretListResponse)
 async def secrets_list(body: SecretListRequest) -> SecretListResponse:
     if _secrets_manager is None:
@@ -5303,34 +5325,14 @@ async def agent_snapshot() -> AgentSnapshotResponse:
     if tick_age and tick_age > 30:
         flags.append("stale_autonomy_loop")
 
-    def _map_initiative(i):
-        return AgentSnapshotInitiative(
-            id=i.id,
-            type=i.type,
-            description=i.description,
-            priority=i.priority,
-            status=i.status,
-            rationale=i.rationale,
-            action_hint=i.action_hint,
-            entity_id=i.entity_id,
-            dedup_key=i.dedup_key,
-            created_at=i.created_at.isoformat() if i.created_at else "",
-            expires_at=i.expires_at.isoformat() if i.expires_at else None,
-            assigned_agent_id=i.assigned_agent_id,
-            acknowledged_at=i.acknowledged_at.isoformat() if i.acknowledged_at else None,
-            completed_at=i.completed_at.isoformat() if i.completed_at else None,
-            failed_at=i.failed_at.isoformat() if i.failed_at else None,
-            failed_reason=i.failed_reason,
-        )
-
     return AgentSnapshotResponse(
         timestamp=now.isoformat(),
         telemetry=telemetry_dict,
-        pending_initiatives=[_map_initiative(i) for i in pending],
+        pending_initiatives=[_map_initiative_to_schema(i) for i in pending],
         pending_count=len(pending),
         assigned_count=_initiative_store.count(status=["assigned"]) if _initiative_store else 0,
         failed_count=len(failed),
-        recently_completed=[_map_initiative(i) for i in recent],
+        recently_completed=[_map_initiative_to_schema(i) for i in recent],
         autonomy_mode=_autonomy_loop.config.mode.value if _autonomy_loop else "unknown",
         autonomy_running=_autonomy_loop.is_running if _autonomy_loop else False,
         last_tick_age_minutes=tick_age,
@@ -5365,12 +5367,20 @@ async def session_report(body: SessionReportRequest) -> SessionReportResponse:
 
     from colony_sidecar.sessions.reports import SessionReport
 
+    # Parse ISO datetimes, ensuring timezone awareness
+    def _parse_iso(iso_str: str) -> datetime:
+        s = iso_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
     report = SessionReport(
         report_id=str(uuid.uuid4()),
         session_id=body.session_id,
         contact_id=body.contact_id,
-        started_at=datetime.fromisoformat(body.started_at.replace("Z", "+00:00")),
-        ended_at=datetime.fromisoformat(body.ended_at.replace("Z", "+00:00")) if body.ended_at else None,
+        started_at=_parse_iso(body.started_at),
+        ended_at=_parse_iso(body.ended_at) if body.ended_at else None,
         summary=body.summary,
         topics=body.topics,
         resolutions=body.resolutions,
@@ -5385,8 +5395,8 @@ async def session_report(body: SessionReportRequest) -> SessionReportResponse:
 @router.get("/context-digest", response_model=ContextDigestResponse)
 async def context_digest(
     contact_id: Optional[str] = None,
-    hours: int = 24,
-    initiative_limit: int = 10,
+    hours: int = Query(24, ge=1, le=168),
+    initiative_limit: int = Query(10, ge=1, le=100),
 ) -> ContextDigestResponse:
     """Return a comprehensive context digest for agent session boot.
 
@@ -5438,26 +5448,6 @@ async def context_digest(
         }
 
     # Map initiatives (module-level helper extracted from agent-snapshot)
-    def _map_initiative(i):
-        return AgentSnapshotInitiative(
-            id=i.id,
-            type=i.type,
-            description=i.description,
-            priority=i.priority,
-            status=i.status,
-            rationale=i.rationale,
-            action_hint=i.action_hint,
-            entity_id=i.entity_id,
-            dedup_key=i.dedup_key,
-            created_at=i.created_at.isoformat() if i.created_at else "",
-            expires_at=i.expires_at.isoformat() if i.expires_at else None,
-            assigned_agent_id=i.assigned_agent_id,
-            acknowledged_at=i.acknowledged_at.isoformat() if i.acknowledged_at else None,
-            completed_at=i.completed_at.isoformat() if i.completed_at else None,
-            failed_at=i.failed_at.isoformat() if i.failed_at else None,
-            failed_reason=i.failed_reason,
-        )
-
     system_state = AgentSnapshotSystemState(
         autonomy_running=_autonomy_loop.is_running if _autonomy_loop else False,
         mode=_autonomy_loop.config.mode.value if _autonomy_loop else "unknown",
@@ -5470,7 +5460,7 @@ async def context_digest(
         generated_at=now.isoformat(),
         contact_id=contact_id,
         session_reports=session_reports,
-        pending_initiatives=[_map_initiative(i) for i in pending],
+        pending_initiatives=[_map_initiative_to_schema(i) for i in pending],
         system_state=system_state,
         last_outreach=last_outreach,
     )
