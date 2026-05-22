@@ -1425,3 +1425,49 @@ class InitiativeDelegateRequest(BaseModel):
 
 class InitiativePriorityRequest(BaseModel):
     priority: int = Field(ge=0, le=100)
+
+
+# --- Agent Snapshot ---------------------------------------------------------
+
+class AgentSnapshotInitiative(BaseModel):
+    id: str
+    type: str
+    description: str
+    priority: float
+    status: str
+    rationale: Optional[str] = None
+    action_hint: Optional[str] = None
+    entity_id: Optional[str] = None
+    dedup_key: Optional[str] = None
+    created_at: str
+    expires_at: Optional[str] = None
+    assigned_agent_id: Optional[str] = None
+    acknowledged_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    failed_at: Optional[str] = None
+    failed_reason: Optional[str] = None
+
+
+class AgentSnapshotResponse(BaseModel):
+    timestamp: str
+    telemetry: Dict[str, Any]
+    pending_initiatives: List[AgentSnapshotInitiative]
+    pending_count: int
+    assigned_count: int
+    failed_count: int
+    recently_completed: List[AgentSnapshotInitiative]
+    autonomy_mode: str
+    autonomy_running: bool
+    last_tick_age_minutes: Optional[float] = None
+    flags: List[str]
+
+
+class RecordOutreachRequest(BaseModel):
+    agent_id: str = "aeva"
+    channel: str = "whatsapp"
+    reason: Optional[str] = None
+
+
+class RecordOutreachResponse(BaseModel):
+    recorded_at: str
+    last_aeva_outreach_at: str
