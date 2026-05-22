@@ -130,6 +130,11 @@ class ScheduleStore:
             )
             return cursor.rowcount > 0
 
+    def delete(self, schedule_id: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM schedules WHERE id=?", (schedule_id,))
+            return cursor.rowcount > 0
+
     def _row_to_schedule(self, row: sqlite3.Row) -> TaskSchedule:
         return TaskSchedule(
             id=row["id"],
@@ -213,7 +218,8 @@ class AutonomyScheduler:
         for task in due:
             callback = self._callbacks.get(task.callback_name)
             if not callback:
-                logger.warning("No callback registered for schedule '%s'", task.callback_name)
+                logger.info("Removing stale schedule '%s' (no callback registered)", task.callback_name)
+                self._store.delete(task.id)
                 continue
 
             try:
