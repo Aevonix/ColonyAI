@@ -277,8 +277,9 @@ class TestContextDigestEndpoint:
 
         # Now fetch digest (note: + must be URL-encoded as %2B in query params)
         from urllib.parse import quote
+        encoded = quote(payload["contact_id"], safe="")
         resp = client.get(
-            f"/v1/host/context-digest?contact_id={quote(payload['contact_id'], safe='')}&hours=24"
+            f"/v1/host/context-digest?contact_id={encoded}&hours=24"
         )
         assert resp.status_code == 200
         data = resp.json()

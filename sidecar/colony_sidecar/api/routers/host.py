@@ -7,7 +7,6 @@ future shim) to mount Colony's intelligence as a plugin.
 from __future__ import annotations
 
 import asyncio
-import collections
 import hmac
 import json
 import logging
@@ -153,7 +152,6 @@ from colony_sidecar.api.schemas.host import (
     WorldEntityCreateRequest,
     WorldEntityUpdateRequest,
     WorldEntityDetailResponse,
-    WorldEntityListResponse,
     WorldRelationshipCreateRequest,
     WorldRelationshipUpdateRequest,
     WorldRelationshipResponse,
@@ -425,7 +423,6 @@ async def configure_host(body: HostConfigureRequest) -> HostConfigureResponse:
         # Persist config for restarts
         try:
             import json
-            from pathlib import Path
             config_path = get_state_dir() / ".colony-llm-config.json"
             config_path.write_text(json.dumps(body.llm, indent=2))
             logger.info("LLM config persisted to %s", config_path)
@@ -454,7 +451,6 @@ async def list_models() -> ModelListResponse:
     """
     # Load persisted host config to know the current provider/base_url
     from colony_sidecar.router.tiers import discover_local_models
-    import json
 
     config_path = get_state_dir() / ".colony-llm-config.json"
     provider = ""
@@ -1641,7 +1637,6 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
         try:
             from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled
             if _cognition_enabled():
-                import asyncio as _aio
                 content = ""
                 if incoming and incoming.content:
                     content = incoming.content[:500]
@@ -1699,7 +1694,6 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     try:
         from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled
         if _cognition_enabled():
-            import asyncio
             _spawn_task(trigger_cognition(
                 trigger_type="turn_sync",
                 context={
@@ -1723,7 +1717,6 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # ToM LLM extraction (best-effort, non-blocking)
     try:
         if _tom_extractor is not None and _affect_store is not None and _facts_store is not None:
-            import asyncio
             _spawn_task(_run_tom_extraction(
                 conversation_text=body.summary or "",
                 contact_id=body.context.contact_id,
@@ -2331,7 +2324,7 @@ async def start_research(body: ResearchStartRequest) -> ResearchRunResponse:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
         depth_map = {"quick": 1, "standard": 3, "deep": 5}
-        max_stages = depth_map.get(body.depth or "standard", 3)
+        depth_map.get(body.depth or "standard", 3)
         run = await _research_pipeline.run(goal=body.topic, metadata={"depth": body.depth, "person_id": body.person_id})
         return ResearchRunResponse(
             run_id=run.id,
@@ -4249,11 +4242,11 @@ async def extract_tom(body: TomExtractRequest) -> TomExtractResponse:
 @router.post("/seed", response_model=SeedResponse)
 async def seed_self_knowledge_endpoint(force: bool = Query(False, description="Force re-seeding even if already seeded")) -> SeedResponse:
     """Seed Colony with self-knowledge via API.
-    
+
     This endpoint triggers the self-knowledge seeding process that populates
     Colony's memory, world model, and skills registry with deep understanding
     of its own architecture and capabilities.
-    
+
     Args:
         force: If True, re-seed even if already seeded (updates existing)
     """
@@ -4281,7 +4274,7 @@ async def seed_self_knowledge_endpoint(force: bool = Query(False, description="F
         skills_registry=sr,
         force=force,
     )
-    
+
     return SeedResponse(
         memories=results.get("memories", 0),
         entities=results.get("entities", 0),
@@ -4663,9 +4656,9 @@ async def create_agent_invite(body: AgentInviteRequest) -> AgentInviteResponse:
     """Generate a setup code for remote agent onboarding."""
     if _invite_store is None:
         raise HTTPException(status_code=501, detail="Invite store not initialized")
-    
+
     colony_id = os.environ.get("COLONY_ID", str(uuid.uuid4()))
-    
+
     invite = _invite_store.create(
         colony_id=colony_id,
         capabilities=body.granted_capabilities,
@@ -4674,11 +4667,11 @@ async def create_agent_invite(body: AgentInviteRequest) -> AgentInviteResponse:
         expires_seconds=body.expires_in_seconds,
         label=body.label,
     )
-    
+
     # Build setup command
     colony_url = os.environ.get("COLONY_URL", "http://localhost:7777")
     setup_command = f"colony agent connect --setup-code {invite['setup_code']} --colony-url {colony_url}"
-    
+
     return AgentInviteResponse(
         code=invite["setup_code"],
         expires_at=invite["expires_at"],
@@ -4692,20 +4685,19 @@ async def connect_remote_agent(body: AgentConnectRequest) -> AgentConnectRespons
     """Connect a remote agent using setup code."""
     if _invite_store is None or _agent_store is None:
         raise HTTPException(status_code=501, detail="Agent system not initialized")
-    
+
     # Generate agent ID and node ID
     agent_id = str(uuid.uuid4())
     node_id = body.node_id or str(uuid.uuid4())
     colony_id = os.environ.get("COLONY_ID", str(uuid.uuid4()))
-    
+
     # Validate and use setup code
     try:
         invite = _invite_store.use(body.setup_code, node_id, agent_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
     # Create node certificate (simplified for now - TODO: proper signing)
-    from datetime import timedelta
     issued_at = datetime.now(timezone.utc)
     node_cert = AgentNodeCert(
         colony_id=colony_id,
@@ -4714,7 +4706,7 @@ async def connect_remote_agent(body: AgentConnectRequest) -> AgentConnectRespons
         signature=f"sig-{uuid.uuid4()}",  # TODO: actual signature
         issued_at=issued_at.isoformat(),
     )
-    
+
     # Register agent
     agent = _agent_store.create({
         "agent_id": agent_id,
@@ -4727,11 +4719,11 @@ async def connect_remote_agent(body: AgentConnectRequest) -> AgentConnectRespons
         "max_concurrent": invite.get("max_concurrent", 5),
         "metadata": body.metadata,
     })
-    
+
     # Build websocket URL
     colony_url = os.environ.get("COLONY_URL", "ws://localhost:7777")
     ws_url = f"{colony_url.replace('http', 'ws')}/v1/host/agents/{agent_id}/stream"
-    
+
     return AgentConnectResponse(
         agent_id=agent_id,
         node_id=node_id,
@@ -4749,12 +4741,12 @@ async def register_local_agent(body: AgentRegisterRequest) -> AgentRegisterRespo
     """Register a local agent (same network, no setup code)."""
     if _agent_store is None:
         raise HTTPException(status_code=501, detail="Agent store not initialized")
-    
+
     agent_id = body.agent_id or str(uuid.uuid4())
     node_id = body.node_id or str(uuid.uuid4())
     colony_id = os.environ.get("COLONY_ID", str(uuid.uuid4()))
-    
-    agent = _agent_store.create({
+
+    _agent_store.create({
         "agent_id": agent_id,
         "node_id": node_id,
         "colony_id": colony_id,
@@ -4768,12 +4760,12 @@ async def register_local_agent(body: AgentRegisterRequest) -> AgentRegisterRespo
         "excluded_types": body.excluded_types,
         "metadata": body.metadata,
     })
-    
+
     ws_url = None
     if body.connection_mode == "remote":
         colony_url = os.environ.get("COLONY_URL", "ws://localhost:7777")
         ws_url = f"{colony_url.replace('http', 'ws')}/v1/host/agents/{agent_id}/stream"
-    
+
     return AgentRegisterResponse(
         agent_id=agent_id,
         node_id=node_id,
@@ -4789,11 +4781,11 @@ async def agent_heartbeat(agent_id: str, body: AgentHeartbeatRequest) -> Dict[st
     """Update agent status with heartbeat."""
     if _agent_store is None:
         raise HTTPException(status_code=501, detail="Agent store not initialized")
-    
+
     agent = _agent_store.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    
+
     # Update status and metadata
     updates = {
         "status": body.status,
@@ -4802,9 +4794,9 @@ async def agent_heartbeat(agent_id: str, body: AgentHeartbeatRequest) -> Dict[st
     }
     if body.metadata:
         updates["metadata"] = body.metadata
-    
+
     _agent_store.update(agent_id, **updates)
-    
+
     return {"status": "ok", "agent_id": agent_id}
 
 
@@ -4816,9 +4808,9 @@ async def list_agents(
     """List all registered agents."""
     if _agent_store is None:
         raise HTTPException(status_code=501, detail="Agent store not initialized")
-    
+
     agents = _agent_store.list(status=status, capability=capability)
-    
+
     return AgentListResponse(
         agents=[
             AgentResponse(
@@ -4850,11 +4842,11 @@ async def get_agent(agent_id: str) -> AgentResponse:
     """Get agent details."""
     if _agent_store is None:
         raise HTTPException(status_code=501, detail="Agent store not initialized")
-    
+
     agent = _agent_store.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    
+
     return AgentResponse(
         agent_id=agent.agent_id,
         node_id=agent.node_id,
@@ -4880,13 +4872,13 @@ async def revoke_agent(agent_id: str) -> Dict[str, Any]:
     """Revoke an agent's access."""
     if _agent_store is None:
         raise HTTPException(status_code=501, detail="Agent store not initialized")
-    
+
     agent = _agent_store.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    
+
     _agent_store.revoke(agent_id)
-    
+
     return {"status": "revoked", "agent_id": agent_id}
 
 
@@ -4895,15 +4887,15 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest) -> AgentResponse
     """Update agent configuration."""
     if _agent_store is None:
         raise HTTPException(status_code=501, detail="Agent store not initialized")
-    
+
     agent = _agent_store.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    
+
     updates = body.dict(exclude_unset=True)
     if updates:
         agent = _agent_store.update(agent_id, **updates)
-    
+
     return AgentResponse(
         agent_id=agent.agent_id,
         node_id=agent.node_id,
@@ -4929,9 +4921,9 @@ async def get_agents_health() -> AgentHealthResponse:
     """Get health status of all agents."""
     if _agent_store is None:
         raise HTTPException(status_code=501, detail="Agent store not initialized")
-    
+
     agents = _agent_store.list()
-    
+
     return AgentHealthResponse(
         agents=[
             {
@@ -4954,7 +4946,7 @@ async def create_initiative(body: InitiativeCreateRequest) -> InitiativeResponse
     """Create a new initiative."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
-    
+
     initiative = _initiative_store.create(
         type=body.initiative_type,
         description=body.description,
@@ -4970,7 +4962,7 @@ async def create_initiative(body: InitiativeCreateRequest) -> InitiativeResponse
             await _telemetry.touch("last_initiative_at")
         except Exception:
             pass
-    
+
     return _initiative_to_response(initiative)
 
 
@@ -4983,13 +4975,13 @@ async def list_initiatives(
     """List initiatives with optional filters."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
-    
+
     initiatives = _initiative_store.list(
         status=status,
         assigned_agent_id=agent_id,
         limit=limit,
     )
-    
+
     return InitiativeListResponse(
         initiatives=[_initiative_to_response(i) for i in initiatives],
         total=len(initiatives),
@@ -5001,11 +4993,11 @@ async def get_initiative(initiative_id: str) -> InitiativeResponse:
     """Get initiative details."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
-    
+
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
-    
+
     return _initiative_to_response(initiative)
 
 
@@ -5017,22 +5009,22 @@ async def claim_initiative(
     """Claim an initiative for an agent."""
     if _initiative_store is None or _agent_store is None:
         raise HTTPException(status_code=501, detail="System not initialized")
-    
+
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
-    
+
     if initiative.status != "pending":
         raise HTTPException(status_code=400, detail=f"Initiative already {initiative.status}")
-    
+
     agent = _agent_store.get(body.agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    
+
     _initiative_store.assign(initiative_id, body.agent_id)
-    
+
     return {"status": "claimed", "initiative_id": initiative_id, "agent_id": body.agent_id}
-    
+
     return {"status": "claimed", "initiative_id": initiative_id, "agent_id": body.agent_id}
 
 
@@ -5044,16 +5036,16 @@ async def complete_initiative(
     """Mark initiative as completed."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
-    
+
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
-    
+
     if initiative.assigned_agent_id != body.agent_id:
         raise HTTPException(status_code=403, detail="Not assigned to this agent")
-    
+
     _initiative_store.complete(initiative_id, body.agent_id, body.result.get("result"), body.result)
-    
+
     return {"status": "completed", "initiative_id": initiative_id}
 
 
@@ -5065,16 +5057,16 @@ async def fail_initiative(
     """Mark initiative as failed."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
-    
+
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
-    
+
     if initiative.assigned_agent_id != body.agent_id:
         raise HTTPException(status_code=403, detail="Not assigned to this agent")
-    
+
     _initiative_store.fail(initiative_id, body.agent_id, body.error_message)
-    
+
     return {"status": "failed", "initiative_id": initiative_id}
 
 
@@ -5086,15 +5078,15 @@ async def delegate_initiative(
     """Delegate initiative to another agent."""
     if _initiative_store is None or _agent_store is None:
         raise HTTPException(status_code=501, detail="System not initialized")
-    
+
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
-    
+
     agent = _agent_store.get(body.target_agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Target agent not found")
-    
+
     _initiative_store.update(
         initiative_id,
         assigned_agent_id=body.target_agent_id,
@@ -5105,7 +5097,7 @@ async def delegate_initiative(
         agent_id=initiative.assigned_agent_id,
         details={"target_agent_id": body.target_agent_id, "reason": body.reason},
     )
-    
+
     return {"status": "delegated", "initiative_id": initiative_id, "target_agent_id": body.target_agent_id}
 
 
@@ -5117,13 +5109,13 @@ async def update_initiative_priority(
     """Update initiative priority."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
-    
+
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
-    
+
     _initiative_store.update(initiative_id, priority=body.priority)
-    
+
     return {"status": "updated", "initiative_id": initiative_id, "priority": body.priority}
 
 
@@ -5132,14 +5124,14 @@ async def retry_initiative(initiative_id: str) -> Dict[str, Any]:
     """Retry a failed initiative."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
-    
+
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
-    
+
     if initiative.status != "failed":
         raise HTTPException(status_code=400, detail="Can only retry failed initiatives")
-    
+
     _initiative_store.update(
         initiative_id,
         status="pending",
@@ -5148,7 +5140,7 @@ async def retry_initiative(initiative_id: str) -> Dict[str, Any]:
         failed_at=None,
     )
     _initiative_store.log_history(initiative_id, action="retry", agent_id=None)
-    
+
     return {"status": "pending", "initiative_id": initiative_id}
 
 
@@ -5157,13 +5149,13 @@ async def cancel_initiative(initiative_id: str) -> Dict[str, Any]:
     """Cancel an initiative."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
-    
+
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
-    
+
     _initiative_store.cancel(initiative_id, cancelled_by="api")
-    
+
     return {"status": "cancelled", "initiative_id": initiative_id}
 
 
@@ -5178,7 +5170,7 @@ def _initiative_to_response(initiative) -> InitiativeResponse:
             result_dict = initiative.result
         elif isinstance(initiative.result, str):
             result_dict = {"result": initiative.result}
-    
+
     return InitiativeResponse(
         id=initiative.id,
         initiative_type=initiative.type,
@@ -5280,7 +5272,11 @@ async def respond_to_initiative(
         agent_id="openclaw",
         details=details or {},
     )
-    return {"success": True, "initiative_id": initiative_id, "status": new_status or initiative.status}
+    return {
+        "success": True,
+        "initiative_id": initiative_id,
+        "status": new_status or initiative.status,
+    }
 
 
 # --- Agent Snapshot Endpoints ---
@@ -5330,7 +5326,9 @@ async def agent_snapshot() -> AgentSnapshotResponse:
         telemetry=telemetry_dict,
         pending_initiatives=[_map_initiative_to_schema(i) for i in pending],
         pending_count=len(pending),
-        assigned_count=_initiative_store.count(status=["assigned"]) if _initiative_store else 0,
+        assigned_count=(
+            _initiative_store.count(status=["assigned"]) if _initiative_store else 0
+        ),
         failed_count=len(failed),
         recently_completed=[_map_initiative_to_schema(i) for i in recent],
         autonomy_mode=_autonomy_loop.config.mode.value if _autonomy_loop else "unknown",
@@ -5363,7 +5361,9 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
 async def session_report(body: SessionReportRequest) -> SessionReportResponse:
     """Store a session summary from the agent for future context retrieval."""
     if _session_report_store is None:
-        raise HTTPException(status_code=501, detail="Session report store not initialized")
+        raise HTTPException(
+            status_code=501, detail="Session report store not initialized"
+        )
 
     from colony_sidecar.sessions.reports import SessionReport
 
@@ -5408,7 +5408,9 @@ async def context_digest(
     # Session reports
     session_reports = []
     if _session_report_store is not None and contact_id:
-        reports = await _session_report_store.get_recent(contact_id, hours=hours, limit=10)
+        reports = await _session_report_store.get_recent(
+            contact_id, hours=hours, limit=10
+        )
         session_reports = [
             ContextDigestSessionReport(
                 report_id=r.report_id,
@@ -5474,5 +5476,5 @@ async def agent_websocket_stream(ws: WebSocket, agent_id: str) -> None:
     if _websocket_manager is None:
         await ws.close(code=1011, reason="WebSocket manager not initialized")
         return
-    
+
     await _websocket_manager.handle_connection(ws, agent_id)
