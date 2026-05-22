@@ -70,7 +70,7 @@ class AutonomyConfig:
 
     # ── Owner check-in (silence-triggered proactive outreach) ──────────
     # When no initiatives fire for this many hours, reach out to the owner.
-    owner_check_in_enabled: bool = True
+    owner_check_in_enabled: bool = False
     owner_check_in_silent_hours: float = 1.0
     owner_check_in_cooldown_hours: float = 4.0
     owner_contact_id: Optional[str] = None  # None = resolve from identity
