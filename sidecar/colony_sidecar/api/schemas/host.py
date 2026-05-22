@@ -1470,4 +1470,4 @@ class RecordOutreachRequest(BaseModel):
 
 class RecordOutreachResponse(BaseModel):
     recorded_at: str
-    last_aeva_outreach_at: str
+    last_agent_outreach_at: str

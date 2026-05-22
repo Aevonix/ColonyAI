@@ -61,7 +61,7 @@ class TestAgentSnapshot:
         assert data["autonomy_mode"] == "proactive"
         assert data["autonomy_running"] is True
         assert data["last_tick_age_minutes"] is None
-        assert data["telemetry"]["last_aeva_outreach_at"] is None
+        assert data["telemetry"]["last_agent_outreach_at"] is None
 
     def test_agent_snapshot_with_initiatives(self, client: TestClient, tmp_path: Path):
         """Snapshot reflects pending and failed initiatives."""
@@ -146,8 +146,8 @@ class TestAgentSnapshot:
         data = resp.json()
 
         assert "recorded_at" in data
-        assert "last_aeva_outreach_at" in data
-        assert data["last_aeva_outreach_at"] is not None
+        assert "last_agent_outreach_at" in data
+        assert data["last_agent_outreach_at"] is not None
 
     def test_record_outreach_then_snapshot(self, client: TestClient):
         """After recording outreach, snapshot reflects the new timestamp."""
@@ -161,4 +161,4 @@ class TestAgentSnapshot:
         assert resp.status_code == 200
         data = resp.json()
 
-        assert data["telemetry"]["last_aeva_outreach_at"] is not None
+        assert data["telemetry"]["last_agent_outreach_at"] is not None
