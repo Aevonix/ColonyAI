@@ -10,10 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from colony_sidecar.sessions.reports import SessionReport, SessionReportStore
-from colony_sidecar.telemetry import TelemetryStore
 from colony_sidecar.api.schemas.host import (
     SessionReportRequest,
-    SessionReportResponse,
     ContextDigestResponse,
     AgentSnapshotSystemState,
 )

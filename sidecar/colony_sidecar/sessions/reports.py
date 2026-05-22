@@ -6,7 +6,6 @@ This is NOT long-term memory — for that, use the graph store.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
@@ -62,12 +61,17 @@ class SessionReportStore:
         """Return recent reports for a contact, filtered by age and capped."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         reports = self._reports.get(contact_id, [])
-        recent = [
-            r
-            for r in reports
-            if (r.ended_at is not None and r.ended_at > cutoff)
-            or (r.ended_at is None and r.started_at > cutoff)
-        ]
+        recent = []
+        for r in reports:
+            # Defensive: ensure timezone-aware comparison
+            ended = r.ended_at
+            started = r.started_at
+            if ended is not None and ended.tzinfo is None:
+                ended = ended.replace(tzinfo=timezone.utc)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            if (ended is not None and ended > cutoff) or (ended is None and started > cutoff):
+                recent.append(r)
         return recent[-limit:]
 
     def to_dict(self) -> Dict[str, Any]:
