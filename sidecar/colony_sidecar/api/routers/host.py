@@ -183,11 +183,17 @@ from colony_sidecar.api.schemas.host import (
     InitiativeFailRequest,
     InitiativeDelegateRequest,
     InitiativePriorityRequest,
-    # Aeva Heartbeat & Agent Snapshot
+    # Agent Snapshot
     AgentSnapshotInitiative,
     AgentSnapshotResponse,
     RecordOutreachRequest,
     RecordOutreachResponse,
+    # Session Context Architecture
+    AgentSnapshotSystemState,
+    SessionReportRequest,
+    SessionReportResponse,
+    ContextDigestSessionReport,
+    ContextDigestResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -3299,6 +3305,11 @@ def set_task_queue(queue) -> None:
     _task_queue = queue
 
 
+def set_session_report_store(store) -> None:
+    global _session_report_store
+    _session_report_store = store
+
+
 @router.post("/secrets/list", response_model=SecretListResponse)
 async def secrets_list(body: SecretListRequest) -> SecretListResponse:
     if _secrets_manager is None:
@@ -3362,6 +3373,7 @@ _autonomy_task = None
 _reranker = None
 _session_store = None
 _task_queue = None
+_session_report_store = None
 
 def set_autonomy_loop(loop) -> None:
     global _autonomy_loop
@@ -5342,6 +5354,125 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
     return RecordOutreachResponse(
         recorded_at=now.isoformat(),
         last_agent_outreach_at=outreach_at,
+    )
+
+
+@router.post("/session-report", response_model=SessionReportResponse)
+async def session_report(body: SessionReportRequest) -> SessionReportResponse:
+    """Store a session summary from the agent for future context retrieval."""
+    if _session_report_store is None:
+        raise HTTPException(status_code=501, detail="Session report store not initialized")
+
+    from colony_sidecar.sessions.reports import SessionReport
+
+    report = SessionReport(
+        report_id=str(uuid.uuid4()),
+        session_id=body.session_id,
+        contact_id=body.contact_id,
+        started_at=datetime.fromisoformat(body.started_at.replace("Z", "+00:00")),
+        ended_at=datetime.fromisoformat(body.ended_at.replace("Z", "+00:00")) if body.ended_at else None,
+        summary=body.summary,
+        topics=body.topics,
+        resolutions=body.resolutions,
+        pending=body.pending,
+        notified_user=body.notified_user,
+        metadata=body.metadata,
+    )
+    await _session_report_store.add_report(report)
+    return SessionReportResponse(stored=True, report_id=report.report_id)
+
+
+@router.get("/context-digest", response_model=ContextDigestResponse)
+async def context_digest(
+    contact_id: Optional[str] = None,
+    hours: int = 24,
+    initiative_limit: int = 10,
+) -> ContextDigestResponse:
+    """Return a comprehensive context digest for agent session boot.
+
+    Combines recent session reports, pending initiatives, system state,
+    and outreach history into a single response.
+    """
+    now = datetime.now(timezone.utc)
+
+    # Session reports
+    session_reports = []
+    if _session_report_store is not None and contact_id:
+        reports = await _session_report_store.get_recent(contact_id, hours=hours, limit=10)
+        session_reports = [
+            ContextDigestSessionReport(
+                report_id=r.report_id,
+                started_at=r.started_at.isoformat() if r.started_at else "",
+                ended_at=r.ended_at.isoformat() if r.ended_at else None,
+                summary=r.summary,
+                topics=r.topics,
+                resolutions=r.resolutions,
+                pending=r.pending,
+                notified_user=r.notified_user,
+            )
+            for r in reports
+        ]
+
+    # Pending initiatives (reuse agent-snapshot logic)
+    pending = []
+    if _initiative_store is not None:
+        pending = _initiative_store.list(status=["pending"], limit=initiative_limit)
+
+    # System state (reuse agent-snapshot logic)
+    thresholds = {"sync": 1.0, "tick": 1.0, "initiative": 4.0, "prefetch": 24.0}
+    telemetry_dict = await _telemetry.to_dict(thresholds) if _telemetry else {}
+
+    tick_age = None
+    if _telemetry is not None and _telemetry.last_tick_at is not None:
+        tick_age = (now - _telemetry.last_tick_at).total_seconds() / 60
+
+    silence_flags = telemetry_dict.get("silence_hours", {})
+    stale_flags = telemetry_dict.get("stale_flags", [])
+
+    # Last outreach
+    last_outreach = {"at": None, "reason": None}
+    if _telemetry is not None and _telemetry.last_agent_outreach_at is not None:
+        last_outreach = {
+            "at": _telemetry.last_agent_outreach_at.isoformat(),
+            "reason": None,
+        }
+
+    # Map initiatives (module-level helper extracted from agent-snapshot)
+    def _map_initiative(i):
+        return AgentSnapshotInitiative(
+            id=i.id,
+            type=i.type,
+            description=i.description,
+            priority=i.priority,
+            status=i.status,
+            rationale=i.rationale,
+            action_hint=i.action_hint,
+            entity_id=i.entity_id,
+            dedup_key=i.dedup_key,
+            created_at=i.created_at.isoformat() if i.created_at else "",
+            expires_at=i.expires_at.isoformat() if i.expires_at else None,
+            assigned_agent_id=i.assigned_agent_id,
+            acknowledged_at=i.acknowledged_at.isoformat() if i.acknowledged_at else None,
+            completed_at=i.completed_at.isoformat() if i.completed_at else None,
+            failed_at=i.failed_at.isoformat() if i.failed_at else None,
+            failed_reason=i.failed_reason,
+        )
+
+    system_state = AgentSnapshotSystemState(
+        autonomy_running=_autonomy_loop.is_running if _autonomy_loop else False,
+        mode=_autonomy_loop.config.mode.value if _autonomy_loop else "unknown",
+        last_tick_age_minutes=tick_age,
+        silence_hours=silence_flags,
+        stale_flags=stale_flags,
+    )
+
+    return ContextDigestResponse(
+        generated_at=now.isoformat(),
+        contact_id=contact_id,
+        session_reports=session_reports,
+        pending_initiatives=[_map_initiative(i) for i in pending],
+        system_state=system_state,
+        last_outreach=last_outreach,
     )
 
 
