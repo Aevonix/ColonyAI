@@ -1471,3 +1471,53 @@ class RecordOutreachRequest(BaseModel):
 class RecordOutreachResponse(BaseModel):
     recorded_at: str
     last_agent_outreach_at: str
+
+
+# --- Session Reports & Context Digest -----------------------------------------
+
+class AgentSnapshotSystemState(BaseModel):
+    """Reusable system-state component for context digest."""
+
+    autonomy_running: bool
+    mode: str
+    last_tick_age_minutes: Optional[float] = None
+    silence_hours: Dict[str, Any] = Field(default_factory=dict)
+    stale_flags: List[str] = Field(default_factory=list)
+
+
+class SessionReportRequest(BaseModel):
+    session_id: str
+    contact_id: str
+    started_at: str  # ISO datetime
+    ended_at: Optional[str] = None
+    summary: str
+    topics: List[str] = Field(default_factory=list)
+    resolutions: List[str] = Field(default_factory=list)
+    pending: List[str] = Field(default_factory=list)
+    notified_user: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionReportResponse(BaseModel):
+    stored: bool
+    report_id: str
+
+
+class ContextDigestSessionReport(BaseModel):
+    report_id: str
+    started_at: str
+    ended_at: Optional[str] = None
+    summary: str
+    topics: List[str] = Field(default_factory=list)
+    resolutions: List[str] = Field(default_factory=list)
+    pending: List[str] = Field(default_factory=list)
+    notified_user: bool = False
+
+
+class ContextDigestResponse(BaseModel):
+    generated_at: str
+    contact_id: Optional[str] = None
+    session_reports: List[ContextDigestSessionReport] = Field(default_factory=list)
+    pending_initiatives: List[AgentSnapshotInitiative] = Field(default_factory=list)
+    system_state: AgentSnapshotSystemState
+    last_outreach: Dict[str, Any] = Field(default_factory=dict)

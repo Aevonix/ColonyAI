@@ -79,6 +79,7 @@ from colony_sidecar.api.routers.host import (
     set_assignment_engine,
     set_websocket_manager,
     set_telemetry,
+    set_session_report_store,
     supported_capabilities,
 )
 
@@ -922,6 +923,12 @@ async def lifespan(app: FastAPI):
     set_telemetry(telemetry)
     logger.info("TelemetryStore initialized")
 
+    # Session report store (cross-session context bridge)
+    from colony_sidecar.sessions.reports import SessionReportStore
+    session_report_store = SessionReportStore()
+    set_session_report_store(session_report_store)
+    logger.info("SessionReportStore initialized")
+
     # Register conversation synthesis task (periodic memory scan for goals)
     try:
         if (
@@ -997,6 +1004,7 @@ async def lifespan(app: FastAPI):
     set_chain_manager(None)
     set_secrets_manager(None)
     set_session_store(None)
+    set_session_report_store(None)
     # Stop worker node (before queue so in-flight jobs can drain).
     try:
         worker = getattr(app.state, "worker", None)

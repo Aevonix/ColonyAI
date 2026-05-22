@@ -629,17 +629,20 @@ class AutonomyLoop:
                                 person_id, reason, urgency,
                             )
                             continue  # Keep in store for retry next tick
-                    ok = await delivery.push_initiative(payload)
-                    if ok:
-                        self.stats.actions_executed += 1
-                        self.stats.actions_this_hour += 1
-                        logger.info("Pushed initiative: %s", payload["id"])
-                        try:
-                            from colony_sidecar.api.routers.host import _telemetry
-                            if _telemetry is not None:
-                                await _telemetry.touch("last_initiative_at")
-                        except Exception:
-                            pass
+                    if getattr(self.config, "proactive_delivery_enabled", False):
+                        ok = await delivery.push_initiative(payload)
+                        if ok:
+                            self.stats.actions_executed += 1
+                            self.stats.actions_this_hour += 1
+                            logger.info("Pushed initiative: %s", payload["id"])
+                            try:
+                                from colony_sidecar.api.routers.host import _telemetry
+                                if _telemetry is not None:
+                                    await _telemetry.touch("last_initiative_at")
+                            except Exception:
+                                pass
+                    else:
+                        logger.debug("Proactive delivery disabled — initiative stored for agent polling")
 
                 # WebSocket broadcast
                 try:
@@ -729,19 +732,22 @@ class AutonomyLoop:
                 # Push approval request to delivery
                 delivery = self._registry.delivery
                 if delivery and hasattr(delivery, "push_initiative"):
-                    await delivery.push_initiative({
-                        "id": initiative_id,
-                        "type": "agent_action",
-                        "priority": getattr(initiative, "priority", 0.5),
-                        "title": f"Approval required: {getattr(initiative, 'description', '')[:60]}",
-                        "description": getattr(initiative, "description", ""),
-                        "rationale": getattr(initiative, "rationale", ""),
-                        "suggested_action": "colony_approve_initiative",
-                        "entity_id": getattr(initiative, "entity_id", None),
-                        "channel_hint": "dm",
-                        "context": {"job_id": job_id, "action_hint": action_hint},
-                        "generated_at": datetime.now(timezone.utc).isoformat(),
-                    })
+                    if getattr(self.config, "proactive_delivery_enabled", False):
+                        await delivery.push_initiative({
+                            "id": initiative_id,
+                            "type": "agent_action",
+                            "priority": getattr(initiative, "priority", 0.5),
+                            "title": f"Approval required: {getattr(initiative, 'description', '')[:60]}",
+                            "description": getattr(initiative, "description", ""),
+                            "rationale": getattr(initiative, "rationale", ""),
+                            "suggested_action": "colony_approve_initiative",
+                            "entity_id": getattr(initiative, "entity_id", None),
+                            "channel_hint": "dm",
+                            "context": {"job_id": job_id, "action_hint": action_hint},
+                            "generated_at": datetime.now(timezone.utc).isoformat(),
+                        })
+                    else:
+                        logger.debug("Proactive delivery disabled — approval request stored for agent polling")
 
             # Only count as executed if the job was not blocked awaiting approval
             if not (is_destructive and not auto_approve):
@@ -1254,9 +1260,12 @@ class AutonomyLoop:
                         "generated_at": initiative.created_at.isoformat() if initiative.created_at else datetime.now(timezone.utc).isoformat(),
                     }
                     try:
-                        ok = await delivery.push_initiative(payload)
-                        if ok:
-                            repushed += 1
+                        if getattr(self.config, "proactive_delivery_enabled", False):
+                            ok = await delivery.push_initiative(payload)
+                            if ok:
+                                repushed += 1
+                        else:
+                            logger.debug("Proactive delivery disabled — skipping startup re-push")
                     except Exception as exc:
                         logger.debug("Failed to re-push initiative %s: %s", initiative.id, exc)
 
