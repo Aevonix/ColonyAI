@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.14.0 (2026-05-22)
+
+Session context architecture — cross-session state bridge for agent continuity.
+
+### Added
+- **Session Report API** (`/v1/host/session-report`):
+  - `POST /session-report` — store session summary from agent (start, end, message counts, sentiment, context notes, token usage)
+  - `SessionReportStore` — in-memory FIFO (default 20 reports/contact), timezone-aware `get_recent(hours)` filtering
+- **Context Digest API** (`/v1/host/context-digest`):
+  - `GET /context-digest` — unified state snapshot combining pending initiatives, system health, and recent session history
+  - `AgentSnapshotSystemState` schema — autonomy mode, running status, last tick age, stale flags
+  - `ContextDigestSessionReport` schema — lightweight session summaries for agent context window
+- **`proactive_delivery_enabled` config flag** — gates all `push_initiative()` calls; defaults to `False` for backward compatibility
+  - Env var: `COLONY_PROACTIVE_DELIVERY_ENABLED`
+- **`last_agent_outreach_at` telemetry field** — renamed from `last_aeva_outreach_at` for generic agent support
+
+### Changed
+- **De-personalized codebase** — all owner references changed to generic "owner"; agent references changed to generic "agent"
+- **DRY initiative mapping** — extracted `_map_initiative_to_schema()` module-level helper shared by agent-snapshot and context-digest endpoints
+
+### Fixed
+- Timezone safety in session report ingestion — `_parse_iso()` helper forces UTC on naive ISO strings
+- `SessionReportStore.get_recent()` defensive tzinfo fallback before cutoff comparison
+- Query parameter bounds on context-digest: `hours` (1–168), `initiative_limit` (1–100)
+
 ## 0.13.0 (2026-05-21)
 
 Aeva heartbeat and agent snapshot endpoints. Colony exposes state; Aeva decides when to communicate.
