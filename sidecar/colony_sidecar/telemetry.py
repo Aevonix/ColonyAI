@@ -15,6 +15,7 @@ class TelemetryStore:
     last_tick_at: Optional[datetime] = None
     last_initiative_at: Optional[datetime] = None
     last_prefetch_at: Optional[datetime] = None
+    last_aeva_outreach_at: Optional[datetime] = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def touch(self, key: str) -> None:
@@ -50,6 +51,7 @@ class TelemetryStore:
         tick_at = self.last_tick_at.isoformat() if self.last_tick_at else None
         init_at = self.last_initiative_at.isoformat() if self.last_initiative_at else None
         prefetch_at = self.last_prefetch_at.isoformat() if self.last_prefetch_at else None
+        outreach_at = self.last_aeva_outreach_at.isoformat() if self.last_aeva_outreach_at else None
         silence = {}
         for key in thresholds:
             silence[key] = await self.silence_hours(key)
@@ -60,6 +62,7 @@ class TelemetryStore:
             "last_tick_at": tick_at,
             "last_initiative_at": init_at,
             "last_prefetch_at": prefetch_at,
+            "last_aeva_outreach_at": outreach_at,
             "silence_hours": silence,
             "stale_flags": flags,
         }
