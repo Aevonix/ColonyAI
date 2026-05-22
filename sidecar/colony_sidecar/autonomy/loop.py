@@ -19,7 +19,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, List, Optional
+from typing import Any, List, Optional
 from zoneinfo import ZoneInfo
 
 from colony_sidecar.autonomy.config import AutonomyConfig, AutonomyMode
@@ -39,7 +39,8 @@ def _get_broadcast():
             from colony_sidecar.api.routers.host import broadcast_event
             _broadcast = broadcast_event
         except ImportError:
-            _broadcast = lambda e: None
+            def _broadcast(e):
+                return None
     return _broadcast
 
 logger = logging.getLogger(__name__)
@@ -314,12 +315,7 @@ class AutonomyLoop:
                 for event in recent:
                     event_type = getattr(event, "event_type", None)
                     if event_type in ("message_received", "message_sent", "gateway_signal"):
-                        person_id = getattr(event, "person_id", None)
-                        description = (
-                            f"Message from {person_id}"
-                            if person_id and event_type == "message_received"
-                            else f"Signal: {event_type}"
-                        )
+                        getattr(event, "person_id", None)
             self.stats.events_processed += new_count
         except Exception as exc:
             self.stats.errors += 1
@@ -432,7 +428,7 @@ class AutonomyLoop:
                 logger.info("Phase initiative: %d new proposals", len(initiatives))
             self._pending_initiatives = initiatives
             self.stats.initiatives_generated += len(initiatives)
-            
+
             # Capture context for payload building in _phase_execute
             self._last_initiative_context = dict(getattr(engine, "_context", {}))
         except Exception as exc:
@@ -629,17 +625,20 @@ class AutonomyLoop:
                                 person_id, reason, urgency,
                             )
                             continue  # Keep in store for retry next tick
-                    ok = await delivery.push_initiative(payload)
-                    if ok:
-                        self.stats.actions_executed += 1
-                        self.stats.actions_this_hour += 1
-                        logger.info("Pushed initiative: %s", payload["id"])
-                        try:
-                            from colony_sidecar.api.routers.host import _telemetry
-                            if _telemetry is not None:
-                                await _telemetry.touch("last_initiative_at")
-                        except Exception:
-                            pass
+                    if getattr(self.config, "proactive_delivery_enabled", False):
+                        ok = await delivery.push_initiative(payload)
+                        if ok:
+                            self.stats.actions_executed += 1
+                            self.stats.actions_this_hour += 1
+                            logger.info("Pushed initiative: %s", payload["id"])
+                            try:
+                                from colony_sidecar.api.routers.host import _telemetry
+                                if _telemetry is not None:
+                                    await _telemetry.touch("last_initiative_at")
+                            except Exception:
+                                pass
+                    else:
+                        logger.debug("Proactive delivery disabled — initiative stored for agent polling")
 
                 # WebSocket broadcast
                 try:
@@ -729,19 +728,22 @@ class AutonomyLoop:
                 # Push approval request to delivery
                 delivery = self._registry.delivery
                 if delivery and hasattr(delivery, "push_initiative"):
-                    await delivery.push_initiative({
-                        "id": initiative_id,
-                        "type": "agent_action",
-                        "priority": getattr(initiative, "priority", 0.5),
-                        "title": f"Approval required: {getattr(initiative, 'description', '')[:60]}",
-                        "description": getattr(initiative, "description", ""),
-                        "rationale": getattr(initiative, "rationale", ""),
-                        "suggested_action": "colony_approve_initiative",
-                        "entity_id": getattr(initiative, "entity_id", None),
-                        "channel_hint": "dm",
-                        "context": {"job_id": job_id, "action_hint": action_hint},
-                        "generated_at": datetime.now(timezone.utc).isoformat(),
-                    })
+                    if getattr(self.config, "proactive_delivery_enabled", False):
+                        await delivery.push_initiative({
+                            "id": initiative_id,
+                            "type": "agent_action",
+                            "priority": getattr(initiative, "priority", 0.5),
+                            "title": f"Approval required: {getattr(initiative, 'description', '')[:60]}",
+                            "description": getattr(initiative, "description", ""),
+                            "rationale": getattr(initiative, "rationale", ""),
+                            "suggested_action": "colony_approve_initiative",
+                            "entity_id": getattr(initiative, "entity_id", None),
+                            "channel_hint": "dm",
+                            "context": {"job_id": job_id, "action_hint": action_hint},
+                            "generated_at": datetime.now(timezone.utc).isoformat(),
+                        })
+                    else:
+                        logger.debug("Proactive delivery disabled — approval request stored for agent polling")
 
             # Only count as executed if the job was not blocked awaiting approval
             if not (is_destructive and not auto_approve):
@@ -905,7 +907,7 @@ class AutonomyLoop:
             return
         try:
             if hasattr(cognition, "run_cycle"):
-                result = await cognition.run_cycle()
+                await cognition.run_cycle()
                 logger.debug("Phase cognition: cycle complete")
         except Exception as exc:
             self.stats.errors += 1
@@ -1125,7 +1127,7 @@ class AutonomyLoop:
         try:
             cognition = self._registry.cognition
             if cognition is not None and hasattr(cognition, "self_reflect"):
-                result = await cognition.self_reflect()
+                await cognition.self_reflect()
                 self._last_self_reflection = now
                 logger.info("Phase self_reflection: complete")
         except Exception as exc:
@@ -1170,13 +1172,13 @@ class AutonomyLoop:
             # Get agents with old last_seen_at
             from datetime import timedelta
             threshold = datetime.now(timezone.utc) - timedelta(minutes=5)
-            
+
             agents = agent_store.list(status=["online", "busy"])
             for agent in agents:
                 if agent.last_seen_at and agent.last_seen_at < threshold:
                     logger.info("Agent %s marked offline (no heartbeat)", agent.name)
                     await agent_store.set_offline(agent.agent_id)
-                    
+
                     # Reassign pending initiatives
                     initiative_store = self._registry.initiative_store
                     if initiative_store:
@@ -1254,9 +1256,12 @@ class AutonomyLoop:
                         "generated_at": initiative.created_at.isoformat() if initiative.created_at else datetime.now(timezone.utc).isoformat(),
                     }
                     try:
-                        ok = await delivery.push_initiative(payload)
-                        if ok:
-                            repushed += 1
+                        if getattr(self.config, "proactive_delivery_enabled", False):
+                            ok = await delivery.push_initiative(payload)
+                            if ok:
+                                repushed += 1
+                        else:
+                            logger.debug("Proactive delivery disabled — skipping startup re-push")
                     except Exception as exc:
                         logger.debug("Failed to re-push initiative %s: %s", initiative.id, exc)
 
@@ -1308,12 +1313,12 @@ class AutonomyLoop:
         try:
             from datetime import timedelta
             threshold = datetime.now(timezone.utc) - timedelta(hours=1)
-            
+
             stale = initiative_store.find_stale_acknowledged(threshold)
-            
+
             for initiative in stale:
                 agent = agent_store.get(initiative.assigned_agent_id)
-                
+
                 if agent is None or agent.status != "online":
                     logger.warning(
                         "Initiative %s stuck in acknowledged, reassigning",
@@ -1337,9 +1342,9 @@ class AutonomyLoop:
         try:
             from datetime import timedelta
             threshold = datetime.now(timezone.utc) - timedelta(minutes=10)
-            
+
             ghosts = agent_store.list_ghosts(registered_before=threshold)
-            
+
             for ghost in ghosts:
                 # Reassign initiatives first
                 if initiative_store:
@@ -1351,7 +1356,7 @@ class AutonomyLoop:
                             assigned_agent_id=None,
                             recovery_reason="agent_ghost",
                         )
-                
+
                 # Remove ghost
                 agent_store.delete(ghost.agent_id)
                 logger.info("Removed ghost agent %s", ghost.agent_id)
@@ -1370,13 +1375,13 @@ class AutonomyLoop:
         try:
             agent_store = self._registry.agent_store
             initiative_store = self._registry.initiative_store
-            
+
             if agent_store and hasattr(agent_store, "backup"):
                 agent_store.backup()
-            
+
             if initiative_store and hasattr(initiative_store, "backup"):
                 initiative_store.backup()
-            
+
             logger.debug("Database backup complete")
         except Exception as exc:
             logger.warning("Phase database_backup error: %s", exc)

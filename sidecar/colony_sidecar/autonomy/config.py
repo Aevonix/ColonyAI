@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import Any, Callable, List, Optional
+from dataclasses import dataclass
+from typing import Optional
 from enum import Enum
 from zoneinfo import ZoneInfo
 
@@ -74,6 +74,11 @@ class AutonomyConfig:
     owner_check_in_silent_hours: float = 1.0
     owner_check_in_cooldown_hours: float = 4.0
     owner_contact_id: Optional[str] = None  # None = resolve from identity
+
+    # ── Proactive delivery (push initiatives to webhook) ────────────────
+    # When False, initiatives are stored but never pushed to the delivery bridge.
+    # The agent must poll via context-digest to see pending work.
+    proactive_delivery_enabled: bool = False
 
     # ── Conversation synthesis (periodic memory scan for goals) ─────────
     # Scans stored conversation memories for implicit goals and commitments.
@@ -168,6 +173,9 @@ class AutonomyConfig:
                 defaults.owner_check_in_cooldown_hours,
             )),
             owner_contact_id=_get("owner_contact_id", defaults.owner_contact_id),
+            proactive_delivery_enabled=bool(
+                _get("proactive_delivery_enabled", defaults.proactive_delivery_enabled)
+            ),
             conversation_synthesis_enabled=bool(_get(
                 "conversation_synthesis_enabled",
                 defaults.conversation_synthesis_enabled,
@@ -207,6 +215,7 @@ class AutonomyConfig:
             COLONY_OWNER_CHECK_IN_SILENT_HOURS
             COLONY_OWNER_CHECK_IN_COOLDOWN_HOURS
             COLONY_OWNER_CONTACT_ID
+            COLONY_PROACTIVE_DELIVERY_ENABLED
             COLONY_CONVERSATION_SYNTHESIS_ENABLED
             COLONY_CONVERSATION_SYNTHESIS_INTERVAL_SECS
             COLONY_CONVERSATION_SYNTHESIS_LOOKBACK_HOURS
@@ -314,6 +323,10 @@ class AutonomyConfig:
             owner_contact_id=os.environ.get(
                 "COLONY_OWNER_CONTACT_ID",
                 defaults.owner_contact_id,
+            ),
+            proactive_delivery_enabled=_bool(
+                "COLONY_PROACTIVE_DELIVERY_ENABLED",
+                defaults.proactive_delivery_enabled,
             ),
             conversation_synthesis_enabled=_bool(
                 "COLONY_CONVERSATION_SYNTHESIS_ENABLED",
