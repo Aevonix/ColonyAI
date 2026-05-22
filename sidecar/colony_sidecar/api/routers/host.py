@@ -183,6 +183,11 @@ from colony_sidecar.api.schemas.host import (
     InitiativeFailRequest,
     InitiativeDelegateRequest,
     InitiativePriorityRequest,
+    # Aeva Heartbeat & Agent Snapshot
+    AgentSnapshotInitiative,
+    AgentSnapshotResponse,
+    RecordOutreachRequest,
+    RecordOutreachResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -5242,6 +5247,102 @@ async def respond_to_initiative(
         details=details or {},
     )
     return {"success": True, "initiative_id": initiative_id, "status": new_status or initiative.status}
+
+
+# --- Agent Snapshot Endpoints ---
+
+@router.get("/agent-snapshot", response_model=AgentSnapshotResponse)
+async def agent_snapshot() -> AgentSnapshotResponse:
+    """Return a comprehensive snapshot of Colony state for Aeva evaluation."""
+    now = datetime.now(timezone.utc)
+
+    # Telemetry
+    thresholds = {"sync": 1.0, "tick": 1.0, "initiative": 4.0, "prefetch": 24.0}
+    telemetry_dict = await _telemetry.to_dict(thresholds) if _telemetry else {}
+
+    # Pending initiatives (top 20 by priority)
+    pending = []
+    if _initiative_store is not None:
+        pending = _initiative_store.list(status=["pending"], limit=20)
+
+    # Recently completed (top 10 by priority — store orders by priority DESC)
+    recent = []
+    if _initiative_store is not None:
+        recent = _initiative_store.list(status=["completed"], limit=10)
+
+    # Failed initiatives
+    failed = []
+    if _initiative_store is not None:
+        failed = _initiative_store.list(status=["failed"], limit=10)
+
+    # Compute last tick age
+    tick_age = None
+    if _telemetry is not None and _telemetry.last_tick_at is not None:
+        tick_age = (now - _telemetry.last_tick_at).total_seconds() / 60
+
+    # Flags: high-signal items Aeva should know about
+    flags = []
+    if (telemetry_dict.get("silence_hours", {}).get("initiative") or 0) > 4:
+        flags.append("long_initiative_silence")
+    if failed:
+        flags.append("failed_initiatives")
+    if pending and any(i.priority > 0.8 for i in pending):
+        flags.append("high_priority_pending")
+    if tick_age and tick_age > 30:
+        flags.append("stale_autonomy_loop")
+
+    def _map_initiative(i):
+        return AgentSnapshotInitiative(
+            id=i.id,
+            type=i.type,
+            description=i.description,
+            priority=i.priority,
+            status=i.status,
+            rationale=i.rationale,
+            action_hint=i.action_hint,
+            entity_id=i.entity_id,
+            dedup_key=i.dedup_key,
+            created_at=i.created_at.isoformat() if i.created_at else "",
+            expires_at=i.expires_at.isoformat() if i.expires_at else None,
+            assigned_agent_id=i.assigned_agent_id,
+            acknowledged_at=i.acknowledged_at.isoformat() if i.acknowledged_at else None,
+            completed_at=i.completed_at.isoformat() if i.completed_at else None,
+            failed_at=i.failed_at.isoformat() if i.failed_at else None,
+            failed_reason=i.failed_reason,
+        )
+
+    return AgentSnapshotResponse(
+        timestamp=now.isoformat(),
+        telemetry=telemetry_dict,
+        pending_initiatives=[_map_initiative(i) for i in pending],
+        pending_count=len(pending),
+        assigned_count=_initiative_store.count(status=["assigned"]) if _initiative_store else 0,
+        failed_count=len(failed),
+        recently_completed=[_map_initiative(i) for i in recent],
+        autonomy_mode=_autonomy_loop.config.mode.value if _autonomy_loop else "unknown",
+        autonomy_running=_autonomy_loop.is_running if _autonomy_loop else False,
+        last_tick_age_minutes=tick_age,
+        flags=flags,
+    )
+
+
+@router.post("/agent-snapshot/record-outreach", response_model=RecordOutreachResponse)
+async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse:
+    """Record that Aeva proactively messaged the owner."""
+    now = datetime.now(timezone.utc)
+    outreach_at = now.isoformat()
+    if _telemetry is not None:
+        await _telemetry.touch("last_aeva_outreach_at")
+        if _telemetry.last_aeva_outreach_at is not None:
+            outreach_at = _telemetry.last_aeva_outreach_at.isoformat()
+    logger.info(
+        "Aeva outreach recorded: agent=%s channel=%s reason=%s",
+        body.agent_id, body.channel, body.reason,
+    )
+    return RecordOutreachResponse(
+        recorded_at=now.isoformat(),
+        last_aeva_outreach_at=outreach_at,
+    )
 
 
 # --- WebSocket Endpoint ---
