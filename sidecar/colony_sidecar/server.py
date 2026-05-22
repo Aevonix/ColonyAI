@@ -922,39 +922,6 @@ async def lifespan(app: FastAPI):
     set_telemetry(telemetry)
     logger.info("TelemetryStore initialized")
 
-    # Register owner check-in task (silence-triggered proactive outreach)
-    # Must be after telemetry is initialized since it queries silence hours.
-    try:
-        if (
-            autonomy_config is not None
-            and autonomy_config.owner_check_in_enabled
-            and registry is not None
-            and scheduler is not None
-        ):
-            from colony_sidecar.autonomy.checkin import OwnerCheckInTask
-            _checkin_task = OwnerCheckInTask(
-                registry=registry,
-                config=autonomy_config,
-                event_bus=autonomy_loop.events if autonomy_loop is not None and hasattr(autonomy_loop, "events") else None,
-                telemetry=telemetry,
-            )
-            # Run every 30 minutes (half the default silence threshold of 1 hour)
-            checkin_interval = max(600, int(autonomy_config.owner_check_in_silent_hours * 1800))
-            scheduler.register(
-                "owner_check_in",
-                _checkin_task.run,
-                interval_seconds=checkin_interval,
-                metadata={"description": "Check for initiative silence and reach out to owner if needed"},
-            )
-            logger.info(
-                "Owner check-in registered (silent_threshold=%.1fh, cooldown=%.1fh, interval=%ds)",
-                autonomy_config.owner_check_in_silent_hours,
-                autonomy_config.owner_check_in_cooldown_hours,
-                checkin_interval,
-            )
-    except Exception as exc:
-        logger.warning("Owner check-in registration failed: %s", exc)
-
     # Register conversation synthesis task (periodic memory scan for goals)
     try:
         if (
