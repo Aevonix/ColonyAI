@@ -79,6 +79,7 @@ from colony_sidecar.api.routers.host import (
     set_assignment_engine,
     set_websocket_manager,
     set_telemetry,
+    set_session_report_store,
     supported_capabilities,
 )
 
@@ -548,11 +549,11 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.intelligence.cognition.registry import CognitionPipeline
         from colony_sidecar.events.bus import EventBus
-        
+
         if graph is not None:
             # Create EventBus for real-time metrics
             event_bus = EventBus()
-            
+
             cognition_pipeline = CognitionPipeline(
                 graph=graph,
                 event_bus=event_bus,
@@ -726,7 +727,7 @@ async def lifespan(app: FastAPI):
 
         # Initialize node identity
         try:
-            from colony_sidecar.chain.node import get_or_create_node_id, ensure_node_keypair, create_node_certificate, load_node_certificate
+            from colony_sidecar.chain.node import get_or_create_node_id, ensure_node_keypair, create_node_certificate
             node_id = get_or_create_node_id(state_dir)
             node_km = ensure_node_keypair(state_dir)
             logger.info("Node identity: %s (public_key=%s...)", node_id, node_km.public_key_hex()[:16])
@@ -734,7 +735,7 @@ async def lifespan(app: FastAPI):
             # Create node certificate if missing
             cert_path = Path(state_dir) / "node-cert.json"
             if not cert_path.exists():
-                cert = create_node_certificate(state_dir, colony_key_manager=key_mgr)
+                create_node_certificate(state_dir, colony_key_manager=key_mgr)
                 logger.info("Node certificate created and signed by Colony key")
             else:
                 logger.info("Node certificate exists")
@@ -922,6 +923,12 @@ async def lifespan(app: FastAPI):
     set_telemetry(telemetry)
     logger.info("TelemetryStore initialized")
 
+    # Session report store (cross-session context bridge)
+    from colony_sidecar.sessions.reports import SessionReportStore
+    session_report_store = SessionReportStore()
+    set_session_report_store(session_report_store)
+    logger.info("SessionReportStore initialized")
+
     # Register conversation synthesis task (periodic memory scan for goals)
     try:
         if (
@@ -997,6 +1004,7 @@ async def lifespan(app: FastAPI):
     set_chain_manager(None)
     set_secrets_manager(None)
     set_session_store(None)
+    set_session_report_store(None)
     # Stop worker node (before queue so in-flight jobs can drain).
     try:
         worker = getattr(app.state, "worker", None)
