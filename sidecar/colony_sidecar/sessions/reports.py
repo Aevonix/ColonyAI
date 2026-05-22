@@ -70,7 +70,10 @@ class SessionReportStore:
                 ended = ended.replace(tzinfo=timezone.utc)
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
-            if (ended is not None and ended > cutoff) or (ended is None and started > cutoff):
+            if (
+                (ended is not None and ended > cutoff)
+                or (ended is None and started > cutoff)
+            ):
                 recent.append(r)
         return recent[-limit:]
 

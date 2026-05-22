@@ -549,11 +549,11 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.intelligence.cognition.registry import CognitionPipeline
         from colony_sidecar.events.bus import EventBus
-        
+
         if graph is not None:
             # Create EventBus for real-time metrics
             event_bus = EventBus()
-            
+
             cognition_pipeline = CognitionPipeline(
                 graph=graph,
                 event_bus=event_bus,
@@ -727,7 +727,7 @@ async def lifespan(app: FastAPI):
 
         # Initialize node identity
         try:
-            from colony_sidecar.chain.node import get_or_create_node_id, ensure_node_keypair, create_node_certificate, load_node_certificate
+            from colony_sidecar.chain.node import get_or_create_node_id, ensure_node_keypair, create_node_certificate
             node_id = get_or_create_node_id(state_dir)
             node_km = ensure_node_keypair(state_dir)
             logger.info("Node identity: %s (public_key=%s...)", node_id, node_km.public_key_hex()[:16])
@@ -735,7 +735,7 @@ async def lifespan(app: FastAPI):
             # Create node certificate if missing
             cert_path = Path(state_dir) / "node-cert.json"
             if not cert_path.exists():
-                cert = create_node_certificate(state_dir, colony_key_manager=key_mgr)
+                create_node_certificate(state_dir, colony_key_manager=key_mgr)
                 logger.info("Node certificate created and signed by Colony key")
             else:
                 logger.info("Node certificate exists")
