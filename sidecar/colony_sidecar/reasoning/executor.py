@@ -82,7 +82,7 @@ class ToolExecutor:
         if search_orchestrator and search_orchestrator.has_providers:
             try:
                 from colony_sidecar.reasoning.native_tools.web_search import WebSearchTool
-                ws_tool = WebSearchTool(search_orchestrator, graph_client=self._graph)
+                ws_tool = WebSearchTool(search_orchestrator)
                 self.register("web_search", ws_tool.execute)
             except Exception as exc:
                 logger.warning("register web_search tool failed: %s", exc)

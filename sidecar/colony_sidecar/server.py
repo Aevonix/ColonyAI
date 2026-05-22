@@ -663,11 +663,9 @@ async def lifespan(app: FastAPI):
     skills_registry = None
     try:
         from colony_sidecar.skills.registry import SkillRegistry
-        skills_db_path = state_dir / "skills.db"
-        skills_registry = SkillRegistry(db_path=skills_db_path)
-        skills_registry.open()
+        skills_registry = SkillRegistry()
         set_skills_registry(skills_registry)
-        logger.info("SkillRegistry initialized (db=%s)", skills_db_path)
+        logger.info("SkillRegistry initialized (%d skills)", len(skills_registry.list_skills()))
 
         try:
             from colony_sidecar.skills.executor import SkillExecutor
