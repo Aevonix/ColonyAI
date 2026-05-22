@@ -180,6 +180,61 @@ The provider's system prompt block instructs the LLM to prefer host-provided cur
 
 -----
 
+## Aeva Heartbeat & Agent Snapshot (v0.13.0)
+
+Colony v0.13.0 replaces the old silence-triggered owner check-in with a **state-exposure model**. Colony exposes its full state via an API endpoint. The agent (Aeva) pulls that state, evaluates it, and decides whether, when, and how to communicate with the owner.
+
+**Colony never messages the owner directly. Aeva decides on outreach.**
+
+### Agent Snapshot Endpoint
+
+`GET /v1/host/agent-snapshot` returns everything Aeva needs to evaluate whether to reach out:
+
+| Field | Description |
+|---|---|
+| `telemetry` | `started_at`, `last_sync_at`, `last_tick_at`, `last_initiative_at`, `last_aeva_outreach_at`, `silence_hours`, `stale_flags` |
+| `pending_initiatives` | Top 20 pending initiatives by priority |
+| `recently_completed` | Top 10 completed initiatives |
+| `failed_count` / `failed_initiatives` | Failed initiatives requiring attention |
+| `autonomy_mode` | `reactive` or `proactive` |
+| `autonomy_running` | Is the autonomy loop active? |
+| `last_tick_age_minutes` | How long since the last tick |
+| `flags` | Computed signals: `high_priority_pending`, `failed_initiatives`, `long_initiative_silence`, `stale_autonomy_loop` |
+
+### Recording Outreach
+
+After Aeva proactively messages the owner, it records the outreach:
+
+```bash
+curl -X POST http://localhost:7777/v1/host/agent-snapshot/record-outreach \
+  -H "Authorization: Bearer $COLONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "aeva", "channel": "whatsapp", "reason": "high_priority_pending"}'
+```
+
+This touches `TelemetryStore.last_aeva_outreach_at`, which appears in subsequent snapshots and suppresses redundant outreach.
+
+### Hermes Cron Integration
+
+Aeva evaluates the snapshot on a schedule via Hermes cron:
+
+```bash
+hermes cron create \
+  --name "aeva-colony-heartbeat" \
+  --schedule "*/20 * * * *" \
+  --prompt "Query Colony agent snapshot at http://127.0.0.1:7777/v1/host/agent-snapshot. Evaluate whether to proactively message the owner based on: pending initiatives, failed items, silence duration, and last outreach time. If you decide to reach out, compose a natural message and use the send_message tool. After sending, record the outreach via POST to /v1/host/agent-snapshot/record-outreach." \
+  --toolsets web,terminal
+```
+
+### Design Principles
+
+1. **Colony runs everything autonomously** — initiatives, execution, telemetry, scheduling
+2. **Colony exposes state to Aeva** — via snapshot endpoint, not direct messages
+3. **Aeva evaluates and decides** — whether, when, and what to communicate
+4. **State survives session resets** — all temporal state lives in Colony, not Aeva memory
+
+-----
+
 ## Multi-Agent (v0.7.0)
 
 Colony v0.7.0 introduces **multi-agent support**, enabling multiple OpenClaw instances, coding agents, and AI systems to connect to a central Colony and share unified context.
@@ -252,6 +307,7 @@ See [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md) for:
 - [What Is Colony](#what-is-colony)
 - [Quick Start](#quick-start)
 - [Temporal Awareness, Sync Health & Auto-Restart](#temporal-awareness-sync-health--auto-restart-v08x)
+- [Aeva Heartbeat & Agent Snapshot](#aeva-heartbeat--agent-snapshot-v0130)
 - [Multi-Agent (v0.7.0)](#multi-agent-v070)
 - [Why Colony](#why-colony)
 - [36 Wired Subsystems](#36-wired-subsystems)
@@ -376,7 +432,7 @@ Everything below works now.
 
 **Types stay in sync.** Python Pydantic schemas export an OpenAPI spec. TypeScript types generate from the spec. No client/server drift.
 
-**Authenticated by default.** When `COLONY_API_KEY` is set, all API endpoints require `X-API-Key` header authentication. Without it, the API runs in open dev mode.
+**Authenticated by default.** When `COLONY_API_KEY` is set, all API endpoints require `Authorization: Bearer <token>` header authentication. Without it, the API runs in open dev mode.
 
 -----
 
@@ -666,7 +722,7 @@ colony restore                       # Interactive: file + passphrase
 
 Base URL: `http://localhost:7777/v1/host`
 
-All endpoints require `X-API-Key` authentication when `COLONY_API_KEY` is set. Unauthenticated requests receive 401. The health endpoint (`/v1/host/health`) and OpenAPI spec (`/openapi.json`) are accessible without auth.
+All endpoints require `Authorization: Bearer <token>` authentication when `COLONY_API_KEY` is set. Unauthenticated requests receive 401. The health endpoint (`/v1/host/health`) and OpenAPI spec (`/openapi.json`) are accessible without auth.
 
 Full OpenAPI spec:
 
@@ -740,6 +796,8 @@ curl http://localhost:7777/openapi.json
 | POST | `/initiatives` | Create an initiative (autonomy loop or external) |
 | GET | `/initiatives/{id}` | Get initiative by ID |
 | PATCH | `/initiatives/{id}` | Update initiative status |
+| GET | `/agent-snapshot` | Full Colony state snapshot for agent evaluation |
+| POST | `/agent-snapshot/record-outreach` | Record agent proactive outreach timestamp |
 
 ### Goals, Skills, and Identity
 
@@ -776,21 +834,29 @@ Colony is not a reminder service. When the autonomy loop detects work, it genera
 
 ## Roadmap
 
-### Now (v0.8.x)
+### Now (v0.13.0)
 
-- 36 wired subsystems, 57+ API endpoints
-- Temporal awareness and sync health monitoring
-- Auto-restart via launchd with telemetry tracking
+- 36 wired subsystems, 59+ API endpoints
+- Agent snapshot endpoint for Aeva proactive outreach evaluation
+- Telemetry `last_aeva_outreach_at` with state-survival across session resets
+- Colony exposes state; Aeva decides on communication (no direct owner messaging)
+- Temporal awareness and sync health monitoring with auto-restart
 - Initiative poller with health preflight and alert routing
 - Memory provider with circuit breaker, retry, and diagnostics
 - MCP server for Claude Code, Codex, Crush, Hermes
-- Silence-triggered owner check-in — agent-initiated touchpoint when autonomy goes quiet
 - Multi-harness shared intelligence layer
 - Neo4j + SQLite world model backends
 - Cognitive architecture: commitments, affect, shared facts, patterns, surprise, autonomy
 - Event journal with replay
 - Adaptive context compression
 - Full lifecycle CLI (start/stop/service/validate/doctor)
+
+### Next (v0.14.0)
+
+- Colony-to-Colony networking: federation, knowledge sharing, and super-agent clusters
+- SuperColony substrate for personal agent clusters on shared infrastructure
+- Advanced autonomy: goal-driven planning, resource negotiation, and cross-Colony task delegation
+- Web dashboard for real-time Colony telemetry and initiative monitoring
 
 ### Next
 

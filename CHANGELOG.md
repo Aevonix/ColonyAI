@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.13.0 (2026-05-21)
+
+Aeva heartbeat and agent snapshot endpoints. Colony exposes state; Aeva decides when to communicate.
+
+### Added
+- **Agent Snapshot API** (`/v1/host/agent-snapshot`):
+  - `GET /agent-snapshot` — comprehensive Colony state snapshot for Aeva evaluation
+    - Telemetry with silence hours and stale flags
+    - Pending initiatives (top 20), recently completed (top 10), failed (top 10)
+    - Autonomy mode, running status, last tick age
+    - Computed flags: `high_priority_pending`, `failed_initiatives`, `long_initiative_silence`, `stale_autonomy_loop`
+  - `POST /agent-snapshot/record-outreach` — record Aeva proactive outreach timestamp
+- **TelemetryStore** — `last_aeva_outreach_at` field with `to_dict()` serialization
+- **Pydantic schemas** — `AgentSnapshotInitiative`, `AgentSnapshotResponse`, `RecordOutreachRequest`, `RecordOutreachResponse`
+- **Tests** — `tests/test_agent_snapshot.py` with 6 unit tests (empty state, initiatives, stale tick, silence flags, outreach recording, round-trip)
+
+### Changed
+- Replaces `OwnerCheckInTask` (removed in v0.12.1) with a state-exposure model
+- Colony never messages the owner directly; Aeva evaluates snapshot and decides on outreach
+
+### Fixed
+- `silence_hours` null handling in flag computation (`None > 4` TypeError on fresh telemetry)
+- `record_outreach` returns actual touched timestamp instead of stale `now.isoformat()`
+
 ## 0.12.0 (2026-05-21)
 
 Agent work queue v0.13.0 — distributed job scheduling for autonomous agent execution.
