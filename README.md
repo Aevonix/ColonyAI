@@ -24,7 +24,7 @@ Colony is not another agent. It is infrastructure. A sidecar process with a unif
 
 Both paths read and write to the same stores. Any harness can observe or contribute to the same commitments, facts, and world model.
 
-The current release delivers 36 production subsystems across 57+ API endpoints. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony: personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design. The same pattern that makes ant colonies collectively intelligent without a central controller.
+The current release delivers 37 production subsystems across 57+ API endpoints. Across future releases, Colonies will network into super-agents across your hardware, federate to share knowledge and compute, and ultimately form a SuperColony: personal agent clusters that share resources on a global substrate. The architecture is stigmergic by design. The same pattern that makes ant colonies collectively intelligent without a central controller.
 
 -----
 
@@ -834,11 +834,13 @@ Colony is not a reminder service. When the autonomy loop detects work, it genera
 
 ## Roadmap
 
-### Now (v0.13.0)
+### Now (v0.15.0)
 
-- 36 wired subsystems, 59+ API endpoints
+- 37 wired subsystems, 59+ API endpoints
+- **Memory governance & epistemic hygiene** — source anchoring, confidence computation, Ebbinghaus decay, pruning, file reconciliation, archival
+- Epistemic state machine: 8 states from `inferred` to `archived` with automatic transitions
 - Agent snapshot endpoint for Aeva proactive outreach evaluation
-- Telemetry `last_aeva_outreach_at` with state-survival across session resets
+- Telemetry `last_agent_outreach_at` with state-survival across session resets
 - Colony exposes state; Aeva decides on communication (no direct owner messaging)
 - Temporal awareness and sync health monitoring with auto-restart
 - Initiative poller with health preflight and alert routing
