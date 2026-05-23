@@ -195,9 +195,11 @@ class MemoryConsolidator:
         query = (
             "MATCH (m:Memory) "
             "WHERE m.accessed_at >= datetime() - duration({hours: $hours}) "
+            "  AND NOT m.epistemic_state IN ['stale', 'superseded', 'deprecated', 'archived'] "
             "RETURN m.id AS id, m.content AS content, m.embedding AS embedding, "
-            "m.strength AS strength, m.type AS type, m.sources AS sources "
-            "ORDER BY m.strength DESC"
+            "m.strength AS strength, m.effective_confidence AS effective_confidence, "
+            "m.type AS type, m.sources AS sources, m.epistemic_state AS epistemic_state "
+            "ORDER BY m.effective_confidence DESC, m.strength DESC"
         )
         rows = await self._execute(query, hours=self.lookback_hours)
         return rows if rows else []
@@ -215,57 +217,85 @@ class MemoryConsolidator:
 
     async def _merge_pair(self, keep_rec: Dict[str, Any], merge_rec: Dict[str, Any]) -> None:
         """Merge *merge_rec* into *keep_rec*: highest-strength node survives."""
-        # Determine survivor
-        if (merge_rec.get("strength") or 0.0) > (keep_rec.get("strength") or 0.0):
+        from colony_sidecar.intelligence.graph.client import EpistemicState
+
+        # Determine survivor by effective_confidence → strength → recency
+        keep_conf = keep_rec.get("effective_confidence") or keep_rec.get("strength") or 0.0
+        merge_conf = merge_rec.get("effective_confidence") or merge_rec.get("strength") or 0.0
+        if merge_conf > keep_conf:
             keep_rec, merge_rec = merge_rec, keep_rec
+            keep_conf, merge_conf = merge_conf, keep_conf
 
         keep_id = keep_rec["id"]
         merge_id = merge_rec["id"]
 
-        # 1. Re-point all outgoing relationships from merge → keep
+        # 1. Re-point all outgoing MENTIONS relationships from merge → keep
         await self._execute(
-            "MATCH (m:Memory {id: $merge_id})-[r]->(target) "
-            "MATCH (k:Memory {id: $keep_id}) "
-            "CALL apoc.create.relationship(k, type(r), properties(r), target) YIELD rel "
-            "DELETE r",
+            """
+            MATCH (m:Memory {id: $merge_id})-[r:MENTIONS]->(e:Entity)
+            MATCH (k:Memory {id: $keep_id})
+            MERGE (k)-[nr:MENTIONS]->(e)
+            SET nr.created_at = coalesce(r.created_at, datetime())
+            DELETE r
+            """,
             keep_id=keep_id,
             merge_id=merge_id,
         )
 
-        # 2. Re-point all incoming relationships to keep
+        # 3. Re-point ABOUT relationships
         await self._execute(
-            "MATCH (source)-[r]->(m:Memory {id: $merge_id}) "
-            "MATCH (k:Memory {id: $keep_id}) "
-            "CALL apoc.create.relationship(source, type(r), properties(r), k) YIELD rel "
-            "DELETE r",
+            """
+            MATCH (m:Memory {id: $merge_id})-[r:ABOUT]->(p:Person)
+            MATCH (k:Memory {id: $keep_id})
+            MERGE (k)-[nr:ABOUT]->(p)
+            SET nr.created_at = coalesce(r.created_at, datetime())
+            DELETE r
+            """,
             keep_id=keep_id,
             merge_id=merge_id,
         )
 
-        # 3. Merge sources list
+        # 4. Create MERGED_INTO edge
+        await self._execute(
+            """
+            MATCH (k:Memory {id: $keep_id}), (m:Memory {id: $merge_id})
+            MERGE (m)-[r:MERGED_INTO]->(k)
+            SET r.merged_at = datetime()
+            """,
+            keep_id=keep_id,
+            merge_id=merge_id,
+        )
+
+        # 5. Merge provenance and update survivor
         merge_sources = merge_rec.get("sources") or []
+        merge_provenance = merge_rec.get("provenance") or []
         await self._execute(
-            "MATCH (k:Memory {id: $keep_id}) "
-            "SET k.sources = CASE WHEN k.sources IS NULL THEN $sources "
-            "               ELSE k.sources + [x IN $sources WHERE NOT x IN k.sources] END, "
-            "    k.accessed_at = datetime(), "
-            "    k.provenance = coalesce(k.provenance, []) + [$merged_id]",
+            """
+            MATCH (k:Memory {id: $keep_id})
+            SET k.sources = CASE WHEN k.sources IS NULL THEN $sources
+                           ELSE k.sources + [x IN $sources WHERE NOT x IN k.sources] END,
+                k.provenance = coalesce(k.provenance, []) + $merge_provenance + [$merged_id],
+                k.accessed_at = datetime(),
+                k.epistemic_state = CASE
+                    WHEN k.epistemic_state = 'inferred' AND $merge_state IN ['observed', 'corroborated', 'verified']
+                    THEN $merge_state
+                    ELSE k.epistemic_state
+                END
+            """,
             keep_id=keep_id,
             sources=merge_sources,
+            merge_provenance=merge_provenance,
             merged_id=merge_id,
+            merge_state=merge_rec.get("epistemic_state", "inferred"),
         )
 
-        # 4. Delete the merged node.
-        # Note: DETACH DELETE removes the node and all its relationships.
-        # The audit trail is preserved in the keep node's `provenance`
-        # array (set in step 3 above) rather than a relationship, since
-        # DETACH DELETE would destroy any edge to the deleted node.
+        # 6. Remove :Memory label from merged node (preserves MERGED_INTO audit edge)
         await self._execute(
-            "MATCH (m:Memory {id: $merge_id}) DETACH DELETE m",
+            "MATCH (m:Memory {id: $merge_id}) REMOVE m:Memory",
             merge_id=merge_id,
         )
 
-        logger.debug("Merged memory %s → %s (provenance recorded on keeper)", merge_id, keep_id)
+        logger.debug("Merged memory %s → %s (MERGED_INTO + provenance recorded)", merge_id, keep_id)
 
     async def _detect_conflicts(self) -> List[ConflictPair]:
         """Find Memory pairs that assert contradictory facts about the same entity."""
