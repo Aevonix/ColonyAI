@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.15.0 (2026-05-23)
+
+Memory governance & epistemic hygiene — source anchoring, confidence computation, decay, pruning, reconciliation, and archival.
+
+### Added
+- **Epistemic state machine** — 8 states (`inferred`, `observed`, `corroborated`, `verified`, `stale`, `superseded`, `deprecated`, `archived`) with `transition_epistemic_state()` API
+- **Source anchoring** — every memory records `source_type`, `source_uri`, `source_version`, `content_hash`
+  - `MemorySourceType` enum: `conversation`, `file`, `tool_output`, `user_assertion`, `inference`
+  - `SOURCE_RELIABILITY` weighting: user_assertion (1.0) > file (0.9) > tool_output (0.85) > conversation (0.7) > inference (0.5)
+  - `MAX_IMPORTANCE` clamping per source type to prevent over-inflation
+  - `protected` flag auto-set for `user_assertion` memories (immune to pruning)
+- **Effective confidence computation** — multi-signal formula:
+  - Base: `base_confidence × source_reliability`
+  - Corroboration boost / contradiction penalty
+  - Recall reinforcement (diminishing returns, cap 1.3×)
+  - Recency discount (~10%/year exponential decay)
+  - Verification boost (1.2× if verified within 7 days)
+  - State floors/penalties: `verified` ≥ 0.9, `stale`/≠superseded × 0.3, `deprecated` × 0.1
+- **Ebbinghaus decay** — `decay_memories()` applies forgetting curve:
+  - Formula: `strength = importance × e^(-λ × days) × (1 + recalls × 0.2)`
+  - Identity memories never decay; procedural at half rate; protected skipped
+- **Pruning** — `prune_weak_memories()` deletes memories with `strength < 0.05`
+  - Skips protected, `corroborated`, `verified`, and fully terminal states
+- **File reconciliation** — `FileReconciler` validates file-sourced memories against ground truth:
+  - Detects deleted files → marks `STALE`
+  - Hash-match unchanged files → marks `VERIFIED`
+  - Hash-mismatch → creates superseded version with preserved entities
+  - `dry_run` mode for safe preview
+- **Archival** — `archive_memories()` moves terminal-state memories to `:ArchivedMemory` after 30 days:
+  - Copies `MENTIONS`, `ABOUT`, `SUPERSEDES`, `DERIVED_FROM` relationships
+  - Removes from LanceDB vector store
+- **Batch confidence refresh** — `_update_effective_confidence_batch()` recalculates all memories in 1000-item batches
+- **19 unit tests** — `tests/test_memory_governance.py` covering confidence signals, write governance, epistemic states, source anchoring, reconciler structure
+
+### Fixed (5-pass audit)
+- `record_turn()` `NameError`: undefined `meta` → `metadata`; now passes `contact_id` as `person_id`
+- `store_memory()` missing Cypher params: `source_type`, `source_uri`, `source_version`, `content_hash`
+- `compute_effective_confidence()` Neo4j `DateTime` compatibility via `.to_native()`
+- `decay_memories()` null `accessed_at` safety with `coalesce(m.accessed_at, m.created_at, datetime())`
+- `prune_weak_memories()` / `verify_memory()` docstring accuracy
+- `FileAnchor` lazy creation during `store_memory()` for file sources
+- Reconciler query efficiency via `FileAnchor` index
+- `source_type` case normalization preventing `MAX_IMPORTANCE` lookup misses
+
 ## 0.14.1 (2026-05-23)
 
 Audit-driven hardening — graph schema, silent-failure logging, stale-comment cleanup.
