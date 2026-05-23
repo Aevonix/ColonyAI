@@ -796,14 +796,22 @@ async def memory_flush(body: MemoryFlushRequest) -> MemoryFlushResponse:
 async def memory_reconcile(body: MemoryReconcileRequest) -> MemoryReconcileResponse:
     if _graph is None:
         return MemoryReconcileResponse()
-    # TODO: Implement FileReconciler integration
-    return MemoryReconcileResponse(
-        files_checked=0,
-        memories_verified=0,
-        memories_staled=0,
-        memories_superseded=0,
-        errors=["FileReconciler not yet implemented"],
-    )
+    try:
+        from colony_sidecar.intelligence.graph.reconciler import FileReconciler
+        reconciler = FileReconciler(_graph)
+        result = await reconciler.reconcile(dry_run=body.dry_run or False)
+        return MemoryReconcileResponse(
+            files_checked=result["files_checked"],
+            memories_verified=result["memories_verified"],
+            memories_staled=result["memories_staled"],
+            memories_superseded=result["memories_superseded"],
+            errors=result["errors"],
+        )
+    except Exception as exc:
+        logger.warning("memory_reconcile failed: %s", exc)
+        return MemoryReconcileResponse(
+            errors=[str(exc)],
+        )
 
 
 @router.get("/memory/conflicts", response_model=MemoryConflictsResponse)
