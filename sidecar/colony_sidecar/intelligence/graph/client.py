@@ -7,11 +7,13 @@ relationships, events, and behavioral patterns.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Coroutine, Dict, List, Optional, TYPE_CHECKING
 
 try:
@@ -36,6 +38,42 @@ class GraphConfig:
     max_pool_size: int = 50
     connection_timeout_secs: float = 10.0
     max_retry_secs: float = 30.0
+
+
+class MemorySourceType(str, Enum):
+    CONVERSATION = "conversation"
+    FILE = "file"
+    TOOL_OUTPUT = "tool_output"
+    USER_ASSERTION = "user_assertion"
+    INFERENCE = "inference"
+
+
+class EpistemicState(str, Enum):
+    INFERRED = "inferred"
+    OBSERVED = "observed"
+    CORROBORATED = "corroborated"
+    VERIFIED = "verified"
+    STALE = "stale"
+    SUPERSEDED = "superseded"
+    DEPRECATED = "deprecated"
+    ARCHIVED = "archived"
+
+
+SOURCE_RELIABILITY: Dict[str, float] = {
+    MemorySourceType.USER_ASSERTION: 1.0,
+    MemorySourceType.FILE: 0.9,
+    MemorySourceType.TOOL_OUTPUT: 0.85,
+    MemorySourceType.CONVERSATION: 0.7,
+    MemorySourceType.INFERENCE: 0.5,
+}
+
+MAX_IMPORTANCE: Dict[str, float] = {
+    MemorySourceType.USER_ASSERTION: 1.0,
+    MemorySourceType.FILE: 0.95,
+    MemorySourceType.TOOL_OUTPUT: 0.9,
+    MemorySourceType.CONVERSATION: 0.8,
+    MemorySourceType.INFERENCE: 0.7,
+}
 
 
 class ColonyGraph:
@@ -158,6 +196,75 @@ class ColonyGraph:
             )
         return await self._embed_fn(text)
 
+    @staticmethod
+    def compute_effective_confidence(
+        base_confidence: float,
+        source_reliability: float,
+        corroboration_count: int,
+        contradiction_count: int,
+        recalls: int,
+        last_verified_at: Optional[Any],
+        created_at: Any,
+        epistemic_state: str,
+        now: Any,
+    ) -> float:
+        """Compute effective confidence from multiple signals.
+
+        Args:
+            base_confidence: Initial confidence (0-1)
+            source_reliability: Reliability of the source (0-1)
+            corroboration_count: Number of corroborating memories
+            contradiction_count: Number of contradicting memories
+            recalls: Number of times recalled
+            last_verified_at: Last verification timestamp or None
+            created_at: Creation timestamp
+            epistemic_state: Current epistemic state string
+            now: Current timestamp
+
+        Returns:
+            Effective confidence in [0, 1].
+        """
+        from datetime import datetime as _dt, timezone as _tz
+
+        if now is None:
+            now = _dt.now(_tz.utc)
+        if isinstance(now, str):
+            now = _dt.fromisoformat(now.replace("Z", "+00:00"))
+        if isinstance(created_at, str):
+            created_at = _dt.fromisoformat(created_at.replace("Z", "+00:00"))
+
+        # Source weight
+        confidence = base_confidence * source_reliability
+
+        # Corroboration / contradiction adjustment
+        net_support = corroboration_count - contradiction_count
+        confidence *= min(1.0, 1.0 + net_support * 0.1)
+
+        # Recall reinforcement (diminishing returns)
+        confidence *= min(1.3, 1.0 + recalls * 0.03)
+
+        # Recency discount (separate from Ebbinghaus decay)
+        days_old = max(0, (now - created_at).days)
+        recency_factor = math.exp(-days_old / 365.0 * 0.1)  # ~10% per year
+        confidence *= recency_factor
+
+        # Verification boost
+        if last_verified_at:
+            if isinstance(last_verified_at, str):
+                last_verified_at = _dt.fromisoformat(last_verified_at.replace("Z", "+00:00"))
+            if (now - last_verified_at).days < 7:
+                confidence *= 1.2
+
+        # State clamp
+        if epistemic_state == EpistemicState.VERIFIED.value:
+            confidence = max(confidence, 0.9)
+        elif epistemic_state in (EpistemicState.STALE.value, EpistemicState.SUPERSEDED.value):
+            confidence *= 0.3
+        elif epistemic_state == EpistemicState.DEPRECATED.value:
+            confidence *= 0.1
+
+        return min(1.0, max(0.0, confidence))
+
     # ------------------------------------------------------------------
     # Core operations
     # ------------------------------------------------------------------
@@ -171,6 +278,10 @@ class ColonyGraph:
         importance: float = 1.0,
         person_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        source_type: str = "inference",
+        source_uri: Optional[str] = None,
+        source_version: Optional[str] = None,
+        content_hash: Optional[str] = None,
     ) -> str:
         """Store a memory with automatic entity linking.
 
@@ -185,16 +296,45 @@ class ColonyGraph:
             metadata: Optional key-value metadata
             importance: Initial importance / strength (0-1, default 1.0)
             person_id: Optional person ID to link this memory to via (Memory)-[:ABOUT]->(Person)
+            source_type: Origin of this memory (conversation, file, tool_output, user_assertion, inference)
+            source_uri: Optional URI referencing the source
+            source_version: Optional version string for the source
+            content_hash: Optional SHA-256 hash of the content
 
         Returns:
             The UUID of the newly created Memory node.
         """
         metadata = metadata or {}
+        max_importance = MAX_IMPORTANCE.get(source_type, 0.7)
+        if importance > max_importance:
+            logger.warning(
+                "Importance %.2f for source_type '%s' exceeds max %.2f; clamping.",
+                importance, source_type, max_importance,
+            )
+            importance = max_importance
         importance = max(0.0, min(1.0, importance))
+
         # Resolve person_id from explicit arg or metadata fallback
         person_id = person_id or metadata.get("person_id")
         # Resolve session_id from explicit arg or metadata fallback
         session_id = session_id or (metadata.get("session_id") if metadata else None)
+
+        source_reliability = SOURCE_RELIABILITY.get(source_type, 0.5)
+        protected = source_type == MemorySourceType.USER_ASSERTION
+        base_confidence = importance
+        epistemic_state = EpistemicState.INFERRED
+
+        effective_confidence = self.compute_effective_confidence(
+            base_confidence=base_confidence,
+            source_reliability=source_reliability,
+            corroboration_count=0,
+            contradiction_count=0,
+            recalls=0,
+            last_verified_at=None,
+            created_at=self._utcnow(),
+            epistemic_state=epistemic_state.value,
+            now=self._utcnow(),
+        )
 
         # Compute embedding if available
         embedding: Optional[List[float]] = None
@@ -215,7 +355,21 @@ class ColonyGraph:
                     accessed_at: datetime(),
                     embedding: $embedding,
                     metadata: $metadata,
-                    session_id: $session_id
+                    session_id: $session_id,
+                    source_type: $source_type,
+                    source_uri: $source_uri,
+                    source_version: $source_version,
+                    content_hash: $content_hash,
+                    base_confidence: $base_confidence,
+                    source_reliability: $source_reliability,
+                    corroboration_count: 0,
+                    contradiction_count: 0,
+                    effective_confidence: $effective_confidence,
+                    epistemic_state: $epistemic_state,
+                    protected: $protected,
+                    last_verified_at: null,
+                    superseded_by: null,
+                    provenance: []
                 })
                 WITH m
                 FOREACH (entity_name IN $entities |
@@ -237,6 +391,15 @@ class ColonyGraph:
                 metadata=str(metadata),
                 person_id=person_id,
                 session_id=session_id,
+                source_type=source_type,
+                source_uri=source_uri,
+                source_version=source_version,
+                content_hash=content_hash,
+                base_confidence=base_confidence,
+                source_reliability=source_reliability,
+                effective_confidence=effective_confidence,
+                epistemic_state=epistemic_state.value,
+                protected=protected,
             )
             record = await result.single()
             if record is None:
@@ -261,6 +424,13 @@ class ColonyGraph:
                         "tags": metadata.get("tags", []),
                         "created_at": metadata.get("created_at"),
                         "session_id": session_id,
+                        "source_type": source_type,
+                        "source_uri": source_uri,
+                        "source_version": source_version,
+                        "content_hash": content_hash,
+                        "effective_confidence": effective_confidence,
+                        "epistemic_state": epistemic_state.value,
+                        "protected": protected,
                     },
                 )
             except Exception as exc:
@@ -306,6 +476,7 @@ class ColonyGraph:
         }
 
         try:
+            content_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
             return await self.store_memory(
                 content=content,
                 memory_type="episodic",
@@ -314,6 +485,9 @@ class ColonyGraph:
                 importance=importance,
                 person_id=contact_id,
                 session_id=session_id,
+                source_type=MemorySourceType.CONVERSATION.value,
+                source_uri=session_id,
+                content_hash=content_hash,
             )
         except Exception as exc:
             logger.warning("record_turn failed: %s", exc)
@@ -324,6 +498,7 @@ class ColonyGraph:
         query: str,
         limit: int = 10,
         min_strength: float = 0.1,
+        min_confidence: float = 0.1,
     ) -> List[Dict[str, Any]]:
         """Retrieve memories by semantic similarity with strength decay.
 
@@ -373,6 +548,14 @@ class ColonyGraph:
                             if strength < min_strength:
                                 continue
                             mem["relevance"] = vector_score * strength
+                            # Filter terminal epistemic states and low confidence
+                            epistemic_state = mem.get("epistemic_state", "inferred")
+                            if epistemic_state in ("stale", "superseded", "deprecated", "archived"):
+                                continue
+                            effective_confidence = float(mem.get("effective_confidence", mem.get("strength", 1.0)))
+                            if effective_confidence < min_confidence:
+                                continue
+                            mem["relevance"] = vector_score * effective_confidence
                             memories.append(mem)
 
                     memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)
@@ -392,10 +575,11 @@ class ColonyGraph:
                 MATCH (m:Memory)
                 WHERE m.strength >= $min_strength
                   AND toLower(m.content) CONTAINS toLower($search_text)
+                  AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
                 OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
                 WITH m, collect(e.name) AS entity_names
                 RETURN m {.*, entities: entity_names} AS memory,
-                       m.strength AS relevance
+                       m.effective_confidence AS relevance
                 ORDER BY relevance DESC
                 LIMIT $limit
                 """,
@@ -407,6 +591,9 @@ class ColonyGraph:
             async for record in result:
                 mem = record["memory"]
                 mem["relevance"] = record.get("relevance", mem.get("strength", 0.5))
+                effective_confidence = float(mem.get("effective_confidence", mem.get("strength", 1.0)))
+                if effective_confidence < min_confidence:
+                    continue
                 memories.append(mem)
         # Fire-and-forget touch_memory for each recalled result
         for mem in memories:
@@ -462,12 +649,13 @@ class ColonyGraph:
         return min(1.0, max(0.0, strength))
 
     async def decay_memories(self, half_life_days: float = 7.0) -> None:
-        """Apply Ebbinghaus forgetting curve to all non-identity memories.
+        """Apply Ebbinghaus forgetting curve to all non-identity, non-protected memories.
 
         Formula: strength = importance * e^(-lambda * days) * (1 + recalls * 0.2)
 
         Where lambda = ln(2) / half_life_days.
         - Identity memories are skipped (never decay).
+        - Protected memories are skipped.
         - Procedural memories use lambda / 2 (half rate).
         - Result is capped at 1.0.
 
@@ -478,10 +666,11 @@ class ColonyGraph:
         lambda_procedural = lambda_normal / 2
 
         async with self.driver.session(database=self.database) as session:
+            # First pass: update strength
             await session.run(
                 """
                 MATCH (m:Memory)
-                WHERE m.type <> 'identity'
+                WHERE m.type <> 'identity' AND coalesce(m.protected, false) = false
                 WITH m,
                      toFloat(duration.between(m.accessed_at, datetime()).days) AS days_since,
                      CASE WHEN m.type = 'procedural'
@@ -502,11 +691,16 @@ class ColonyGraph:
                 lambda_proc=lambda_procedural,
             )
 
+        # Second pass: update effective_confidence in batches
+        await self._update_effective_confidence_batch()
+
     async def prune_weak_memories(
         self,
         threshold: float = 0.05,
     ) -> int:
         """Delete memories whose strength has decayed below *threshold*.
+
+        Skips protected memories and memories in terminal epistemic states.
 
         Returns:
             The number of pruned Memory nodes.
@@ -516,6 +710,8 @@ class ColonyGraph:
                 """
                 MATCH (m:Memory)
                 WHERE m.strength < $threshold
+                  AND coalesce(m.protected, false) = false
+                  AND m.epistemic_state IN ["inferred", "observed", "stale"]
                 DETACH DELETE m
                 RETURN count(m) AS pruned
                 """,
@@ -542,6 +738,191 @@ class ColonyGraph:
                 """,
                 memory_id=memory_id,
             )
+
+    async def _update_effective_confidence_batch(self, batch_size: int = 1000) -> None:
+        """Update effective_confidence for all memories in batches."""
+        from datetime import datetime as _dt, timezone as _tz
+        now = _dt.now(_tz.utc)
+        offset = 0
+        while True:
+            async with self.driver.session(database=self.database) as session:
+                result = await session.run(
+                    """
+                    MATCH (m:Memory)
+                    WHERE m.effective_confidence IS NOT NULL
+                    RETURN m {
+                        .id, .base_confidence, .source_reliability,
+                        .corroboration_count, .contradiction_count,
+                        .recalls, .last_verified_at, .created_at,
+                        .epistemic_state
+                    } AS mem
+                    SKIP $offset LIMIT $limit
+                    """,
+                    offset=offset,
+                    limit=batch_size,
+                )
+                rows = [dict(r["mem"]) async for r in result]
+                if not rows:
+                    break
+                for row in rows:
+                    new_confidence = self.compute_effective_confidence(
+                        base_confidence=row.get("base_confidence", 1.0),
+                        source_reliability=row.get("source_reliability", 0.5),
+                        corroboration_count=row.get("corroboration_count", 0),
+                        contradiction_count=row.get("contradiction_count", 0),
+                        recalls=row.get("recalls", 0),
+                        last_verified_at=row.get("last_verified_at"),
+                        created_at=row.get("created_at"),
+                        epistemic_state=row.get("epistemic_state", "inferred"),
+                        now=now,
+                    )
+                    await session.run(
+                        """
+                        MATCH (m:Memory {id: $memory_id})
+                        SET m.effective_confidence = $effective_confidence
+                        """,
+                        memory_id=row["id"],
+                        effective_confidence=new_confidence,
+                    )
+                offset += batch_size
+
+    async def verify_memory(self, memory_id: str) -> None:
+        """Mark a memory as manually verified.
+
+        Sets last_verified_at and transitions epistemic_state to verified
+        if currently in an active state.
+        """
+        async with self.driver.session(database=self.database) as session:
+            await session.run(
+                """
+                MATCH (m:Memory {id: $memory_id})
+                SET m.last_verified_at = datetime(),
+                    m.epistemic_state = CASE
+                        WHEN m.epistemic_state IN ["inferred", "observed", "corroborated"]
+                        THEN "verified"
+                        ELSE m.epistemic_state
+                    END
+                """,
+                memory_id=memory_id,
+            )
+
+    async def get_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single memory by ID.
+
+        Returns:
+            Memory dict or None if not found.
+        """
+        async with self.driver.session(database=self.database) as session:
+            result = await session.run(
+                """
+                MATCH (m:Memory {id: $memory_id})
+                OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                WITH m, collect(e.name) AS entity_names
+                RETURN m {.*, entities: entity_names} AS memory
+                """,
+                memory_id=memory_id,
+            )
+            record = await result.single()
+            return dict(record["memory"]) if record else None
+
+    async def transition_epistemic_state(
+        self,
+        memory_id: str,
+        new_state: str,
+        superseded_by: Optional[str] = None,
+    ) -> None:
+        """Transition a memory to a new epistemic state.
+
+        Args:
+            memory_id: UUID of the memory to transition.
+            new_state: Target EpistemicState value.
+            superseded_by: Optional UUID of the memory that superseded this one.
+        """
+        async with self.driver.session(database=self.database) as session:
+            await session.run(
+                """
+                MATCH (m:Memory {id: $memory_id})
+                SET m.epistemic_state = $new_state
+                WITH m
+                FOREACH (_ IN CASE WHEN $superseded_by IS NOT NULL THEN [1] ELSE [] END |
+                    SET m.superseded_by = $superseded_by
+                )
+                """,
+                memory_id=memory_id,
+                new_state=new_state,
+                superseded_by=superseded_by,
+            )
+
+    async def archive_memories(self, max_age_days: int = 30) -> int:
+        """Archive memories that have been in a terminal state for too long.
+
+        Relabels :Memory to :ArchivedMemory, copies key relationships,
+        removes from vector store, and deletes the original.
+
+        Returns:
+            Number of memories archived.
+        """
+        archived = 0
+        async with self.driver.session(database=self.database) as session:
+            result = await session.run(
+                """
+                MATCH (m:Memory)
+                WHERE m.epistemic_state IN ["superseded", "deprecated", "stale"]
+                  AND duration.between(m.updated_at, datetime()).days >= $max_age_days
+                RETURN m.id AS id
+                """,
+                max_age_days=max_age_days,
+            )
+            memory_ids = [r["id"] async for r in result]
+
+        for memory_id in memory_ids:
+            try:
+                async with self.driver.session(database=self.database) as session:
+                    # Copy to ArchivedMemory with key relationships
+                    await session.run(
+                        """
+                        MATCH (m:Memory {id: $memory_id})
+                        CREATE (a:ArchivedMemory)
+                        SET a = properties(m)
+                        WITH m, a
+                        OPTIONAL MATCH (m)-[r:MENTIONS]->(e:Entity)
+                        FOREACH (_ IN CASE WHEN e IS NOT NULL THEN [1] ELSE [] END |
+                            CREATE (a)-[:MENTIONS {created_at: datetime()}]->(e)
+                        )
+                        WITH m, a
+                        OPTIONAL MATCH (m)-[r:ABOUT]->(p:Person)
+                        FOREACH (_ IN CASE WHEN p IS NOT NULL THEN [1] ELSE [] END |
+                            CREATE (a)-[:ABOUT {created_at: datetime()}]->(p)
+                        )
+                        WITH m, a
+                        OPTIONAL MATCH (m)-[r:SUPERSEDES]->(old:Memory)
+                        FOREACH (_ IN CASE WHEN old IS NOT NULL THEN [1] ELSE [] END |
+                            CREATE (a)-[:SUPERSEDES {superseded_at: r.superseded_at}]->(old)
+                        )
+                        WITH m, a
+                        OPTIONAL MATCH (m)-[r:DERIVED_FROM]->(fa:FileAnchor)
+                        FOREACH (_ IN CASE WHEN fa IS NOT NULL THEN [1] ELSE [] END |
+                            CREATE (a)-[:DERIVED_FROM {derivation_type: r.derivation_type}]->(fa)
+                        )
+                        DETACH DELETE m
+                        """,
+                        memory_id=memory_id,
+                    )
+                # Remove from vector store
+                if self._vector_store is not None:
+                    try:
+                        from colony_sidecar.vector.collections import Collection
+                        await self._vector_store.delete(
+                            collection=Collection.MEMORIES,
+                            id=memory_id,
+                        )
+                    except Exception as exc:
+                        logger.debug("Failed to remove archived memory from vector store: %s", exc)
+                archived += 1
+            except Exception as exc:
+                logger.warning("Failed to archive memory %s: %s", memory_id, exc)
+
+        return archived
 
     # ------------------------------------------------------------------
     # Traversal
