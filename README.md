@@ -851,7 +851,15 @@ Colony is not a reminder service. When the autonomy loop detects work, it genera
 - Adaptive context compression
 - Full lifecycle CLI (start/stop/service/validate/doctor)
 
-### Next (v0.14.0)
+### v0.14.1 (2026-05-23)
+
+- Graph schema migrations run automatically on startup
+- Eliminated silent failures across autonomy loop, server lifecycle, goals, patterns, research, and cognition modules
+- Timezone safety hardening in goal store datetime parsing
+- Tool and registry startup wiring fixes
+- Stale schedule auto-cleanup in scheduler
+
+### Next (v0.15.0)
 
 - Colony-to-Colony networking: federation, knowledge sharing, and super-agent clusters
 - SuperColony substrate for personal agent clusters on shared infrastructure

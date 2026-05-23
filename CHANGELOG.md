@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.14.1 (2026-05-23)
+
+Audit-driven hardening — graph schema, silent-failure logging, stale-comment cleanup.
+
+### Fixed
+- **Graph schema migrations now run on startup** — `run_migrations()` applied after `ColonyGraph` init so constraints/indexes exist before any queries execute
+- **Timezone crash in goal completion** — `goals/store.py` `_parse_dt()` normalizes all datetimes to UTC, preventing `TypeError: can't compare offset-naive and offset-aware datetimes`
+- **WebSearchTool startup failure** — removed invalid `graph_client=` kwarg from constructor call in `reasoning/executor.py`
+- **SkillRegistry startup failure** — corrected constructor call (removed legacy `db_path=` and `.open()`)
+- **Stale `owner_check_in` schedule spam** — scheduler now auto-deletes schedules with no registered callback instead of warning forever
+
+### Changed
+- **Silent failures now logged** — 13 `except Exception: pass` blocks across `autonomy/loop.py`, `server.py`, `goals/store.py`, `patterns/extract.py`, `research/artifact.py`, `performance_index.py`, `signal_collector.py`, and `session_safety.py` now emit `logger.debug`/`logger.warning` with context
+- **Clarified non-actionable TODOs** — `cli.py` node keypair comment, `delivery/bridge.py` DIGEST status comment, `vector/setup.py` rebuild prerequisites
+
 ## 0.14.0 (2026-05-22)
 
 Session context architecture — cross-session state bridge for agent continuity.
