@@ -462,7 +462,7 @@ class ArtifactRenderer:
                 deck = json.loads(content)
                 slide_count = len(deck.get("slides", []))
             except Exception:
-                pass
+                logger.debug("Slide count parsing failed", exc_info=True)
 
         return Artifact(
             id=secrets.token_hex(8),

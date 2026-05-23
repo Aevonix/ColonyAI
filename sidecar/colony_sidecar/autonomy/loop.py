@@ -214,7 +214,7 @@ class AutonomyLoop:
             if _telemetry is not None:
                 await _telemetry.touch("last_tick_at")
         except Exception:
-            pass
+            logger.warning("Telemetry touch failed (non-critical)")
 
         logger.debug("Tick #%d starting", self.stats.ticks)
 
@@ -636,7 +636,7 @@ class AutonomyLoop:
                                 if _telemetry is not None:
                                     await _telemetry.touch("last_initiative_at")
                             except Exception:
-                                pass
+                                logger.warning("Telemetry touch failed (non-critical)")
                     else:
                         logger.debug("Proactive delivery disabled — initiative stored for agent polling")
 
@@ -649,7 +649,7 @@ class AutonomyLoop:
                         "payload": payload,
                     })
                 except Exception:
-                    pass
+                    logger.warning("WebSocket broadcast failed (non-critical)")
             except Exception as exc:
                 logger.error("Failed to push initiative: %s", exc)
 

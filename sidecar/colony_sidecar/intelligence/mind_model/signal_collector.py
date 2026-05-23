@@ -243,8 +243,8 @@ class SignalCollector:
                     signal_count=len(signals),
                     signal_types=[s.signal_type for s in signals],
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Metrics recording failed: %s", exc)
 
         return signals
 

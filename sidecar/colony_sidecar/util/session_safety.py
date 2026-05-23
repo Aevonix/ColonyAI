@@ -33,5 +33,5 @@ def save_last_user_message_at() -> None:
         _LAST_MSG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(_LAST_MSG_PATH, "w") as f:
             json.dump({"timestamp": datetime.now(timezone.utc).isoformat()}, f)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to save last_user_message_at: %s", exc)

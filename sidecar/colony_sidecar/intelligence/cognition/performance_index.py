@@ -1,7 +1,10 @@
 """Cognitive Performance Index (CPI) computation."""
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -101,8 +104,8 @@ class PerformanceIndexComputer:
         if collector:
             try:
                 return await collector.get_metrics(domain, days=days)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Collector metrics failed for %s: %s", domain, exc)
 
         # Fallback: query graph directly
         try:
@@ -118,7 +121,8 @@ class PerformanceIndexComputer:
                 async for record in result:
                     metrics[record["type"]] = record["value"]
                 return metrics
-        except Exception:
+        except Exception as exc:
+            logger.debug("Graph metrics query failed for %s: %s", domain, exc)
             return {}
 
     def _compute_retrieval(self, metrics: Dict[str, float]) -> CPIComponent:

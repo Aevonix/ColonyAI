@@ -707,7 +707,7 @@ def _cmd_agent(args) -> None:
             json={
                 "setup_code": args.setup_code,
                 "name": name,
-                "node_public_key": str(uuid.uuid4()),  # TODO: generate real keypair
+                "node_public_key": str(uuid.uuid4()),  # DEV ONLY: real keypair generated at first startup in server.py
                 "capabilities": args.capabilities.split(",") if args.capabilities else None,
             },
             headers=headers,
