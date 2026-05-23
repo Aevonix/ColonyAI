@@ -228,8 +228,12 @@ class ColonyGraph:
 
         if now is None:
             now = _dt.now(_tz.utc)
+        if hasattr(now, "to_native"):
+            now = now.to_native()
         if isinstance(now, str):
             now = _dt.fromisoformat(now.replace("Z", "+00:00"))
+        if hasattr(created_at, "to_native"):
+            created_at = created_at.to_native()
         if isinstance(created_at, str):
             created_at = _dt.fromisoformat(created_at.replace("Z", "+00:00"))
 
@@ -250,6 +254,8 @@ class ColonyGraph:
 
         # Verification boost
         if last_verified_at:
+            if hasattr(last_verified_at, "to_native"):
+                last_verified_at = last_verified_at.to_native()
             if isinstance(last_verified_at, str):
                 last_verified_at = _dt.fromisoformat(last_verified_at.replace("Z", "+00:00"))
             if (now - last_verified_at).days < 7:
@@ -406,10 +412,14 @@ class ColonyGraph:
                 metadata=metadata_str,
                 person_id=person_id,
                 session_id=session_id,
+                source_type=source_type,
+                source_uri=source_uri,
+                source_version=source_version,
+                content_hash=content_hash,
                 base_confidence=base_confidence,
                 source_reliability=source_reliability,
                 effective_confidence=effective_confidence,
-                epistemic_state=epistemic_state.value,
+                epistemic_state=epistemic_state,
                 protected=protected,
             )
             record = await result.single()
@@ -492,8 +502,9 @@ class ColonyGraph:
                 content=content,
                 memory_type="episodic",
                 entities=entities or [],
-                metadata=meta,
+                metadata=metadata,
                 importance=0.85,
+                person_id=contact_id,
                 source_type=MemorySourceType.CONVERSATION.value,
                 source_uri=f"session:{session_id}",
                 content_hash=content_hash,
@@ -681,7 +692,7 @@ class ColonyGraph:
                 MATCH (m:Memory)
                 WHERE m.type <> 'identity' AND coalesce(m.protected, false) = false
                 WITH m,
-                     toFloat(duration.between(m.accessed_at, datetime()).days) AS days_since,
+                     toFloat(duration.between(coalesce(m.accessed_at, m.created_at, datetime()), datetime()).days) AS days_since,
                      CASE WHEN m.type = 'procedural'
                           THEN $lambda_proc
                           ELSE $lambda_norm
@@ -709,7 +720,10 @@ class ColonyGraph:
     ) -> int:
         """Delete memories whose strength has decayed below *threshold*.
 
-        Skips protected memories and memories in terminal epistemic states.
+        Only targets memories in ``inferred``, ``observed``, or ``stale``
+        epistemic states. Skips protected memories, ``corroborated``,
+        ``verified``, and fully terminal states (``superseded``,
+        ``deprecated``, ``archived``).
 
         Returns:
             The number of pruned Memory nodes.
@@ -797,8 +811,9 @@ class ColonyGraph:
     async def verify_memory(self, memory_id: str) -> None:
         """Mark a memory as manually verified.
 
-        Sets last_verified_at, transitions epistemic_state to verified
-        if currently in an active state, and recomputes effective_confidence.
+        Sets last_verified_at, transitions epistemic_state to ``verified``
+        if currently in an active state, and floors effective_confidence
+        at 0.9.
         """
         async with self.driver.session(database=self.database) as session:
             await session.run(
