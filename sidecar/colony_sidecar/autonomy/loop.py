@@ -141,6 +141,8 @@ class AutonomyLoop:
         self._last_self_reflection: Optional[datetime] = None
         self._last_decay_date: Optional[str] = None
         self._last_prune_date: Optional[str] = None
+        self._last_reconcile_date: Optional[str] = None
+        self._last_archive_week: Optional[str] = None
         self._last_distillation_week: str = ""
         self._last_task_completion_check: Optional[datetime] = None
 
@@ -249,10 +251,16 @@ class AutonomyLoop:
         # Phase 9: memory decay (daily)
         await self._phase_memory_decay()
 
-        # Phase 10: memory pruning (weekly)
+        # Phase 10: memory reconciliation (daily)
+        await self._phase_memory_reconciliation()
+
+        # Phase 11: memory pruning (weekly)
         await self._phase_memory_pruning()
 
-        # Phase 11: memory distillation (weekly)
+        # Phase 12: memory archive (weekly)
+        await self._phase_memory_archive()
+
+        # Phase 13: memory distillation (weekly)
         await self._phase_memory_distillation()
 
         # Phase 12: task completion follow-ups
@@ -961,6 +969,48 @@ class AutonomyLoop:
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase memory_pruning error: %s", exc, exc_info=True)
+
+    async def _phase_memory_reconciliation(self) -> None:
+        """Memory reconciliation — runs once per day."""
+        graph = self._registry.graph
+        if graph is None:
+            return
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today == self._last_reconcile_date:
+            return
+        try:
+            from colony_sidecar.intelligence.graph.reconciler import FileReconciler
+            reconciler = FileReconciler(graph)
+            result = await reconciler.reconcile(dry_run=False)
+            logger.info(
+                "Phase memory_reconciliation: checked=%d verified=%d staled=%d superseded=%d errors=%d",
+                result["files_checked"],
+                result["memories_verified"],
+                result["memories_staled"],
+                result["memories_superseded"],
+                len(result["errors"]),
+            )
+            self._last_reconcile_date = today
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase memory_reconciliation error: %s", exc, exc_info=True)
+
+    async def _phase_memory_archive(self) -> None:
+        """Memory archive — runs once per week."""
+        graph = self._registry.graph
+        if graph is None:
+            return
+        week = datetime.now(timezone.utc).strftime("%Y-W%W")
+        if week == self._last_archive_week:
+            return
+        try:
+            if hasattr(graph, "archive_memories"):
+                archived = await graph.archive_memories(max_age_days=30)
+                logger.info("Phase memory_archive: archived=%d", archived)
+            self._last_archive_week = week
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase memory_archive error: %s", exc, exc_info=True)
 
     async def _phase_memory_distillation(self) -> None:
         """Memory distillation — runs once per week."""
