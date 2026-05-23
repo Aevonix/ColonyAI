@@ -48,9 +48,10 @@ class FileReconciler:
         async with self.graph.driver.session(database=self.graph.database) as session:
             result = await session.run(
                 """
-                MATCH (m:Memory)
+                MATCH (fa:FileAnchor)
+                MATCH (m:Memory)-[:DERIVED_FROM]->(fa)
                 WHERE m.source_type = 'file'
-                RETURN m.id AS id, m.source_uri AS path,
+                RETURN m.id AS id, fa.uri AS path,
                        m.content_hash AS content_hash, m.content AS content
                 """
             )
@@ -96,11 +97,14 @@ class FileReconciler:
                 else:
                     # Changed — supersede old, create new
                     if not dry_run:
+                        # Fetch old memory entities to preserve links
+                        old_mem = await self.graph.get_memory(row["id"])
+                        preserved_entities = old_mem.get("entities", []) if old_mem else []
                         # Create new memory with updated content
                         new_id = await self.graph.store_memory(
                             content=current_content,
                             memory_type="semantic",
-                            entities=[],
+                            entities=preserved_entities,
                             importance=0.85,
                             source_type="file",
                             source_uri=filepath,

@@ -770,7 +770,7 @@ async def memory_search(body: MemorySearchRequest) -> MemorySearchResponse:
                 entities=e.get("entities"),
                 tags=e.get("tags"),
                 created_at=str(e["created_at"]) if "created_at" in e and e["created_at"] is not None else None,
-                score=float(e["relevance"]) if "relevance" in e and e["relevance"] is not None else e.get("score"),
+                score=float(e["relevance"]) if "relevance" in e and e["relevance"] is not None else None,
             )
             for e in results
         ]

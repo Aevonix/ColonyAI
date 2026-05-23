@@ -195,9 +195,11 @@ class MemoryConsolidator:
         query = (
             "MATCH (m:Memory) "
             "WHERE m.accessed_at >= datetime() - duration({hours: $hours}) "
+            "  AND NOT m.epistemic_state IN ['stale', 'superseded', 'deprecated', 'archived'] "
             "RETURN m.id AS id, m.content AS content, m.embedding AS embedding, "
-            "m.strength AS strength, m.type AS type, m.sources AS sources "
-            "ORDER BY m.strength DESC"
+            "m.strength AS strength, m.effective_confidence AS effective_confidence, "
+            "m.type AS type, m.sources AS sources, m.epistemic_state AS epistemic_state "
+            "ORDER BY m.effective_confidence DESC, m.strength DESC"
         )
         rows = await self._execute(query, hours=self.lookback_hours)
         return rows if rows else []
@@ -240,19 +242,6 @@ class MemoryConsolidator:
             merge_id=merge_id,
         )
 
-        # 2. Re-point all incoming MENTIONS relationships to keep
-        await self._execute(
-            """
-            MATCH (e:Entity)-[r:MENTIONS]->(m:Memory {id: $merge_id})
-            MATCH (k:Memory {id: $keep_id})
-            MERGE (e)-[nr:MENTIONS]->(k)
-            SET nr.created_at = coalesce(r.created_at, datetime())
-            DELETE r
-            """,
-            keep_id=keep_id,
-            merge_id=merge_id,
-        )
-
         # 3. Re-point ABOUT relationships
         await self._execute(
             """
@@ -266,7 +255,7 @@ class MemoryConsolidator:
             merge_id=merge_id,
         )
 
-        # 4. Create MERGED_INTO edge before deletion
+        # 4. Create MERGED_INTO edge
         await self._execute(
             """
             MATCH (k:Memory {id: $keep_id}), (m:Memory {id: $merge_id})
@@ -300,18 +289,9 @@ class MemoryConsolidator:
             merge_state=merge_rec.get("epistemic_state", "inferred"),
         )
 
-        # 6. Transition merged node to archived
+        # 6. Remove :Memory label from merged node (preserves MERGED_INTO audit edge)
         await self._execute(
-            """
-            MATCH (m:Memory {id: $merge_id})
-            SET m.epistemic_state = 'archived'
-            """,
-            merge_id=merge_id,
-        )
-
-        # 7. Delete the merged node (MERGED_INTO preserves audit trail)
-        await self._execute(
-            "MATCH (m:Memory {id: $merge_id}) DETACH DELETE m",
+            "MATCH (m:Memory {id: $merge_id}) REMOVE m:Memory",
             merge_id=merge_id,
         )
 

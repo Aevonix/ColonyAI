@@ -319,10 +319,15 @@ class ColonyGraph:
         # Resolve session_id from explicit arg or metadata fallback
         session_id = session_id or (metadata.get("session_id") if metadata else None)
 
+        source_type = (source_type or MemorySourceType.INFERENCE.value).lower()
+        source_uri = source_uri or None
+        source_version = source_version or None
+        content_hash = content_hash or None
         source_reliability = SOURCE_RELIABILITY.get(source_type, 0.5)
         protected = source_type == MemorySourceType.USER_ASSERTION
         base_confidence = importance
         epistemic_state = EpistemicState.INFERRED
+        created_at = self._utcnow()
 
         effective_confidence = self.compute_effective_confidence(
             base_confidence=base_confidence,
@@ -331,15 +336,19 @@ class ColonyGraph:
             contradiction_count=0,
             recalls=0,
             last_verified_at=None,
-            created_at=self._utcnow(),
+            created_at=created_at,
             epistemic_state=epistemic_state.value,
-            now=self._utcnow(),
+            now=created_at,
         )
 
         # Compute embedding if available
         embedding: Optional[List[float]] = None
         if self._embed_fn is not None:
             embedding = await self._embed(content)
+
+        # Preserve dict for vector store before stringifying for Neo4j
+        metadata_dict = metadata
+        metadata_str = str(metadata_dict) if metadata_dict else "{}"
 
         async with self.driver.session(database=self.database) as session:
             result = await session.run(
@@ -381,6 +390,12 @@ class ColonyGraph:
                     MERGE (p:Person {id: $person_id})
                     CREATE (m)-[:ABOUT]->(p)
                 )
+                WITH m
+                FOREACH (_ IN CASE WHEN $source_uri IS NOT NULL AND $source_type = "file" THEN [1] ELSE [] END |
+                    MERGE (fa:FileAnchor {uri: $source_uri})
+                    ON CREATE SET fa.first_seen = datetime()
+                    CREATE (m)-[:DERIVED_FROM {derivation_type: "file_read"}]->(fa)
+                )
                 RETURN m.id AS id
                 """,
                 content=content,
@@ -388,13 +403,9 @@ class ColonyGraph:
                 importance=importance,
                 entities=entities,
                 embedding=embedding,
-                metadata=str(metadata),
+                metadata=metadata_str,
                 person_id=person_id,
                 session_id=session_id,
-                source_type=source_type,
-                source_uri=source_uri,
-                source_version=source_version,
-                content_hash=content_hash,
                 base_confidence=base_confidence,
                 source_reliability=source_reliability,
                 effective_confidence=effective_confidence,
@@ -420,9 +431,9 @@ class ColonyGraph:
                         "type": memory_type,
                         "strength": importance,
                         "importance": importance,
-                        "person_id": metadata.get("person_id"),
-                        "tags": metadata.get("tags", []),
-                        "created_at": metadata.get("created_at"),
+                        "person_id": metadata_dict.get("person_id") if metadata_dict else None,
+                        "tags": metadata_dict.get("tags", []) if metadata_dict else [],
+                        "created_at": metadata_dict.get("created_at") if metadata_dict else None,
                         "session_id": session_id,
                         "source_type": source_type,
                         "source_uri": source_uri,
@@ -476,17 +487,15 @@ class ColonyGraph:
         }
 
         try:
-            content_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             return await self.store_memory(
                 content=content,
                 memory_type="episodic",
                 entities=entities or [],
-                metadata=metadata,
-                importance=importance,
-                person_id=contact_id,
-                session_id=session_id,
+                metadata=meta,
+                importance=0.85,
                 source_type=MemorySourceType.CONVERSATION.value,
-                source_uri=session_id,
+                source_uri=f"session:{session_id}",
                 content_hash=content_hash,
             )
         except Exception as exc:
@@ -749,7 +758,6 @@ class ColonyGraph:
                 result = await session.run(
                     """
                     MATCH (m:Memory)
-                    WHERE m.effective_confidence IS NOT NULL
                     RETURN m {
                         .id, .base_confidence, .source_reliability,
                         .corroboration_count, .contradiction_count,
@@ -789,8 +797,8 @@ class ColonyGraph:
     async def verify_memory(self, memory_id: str) -> None:
         """Mark a memory as manually verified.
 
-        Sets last_verified_at and transitions epistemic_state to verified
-        if currently in an active state.
+        Sets last_verified_at, transitions epistemic_state to verified
+        if currently in an active state, and recomputes effective_confidence.
         """
         async with self.driver.session(database=self.database) as session:
             await session.run(
@@ -801,6 +809,10 @@ class ColonyGraph:
                         WHEN m.epistemic_state IN ["inferred", "observed", "corroborated"]
                         THEN "verified"
                         ELSE m.epistemic_state
+                    END,
+                    m.effective_confidence = CASE
+                        WHEN m.effective_confidence < 0.9 THEN 0.9
+                        ELSE m.effective_confidence
                     END
                 """,
                 memory_id=memory_id,
@@ -868,7 +880,7 @@ class ColonyGraph:
                 """
                 MATCH (m:Memory)
                 WHERE m.epistemic_state IN ["superseded", "deprecated", "stale"]
-                  AND duration.between(m.updated_at, datetime()).days >= $max_age_days
+                  AND duration.between(m.accessed_at, datetime()).days >= $max_age_days
                 RETURN m.id AS id
                 """,
                 max_age_days=max_age_days,

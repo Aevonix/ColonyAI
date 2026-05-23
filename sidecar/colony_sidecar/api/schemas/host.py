@@ -72,101 +72,6 @@ class MemoryEntry(BaseModel):
     content: str
     type: Optional[str] = None
     strength: Optional[float] = None
-    person_id: Optional[str] = None
-    entities: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
-    created_at: Optional[str] = None
-    score: Optional[float] = None
-
-
-class MemoryReadRequest(BaseModel):
-    identity: HostIdentity
-    memory_id: Optional[str] = None
-    person_id: Optional[str] = None
-    limit: Optional[int] = None
-
-
-class MemoryReadResponse(BaseModel):
-    entries: List[MemoryEntry] = []
-
-
-class MemoryWriteRequest(BaseModel):
-    identity: HostIdentity
-    context: Optional[HostTurnContext] = None
-    content: str
-    type: Optional[str] = None
-    person_id: Optional[str] = None
-    entities: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
-    strength: Optional[float] = None
-
-
-class MemoryWriteResponse(BaseModel):
-    id: str
-    accepted: bool
-
-
-class MemorySearchRequest(BaseModel):
-    identity: HostIdentity
-    query: str
-    limit: Optional[int] = None
-    min_score: Optional[float] = None
-    person_id: Optional[str] = None
-    types: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
-
-
-class RerankRequest(BaseModel):
-    identity: HostIdentity
-    query: str
-    documents: List[str]
-    top_k: Optional[int] = 10
-
-
-class RerankResult(BaseModel):
-    index: int
-    score: float
-    text: str
-
-
-class RerankResponse(BaseModel):
-    results: List[RerankResult] = []
-    model: str = ""
-
-
-class MemorySearchResponse(BaseModel):
-    entries: List[MemoryEntry] = []
-
-
-# --- Context ----------------------------------------------------------------
-
-class ContextAssembleRequest(BaseModel):
-    identity: HostIdentity
-    context: HostTurnContext
-    incoming_message: HostMessage
-    available_tools: Optional[List[str]] = None
-    citations_mode: Optional[Literal["off", "inline", "appendix"]] = None
-    include_initiatives: Optional[bool] = None  # v0.13.0
-
-
-class ContextSection(BaseModel):
-    id: str
-    title: Optional[str] = None
-    body: str
-    priority: Optional[int] = None
-    citations: Optional[List[Dict[str, Any]]] = None
-
-
-class ContextAssembleResponse(BaseModel):
-    sections: List[ContextSection] = []
-    notices: Optional[List[str]] = None
-
-
-class MemoryEntry(BaseModel):
-    id: str
-    content: str
-    type: Optional[str] = None
-    strength: Optional[float] = None
     effective_confidence: Optional[float] = None
     epistemic_state: Optional[str] = None
     source_type: Optional[str] = None
@@ -223,6 +128,24 @@ class MemorySearchRequest(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class RerankRequest(BaseModel):
+    identity: HostIdentity
+    query: str
+    documents: List[str]
+    top_k: Optional[int] = 10
+
+
+class RerankResult(BaseModel):
+    index: int
+    score: float
+    text: str
+
+
+class RerankResponse(BaseModel):
+    results: List[RerankResult] = []
+    model: str = ""
+
+
 class MemorySearchResponse(BaseModel):
     entries: List[MemoryEntry] = []
 
@@ -270,6 +193,30 @@ class MemoryStatsResponse(BaseModel):
     total_active: int = 0
     total_archived: int = 0
     protected_count: int = 0
+
+
+# --- Context ----------------------------------------------------------------
+
+class ContextAssembleRequest(BaseModel):
+    identity: HostIdentity
+    context: HostTurnContext
+    incoming_message: HostMessage
+    available_tools: Optional[List[str]] = None
+    citations_mode: Optional[Literal["off", "inline", "appendix"]] = None
+    include_initiatives: Optional[bool] = None  # v0.13.0
+
+
+class ContextSection(BaseModel):
+    id: str
+    title: Optional[str] = None
+    body: str
+    priority: Optional[int] = None
+    citations: Optional[List[Dict[str, Any]]] = None
+
+
+class ContextAssembleResponse(BaseModel):
+    sections: List[ContextSection] = []
+    notices: Optional[List[str]] = None
 
 
 class MemoryFlushRequest(BaseModel):
