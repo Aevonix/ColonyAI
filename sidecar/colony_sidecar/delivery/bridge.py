@@ -8,7 +8,7 @@ The autonomy loop calls deliver() with an initiative or insight. The bridge:
 Delivery channels:
   PUSH       → deliver immediately (queued for gateway polling)
   IN_SESSION → store for injection into next conversation's system prompt
-  DIGEST     → accumulate for bundled morning briefing (not yet implemented)
+  DIGEST     → accumulate for bundled morning briefing (wired but not scheduled by default)
 """
 
 from __future__ import annotations

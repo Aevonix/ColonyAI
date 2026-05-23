@@ -69,7 +69,8 @@ def _extract_entity_cooccurrence(world_store: Any) -> List[Dict[str, Any]]:
 
     try:
         entities = world_store.list_entities(limit=200)
-    except Exception:
+    except Exception as exc:
+        logger.debug("list_entities failed in pattern extraction: %s", exc)
         return patterns
 
     if not entities:
@@ -113,7 +114,8 @@ def _extract_relation_frequency(world_store: Any) -> List[Dict[str, Any]]:
 
     try:
         entities = world_store.list_entities(limit=200)
-    except Exception:
+    except Exception as exc:
+        logger.debug("list_entities failed in pattern extraction: %s", exc)
         return patterns
 
     # Count relationship types.
@@ -148,7 +150,8 @@ def _extract_attribute_clusters(world_store: Any) -> List[Dict[str, Any]]:
 
     try:
         entities = world_store.list_entities(limit=200)
-    except Exception:
+    except Exception as exc:
+        logger.debug("list_entities failed in pattern extraction: %s", exc)
         return patterns
 
     # Group by type, collect attribute keys.

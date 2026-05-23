@@ -158,6 +158,12 @@ async def lifespan(app: FastAPI):
             database=neo4j_db,
         )
         graph = ColonyGraph(graph_config)
+        # Apply graph schema constraints/indexes before any queries run
+        try:
+            from colony_sidecar.intelligence.graph.migrations import run_migrations
+            await run_migrations(graph.driver, database=neo4j_db)
+        except Exception as exc:
+            logger.warning("Graph migrations failed (queries may be degraded): %s", exc)
         set_graph(graph)
         # Wire graph into ToolExecutor for capability-gap detection
         try:
@@ -166,7 +172,7 @@ async def lifespan(app: FastAPI):
             if te is not None:
                 te._graph = graph
         except Exception:
-            pass
+            logger.warning("ToolExecutor graph wiring failed (capability-gap detection degraded)")
         logger.info("ColonyGraph initialized (uri=%s db=%s)", neo4j_uri, neo4j_db)
 
         # Ensure Colony self-representation in graph (v0.11.0)
@@ -966,17 +972,17 @@ async def lifespan(app: FastAPI):
         try:
             await graph.close()
         except Exception:
-            pass
+            logger.debug("Graph close failed", exc_info=True)
     if world_store is not None:
         try:
             await world_store.close()
         except Exception:
-            pass
+            logger.debug("WorldStore close failed", exc_info=True)
     if skills_registry is not None:
         try:
             skills_registry.close()
         except Exception:
-            pass
+            logger.debug("SkillRegistry close failed", exc_info=True)
     set_llm_router(None)
     set_reasoning_loop(None)
     set_graph(None)
@@ -1019,7 +1025,7 @@ async def lifespan(app: FastAPI):
         if _task_queue is not None:
             await _task_queue.queue.stop()
     except Exception:
-        pass
+        logger.warning("Task queue shutdown failed")
     set_task_queue(None)
     # Stop autonomy loop if running
     try:
@@ -1027,7 +1033,7 @@ async def lifespan(app: FastAPI):
         if _autonomy_loop is not None and _autonomy_loop.is_running:
             await _autonomy_loop.stop()
     except Exception:
-        pass
+        logger.warning("Autonomy loop shutdown failed")
     set_autonomy_loop(None)
     set_session_store(None)
     set_task_queue(None)

@@ -256,7 +256,7 @@ class GoalStore:
                 "title": goal.title,
             })
         except Exception:
-            pass
+            logger.debug("Goal update event broadcast failed", exc_info=True)
 
     def get_goal(self, goal_id: str) -> Goal:
         conn = self._get_conn()

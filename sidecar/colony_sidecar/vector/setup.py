@@ -265,8 +265,9 @@ def cli_rebuild(args: list[str] | None = None) -> None:
     parsed = parser.parse_args(args if args is not None else [])
 
     print(f"Rebuilding vector collection(s): {parsed.collection}")
-    print("This re-embeds all data from Neo4j source text.")
-    print("Use 'python scripts/vector_backfill.py' for the full backfill process.")
+    print("NOTE: Vector search requires COLONY_EMBED_MODEL to be set.")
+    print("      Run 'colony vector setup' first, then use scripts/vector_backfill.py")
+    print("      for the full backfill process.")
 
 
 def cli_main() -> None:
