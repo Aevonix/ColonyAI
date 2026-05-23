@@ -74,6 +74,12 @@ SCHEMA_V1: List[str] = [
     "CREATE INDEX subsystem_status IF NOT EXISTS FOR (s:Subsystem) ON (s.status)",
     "CREATE INDEX observation_created IF NOT EXISTS FOR (o:Observation) ON (o.created_at)",
     "CREATE INDEX observation_entity IF NOT EXISTS FOR (o:Observation) ON (o.entity_id)",
+    # Memory governance indexes (v0.15.0)
+    "CREATE INDEX memory_source_type IF NOT EXISTS FOR (m:Memory) ON (m.source_type)",
+    "CREATE INDEX memory_epistemic_state IF NOT EXISTS FOR (m:Memory) ON (m.epistemic_state)",
+    "CREATE INDEX memory_effective_confidence IF NOT EXISTS FOR (m:Memory) ON (m.effective_confidence)",
+    "CREATE INDEX memory_content_hash IF NOT EXISTS FOR (m:Memory) ON (m.content_hash)",
+    "CREATE INDEX memory_protected IF NOT EXISTS FOR (m:Memory) ON (m.protected)",
 ]
 
 async def run_migrations(
