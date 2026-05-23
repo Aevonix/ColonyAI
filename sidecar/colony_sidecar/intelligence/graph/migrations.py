@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # block subsequent (independent) statements.
 
 SCHEMA_V1: List[str] = [
-    # ── Node constraints ──────────────────────────────────────────────
+    # ── Node constraints (id-based) ───────────────────────────────────
     "CREATE CONSTRAINT memory_id IF NOT EXISTS FOR (m:Memory) REQUIRE m.id IS UNIQUE",
     "CREATE CONSTRAINT person_id IF NOT EXISTS FOR (p:Person) REQUIRE p.id IS UNIQUE",
     "CREATE CONSTRAINT entity_name IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE",
@@ -37,18 +37,43 @@ SCHEMA_V1: List[str] = [
     "CREATE CONSTRAINT context_id IF NOT EXISTS FOR (c:Context) REQUIRE c.id IS UNIQUE",
     "CREATE CONSTRAINT score_event_id IF NOT EXISTS FOR (se:ScoreEvent) REQUIRE se.id IS UNIQUE",
     "CREATE CONSTRAINT prediction_id IF NOT EXISTS FOR (pr:Prediction) REQUIRE pr.id IS UNIQUE",
+    "CREATE CONSTRAINT agent_id IF NOT EXISTS FOR (a:Agent) REQUIRE a.id IS UNIQUE",
+    "CREATE CONSTRAINT capability_id IF NOT EXISTS FOR (c:Capability) REQUIRE c.id IS UNIQUE",
+    "CREATE CONSTRAINT concept_id IF NOT EXISTS FOR (c:Concept) REQUIRE c.id IS UNIQUE",
+    "CREATE CONSTRAINT goal_id IF NOT EXISTS FOR (g:Goal) REQUIRE g.id IS UNIQUE",
+    "CREATE CONSTRAINT initiative_category_id IF NOT EXISTS FOR (ic:InitiativeCategory) REQUIRE ic.id IS UNIQUE",
+    "CREATE CONSTRAINT observation_id IF NOT EXISTS FOR (o:Observation) REQUIRE o.id IS UNIQUE",
+    "CREATE CONSTRAINT pattern_id IF NOT EXISTS FOR (p:Pattern) REQUIRE p.id IS UNIQUE",
+    "CREATE CONSTRAINT subsystem_id IF NOT EXISTS FOR (s:Subsystem) REQUIRE s.id IS UNIQUE",
+    "CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
     # ── Indexes for common queries ────────────────────────────────────
     "CREATE INDEX memory_type IF NOT EXISTS FOR (m:Memory) ON (m.type)",
     "CREATE INDEX memory_strength IF NOT EXISTS FOR (m:Memory) ON (m.strength)",
-    "CREATE INDEX person_tier IF NOT EXISTS FOR (p:Person) ON (p.tier)",
-    "CREATE INDEX signal_type IF NOT EXISTS FOR (s:Signal) ON (s.signal_type)",
-    "CREATE INDEX signal_timestamp IF NOT EXISTS FOR (s:Signal) ON (s.timestamp)",
-    "CREATE INDEX person_last_interaction IF NOT EXISTS FOR (p:Person) ON (p.lastInteraction)",
     "CREATE INDEX memory_accessed_at IF NOT EXISTS FOR (m:Memory) ON (m.accessed_at)",
     "CREATE INDEX memory_created_at IF NOT EXISTS FOR (m:Memory) ON (m.created_at)",
+    "CREATE INDEX person_tier IF NOT EXISTS FOR (p:Person) ON (p.tier)",
+    "CREATE INDEX person_score IF NOT EXISTS FOR (p:Person) ON (p.score)",
+    "CREATE INDEX person_last_interaction IF NOT EXISTS FOR (p:Person) ON (p.lastInteraction)",
+    "CREATE INDEX signal_type IF NOT EXISTS FOR (s:Signal) ON (s.signal_type)",
+    "CREATE INDEX signal_timestamp IF NOT EXISTS FOR (s:Signal) ON (s.timestamp)",
+    "CREATE INDEX signal_processed IF NOT EXISTS FOR (s:Signal) ON (s.processed)",
     "CREATE INDEX prediction_expires IF NOT EXISTS FOR (pr:Prediction) ON (pr.expires_at)",
     "CREATE INDEX prediction_resolved IF NOT EXISTS FOR (pr:Prediction) ON (pr.resolved)",
-    "CREATE INDEX person_score IF NOT EXISTS FOR (p:Person) ON (p.score)",
+    "CREATE INDEX concept_confidence IF NOT EXISTS FOR (c:Concept) ON (c.confidence_score)",
+    "CREATE INDEX concept_status IF NOT EXISTS FOR (c:Concept) ON (c.status)",
+    "CREATE INDEX pattern_type IF NOT EXISTS FOR (p:Pattern) ON (p.pattern_type)",
+    "CREATE INDEX pattern_active IF NOT EXISTS FOR (p:Pattern) ON (p.is_active)",
+    "CREATE INDEX pattern_recurrence IF NOT EXISTS FOR (p:Pattern) ON (p.recurrence_count)",
+    "CREATE INDEX goal_status IF NOT EXISTS FOR (g:Goal) ON (g.status)",
+    "CREATE INDEX goal_priority IF NOT EXISTS FOR (g:Goal) ON (g.priority)",
+    "CREATE INDEX task_status IF NOT EXISTS FOR (t:Task) ON (t.status)",
+    "CREATE INDEX task_priority IF NOT EXISTS FOR (t:Task) ON (t.priority)",
+    "CREATE INDEX task_due IF NOT EXISTS FOR (t:Task) ON (t.due_at)",
+    "CREATE INDEX initiative_auto_exec IF NOT EXISTS FOR (ic:InitiativeCategory) ON (ic.auto_execute)",
+    "CREATE INDEX initiative_triggered IF NOT EXISTS FOR (ic:InitiativeCategory) ON (ic.last_triggered)",
+    "CREATE INDEX subsystem_status IF NOT EXISTS FOR (s:Subsystem) ON (s.status)",
+    "CREATE INDEX observation_created IF NOT EXISTS FOR (o:Observation) ON (o.created_at)",
+    "CREATE INDEX observation_entity IF NOT EXISTS FOR (o:Observation) ON (o.entity_id)",
 ]
 
 async def run_migrations(
