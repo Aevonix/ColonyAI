@@ -83,8 +83,15 @@ from colony_sidecar.api.schemas.host import (
     MemoryFlushResponse,
     MemoryReadRequest,
     MemoryReadResponse,
+    MemoryReconcileRequest,
+    MemoryReconcileResponse,
+    MemoryConflictEntry,
+    MemoryConflictsResponse,
     MemorySearchRequest,
     MemorySearchResponse,
+    MemoryVerifyRequest,
+    MemoryVerifyResponse,
+    MemoryStatsResponse,
     MemoryWriteRequest,
     MemoryWriteResponse,
     RerankRequest,
@@ -729,6 +736,10 @@ async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
             entities=body.entities or [],
             importance=body.strength if body.strength is not None else 1.0,
             metadata={"tags": body.tags} if body.tags else None,
+            source_type=body.source_type or "inference",
+            source_uri=body.source_uri,
+            source_version=body.source_version,
+            content_hash=body.content_hash,
         )
         return MemoryWriteResponse(
             id=memory_id or str(uuid.uuid4()),
@@ -747,6 +758,7 @@ async def memory_search(body: MemorySearchRequest) -> MemorySearchResponse:
         results = await _graph.recall(
             query=body.query,
             limit=body.limit or 10,
+            min_confidence=body.min_confidence if body.min_confidence is not None else 0.1,
         )
         entries = [
             MemoryEntry(
@@ -778,6 +790,118 @@ async def memory_flush(body: MemoryFlushRequest) -> MemoryFlushResponse:
     except Exception as exc:
         logger.warning("memory_flush failed: %s", exc)
         return MemoryFlushResponse(accepted=False)
+
+
+@router.post("/memory/reconcile", response_model=MemoryReconcileResponse)
+async def memory_reconcile(body: MemoryReconcileRequest) -> MemoryReconcileResponse:
+    if _graph is None:
+        return MemoryReconcileResponse()
+    # TODO: Implement FileReconciler integration
+    return MemoryReconcileResponse(
+        files_checked=0,
+        memories_verified=0,
+        memories_staled=0,
+        memories_superseded=0,
+        errors=["FileReconciler not yet implemented"],
+    )
+
+
+@router.get("/memory/conflicts", response_model=MemoryConflictsResponse)
+async def memory_conflicts() -> MemoryConflictsResponse:
+    if _graph is None:
+        return MemoryConflictsResponse()
+    try:
+        # Query CONFLICTS_WITH relationships
+        async with _graph.driver.session(database=_graph.database) as session:
+            result = await session.run(
+                """
+                MATCH (m1:Memory)-[r:CONFLICTS_WITH]->(m2:Memory)
+                OPTIONAL MATCH (m1)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(m2)
+                RETURN m1.id AS id_a, m2.id AS id_b, e.name AS entity_name,
+                       r.detected_at AS detected_at
+                """
+            )
+            conflicts = []
+            async for record in result:
+                conflicts.append(MemoryConflictEntry(
+                    memory_id_a=record["id_a"],
+                    memory_id_b=record["id_b"],
+                    entity_name=record["entity_name"] or "",
+                    reason="Semantic conflict detected",
+                    detected_at=str(record["detected_at"]) if record["detected_at"] else None,
+                ))
+            return MemoryConflictsResponse(conflicts=conflicts, total=len(conflicts))
+    except Exception as exc:
+        logger.warning("memory_conflicts failed: %s", exc)
+        return MemoryConflictsResponse()
+
+
+@router.get("/memory/stats", response_model=MemoryStatsResponse)
+async def memory_stats() -> MemoryStatsResponse:
+    if _graph is None:
+        return MemoryStatsResponse()
+    try:
+        async with _graph.driver.session(database=_graph.database) as session:
+            # Count by epistemic state
+            result = await session.run(
+                """
+                MATCH (m:Memory)
+                RETURN m.epistemic_state AS state, count(m) AS cnt
+                """
+            )
+            by_state = {}
+            async for record in result:
+                by_state[record["state"] or "inferred"] = record["cnt"]
+            # Count by source type
+            result = await session.run(
+                """
+                MATCH (m:Memory)
+                RETURN m.source_type AS source, count(m) AS cnt
+                """
+            )
+            by_source = {}
+            async for record in result:
+                by_source[record["source"] or "inference"] = record["cnt"]
+            # Count archived
+            result = await session.run(
+                """MATCH (a:ArchivedMemory) RETURN count(a) AS cnt"""
+            )
+            record = await result.single()
+            total_archived = record["cnt"] if record else 0
+            # Count protected
+            result = await session.run(
+                """MATCH (m:Memory) WHERE m.protected = true RETURN count(m) AS cnt"""
+            )
+            record = await result.single()
+            protected_count = record["cnt"] if record else 0
+            total_active = sum(v for k, v in by_state.items() if k != "archived")
+            return MemoryStatsResponse(
+                by_state=by_state,
+                by_source=by_source,
+                total_active=total_active,
+                total_archived=total_archived,
+                protected_count=protected_count,
+            )
+    except Exception as exc:
+        logger.warning("memory_stats failed: %s", exc)
+        return MemoryStatsResponse()
+
+
+@router.post("/memory/verify", response_model=MemoryVerifyResponse)
+async def memory_verify(body: MemoryVerifyRequest) -> MemoryVerifyResponse:
+    if _graph is None:
+        return MemoryVerifyResponse(memory_id=body.memory_id, verified=False)
+    try:
+        await _graph.verify_memory(body.memory_id)
+        mem = await _graph.get_memory(body.memory_id)
+        return MemoryVerifyResponse(
+            memory_id=body.memory_id,
+            verified=True,
+            effective_confidence=float(mem.get("effective_confidence", 0.0)) if mem else 0.0,
+        )
+    except Exception as exc:
+        logger.warning("memory_verify failed: %s", exc)
+        return MemoryVerifyResponse(memory_id=body.memory_id, verified=False)
 
 
 @router.post("/memory/embed", response_model=MemoryEmbedResponse)
