@@ -167,6 +167,13 @@ class MemoryEntry(BaseModel):
     content: str
     type: Optional[str] = None
     strength: Optional[float] = None
+    effective_confidence: Optional[float] = None
+    epistemic_state: Optional[str] = None
+    source_type: Optional[str] = None
+    source_uri: Optional[str] = None
+    source_version: Optional[str] = None
+    content_hash: Optional[str] = None
+    protected: Optional[bool] = None
     person_id: Optional[str] = None
     entities: Optional[List[str]] = None
     tags: Optional[List[str]] = None
@@ -194,6 +201,10 @@ class MemoryWriteRequest(BaseModel):
     entities: Optional[List[str]] = None
     tags: Optional[List[str]] = None
     strength: Optional[float] = None
+    source_type: Optional[str] = "inference"
+    source_uri: Optional[str] = None
+    source_version: Optional[str] = None
+    content_hash: Optional[str] = None
 
 
 class MemoryWriteResponse(BaseModel):
@@ -206,6 +217,7 @@ class MemorySearchRequest(BaseModel):
     query: str
     limit: Optional[int] = None
     min_score: Optional[float] = None
+    min_confidence: Optional[float] = 0.1
     person_id: Optional[str] = None
     types: Optional[List[str]] = None
     tags: Optional[List[str]] = None
@@ -213,6 +225,51 @@ class MemorySearchRequest(BaseModel):
 
 class MemorySearchResponse(BaseModel):
     entries: List[MemoryEntry] = []
+
+
+class MemoryReconcileRequest(BaseModel):
+    identity: HostIdentity
+    dry_run: Optional[bool] = False
+
+
+class MemoryReconcileResponse(BaseModel):
+    files_checked: int = 0
+    memories_verified: int = 0
+    memories_staled: int = 0
+    memories_superseded: int = 0
+    errors: List[str] = []
+
+
+class MemoryConflictEntry(BaseModel):
+    memory_id_a: str
+    memory_id_b: str
+    entity_name: str
+    reason: str
+    detected_at: Optional[str] = None
+
+
+class MemoryConflictsResponse(BaseModel):
+    conflicts: List[MemoryConflictEntry] = []
+    total: int = 0
+
+
+class MemoryVerifyRequest(BaseModel):
+    identity: HostIdentity
+    memory_id: str
+
+
+class MemoryVerifyResponse(BaseModel):
+    memory_id: str
+    verified: bool
+    effective_confidence: float = 0.0
+
+
+class MemoryStatsResponse(BaseModel):
+    by_state: Dict[str, int] = Field(default_factory=dict)
+    by_source: Dict[str, int] = Field(default_factory=dict)
+    total_active: int = 0
+    total_archived: int = 0
+    protected_count: int = 0
 
 
 class MemoryFlushRequest(BaseModel):
