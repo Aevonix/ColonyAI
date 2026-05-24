@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.1 (2026-05-23)
+
+Live Neo4j integration validation — 2 critical fixes found against real data.
+
+### Fixed
+- **`duration.between(...).days` → `duration.inDays(...).days`** — Neo4j normalizes durations into months + days. `duration.between(...).days` returns the *component* days (e.g. 29 for a 60-day span), not total days. This caused:
+  - `archive_memories()` to never archive memories older than ~1 month
+  - `decay_memories()` to under-decay memories older than ~1 month
+- **Null-property safety in `_update_effective_confidence_batch()`** — `row.get("base_confidence", 1.0)` returns `None` when the key exists but the property is `null` (pre-v0.15.0 legacy memories). Switched to `or` fallback to prevent `TypeError` on the first decay pass against any graph with old data.
+
 ## 0.15.0 (2026-05-23)
 
 Memory governance & epistemic hygiene — source anchoring, confidence computation, decay, pruning, reconciliation, and archival.
