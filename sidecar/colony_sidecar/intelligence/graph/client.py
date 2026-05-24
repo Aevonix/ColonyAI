@@ -692,7 +692,7 @@ class ColonyGraph:
                 MATCH (m:Memory)
                 WHERE m.type <> 'identity' AND coalesce(m.protected, false) = false
                 WITH m,
-                     toFloat(duration.between(coalesce(m.accessed_at, m.created_at, datetime()), datetime()).days) AS days_since,
+                     toFloat(duration.inDays(coalesce(m.accessed_at, m.created_at, datetime()), datetime()).days) AS days_since,
                      CASE WHEN m.type = 'procedural'
                           THEN $lambda_proc
                           ELSE $lambda_norm
@@ -788,14 +788,14 @@ class ColonyGraph:
                     break
                 for row in rows:
                     new_confidence = self.compute_effective_confidence(
-                        base_confidence=row.get("base_confidence", 1.0),
-                        source_reliability=row.get("source_reliability", 0.5),
-                        corroboration_count=row.get("corroboration_count", 0),
-                        contradiction_count=row.get("contradiction_count", 0),
-                        recalls=row.get("recalls", 0),
+                        base_confidence=row.get("base_confidence") or 1.0,
+                        source_reliability=row.get("source_reliability") or 0.5,
+                        corroboration_count=row.get("corroboration_count") or 0,
+                        contradiction_count=row.get("contradiction_count") or 0,
+                        recalls=row.get("recalls") or 0,
                         last_verified_at=row.get("last_verified_at"),
-                        created_at=row.get("created_at"),
-                        epistemic_state=row.get("epistemic_state", "inferred"),
+                        created_at=row.get("created_at") or now,
+                        epistemic_state=row.get("epistemic_state") or "inferred",
                         now=now,
                     )
                     await session.run(
@@ -895,7 +895,7 @@ class ColonyGraph:
                 """
                 MATCH (m:Memory)
                 WHERE m.epistemic_state IN ["superseded", "deprecated", "stale"]
-                  AND duration.between(m.accessed_at, datetime()).days >= $max_age_days
+                  AND duration.inDays(m.accessed_at, datetime()).days >= $max_age_days
                 RETURN m.id AS id
                 """,
                 max_age_days=max_age_days,
