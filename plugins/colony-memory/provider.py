@@ -707,7 +707,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         try:
             with httpx.Client(timeout=5) as client:
                 resp = client.get(
-                    f"{self.sidecar_url}/v1/host/affect/{contact_id}",
+                    f"{self.sidecar_url}/v1/host/affect/state/{contact_id}",
                     headers=self._headers(),
                     timeout=5,
                 )
@@ -724,9 +724,9 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         try:
             with httpx.Client(timeout=5) as client:
                 resp = client.get(
-                    f"{self.sidecar_url}/v1/host/mind/facts/{contact_id}",
+                    f"{self.sidecar_url}/v1/host/mind/facts",
                     headers=self._headers(),
-                    params={"limit": limit},
+                    params={"contact_id": contact_id, "limit": limit},
                     timeout=5,
                 )
                 resp.raise_for_status()
@@ -740,7 +740,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         try:
             with httpx.Client(timeout=5) as client:
                 resp = client.get(
-                    f"{self.sidecar_url}/v1/host/patterns/{contact_id}",
+                    f"{self.sidecar_url}/v1/host/patterns",
                     headers=self._headers(),
                     params={"limit": limit},
                     timeout=5,
