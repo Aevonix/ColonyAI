@@ -306,7 +306,7 @@ class _ToolDispatcher:
     def _handle_colony_task_complete(self, args: dict) -> str:
         try:
             resp = self._client.post(
-                f"/v1/host/goals/{args['task_id']}/complete",
+                f"/v1/host/tasks/{args['task_id']}/complete",
                 json={},
                 timeout=5,
             )
@@ -318,7 +318,7 @@ class _ToolDispatcher:
     def _handle_colony_task_snooze(self, args: dict) -> str:
         try:
             resp = self._client.post(
-                f"/v1/host/goals/{args['task_id']}/snooze",
+                f"/v1/host/tasks/{args['task_id']}/snooze",
                 json={"hours": args.get("hours", 24), "reason": args.get("reason", "")},
                 timeout=5,
             )
@@ -330,7 +330,7 @@ class _ToolDispatcher:
     def _handle_colony_task_dismiss(self, args: dict) -> str:
         try:
             resp = self._client.post(
-                f"/v1/host/goals/{args['task_id']}/dismiss",
+                f"/v1/host/tasks/{args['task_id']}/dismiss",
                 json={"reason": args.get("reason", "stale")},
                 timeout=5,
             )
@@ -342,7 +342,7 @@ class _ToolDispatcher:
     def _handle_colony_initiative_feedback(self, args: dict) -> str:
         try:
             resp = self._client.post(
-                "/v1/host/initiatives/feedback",
+                f"/v1/host/initiatives/{args['initiative_id']}/respond",
                 json={
                     "initiative_id": args["initiative_id"],
                     "action": args["action"],
