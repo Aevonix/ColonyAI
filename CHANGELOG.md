@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — 0.16.0
+
+Initiative pipeline fixes + autonomous work engine foundations.
+
+### Fixed
+- **Initiative API: title is the action, not the reason** — serializer used `rationale` ("No contact for 14 days") as the title instead of `description` ("Check in with Bradley Shadowens"). Rationale now travels inside the context dict.
+- **Initiative API: `entity_id` exposed** — the subject of an initiative (person, PR, commitment) is now returned; `target_agent_id` is populated from assignment instead of hardcoded `null`. Subject and executor stay distinct fields.
+- **Initiative API: context no longer empty** — the autonomy loop's per-initiative context snapshot is persisted to a new `context` column (idempotent migration; pre-migration rows return `{}`) and returned over the REST API, stamped with `context_captured_at`.
+- **Owner self-initiative filter** — replaced the broken `COLONY_HOST_CONTACT_ID`/`"owner"`-default equality check with an `IdentityResolver` backed by the contact store (CID ↔ Neo4j Person UUID ↔ display name ↔ handles). `COLONY_OWNER_CONTACT_ID` is canonical (legacy var still honored with a deprecation warning). Missing/unresolvable owner now fails **closed** (CRITICAL log, relationship generation disabled) instead of open. Filter is scoped to relationship generators only — the owner remains a valid subject for commitment/calendar/agent-action work.
+- **`InitiativeResponse.status`** accepted `"in_progress"` but not `"assigned"`, breaking serialization of assigned initiatives.
+- **`POST /initiatives`** dropped the request `context`, lacked `entity_id`, and stored the 0–100 priority unscaled (clamping everything to 100).
+
+### Added
+- **IdentityResolver** (`identity/resolver.py`) — `resolve(any_id) → set[str]` across all identifier formats; ambiguous display names resolve to nothing rather than merging people.
+- **Action registry** (`initiatives/action_registry.py`) — `action_hint` is a named, allow-listed capability with risk tiers (`read_only` auto-executes; `mutating`/`outbound` block on human-owner approval). Unregistered hints are never queued. Covers task/coding/project/system/calendar/commitment/research/agent actions.
+- **Context durability & freshness** (`initiatives/context_freshness.py`) — every initiative type declares durable vs volatile context with per-type freshness TTLs; `context_durability` returned by the API.
+- **Per-entity context refresh** — `POST /v1/host/initiatives/{id}/context/refresh` routes to `engine.rebuild_context()` (relationship and commitment rebuilders shipped; volatile types without a rebuilder return 501 instead of stale data).
+- **New initiative types** — `COMMITMENT`, `CALENDAR`, `RESEARCH`, `TASK`, `PROJECT`, `SYSTEM` join the existing 12.
+- **COMMITMENT generator** — commitments surface as first-class durable initiatives (`dedup_key=commitment:{id}`, overdue escalation) instead of anonymous scheduling opportunities.
+- Spec: `specs/2026-06-09-initiative-pipeline-v0.16.0.md` (Step 0 identity findings, remaining Phase 2 integrations, gap-layer map).
+
 ## 0.15.1 (2026-05-23)
 
 Live Neo4j integration validation — 2 critical fixes found against real data.
