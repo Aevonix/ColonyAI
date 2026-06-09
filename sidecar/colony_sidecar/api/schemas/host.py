@@ -6,6 +6,7 @@ The sidecar is the source of truth for these schemas.
 
 from __future__ import annotations
 
+import os as _os
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -1478,7 +1479,11 @@ class AgentSnapshotResponse(BaseModel):
 
 
 class RecordOutreachRequest(BaseModel):
-    agent_id: str = "aeva"
+    # Agent identity is deployment-specific — configure COLONY_AGENT_NAME
+    # rather than relying on this generic fallback.
+    agent_id: str = Field(
+        default_factory=lambda: _os.environ.get("COLONY_AGENT_NAME", "agent")
+    )
     channel: str = "whatsapp"
     reason: Optional[str] = None
 

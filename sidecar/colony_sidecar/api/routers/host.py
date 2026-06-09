@@ -5486,7 +5486,7 @@ async def respond_to_initiative(
 
 @router.get("/agent-snapshot", response_model=AgentSnapshotResponse)
 async def agent_snapshot() -> AgentSnapshotResponse:
-    """Return a comprehensive snapshot of Colony state for Aeva evaluation."""
+    """Return a comprehensive snapshot of Colony state for agent evaluation."""
     now = datetime.now(timezone.utc)
 
     # Telemetry
@@ -5513,7 +5513,7 @@ async def agent_snapshot() -> AgentSnapshotResponse:
     if _telemetry is not None and _telemetry.last_tick_at is not None:
         tick_age = (now - _telemetry.last_tick_at).total_seconds() / 60
 
-    # Flags: high-signal items Aeva should know about
+    # Flags: high-signal items the agent should know about
     flags = []
     if (telemetry_dict.get("silence_hours", {}).get("initiative") or 0) > 4:
         flags.append("long_initiative_silence")
@@ -5543,7 +5543,7 @@ async def agent_snapshot() -> AgentSnapshotResponse:
 
 @router.post("/agent-snapshot/record-outreach", response_model=RecordOutreachResponse)
 async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse:
-    """Record that Aeva proactively messaged the owner."""
+    """Record that the agent proactively messaged the owner."""
     now = datetime.now(timezone.utc)
     outreach_at = now.isoformat()
     if _telemetry is not None:
@@ -5551,7 +5551,7 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
         if _telemetry.last_agent_outreach_at is not None:
             outreach_at = _telemetry.last_agent_outreach_at.isoformat()
     logger.info(
-        "Aeva outreach recorded: agent=%s channel=%s reason=%s",
+        "Agent outreach recorded: agent=%s channel=%s reason=%s",
         body.agent_id, body.channel, body.reason,
     )
     return RecordOutreachResponse(

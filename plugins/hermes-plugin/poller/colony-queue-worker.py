@@ -30,7 +30,12 @@ COLONY_API_KEY = os.environ.get("COLONY_API_KEY", "dev-mode-no-key")
 WEBHOOK_URL = os.environ.get(
     "COLONY_JOBS_WEBHOOK_URL", "http://127.0.0.1:8644/webhooks/colony-jobs"
 )
-NODE_ID = os.environ.get("COLONY_WORKER_NODE_ID", "aeva-hermes-agent")
+# Worker identity is deployment-specific: set COLONY_WORKER_NODE_ID, or
+# COLONY_AGENT_NAME (the agent's name) from which a node id is derived.
+NODE_ID = os.environ.get("COLONY_WORKER_NODE_ID") or (
+    os.environ.get("COLONY_AGENT_NAME", "hermes").strip().lower().replace(" ", "-")
+    + "-agent"
+)
 # How many jobs to hand to the agent per run. Keep small — each one is
 # a full agent invocation.
 MAX_JOBS_PER_RUN = int(os.environ.get("COLONY_WORKER_MAX_JOBS", "1"))

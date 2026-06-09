@@ -15,10 +15,15 @@ requests — while still allowing direct interaction with the user.
 
 **Framing that governs everything here:** initiatives are directed at
 the *agent*, not the human. They are the agent's autonomous task queue.
-Colony = brain (generates initiatives). Aeva = decision layer (polls,
-decides what to execute, when to communicate, when to stay silent).
-Colony never sends messages directly; Aeva is the sole decision-maker
-for outbound communication.
+Colony = brain (generates initiatives). The host agent = decision layer:
+it polls, decides what to execute, when to communicate, and when to stay
+silent. Colony never sends messages directly; the agent is the sole
+decision-maker for outbound communication.
+
+Colony is agent-name-agnostic: it is a public project, and every
+deployment names its own agent ("Aeva" is the reference deployment's).
+Agent identity always comes from configuration — `COLONY_AGENT_NAME`,
+`COLONY_WORKER_NODE_ID` — never from code, defaults, or prompts.
 
 The relationship tracking that currently dominates the engine was only
 ever meant to be one domain among many — the agent tracking *its own*
@@ -103,7 +108,7 @@ built from graph data that can include untrusted content; free-form
 commands are an injection-to-execution path). Risk tiers:
 
 - `read_only` → auto-execute.
-- `mutating` / `outbound` → requires **human owner** approval. Aeva
+- `mutating` / `outbound` → requires **human owner** approval. The agent
   cannot approve its own mutations — the same actor on both sides of a
   gate is a log line, not a boundary. `COLONY_AGENT_AUTO_APPROVE=true`
   collapses the gate for trusted deployments (default false).
@@ -284,13 +289,13 @@ not invent.
 ### 4.1 Execution engine — mostly exists (v0.13.0)
 The distributed task queue (`task_queue/`) with atomic claim, worker
 registry, heartbeats, retries, and the BLOCKED→approval→QUEUED state
-machine is the execution engine. Aeva registers as an external worker
+machine is the execution engine. The host agent registers as an external worker
 claiming `agent_action` jobs. v0.16.0 adds the allow-list in front of
 it. **Remaining:** map registered action names to Hermes toolsets in the
 worker; per-action timeout/retry policy from the `ActionSpec`.
 
-### 4.2 Decision layer — Aeva-side, keep it there
-Colony ranks (priority, dedup, cooldowns); Aeva decides. The decision
+### 4.2 Decision layer — agent-side, keep it there
+Colony ranks (priority, dedup, cooldowns); the agent decides. The decision
 inputs are now complete: subject (`entity_id`), situation (`context`),
 staleness contract (`context_durability` + `context_captured_at`),
 risk (`risk` in job payloads). **Remaining:** a decision prompt/policy
@@ -313,7 +318,7 @@ gate as any other outward-facing act until the generators are trusted.
 Delivery bridge + rate limiter + quiet hours + channel registry already
 gate outbound pushes; the v2.2 webhook spec governs payload hygiene (no
 raw dumps). The rule stands: Colony never composes user-facing
-messages; it pushes structured payloads and Aeva decides whether/what
+messages; it pushes structured payloads and the agent decides whether/what
 to say. **Remaining:** digest mode (bundle completed-job summaries,
 spec'd in v0.13.0 §9) instead of per-event pings.
 
@@ -388,6 +393,12 @@ one-offs):
   suggested action should instead emit the situation and let the agent
   decide. Colony describes; the agent disposes.
 
+**Agent-name agnosticism:** Colony is a public project; no agent name
+may appear in sidecar code, schema defaults, or registry entries.
+Identity comes from `COLONY_AGENT_NAME` (display name) and
+`COLONY_WORKER_NODE_ID` (queue worker id). A regression test greps the
+sidecar source to enforce this; plugin examples use placeholders.
+
 **Review rule for new generators:** ask "is this a task the AGENT
 should evaluate and act on?" If the only conceivable action is
 "forward to the human," it belongs in the briefings system (the
@@ -395,7 +406,7 @@ owner-facing channel), not the initiative queue.
 
 ---
 
-## 6. Deploy on Aeva's Machine & Watch It Work
+## 6. Deploy on the Agent's Machine & Watch It Work
 
 ### 6.1 Update Colony
 
@@ -442,7 +453,7 @@ curl $H http://127.0.0.1:7777/v1/host/observations
 curl $H http://127.0.0.1:7777/v1/host/queue/jobs/pending
 #    → agent_sync_coding / agent_sync_task / agent_sync_system jobs
 
-# 3. Within ~5 min the queue worker hands one to Aeva; she observes and
+# 3. Within ~5 min the queue worker hands one to the agent; it observes and
 #    reports. Verify the sensor filled in:
 curl $H http://127.0.0.1:7777/v1/host/observations/coding
 

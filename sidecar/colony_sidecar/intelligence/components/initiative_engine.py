@@ -2089,7 +2089,7 @@ class InitiativeEngine:
         """Generate agent-actionable initiatives for autonomous execution (v0.13.0).
 
         These initiatives are routed to the task queue instead of the delivery
-        bridge, and claimed by the Aeva cron worker.
+        bridge, and claimed by the host agent's external worker.
         """
         initiatives: List[Initiative] = []
 
