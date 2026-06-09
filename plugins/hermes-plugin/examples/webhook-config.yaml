@@ -102,7 +102,7 @@ colony-jobs:
     2. Report what you saw (one entity per observation, stable entity_id):
        curl -X POST {payload.observations_url} \
          -H "X-API-Key: $COLONY_API_KEY" -H "Content-Type: application/json" \
-         -d '{"domain": "{payload.domain}", "reported_by": "aeva", "observations": [{"entity_id": "repo#123", "payload": {"title": "...", "ci_status": "failing", "review_requested": true}}]}'
+         -d '{"domain": "{payload.domain}", "reported_by": "<your-agent-name>", "observations": [{"entity_id": "repo#123", "payload": {"title": "...", "ci_status": "failing", "review_requested": true}}]}'
        Payload fields Colony understands per domain:
        - coding:   title, url, ci_status, review_requested, draft
        - task:     title, url, state, assignee, stale_days, needs_follow_up

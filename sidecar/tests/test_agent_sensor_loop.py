@@ -360,6 +360,20 @@ class TestSensorRegistration:
             assert spec is not None, action_name
             assert spec.risk == RiskTier.READ_ONLY, action_name
 
+    def test_no_agent_name_hardcoded_in_sidecar(self):
+        # Colony is a public project: every deployment names its own
+        # agent. Identity comes from COLONY_AGENT_NAME /
+        # COLONY_WORKER_NODE_ID, never from code or defaults.
+        import pathlib
+
+        src = pathlib.Path(__file__).resolve().parents[1] / "colony_sidecar"
+        offenders = [
+            str(path)
+            for path in src.rglob("*.py")
+            if "aeva" in path.read_text(errors="ignore").lower()
+        ]
+        assert offenders == []
+
     def test_no_notification_relay_defaults_remain(self):
         # The agent decides dispositions; Colony must not default to
         # "notify the owner" framing anywhere in the pipeline.
