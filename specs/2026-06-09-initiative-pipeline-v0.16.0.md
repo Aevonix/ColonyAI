@@ -158,6 +158,52 @@ and the owner explicitly allowed as subject.
   mutating/outbound require approval; legacy destructive hints stay
   gated; injection-shaped hints are not executable.
 
+### 2.6 Agent-as-sensor loop (IMPLEMENTED)
+
+The full sensor loop from §3 shipped:
+
+- **Observation store** (`observations/store.py`): latest-snapshot-per-
+  entity SQLite store across six domains (coding, task, calendar,
+  research, project, system) with per-domain freshness tracking.
+- **Ingestion API** (`api/routers/observations.py`): `POST
+  /v1/host/observations` (batch), `GET /v1/host/observations[/{domain}]`
+  (sensor health/summary), `DELETE .../{domain}/{entity_id}`.
+- **Sync requests** (`loop._phase_observation_sync`): when a domain's
+  newest observation outlives its sync interval
+  (`OBSERVATION_SYNC_INTERVALS`), the loop posts a read-only
+  `agent_sync_<domain>` job to the task queue (all six registered in
+  the action registry). Per-domain in-memory gating prevents re-spam
+  while the agent is slow. `COLONY_SYNC_DOMAINS` env var scopes which
+  domains are requested (default: all six).
+- **Six observation-backed generators** in the engine: failing-CI /
+  review-requested PRs, stale open tasks, events starting within 24h,
+  unchecked research items, milestones due ≤7d with open work, and
+  unhealthy services. All dedup on the subject's entity_id and carry
+  the observation snapshot as context.
+- **Per-entity rebuild + auto-close**: all six domains share one
+  rebuilder (the freshest stored observation). The refresh endpoint
+  now auto-closes volatile initiatives whose condition has cleared
+  (CI green, service recovered, meeting over) — cancelled with
+  `stale_reason="condition_cleared"` instead of surfacing stale work.
+- **Hermes plugin**: `poller/colony-queue-worker.py` registers as a
+  queue worker, claims one `agent_action` job per run, and fires it to
+  the `colony-jobs` webhook route with explicit lifecycle URLs (report
+  observations / complete / fail via curl). Example webhook config
+  rewritten around the five decision verbs.
+
+### 2.7 Framing sweep (IMPLEMENTED)
+
+- `notify_user` defaults removed from the dispatch payloads and the
+  delivery bridge — the fallback disposition is now `review_and_decide`
+  (a test greps the source tree to keep it that way).
+- The relationship generator's hint changed from "Send a message or
+  schedule a call" to `evaluate_relationship` — the agent evaluates and
+  chooses a disposition; nothing instructs it to message.
+- Webhook prompt examples rewritten: "This is YOUR work item… the owner
+  has not seen it and does not need to unless YOU decide they should,"
+  with the five-verb decision block and the volatile-context freshness
+  check up front.
+
 ---
 
 ## 3. Remaining Phase 2 — data feeds via the agent (no duplicated integrations)
@@ -349,7 +395,82 @@ owner-facing channel), not the initiative queue.
 
 ---
 
-## 6. Operational Notes
+## 6. Deploy on Aeva's Machine & Watch It Work
+
+### 6.1 Update Colony
+
+```bash
+cd ~/ColonyAI && git fetch origin && git checkout claude/colony-initiative-pipeline-98ye3x
+pip install -e ./sidecar          # or: pip install -U colonyai once released
+colony service restart            # or: launchctl kickstart -k gui/$UID/ai.aevonix.colony-sidecar
+```
+
+Set before/at restart (in the service environment):
+
+```bash
+export COLONY_OWNER_CONTACT_ID="cid-..."   # owner's CID, Person UUID, or unambiguous name
+export COLONY_SYNC_DOMAINS="coding,task,system"  # start small; add domains as the agent proves them
+# COLONY_HOST_CONTACT_ID still works but logs a deprecation warning
+```
+
+The `context` column migrates automatically on first start. Watch the
+startup log for `ObservationStore initialized` and — if the owner env
+is wrong — the CRITICAL `OWNER IDENTITY NOT RESOLVED` line (fix it;
+relationship generation stays off until you do).
+
+### 6.2 Update the Hermes plugin
+
+```bash
+cd ~/ColonyAI/plugins/hermes-plugin && ./install.sh --poller
+hermes cron create --name colony-queue-worker --schedule 'every 5m' \
+  --script colony-queue-worker.py --no-agent
+```
+
+Then add BOTH webhook routes from `examples/webhook-config.yaml`
+(`colony-initiatives` updated with the five decision verbs;
+`colony-jobs` new) to `~/.hermes/config.yaml` and restart the gateway.
+
+### 6.3 Watch it work (smoke sequence)
+
+```bash
+H='-H "X-API-Key: $COLONY_API_KEY" -H "Content-Type: application/json"'
+
+# 1. Sensor health — all domains empty on first boot
+curl $H http://127.0.0.1:7777/v1/host/observations
+
+# 2. After one autonomy tick: stale domains have sync jobs queued
+curl $H http://127.0.0.1:7777/v1/host/queue/jobs/pending
+#    → agent_sync_coding / agent_sync_task / agent_sync_system jobs
+
+# 3. Within ~5 min the queue worker hands one to Aeva; she observes and
+#    reports. Verify the sensor filled in:
+curl $H http://127.0.0.1:7777/v1/host/observations/coding
+
+# 4. Next tick: initiatives generated FROM her observations
+curl $H "http://127.0.0.1:7777/v1/host/initiatives?status=pending"
+#    → e.g. "Investigate failing CI on <PR>", entity_id, full context
+
+# 5. Manual end-to-end without waiting on real repos — inject a failing
+#    observation, watch the initiative appear, then clear it:
+curl -X POST $H http://127.0.0.1:7777/v1/host/observations -d '{
+  "domain": "system", "reported_by": "manual-test",
+  "observations": [{"entity_id": "test-svc",
+    "payload": {"status": "degraded", "error_rate": 0.4}}]}'
+#    ... after a tick: "Investigate test-svc: degraded" appears.
+curl -X POST $H http://127.0.0.1:7777/v1/host/observations -d '{
+  "domain": "system", "reported_by": "manual-test",
+  "observations": [{"entity_id": "test-svc",
+    "payload": {"status": "healthy", "error_rate": 0.0}}]}'
+curl -X POST $H http://127.0.0.1:7777/v1/host/initiatives/<id>/context/refresh
+#    → status "cancelled", stale_reason "condition_cleared" (auto-close)
+```
+
+Log lines that prove the loop is alive: `Requested <domain> observation
+sync`, `Recorded N observation(s) for domain <d>`, `Phase initiative: N
+new proposals`, `Blocked <risk> job ... awaiting owner approval` (when
+the agent escalates a mutating action).
+
+## 7. Operational Notes
 
 - **Env:** set `COLONY_OWNER_CONTACT_ID` (CID, Neo4j Person UUID, or
   unambiguous display name). `COLONY_HOST_CONTACT_ID` still works but

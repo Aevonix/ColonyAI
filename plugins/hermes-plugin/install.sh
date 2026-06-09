@@ -69,7 +69,7 @@ EOF
   echo "   Memory provider deployed to $MEMORY_DIR"
 fi
 
-# Deploy poller
+# Deploy poller + queue worker
 if [[ "$INSTALL_POLLER" -eq 1 ]]; then
   SCRIPTS_DIR="$HERMES_HOME/scripts"
   mkdir -p "$SCRIPTS_DIR"
@@ -77,6 +77,11 @@ if [[ "$INSTALL_POLLER" -eq 1 ]]; then
   chmod +x "$SCRIPTS_DIR/colony-initiative-poller.py"
   echo "   Initiative poller deployed to $SCRIPTS_DIR/colony-initiative-poller.py"
   echo "   Schedule with: hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
+  cp "$SCRIPT_DIR/poller/colony-queue-worker.py" "$SCRIPTS_DIR/"
+  chmod +x "$SCRIPTS_DIR/colony-queue-worker.py"
+  echo "   Queue worker deployed to $SCRIPTS_DIR/colony-queue-worker.py (v0.16.0 agent-as-sensor)"
+  echo "   Schedule with: hermes cron create --name colony-queue-worker --schedule 'every 5m' --script colony-queue-worker.py --no-agent"
+  echo "   Add the colony-jobs webhook route from examples/webhook-config.yaml to ~/.hermes/config.yaml"
 fi
 
 # Check if plugin is enabled
