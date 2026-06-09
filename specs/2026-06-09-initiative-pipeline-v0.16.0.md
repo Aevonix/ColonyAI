@@ -160,30 +160,64 @@ and the owner explicitly allowed as subject.
 
 ---
 
-## 3. Remaining Phase 2 — data-source integrations
+## 3. Remaining Phase 2 — data feeds via the agent (no duplicated integrations)
 
-The enum is done; **the real work is context loaders**. Each remaining
-type follows the same recipe: data source → `_load_<type>_context()`
-(batch + per-entity modes) → `_generate_<type>_initiatives()` →
-subject-keyed dedup → registered actions.
+The enum is done; **the real work is data feeds**. Original drafts had
+Colony owning API clients for GitHub, calendars, and arXiv. That is the
+wrong shape: Hermes already holds those connections (github, terminal,
+web, browser toolsets), and the v0.13.0 worker registry already maps
+toolsets to capabilities. Duplicating them in Colony means duplicate
+credentials, duplicate clients, and two places to configure "connect to
+GitHub."
 
-| Task | Type | Data source | Dedup | Loader mode |
-|------|------|-------------|-------|-------------|
-| 6 | `AGENT_ACTION` expansion | GitHub API, local git, system health | `agent_action:{entity}:{action}` | volatile, per-entity |
-| 7 | `CALENDAR` | Google/Apple Calendar | `calendar:{event_id}` | volatile, per-entity |
-| 8 | `RESEARCH` | arXiv, HuggingFace, notes | `research:{paper_id}` | durable |
-| 9 | `TASK` | GitHub issues, local lists | `task:{task_id}` | durable |
-| 10 | `CODING` | GitHub PRs, CI status | `coding:{pr_id}` | volatile, per-entity |
-| 11 | `PROJECT` | GitHub milestones/boards | `project:{milestone_id}` | durable |
-| 12 | `SYSTEM` | health metrics, logs | `system:{service_id}` | volatile, per-entity |
+### 3.1 The agent is Colony's sensor array
+
+Colony does not reach out to the world; the agent observes the world
+through its existing Hermes connections and reports back. A brain does
+not have its own eyes — it processes what the body senses.
+
+1. **Observation store (new, Colony-side).** Domain-scoped records:
+   `domain`, `entity_id`, `payload` (JSON), `observed_at`,
+   `reported_by`. Written via a new ingestion endpoint
+   (`POST /v1/host/observations`), readable by domain + entity.
+2. **Sync actions (registry, read_only).** `agent_sync_repos`,
+   `agent_sync_calendar`, `agent_sync_research`, ... When a domain's
+   newest observation is older than its freshness TTL, the loop
+   generates a sync job. The agent claims it, looks through its own
+   toolsets, and POSTs observations back. Read-only → auto-executes,
+   no approval friction.
+3. **Loaders read observations, not APIs.** `_load_coding_context()`
+   etc. query the observation store in batch mode and per-entity mode;
+   per-entity rebuild = the latest observation for that entity (or a
+   sync job if there is none fresh enough).
+4. **Self-priming loop.** Colony requests observation → agent observes
+   → Colony generates initiatives from observations → agent executes →
+   results and fresh observations flow back.
+5. **Agent-assisted setup, by construction.** Enabling a feed = the
+   agent registering that it can observe a domain (existing
+   worker-capability registration). A new connection added in Hermes
+   becomes a new domain Colony can think about, with zero Colony-side
+   credentials. Local-only sources (sidecar health, logs) remain the
+   one exception where Colony observes directly — it is observing
+   itself.
+
+| Task | Type | Observed via (agent toolset) | Dedup | Context |
+|------|------|------------------------------|-------|---------|
+| 6 | `AGENT_ACTION` expansion | terminal/git, self-health | `agent_action:{entity}:{action}` | volatile, per-entity |
+| 7 | `CALENDAR` | agent calendar access | `calendar:{event_id}` | volatile, per-entity |
+| 8 | `RESEARCH` | web (arXiv, HuggingFace) | `research:{paper_id}` | durable |
+| 9 | `TASK` | github (issues), local lists | `task:{task_id}` | durable |
+| 10 | `CODING` | github (PRs, CI) | `coding:{pr_id}` | volatile, per-entity |
+| 11 | `PROJECT` | github (milestones/boards) | `project:{milestone_id}` | durable |
+| 12 | `SYSTEM` | terminal, Colony self-metrics | `system:{service_id}` | volatile, per-entity |
 
 Loader interface (both modes from the start):
 
 ```python
 async def _load_coding_context(self, entity_id: str | None = None) -> dict | None:
-    """Batch mode (None): populates self._context["coding"].
-    Per-entity mode: returns a fresh snapshot for one PR and is
-    registered in rebuild_context()."""
+    """Batch mode (None): populates self._context["coding"] from the
+    observation store. Per-entity mode: returns the freshest stored
+    observation for one PR; registered in rebuild_context()."""
 ```
 
 **Volatile auto-close lifecycle (settle before Task 10/12):** when a
@@ -213,9 +247,21 @@ worker; per-action timeout/retry policy from the `ActionSpec`.
 Colony ranks (priority, dedup, cooldowns); Aeva decides. The decision
 inputs are now complete: subject (`entity_id`), situation (`context`),
 staleness contract (`context_durability` + `context_captured_at`),
-risk (`risk` in job payloads). **Remaining:** a `decide` prompt/policy
-in the Hermes plugin: act / snooze / dismiss / escalate, written back
-via the existing `/initiatives/{id}/respond` feedback endpoint.
+risk (`risk` in job payloads). **Remaining:** a decision prompt/policy
+in the Hermes plugin choosing one of five agent verbs, each of which
+already has an endpoint:
+
+| Verb | Endpoint |
+|------|----------|
+| execute | claim → queue lifecycle → complete/fail |
+| snooze (until) | `/initiatives/{id}/respond` (snoozed) |
+| dismiss (reason) | `/initiatives/{id}/respond` (dismissed) |
+| communicate to owner | outbound-tier action via delivery bridge |
+| request approval | BLOCKED job → owner approval flow |
+
+Communicating with the owner is *one action among five*, not the
+default disposition — and as an outbound-tier action it passes the same
+gate as any other outward-facing act until the generators are trusted.
 
 ### 4.3 Communication layer — exists, keep Colony out of it
 Delivery bridge + rate limiter + quiet hours + channel registry already
@@ -247,11 +293,12 @@ Self-initiative types (SUBSYSTEM_HEALTH, DATA_QUALITY, OPERATIONAL,
 monitor itself. The SYSTEM type (Task 12) extends this to host
 infrastructure. No new framework needed.
 
-### 4.7 Integration layer — this IS remaining Phase 2
-Each external integration (GitHub, calendar, arXiv/HF) should be a
-thin async client owned by its context loader, configured by env vars,
-absent-by-default (loader skips cleanly when unconfigured — same
-defensive pattern the graph loaders already use).
+### 4.7 Integration layer — agent-supplied, not Colony-owned
+SUPERSEDED BY §3.1: Colony does not own external API clients. The
+agent observes through its existing Hermes connections and reports
+into the observation store; Colony's loaders read observations. The
+only direct integrations Colony keeps are self-observations (its own
+health, stores, and graph).
 
 ### 4.8 Configuration layer — exists, consolidate as you go
 `AutonomyConfig.from_env()` + `InitiativeConfig.from_env()` is the
@@ -261,7 +308,48 @@ caused Bug 4 is the cautionary tale).
 
 ---
 
-## 5. Operational Notes
+## 5. Framing Guardrail — Colony Is the Agent's Brain
+
+Colony builds **the agent's** initiatives, not the owner's. The owner
+interacts with the agent; the agent thinks with Colony. Owner needs and
+agent initiatives overlap exactly the way they do with any assistant —
+a promise the *owner* made still becomes the *agent's* task to track
+and act on — but the addressee of every initiative is the agent.
+Relationship tracking exists so the agent can manage *its own*
+relationships, built with whoever it interacts with on the owner's
+behalf.
+
+Where the framing is structurally enforced today:
+- Initiatives are a queue the agent polls, claims, acknowledges, and
+  completes — never a notification feed to the human.
+- Self-initiative types (capability gaps, knowledge acquisition,
+  behavioral correction, subsystem health) are the agent's
+  introspection about itself.
+- The MANAGES-edge gate: relationship work is generated only for
+  people the agent manages, not for everyone in the graph.
+- Owner exclusion (Bug 4): "build a relationship with my own operator"
+  is a category error and is now impossible, fail-closed.
+- Approval boundaries are about *whose authority*, not *whose work*:
+  the agent initiates; the human authorizes mutations and outbound.
+
+Known leaks to clean up (fold into the decision-layer work, not
+one-offs):
+- Legacy action hints phrased as notifications — `remind_user`,
+  `notify_user`, "Send a message or schedule a call". These frame the
+  agent as a relay. Replace with registered capabilities or drop the
+  hint and let the decision policy choose the disposition.
+- Any future generator that defaults to "tell the owner" as its
+  suggested action should instead emit the situation and let the agent
+  decide. Colony describes; the agent disposes.
+
+**Review rule for new generators:** ask "is this a task the AGENT
+should evaluate and act on?" If the only conceivable action is
+"forward to the human," it belongs in the briefings system (the
+owner-facing channel), not the initiative queue.
+
+---
+
+## 6. Operational Notes
 
 - **Env:** set `COLONY_OWNER_CONTACT_ID` (CID, Neo4j Person UUID, or
   unambiguous display name). `COLONY_HOST_CONTACT_ID` still works but
