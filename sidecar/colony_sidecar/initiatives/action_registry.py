@@ -59,7 +59,70 @@ class ActionSpec:
         return self.risk == RiskTier.READ_ONLY
 
 
+# The agent-as-sensor loop (v0.16.0): when a domain's observations go
+# stale, the autonomy loop posts one of these read-only sync jobs. The
+# agent observes through its own Hermes connections and POSTs results
+# to /v1/host/observations. Colony never calls external APIs itself.
+OBSERVATION_SYNC_ACTIONS: Dict[str, str] = {
+    "coding": "agent_sync_coding",
+    "task": "agent_sync_task",
+    "calendar": "agent_sync_calendar",
+    "research": "agent_sync_research",
+    "project": "agent_sync_project",
+    "system": "agent_sync_system",
+}
+
 _SPECS: List[ActionSpec] = [
+    # --- Observation sync (v0.16.0, agent-as-sensor) ---
+    ActionSpec(
+        name="agent_sync_coding",
+        tool="github",
+        command="gh pr list --state open --json number,title,url,isDraft,reviewDecision,statusCheckRollup",
+        risk=RiskTier.READ_ONLY,
+        description="Observe open PRs + CI status; report to /v1/host/observations (domain=coding)",
+        initiative_type="coding",
+    ),
+    ActionSpec(
+        name="agent_sync_task",
+        tool="github",
+        command="gh issue list --state open --json number,title,url,assignees,updatedAt",
+        risk=RiskTier.READ_ONLY,
+        description="Observe open issues/tasks; report to /v1/host/observations (domain=task)",
+        initiative_type="task",
+    ),
+    ActionSpec(
+        name="agent_sync_calendar",
+        tool="calendar",
+        command="list upcoming events for the next 48h",
+        risk=RiskTier.READ_ONLY,
+        description="Observe upcoming events; report to /v1/host/observations (domain=calendar)",
+        initiative_type="calendar",
+    ),
+    ActionSpec(
+        name="agent_sync_research",
+        tool="web",
+        command="check tracked papers/models for status changes",
+        risk=RiskTier.READ_ONLY,
+        description="Observe tracked research items; report to /v1/host/observations (domain=research)",
+        initiative_type="research",
+    ),
+    ActionSpec(
+        name="agent_sync_project",
+        tool="github",
+        command="gh api repos/{owner}/{repo}/milestones",
+        risk=RiskTier.READ_ONLY,
+        description="Observe milestones/boards; report to /v1/host/observations (domain=project)",
+        initiative_type="project",
+    ),
+    ActionSpec(
+        name="agent_sync_system",
+        tool="terminal",
+        command="check service health/latency/error rates",
+        risk=RiskTier.READ_ONLY,
+        description="Observe infrastructure health; report to /v1/host/observations (domain=system)",
+        initiative_type="system",
+    ),
+
     # --- AGENT_ACTION (v0.13.0 hints, now registered) ---
     ActionSpec(
         name="agent_check_repo_status",

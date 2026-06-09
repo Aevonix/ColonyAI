@@ -19,7 +19,14 @@ Initiative pipeline fixes + autonomous work engine foundations.
 - **Per-entity context refresh** — `POST /v1/host/initiatives/{id}/context/refresh` routes to `engine.rebuild_context()` (relationship and commitment rebuilders shipped; volatile types without a rebuilder return 501 instead of stale data).
 - **New initiative types** — `COMMITMENT`, `CALENDAR`, `RESEARCH`, `TASK`, `PROJECT`, `SYSTEM` join the existing 12.
 - **COMMITMENT generator** — commitments surface as first-class durable initiatives (`dedup_key=commitment:{id}`, overdue escalation) instead of anonymous scheduling opportunities.
-- Spec: `specs/2026-06-09-initiative-pipeline-v0.16.0.md` (Step 0 identity findings, remaining Phase 2 integrations, gap-layer map).
+- **Agent-as-sensor loop** — Colony never calls external APIs; the agent observes through its own Hermes connections and reports back:
+  - Observation store (`observations/`) + ingestion API (`POST/GET /v1/host/observations`) across six domains (coding, task, calendar, research, project, system)
+  - Autonomy loop posts read-only `agent_sync_<domain>` jobs to the task queue when a domain's observations go stale (`COLONY_SYNC_DOMAINS` scopes it)
+  - Six observation-backed generators: failing-CI/review-requested PRs, stale tasks, events starting within 24h, unchecked research, milestones due with open work, unhealthy services
+  - Volatile auto-close: `POST /initiatives/{id}/context/refresh` cancels initiatives whose condition has cleared (CI green, service recovered) with `stale_reason="condition_cleared"`
+  - Hermes plugin: `colony-queue-worker.py` claims agent jobs and hands them to the agent via the new `colony-jobs` webhook route with curl-able lifecycle URLs
+- **Agent-brain framing sweep** — `notify_user` defaults replaced with `review_and_decide` (regression-tested); relationship hint changed to `evaluate_relationship`; webhook prompts rewritten around five agent decision verbs (execute/snooze/dismiss/communicate/request-approval).
+- Spec: `specs/2026-06-09-initiative-pipeline-v0.16.0.md` (Step 0 identity findings, agent-as-sensor architecture, deploy-and-watch runbook, gap-layer map).
 
 ## 0.15.1 (2026-05-23)
 

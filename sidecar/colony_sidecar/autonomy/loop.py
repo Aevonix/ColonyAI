@@ -137,6 +137,9 @@ class AutonomyLoop:
         self._stop_event = asyncio.Event()
         self._wake_sub: Any = None
         self._pending_initiatives: List[Any] = []
+        # Per-domain timestamps of the last observation-sync request, so
+        # a slow agent isn't spammed with duplicate sync jobs every tick.
+        self._last_sync_request: dict = {}
         self._last_consolidation_hour: int = -1
         self._last_bootstrap_check: Optional[datetime] = None
         self._last_self_reflection: Optional[datetime] = None
@@ -260,6 +263,9 @@ class AutonomyLoop:
 
         # Phase 6: execute approved actions
         await self._phase_execute()
+
+        # Phase 6b: request fresh observations for stale domains (v0.16.0)
+        await self._phase_observation_sync()
 
         # Phase 7: cognition pipeline tick
         await self._phase_cognition()
@@ -669,7 +675,7 @@ class AutonomyLoop:
                     "title": getattr(initiative, "description", "").split(".")[0][:80] if getattr(initiative, "description", "") else "(no title)",
                     "description": getattr(initiative, "description", ""),
                     "rationale": getattr(initiative, "rationale", ""),
-                    "suggested_action": action_hint or "notify_user",
+                    "suggested_action": action_hint or "review_and_decide",
                     "entity_id": getattr(initiative, "entity_id", None),
                     "entity_type": type_value,
                     "channel_hint": "home" if is_self_initiative else "dm",
@@ -721,6 +727,83 @@ class AutonomyLoop:
                 logger.error("Failed to push initiative: %s", exc)
 
         self._pending_initiatives = []
+
+    async def _phase_observation_sync(self) -> None:
+        """Request fresh observations for stale domains (v0.16.0).
+
+        The agent is Colony's sensor array: when a domain's newest
+        observation outlives its sync interval, post a read-only
+        ``agent_sync_<domain>`` job to the task queue. The agent claims
+        it, observes through its own Hermes connections, and POSTs
+        snapshots back to /v1/host/observations. Colony never calls
+        external APIs itself.
+        """
+        task_queue = getattr(self._registry, "task_queue", None)
+        if task_queue is None:
+            return
+        try:
+            from colony_sidecar.api.routers.observations import get_observation_store
+            obs_store = get_observation_store()
+        except Exception:
+            obs_store = None
+        if obs_store is None:
+            return
+
+        from colony_sidecar.initiatives.action_registry import OBSERVATION_SYNC_ACTIONS
+        from colony_sidecar.observations.store import OBSERVATION_SYNC_INTERVALS
+
+        enabled = os.environ.get(
+            "COLONY_SYNC_DOMAINS",
+            "coding,task,calendar,research,project,system",
+        )
+        now = datetime.now(timezone.utc)
+
+        for domain in (d.strip() for d in enabled.split(",")):
+            action = OBSERVATION_SYNC_ACTIONS.get(domain)
+            if action is None:
+                continue
+            interval = OBSERVATION_SYNC_INTERVALS.get(domain, 3600)
+            try:
+                age = obs_store.domain_age_seconds(domain)
+            except Exception:
+                continue
+            if age is not None and age < interval:
+                continue
+            last_request = self._last_sync_request.get(domain)
+            if last_request and (now - last_request).total_seconds() < interval:
+                continue  # already asked; the agent may just be slow
+            try:
+                bucket = int(now.timestamp() // max(interval, 300))
+                await task_queue.submit(
+                    task_type="agent_action",
+                    priority="normal",
+                    params={
+                        "action_hint": action,
+                        "domain": domain,
+                        "risk": "read_only",
+                        "description": (
+                            f"Observe the {domain} domain through your own "
+                            f"connections and report snapshots to Colony"
+                        ),
+                        "report_to": "/v1/host/observations",
+                        "report_example": {
+                            "domain": domain,
+                            "reported_by": "<your agent id>",
+                            "observations": [
+                                {"entity_id": "<stable id>", "payload": {}}
+                            ],
+                        },
+                    },
+                    idempotency_key=f"agent_sync:{domain}:{bucket}",
+                )
+                self._last_sync_request[domain] = now
+                logger.info(
+                    "Requested %s observation sync (domain age: %s)",
+                    domain,
+                    f"{age:.0f}s" if age is not None else "never observed",
+                )
+            except Exception as exc:
+                logger.warning("Observation sync request failed for %s: %s", domain, exc)
 
     async def _post_agent_action_to_queue(
         self,
@@ -1401,7 +1484,7 @@ class AutonomyLoop:
                         "title": initiative.description.split(".")[0][:80] if initiative.description else "(no title)",
                         "description": initiative.description,
                         "rationale": initiative.rationale or "",
-                        "suggested_action": initiative.action_hint or "notify_user",
+                        "suggested_action": initiative.action_hint or "review_and_decide",
                         "entity_id": initiative.entity_id,
                         "entity_type": initiative.type,
                         "context": {},

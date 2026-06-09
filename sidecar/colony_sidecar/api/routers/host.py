@@ -5319,6 +5319,23 @@ async def refresh_initiative_context(initiative_id: str) -> InitiativeResponse:
             ),
         )
 
+    # Volatile auto-close: if the refreshed snapshot shows the condition
+    # has cleared (CI green again, service recovered, meeting over), the
+    # initiative retires itself instead of surfacing stale work.
+    condition_cleared = bool(fresh.pop("condition_cleared", False))
+    if condition_cleared and initiative.is_active:
+        _initiative_store.update(
+            initiative_id,
+            context=fresh,
+            status="cancelled",
+            cancelled_at=datetime.now(timezone.utc).isoformat(),
+            cancelled_by="context_refresh",
+            cancelled_reason="condition_cleared",
+            stale_reason="condition_cleared",
+        )
+        updated = _initiative_store.get(initiative_id)
+        return _initiative_to_response(updated or initiative)
+
     updated = _initiative_store.update(initiative_id, context=fresh)
     return _initiative_to_response(updated or initiative)
 

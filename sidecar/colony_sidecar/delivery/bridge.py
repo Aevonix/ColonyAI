@@ -284,7 +284,7 @@ class ProactiveDeliveryBridge:
                 "agent_name": agent_name,
                 "context": {
                     "trigger": initiative.get("rationale", ""),
-                    "suggested_actions": [initiative.get("suggested_action", "notify_user")]
+                    "suggested_actions": [initiative.get("suggested_action", "review_and_decide")]
                     if initiative.get("suggested_action")
                     else [],
                     "constraints": {},
