@@ -10,7 +10,7 @@ Guides the user through first-time configuration:
 7. Database setup
 8. Autonomy & approvals (owner contact, approval policy, gates, home channel)
 9. Self-knowledge seeding
-10. Start sidecar + verify
+10. Start sidecar + verify (10e: schedule agent workers via crontab)
 11. Summary
 12. Health check (colony doctor)
 """
@@ -1791,6 +1791,189 @@ def run_autonomy_step(
     return updates
 
 
+# ── Scheduled agent workers (v0.20.0) ───────────────────────────────────────
+#
+# The agent-side workers (queue worker + skills sync) only do their job
+# when something actually schedules them. The wizard offers to install
+# crontab entries; the pure helpers below (command/line construction and
+# crontab merging) are extracted for tests.
+
+#: The schedulable agent-side workers: console-script name, module path
+#: (for the `python -m` fallback) and cron schedule.
+WORKER_SPECS = (
+    {
+        "name": "colony-queue-worker",
+        "module": "colony_sidecar.workers.queue_worker",
+        "schedule": "*/5 * * * *",
+        "blurb": "claims approved agent_action jobs every 5 minutes and hands "
+                 "them to your agent (without it, auto-approved jobs sit QUEUED forever)",
+    },
+    {
+        "name": "colony-skills-sync",
+        "module": "colony_sidecar.workers.skills_sync",
+        "schedule": "0 9 * * *",
+        "blurb": "reports your agent's installed skill index to Colony once a "
+                 "day so it proposes work the agent can actually do",
+    },
+)
+
+
+def build_worker_command(name: str, module: str, which=shutil.which, python: str = "") -> str:
+    """Command for one worker: the console script when installed on PATH,
+    else ``<python> -m <module>`` (works from any environment where the
+    package is importable)."""
+    script = which(name)
+    if script:
+        return script
+    return f"{python or sys.executable} -m {module}"
+
+
+def build_cron_lines(
+    env_file: str,
+    log_dir: str,
+    workdir: str = "",
+    which=shutil.which,
+    python: str = "",
+) -> list[str]:
+    """Build the crontab lines for both workers.
+
+    Each line sources the wizard's .env (``set -a`` so every var is
+    exported to the worker), runs from a stable directory, and appends
+    stdout+stderr to ``<log_dir>/cron-<name>.log``.
+    """
+    workdir = workdir or str(Path.home())
+    lines: list[str] = []
+    for spec in WORKER_SPECS:
+        cmd = build_worker_command(spec["name"], spec["module"], which=which, python=python)
+        prefix = f"cd {workdir} && set -a; . {env_file}; set +a;"
+        log = f"{log_dir}/cron-{spec['name']}.log"
+        lines.append(f"{spec['schedule']} {prefix} {cmd} >> {log} 2>&1")
+    return lines
+
+
+def merge_crontab(existing: str, new_lines: list[str]) -> tuple[str, list[str]]:
+    """Merge worker cron lines into an existing crontab (idempotent).
+
+    A new line is skipped when the existing crontab already references
+    that worker in either form (console-script name or ``-m`` module
+    path), so re-running the wizard never duplicates entries and never
+    clobbers hand-tuned schedules. Existing content is preserved
+    verbatim. Returns ``(merged_text, lines_actually_added)``.
+    """
+    existing = existing or ""
+    added: list[str] = []
+    for line in new_lines:
+        markers = [line.strip()]
+        for spec in WORKER_SPECS:
+            if spec["name"] in line or spec["module"] in line:
+                markers = [spec["name"], spec["module"]]
+                break
+        if any(m in existing for m in markers):
+            continue
+        added.append(line)
+    if not added:
+        return existing, []
+    merged = existing.rstrip("\n")
+    merged = (merged + "\n" if merged else "") + "\n".join(added) + "\n"
+    return merged, added
+
+
+def install_cron_jobs(lines: list[str], run=subprocess.run) -> list[str]:
+    """Merge ``lines`` into the user crontab via ``crontab -l`` / ``crontab -``.
+
+    Returns the lines actually added ([] when everything was already
+    installed). Raises ``RuntimeError`` when the write fails. ``run`` is
+    injectable for tests.
+    """
+    read = run(["crontab", "-l"], capture_output=True, text=True, timeout=10)
+    # `crontab -l` exits non-zero with "no crontab for <user>" — treat as empty.
+    existing = read.stdout if read.returncode == 0 else ""
+    merged, added = merge_crontab(existing, lines)
+    if not added:
+        return []
+    write = run(["crontab", "-"], input=merged, capture_output=True, text=True, timeout=10)
+    if write.returncode != 0:
+        raise RuntimeError(
+            f"crontab write failed: {(write.stderr or write.stdout or '').strip()}"
+        )
+    return added
+
+
+def run_workers_step(
+    env_path: Path,
+    non_interactive: bool = False,
+    ask=None,
+    run=subprocess.run,
+    which=shutil.which,
+) -> None:
+    """Step 10e: Scheduled agent workers.
+
+    Explains the two cron-driven workers, asks whether the agent lives on
+    this machine, and (on macOS/Linux with crontab available) installs
+    the schedule entries idempotently. Otherwise prints the exact lines
+    for manual installation. Never raises — scheduling is a convenience,
+    not a setup blocker.
+    """
+    print(_bold("Step 10e: Scheduled agent workers"))
+    print()
+    print("  Colony needs two small workers scheduled on the agent's machine:")
+    for spec in WORKER_SPECS:
+        print(f"    • {spec['name']} — {spec['blurb']}")
+    print()
+
+    # Cron lines are built the same way for install and manual fallback.
+    state_dir = os.environ.get("COLONY_STATE_DIR", "")
+    workdir = str(Path(state_dir).expanduser().parent) if state_dir else str(Path.home())
+    colony_home = Path(os.environ.get("COLONY_HOME", Path.home() / ".colony"))
+    log_dir = colony_home / "logs"
+    lines = build_cron_lines(
+        env_file=str(env_path.expanduser().resolve()),
+        log_dir=str(log_dir),
+        workdir=workdir,
+        which=which,
+    )
+
+    def _print_manual():
+        print("  Add these crontab lines yourself when ready (crontab -e):")
+        for line in lines:
+            print(f"    {line}")
+        print()
+
+    answer = _prompt("  Is your agent on this machine? [Y/n]", "Y", non_interactive, ask=ask)
+    if answer.strip().lower() not in ("y", "yes", ""):
+        print("  ⚪ Skipping local schedule install (agent is elsewhere).")
+        _print_manual()
+        return
+
+    system = platform.system()
+    if system not in ("Darwin", "Linux") or not which("crontab"):
+        reason = "crontab not found" if system in ("Darwin", "Linux") else f"unsupported platform ({system})"
+        print(f"  ⚪ Cannot install automatically ({reason}).")
+        _print_manual()
+        return
+
+    install = _prompt("  Install the crontab entries now? [Y/n]", "Y", non_interactive, ask=ask)
+    if install.strip().lower() not in ("y", "yes", ""):
+        print("  ⚪ Skipped.")
+        _print_manual()
+        return
+
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        added = install_cron_jobs(lines, run=run)
+        if added:
+            print(f"  ✅ Installed {len(added)} crontab entr{'y' if len(added) == 1 else 'ies'}:")
+            for line in added:
+                print(f"    {line}")
+        else:
+            print("  ✅ Crontab entries already installed (nothing to do).")
+        print(f"  Logs: {log_dir}/cron-<worker>.log")
+    except Exception as exc:
+        print(f"  ⚠️ Crontab install failed: {exc}")
+        _print_manual()
+    print()
+
+
 # ── Final health check (colony doctor) ──────────────────────────────────────
 
 def _print_doctor_results(results) -> None:
@@ -2929,6 +3112,11 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 print(_yellow(f"  ⚠️ Could not create test commitment ({r.status_code})"))
         except Exception as exc:
             print(f"  ⚪ Data flow verification skipped: {exc}")
+
+    # ── Step 10e: Scheduled agent workers ───────────────────────────────
+
+    print()
+    run_workers_step(env_path, non_interactive)
 
     # ── Step 11: Summary ─────────────────────────────────────────────────
 

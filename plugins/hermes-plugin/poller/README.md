@@ -63,3 +63,18 @@ Requires the `colony-jobs` route from `examples/webhook-config.yaml` in
 `~/.hermes/config.yaml`. Env vars: `COLONY_URL`, `COLONY_API_KEY`,
 `COLONY_JOBS_WEBHOOK_URL`, `COLONY_WORKER_NODE_ID`,
 `COLONY_WORKER_MAX_JOBS` (default 1 job per run).
+
+## v0.20.0 — workers moved into the pip package
+
+The logic of `colony-queue-worker.py` and `colony-skills-sync.py` now
+lives in the installed package (`colony_sidecar.workers.*`) and ships
+as the `colony-queue-worker` / `colony-skills-sync` console scripts
+(`pip install colonyai`). The files here are thin back-compat wrappers:
+existing cron entries that call them by path keep working as long as
+`colony_sidecar` is importable (installed, or running from a repo
+checkout). For new installs, prefer the console scripts — the
+`colony init` wizard (Step 10e) installs the crontab entries
+(`*/5 * * * *` worker, `0 9 * * *` skills sync) for you, and
+`colony doctor` warns (`server-worker-liveness`) when QUEUED
+`agent_action` jobs indicate the worker is not running. Both support
+`--dry-run`.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "colonyai"
-version = "0.19.0"
+version = "0.20.0"
 description = "Colony intelligence sidecar — harness-agnostic cognition server"
 requires-python = ">=3.11"
 dependencies = [
@@ -33,6 +33,8 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.27"]
 
 [project.scripts]
 colony = "colony_sidecar.cli:main"
+colony-queue-worker = "colony_sidecar.workers.queue_worker:main"
+colony-skills-sync = "colony_sidecar.workers.skills_sync:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

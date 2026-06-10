@@ -1,103 +1,55 @@
 #!/usr/bin/env python3
-"""Report the Hermes skill index to Colony (v0.18.0).
+"""Back-compat wrapper (v0.20.0) — logic lives in the installed package.
 
-Scans the Hermes skills directory for SKILL.md files, parses the
-frontmatter (name / description / tags), and POSTs the index to
-Colony's push-only "skills" observation domain. Colony's self-directed
-thinking and capability-gap machinery read from there, so Colony
-proposes work the agent can actually do.
+The skills-sync logic moved to ``colony_sidecar.workers.skills_sync``
+so pip installs ship it as the ``colony-skills-sync`` console script
+(see sidecar/pyproject.toml [project.scripts]). This file remains so
+existing cron / hermes-cron entries that invoke it by path keep working.
 
-Run from cron daily (or after installing new skills), alongside
-colony-initiative-poller.py. The TypeScript OpenClaw plugin ships the
-same sync built-in (src/hermes-skills.ts); this script is for
-deployments using the Python Hermes plugin.
+Resolution order:
+  1. import colony_sidecar (installed in this interpreter's environment)
+  2. sys.path fallback to the repo-relative ``sidecar/`` tree, for the
+     common case where this script still runs from a ColonyAI checkout
+     without the package installed
+
+If both fail (e.g. this file was copied standalone to ~/.hermes/scripts/
+on a machine without the package), install it: ``pip install colonyai``
+— the worker module is stdlib-only, so no heavy deps are pulled at run
+time. The pre-v0.20 standalone logic is preserved in git history
+(tag/branch v0.19) if you truly need a single-file copy.
+
+Same env vars and behavior as before: COLONY_URL, COLONY_API_KEY,
+HERMES_SKILLS_DIR.
 """
 
-import json
-import os
-import pathlib
-import re
-import urllib.request
-
-COLONY_URL = os.environ.get("COLONY_URL", "http://127.0.0.1:7777")
-COLONY_API_KEY = os.environ.get("COLONY_API_KEY", "dev-mode-no-key")
-SKILLS_DIR = pathlib.Path(
-    os.environ.get("HERMES_SKILLS_DIR", "~/.hermes/skills")).expanduser()
-MAX_DEPTH = 4
-
-HEADERS = {"X-API-Key": COLONY_API_KEY, "Content-Type": "application/json"}
+import sys
+from pathlib import Path
 
 
-def _parse_frontmatter(text: str) -> dict:
-    """Minimal SKILL.md frontmatter parse — name/description scalars and
-    tags (inline ``[a, b]`` or block list), no YAML dependency."""
-    match = re.match(r"\A---\s*\n(.*?)\n---", text, re.DOTALL)
-    if not match:
-        return {}
-    fm = match.group(1)
-    out: dict = {}
-    name = re.search(r"^name:\s*[\"']?([^\"'\n]+)", fm, re.MULTILINE)
-    desc = re.search(r"^description:\s*[\"']?([^\"\n]+?)[\"']?\s*$",
-                     fm, re.MULTILINE)
-    if name:
-        out["name"] = name.group(1).strip()
-    if desc:
-        out["description"] = desc.group(1).strip()
-    inline = re.search(r"^\s*tags:\s*\[([^\]]*)\]", fm, re.MULTILINE)
-    if inline:
-        out["tags"] = [t.strip().strip("\"'")
-                       for t in inline.group(1).split(",") if t.strip()]
-    else:
-        block = re.search(r"^\s*tags:\s*\n((?:\s+-\s+.*\n?)+)", fm,
-                          re.MULTILINE)
-        if block:
-            out["tags"] = [ln.split("-", 1)[1].strip().strip("\"'")
-                           for ln in block.group(1).splitlines()
-                           if "-" in ln]
-    return out
-
-
-def scan() -> list:
-    observations = []
-    if not SKILLS_DIR.is_dir():
-        return observations
-    for skill_md in SKILLS_DIR.rglob("SKILL.md"):
-        rel = skill_md.relative_to(SKILLS_DIR)
-        if len(rel.parts) > MAX_DEPTH:
-            continue
-        try:
-            meta = _parse_frontmatter(
-                skill_md.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
-        name = meta.get("name") or skill_md.parent.name
-        observations.append({
-            "entity_id": name,
-            "payload": {
-                "description": meta.get("description", ""),
-                "tags": meta.get("tags", []),
-                "path": str(skill_md),
-                "source": "hermes",
-            },
-        })
-    return observations
-
-
-def main() -> None:
-    observations = scan()
-    if not observations:
-        print(f"No skills found under {SKILLS_DIR}")
-        return
-    body = {"domain": "skills", "reported_by": "hermes-skills-sync",
-            "observations": observations}
-    req = urllib.request.Request(
-        f"{COLONY_URL}/v1/host/observations",
-        data=json.dumps(body).encode("utf-8"),
-        headers=HEADERS, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        print(f"Reported {len(observations)} skills "
-              f"(HTTP {resp.status}) from {SKILLS_DIR}")
+def _resolve_main():
+    try:
+        from colony_sidecar.workers.skills_sync import main
+        return main
+    except ImportError:
+        # Repo-relative fallback: this file lives at
+        # <repo>/plugins/hermes-plugin/poller/, the package at <repo>/sidecar/.
+        sidecar = Path(__file__).resolve().parents[3] / "sidecar"
+        if sidecar.is_dir():
+            sys.path.insert(0, str(sidecar))
+            try:
+                from colony_sidecar.workers.skills_sync import main
+                return main
+            except ImportError:
+                pass
+        sys.stderr.write(
+            "colony-skills-sync: colony_sidecar is not importable from this "
+            "interpreter and no repo-relative sidecar/ tree was found.\n"
+            "Install the package (pip install colonyai) and either re-run this "
+            "script or switch your cron entry to the `colony-skills-sync` "
+            "console command.\n"
+        )
+        raise
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(_resolve_main()())

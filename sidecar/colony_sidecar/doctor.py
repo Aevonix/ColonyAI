@@ -60,7 +60,20 @@ SERVER_CHECK_NAMES = (
     "server-llm-router",
     "server-embedder",
     "server-blocked-approvals",
+    "server-worker-liveness",
     "server-skills-observations",
+)
+
+#: A QUEUED agent_action job older than this means no queue worker is
+#: claiming — auto-approved jobs would sit QUEUED forever.
+WORKER_LIVENESS_THRESHOLD_MINUTES = 15
+
+#: How to get the queue worker scheduled (v0.20.0).
+WORKER_CRON_REMEDY = (
+    "install the cron: re-run 'colony init' (Step 10e installs it), or add "
+    "'*/5 * * * * colony-queue-worker' to your crontab — the console script "
+    "ships with the pip package (or use "
+    "'python -m colony_sidecar.workers.queue_worker')"
 )
 
 #: The launchd footgun: `launchctl kickstart` restarts the process with
@@ -625,8 +638,80 @@ def check_server_blocked_approvals(base_url: str, api_key: str, timeout: float) 
     )
 
 
+def check_server_worker_liveness(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """16. A queue worker must be claiming agent_action jobs.
+
+    Uses the existing authed ``/v1/host/queue/jobs/pending`` surface
+    (QUEUED jobs come first and carry ``posted_at``) and computes the
+    age client-side: any QUEUED agent_action job older than
+    ``WORKER_LIVENESS_THRESHOLD_MINUTES`` means nothing is claiming —
+    the cron-driven ``colony-queue-worker`` is absent or broken.
+    """
+    status, body = _http_get(
+        f"{base_url}/v1/host/queue/jobs/pending?task_type=agent_action&limit=200",
+        api_key, timeout,
+    )
+    if status in (404, 501, 503):
+        return CheckResult(
+            "server-worker-liveness", SKIP,
+            detail=f"task queue not available (HTTP {status})",
+        )
+    if status != 200 or not isinstance(body, list):
+        return CheckResult(
+            "server-worker-liveness", FAIL, detail=f"HTTP {status}: {body}",
+        )
+
+    now = datetime.now(timezone.utc)
+    threshold = WORKER_LIVENESS_THRESHOLD_MINUTES
+    stale: List[dict] = []
+    queued = 0
+    for job in body:
+        if not isinstance(job, dict) or job.get("status") != "queued":
+            continue
+        queued += 1
+        raw = job.get("posted_at")
+        if not raw:
+            continue
+        try:
+            posted = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if posted.tzinfo is None:
+            posted = posted.replace(tzinfo=timezone.utc)
+        if (now - posted).total_seconds() > threshold * 60:
+            stale.append(job)
+
+    if stale:
+        oldest_mins = max(
+            (now - datetime.fromisoformat(str(j["posted_at"]).replace("Z", "+00:00"))
+             ).total_seconds() / 60
+            for j in stale
+        )
+        hints = ", ".join(
+            str((j.get("payload") or {}).get("action_hint") or j.get("job_id"))
+            for j in stale[:5]
+        )
+        return CheckResult(
+            "server-worker-liveness", WARN,
+            detail=f"{len(stale)} QUEUED agent_action job(s) older than {threshold} minutes "
+                   f"(oldest {oldest_mins:.0f}m: {hints}) — queue worker appears absent, so "
+                   "approved jobs are never claimed or executed",
+            remedy=WORKER_CRON_REMEDY,
+        )
+    if queued:
+        return CheckResult(
+            "server-worker-liveness", PASS,
+            detail=f"{queued} QUEUED agent_action job(s), all younger than "
+                   f"{threshold} minutes",
+        )
+    return CheckResult(
+        "server-worker-liveness", PASS,
+        detail="no QUEUED agent_action jobs waiting on a worker",
+    )
+
+
 def check_server_skills_observations(base_url: str, api_key: str, timeout: float) -> CheckResult:
-    """16. The agent's skill index must be reported and reasonably fresh."""
+    """17. The agent's skill index must be reported and reasonably fresh."""
     status, body = _http_get(f"{base_url}/v1/host/observations/skills", api_key, timeout)
     if status == 501:
         return CheckResult(
@@ -642,8 +727,9 @@ def check_server_skills_observations(base_url: str, api_key: str, timeout: float
             "server-skills-observations", WARN,
             detail="no skill observations recorded — Colony does not know which skills the "
                    "agent has installed",
-            remedy="run colony-skills-sync.py or enable the plugin skills sync so the agent "
-                   "reports its ~/.hermes/skills index",
+            remedy="run the colony-skills-sync console command (installed with the pip "
+                   "package; the wizard schedules it daily) or enable the plugin skills "
+                   "sync so the agent reports its ~/.hermes/skills index",
         )
     newest: Optional[datetime] = None
     for obs in observations:
@@ -668,7 +754,8 @@ def check_server_skills_observations(base_url: str, api_key: str, timeout: float
         return CheckResult(
             "server-skills-observations", WARN,
             detail=f"skill observations are stale — newest is {age_days:.1f} days old",
-            remedy="run colony-skills-sync.py or re-enable the plugin skills sync",
+            remedy="run the colony-skills-sync console command (or re-enable the plugin "
+                   "skills sync / the wizard's daily cron entry)",
         )
     return CheckResult(
         "server-skills-observations", PASS,
@@ -725,6 +812,8 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-llm-router", check_server_llm, base_url, api_key, timeout)
     results += _run("server-embedder", check_server_embedder, base_url, api_key, timeout)
     results += _run("server-blocked-approvals", check_server_blocked_approvals,
+                    base_url, api_key, timeout)
+    results += _run("server-worker-liveness", check_server_worker_liveness,
                     base_url, api_key, timeout)
     results += _run("server-skills-observations", check_server_skills_observations,
                     base_url, api_key, timeout)

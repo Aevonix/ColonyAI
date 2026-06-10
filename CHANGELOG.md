@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.20.0 (2026-06-10)
+
+Scheduled-worker installation: the agent-side workers become part of
+the pip package, the wizard schedules them, and the doctor detects when
+the queue worker is missing.
+
+### Added
+- **`colony_sidecar.workers` package** (stdlib-only): the queue-worker
+  and skills-sync logic moved out of the loose
+  `plugins/hermes-plugin/poller/` scripts into
+  `colony_sidecar.workers.queue_worker` / `.skills_sync`, shipped as the
+  `colony-queue-worker` and `colony-skills-sync` console scripts
+  (same env vars and behavior; both support `--dry-run`). The old
+  script paths remain as thin back-compat wrappers (import-and-call
+  with a repo-relative `sys.path` fallback).
+- **Wizard Step 10e "Scheduled agent workers"** (`colony init`,
+  idempotent on re-run): asks whether the agent lives on this machine
+  and installs crontab entries on macOS/Linux — `*/5 * * * *`
+  queue worker + `0 9 * * *` skills sync, sourcing the wizard's `.env`
+  (`set -a`), logging to `$COLONY_HOME/logs/cron-<name>.log`. Merges
+  with the existing crontab (never duplicates a worker referenced in
+  either console-script or `python -m` form); prints the exact lines
+  for manual install when declined or crontab is unavailable.
+- **`colony doctor` `server-worker-liveness` check**: WARNs when any
+  QUEUED `agent_action` job is older than 15 minutes (queue worker
+  appears absent — auto-approved jobs would sit QUEUED forever), with
+  the cron-install remedy. Uses the existing authed
+  `/v1/host/queue/jobs/pending` surface; skips when the sidecar or
+  task queue is down. Skill-staleness remedies now point at the
+  `colony-skills-sync` console command.
+
 ## 0.19.0 (2026-06-10)
 
 Setup catches up with autonomy: the wizard configures the v0.16-v0.18
