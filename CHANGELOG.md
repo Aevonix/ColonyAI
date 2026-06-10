@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased — 0.16.0
+## 0.16.0 (2026-06-10)
 
 Initiative pipeline fixes + autonomous work engine foundations.
 
 ### Fixed
+- **Remote embedding via `COLONY_EMBED_PROVIDER=openai_api` actually works** — the text-only startup path never called `provider.configure()`, leaving base_url/api_key empty; and the request payload always sent `dimensions`, which vllm rejects (HTTP 400) for non-matryoshka models such as Qwen3-Embedding-8B. Running in production against a remote CUDA endpoint since 2026-06-10 (parity cosine >0.9998 vs the native-MLX path).
+- **Auth middleware accepts `X-API-Key`** — the initiative poller and the new queue worker authenticate with `X-API-Key` (and advertise that header to agents in job payloads), but the middleware only honored `Authorization: Bearer`, so on keyed deployments every poller/worker call returned 401. Either header is now accepted with the same constant-time comparison.
 - **Initiative API: title is the action, not the reason** — serializer used `rationale` ("No contact for 14 days") as the title instead of `description` ("Check in with Jordan Example"). Rationale now travels inside the context dict.
 - **Initiative API: `entity_id` exposed** — the subject of an initiative (person, PR, commitment) is now returned; `target_agent_id` is populated from assignment instead of hardcoded `null`. Subject and executor stay distinct fields.
 - **Initiative API: context no longer empty** — the autonomy loop's per-initiative context snapshot is persisted to a new `context` column (idempotent migration; pre-migration rows return `{}`) and returned over the REST API, stamped with `context_captured_at`.
