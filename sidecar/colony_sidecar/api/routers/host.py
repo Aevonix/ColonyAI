@@ -2804,6 +2804,17 @@ async def approve_skill(skill_id: str) -> dict:
             })
         except Exception:
             pass
+        # v0.18.0 Hermes bridge: best-effort render of the approved skill
+        # as an instructional Hermes SKILL.md. Gated inside the exporter
+        # by COLONY_EMIT_HERMES_SKILLS (off by default) and a procedural
+        # heuristic; a failure here must never block activation.
+        try:
+            from colony_sidecar.skills.hermes_export import export_approved_skill
+            exported = export_approved_skill(existing)
+            if exported is not None:
+                logger.info("Hermes SKILL.md exported for %s → %s", skill_id, exported)
+        except Exception as exc:
+            logger.warning("Hermes export failed for %s (non-fatal): %s", skill_id, exc)
         return {"ok": True, "skill_id": skill_id, "status": "active"}
     except HTTPException:
         raise

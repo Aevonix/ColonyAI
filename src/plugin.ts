@@ -20,6 +20,7 @@ import {
   registerColonyTools,
   type ToolRegistrarHandle,
 } from "./tool-registrar.js";
+import { hermesSkillsLifecycleService } from "./hermes-skills.js";
 import {
   loadAgentConfig,
   isRemoteAgent,
@@ -2174,6 +2175,13 @@ export function createColonyPlugin(): unknown {
       api.registerService(
         eventsLifecycleService(ctx, api, api.logger, toolRegistrar),
       );
+
+      // v0.18.0 Hermes bridge: scan the agent's instructional Hermes
+      // skills (~/.hermes/skills or config.hermesSkillsDir) at startup
+      // and every 24h, and report the index to Colony as
+      // ``skills``-domain observations so Colony knows what the agent
+      // can do.
+      api.registerService(hermesSkillsLifecycleService(ctx, api.logger));
 
       // #7 Phase 3 — ``memoryEmbeddingProvider`` returns the real
       // ``MemoryEmbeddingProviderAdapter`` shape (see its doc comment),

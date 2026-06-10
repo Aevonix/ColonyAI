@@ -194,3 +194,9 @@ class SubsystemRegistry:
         """Get the TaskQueueManager for distributed job scheduling."""
         from colony_sidecar.api.routers.host import _task_queue
         return _task_queue
+
+    @property
+    def contacts(self) -> Any:
+        """Get the contact store (graduated approval policy, v0.18.0)."""
+        from colony_sidecar.api.routers.host import _contacts_store
+        return _contacts_store

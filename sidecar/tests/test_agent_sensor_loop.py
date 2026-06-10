@@ -354,7 +354,13 @@ class TestObservationSyncPhase:
 
 class TestSensorRegistration:
     def test_all_domains_have_read_only_sync_actions(self):
-        assert set(OBSERVATION_SYNC_ACTIONS) == set(OBSERVATION_DOMAINS)
+        # "skills" (v0.18.0) is push-only: the OpenClaw plugin reports
+        # the agent's Hermes skill index on its own 24h schedule, so it
+        # must NOT have an agent_sync action — the autonomy loop never
+        # requests refreshes for it. Every pull domain still needs one.
+        pull_domains = set(OBSERVATION_DOMAINS) - {"skills"}
+        assert set(OBSERVATION_SYNC_ACTIONS) == pull_domains
+        assert "skills" not in OBSERVATION_SYNC_ACTIONS
         for action_name in OBSERVATION_SYNC_ACTIONS.values():
             spec = get_action(action_name)
             assert spec is not None, action_name

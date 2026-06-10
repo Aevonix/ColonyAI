@@ -548,6 +548,26 @@ class AutonomyLoop:
         pending = getattr(self, "_pending_initiatives", None) or []
         situation["current_initiatives"] = [
             getattr(i, "description", "") for i in pending][:20]
+
+        # Agent capability awareness (v0.18.0): the plugin reports the
+        # Hermes skill index into the "skills" observation domain, so the
+        # thinker proposes work the agent can actually do — and spots
+        # genuine skill gaps instead of guessing.
+        try:
+            from colony_sidecar.api.routers.observations import (
+                get_observation_store,
+            )
+            obs_store = get_observation_store()
+            if obs_store is not None:
+                skills = obs_store.list("skills", limit=40)
+                if skills:
+                    situation["agent_skills"] = [
+                        {"name": o.entity_id,
+                         "description": str(
+                             (o.payload or {}).get("description", ""))[:120]}
+                        for o in skills]
+        except Exception:
+            pass
         return situation
 
     def _build_initiative_context(self, initiative: Any, type_value: str) -> dict:
@@ -895,8 +915,13 @@ class AutonomyLoop:
     ) -> None:
         """Post an AGENT_ACTION initiative to the task queue (v0.13.0).
 
-        Destructive actions are posted as BLOCKED awaiting owner approval.
-        Non-destructive actions are posted as QUEUED for immediate claiming.
+        Gated actions are posted as BLOCKED awaiting owner approval; the
+        rest are posted as QUEUED for immediate claiming. What counts as
+        gated depends on COLONY_APPROVAL_POLICY (v0.18.0): strict gates
+        everything non-read-only (v0.17 behavior); graduated only gates
+        destructive actions and outbound actions whose recipient is not
+        an authorized contact. Auto-passed mutating/outbound jobs carry
+        audit tags and emit ``action_auto_approved``.
         """
         task_queue = getattr(self._registry, "task_queue", None)
         if task_queue is None:
@@ -908,9 +933,15 @@ class AutonomyLoop:
         # untrusted content — an unregistered hint NEVER reaches the queue.
         # The initiative stays stored (visible to the agent as information)
         # but nothing executes it.
-        from colony_sidecar.initiatives.action_registry import classify_agent_action
+        from colony_sidecar.initiatives.action_registry import (
+            RiskTier,
+            classify_agent_action,
+            get_action,
+            get_approval_policy,
+        )
 
-        verdict = classify_agent_action(action_hint)
+        policy = get_approval_policy()
+        verdict = classify_agent_action(action_hint, policy=policy)
         if not verdict["executable"]:
             logger.warning(
                 "action_hint %r is not in the action registry — initiative "
@@ -919,10 +950,6 @@ class AutonomyLoop:
             )
             return
 
-        # mutating/outbound actions require HUMAN OWNER approval — the
-        # agent cannot approve its own mutations. COLONY_AGENT_AUTO_APPROVE
-        # collapses the gate for trusted deployments (default false).
-        is_gated = bool(verdict["requires_approval"])
         auto_approve = os.environ.get("COLONY_AGENT_AUTO_APPROVE", "false").lower() == "true"
 
         job_payload = {
@@ -931,14 +958,64 @@ class AutonomyLoop:
             "description": getattr(initiative, "description", ""),
             "entity_id": getattr(initiative, "entity_id", None),
             "risk": verdict["risk"],
-            "destructive": is_gated,  # legacy field name, kept for workers
             "auto_approve": auto_approve,
             "context": self._build_initiative_context(initiative, type_value),
         }
 
+        # v0.18.0 graduated policy: an OUTBOUND action auto-passes only
+        # when its recipient resolves to an authorized contact
+        # (interaction_allowed=True). Fails closed — no contact store, no
+        # target, unknown or unauthorized contact all keep the gate.
+        target_verdict = ""
+        if (
+            policy == "graduated"
+            and verdict["risk"] == RiskTier.OUTBOUND.value
+            and verdict["requires_approval"]
+        ):
+            from colony_sidecar.initiatives.approval_policy import is_authorized_target
+
+            contacts_store = getattr(self._registry, "contacts", None)
+            authorized, target_verdict = await is_authorized_target(
+                job_payload, get_action(action_hint), contacts_store,
+            )
+            if authorized:
+                verdict = classify_agent_action(
+                    action_hint,
+                    params=job_payload,
+                    policy=policy,
+                    target_authorized=True,
+                )
+
+        # Gated actions require HUMAN OWNER approval — the agent cannot
+        # approve its own mutations. COLONY_AGENT_AUTO_APPROVE collapses
+        # the gate for trusted deployments (default false).
+        is_gated = bool(verdict["requires_approval"])
+        job_payload["destructive"] = is_gated  # legacy field name, kept for workers
+
         # v0.17.0: gated jobs are created directly in BLOCKED so no worker
         # can claim them in the window before a post-hoc transition lands.
         gate_pending = is_gated and not auto_approve
+
+        # v0.18.0: non-read-only jobs that the POLICY (not the legacy env
+        # bypass) waved through get a visible audit trail.
+        policy_auto_pass = (
+            not is_gated and verdict["risk"] != RiskTier.READ_ONLY.value
+        )
+        if gate_pending:
+            job_tags = {"blocked_reason": "awaiting_owner_approval"}
+        elif policy_auto_pass:
+            approved_via = (
+                "standing_approval" if verdict["reason"] == "standing_approval"
+                else policy
+            )
+            job_tags = {
+                "auto_approved_by_policy": approved_via,
+                "risk": str(verdict["risk"]),
+            }
+            if verdict["reason"] == "outbound_authorized_contact" and target_verdict:
+                job_tags["outbound_target"] = target_verdict
+        else:
+            job_tags = None
 
         try:
             from colony_sidecar.task_queue.models import JobStatus
@@ -949,10 +1026,28 @@ class AutonomyLoop:
                 params=job_payload,
                 idempotency_key=f"agent_action:{action_hint}:{getattr(initiative, 'entity_id', 'global')}",
                 initial_status=JobStatus.BLOCKED if gate_pending else None,
-                tags={"blocked_reason": "awaiting_owner_approval"} if gate_pending else None,
+                tags=job_tags,
             )
             job_id = job_result.get("id")
             logger.info("Posted agent_action job %s for initiative %s", job_id, initiative_id)
+
+            if policy_auto_pass and job_id:
+                logger.info(
+                    "Auto-approved %s job %s (%s: %s)",
+                    verdict["risk"], job_id, policy, verdict["reason"],
+                )
+                try:
+                    from colony_sidecar.events.broadcaster import emit as broadcast
+                    broadcast("action_auto_approved", {
+                        "job_id": job_id,
+                        "initiative_id": initiative_id,
+                        "action_hint": action_hint,
+                        "risk": verdict["risk"],
+                        "policy": policy,
+                        "reason": verdict["reason"],
+                    })
+                except Exception:
+                    pass
 
             # Update initiative with job_id
             store = getattr(self._registry, "initiative_store", None)
