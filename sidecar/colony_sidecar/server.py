@@ -843,6 +843,16 @@ async def lifespan(app: FastAPI):
         set_initiative_store(initiative_store)
         logger.info("InitiativeStore initialized (state_dir=%s)", state_dir)
 
+        # Observation store (v0.16.0) — agent-reported domain snapshots
+        try:
+            from colony_sidecar.observations.store import ObservationStore
+            from colony_sidecar.api.routers.observations import set_observation_store
+            observation_store = ObservationStore(state_dir=state_dir)
+            set_observation_store(observation_store)
+            logger.info("ObservationStore initialized (state_dir=%s)", state_dir)
+        except Exception as exc:
+            logger.warning("ObservationStore init failed (non-fatal): %s", exc)
+
         assignment_engine = AssignmentEngine(
             agent_store=agent_store,
             initiative_store=initiative_store,
@@ -1050,6 +1060,11 @@ async def lifespan(app: FastAPI):
     set_initiative_store(None)
     set_assignment_engine(None)
     set_websocket_manager(None)
+    try:
+        from colony_sidecar.api.routers.observations import set_observation_store
+        set_observation_store(None)
+    except Exception:
+        pass
     logger.info("Sidecar shutdown complete")
 
 
@@ -1084,6 +1099,10 @@ def create_app() -> FastAPI:
     # Task queue router (v0.13.0)
     from colony_sidecar.api.routers import task_queue as task_queue_router
     app.include_router(task_queue_router.router)
+
+    # Observations router (v0.16.0) — agent-as-sensor ingestion
+    from colony_sidecar.api.routers import observations as observations_router
+    app.include_router(observations_router.router)
 
     # MCP streamable HTTP endpoint
     try:

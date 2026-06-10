@@ -3087,10 +3087,12 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     if briefings:
         parts = []
         for b in briefings[:3]:
-            title = b.get("title") if isinstance(b, dict) else getattr(b, "title", "")
-            body = b.get("body") if isinstance(b, dict) else getattr(b, "body", "")
-            if title or body:
-                parts.append(f"- {title}: {body[:200]}" if title else f"- {body[:200]}")
+            # Careful not to shadow the request model `body` — it is
+            # still read below (compression, citations).
+            b_title = b.get("title") if isinstance(b, dict) else getattr(b, "title", "")
+            b_body = b.get("body") if isinstance(b, dict) else getattr(b, "body", "")
+            if b_title or b_body:
+                parts.append(f"- {b_title}: {b_body[:200]}" if b_title else f"- {b_body[:200]}")
         if parts:
             sections.append(ContextSection(
                 id="colony-briefings",
@@ -5082,11 +5084,13 @@ async def create_initiative(body: InitiativeCreateRequest) -> InitiativeResponse
     initiative = _initiative_store.create(
         type=body.initiative_type,
         description=body.description,
-        priority=body.priority,
+        # Request priority is 0-100; the store holds 0.0-1.0.
+        priority=body.priority / 100.0,
         timeout_seconds=body.timeout_seconds,
         dedup_key=body.dedup_key,
+        entity_id=body.entity_id,
         preferred_agent_id=body.target_agent_id,
-        # Extra context stored separately if needed
+        context=body.context or None,
     )
 
     if _telemetry is not None:
@@ -5276,6 +5280,68 @@ async def retry_initiative(initiative_id: str) -> Dict[str, Any]:
     return {"status": "pending", "initiative_id": initiative_id}
 
 
+@router.post("/initiatives/{initiative_id}/context/refresh", response_model=InitiativeResponse)
+async def refresh_initiative_context(initiative_id: str) -> InitiativeResponse:
+    """Rebuild the context snapshot for one initiative's subject (v0.16.0).
+
+    Volatile initiative types (calendar, coding, system, agent_action)
+    carry context that can go stale while the initiative sits in the
+    queue. The agent calls this before acting when the snapshot's
+    ``context_captured_at`` is older than the type's freshness TTL.
+    Durable types return their stored snapshot unchanged.
+    """
+    if _initiative_store is None:
+        raise HTTPException(status_code=501, detail="Initiative store not initialized")
+
+    initiative = _initiative_store.get(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail="Initiative not found")
+
+    from colony_sidecar.initiatives.context_freshness import DURABLE, durability_for
+
+    engine = None
+    if _autonomy_loop is not None:
+        registry = getattr(_autonomy_loop, "_registry", None)
+        if registry is not None:
+            engine = getattr(registry, "initiative_engine", None)
+
+    fresh = None
+    if engine is not None and hasattr(engine, "rebuild_context"):
+        fresh = await engine.rebuild_context(initiative.type, initiative.entity_id)
+
+    if fresh is None:
+        if durability_for(initiative.type) == DURABLE:
+            # Durable context: the creation-time snapshot is still valid.
+            return _initiative_to_response(initiative)
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                f"No per-entity context loader registered for volatile "
+                f"type '{initiative.type}' — context cannot be refreshed"
+            ),
+        )
+
+    # Volatile auto-close: if the refreshed snapshot shows the condition
+    # has cleared (CI green again, service recovered, meeting over), the
+    # initiative retires itself instead of surfacing stale work.
+    condition_cleared = bool(fresh.pop("condition_cleared", False))
+    if condition_cleared and initiative.is_active:
+        _initiative_store.update(
+            initiative_id,
+            context=fresh,
+            status="cancelled",
+            cancelled_at=datetime.now(timezone.utc).isoformat(),
+            cancelled_by="context_refresh",
+            cancelled_reason="condition_cleared",
+            stale_reason="condition_cleared",
+        )
+        updated = _initiative_store.get(initiative_id)
+        return _initiative_to_response(updated or initiative)
+
+    updated = _initiative_store.update(initiative_id, context=fresh)
+    return _initiative_to_response(updated or initiative)
+
+
 @router.delete("/initiatives/{initiative_id}")
 async def cancel_initiative(initiative_id: str) -> Dict[str, Any]:
     """Cancel an initiative."""
@@ -5303,16 +5369,23 @@ def _initiative_to_response(initiative) -> InitiativeResponse:
         elif isinstance(initiative.result, str):
             result_dict = {"result": initiative.result}
 
+    from colony_sidecar.initiatives.context_freshness import durability_for
+
     return InitiativeResponse(
         id=initiative.id,
         initiative_type=initiative.type,
-        title=initiative.rationale or initiative.description[:50],  # Use rationale as title
+        # Title is the ACTION ("Check in with Bradley"), not the reason.
+        # The rationale lives in the context dict.
+        title=initiative.description[:100],
         description=initiative.description,
         priority=int(initiative.priority * 100) if initiative.priority else 0,
         status=initiative.status,
         timeout_seconds=initiative.timeout_seconds,
-        context={},  # Not stored separately
-        target_agent_id=None,  # Not in StoredInitiative
+        # NULL for rows created before the v0.16.0 context migration.
+        context=initiative.context or {},
+        context_durability=durability_for(initiative.type),
+        entity_id=initiative.entity_id,
+        target_agent_id=initiative.assigned_agent_id or initiative.preferred_agent_id,
         assigned_agent_id=initiative.assigned_agent_id,
         dedup_key=initiative.dedup_key,
         result=result_dict,
@@ -5415,7 +5488,7 @@ async def respond_to_initiative(
 
 @router.get("/agent-snapshot", response_model=AgentSnapshotResponse)
 async def agent_snapshot() -> AgentSnapshotResponse:
-    """Return a comprehensive snapshot of Colony state for Aeva evaluation."""
+    """Return a comprehensive snapshot of Colony state for agent evaluation."""
     now = datetime.now(timezone.utc)
 
     # Telemetry
@@ -5442,7 +5515,7 @@ async def agent_snapshot() -> AgentSnapshotResponse:
     if _telemetry is not None and _telemetry.last_tick_at is not None:
         tick_age = (now - _telemetry.last_tick_at).total_seconds() / 60
 
-    # Flags: high-signal items Aeva should know about
+    # Flags: high-signal items the agent should know about
     flags = []
     if (telemetry_dict.get("silence_hours", {}).get("initiative") or 0) > 4:
         flags.append("long_initiative_silence")
@@ -5472,7 +5545,7 @@ async def agent_snapshot() -> AgentSnapshotResponse:
 
 @router.post("/agent-snapshot/record-outreach", response_model=RecordOutreachResponse)
 async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse:
-    """Record that Aeva proactively messaged the owner."""
+    """Record that the agent proactively messaged the owner."""
     now = datetime.now(timezone.utc)
     outreach_at = now.isoformat()
     if _telemetry is not None:
@@ -5480,7 +5553,7 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
         if _telemetry.last_agent_outreach_at is not None:
             outreach_at = _telemetry.last_agent_outreach_at.isoformat()
     logger.info(
-        "Aeva outreach recorded: agent=%s channel=%s reason=%s",
+        "Agent outreach recorded: agent=%s channel=%s reason=%s",
         body.agent_id, body.channel, body.reason,
     )
     return RecordOutreachResponse(

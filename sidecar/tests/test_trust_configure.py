@@ -107,6 +107,9 @@ async def test_chain_verify_no_chain_returns_invalid():
 @pytest.mark.asyncio
 async def test_configure_host_rebuilds_router(tmp_path, monkeypatch):
     """configure_host rebuilds the LLMRouter and persists the config."""
+    # The router module imports litellm at module level — an optional
+    # dependency; skip cleanly where it isn't installed.
+    pytest.importorskip("litellm")
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
 
     # Reuse real LLMRouter / ReasoningLoop wiring — only the builder is stubbed.

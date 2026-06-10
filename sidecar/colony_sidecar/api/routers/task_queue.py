@@ -1,7 +1,7 @@
 """Task Queue API — ``/v1/host/queue`` endpoints for distributed job scheduling.
 
 Exposes the TaskQueueManager / QueueManager surface to external workers
-(including Aeva's cron-driven agent worker).
+(including the host agent's cron-driven worker).
 """
 
 from __future__ import annotations

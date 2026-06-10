@@ -6,6 +6,7 @@ The sidecar is the source of truth for these schemas.
 
 from __future__ import annotations
 
+import os as _os
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -1378,6 +1379,7 @@ class InitiativeCreateRequest(BaseModel):
     priority: int = Field(default=0, ge=0, le=100)
     timeout_seconds: int = Field(default=3600, ge=60, le=86400)
     context: Dict[str, Any] = Field(default_factory=dict)
+    entity_id: Optional[str] = None
     target_agent_id: Optional[str] = None
     dedup_key: Optional[str] = None
 
@@ -1388,9 +1390,19 @@ class InitiativeResponse(BaseModel):
     title: str
     description: str
     priority: int
-    status: Literal["pending", "acknowledged", "in_progress", "completed", "failed", "cancelled"]
+    status: Literal[
+        "pending", "assigned", "acknowledged", "in_progress",
+        "completed", "failed", "cancelled",
+    ]
     timeout_seconds: int
     context: Dict[str, Any]
+    # v0.16.0: durability contract for the context snapshot —
+    # 'durable' (safe to act on as-is) or 'volatile' (check
+    # context_captured_at against the type's freshness TTL first).
+    context_durability: Optional[str] = None
+    # The SUBJECT of the initiative (a person, a PR, a commitment) —
+    # distinct from target/assigned agent (who EXECUTES it).
+    entity_id: Optional[str] = None
     target_agent_id: Optional[str]
     assigned_agent_id: Optional[str]
     dedup_key: Optional[str]
@@ -1467,7 +1479,11 @@ class AgentSnapshotResponse(BaseModel):
 
 
 class RecordOutreachRequest(BaseModel):
-    agent_id: str = "aeva"
+    # Agent identity is deployment-specific — configure COLONY_AGENT_NAME
+    # rather than relying on this generic fallback.
+    agent_id: str = Field(
+        default_factory=lambda: _os.environ.get("COLONY_AGENT_NAME", "agent")
+    )
     channel: str = "whatsapp"
     reason: Optional[str] = None
 
