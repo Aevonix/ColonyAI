@@ -62,6 +62,12 @@ class StoredInitiative:
     # === Deduplication ===
     dedup_key: Optional[str] = None
 
+    # === Situational context (v0.16.0) ===
+    # Snapshot built at generation time (contact name, days since contact,
+    # CI status, ...). None for rows created before the migration.
+    # Volatile types carry a "context_captured_at" stamp inside the dict.
+    context: Optional[Dict[str, Any]] = None
+
     # === Source tracking ===
     source_type: Optional[str] = None  # blocked_goal, neglected_contact, manual
     source_id: Optional[str] = None
@@ -159,6 +165,15 @@ class StoredInitiative:
         else:
             result_metadata = result_metadata_raw
 
+        context_raw = row.get("context")
+        if isinstance(context_raw, str):
+            try:
+                context = json.loads(context_raw)
+            except (ValueError, TypeError):
+                context = None
+        else:
+            context = context_raw
+
         return cls(
             id=row["id"],
             type=row["type"],
@@ -169,6 +184,7 @@ class StoredInitiative:
             entity_id=row.get("entity_id"),
             created_at=parse_dt(row.get("created_at")) or datetime.now(timezone.utc),
             dedup_key=row.get("dedup_key"),
+            context=context,
             source_type=row.get("source_type"),
             source_id=row.get("source_id"),
             created_by=row.get("created_by"),
@@ -216,6 +232,7 @@ class StoredInitiative:
             "entity_id": self.entity_id,
             "created_at": format_dt(self.created_at),
             "dedup_key": self.dedup_key,
+            "context": self.context,
             "source_type": self.source_type,
             "source_id": self.source_id,
             "created_by": self.created_by,

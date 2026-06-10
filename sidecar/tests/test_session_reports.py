@@ -123,7 +123,18 @@ class TestSessionReportEndpoint:
         from colony_sidecar.telemetry import TelemetryStore
         from colony_sidecar.initiatives.store import InitiativeStore
 
+        from colony_sidecar.api.routers import host as host_mod
+
         monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+
+        # Save module globals — leaking a Mock autonomy loop poisons
+        # other test modules (e.g. test_sidecar's not-wired tests).
+        prev = (
+            host_mod._telemetry,
+            host_mod._initiative_store,
+            host_mod._autonomy_loop,
+            host_mod._session_report_store,
+        )
 
         telemetry = TelemetryStore()
         set_telemetry(telemetry)
@@ -140,7 +151,12 @@ class TestSessionReportEndpoint:
         set_session_report_store(session_report_store)
 
         app = create_app()
-        return TestClient(app, headers={"Authorization": "Bearer test-api-key"})
+        yield TestClient(app, headers={"Authorization": "Bearer test-api-key"})
+
+        set_telemetry(prev[0])
+        set_initiative_store(prev[1])
+        set_autonomy_loop(prev[2])
+        set_session_report_store(prev[3])
 
     def test_store_report(self, client: TestClient):
         payload = {
@@ -210,7 +226,18 @@ class TestContextDigestEndpoint:
         from colony_sidecar.telemetry import TelemetryStore
         from colony_sidecar.initiatives.store import InitiativeStore
 
+        from colony_sidecar.api.routers import host as host_mod
+
         monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+
+        # Save module globals — leaking a Mock autonomy loop poisons
+        # other test modules (e.g. test_sidecar's not-wired tests).
+        prev = (
+            host_mod._telemetry,
+            host_mod._initiative_store,
+            host_mod._autonomy_loop,
+            host_mod._session_report_store,
+        )
 
         telemetry = TelemetryStore()
         set_telemetry(telemetry)
@@ -227,7 +254,12 @@ class TestContextDigestEndpoint:
         set_session_report_store(session_report_store)
 
         app = create_app()
-        return TestClient(app, headers={"Authorization": "Bearer test-api-key"})
+        yield TestClient(app, headers={"Authorization": "Bearer test-api-key"})
+
+        set_telemetry(prev[0])
+        set_initiative_store(prev[1])
+        set_autonomy_loop(prev[2])
+        set_session_report_store(prev[3])
 
     def test_digest_structure(self, client: TestClient):
         resp = client.get(
@@ -259,12 +291,16 @@ class TestContextDigestEndpoint:
         assert data["session_reports"] == []
 
     def test_digest_with_stored_reports(self, client: TestClient):
-        # Store a report first
+        from datetime import datetime, timedelta, timezone
+
+        # Timestamps must be relative — the digest filters by a rolling
+        # window, so hardcoded dates turn this test into a time bomb.
+        now = datetime.now(timezone.utc)
         payload = {
             "session_id": "s-digest",
             "contact_id": "whatsapp:+1XXXXXX",
-            "started_at": "2026-05-22T15:00:00Z",
-            "ended_at": "2026-05-22T15:30:00Z",
+            "started_at": (now - timedelta(minutes=45)).isoformat(),
+            "ended_at": (now - timedelta(minutes=15)).isoformat(),
             "summary": "Digest test session",
             "topics": ["digest"],
             "resolutions": ["done"],

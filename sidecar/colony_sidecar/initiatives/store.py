@@ -127,12 +127,14 @@ class InitiativeStore:
                 preferred_agent_id TEXT,
                 stale_reason TEXT,
                 recovery_reason TEXT,
-                job_id TEXT  -- v0.13.0: linked task-queue job
+                job_id TEXT,  -- v0.13.0: linked task-queue job
+                context TEXT  -- v0.16.0: situational context snapshot (JSON)
             )
             """
         )
 
-        # v0.13.0 migration: add job_id column if missing
+        # Column migrations: v0.13.0 job_id, v0.16.0 context.
+        # Old rows keep context NULL — the API serializer maps that to {}.
         try:
             cursor = conn.execute("PRAGMA table_info(initiatives)")
             columns = {row[1] for row in cursor.fetchall()}
@@ -140,6 +142,10 @@ class InitiativeStore:
                 conn.execute("ALTER TABLE initiatives ADD COLUMN job_id TEXT")
                 conn.commit()
                 logger.info("Migrated initiatives table: added job_id column")
+            if "context" not in columns:
+                conn.execute("ALTER TABLE initiatives ADD COLUMN context TEXT")
+                conn.commit()
+                logger.info("Migrated initiatives table: added context column")
         except Exception as exc:
             logger.warning("Initiative migration check failed (non-fatal): %s", exc)
 
@@ -205,6 +211,7 @@ class InitiativeStore:
         expires_at: Optional[datetime] = None,
         preferred_agent_id: Optional[str] = None,
         job_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
         **extra,
     ) -> StoredInitiative:
         """Create a new initiative."""
@@ -266,8 +273,9 @@ class InitiativeStore:
             INSERT INTO initiatives (
                 id, dedup_key, type, description, priority, rationale,
                 action_hint, entity_id, source_type, source_id, created_by,
-                timeout_seconds, expires_at, preferred_agent_id, job_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                timeout_seconds, expires_at, preferred_agent_id, job_id,
+                context, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 initiative_id,
@@ -285,6 +293,7 @@ class InitiativeStore:
                 expires_at.isoformat() if expires_at else None,
                 preferred_agent_id,
                 job_id,
+                json.dumps(context) if context is not None else None,
                 now.isoformat(),
             ],
         )
@@ -331,6 +340,7 @@ class InitiativeStore:
         "delivery_failed_at", "delivery_failed_reason",
         "result", "result_metadata",
         "preferred_agent_id", "stale_reason", "recovery_reason", "job_id",
+        "context",
     })
 
     def update(self, initiative_id: str, **updates) -> Optional[StoredInitiative]:
@@ -349,9 +359,12 @@ class InitiativeStore:
         params = []
 
         for key, value in updates.items():
-            if key in ("result_metadata",):
+            if key in ("result_metadata", "context"):
                 set_parts.append(f"{key} = ?")
-                params.append(json.dumps(value) if not isinstance(value, str) else value)
+                if value is None:
+                    params.append(None)
+                else:
+                    params.append(json.dumps(value) if not isinstance(value, str) else value)
             elif key in (
                 "assigned_at",
                 "acknowledged_at",

@@ -94,6 +94,16 @@ class InitiativeType(str, Enum):
     # Agent-actionable initiatives (v0.13.0)
     AGENT_ACTION = "agent_action"
 
+    # Autonomous work domains (v0.16.0) — Colony as the agent's
+    # general-purpose work engine, not just relationship upkeep.
+    # Context durability per type lives in initiatives/context_freshness.py.
+    COMMITMENT = "commitment"      # promises and follow-through (durable)
+    CALENDAR = "calendar"          # calendar awareness and prep (volatile)
+    RESEARCH = "research"          # long-running research tasks (durable)
+    TASK = "task"                  # task management and follow-up (durable)
+    PROJECT = "project"            # milestones and project management (durable)
+    SYSTEM = "system"              # infrastructure monitoring (volatile)
+
 
 @dataclass
 class Initiative:
@@ -212,12 +222,14 @@ class InitiativeEngine:
         goal_store: Optional[Any] = None,  # GoalStore for dedup cooldown (v0.7.10)
         config: Optional[InitiativeConfig] = None,
         skill_registry: Optional[SkillRegistry] = None,
+        observation_store: Optional[Any] = None,  # agent-reported snapshots (v0.16.0)
     ) -> None:
         self.graph = graph_client
         self.events = event_bus
         self.mind_model = mind_model
         self._store = store
         self._goal_store = goal_store
+        self._observation_store = observation_store
         self._config = config or InitiativeConfig.from_env()
         self._initiatives: List[Initiative] = []
         self._context: Dict[str, List[Dict[str, Any]]] = {}
@@ -449,8 +461,26 @@ class InitiativeEngine:
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
 
-        import os
-        host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "owner")
+        # Owner exclusion is a relationship-domain policy: the agent must
+        # not generate "check in with" work targeting its own operator.
+        # Fail closed — if the owner's identity can't be established we
+        # generate nothing rather than risk targeting the owner. (The old
+        # COLONY_HOST_CONTACT_ID default of "owner" never matched anything,
+        # which let the owner through every time.)
+        from colony_sidecar.identity.resolver import (
+            OwnerIdentityError,
+            get_identity_resolver,
+        )
+        resolver = get_identity_resolver()
+        try:
+            await resolver.owner_identities()
+        except OwnerIdentityError as exc:
+            logger.critical(
+                "Owner identity unresolved — skipping neglected-contact "
+                "scan (fail closed): %s", exc,
+            )
+            self._context["neglected_contacts"] = []
+            return
 
         query = """
             MATCH (p:Person)
@@ -468,7 +498,7 @@ class InitiativeEngine:
                    ELSE null
                  END AS days_since
             WHERE days_since IS NOT NULL
-            RETURN p.id as id, p.name as name, days_since
+            RETURN p.id as id, p.name as name, p.score as score, days_since
             ORDER BY days_since DESC
             LIMIT $limit
         """
@@ -487,8 +517,8 @@ class InitiativeEngine:
                     entity_id = record.get("id")
                     days_since = record.get("days_since")
 
-                    # Skip host and junk/system nodes
-                    if entity_id == host_id or name == host_id:
+                    # Skip the owner (any identifier format) and junk nodes
+                    if await resolver.is_owner(entity_id) or await resolver.is_owner(name):
                         continue
                     if not self._is_meaningful_contact(name):
                         logger.debug("Skipping junk contact: %s (%s)", name, entity_id)
@@ -499,6 +529,7 @@ class InitiativeEngine:
                             "entity_id": entity_id,
                             "name": name,
                             "days_since_contact": int(days_since),
+                            "relationship_score": record.get("score"),
                         })
 
             logger.debug("Loaded %d genuinely neglected contacts", len(contacts))
@@ -1023,7 +1054,10 @@ class InitiativeEngine:
         
         # Load live data from graph before generating
         await self._load_graph_context()
-        
+
+        # Load agent-reported observations (v0.16.0, agent-as-sensor)
+        self._load_observation_domains()
+
         # Bug 33: Run generators in parallel with exception handling
         generators = []
         if not types or InitiativeType.FOLLOW_UP in types:
@@ -1035,6 +1069,21 @@ class InitiativeEngine:
             generators.append(self._generate_health_suggestions())
         if not types or InitiativeType.SCHEDULING in types:
             generators.append(self._generate_scheduling_suggestions())
+        # Autonomous work domains (v0.16.0)
+        if not types or InitiativeType.COMMITMENT in types:
+            generators.append(self._generate_commitment_initiatives())
+        if not types or InitiativeType.CODING in types:
+            generators.append(self._generate_coding_initiatives())
+        if not types or InitiativeType.TASK in types:
+            generators.append(self._generate_task_initiatives())
+        if not types or InitiativeType.CALENDAR in types:
+            generators.append(self._generate_calendar_initiatives())
+        if not types or InitiativeType.RESEARCH in types:
+            generators.append(self._generate_research_initiatives())
+        if not types or InitiativeType.PROJECT in types:
+            generators.append(self._generate_project_initiatives())
+        if not types or InitiativeType.SYSTEM in types:
+            generators.append(self._generate_system_initiatives())
         # Self-initiative generators (v0.11.0)
         if not types or InitiativeType.SUBSYSTEM_HEALTH in types:
             generators.append(self._generate_subsystem_health_initiatives())
@@ -1279,14 +1328,35 @@ class InitiativeEngine:
         """Generate relationship maintenance suggestions.
 
         Gates relationship initiatives behind:
-        1. Colony has a MANAGES edge to the Person
-        2. Colony has at least one communication channel to the Person
+        1. The subject is not the owner (owner exclusion, fail closed)
+        2. Colony has a MANAGES edge to the Person
+        3. Colony has at least one communication channel to the Person
         """
+        from colony_sidecar.identity.resolver import (
+            OwnerIdentityError,
+            get_identity_resolver,
+        )
+        resolver = get_identity_resolver()
+        try:
+            await resolver.owner_identities()
+        except OwnerIdentityError as exc:
+            logger.critical(
+                "Owner identity unresolved — relationship initiative "
+                "generation disabled (fail closed): %s", exc,
+            )
+            return []
+
         initiatives: List[Initiative] = []
         for contact in self._context.get("neglected_contacts", []):
             entity_id = contact.get("entity_id")
             name = contact.get("name", "Unknown")
             days = contact.get("days_since_contact", 0)
+
+            # Owner exclusion — context may be fed externally (loop tick),
+            # so re-check here even though the graph loader also filters.
+            if not entity_id or await resolver.is_owner(entity_id) or await resolver.is_owner(name):
+                logger.debug("Skipping relationship initiative for owner/empty subject: %s", name)
+                continue
 
             # Gate: check if Colony MANAGES this person
             has_manages = False
@@ -1313,7 +1383,9 @@ class InitiativeEngine:
                     description=f"Check in with {name}",
                     priority=min(1.0, 0.4 + (days / 14.0)),
                     rationale=f"No contact for {days} days",
-                    action_hint="Send a message or schedule a call",
+                    # Agent-directed: evaluate the relationship and choose a
+                    # disposition — this is not an instruction to message.
+                    action_hint="evaluate_relationship",
                     entity_id=entity_id,
                     dedup_key=f"relationship:{entity_id}",
                     expires_at=datetime.now(timezone.utc) + timedelta(days=3),
@@ -1362,6 +1434,481 @@ class InitiativeEngine:
                     entity_id=dedup_key.split(":", 1)[1] if ":" in dedup_key else None,
                     dedup_key=dedup_key,
                     expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+                )
+            )
+        return initiatives
+
+    async def _generate_commitment_initiatives(self) -> List[Initiative]:
+        """Generate commitment follow-through initiatives (v0.16.0).
+
+        Reads ``upcoming_commitments`` context fed by the autonomy loop
+        from Colony's own commitment store. The OWNER IS A VALID SUBJECT
+        here — "follow up on what you promised Marc" is exactly the work
+        this type exists for, so no owner-exclusion filter applies.
+        Context is durable: the promise and its deadline do not go stale
+        the way CI status does.
+        """
+        initiatives: List[Initiative] = []
+        now = datetime.now(timezone.utc)
+        for c in self._context.get("upcoming_commitments", []):
+            commitment_id = c.get("commitment_id")
+            if not commitment_id:
+                continue
+            desc = c.get("description", "untitled commitment")
+            hours_until_due = c.get("hours_until_due")
+            overdue = bool(c.get("overdue"))
+
+            if overdue:
+                priority = 0.9
+                rationale = "Commitment is overdue"
+                description = f"Follow up on overdue commitment: {desc}"
+            else:
+                priority = 0.85 if (hours_until_due is not None and hours_until_due < 4) else 0.7
+                rationale = (
+                    f"Due in {int(hours_until_due)}h"
+                    if hours_until_due is not None else "Deadline approaching"
+                )
+                description = f"Follow up on commitment: {desc}"
+
+            initiatives.append(
+                Initiative(
+                    id=f"commitment-{commitment_id}",
+                    type=InitiativeType.COMMITMENT,
+                    description=description,
+                    priority=min(1.0, priority),
+                    rationale=rationale,
+                    action_hint="commitment_check_deadline",
+                    entity_id=commitment_id,
+                    dedup_key=f"commitment:{commitment_id}",
+                    expires_at=now + timedelta(days=2),
+                    trigger_data={
+                        "commitment_text": desc,
+                        "deadline": c.get("due_at"),
+                        "status": c.get("status", "pending"),
+                        "person_id": c.get("person_id"),
+                        "hours_until_due": hours_until_due,
+                    },
+                )
+            )
+        return initiatives
+
+    # ------------------------------------------------------------------
+    # Per-entity context rebuild (v0.16.0)
+    # ------------------------------------------------------------------
+
+    async def rebuild_context(
+        self,
+        type_value: str,
+        entity_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Rebuild the context snapshot for ONE initiative's subject.
+
+        This is the volatile-context refresh path: the batch loaders
+        (``_load_*_context``) only run during the generation tick, so the
+        agent calls this (via POST /initiatives/{id}/context/refresh)
+        before acting on a snapshot that has outlived its freshness TTL.
+
+        Returns None when no per-entity rebuilder is registered for the
+        type — callers must surface that, not silently serve stale data.
+        New volatile types (calendar, coding, system) MUST register a
+        rebuilder here when their batch loader lands.
+        """
+        rebuilders = {
+            "relationship": self._rebuild_relationship_context,
+            "commitment": self._rebuild_commitment_context,
+        }
+        rebuilder = rebuilders.get(type_value)
+        if rebuilder is not None:
+            return await rebuilder(entity_id)
+        # Observation-backed domains share one rebuilder: the freshest
+        # agent-reported snapshot for this entity.
+        if type_value in self._OBSERVATION_DOMAIN_TYPES:
+            return self._rebuild_observation_context(type_value, entity_id)
+        return None
+
+    async def _rebuild_relationship_context(
+        self, entity_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Re-query days-since-contact and score for one Person node."""
+        if not entity_id or self.graph is None or not hasattr(self.graph, "driver"):
+            return None
+        query = """
+            MATCH (p:Person {id: $id})
+            WITH p,
+                 coalesce(p.lastCommunication, p.lastInteraction, p.lastSeen) AS last_seen
+            RETURN p.name AS name, p.score AS score,
+                   CASE WHEN last_seen IS NULL THEN null
+                        ELSE duration.inDays(last_seen, datetime()).days END AS days_since
+        """
+        try:
+            async with self.graph.driver.session(database=self.graph.database) as session:
+                result = await session.run(query, id=entity_id)
+                record = await result.single()
+                if record is None:
+                    return None
+                record = dict(record)
+                return {
+                    "neglected_contact": {
+                        "contact_id": entity_id,
+                        "contact_name": record.get("name"),
+                        "days_since_contact": record.get("days_since"),
+                        "relationship_score": record.get("score"),
+                    },
+                    "context_captured_at": datetime.now(timezone.utc).isoformat(),
+                }
+        except Exception as exc:
+            logger.warning("Relationship context rebuild failed for %s: %s", entity_id, exc)
+            return None
+
+    async def _rebuild_commitment_context(
+        self, entity_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Re-read one commitment from the commitment store."""
+        if not entity_id:
+            return None
+        try:
+            # Late-bound like SubsystemRegistry — the engine is constructed
+            # before the stores in some boot orders.
+            from colony_sidecar.api.routers.host import _commitment_store
+        except Exception:
+            return None
+        if _commitment_store is None or not hasattr(_commitment_store, "get"):
+            return None
+        try:
+            commitment = _commitment_store.get(entity_id)
+        except Exception as exc:
+            logger.warning("Commitment context rebuild failed for %s: %s", entity_id, exc)
+            return None
+        if not commitment:
+            return None
+        return {
+            "commitment": {
+                "commitment_id": entity_id,
+                "commitment_text": commitment.get("description"),
+                "deadline": commitment.get("due_at"),
+                "status": commitment.get("status"),
+                "person_id": commitment.get("person_id"),
+            },
+            "context_captured_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # ------------------------------------------------------------------
+    # Observation-backed domains (v0.16.0, agent-as-sensor)
+    # ------------------------------------------------------------------
+    # The agent observes the world through its own Hermes connections
+    # and reports snapshots to the observation store. These loaders and
+    # generators read observations — Colony never calls external APIs.
+
+    _OBSERVATION_DOMAIN_TYPES = (
+        "coding", "task", "calendar", "research", "project", "system",
+    )
+
+    def _obs_store(self) -> Any:
+        """Observation store, late-bound like the other host singletons."""
+        if self._observation_store is not None:
+            return self._observation_store
+        try:
+            from colony_sidecar.api.routers.observations import get_observation_store
+            return get_observation_store()
+        except Exception:
+            return None
+
+    def _load_observation_domains(self) -> None:
+        """Populate context for each observed domain (batch mode).
+
+        Respects manually-fed context: a domain key that already exists
+        (e.g. injected by a test or the loop) is left untouched.
+        """
+        store = self._obs_store()
+        if store is None:
+            return
+        for domain in self._OBSERVATION_DOMAIN_TYPES:
+            if self._context.get(domain):
+                continue
+            try:
+                observations = store.list(domain, limit=100)
+            except Exception as exc:
+                logger.warning("Observation load failed for %s: %s", domain, exc)
+                continue
+            if observations:
+                self._context[domain] = [
+                    {
+                        "entity_id": o.entity_id,
+                        "observed_at": o.observed_at.isoformat(),
+                        **(o.payload or {}),
+                    }
+                    for o in observations
+                ]
+
+    @staticmethod
+    def _parse_iso(value: Any) -> Optional[datetime]:
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    @staticmethod
+    def _observation_condition_cleared(domain: str, payload: Dict[str, Any]) -> bool:
+        """Has the condition that justified an initiative gone away?
+
+        Used by the refresh path to auto-close volatile initiatives
+        instead of surfacing stale context (CI green again, service
+        recovered, meeting already over).
+        """
+        healthy = {"healthy", "ok", "active", "up", "passing", "success", "green"}
+        if domain == "coding":
+            ci = str(payload.get("ci_status") or "").lower()
+            ci_ok = (not ci) or ci in healthy
+            return ci_ok and not payload.get("review_requested")
+        if domain == "system":
+            status = str(payload.get("status") or "").lower()
+            error_rate = float(payload.get("error_rate") or 0.0)
+            return status in healthy and error_rate <= 0.1
+        if domain == "calendar":
+            start = InitiativeEngine._parse_iso(payload.get("start_time"))
+            return start is not None and start < datetime.now(timezone.utc)
+        if domain == "task":
+            return str(payload.get("state") or "").lower() not in ("open", "")
+        if domain == "project":
+            return int(payload.get("open_issues") or 0) == 0
+        if domain == "research":
+            return str(payload.get("status") or "").lower() in (
+                "done", "complete", "published", "released",
+            )
+        return False
+
+    def _rebuild_observation_context(
+        self, domain: str, entity_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Per-entity refresh = the freshest stored observation."""
+        if not entity_id:
+            return None
+        store = self._obs_store()
+        if store is None:
+            return None
+        try:
+            obs = store.get(domain, entity_id)
+        except Exception as exc:
+            logger.warning("Observation rebuild failed for %s/%s: %s", domain, entity_id, exc)
+            return None
+        if obs is None:
+            return None
+        return {
+            domain: {"entity_id": entity_id, **(obs.payload or {})},
+            "context_captured_at": obs.observed_at.isoformat(),
+            "condition_cleared": self._observation_condition_cleared(domain, obs.payload or {}),
+        }
+
+    async def _generate_coding_initiatives(self) -> List[Initiative]:
+        """PRs needing review and failing CI, from agent observations."""
+        initiatives: List[Initiative] = []
+        now = datetime.now(timezone.utc)
+        for item in self._context.get("coding", []):
+            entity_id = item.get("entity_id")
+            if not entity_id:
+                continue
+            title = item.get("title", entity_id)
+            ci = str(item.get("ci_status") or "").lower()
+            ci_failing = ci in ("failing", "failure", "failed", "error", "red")
+            review_needed = bool(item.get("review_requested")) and not item.get("draft")
+            if ci_failing:
+                description = f"Investigate failing CI on {title}"
+                action_hint = "coding_check_ci"
+                priority = 0.85
+                rationale = f"CI status: {item.get('ci_status')}"
+            elif review_needed:
+                description = f"Review PR: {title}"
+                action_hint = "coding_check_ci"
+                priority = 0.75
+                rationale = "Review requested"
+            else:
+                continue
+            initiatives.append(
+                Initiative(
+                    id=f"coding-{entity_id}",
+                    type=InitiativeType.CODING,
+                    description=description,
+                    priority=priority,
+                    rationale=rationale,
+                    action_hint=action_hint,
+                    entity_id=str(entity_id),
+                    dedup_key=f"coding:{entity_id}",
+                    expires_at=now + timedelta(hours=24),
+                    trigger_data={k: v for k, v in item.items() if k != "entity_id"},
+                )
+            )
+        return initiatives
+
+    async def _generate_task_initiatives(self) -> List[Initiative]:
+        """Open tasks that have gone stale, from agent observations."""
+        initiatives: List[Initiative] = []
+        now = datetime.now(timezone.utc)
+        for item in self._context.get("task", []):
+            entity_id = item.get("entity_id")
+            if not entity_id:
+                continue
+            if str(item.get("state") or "open").lower() != "open":
+                continue
+            stale_days = float(item.get("stale_days") or 0)
+            if stale_days < 3 and not item.get("needs_follow_up"):
+                continue
+            title = item.get("title", entity_id)
+            initiatives.append(
+                Initiative(
+                    id=f"task-{entity_id}",
+                    type=InitiativeType.TASK,
+                    description=f"Follow up on task: {title}",
+                    priority=min(1.0, 0.5 + stale_days / 14.0),
+                    rationale=f"Open with no movement for {int(stale_days)} days"
+                    if stale_days else "Flagged for follow-up",
+                    action_hint="task_check_status",
+                    entity_id=str(entity_id),
+                    dedup_key=f"task:{entity_id}",
+                    expires_at=now + timedelta(days=3),
+                    trigger_data={k: v for k, v in item.items() if k != "entity_id"},
+                )
+            )
+        return initiatives
+
+    async def _generate_calendar_initiatives(self) -> List[Initiative]:
+        """Upcoming events needing preparation, from agent observations."""
+        initiatives: List[Initiative] = []
+        now = datetime.now(timezone.utc)
+        for item in self._context.get("calendar", []):
+            entity_id = item.get("entity_id")
+            if not entity_id:
+                continue
+            if item.get("needs_prep") is False:
+                continue
+            start = self._parse_iso(item.get("start_time"))
+            if start is None or start < now:
+                continue
+            hours_until = (start - now).total_seconds() / 3600
+            if hours_until > 24:
+                continue
+            title = item.get("title", entity_id)
+            initiatives.append(
+                Initiative(
+                    id=f"calendar-{entity_id}",
+                    type=InitiativeType.CALENDAR,
+                    description=f"Prepare for: {title}",
+                    priority=0.85 if hours_until <= 2 else 0.7,
+                    rationale=f"Starts in {hours_until:.1f}h",
+                    action_hint="calendar_prepare_meeting",
+                    entity_id=str(entity_id),
+                    dedup_key=f"calendar:{entity_id}",
+                    expires_at=start,
+                    trigger_data={k: v for k, v in item.items() if k != "entity_id"},
+                )
+            )
+        return initiatives
+
+    async def _generate_research_initiatives(self) -> List[Initiative]:
+        """Tracked research items due a check, from agent observations."""
+        initiatives: List[Initiative] = []
+        now = datetime.now(timezone.utc)
+        for item in self._context.get("research", []):
+            entity_id = item.get("entity_id")
+            if not entity_id:
+                continue
+            status = str(item.get("status") or "").lower()
+            if status in ("done", "complete", "published", "released"):
+                continue
+            last_checked = self._parse_iso(item.get("last_checked"))
+            days_since_check = (
+                (now - last_checked).total_seconds() / 86400
+                if last_checked else None
+            )
+            if days_since_check is not None and days_since_check < self._config.research_task_age_days:
+                continue
+            title = item.get("title", entity_id)
+            initiatives.append(
+                Initiative(
+                    id=f"research-{entity_id}",
+                    type=InitiativeType.RESEARCH,
+                    description=f"Check research item: {title}",
+                    priority=0.6,
+                    rationale=(
+                        f"Not checked for {int(days_since_check)} days"
+                        if days_since_check is not None else "Tracked and awaiting status"
+                    ),
+                    action_hint="research_check_paper",
+                    entity_id=str(entity_id),
+                    dedup_key=f"research:{entity_id}",
+                    expires_at=now + timedelta(days=7),
+                    trigger_data={k: v for k, v in item.items() if k != "entity_id"},
+                )
+            )
+        return initiatives
+
+    async def _generate_project_initiatives(self) -> List[Initiative]:
+        """Milestones approaching with open work, from agent observations."""
+        initiatives: List[Initiative] = []
+        now = datetime.now(timezone.utc)
+        for item in self._context.get("project", []):
+            entity_id = item.get("entity_id")
+            if not entity_id:
+                continue
+            open_issues = int(item.get("open_issues") or 0)
+            if open_issues == 0:
+                continue
+            due = self._parse_iso(item.get("due_on"))
+            if due is None:
+                continue
+            days_until = (due - now).total_seconds() / 86400
+            if days_until > 7:
+                continue
+            title = item.get("title", entity_id)
+            initiatives.append(
+                Initiative(
+                    id=f"project-{entity_id}",
+                    type=InitiativeType.PROJECT,
+                    description=(
+                        f"Milestone {title}: {open_issues} open issue(s), "
+                        f"due in {max(0, int(days_until))}d"
+                    ),
+                    priority=0.85 if days_until <= 2 else 0.7,
+                    rationale="Milestone deadline approaching with open work",
+                    action_hint="project_check_progress",
+                    entity_id=str(entity_id),
+                    dedup_key=f"project:{entity_id}",
+                    expires_at=due,
+                    trigger_data={k: v for k, v in item.items() if k != "entity_id"},
+                )
+            )
+        return initiatives
+
+    async def _generate_system_initiatives(self) -> List[Initiative]:
+        """Unhealthy services, from agent observations."""
+        initiatives: List[Initiative] = []
+        now = datetime.now(timezone.utc)
+        healthy = {"healthy", "ok", "active", "up", "passing", "green"}
+        for item in self._context.get("system", []):
+            entity_id = item.get("entity_id")
+            if not entity_id:
+                continue
+            status = str(item.get("status") or "").lower()
+            error_rate = float(item.get("error_rate") or 0.0)
+            if status in healthy and error_rate <= 0.1:
+                continue
+            initiatives.append(
+                Initiative(
+                    id=f"system-{entity_id}",
+                    type=InitiativeType.SYSTEM,
+                    description=f"Investigate {entity_id}: {item.get('status', 'degraded')}",
+                    priority=0.9,
+                    rationale=item.get("message")
+                    or f"status={item.get('status')}, error_rate={error_rate:.2f}",
+                    action_hint="system_check_health",
+                    entity_id=str(entity_id),
+                    dedup_key=f"system:{entity_id}",
+                    expires_at=now + timedelta(hours=2),
+                    trigger_data={k: v for k, v in item.items() if k != "entity_id"},
                 )
             )
         return initiatives
@@ -1542,7 +2089,7 @@ class InitiativeEngine:
         """Generate agent-actionable initiatives for autonomous execution (v0.13.0).
 
         These initiatives are routed to the task queue instead of the delivery
-        bridge, and claimed by the Aeva cron worker.
+        bridge, and claimed by the host agent's external worker.
         """
         initiatives: List[Initiative] = []
 

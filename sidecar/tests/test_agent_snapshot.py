@@ -17,6 +17,7 @@ class TestAgentSnapshot:
     @pytest.fixture
     def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         """Create a test client with telemetry and initiative stores injected."""
+        from colony_sidecar.api.routers import host as host_mod
         from colony_sidecar.api.routers.host import (
             set_telemetry,
             set_initiative_store,
@@ -25,6 +26,14 @@ class TestAgentSnapshot:
         from colony_sidecar.server import create_app
 
         monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+
+        # Save module globals — leaking a Mock autonomy loop poisons
+        # other test modules (e.g. test_sidecar's not-wired tests).
+        prev = (
+            host_mod._telemetry,
+            host_mod._initiative_store,
+            host_mod._autonomy_loop,
+        )
 
         telemetry = TelemetryStore()
         initiative_store = InitiativeStore(state_dir=tmp_path)
@@ -39,7 +48,11 @@ class TestAgentSnapshot:
         set_autonomy_loop(autonomy_loop)
 
         app = create_app()
-        return TestClient(app, headers={"Authorization": "Bearer test-api-key"})
+        yield TestClient(app, headers={"Authorization": "Bearer test-api-key"})
+
+        set_telemetry(prev[0])
+        set_initiative_store(prev[1])
+        set_autonomy_loop(prev[2])
 
     # -----------------------------------------------------------------------
     # GET /v1/host/agent-snapshot

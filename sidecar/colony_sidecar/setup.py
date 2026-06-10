@@ -825,18 +825,21 @@ def _start_neo4j_docker(neo4j_password: str) -> bool:
     neo4j_data = Path.home() / ".colony" / "neo4j-data"
     neo4j_data.mkdir(parents=True, exist_ok=True)
 
-    # Run Neo4j container
+    # Run Neo4j container. The credential travels via the process env
+    # (`-e NEO4J_AUTH` with no value makes docker read it from there) so
+    # the password never appears in argv where `ps` exposes it.
     try:
         cmd = [
             "docker", "run", "-d",
             "--name", "neo4j-colony",
             "-p", "7474:7474",
             "-p", "7687:7687",
-            "-e", f"NEO4J_AUTH=neo4j/{neo4j_password}",
+            "-e", "NEO4J_AUTH",
             "-v", f"{neo4j_data}:/data",
             "neo4j:5.15"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        env = {**os.environ, "NEO4J_AUTH": f"neo4j/{neo4j_password}"}
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
         if result.returncode != 0:
             print(f"    ⚠️ docker run failed: {result.stderr.strip()}")
             return False

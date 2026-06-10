@@ -122,8 +122,14 @@ class TestRelationshipGating:
         assert len(initiatives) == 0
 
     @pytest.mark.asyncio
-    async def test_relationship_with_manages_generated(self):
+    async def test_relationship_with_manages_generated(self, monkeypatch):
         """Relationship initiatives SHOULD generate for contacts with MANAGES edge."""
+        # v0.16.0: relationship generation fails closed without a resolvable
+        # owner identity, so configure one for this test.
+        from colony_sidecar.identity.resolver import reset_identity_resolver
+        reset_identity_resolver()
+        monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-test-owner")
+
         graph = FakeGraphClient()
         mock_session = AsyncMock()
         mock_result = AsyncMock()
@@ -145,6 +151,7 @@ class TestRelationshipGating:
         initiatives = await engine._generate_relationship_suggestions()
         assert len(initiatives) == 1
         assert initiatives[0].type == InitiativeType.RELATIONSHIP
+        reset_identity_resolver()
 
 
 class TestInitiativeTypeEnum:

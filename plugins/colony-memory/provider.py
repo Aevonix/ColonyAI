@@ -264,8 +264,8 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "properties": {
                 "worker_id": {
                     "type": "string",
-                    "description": "Optional worker node ID (default: aeva-worker)",
-                    "default": "aeva-worker",
+                    "description": "Optional worker node ID (default: COLONY_WORKER_NODE_ID or agent-worker)",
+                    "default": "agent-worker",
                 },
                 "capabilities": {
                     "type": "array",
@@ -855,7 +855,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                     f"{self.sidecar_url}/v1/host/queue/jobs/claim",
                     headers=self._headers(),
                     json={
-                        "node_id": args.get("worker_id", "aeva-worker"),
+                        "node_id": args.get("worker_id") or os.environ.get("COLONY_WORKER_NODE_ID", "agent-worker"),
                         "capabilities": args.get("capabilities", ["agent_action"]),
                     },
                     timeout=5,

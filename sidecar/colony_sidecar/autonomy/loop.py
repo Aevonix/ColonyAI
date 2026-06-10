@@ -14,6 +14,7 @@ Kill it at any point and it picks up cleanly on restart.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import uuid
@@ -136,6 +137,9 @@ class AutonomyLoop:
         self._stop_event = asyncio.Event()
         self._wake_sub: Any = None
         self._pending_initiatives: List[Any] = []
+        # Per-domain timestamps of the last observation-sync request, so
+        # a slow agent isn't spammed with duplicate sync jobs every tick.
+        self._last_sync_request: dict = {}
         self._last_consolidation_hour: int = -1
         self._last_bootstrap_check: Optional[datetime] = None
         self._last_self_reflection: Optional[datetime] = None
@@ -154,6 +158,24 @@ class AutonomyLoop:
         """Start the autonomy loop. Runs until stop() is called."""
         self._running = True
         self._stop_event.clear()
+
+        # Fail loudly at startup if the owner identity is missing or
+        # unresolvable (v0.16.0). Relationship generation fails closed at
+        # tick time either way; this surfaces the misconfiguration once,
+        # at CRITICAL, instead of letting it hide in per-tick noise.
+        try:
+            from colony_sidecar.identity.resolver import (
+                OwnerIdentityError,
+                get_identity_resolver,
+            )
+            await get_identity_resolver().owner_identities()
+        except OwnerIdentityError as exc:
+            logger.critical(
+                "OWNER IDENTITY NOT RESOLVED — relationship initiative "
+                "generation will be disabled until fixed: %s", exc,
+            )
+        except Exception as exc:
+            logger.warning("Owner identity startup check failed: %s", exc)
 
         # Reactive mode: just mark as running, no timer
         if self.config.mode == AutonomyMode.REACTIVE:
@@ -241,6 +263,9 @@ class AutonomyLoop:
 
         # Phase 6: execute approved actions
         await self._phase_execute()
+
+        # Phase 6b: request fresh observations for stale domains (v0.16.0)
+        await self._phase_observation_sync()
 
         # Phase 7: cognition pipeline tick
         await self._phase_cognition()
@@ -473,7 +498,24 @@ class AutonomyLoop:
                     return {
                         "neglected_contact": {
                             "contact_id": entity_id,
+                            "contact_name": contact.get("name"),
                             "days_since_contact": contact.get("days_since_contact", 0),
+                            "relationship_score": contact.get("relationship_score"),
+                        }
+                    }
+            return {}
+
+        if type_value == "commitment":
+            for c in raw_ctx.get("upcoming_commitments", []):
+                if c.get("commitment_id") == entity_id:
+                    return {
+                        "commitment": {
+                            "commitment_id": entity_id,
+                            "commitment_text": c.get("description"),
+                            "deadline": c.get("due_at"),
+                            "status": c.get("status"),
+                            "person_id": c.get("person_id"),
+                            "hours_until_due": c.get("hours_until_due"),
                         }
                     }
             return {}
@@ -564,22 +606,42 @@ class AutonomyLoop:
 
             # Build and push payload
             try:
+                # Situational context snapshot (v0.16.0): persisted with the
+                # initiative so the agent gets it over the REST API, not just
+                # in push payloads. Carries the rationale and a capture
+                # timestamp (volatile types check it against their TTL).
+                initiative_context = self._build_initiative_context(initiative, type_value)
+                trigger_data = getattr(initiative, "trigger_data", None)
+                if trigger_data and not initiative_context:
+                    initiative_context = dict(trigger_data)
+                rationale = getattr(initiative, "rationale", "")
+                if rationale:
+                    initiative_context.setdefault("rationale", rationale)
+                initiative_context.setdefault(
+                    "context_captured_at",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+
                 # Persist initiative before dispatch so it survives restarts
                 store = getattr(self._registry, "initiative_store", None)
                 if store:
                     try:
                         loop = asyncio.get_event_loop()
-                        stored = await loop.run_in_executor(
-                            None,
+                        create_call = functools.partial(
                             store.create,
-                            type_value,
-                            getattr(initiative, "description", ""),
-                            getattr(initiative, "priority", 0.5),
-                            getattr(initiative, "rationale", ""),
-                            getattr(initiative, "action_hint", None),
-                            getattr(initiative, "entity_id", None),
-                            getattr(initiative, "dedup_key", None),
+                            type=type_value,
+                            description=getattr(initiative, "description", ""),
+                            priority=getattr(initiative, "priority", 0.5),
+                            rationale=rationale,
+                            action_hint=getattr(initiative, "action_hint", None),
+                            entity_id=getattr(initiative, "entity_id", None),
+                            dedup_key=getattr(initiative, "dedup_key", None),
+                            context=initiative_context or None,
+                            expires_at=getattr(initiative, "expires_at", None),
+                            source_type=type_value,
+                            created_by="autonomy_loop",
                         )
+                        stored = await loop.run_in_executor(None, create_call)
                         # If dedup hit and initiative is still active, skip dispatch
                         original_id = getattr(initiative, "id", None)
                         if stored and stored.is_active and (original_id is None or stored.id != original_id):
@@ -613,17 +675,20 @@ class AutonomyLoop:
                     "title": getattr(initiative, "description", "").split(".")[0][:80] if getattr(initiative, "description", "") else "(no title)",
                     "description": getattr(initiative, "description", ""),
                     "rationale": getattr(initiative, "rationale", ""),
-                    "suggested_action": action_hint or "notify_user",
+                    "suggested_action": action_hint or "review_and_decide",
                     "entity_id": getattr(initiative, "entity_id", None),
                     "entity_type": type_value,
                     "channel_hint": "home" if is_self_initiative else "dm",
-                    "context": self._build_initiative_context(initiative, type_value),
+                    "context": initiative_context,
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 }
 
                 if delivery:
                     # Rate-limit check before push (v0.13.0)
-                    person_id = payload.get("entity_id") or os.environ.get("COLONY_OWNER_CONTACT_ID", "owner")
+                    from colony_sidecar.identity.resolver import get_owner_contact_id
+                    # Rate-limiter bucket key only — "owner" here is a
+                    # bucket label, not an identity claim.
+                    person_id = payload.get("entity_id") or get_owner_contact_id() or "owner"
                     urgency = float(payload.get("priority", 0.5))
                     if hasattr(delivery, "_rate_limiter") and delivery._rate_limiter is not None:
                         allowed, reason = delivery._rate_limiter.can_deliver(person_id, urgency=urgency)
@@ -663,6 +728,83 @@ class AutonomyLoop:
 
         self._pending_initiatives = []
 
+    async def _phase_observation_sync(self) -> None:
+        """Request fresh observations for stale domains (v0.16.0).
+
+        The agent is Colony's sensor array: when a domain's newest
+        observation outlives its sync interval, post a read-only
+        ``agent_sync_<domain>`` job to the task queue. The agent claims
+        it, observes through its own Hermes connections, and POSTs
+        snapshots back to /v1/host/observations. Colony never calls
+        external APIs itself.
+        """
+        task_queue = getattr(self._registry, "task_queue", None)
+        if task_queue is None:
+            return
+        try:
+            from colony_sidecar.api.routers.observations import get_observation_store
+            obs_store = get_observation_store()
+        except Exception:
+            obs_store = None
+        if obs_store is None:
+            return
+
+        from colony_sidecar.initiatives.action_registry import OBSERVATION_SYNC_ACTIONS
+        from colony_sidecar.observations.store import OBSERVATION_SYNC_INTERVALS
+
+        enabled = os.environ.get(
+            "COLONY_SYNC_DOMAINS",
+            "coding,task,calendar,research,project,system",
+        )
+        now = datetime.now(timezone.utc)
+
+        for domain in (d.strip() for d in enabled.split(",")):
+            action = OBSERVATION_SYNC_ACTIONS.get(domain)
+            if action is None:
+                continue
+            interval = OBSERVATION_SYNC_INTERVALS.get(domain, 3600)
+            try:
+                age = obs_store.domain_age_seconds(domain)
+            except Exception:
+                continue
+            if age is not None and age < interval:
+                continue
+            last_request = self._last_sync_request.get(domain)
+            if last_request and (now - last_request).total_seconds() < interval:
+                continue  # already asked; the agent may just be slow
+            try:
+                bucket = int(now.timestamp() // max(interval, 300))
+                await task_queue.submit(
+                    task_type="agent_action",
+                    priority="normal",
+                    params={
+                        "action_hint": action,
+                        "domain": domain,
+                        "risk": "read_only",
+                        "description": (
+                            f"Observe the {domain} domain through your own "
+                            f"connections and report snapshots to Colony"
+                        ),
+                        "report_to": "/v1/host/observations",
+                        "report_example": {
+                            "domain": domain,
+                            "reported_by": "<your agent id>",
+                            "observations": [
+                                {"entity_id": "<stable id>", "payload": {}}
+                            ],
+                        },
+                    },
+                    idempotency_key=f"agent_sync:{domain}:{bucket}",
+                )
+                self._last_sync_request[domain] = now
+                logger.info(
+                    "Requested %s observation sync (domain age: %s)",
+                    domain,
+                    f"{age:.0f}s" if age is not None else "never observed",
+                )
+            except Exception as exc:
+                logger.warning("Observation sync request failed for %s: %s", domain, exc)
+
     async def _post_agent_action_to_queue(
         self,
         initiative: Any,
@@ -680,14 +822,26 @@ class AutonomyLoop:
             logger.warning("No task_queue available, skipping agent_action: %s", initiative_id)
             return
 
-        # Destructive action classification
-        DESTRUCTIVE_HINTS = {
-            "agent_git_push", "agent_git_commit", "agent_service_restart",
-            "agent_file_delete", "agent_deploy",
-        }
-        is_destructive = any(
-            action_hint.startswith(h) for h in DESTRUCTIVE_HINTS
-        )
+        # v0.16.0: action_hint must be a named capability in the action
+        # registry. Initiatives are built from graph data that can include
+        # untrusted content — an unregistered hint NEVER reaches the queue.
+        # The initiative stays stored (visible to the agent as information)
+        # but nothing executes it.
+        from colony_sidecar.initiatives.action_registry import classify_agent_action
+
+        verdict = classify_agent_action(action_hint)
+        if not verdict["executable"]:
+            logger.warning(
+                "action_hint %r is not in the action registry — initiative "
+                "%s stored but NOT queued for execution",
+                action_hint, initiative_id,
+            )
+            return
+
+        # mutating/outbound actions require HUMAN OWNER approval — the
+        # agent cannot approve its own mutations. COLONY_AGENT_AUTO_APPROVE
+        # collapses the gate for trusted deployments (default false).
+        is_gated = bool(verdict["requires_approval"])
         auto_approve = os.environ.get("COLONY_AGENT_AUTO_APPROVE", "false").lower() == "true"
 
         job_payload = {
@@ -695,7 +849,8 @@ class AutonomyLoop:
             "action_hint": action_hint,
             "description": getattr(initiative, "description", ""),
             "entity_id": getattr(initiative, "entity_id", None),
-            "destructive": is_destructive,
+            "risk": verdict["risk"],
+            "destructive": is_gated,  # legacy field name, kept for workers
             "auto_approve": auto_approve,
             "context": self._build_initiative_context(initiative, type_value),
         }
@@ -722,8 +877,8 @@ class AutonomyLoop:
                 except Exception as exc:
                     logger.warning("Failed to link initiative %s to job %s: %s", initiative_id, job_id, exc)
 
-            # If destructive and not auto-approved, block the job
-            if is_destructive and not auto_approve and job_id:
+            # mutating/outbound and not auto-approved → block awaiting owner
+            if is_gated and not auto_approve and job_id:
                 queue_mgr = task_queue.queue
                 from colony_sidecar.task_queue.models import JobStatus
                 await queue_mgr.update_job_status(
@@ -732,7 +887,10 @@ class AutonomyLoop:
                     reason="awaiting_owner_approval",
                     tags={"blocked_reason": "awaiting_owner_approval"},
                 )
-                logger.info("Blocked destructive job %s awaiting owner approval", job_id)
+                logger.info(
+                    "Blocked %s job %s awaiting owner approval",
+                    verdict["risk"], job_id,
+                )
                 # Push approval request to delivery
                 delivery = self._registry.delivery
                 if delivery and hasattr(delivery, "push_initiative"):
@@ -754,7 +912,7 @@ class AutonomyLoop:
                         logger.debug("Proactive delivery disabled — approval request stored for agent polling")
 
             # Only count as executed if the job was not blocked awaiting approval
-            if not (is_destructive and not auto_approve):
+            if not (is_gated and not auto_approve):
                 self.stats.actions_executed += 1
                 self.stats.actions_this_hour += 1
         except Exception as exc:
@@ -837,8 +995,24 @@ class AutonomyLoop:
         if affect is None:
             return
 
-        # Host contact ID to skip
-        host_id = os.environ.get("COLONY_HOST_CONTACT_ID", "owner")
+        # Owner exclusion is a relationship-domain policy (the agent must
+        # not "check in with" its own operator) — fail closed when the
+        # owner identity can't be established. Other domains (commitment,
+        # calendar, agent_action) legitimately target the owner and must
+        # NOT inherit this filter.
+        from colony_sidecar.identity.resolver import (
+            OwnerIdentityError,
+            get_identity_resolver,
+        )
+        resolver = get_identity_resolver()
+        try:
+            await resolver.owner_identities()
+        except OwnerIdentityError as exc:
+            logger.critical(
+                "Owner identity unresolved — neglected-contact feed "
+                "disabled (fail closed): %s", exc,
+            )
+            return
 
         try:
             states = affect.get_all_states() if hasattr(affect, "get_all_states") else []
@@ -846,7 +1020,7 @@ class AutonomyLoop:
 
             for state in states[:20]:
                 contact_id = state.get("contact_id")
-                if not contact_id or contact_id == host_id:
+                if not contact_id or await resolver.is_owner(contact_id):
                     continue
 
                 # Only sustained decline, not a single bad event
@@ -872,7 +1046,13 @@ class AutonomyLoop:
             logger.warning("Failed to feed neglected contacts: %s", e)
 
     async def _feed_commitment_reminders(self, engine: Any) -> None:
-        """Feed upcoming commitments as scheduling opportunities."""
+        """Feed upcoming/overdue commitments for COMMITMENT initiatives.
+
+        v0.16.0: commitments are first-class COMMITMENT initiatives
+        (durable context, dedup ``commitment:{id}``) instead of being
+        flattened into anonymous scheduling opportunities. The owner is a
+        legitimate subject here.
+        """
         commitments = self._registry.commitment_store
         if commitments is None:
             return
@@ -883,7 +1063,7 @@ class AutonomyLoop:
             active = result.get("commitments", [])
 
             now = datetime.now(timezone.utc)
-            opportunities = []
+            upcoming = []
 
             for c in active:
                 due = c.get("due_at")
@@ -895,16 +1075,21 @@ class AutonomyLoop:
 
                 hours_until = (due - now).total_seconds() / 3600
 
-                if 0 < hours_until < 48:
-                    opportunities.append({
-                        "description": f"Commitment due: {c.get('description', 'untitled')}",
-                        "priority": 0.9 if hours_until < 4 else 0.6,
-                        "rationale": f"Due in {int(hours_until)}h",
-                        "action_hint": "remind_user",
+                # Surface anything due in the next 48h, plus overdue
+                # commitments up to a week old (they need follow-up most).
+                if -168 < hours_until < 48:
+                    upcoming.append({
+                        "commitment_id": c.get("id"),
+                        "description": c.get("description", "untitled"),
+                        "due_at": due.isoformat(),
+                        "hours_until_due": hours_until,
+                        "overdue": hours_until <= 0,
+                        "status": c.get("status", "pending"),
+                        "person_id": c.get("person_id"),
                     })
 
-            if opportunities:
-                engine.add_context("scheduling_opportunities", opportunities)
+            if upcoming:
+                engine.add_context("upcoming_commitments", upcoming)
         except Exception as e:
             logger.warning("Failed to feed commitment reminders: %s", e)
 
@@ -1299,7 +1484,7 @@ class AutonomyLoop:
                         "title": initiative.description.split(".")[0][:80] if initiative.description else "(no title)",
                         "description": initiative.description,
                         "rationale": initiative.rationale or "",
-                        "suggested_action": initiative.action_hint or "notify_user",
+                        "suggested_action": initiative.action_hint or "review_and_decide",
                         "entity_id": initiative.entity_id,
                         "entity_type": initiative.type,
                         "context": {},
