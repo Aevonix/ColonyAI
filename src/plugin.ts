@@ -452,7 +452,7 @@ function memoryCapability(
     async getMemorySearchManager(params: {
       cfg: unknown;
       agentId: string;
-      purpose?: "default" | "status";
+      purpose?: "default" | "status" | "cli";
     }): Promise<{ manager: ColonyMemorySearchManager | null; error?: string }> {
       const existing = managers.get(params.agentId);
       if (existing) return { manager: existing };
@@ -2309,11 +2309,11 @@ export function createColonyPlugin(): unknown {
 
           // Enqueue with correct session key and delivery context
           try {
+            // openclaw 2026.6.x removed SystemEventOptions.trusted.
             const enqueued = api.runtime.system.enqueueSystemEvent(text, {
               sessionKey,
               contextKey: `colony:initiative:${init.id}`,
               deliveryContext: normalizedDeliveryContext,
-              trusted: true,
             });
 
             if (!enqueued) {
@@ -2469,10 +2469,10 @@ function remoteAgentLifecycleService(api: OpenClawPluginApi) {
             suggested_action: "notify_user",
           });
 
+          // openclaw 2026.6.x removed SystemEventOptions.trusted.
           const enqueued = api.runtime.system.enqueueSystemEvent(text, {
             sessionKey,
             contextKey: `colony:initiative:${initiative.id}`,
-            trusted: true,
           });
 
           if (enqueued) {

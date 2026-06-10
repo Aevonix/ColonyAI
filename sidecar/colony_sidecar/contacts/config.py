@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 
@@ -30,6 +31,22 @@ class ContactsExportConfig:
 class ContactsConfig:
     enabled: bool = True
     sqlite_path: str = ":memory:"
+
+    @classmethod
+    def from_env(cls) -> "ContactsConfig":
+        """Build config from the environment, persisting to the state dir.
+
+        The bare default of ":memory:" exists for tests; a production
+        sidecar must survive restarts (the IdentityResolver treats the
+        contact store as the source of truth for the owner), so the
+        server path resolves COLONY_CONTACTS_DB or falls back to
+        ``$COLONY_STATE_DIR/colony-contacts.db``.
+        """
+        path = os.environ.get("COLONY_CONTACTS_DB")
+        if not path:
+            state_dir = os.environ.get("COLONY_STATE_DIR", ".")
+            path = os.path.join(state_dir, "colony-contacts.db")
+        return cls(sqlite_path=path)
     default_inbound_tier: str = "unknown"
     unknown_tier_grace_hours: int = 48
     auto_merge_confidence_threshold: float = 0.95

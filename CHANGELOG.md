@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.17.0 (2026-06-10)
+
+The autonomous engine: Colony now thinks, acts behind an enforceable
+approval gate, and learns from what its agent does.
+
+### Added
+- **Self-directed thinking (Phase 5b)** — on a slow cadence
+  (`COLONY_THINKING_INTERVAL_SECS`, default 1h; gated by
+  `COLONY_ENABLE_INTERNAL_THINKING`, default off) the autonomy loop hands
+  the LLM a situation report (goals, pending work, commitments, current
+  initiatives) and lets it propose novel initiatives. Proposals are
+  priority-capped (0.85), deduped across cycles, and can never carry an
+  `action_hint` — thought-up work always lands as review/decide
+  initiatives, so mutating/outbound ideas still cross the action
+  registry and owner approval before any agent touches them.
+- **Server-side approval gate** — gated agent actions are now *created*
+  in BLOCKED state (no submit-then-transition race); claims can never
+  hand out blocked jobs; `GET /v1/host/queue/jobs/blocked`,
+  `POST /v1/host/queue/jobs/{id}/approve`, `POST .../reject` (409 on
+  non-blocked); initiative responses sync to the linked job; stale
+  approvals auto-fail after `COLONY_APPROVAL_TIMEOUT_HOURS` (72).
+- **Job-completion memory writeback (Phase 6c)** — completed/failed
+  agent jobs become episodic memories (`source_uri colony://jobs/{id}`),
+  advance their goals (`goals.on_job_completed` existed since v0.13 but
+  was never called), close their linked initiatives, and broadcast
+  events. Idempotent via the `memory_synced` job tag.
+- **Skill capture** (`COLONY_ENABLE_SKILL_SYNTHESIS`, default off) —
+  successful novel agent work flows through the existing-but-dormant
+  learning pipeline (novelty gate → pattern extraction → DRAFT skill
+  package). Captured skills are DRAFT with deny-by-default capabilities
+  and surface a review initiative; nothing synthesized executes without
+  owner approval.
+- `POST /v1/host/contacts` (+ handles) so deployments can bootstrap the
+  owner contact the IdentityResolver requires.
+
+### Fixed
+- **Contact store now persists** — the server built it with the default
+  `sqlite_path=":memory:"`, wiping all contacts (including the owner)
+  on every restart. Now resolves `COLONY_CONTACTS_DB` or
+  `$COLONY_STATE_DIR/colony-contacts.db`.
+- **contact_handles gateway constraint** — whatsapp/discord/slack were
+  deliverable channels but unstorable handles.
+- Capability-gap / knowledge-acquisition / behavioral-correction
+  generators hardened against the real graph schema (schema-adaptive
+  queries, env thresholds, defensive failure paths).
+- CI/Release workflows on node 22 (engines requires >=22.16); npm
+  publish non-blocking until the @aevonix npm org exists.
+- 35 of 36 dependabot alerts resolved (npm audit + openclaw bump; the
+  remaining moderate hono pin sits inside openclaw's published
+  npm-shrinkwrap and is unfixable downstream).
+
 ## 0.16.0 (2026-06-10)
 
 Initiative pipeline fixes + autonomous work engine foundations.
