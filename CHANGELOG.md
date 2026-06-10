@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.18.0 (2026-06-10)
+
+Graduated approvals (the owner only hears about destructive actions and
+unauthorized outreach) + the Hermes↔Colony skills bridge.
+
+### Added
+- **Graduated approval policy** (`COLONY_APPROVAL_POLICY=graduated`;
+  default remains `strict` = v0.17 behavior). Under graduated: read-only
+  and reversible-mutating actions auto-execute with an audit trail
+  (`auto_approved_by_policy` job tags + `action_auto_approved` events);
+  a new DESTRUCTIVE risk tier (merges, deletes, restarts, deploys)
+  always requires owner approval; OUTBOUND is reserved for actions that
+  reach a *person* and auto-passes only when the recipient resolves to a
+  contact with `interaction_allowed` — unknown targets fail closed.
+- **Standing approvals** — approve a blocked job with `{"always": true}`
+  and that action class is pre-authorized from then on (per-action-class
+  approval records, persisted at `$COLONY_STATE_DIR/standing_approvals.json`;
+  `GET /v1/host/queue/approvals/standing`, `DELETE .../{action_name}`).
+- **Hermes skill export** — approving a captured procedural skill also
+  renders a Hermes-format `SKILL.md` into `COLONY_HERMES_SKILLS_DIR`
+  (default `~/.hermes/skills/colony`), with provenance frontmatter and a
+  no-overwrite guard for non-Colony files. Gate:
+  `COLONY_EMIT_HERMES_SKILLS` (default off).
+- **Agent skill-index sync** — the OpenClaw plugin scans the Hermes
+  skills directory (startup + daily) and reports it into the new
+  push-only `skills` observation domain; the self-directed thinking
+  situation report now includes the agent's actual capabilities.
+- Action specs gained `target_param` (recipient extraction for outbound
+  authorization checks).
+
+### Fixed
+- Reclassified `coding_comment_on_pr` and `system_send_alert` from
+  OUTBOUND to MUTATING — platform writes, not person outreach.
+- Test-only Node 18 polyfill for `toSorted`/`toReversed` (10 vitest
+  suites were failing at baseline on Node <20).
+
 ## 0.17.0 (2026-06-10)
 
 The autonomous engine: Colony now thinks, acts behind an enforceable

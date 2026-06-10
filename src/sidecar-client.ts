@@ -449,6 +449,26 @@ export class ColonySidecarClient {
     });
   }
 
+  // --- Observations (agent-as-sensor) ---------------------------------------
+
+  /**
+   * Report a batch of domain observations to Colony's observation
+   * store (``POST /v1/host/observations``). Used by the Hermes skills
+   * reporter (domain ``skills``) and available for any other
+   * agent-as-sensor domain.
+   */
+  reportObservations(body: {
+    domain: string;
+    reported_by?: string;
+    observations: Array<{
+      entity_id: string;
+      payload: Record<string, unknown>;
+      observed_at?: string;
+    }>;
+  }): Promise<{ status: string; domain: string; written: number }> {
+    return this.post("/v1/host/observations", body);
+  }
+
   // --- Host configuration --------------------------------------------------
 
   /**

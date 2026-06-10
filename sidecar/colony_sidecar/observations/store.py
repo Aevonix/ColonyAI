@@ -14,6 +14,7 @@ keys pass through into initiative context, missing keys skip rules):
 - research: {title, url, status, last_checked}
 - project:  {title, due_on, open_issues, closed_issues}
 - system:   {status, latency_ms, error_rate, message}
+- skills:   {description, tags, path, source}  (v0.18.0 Hermes bridge)
 """
 
 from __future__ import annotations
@@ -38,6 +39,12 @@ OBSERVATION_DOMAINS = (
     "research",
     "project",
     "system",
+    # v0.18.0: the agent's installed Hermes skill index, reported by the
+    # OpenClaw plugin. Push-only — the plugin scans ~/.hermes/skills on
+    # its own schedule, so this domain deliberately has NO entry in
+    # OBSERVATION_SYNC_ACTIONS and is NOT in the COLONY_SYNC_DOMAINS
+    # defaults; the autonomy loop never posts agent_sync jobs for it.
+    "skills",
 )
 
 # How old a domain's newest observation may be before the autonomy loop
@@ -51,6 +58,9 @@ OBSERVATION_SYNC_INTERVALS: Dict[str, int] = {
     "research": 86400,
     "project": 86400,
     "system": 300,
+    # Informational only: the plugin pushes the Hermes skill index every
+    # 24h; the loop never requests a sync for this push-only domain.
+    "skills": 86400,
 }
 
 
