@@ -777,6 +777,47 @@ class QueueManager:
             await self._db.commit()
         return count
 
+    async def expire_blocked_approvals(
+        self,
+        now: datetime,
+        timeout_hours: float = 72.0,
+    ) -> int:
+        """Fail BLOCKED jobs awaiting owner approval older than *timeout_hours*.
+
+        Only jobs blocked with the ``awaiting_owner_approval`` tag are
+        affected — dependency-blocked jobs are left for
+        ``unblock_ready_jobs``. Returns count.
+        """
+        assert self._db is not None
+        from datetime import timedelta
+        cutoff = (now - timedelta(hours=timeout_hours)).isoformat()
+        cur = await self._db.execute(
+            """
+            SELECT job_id, tags FROM jobs
+            WHERE status = 'blocked' AND posted_at < ?
+            """,
+            (cutoff,),
+        )
+        rows = await cur.fetchall()
+        count = 0
+        for row in rows:
+            tags = json.loads(row["tags"] or "{}")
+            if tags.get("blocked_reason") != "awaiting_owner_approval":
+                continue
+            jid = row["job_id"]
+            await self._db.execute(
+                "UPDATE jobs SET status = ? WHERE job_id = ?",
+                (JobStatus.FAILED.value, jid),
+            )
+            await self._audit(
+                jid, JobStatus.BLOCKED.value, JobStatus.FAILED.value,
+                reason="owner_approval_timeout",
+            )
+            count += 1
+        if count:
+            await self._db.commit()
+        return count
+
     async def abandon_jobs_for_node(self, node_id: str) -> List[str]:
         """Immediately abandon all CLAIMED/RUNNING jobs held by node_id."""
         assert self._db is not None
@@ -1187,16 +1228,24 @@ class TaskQueueManager:
         priority: str = "normal",
         params: Optional[Dict[str, Any]] = None,
         idempotency_key: Optional[str] = None,
+        initial_status: Optional[JobStatus] = None,
+        tags: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Submit a job to the SQLite queue.
+
+        ``initial_status`` lets callers create a job directly in a
+        non-QUEUED state (e.g. BLOCKED awaiting owner approval) so no
+        worker can claim it before the gate is resolved (v0.17.0).
 
         Returns a task dict compatible with the API response schema.
         """
         job_type = _TYPE_MAP.get(task_type, JobType.CUSTOM)
         job_priority = _PRIORITY_MAP.get(priority, JobPriority.NORMAL)
-        tags: Dict[str, str] = {"task_type": task_type}
+        job_tags: Dict[str, str] = {"task_type": task_type}
         if idempotency_key:
-            tags["idempotency_key"] = idempotency_key
+            job_tags["idempotency_key"] = idempotency_key
+        if tags:
+            job_tags.update(tags)
 
         job = Job(
             job_id=str(_uuid_module.uuid4()),
@@ -1204,8 +1253,10 @@ class TaskQueueManager:
             payload=params or {},
             priority=job_priority,
             posted_by="api",
-            tags=tags,
+            tags=job_tags,
         )
+        if initial_status is not None:
+            job.status = initial_status
 
         await self.queue.post(job)
         logger.info("TaskQueueManager submitted job %s type=%s", job.job_id, task_type)

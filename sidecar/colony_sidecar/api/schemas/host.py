@@ -539,6 +539,24 @@ class ContactListResponse(BaseModel):
     total: int = 0
 
 
+class ContactHandleIn(BaseModel):
+    gateway: str
+    address: str
+    is_primary: bool = False
+    verified: bool = False
+
+
+class ContactCreateRequest(BaseModel):
+    display_name: str
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+    organization: Optional[str] = None
+    trust_tier: str = "regular"
+    tags: Optional[List[str]] = None
+    notes: Optional[str] = None
+    handles: List[ContactHandleIn] = []
+
+
 class ContactStyleRequest(BaseModel):
     identity: HostIdentity
     person_id: str

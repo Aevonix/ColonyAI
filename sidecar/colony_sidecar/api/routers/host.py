@@ -39,6 +39,7 @@ from colony_sidecar.api.schemas.host import (
     CognitionCycleResponse,
     CognitionGap,
     CognitivePerformanceIndex,
+    ContactCreateRequest,
     ContactListResponse,
     ContactResponse,
     ContactStyleRequest,
@@ -2207,6 +2208,45 @@ async def list_contacts(
     except Exception as exc:
         logger.warning("list_contacts failed: %s", exc)
         return ContactListResponse(contacts=[])
+
+
+@router.post("/contacts", response_model=ContactResponse, status_code=201)
+async def create_contact(body: ContactCreateRequest) -> ContactResponse:
+    """Create a curated contact (with optional handles) via the API.
+
+    Exists primarily so deployments can bootstrap the OWNER contact the
+    IdentityResolver requires — before this, contacts could only appear
+    as side effects of message ingestion.
+    """
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    try:
+        contact = await _contacts_store.create(
+            display_name=body.display_name,
+            given_name=body.given_name,
+            family_name=body.family_name,
+            organization=body.organization,
+            trust_tier=body.trust_tier,
+            tags=body.tags,
+            notes=body.notes,
+            import_source="manual",
+        )
+        for handle in body.handles:
+            await _contacts_store.add_handle(
+                contact.contact_id,
+                gateway=handle.gateway,
+                address=handle.address,
+                is_primary=handle.is_primary,
+                verified=handle.verified,
+                source="manual",
+            )
+        created = await _contacts_store.get(contact.contact_id)
+        return ContactResponse(**(created or contact).to_dict())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("create_contact failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/contacts/{contact_id}", response_model=ContactResponse)
@@ -5470,6 +5510,41 @@ async def respond_to_initiative(
     if action == "acknowledged" and _delivery_bridge is not None:
         if hasattr(_delivery_bridge, "acknowledge_delivery"):
             _delivery_bridge.acknowledge_delivery(initiative_id)
+
+    # v0.17.0: sync the owner's response to the approval-gated job, if any.
+    # The autonomy loop records job_id on the initiative after submission;
+    # approving/dismissing the initiative resolves the BLOCKED job too.
+    job_id = getattr(initiative, "job_id", None)
+    if job_id and action in {"approve", "approved", "dismiss", "dismissed", "reject", "rejected"}:
+        try:
+            from colony_sidecar.task_queue.models import JobStatus
+            from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+
+            queue = TaskQueueManager.get_instance().queue
+            job = await queue.get_job(job_id)
+            if job is not None and job.status == JobStatus.BLOCKED:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                if action in {"approve", "approved"}:
+                    await queue.update_job_status(
+                        job_id,
+                        JobStatus.QUEUED,
+                        reason="owner_approved_via_initiative",
+                        tags={"approved_by": "owner", "approved_at": now_iso},
+                    )
+                else:
+                    await queue.update_job_status(
+                        job_id,
+                        JobStatus.CANCELLED,
+                        reason="owner_rejected_via_initiative",
+                        tags={"rejected_by": "owner", "rejected_at": now_iso},
+                    )
+        except RuntimeError:
+            pass  # task queue not initialized — nothing to sync
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync initiative %s response to job %s: %s",
+                initiative_id, job_id, exc,
+            )
 
     _initiative_store.log_history(
         initiative_id,
