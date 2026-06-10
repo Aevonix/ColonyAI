@@ -647,8 +647,24 @@ async def test_secrets_delete_no_manager(client):
 # Autonomy
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+def autonomy_not_wired():
+    """Force the not-wired state for the duration of a test.
+
+    Other test modules (agent snapshot, session reports) set the
+    module-global autonomy loop to a Mock; without this isolation these
+    tests pass alone but fail in a full suite run, depending on order.
+    """
+    from colony_sidecar.api.routers import host as host_mod
+
+    prev = host_mod._autonomy_loop
+    host_mod.set_autonomy_loop(None)
+    yield
+    host_mod.set_autonomy_loop(prev)
+
+
 @pytest.mark.asyncio
-async def test_autonomy_status_not_wired(client):
+async def test_autonomy_status_not_wired(client, autonomy_not_wired):
     resp = await client.get("/v1/host/autonomy/status")
     assert resp.status_code == 200
     data = resp.json()
@@ -656,13 +672,13 @@ async def test_autonomy_status_not_wired(client):
 
 
 @pytest.mark.asyncio
-async def test_autonomy_start_not_wired(client):
+async def test_autonomy_start_not_wired(client, autonomy_not_wired):
     resp = await client.post("/v1/host/autonomy/start")
     assert resp.status_code == 501
 
 
 @pytest.mark.asyncio
-async def test_autonomy_stop_not_wired(client):
+async def test_autonomy_stop_not_wired(client, autonomy_not_wired):
     resp = await client.post("/v1/host/autonomy/stop")
     assert resp.status_code == 200
 

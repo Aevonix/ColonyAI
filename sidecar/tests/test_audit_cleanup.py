@@ -261,7 +261,8 @@ def test_setup_wizard_has_no_shared_default_password():
 
 
 def test_start_neo4j_docker_forwards_password(monkeypatch):
-    """_start_neo4j_docker must inject NEO4J_PASSWORD into the compose env."""
+    """_start_neo4j_docker must pass the credential via the process env —
+    never in argv, where `ps` exposes it to any local user."""
     import subprocess
     from colony_sidecar import setup as wizard
 
@@ -270,6 +271,7 @@ def test_start_neo4j_docker_forwards_password(monkeypatch):
     class _FakeCompleted:
         returncode = 0
         stderr = ""
+        stdout = ""
 
     def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None):
         captured["cmd"] = cmd
@@ -279,7 +281,8 @@ def test_start_neo4j_docker_forwards_password(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     ok = wizard._start_neo4j_docker("super-secret-abc")
     assert ok is True
-    assert captured["env"]["NEO4J_PASSWORD"] == "super-secret-abc"
+    assert captured["env"]["NEO4J_AUTH"] == "neo4j/super-secret-abc"
+    assert "super-secret-abc" not in " ".join(captured["cmd"])
 
 
 def test_env_roundtrip_preserves_generated_password(tmp_path):
@@ -304,7 +307,9 @@ def test_rate_limiter_in_memory_default_still_works():
     """Backwards compat: no db_path means pure in-memory (existing behavior)."""
     from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
 
-    rl = DeliveryRateLimiter()
+    # Disable quiet hours so the test doesn't depend on the wall clock
+    # (default quiet hours made this fail when the suite ran at night).
+    rl = DeliveryRateLimiter(quiet_start_hour=0, quiet_end_hour=0)
     ok, _ = rl.can_deliver("alice")
     assert ok is True
     rl.record_delivery("alice")
