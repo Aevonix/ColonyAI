@@ -37,11 +37,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - run: npm ci
       - run: npm run build
+      # Non-blocking until the @aevonix org exists on npmjs (publish 404s
+      # "scope not found" on every tag; PyPI + GHCR publishes still gate).
       - run: npm publish --access public
+        continue-on-error: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
