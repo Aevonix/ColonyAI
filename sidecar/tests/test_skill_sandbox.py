@@ -67,7 +67,12 @@ def test_runner_async_run_is_awaited():
             await asyncio.sleep(0)
             return {"awaited": True}
     """)
-    result = _run_sandbox({"source": src, "inputs": {}, "limits": {}})
+    # The skill imports asyncio, so it must be declared in the manifest —
+    # the sandbox's import allow-list applies to test skills too.
+    result = _run_sandbox({
+        "source": src, "inputs": {}, "limits": {},
+        "allowed_imports": ["asyncio"],
+    })
     parsed = _parse_last_json_line(result.stdout)
     assert parsed["status"] == "success"
     assert parsed["output"] == {"awaited": True}

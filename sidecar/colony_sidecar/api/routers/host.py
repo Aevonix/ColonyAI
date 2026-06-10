@@ -3087,10 +3087,12 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     if briefings:
         parts = []
         for b in briefings[:3]:
-            title = b.get("title") if isinstance(b, dict) else getattr(b, "title", "")
-            body = b.get("body") if isinstance(b, dict) else getattr(b, "body", "")
-            if title or body:
-                parts.append(f"- {title}: {body[:200]}" if title else f"- {body[:200]}")
+            # Careful not to shadow the request model `body` — it is
+            # still read below (compression, citations).
+            b_title = b.get("title") if isinstance(b, dict) else getattr(b, "title", "")
+            b_body = b.get("body") if isinstance(b, dict) else getattr(b, "body", "")
+            if b_title or b_body:
+                parts.append(f"- {b_title}: {b_body[:200]}" if b_title else f"- {b_body[:200]}")
         if parts:
             sections.append(ContextSection(
                 id="colony-briefings",

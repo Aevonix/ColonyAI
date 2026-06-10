@@ -6,6 +6,10 @@ import os
 
 import pytest
 
+# router.tiers imports litellm (optional dependency) at module level;
+# skip the whole file cleanly where it isn't installed.
+pytest.importorskip("litellm")
+
 from colony_sidecar.router.tiers import (
     ModelTier,
     TierConfig,
