@@ -459,7 +459,7 @@ RULES:
   and nothing to report.
 - Do not hallucinate contact details. Always use Colony's data.
 - NEVER send reminders TO the owner. They do not want to be pinged with "you should
-  text Bradley." Either send the message FOR him, or report that you couldn't.
+  text Jordan." Either send the message FOR them, or report that you couldn't.
 - If sending a message, confirm the recipient channel and send it. Do not
   paraphrase the message back to the owner unless they ask.
 """

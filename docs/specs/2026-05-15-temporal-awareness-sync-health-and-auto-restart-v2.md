@@ -1,7 +1,7 @@
 # Spec: Temporal Awareness, Sync Health & Auto-Restart Architecture
 
 **Date:** 2026-05-15
-**Author:** Aeva (Hermes agent)
+**Author:** ColonyAI agent
 **Status:** Draft — awaiting owner review
 **Version:** Targets ColonyAI v0.7.25
 **Replaces:** `2026-05-15-temporal-awareness-and-sync-health.md`

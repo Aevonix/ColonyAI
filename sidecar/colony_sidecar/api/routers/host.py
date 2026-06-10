@@ -5450,7 +5450,7 @@ def _initiative_to_response(initiative) -> InitiativeResponse:
     return InitiativeResponse(
         id=initiative.id,
         initiative_type=initiative.type,
-        # Title is the ACTION ("Check in with Bradley"), not the reason.
+        # Title is the ACTION ("Check in with Jordan"), not the reason.
         # The rationale lives in the context dict.
         title=initiative.description[:100],
         description=initiative.description,

@@ -180,19 +180,19 @@ The provider's system prompt block instructs the LLM to prefer host-provided cur
 
 -----
 
-## Aeva Heartbeat & Agent Snapshot (v0.13.0)
+## Agent Heartbeat & Snapshot (v0.13.0)
 
-Colony v0.13.0 replaces the old silence-triggered owner check-in with a **state-exposure model**. Colony exposes its full state via an API endpoint. The agent (Aeva) pulls that state, evaluates it, and decides whether, when, and how to communicate with the owner.
+Colony v0.13.0 replaces the old silence-triggered owner check-in with a **state-exposure model**. Colony exposes its full state via an API endpoint. The agent pulls that state, evaluates it, and decides whether, when, and how to communicate with the owner.
 
-**Colony never messages the owner directly. Aeva decides on outreach.**
+**Colony never messages the owner directly. the agent decides on outreach.**
 
 ### Agent Snapshot Endpoint
 
-`GET /v1/host/agent-snapshot` returns everything Aeva needs to evaluate whether to reach out:
+`GET /v1/host/agent-snapshot` returns everything the agent needs to evaluate whether to reach out:
 
 | Field | Description |
 |---|---|
-| `telemetry` | `started_at`, `last_sync_at`, `last_tick_at`, `last_initiative_at`, `last_aeva_outreach_at`, `silence_hours`, `stale_flags` |
+| `telemetry` | `started_at`, `last_sync_at`, `last_tick_at`, `last_initiative_at`, `last_agent_outreach_at`, `silence_hours`, `stale_flags` |
 | `pending_initiatives` | Top 20 pending initiatives by priority |
 | `recently_completed` | Top 10 completed initiatives |
 | `failed_count` / `failed_initiatives` | Failed initiatives requiring attention |
@@ -203,24 +203,24 @@ Colony v0.13.0 replaces the old silence-triggered owner check-in with a **state-
 
 ### Recording Outreach
 
-After Aeva proactively messages the owner, it records the outreach:
+After the agent proactively messages the owner, it records the outreach:
 
 ```bash
 curl -X POST http://localhost:7777/v1/host/agent-snapshot/record-outreach \
   -H "Authorization: Bearer $COLONY_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"agent_id": "aeva", "channel": "whatsapp", "reason": "high_priority_pending"}'
+  -d '{"agent_id": "my-agent", "channel": "whatsapp", "reason": "high_priority_pending"}'
 ```
 
-This touches `TelemetryStore.last_aeva_outreach_at`, which appears in subsequent snapshots and suppresses redundant outreach.
+This touches `TelemetryStore.last_agent_outreach_at`, which appears in subsequent snapshots and suppresses redundant outreach.
 
 ### Hermes Cron Integration
 
-Aeva evaluates the snapshot on a schedule via Hermes cron:
+The agent evaluates the snapshot on a schedule via Hermes cron:
 
 ```bash
 hermes cron create \
-  --name "aeva-colony-heartbeat" \
+  --name "colony-heartbeat" \
   --schedule "*/20 * * * *" \
   --prompt "Query Colony agent snapshot at http://127.0.0.1:7777/v1/host/agent-snapshot. Evaluate whether to proactively message the owner based on: pending initiatives, failed items, silence duration, and last outreach time. If you decide to reach out, compose a natural message and use the send_message tool. After sending, record the outreach via POST to /v1/host/agent-snapshot/record-outreach." \
   --toolsets web,terminal
@@ -229,9 +229,9 @@ hermes cron create \
 ### Design Principles
 
 1. **Colony runs everything autonomously** — initiatives, execution, telemetry, scheduling
-2. **Colony exposes state to Aeva** — via snapshot endpoint, not direct messages
-3. **Aeva evaluates and decides** — whether, when, and what to communicate
-4. **State survives session resets** — all temporal state lives in Colony, not Aeva memory
+2. **Colony exposes state to the agent** — via snapshot endpoint, not direct messages
+3. **The agent evaluates and decides** — whether, when, and what to communicate
+4. **State survives session resets** — all temporal state lives in Colony, not agent memory
 
 -----
 
@@ -307,7 +307,7 @@ See [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md) for:
 - [What Is Colony](#what-is-colony)
 - [Quick Start](#quick-start)
 - [Temporal Awareness, Sync Health & Auto-Restart](#temporal-awareness-sync-health--auto-restart-v08x)
-- [Aeva Heartbeat & Agent Snapshot](#aeva-heartbeat--agent-snapshot-v0130)
+- [Agent Heartbeat & Snapshot](#agent-heartbeat--snapshot-v0130)
 - [Multi-Agent (v0.7.0)](#multi-agent-v070)
 - [Why Colony](#why-colony)
 - [36 Wired Subsystems](#36-wired-subsystems)
@@ -839,9 +839,9 @@ Colony is not a reminder service. When the autonomy loop detects work, it genera
 - 37 wired subsystems, 59+ API endpoints
 - **Memory governance & epistemic hygiene** — source anchoring, confidence computation, Ebbinghaus decay, pruning, file reconciliation, archival
 - Epistemic state machine: 8 states from `inferred` to `archived` with automatic transitions
-- Agent snapshot endpoint for Aeva proactive outreach evaluation
+- Agent snapshot endpoint for agent proactive outreach evaluation
 - Telemetry `last_agent_outreach_at` with state-survival across session resets
-- Colony exposes state; Aeva decides on communication (no direct owner messaging)
+- Colony exposes state; the agent decides on communication (no direct owner messaging)
 - Temporal awareness and sync health monitoring with auto-restart
 - Initiative poller with health preflight and alert routing
 - Memory provider with circuit breaker, retry, and diagnostics

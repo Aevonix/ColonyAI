@@ -28,7 +28,7 @@ def name_similarity(a: str, b: str) -> float:
     # Exact match
     if na == nb:
         return 1.0
-    # One contains the other (e.g. "marc seal" in "marc andrew seal")
+    # One contains the other (e.g. "jane doe" in "jane ann doe")
     if na in nb or nb in na:
         return 0.95
     # Token overlap (e.g. "vitor souza" vs "vitor lopes de souza")

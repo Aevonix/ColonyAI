@@ -1,7 +1,7 @@
 # Spec: Agent-Driven Initiative Delivery (Colony-Hermes Integration v0.12.0)
 
 **Date:** 2026-05-19  
-**Author:** Aeva (Hermes agent)  
+**Author:** ColonyAI agent
 **Status:** Draft — awaiting owner review  
 **Version:** Targets ColonyAI v0.12.0, Hermes Agent any  
 **Prerequisites:** Temporal awareness spec (2026-05-15) — Phase 1 (sidecar telemetry) should be deployed first  

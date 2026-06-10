@@ -440,7 +440,7 @@ def test_server_owner_unset_skips(clean_env, monkeypatch):
 
 
 def test_server_owner_non_cid_skips(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "Marc")
+    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "Owner Name")
     monkeypatch.setattr(doctor, "_http_get", _fake_http(_happy_responses()))
     result = _by_name(run_server_checks(URL, "key"))["server-owner-contact"]
     assert result.status == SKIP

@@ -155,7 +155,7 @@ platforms:
           prompt: |
             {__raw__}
 
-            You are an autonomous agent (Aeva). Colony generated this initiative.
+            You are an autonomous agent. Colony generated this initiative.
             ACT on it immediately using your available tools:
             - terminal: run commands, git, build, deploy
             - web: research, check APIs, read docs

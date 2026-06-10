@@ -21,7 +21,7 @@ silent. Colony never sends messages directly; the agent is the sole
 decision-maker for outbound communication.
 
 Colony is agent-name-agnostic: it is a public project, and every
-deployment names its own agent ("Aeva" is the reference deployment's).
+deployment names its own agent.
 Agent identity always comes from configuration — `COLONY_AGENT_NAME`,
 `COLONY_WORKER_NODE_ID` — never from code, defaults, or prompts.
 
@@ -62,7 +62,7 @@ and the resolver is an index over it.** Per-store findings:
 |-------|-------|-----------|
 | Contact store (SQLite) | CID (PK), display/given/family names, platform handles (`contact_handles` table, normalized), `person_node_id` FK → Neo4j | `get()`, `resolve_handle()`, `find_by_name()`, `find_by_person_node_id()` |
 | Affect store (SQLite) | `contact_id` only | none — must resolve through the contact store |
-| Neo4j graph | `Person.id` (UUID — **not a slug**; the "marc-andrew-seal" slug format does not exist in this codebase), `Person.name` | **no back-reference to CID**; reverse lookup goes through `Contact.person_node_id` |
+| Neo4j graph | `Person.id` (UUID — **not a slug**; the "jane-ann-doe" slug format does not exist in this codebase), `Person.name` | **no back-reference to CID**; reverse lookup goes through `Contact.person_node_id` |
 
 Caveats the resolver absorbs: `person_node_id` is optional (not
 guaranteed populated); Neo4j has no reverse link (the contact-store
@@ -90,7 +90,7 @@ index IS the reverse link); display names are not unique.
   `_load_neglected_contacts`, and `_generate_relationship_suggestions`.
   It is a relationship-domain policy, not a loop-level gate — the owner
   is a legitimate subject for COMMITMENT ("follow up on what you
-  promised Marc"), CALENDAR ("prep Marc's 3pm meeting"), and
+  promised the owner"), CALENDAR ("prep the owner's 3pm meeting"), and
   AGENT_ACTION work, and tests pin that both directions.
 
 ### 2.4 Phase 2 foundations

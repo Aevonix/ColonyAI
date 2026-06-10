@@ -1,6 +1,6 @@
 # Spec Review: ChannelRegistry — Per-Person Initiative Delivery Routing
 
-**Reviewer:** Aeva (self-review)  
+**Reviewer:** ColonyAI agent
 **Date:** 2026-05-16  
 **Spec Version:** 0.1.0  
 **Verdict:** **Needs revision** — 7 issues found, 3 design gaps, 1 blocker

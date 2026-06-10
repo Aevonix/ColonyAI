@@ -13,7 +13,8 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-sys.path.insert(0, "/Users/kurcide/colony-work/sidecar")
+import pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from colony_sidecar.intelligence.graph.client import (
     ColonyGraph,

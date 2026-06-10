@@ -1,4 +1,4 @@
-"""Tests for the Aeva heartbeat agent-snapshot endpoints."""
+"""Tests for the the agent heartbeat agent-snapshot endpoints."""
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -151,7 +151,7 @@ class TestAgentSnapshot:
     def test_record_outreach(self, client: TestClient):
         """Record outreach updates telemetry and returns timestamps."""
         resp = client.post("/v1/host/agent-snapshot/record-outreach", json={
-            "agent_id": "aeva",
+            "agent_id": "test-agent",
             "channel": "whatsapp",
             "reason": "test",
         })
@@ -165,7 +165,7 @@ class TestAgentSnapshot:
     def test_record_outreach_then_snapshot(self, client: TestClient):
         """After recording outreach, snapshot reflects the new timestamp."""
         client.post("/v1/host/agent-snapshot/record-outreach", json={
-            "agent_id": "aeva",
+            "agent_id": "test-agent",
             "channel": "whatsapp",
             "reason": "test",
         })
