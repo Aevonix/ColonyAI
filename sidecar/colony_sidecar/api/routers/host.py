@@ -649,6 +649,31 @@ async def health() -> HostHealthResponse:
     )
 
 
+@router.get("/health/llm")
+async def llm_health() -> dict:
+    """Live-fire the LLM router with one tiny SMALL-tier completion (v0.19.0).
+
+    The cheapest faithful proxy for "can the cognition stack call a
+    model at all" — it exercises the exact router path that dies with
+    "all tiers exhausted" when the persisted baseUrl/apiKey are wrong.
+    Defensive: never raises, always returns {ok, tier, latency_ms, error}.
+    """
+    if _llm_router is None:
+        return {"ok": False, "tier": None, "latency_ms": 0,
+                "error": "LLM router not wired"}
+    try:
+        from colony_sidecar.router.tiers import ModelTier
+        resp = await _llm_router.complete(
+            [{"role": "user", "content": "Say OK"}],
+            force_tier=ModelTier.SMALL,
+        )
+        tier = resp.tier_used.value if getattr(resp, "tier_used", None) else None
+        return {"ok": True, "tier": tier,
+                "latency_ms": getattr(resp, "latency_ms", 0), "error": None}
+    except Exception as exc:  # noqa: BLE001 — diagnostics must not 500
+        return {"ok": False, "tier": None, "latency_ms": 0, "error": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
