@@ -83,6 +83,15 @@ class JobHeartbeatRequest(BaseModel):
     log_lines: Optional[List[str]] = None
 
 
+class JobApproveRequest(BaseModel):
+    approved_by: str = "owner"
+
+
+class JobRejectRequest(BaseModel):
+    rejected_by: str = "owner"
+    reason: str = "rejected_by_owner"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -298,6 +307,95 @@ async def release_job(job_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Job not found")
     await queue.queue.release_job(job_id)
     return {"success": True, "job_id": job_id}
+
+
+@router.get("/jobs/blocked")
+async def list_blocked_jobs(
+    limit: int = Query(50, ge=1, le=200),
+) -> List[Dict[str, Any]]:
+    """List BLOCKED jobs awaiting owner approval (v0.17.0).
+
+    Dependency-blocked jobs are excluded — they resolve automatically
+    when their dependencies complete.
+    """
+    queue = _get_queue()
+    jobs = await queue.queue.get_jobs_by_status(JobStatus.BLOCKED)
+    items = []
+    for job in jobs:
+        blocked_reason = job.tags.get("blocked_reason", "")
+        if blocked_reason != "awaiting_owner_approval":
+            continue
+        items.append({
+            "id": job.job_id,
+            "action_hint": job.payload.get("action_hint"),
+            "risk": job.payload.get("risk"),
+            "description": job.payload.get("description", ""),
+            "created_at": job.posted_at.isoformat() if job.posted_at else None,
+            "blocked_reason": blocked_reason,
+        })
+    return items[:limit]
+
+
+@router.post("/jobs/{job_id}/approve")
+async def approve_job(job_id: str, body: JobApproveRequest) -> Dict[str, Any]:
+    """Approve a BLOCKED job — transitions it to QUEUED for claiming (v0.17.0)."""
+    queue = _get_queue()
+    job = await queue.queue.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != JobStatus.BLOCKED:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is {job.status.value}, not blocked",
+        )
+    approved_at = datetime.now(timezone.utc).isoformat()
+    await queue.queue.update_job_status(
+        job_id,
+        JobStatus.QUEUED,
+        reason=f"approved_by={body.approved_by}",
+        tags={"approved_by": body.approved_by, "approved_at": approved_at},
+    )
+    logger.info("Job %s approved by %s", job_id, body.approved_by)
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": JobStatus.QUEUED.value,
+        "approved_by": body.approved_by,
+        "approved_at": approved_at,
+    }
+
+
+@router.post("/jobs/{job_id}/reject")
+async def reject_job(job_id: str, body: JobRejectRequest) -> Dict[str, Any]:
+    """Reject a BLOCKED job — transitions it to CANCELLED (v0.17.0)."""
+    queue = _get_queue()
+    job = await queue.queue.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != JobStatus.BLOCKED:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is {job.status.value}, not blocked",
+        )
+    rejected_at = datetime.now(timezone.utc).isoformat()
+    await queue.queue.update_job_status(
+        job_id,
+        JobStatus.CANCELLED,
+        reason=body.reason,
+        tags={
+            "rejected_by": body.rejected_by,
+            "rejected_at": rejected_at,
+            "rejected_reason": body.reason,
+        },
+    )
+    logger.info("Job %s rejected by %s: %s", job_id, body.rejected_by, body.reason)
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": JobStatus.CANCELLED.value,
+        "rejected_by": body.rejected_by,
+        "reason": body.reason,
+    }
 
 
 @router.get("/jobs/pending")

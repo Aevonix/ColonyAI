@@ -42,8 +42,11 @@ CREATE INDEX IF NOT EXISTS idx_contacts_person_node
 CREATE TABLE IF NOT EXISTS contact_handles (
   handle_id    TEXT PRIMARY KEY,               -- hdl-<timestamp_ms>-<random7>
   contact_id   TEXT NOT NULL REFERENCES contacts(contact_id) ON DELETE CASCADE,
+  -- Keep in sync with the delivery channel set (delivery/channels.py):
+  -- whatsapp/discord/slack were deliverable but unstorable before v0.17.
   gateway      TEXT NOT NULL
-                 CHECK(gateway IN ('imessage','telegram','email','sms','signal','custom')),
+                 CHECK(gateway IN ('imessage','telegram','whatsapp','discord',
+                                   'slack','email','sms','signal','custom')),
   address      TEXT NOT NULL,
   is_primary   INTEGER NOT NULL DEFAULT 0
                  CHECK(is_primary IN (0,1)),

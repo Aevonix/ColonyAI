@@ -46,7 +46,11 @@ class InitiativeConfig:
     
     # Signal accumulation threshold (count — above this generates initiative)
     signal_accumulation_threshold: int = 10
-    
+
+    # Capability gap failure threshold (count — capabilities with at least
+    # this many recorded failures in the recent window generate initiatives)
+    capability_gap_failures: int = 3
+
     @classmethod
     def from_env(cls) -> "InitiativeConfig":
         """Load configuration from environment variables."""
@@ -71,6 +75,7 @@ class InitiativeConfig:
             calendar_gap_threshold_hours=_float("COLONY_INITIATIVE_GAP_THRESHOLD", 2.0),
             research_task_age_days=_int("COLONY_INITIATIVE_RESEARCH_AGE_DAYS", 1),
             signal_accumulation_threshold=_int("COLONY_INITIATIVE_SIGNAL_THRESHOLD", 10),
+            capability_gap_failures=_int("COLONY_CAPABILITY_GAP_FAILURES", 3),
         )
 
 
@@ -914,44 +919,82 @@ class InitiativeEngine:
             self._context.setdefault("initiative_categories", [])
 
     async def _load_capability_gaps(self) -> None:
-        """Query graph for tools that have failed repeatedly."""
+        """Query graph for capabilities that have failed repeatedly.
+
+        Schema-adaptive (same idiom as ``_load_blocked_goals``): the
+        primary variant reads ``failure_count`` / ``last_failure_at``
+        directly from :Capability nodes — the fields actually defined in
+        ``intelligence/graph/schema.py``. The fallback variant reads the
+        same counters from [:NEEDS_CAPABILITY] relationships, which is
+        where the original v0.11.1 design recorded failures.
+
+        The failure threshold comes from ``COLONY_CAPABILITY_GAP_FAILURES``
+        (default 3) and only failures within the last 24 hours qualify.
+        """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
 
-        query = """
-            MATCH (a:Agent)-[r:NEEDS_CAPABILITY]->(c:Capability)
-            WHERE r.failure_count >= 3
-              AND r.last_failure_at > datetime() - duration({hours: 24})
-            RETURN c.name as name, c.id as id, r.failure_count as failure_count,
-                   r.last_failure_at as last_failure, r.failure_mode as failure_mode
-            ORDER BY r.failure_count DESC
-            LIMIT 10
-        """
+        queries = [
+            # Schema reality: failure counters live on the Capability node
+            """
+                MATCH (c:Capability)
+                WHERE c.failure_count >= $threshold
+                  AND c.last_failure_at > datetime() - duration({hours: 24})
+                RETURN c.id as id, c.name as name, c.failure_count as failure_count,
+                       c.last_failure_at as last_failure, c.status as failure_mode
+                ORDER BY c.failure_count DESC
+                LIMIT 10
+            """,
+            # v0.11.1 design: counters live on the NEEDS_CAPABILITY edge
+            """
+                MATCH (a:Agent)-[r:NEEDS_CAPABILITY]->(c:Capability)
+                WHERE r.failure_count >= $threshold
+                  AND r.last_failure_at > datetime() - duration({hours: 24})
+                RETURN c.id as id, c.name as name, r.failure_count as failure_count,
+                       r.last_failure_at as last_failure, r.failure_mode as failure_mode
+                ORDER BY r.failure_count DESC
+                LIMIT 10
+            """,
+        ]
 
         gaps = []
-        try:
-            async with self.graph.driver.session(database=self.graph.database) as session:
-                result = await session.run(query)
-                async for record in result:
-                    record = dict(record)
-                    gaps.append({
-                        "id": record.get("id", "unknown"),
-                        "name": record.get("name", "Unknown"),
-                        "failure_count": record.get("failure_count", 0),
-                        "failure_mode": record.get("failure_mode", "unknown"),
-                        "last_failure": record.get("last_failure"),
-                        "entity_type": "capability_gap",
-                    })
-            logger.debug("Loaded %d capability gaps", len(gaps))
-        except Exception as e:
-            logger.warning("Capability gap query failed: %s", e)
+        for query in queries:
+            if gaps:
+                break
+            try:
+                async with self.graph.driver.session(database=self.graph.database) as session:
+                    result = await session.run(
+                        query,
+                        threshold=self._config.capability_gap_failures,
+                    )
+                    async for record in result:
+                        record = dict(record)
+                        gaps.append({
+                            "id": record.get("id") or record.get("name") or "unknown",
+                            "name": record.get("name", "Unknown"),
+                            "failure_count": record.get("failure_count", 0),
+                            "failure_mode": record.get("failure_mode", "unknown"),
+                            "last_failure": record.get("last_failure"),
+                            "entity_type": "capability_gap",
+                        })
+                if gaps:
+                    logger.debug("Loaded %d capability gaps", len(gaps))
+            except Exception as e:
+                logger.debug("Capability gap query variant failed: %s", e)
+                continue
 
         self._context["capability_gaps"] = gaps
         if not gaps:
             self._context.setdefault("capability_gaps", [])
 
     async def _load_knowledge_gaps(self) -> None:
-        """Query graph for low-confidence concepts."""
+        """Query graph for open, low-confidence :Concept nodes.
+
+        The Concept node type exists in ``intelligence/graph/schema.py``
+        (confidence_score, encounter_count, status, last_researched_at).
+        Concepts researched within the last 7 days are skipped so the
+        same gap is not re-proposed while research is still fresh.
+        """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
 
@@ -959,8 +1002,11 @@ class InitiativeEngine:
             MATCH (c:Concept)
             WHERE c.confidence_score < 0.5
               AND c.status IN ['open', 'researching']
+              AND (c.last_researched_at IS NULL
+                   OR c.last_researched_at < datetime() - duration({days: 7}))
             RETURN c.id as id, c.name as name, c.confidence_score as confidence_score,
-                   c.encounter_count as encounter_count, c.domain as domain
+                   c.encounter_count as encounter_count, c.domain as domain,
+                   c.source as source
             ORDER BY c.confidence_score ASC, c.encounter_count DESC
             LIMIT 10
         """
@@ -972,34 +1018,49 @@ class InitiativeEngine:
                 async for record in result:
                     record = dict(record)
                     gaps.append({
-                        "id": record.get("id", "unknown"),
+                        "id": record.get("id") or record.get("name") or "unknown",
                         "name": record.get("name", "Unknown"),
                         "confidence_score": record.get("confidence_score", 0.0),
                         "encounter_count": record.get("encounter_count", 0),
                         "domain": record.get("domain", "general"),
+                        "source": record.get("source", "unknown"),
                         "entity_type": "knowledge_gap",
                     })
             logger.debug("Loaded %d knowledge gaps", len(gaps))
         except Exception as e:
-            logger.warning("Knowledge gap query failed: %s", e)
+            logger.debug("Knowledge gap query failed: %s", e)
 
         self._context["knowledge_gaps"] = gaps
         if not gaps:
             self._context.setdefault("knowledge_gaps", [])
 
     async def _load_behavioral_patterns(self) -> None:
-        """Query graph for active correction patterns."""
+        """Query graph for active, recurring behavioral patterns.
+
+        The graph :Pattern node (``intelligence/graph/schema.py``) carries
+        ``pattern_type`` (default 'behavioral'; 'correction' is the value
+        the v0.11.1 design used for owner corrections) plus two occurrence
+        counters (``recurrence_count`` and the older ``occurrences``).
+        Both pattern_type values and both counters are accepted here.
+        Note this is distinct from the SQLite PatternStore in
+        ``colony_sidecar/patterns/`` whose pattern_type values
+        (entity_cooccurrence, relation_frequency, ...) never reach the
+        graph.
+        """
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
 
         query = """
             MATCH (p:Pattern)
-            WHERE p.pattern_type = 'correction'
+            WHERE p.pattern_type IN ['behavioral', 'correction']
               AND p.is_active = true
-              AND p.recurrence_count >= 2
+              AND coalesce(p.recurrence_count, p.occurrences, 0) >= 3
+              AND (p.last_triggered_at IS NULL
+                   OR p.last_triggered_at > datetime() - duration({days: 30}))
             RETURN p.id as id, p.trigger as trigger, p.action as action,
-                   p.recurrence_count as recurrence_count, p.confidence as confidence
-            ORDER BY p.recurrence_count DESC, p.confidence DESC
+                   coalesce(p.recurrence_count, p.occurrences, 0) as recurrence_count,
+                   p.confidence as confidence, p.pattern_type as pattern_type
+            ORDER BY recurrence_count DESC, p.confidence DESC
             LIMIT 10
         """
 
@@ -1015,11 +1076,12 @@ class InitiativeEngine:
                         "action": record.get("action", ""),
                         "recurrence_count": record.get("recurrence_count", 0),
                         "confidence": record.get("confidence", 0.5),
+                        "pattern_type": record.get("pattern_type", "behavioral"),
                         "entity_type": "behavioral_pattern",
                     })
             logger.debug("Loaded %d behavioral patterns", len(patterns))
         except Exception as e:
-            logger.warning("Behavioral pattern query failed: %s", e)
+            logger.debug("Behavioral pattern query failed: %s", e)
 
         self._context["behavioral_patterns"] = patterns
         if not patterns:
@@ -2006,83 +2068,146 @@ class InitiativeEngine:
         return initiatives
 
     async def _generate_capability_gap_initiatives(self) -> List[Initiative]:
-        """Generate self-initiatives for missing capabilities."""
+        """Generate self-initiatives proposing to acquire/repair capabilities.
+
+        Reads the ``capability_gaps`` context populated by
+        ``_load_capability_gaps()`` from :Capability nodes whose
+        ``failure_count`` met the COLONY_CAPABILITY_GAP_FAILURES threshold
+        in the last 24h. Limitation: no code in the current tree writes
+        those failure counters (the v0.11.1 ToolExecutor detection hook
+        was never implemented), so this only surfaces gaps recorded by an
+        external writer or operator until that hook lands.
+
+        Defensive: returns [] on any failure; never raises.
+        """
         initiatives: List[Initiative] = []
-        for gap in self._context.get("capability_gaps", []):
-            entity_id = gap.get("id", "unknown")
-            name = gap.get("name", "Unknown capability")
-            failure_count = gap.get("failure_count", 0)
-            failure_mode = gap.get("failure_mode", "unknown")
+        try:
+            for gap in self._context.get("capability_gaps", []):
+                entity_id = gap.get("id") or gap.get("entity_id") or "unknown"
+                name = gap.get("name", "Unknown capability")
+                failure_count = int(gap.get("failure_count", 0) or 0)
+                failure_mode = gap.get("failure_mode", "unknown")
 
-            priority = min(1.0, 0.5 + failure_count / 10)
+                # 0.5 floor, +0.05 per recorded failure, capped at 0.75
+                priority = min(0.75, 0.5 + failure_count * 0.05)
 
-            initiatives.append(
-                Initiative(
-                    id=f"capgap-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
-                    type=InitiativeType.CAPABILITY_GAP,
-                    description=f"Capability gap: {name}",
-                    priority=priority,
-                    rationale=f"Failed {failure_count} times ({failure_mode})",
-                    action_hint="Register or fix missing capability",
-                    entity_id=entity_id,
-                    dedup_key=f"capgap:{entity_id}",
-                    expires_at=datetime.now(timezone.utc) + timedelta(hours=6),
-                    trigger_data={**gap},
+                initiatives.append(
+                    Initiative(
+                        id=f"capgap-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                        type=InitiativeType.CAPABILITY_GAP,
+                        description=f"Acquire or repair capability: {name}",
+                        priority=priority,
+                        rationale=(
+                            f"Capability '{name}' recorded {failure_count} "
+                            f"failure(s) in the last 24h (mode: {failure_mode}, "
+                            f"threshold: {self._config.capability_gap_failures})"
+                        ),
+                        action_hint="Register, repair, or research the failing capability",
+                        entity_id=str(entity_id),
+                        dedup_key=f"capability_gap:{entity_id}",
+                        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                        trigger_data={**gap},
+                    )
                 )
-            )
+            logger.debug("Generated %d capability gap initiatives", len(initiatives))
+        except Exception as exc:
+            logger.debug("Capability gap generation failed: %s", exc)
+            return []
         return initiatives
 
     async def _generate_knowledge_acquisition_initiatives(self) -> List[Initiative]:
-        """Generate self-initiatives for low-confidence knowledge areas."""
+        """Generate research initiatives for low-confidence knowledge areas.
+
+        Reads the ``knowledge_gaps`` context populated by
+        ``_load_knowledge_gaps()`` from open/researching :Concept nodes
+        with confidence_score < 0.5. Limitation: the :Concept node type
+        exists in the graph schema but the v0.11.1 web-search detection
+        hook that was meant to create Concept nodes was never implemented,
+        so gaps only surface once something writes Concept nodes.
+
+        Defensive: returns [] on any failure; never raises.
+        """
         initiatives: List[Initiative] = []
-        for gap in self._context.get("knowledge_gaps", []):
-            entity_id = gap.get("id", "unknown")
-            name = gap.get("name", "Unknown concept")
-            confidence = gap.get("confidence_score", 0.0)
-            encounter_count = gap.get("encounter_count", 0)
+        try:
+            for gap in self._context.get("knowledge_gaps", []):
+                entity_id = gap.get("id") or gap.get("entity_id") or "unknown"
+                name = gap.get("name", "Unknown concept")
+                confidence = float(gap.get("confidence_score", 0.0) or 0.0)
+                encounter_count = int(gap.get("encounter_count", 0) or 0)
 
-            priority = min(1.0, 1.0 - confidence)
+                # Lower confidence -> higher priority, within 0.5-0.75:
+                # confidence 1.0 -> 0.5, confidence 0.0 -> 0.75
+                priority = min(0.75, max(0.5, 0.5 + (1.0 - confidence) * 0.25))
 
-            initiatives.append(
-                Initiative(
-                    id=f"knowgap-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
-                    type=InitiativeType.KNOWLEDGE_ACQUISITION,
-                    description=f"Knowledge gap: {name}",
-                    priority=priority,
-                    rationale=f"Confidence {confidence:.2f} after {encounter_count} encounters",
-                    action_hint="Queue research task",
-                    entity_id=entity_id,
-                    dedup_key=f"knowgap:{entity_id}",
-                    expires_at=datetime.now(timezone.utc) + timedelta(days=3),
-                    trigger_data={**gap},
+                initiatives.append(
+                    Initiative(
+                        id=f"knowgap-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                        type=InitiativeType.KNOWLEDGE_ACQUISITION,
+                        description=f"Research concept: {name}",
+                        priority=priority,
+                        rationale=(
+                            f"Concept '{name}' encountered {encounter_count} "
+                            f"time(s) but confidence is only {confidence:.2f}"
+                        ),
+                        action_hint="Queue background research and update world model",
+                        entity_id=str(entity_id),
+                        dedup_key=f"knowledge_gap:{entity_id}",
+                        expires_at=datetime.now(timezone.utc) + timedelta(days=3),
+                        trigger_data={**gap},
+                    )
                 )
-            )
+            logger.debug("Generated %d knowledge acquisition initiatives", len(initiatives))
+        except Exception as exc:
+            logger.debug("Knowledge acquisition generation failed: %s", exc)
+            return []
         return initiatives
 
     async def _generate_behavioral_correction_initiatives(self) -> List[Initiative]:
-        """Generate self-initiatives for recurring correction patterns."""
+        """Generate correction initiatives for recurring behavioral patterns.
+
+        Reads the ``behavioral_patterns`` context populated by
+        ``_load_behavioral_patterns()`` from active :Pattern nodes with
+        pattern_type 'behavioral' or 'correction' and 3+ occurrences.
+        Limitation: the v0.11.1 correction-detection hook that was meant
+        to write these Pattern nodes was never implemented, so patterns
+        only surface once something writes graph :Pattern nodes (the
+        SQLite PatternStore is a separate store and does not feed this).
+
+        Defensive: returns [] on any failure; never raises.
+        """
         initiatives: List[Initiative] = []
-        for pattern in self._context.get("behavioral_patterns", []):
-            entity_id = pattern.get("id", "unknown")
-            trigger = pattern.get("trigger", "")
-            recurrence = pattern.get("recurrence_count", 0)
+        try:
+            for pattern in self._context.get("behavioral_patterns", []):
+                entity_id = pattern.get("id") or pattern.get("entity_id") or "unknown"
+                trigger = pattern.get("trigger") or "unspecified trigger"
+                action = pattern.get("action") or ""
+                recurrence = int(pattern.get("recurrence_count", 0) or 0)
 
-            priority = min(1.0, 0.5 + recurrence / 10)
+                # 0.5 floor, +0.05 per recurrence, capped at 0.75
+                priority = min(0.75, 0.5 + recurrence * 0.05)
 
-            initiatives.append(
-                Initiative(
-                    id=f"behav-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
-                    type=InitiativeType.BEHAVIORAL_CORRECTION,
-                    description=f"Behavioral pattern: {trigger[:80]}",
-                    priority=priority,
-                    rationale=f"Recurred {recurrence} times",
-                    action_hint="Apply learned preference",
-                    entity_id=entity_id,
-                    dedup_key=f"behav:{entity_id}",
-                    expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
-                    trigger_data={**pattern},
+                rationale = f"Pattern recurred {recurrence} time(s)"
+                if action:
+                    rationale += f"; expected behavior: {action[:80]}"
+
+                initiatives.append(
+                    Initiative(
+                        id=f"behav-{entity_id}-{_uuid_module.uuid4().hex[:8]}",
+                        type=InitiativeType.BEHAVIORAL_CORRECTION,
+                        description=f"Correct recurring behavior: {trigger[:80]}",
+                        priority=priority,
+                        rationale=rationale,
+                        action_hint="Encode the correction as a preference or config rule",
+                        entity_id=str(entity_id),
+                        dedup_key=f"behavioral_correction:{entity_id}",
+                        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+                        trigger_data={**pattern},
+                    )
                 )
-            )
+            logger.debug("Generated %d behavioral correction initiatives", len(initiatives))
+        except Exception as exc:
+            logger.debug("Behavioral correction generation failed: %s", exc)
+            return []
         return initiatives
 
     async def _generate_agent_action_initiatives(self) -> List[Initiative]:

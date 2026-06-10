@@ -261,6 +261,11 @@ class AutonomyLoop:
         # Phase 5: run initiative engine
         await self._phase_initiative()
 
+        # Phase 5b: self-directed thinking (v0.17.0) — novel work the
+        # data-reactive generators can't see. Appends to the same
+        # pending-initiative batch Phase 6 consumes.
+        await self._phase_thinking()
+
         # Phase 6: execute approved actions
         await self._phase_execute()
 
@@ -319,6 +324,9 @@ class AutonomyLoop:
 
         # Phase 21: initiative timeout (every tick)
         await self._phase_initiative_timeout()
+
+        # Phase 21b: owner-approval timeout for blocked jobs (every tick)
+        await self._phase_approval_timeout()
 
         # Phase 21: stale initiative cleanup (every 5 ticks)
         if self.stats.ticks % 5 == 0:
@@ -468,6 +476,69 @@ class AutonomyLoop:
             self.stats.errors += 1
             logger.error("Phase initiative error: %s", exc, exc_info=True)
             self._pending_initiatives = []
+
+    async def _phase_thinking(self) -> None:
+        """Phase 5b: self-directed thinking (v0.17.0).
+
+        On a slow cadence (COLONY_THINKING_INTERVAL_SECS), hand the LLM a
+        situation report and let it propose novel initiatives the
+        data-reactive generators can't see. Results join the same
+        pending batch Phase 6 stores/delivers, so they inherit identical
+        dedup, quiet-hours, rate-limit, and approval treatment.
+        Disabled unless COLONY_ENABLE_INTERNAL_THINKING=true.
+        """
+        if os.environ.get("COLONY_ENABLE_INTERNAL_THINKING",
+                          "false").lower() != "true":
+            return
+        router = self._registry.llm_router
+        if router is None:
+            return
+        thinker = getattr(self, "_thinker", None)
+        if thinker is None:
+            from colony_sidecar.intelligence.components.self_directed_thinker import (
+                SelfDirectedThinker,
+            )
+            thinker = SelfDirectedThinker(router)
+            self._thinker = thinker
+        if not thinker.due():
+            return
+        thinker.mark_ran()
+        try:
+            situation = self._build_thinking_situation()
+            initiatives = await thinker.think(situation)
+            if initiatives:
+                self._pending_initiatives = list(
+                    self._pending_initiatives or []) + initiatives
+                self.stats.initiatives_generated += len(initiatives)
+                logger.info("Phase thinking: %d novel proposal(s)",
+                            len(initiatives))
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase thinking error: %s", exc, exc_info=True)
+
+    def _build_thinking_situation(self) -> dict:
+        """Assemble the situation report for the thinking phase."""
+        situation: dict = {}
+        ctx = dict(getattr(self, "_last_initiative_context", {}) or {})
+        for key in ("pending_tasks", "neglected_contacts",
+                    "commitment_reminders"):
+            if ctx.get(key):
+                situation[key] = list(ctx[key])[:10]
+
+        goals = self._registry.goals
+        if goals is not None and hasattr(goals, "list_goals"):
+            try:
+                situation["active_goals"] = goals.list_goals(
+                    status="active", limit=20)
+                situation["blocked_goals"] = goals.list_goals(
+                    status="blocked", limit=10)
+            except Exception:
+                pass
+
+        pending = getattr(self, "_pending_initiatives", None) or []
+        situation["current_initiatives"] = [
+            getattr(i, "description", "") for i in pending][:20]
+        return situation
 
     def _build_initiative_context(self, initiative: Any, type_value: str) -> dict:
         """Build a focused, per-initiative context dict.
@@ -855,12 +926,20 @@ class AutonomyLoop:
             "context": self._build_initiative_context(initiative, type_value),
         }
 
+        # v0.17.0: gated jobs are created directly in BLOCKED so no worker
+        # can claim them in the window before a post-hoc transition lands.
+        gate_pending = is_gated and not auto_approve
+
         try:
+            from colony_sidecar.task_queue.models import JobStatus
+
             job_result = await task_queue.submit(
                 task_type="agent_action",
                 priority="high" if getattr(initiative, "priority", 0.5) > 0.7 else "normal",
                 params=job_payload,
                 idempotency_key=f"agent_action:{action_hint}:{getattr(initiative, 'entity_id', 'global')}",
+                initial_status=JobStatus.BLOCKED if gate_pending else None,
+                tags={"blocked_reason": "awaiting_owner_approval"} if gate_pending else None,
             )
             job_id = job_result.get("id")
             logger.info("Posted agent_action job %s for initiative %s", job_id, initiative_id)
@@ -877,16 +956,8 @@ class AutonomyLoop:
                 except Exception as exc:
                     logger.warning("Failed to link initiative %s to job %s: %s", initiative_id, job_id, exc)
 
-            # mutating/outbound and not auto-approved → block awaiting owner
-            if is_gated and not auto_approve and job_id:
-                queue_mgr = task_queue.queue
-                from colony_sidecar.task_queue.models import JobStatus
-                await queue_mgr.update_job_status(
-                    job_id,
-                    JobStatus.BLOCKED,
-                    reason="awaiting_owner_approval",
-                    tags={"blocked_reason": "awaiting_owner_approval"},
-                )
+            # mutating/outbound and not auto-approved → blocked awaiting owner
+            if gate_pending and job_id:
                 logger.info(
                     "Blocked %s job %s awaiting owner approval",
                     verdict["risk"], job_id,
@@ -912,7 +983,7 @@ class AutonomyLoop:
                         logger.debug("Proactive delivery disabled — approval request stored for agent polling")
 
             # Only count as executed if the job was not blocked awaiting approval
-            if not (is_gated and not auto_approve):
+            if not gate_pending:
                 self.stats.actions_executed += 1
                 self.stats.actions_this_hour += 1
         except Exception as exc:
@@ -1538,6 +1609,29 @@ class AutonomyLoop:
                 )
         except Exception as exc:
             logger.debug("Phase initiative_timeout error (non-fatal): %s", exc)
+
+    async def _phase_approval_timeout(self) -> None:
+        """Fail BLOCKED jobs whose owner-approval window expired (v0.17.0).
+
+        Jobs blocked with ``awaiting_owner_approval`` older than
+        COLONY_APPROVAL_TIMEOUT_HOURS (default 72) are failed with reason
+        ``owner_approval_timeout`` so they never execute silently later.
+        """
+        task_queue = getattr(self._registry, "task_queue", None)
+        if task_queue is None:
+            return
+        try:
+            timeout_hours = float(os.environ.get("COLONY_APPROVAL_TIMEOUT_HOURS", "72"))
+            expired = await task_queue.queue.expire_blocked_approvals(
+                datetime.now(timezone.utc), timeout_hours,
+            )
+            if expired:
+                logger.info(
+                    "Failed %d blocked job(s) after %.0fh without owner approval",
+                    expired, timeout_hours,
+                )
+        except Exception as exc:
+            logger.debug("Phase approval_timeout error (non-fatal): %s", exc)
 
     async def _phase_stale_initiative_cleanup(self) -> None:
         """Clean up initiatives stuck in acknowledged state."""

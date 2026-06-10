@@ -26,6 +26,7 @@ def test_from_env_explicit_path_wins(monkeypatch, tmp_path):
     assert ContactsConfig.from_env().sqlite_path == str(tmp_path / "custom.db")
 
 
+@pytest.mark.asyncio
 async def test_contacts_survive_reconnect(tmp_path):
     path = str(tmp_path / "contacts.db")
 

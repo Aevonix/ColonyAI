@@ -5511,6 +5511,41 @@ async def respond_to_initiative(
         if hasattr(_delivery_bridge, "acknowledge_delivery"):
             _delivery_bridge.acknowledge_delivery(initiative_id)
 
+    # v0.17.0: sync the owner's response to the approval-gated job, if any.
+    # The autonomy loop records job_id on the initiative after submission;
+    # approving/dismissing the initiative resolves the BLOCKED job too.
+    job_id = getattr(initiative, "job_id", None)
+    if job_id and action in {"approve", "approved", "dismiss", "dismissed", "reject", "rejected"}:
+        try:
+            from colony_sidecar.task_queue.models import JobStatus
+            from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+
+            queue = TaskQueueManager.get_instance().queue
+            job = await queue.get_job(job_id)
+            if job is not None and job.status == JobStatus.BLOCKED:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                if action in {"approve", "approved"}:
+                    await queue.update_job_status(
+                        job_id,
+                        JobStatus.QUEUED,
+                        reason="owner_approved_via_initiative",
+                        tags={"approved_by": "owner", "approved_at": now_iso},
+                    )
+                else:
+                    await queue.update_job_status(
+                        job_id,
+                        JobStatus.CANCELLED,
+                        reason="owner_rejected_via_initiative",
+                        tags={"rejected_by": "owner", "rejected_at": now_iso},
+                    )
+        except RuntimeError:
+            pass  # task queue not initialized — nothing to sync
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync initiative %s response to job %s: %s",
+                initiative_id, job_id, exc,
+            )
+
     _initiative_store.log_history(
         initiative_id,
         action=f"llm_{action}",
