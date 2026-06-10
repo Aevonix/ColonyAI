@@ -178,14 +178,14 @@ async def test_approve_transitions_to_queued_and_claimable(tmp_path):
     try:
         job_id = await _submit_blocked(mgr)
         resp = await tq_router.approve_job(
-            job_id, tq_router.JobApproveRequest(approved_by="marc"),
+            job_id, tq_router.JobApproveRequest(approved_by="owner"),
         )
         assert resp["success"] is True
         assert resp["status"] == "queued"
 
         job = await mgr.queue.get_job(job_id)
         assert job.status == JobStatus.QUEUED
-        assert job.tags.get("approved_by") == "marc"
+        assert job.tags.get("approved_by") == "owner"
         assert job.tags.get("approved_at")
 
         # Approved job is claimable now
@@ -203,14 +203,14 @@ async def test_reject_transitions_to_cancelled(tmp_path):
         job_id = await _submit_blocked(mgr)
         resp = await tq_router.reject_job(
             job_id,
-            tq_router.JobRejectRequest(rejected_by="marc", reason="too risky"),
+            tq_router.JobRejectRequest(rejected_by="owner", reason="too risky"),
         )
         assert resp["success"] is True
         assert resp["status"] == "cancelled"
 
         job = await mgr.queue.get_job(job_id)
         assert job.status == JobStatus.CANCELLED
-        assert job.tags.get("rejected_by") == "marc"
+        assert job.tags.get("rejected_by") == "owner"
         assert job.tags.get("rejected_reason") == "too risky"
 
         # Rejected job is never claimable

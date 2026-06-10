@@ -6,7 +6,7 @@ This specification documents fixes for 60 bugs identified in the ColonyAI initia
 
 **Target Branch:** `fix/initiative-engine-generation` → `main`
 **Version:** v0.7.14
-**Author:** Aeva
+**Author:** ColonyAI agent
 **Date:** 2026-05-07
 
 ---

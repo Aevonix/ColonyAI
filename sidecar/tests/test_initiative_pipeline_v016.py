@@ -192,12 +192,12 @@ class TestContextPersistence:
             type="relationship",
             description="Check in with Jordan Example",
             priority=0.7,
-            entity_id="uuid-bradley",
+            entity_id="uuid-jordan",
             context=ctx,
         )
         fetched = store.get(created.id)
         assert fetched.context == ctx
-        assert fetched.entity_id == "uuid-bradley"
+        assert fetched.entity_id == "uuid-jordan"
 
     def test_context_updatable(self, store):
         created = store.create(type="coding", description="CI check", context={"a": 1})
@@ -255,12 +255,12 @@ class TestContextPersistence:
 class TestInitiativeSerializer:
     def _stored(self, **overrides):
         base = dict(
-            id="rel-uuid-bradley",
+            id="rel-uuid-jordan",
             type="relationship",
             description="Check in with Jordan Example",
             priority=0.72,
             rationale="No contact for 14 days",
-            entity_id="uuid-bradley",
+            entity_id="uuid-jordan",
             context={
                 "neglected_contact": {"days_since_contact": 14},
                 "rationale": "No contact for 14 days",
@@ -280,7 +280,7 @@ class TestInitiativeSerializer:
         from colony_sidecar.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored())
-        assert resp.entity_id == "uuid-bradley"
+        assert resp.entity_id == "uuid-jordan"
         assert resp.context["neglected_contact"]["days_since_contact"] == 14
         assert resp.context["rationale"] == "No contact for 14 days"
         assert resp.context_durability == "durable"
@@ -294,8 +294,8 @@ class TestInitiativeSerializer:
     def test_target_agent_id_populated(self):
         from colony_sidecar.api.routers.host import _initiative_to_response
 
-        assigned = self._stored(assigned_agent_id="aeva", status="assigned")
-        assert _initiative_to_response(assigned).target_agent_id == "aeva"
+        assigned = self._stored(assigned_agent_id="test-agent", status="assigned")
+        assert _initiative_to_response(assigned).target_agent_id == "test-agent"
 
         preferred = self._stored(preferred_agent_id="macmini")
         assert _initiative_to_response(preferred).target_agent_id == "macmini"

@@ -16,3 +16,8 @@ sidecar/build/
 events/
 sidecar.log
 sidecar.pid
+
+# Runtime artifacts — never commit state
+*.db
+*.db-shm
+*.db-wal

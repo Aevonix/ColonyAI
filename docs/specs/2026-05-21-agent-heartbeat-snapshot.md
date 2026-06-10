@@ -1,4 +1,4 @@
-# Aeva Heartbeat & Agent Snapshot Spec
+# the agent Heartbeat & Agent Snapshot Spec
 
 > **Status:** Draft — pending owner review  
 > **Replaces:** `OwnerCheckInTask` (removed in v0.12.1)  
@@ -10,17 +10,17 @@
 
 Colony is the autonomous agent — it runs initiatives, executes actions, tracks telemetry, and "thinks" in the background. That is correct and must stay.
 
-The old `OwnerCheckInTask` was wrong for a different reason: **Colony was bypassing Aeva to message the owner directly.** It hardcoded both the trigger ("1 hour of silence") AND the message text ("anything I can help with?"). Colony decided when to talk and what to say — Aeva had no say.
+The old `OwnerCheckInTask` was wrong for a different reason: **Colony was bypassing the agent to message the owner directly.** It hardcoded both the trigger ("1 hour of silence") AND the message text ("anything I can help with?"). Colony decided when to talk and what to say — the agent had no say.
 
-That violates the autonomy principle: Colony should act autonomously on the owner's behalf, but **communication decisions belong to Aeva.** Colony informs Aeva of state; Aeva decides whether, when, and how to communicate.
+That violates the autonomy principle: Colony should act autonomously on the owner's behalf, but **communication decisions belong to the agent.** Colony informs the agent of state; the agent decides whether, when, and how to communicate.
 
 We need an architecture where:
 1. **Colony runs everything autonomously** — initiatives, execution, telemetry, scheduling
-2. **Colony exposes state to Aeva** — via a snapshot endpoint, not direct messages
-3. **Aeva evaluates and decides** — whether, when, and what to communicate
-4. **A heartbeat ensures Aeva stays aware** — even during owner silence
+2. **Colony exposes state to the agent** — via a snapshot endpoint, not direct messages
+3. **the agent evaluates and decides** — whether, when, and what to communicate
+4. **A heartbeat ensures the agent stays aware** — even during owner silence
 
-Colony remains the brain. Aeva remains the voice. The brain never speaks directly — it informs the voice, and the voice decides when to speak.
+Colony remains the brain. the agent remains the voice. The brain never speaks directly — it informs the voice, and the voice decides when to speak.
 
 ---
 
@@ -29,8 +29,8 @@ Colony remains the brain. Aeva remains the voice. The brain never speaks directl
 | Principle | Rule |
 |-----------|------|
 | Colony never directly messages the owner | Colony emits data/signals only |
-| Aeva decides on outreach | Aeva evaluates context and chooses action |
-| State survives session resets | All temporal state lives in Colony, not Aeva memory |
+| the agent decides on outreach | the agent evaluates context and chooses action |
+| State survives session resets | All temporal state lives in Colony, not the agent memory |
 | No upstream harness changes | Hermes core remains untouched; all wiring via Colony extension points |
 
 ---
@@ -39,11 +39,11 @@ Colony remains the brain. Aeva remains the voice. The brain never speaks directl
 
 ```
 ┌─────────────────┐         ┌──────────────────────┐         ┌─────────────────┐
-│   Colony        │         │   Hermes Gateway     │         │   Aeva (Agent)  │
+│   Colony        │         │   Hermes Gateway     │         │   the agent (Agent)  │
 │   Sidecar       │         │   (no changes)       │         │                 │
 ├─────────────────┤         ├──────────────────────┤         ├─────────────────┤
 │ TelemetryStore  │◄────────│                      │         │                 │
-│  + last_aeva_   │  API    │                      │         │                 │
+│  + last_the-agent_   │  API    │                      │         │                 │
 │    outreach_at  │         │                      │         │                 │
 │                 │         │                      │         │                 │
 │ InitiativeStore │◄────────│                      │         │                 │
@@ -65,7 +65,7 @@ Colony remains the brain. Aeva remains the voice. The brain never speaks directl
 
 **File:** `colony_sidecar/telemetry.py`
 
-Add `last_aeva_outreach_at` to track when Aeva last proactively messaged the owner.
+Add `last_the-agent_outreach_at` to track when the agent last proactively messaged the owner.
 
 ```python
 @dataclass
@@ -75,11 +75,11 @@ class TelemetryStore:
     last_tick_at: Optional[datetime] = None
     last_initiative_at: Optional[datetime] = None
     last_prefetch_at: Optional[datetime] = None
-    last_aeva_outreach_at: Optional[datetime] = None  # NEW
+    last_the-agent_outreach_at: Optional[datetime] = None  # NEW
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 ```
 
-The `touch()` method already supports arbitrary keys via `setattr`, so `await telemetry.touch("last_aeva_outreach_at")` works immediately after this change.
+The `touch()` method already supports arbitrary keys via `setattr`, so `await telemetry.touch("last_the-agent_outreach_at")` works immediately after this change.
 
 **TelemetryStore `to_dict()` update required:**
 ```python
@@ -89,7 +89,7 @@ async def to_dict(self, thresholds: Dict[str, float]) -> dict:
     tick_at = self.last_tick_at.isoformat() if self.last_tick_at else None
     init_at = self.last_initiative_at.isoformat() if self.last_initiative_at else None
     prefetch_at = self.last_prefetch_at.isoformat() if self.last_prefetch_at else None
-    outreach_at = self.last_aeva_outreach_at.isoformat() if self.last_aeva_outreach_at else None
+    outreach_at = self.last_the-agent_outreach_at.isoformat() if self.last_the-agent_outreach_at else None
     silence = {}
     for key in thresholds:
         silence[key] = await self.silence_hours(key)
@@ -100,7 +100,7 @@ async def to_dict(self, thresholds: Dict[str, float]) -> dict:
         "last_tick_at": tick_at,
         "last_initiative_at": init_at,
         "last_prefetch_at": prefetch_at,
-        "last_aeva_outreach_at": outreach_at,
+        "last_the-agent_outreach_at": outreach_at,
         "silence_hours": silence,
         "stale_flags": flags,
     }
@@ -114,7 +114,7 @@ async def to_dict(self, thresholds: Dict[str, float]) -> dict:
 
 **File:** `colony_sidecar/api/routers/host.py`
 
-Returns a comprehensive snapshot of everything Aeva needs to evaluate whether to reach out.
+Returns a comprehensive snapshot of everything the agent needs to evaluate whether to reach out.
 
 **Request:** None (GET, auth via `Authorization: Bearer <COLONY_API_KEY>` header)
 
@@ -145,7 +145,7 @@ class AgentSnapshotResponse(BaseModel):
     timestamp: str  # ISO 8601 UTC
     telemetry: Dict[str, Any]  # {started_at, last_sync_at, last_tick_at,
                                #  last_initiative_at, last_prefetch_at,
-                               #  last_aeva_outreach_at, silence_hours: {...},
+                               #  last_the-agent_outreach_at, silence_hours: {...},
                                #  stale_flags: [...]}
 
     # ── Initiatives ──
@@ -193,7 +193,7 @@ async def agent_snapshot() -> AgentSnapshotResponse:
     last_tick = _telemetry.last_tick_at
     tick_age = (now - last_tick).total_seconds() / 60 if last_tick else None
 
-    # Flags: high-signal items Aeva should know about
+    # Flags: high-signal items the agent should know about
     flags = []
     if telemetry_dict.get("silence_hours", {}).get("initiative", 0) > 4:
         flags.append("long_initiative_silence")
@@ -225,21 +225,21 @@ async def agent_snapshot() -> AgentSnapshotResponse:
 
 **File:** `colony_sidecar/api/routers/host.py`
 
-Aeva calls this after proactively messaging the owner. Colony records the timestamp for future snapshot queries.
+the agent calls this after proactively messaging the owner. Colony records the timestamp for future snapshot queries.
 
 **Request:**
 ```python
 class RecordOutreachRequest(BaseModel):
-    agent_id: str = "aeva"  # identifier for the agent instance
+    agent_id: str = "test-agent"  # identifier for the agent instance
     channel: str = "whatsapp"  # platform used
-    reason: Optional[str] = None  # why Aeva decided to reach out
+    reason: Optional[str] = None  # why the agent decided to reach out
 ```
 
 **Response:**
 ```python
 class RecordOutreachResponse(BaseModel):
     recorded_at: str
-    last_aeva_outreach_at: str
+    last_the-agent_outreach_at: str
 ```
 
 **Implementation:**
@@ -247,14 +247,14 @@ class RecordOutreachResponse(BaseModel):
 @router.post("/agent-snapshot/record-outreach", response_model=RecordOutreachResponse)
 async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse:
     now = datetime.now(timezone.utc)
-    await _telemetry.touch("last_aeva_outreach_at")
+    await _telemetry.touch("last_the-agent_outreach_at")
     logger.info(
-        "Aeva outreach recorded: agent=%s channel=%s reason=%s",
+        "the agent outreach recorded: agent=%s channel=%s reason=%s",
         body.agent_id, body.channel, body.reason,
     )
     return RecordOutreachResponse(
         recorded_at=now.isoformat(),
-        last_aeva_outreach_at=now.isoformat(),
+        last_the-agent_outreach_at=now.isoformat(),
     )
 ```
 
@@ -264,24 +264,24 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
 
 | File | Action | Lines |
 |------|--------|-------|
-| `colony_sidecar/telemetry.py` | Add `last_aeva_outreach_at` field + update `to_dict()` | ~+3 |
+| `colony_sidecar/telemetry.py` | Add `last_the-agent_outreach_at` field + update `to_dict()` | ~+3 |
 | `colony_sidecar/api/schemas/host.py` | Add `AgentSnapshotResponse`, `AgentSnapshotInitiative`, `RecordOutreachRequest`, `RecordOutreachResponse` | ~+60 |
 | `colony_sidecar/api/routers/host.py` | Add `GET /agent-snapshot` and `POST /agent-snapshot/record-outreach` handlers | ~+100 |
 
 ---
 
-## Phase 2: Aeva Heartbeat Trigger
+## Phase 2: the agent Heartbeat Trigger
 
 ### 2.1 Hermes Cron Job
 
-Aeva needs a periodic trigger to evaluate Colony state even when the owner is silent.
+the agent needs a periodic trigger to evaluate Colony state even when the owner is silent.
 
 **Approach:** Hermes native cron job (no Colony changes needed).
 
 The owner configures via Hermes CLI:
 ```bash
 hermes cron create \
-  --name "aeva-colony-heartbeat" \
+  --name "test-agent-colony-heartbeat" \
   --schedule "*/20 * * * *" \
   --prompt "Query Colony agent snapshot at http://127.0.0.1:7777/v1/host/agent-snapshot. Evaluate whether to proactively message the owner based on: pending initiatives, failed items, silence duration, and last outreach time. If you decide to reach out, compose a natural message and use the send_message tool. After sending, record the outreach via POST to /v1/host/agent-snapshot/record-outreach. If you decide not to reach out, do nothing." \
   --toolsets web,terminal
@@ -294,32 +294,32 @@ hermes cron create \
 
 **Why a Hermes cron job?**
 - No upstream harness changes needed
-- Aeva runs in a fresh session with full tool access
-- Colony pushes nothing — Aeva pulls everything
+- the agent runs in a fresh session with full tool access
+- Colony pushes nothing — the agent pulls everything
 - Respects the owner's existing cron infrastructure
 
 ---
 
 ### 2.2 Colony-Driven Lightweight Signal (Optional Future)
 
-If the cron approach has too much latency, Colony could emit a lightweight `AGENT_CONTEXT_AVAILABLE` signal via webhook. This does **not** contain a message — just a timestamp and urgency hint. The Hermes webhook handler stores it, and Aeva checks on its next turn.
+If the cron approach has too much latency, Colony could emit a lightweight `AGENT_CONTEXT_AVAILABLE` signal via webhook. This does **not** contain a message — just a timestamp and urgency hint. The Hermes webhook handler stores it, and the agent checks on its next turn.
 
 **Deferred to future** — start with cron-only, add signal if needed.
 
 ---
 
-## Phase 3: Aeva Decision Logic
+## Phase 3: the agent Decision Logic
 
 ### 3.1 Decision Rubric
 
-When Aeva evaluates the snapshot, it applies these heuristics:
+When the agent evaluates the snapshot, it applies these heuristics:
 
 | Condition | Action |
 |-----------|--------|
 | `high_priority_pending` flag + silence > 2h + no outreach in 4h | Reach out with initiative summary |
 | `failed_initiatives` flag + any destructive action failed | Reach out with failure summary |
 | `stale_autonomy_loop` flag (no tick for 30+ min) | Alert owner that Colony autonomy loop may be stuck |
-| `long_initiative_silence` (4h+) + no outreach in 6h | Optional soft check-in (Aeva's discretion) |
+| `long_initiative_silence` (4h+) + no outreach in 6h | Optional soft check-in (the agent's discretion) |
 | Owner in active session (within last 10 min) | Defer — don't interrupt |
 | Quiet hours (22:00–07:00 owner time) | Defer unless `high_priority_pending` |
 | Reached out < 2h ago | Suppress — avoid spam |
@@ -327,7 +327,7 @@ When Aeva evaluates the snapshot, it applies these heuristics:
 
 ### 3.2 Message Composition Guidelines
 
-When Aeva decides to reach out:
+When the agent decides to reach out:
 - **Never use hardcoded templates** — compose naturally based on context
 - **Lead with the most important item** — highest priority initiative or failed action
 - **Offer specific help** — not "anything I can help with?" but "The PR review for X is still pending — want me to check it?"
@@ -342,11 +342,11 @@ All temporal state lives in Colony:
 
 | State | Location | Updated By |
 |-------|----------|------------|
-| `last_aeva_outreach_at` | `TelemetryStore` (in-memory, no persistence needed for MVP) | `POST /agent-snapshot/record-outreach` |
-| Initiative statuses | `InitiativeStore` (SQLite) | Autonomy loop + Aeva actions |
+| `last_the-agent_outreach_at` | `TelemetryStore` (in-memory, no persistence needed for MVP) | `POST /agent-snapshot/record-outreach` |
+| Initiative statuses | `InitiativeStore` (SQLite) | Autonomy loop + the agent actions |
 | Telemetry timestamps | `TelemetryStore` | Autonomy loop |
 
-**Note:** `TelemetryStore` is currently in-memory only. If sidecar restarts, `last_aeva_outreach_at` resets to `None`. This is acceptable for MVP — Aeva will simply be more conservative after a restart. If persistence is needed later, extend `TelemetryStore` with JSON file backing (similar to the old `autonomy_checkin.json` pattern).
+**Note:** `TelemetryStore` is currently in-memory only. If sidecar restarts, `last_the-agent_outreach_at` resets to `None`. This is acceptable for MVP — the agent will simply be more conservative after a restart. If persistence is needed later, extend `TelemetryStore` with JSON file backing (similar to the old `autonomy_checkin.json` pattern).
 
 ---
 
@@ -354,14 +354,14 @@ All temporal state lives in Colony:
 
 ### Unit Tests
 
-1. **TelemetryStore** — verify `touch("last_aeva_outreach_at")` works
+1. **TelemetryStore** — verify `touch("last_the-agent_outreach_at")` works
 2. **Agent snapshot endpoint** — verify response structure, flag computation, empty state
 3. **Record outreach endpoint** — verify timestamp updates, response format
 
 ### Integration Tests
 
 1. **End-to-end:** Generate a pending initiative → call snapshot → verify pending count = 1 and flag includes `high_priority_pending`
-2. **Outreach flow:** Call record-outreach → verify subsequent snapshot returns updated `last_aeva_outreach_at`
+2. **Outreach flow:** Call record-outreach → verify subsequent snapshot returns updated `last_the-agent_outreach_at`
 3. **Autonomy loop integration:** Run a tick → verify snapshot reflects new `last_tick_at`
 
 ### Manual Validation
@@ -392,7 +392,7 @@ All temporal state lives in Colony:
 
 ## Open Questions
 
-1. **Telemetry persistence:** Is in-memory `last_aeva_outreach_at` sufficient, or do we need JSON file backing?
+1. **Telemetry persistence:** Is in-memory `last_the-agent_outreach_at` sufficient, or do we need JSON file backing?
 2. **Cron frequency:** Is 20 minutes right? Should it be configurable per-owner?
-3. **Decision rubric:** Should any of the thresholds be Colony-configurable (env vars) or Aeva-configurable?
-4. **Multi-owner:** If Colony ever supports multiple owners, how does `last_aeva_outreach_at` scope per owner?
+3. **Decision rubric:** Should any of the thresholds be Colony-configurable (env vars) or the agent-configurable?
+4. **Multi-owner:** If Colony ever supports multiple owners, how does `last_the-agent_outreach_at` scope per owner?

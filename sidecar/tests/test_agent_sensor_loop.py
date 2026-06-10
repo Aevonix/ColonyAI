@@ -74,10 +74,10 @@ class TestObservationStore:
                 {"payload": {"title": "no id"}},
                 {"entity_id": "t2", "payload": {"title": "b"}},
             ],
-            reported_by="aeva",
+            reported_by="test-agent",
         )
         assert written == 2
-        assert obs_store.get("task", "t1").reported_by == "aeva"
+        assert obs_store.get("task", "t1").reported_by == "test-agent"
 
     def test_domain_age(self, obs_store):
         assert obs_store.domain_age_seconds("system") is None  # never observed
@@ -116,7 +116,7 @@ class TestObservationAPI:
             "/v1/host/observations",
             json={
                 "domain": "coding",
-                "reported_by": "aeva",
+                "reported_by": "test-agent",
                 "observations": [
                     {"entity_id": "repo#7", "payload": {"title": "PR 7", "ci_status": "failing"}},
                 ],
@@ -376,7 +376,7 @@ class TestSensorRegistration:
         offenders = [
             str(path)
             for path in src.rglob("*.py")
-            if "aeva" in path.read_text(errors="ignore").lower()
+            if "test-agent" in path.read_text(errors="ignore").lower()
         ]
         assert offenders == []
 

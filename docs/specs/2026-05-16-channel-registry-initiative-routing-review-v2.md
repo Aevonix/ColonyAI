@@ -1,6 +1,6 @@
 # Spec Review: ChannelRegistry v0.2.0
 
-**Reviewer:** Aeva  
+**Reviewer:** ColonyAI agent  
 **Date:** 2026-05-16  
 **Verdict:** **Minor issues found — fix before implementation**
 

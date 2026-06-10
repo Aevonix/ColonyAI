@@ -1,6 +1,6 @@
 # Colony-Hermes Autonomy Architecture Spec v0.10.0
 
-**Author:** Aeva  
+**Author:** the agent  
 **Date:** 2026-05-16  
 **Version:** 0.10.0  
 **Status:** Draft — pending review  
@@ -15,7 +15,7 @@
 
 ## 1. Executive Summary
 
-Colony v0.10.0 implements a complete autonomy pipeline where the Colony sidecar generates initiatives, delivers them to Hermes via webhook, and the Hermes agent (Aeva) acts on them using available tools. The pipeline is fully operational with the following subsystems:
+Colony v0.10.0 implements a complete autonomy pipeline where the Colony sidecar generates initiatives, delivers them to Hermes via webhook, and the Hermes agent (the agent) acts on them using available tools. The pipeline is fully operational with the following subsystems:
 
 | Subsystem | Status | PR |
 |-----------|--------|-----|
@@ -141,7 +141,7 @@ The `AutonomyLoop` runs on a configurable tick interval (default: 60s). Each tic
     "status": "pending",
     "id": "followup-94381c5e9525",
     "dedup_key": "follow_up:32931c84-f435-4091-8640-7cfb4c03182e",
-    "agent_name": "Aeva",
+    "agent_name": "the agent",
     "context": {
       "trigger": "Task has been pending for 0 day(s)",
       "suggested_actions": ["Review status of '...'"],
@@ -263,7 +263,7 @@ platforms:
       routes:
         colony-initiatives:
           deliver: log
-          prompt: "{__raw__}\n\nYou are Aeva, an autonomous agent. Colony generated this\ninitiative. Act on it immediately using your available tools.\n\nDELIVERY\nRULES:\n- Your FULL response (detailed reasoning, tool outputs, findings)\ngoes to LOGS only.\n- Colony has resolved the best channel(s) for this initiative:\n\u2022 {delivery_context.user_chat} (DM channel)\n\u2022 {delivery_context.home_chat}\n(home channel)\n- Choose the channel matching the initiative's channel_hint\n(dm \u2192 user_chat, home \u2192 home_chat).\n- If the matching channel is missing,\nfall back to the other.\n- If BOTH channels are missing, log the result and do\nNOT attempt to send a message.\n- Send AT MOST ONE message to the user per\ninitiative. Make it concise \u2014 one or two sentences max.\n- Do NOT send\nmultiple follow-up messages. Do NOT send \"still working\" updates.\n- If\nthe initiative requires user input or is blocked, send ONE message asking\nwhat they want to do.\n- If you can complete the initiative autonomously,\nsend ONE message summarizing what you did.\n"
+          prompt: "{__raw__}\n\nYou are the agent, an autonomous agent. Colony generated this\ninitiative. Act on it immediately using your available tools.\n\nDELIVERY\nRULES:\n- Your FULL response (detailed reasoning, tool outputs, findings)\ngoes to LOGS only.\n- Colony has resolved the best channel(s) for this initiative:\n\u2022 {delivery_context.user_chat} (DM channel)\n\u2022 {delivery_context.home_chat}\n(home channel)\n- Choose the channel matching the initiative's channel_hint\n(dm \u2192 user_chat, home \u2192 home_chat).\n- If the matching channel is missing,\nfall back to the other.\n- If BOTH channels are missing, log the result and do\nNOT attempt to send a message.\n- Send AT MOST ONE message to the user per\ninitiative. Make it concise \u2014 one or two sentences max.\n- Do NOT send\nmultiple follow-up messages. Do NOT send \"still working\" updates.\n- If\nthe initiative requires user input or is blocked, send ONE message asking\nwhat they want to do.\n- If you can complete the initiative autonomously,\nsend ONE message summarizing what you did.\n"
           secret: INSECURE_NO_AUTH
 ```
 
@@ -297,7 +297,7 @@ When the agent receives an initiative:
 |----------|---------|-------------|
 | `COLONY_HERMES_WEBHOOK_URL` | `http://127.0.0.1:8644/webhooks/colony-initiatives` | Hermes webhook endpoint |
 | `COLONY_HERMES_WEBHOOK_SECRET` | `...` | Optional HMAC secret |
-| `COLONY_AGENT_NAME` | `Aeva` | Agent name in initiative payload |
+| `COLONY_AGENT_NAME` | `the agent` | Agent name in initiative payload |
 | `COLONY_CHANNEL_DM_owner` | `whatsapp:+1555XXXXXXX` | Owner DM channel |
 | `COLONY_CHANNEL_HOME` | `discord:#general` | Global home channel override |
 | `COLONY_CHANNEL_GATEWAY_MAP` | `{"imessage":"whatsapp"}` | Handle-to-platform inference mapping |
@@ -393,7 +393,7 @@ curl -s http://127.0.0.1:7777/v1/host/autonomy/status | jq .
 # 3. Trigger test initiative
 curl -X POST http://127.0.0.1:8644/webhooks/colony-initiatives \
   -H "Content-Type: application/json" \
-  -d '{"type":"initiative","payload":{"initiative_type":"test","title":"Test","description":"Test initiative","priority":50,"status":"pending","id":"test-1","dedup_key":"test:1","agent_name":"Aeva","context":{}},"delivery_context":{"home_chat":"whatsapp:GROUP_ID@g.us"},"channel_hint":"home"}'
+  -d '{"type":"initiative","payload":{"initiative_type":"test","title":"Test","description":"Test initiative","priority":50,"status":"pending","id":"test-1","dedup_key":"test:1","agent_name":"the agent","context":{}},"delivery_context":{"home_chat":"whatsapp:GROUP_ID@g.us"},"channel_hint":"home"}'
 ```
 
 ---

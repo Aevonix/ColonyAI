@@ -1505,7 +1505,7 @@ class InitiativeEngine:
 
         Reads ``upcoming_commitments`` context fed by the autonomy loop
         from Colony's own commitment store. The OWNER IS A VALID SUBJECT
-        here — "follow up on what you promised Marc" is exactly the work
+        here — "follow up on what you promised the owner" is exactly the work
         this type exists for, so no owner-exclusion filter applies.
         Context is durable: the promise and its deadline do not go stale
         the way CI status does.

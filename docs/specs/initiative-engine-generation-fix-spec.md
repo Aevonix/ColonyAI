@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Date:** 2026-05-07  
-**Author:** Aeva (OpenClaw Agent)  
+**Author:** ColonyAI agent
 **Status:** Draft — Pending Review  
 **Target Branch:** `fix/initiative-engine-generation` → `main`  
 **Target Release:** v0.7.14

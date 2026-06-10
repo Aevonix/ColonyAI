@@ -2,20 +2,20 @@
 
 **Status:** Draft for review  
 **Supersedes:** `2026-05-19-agent-driven-initiative-delivery-v0.12.0.md` (v0.12.0 has critical architectural errors; this doc replaces it)  
-**Author:** Aeva (autonomous agent review)  
+**Author:** the agent (autonomous agent review)  
 **Date:** 2026-05-20
 
 ---
 
 ## 1. Executive Summary
 
-**Goal:** Enable Colony to dispatch initiatives to external agents (e.g., Aeva/Hermes) for background autonomous execution, while fixing existing bugs that cause initiatives to be lost, duplicated, or silently dropped.
+**Goal:** Enable Colony to dispatch initiatives to external agents (e.g., the agent/Hermes) for background autonomous execution, while fixing existing bugs that cause initiatives to be lost, duplicated, or silently dropped.
 
 **Critical discovery:** Colony ALREADY has a full distributed task queue with capability matching, heartbeats, retries, and dependency management. We will leverage this infrastructure instead of reinventing it.
 
 **Two delivery paths:**
 
-1. **Background Agent Execution** — Colony posts actionable initiatives as Jobs to the distributed task queue. Aeva (as a SOVEREIGN mesh node) claims jobs matching her capabilities, executes them with tools, reports results. You only hear from me when:
+1. **Background Agent Execution** — Colony posts actionable initiatives as Jobs to the distributed task queue. the agent (as a SOVEREIGN mesh node) claims jobs matching her capabilities, executes them with tools, reports results. You only hear from me when:
    - The task failed and needs your input
    - The result exceeds an escalation threshold
    - A digest window expires (e.g., "here's what I did while you were away")
@@ -38,10 +38,10 @@ Colony already has (`sidecar/colony_sidecar/task_queue/`):
 - **`QueueMeshEventHandler`** — Handles node death, role changes, job redistribution
 
 **What we ADD:**
-- Register Aeva as a SOVEREIGN mesh node with capabilities (terminal, file, web, browser, git, etc.)
+- Register the agent as a SOVEREIGN mesh node with capabilities (terminal, file, web, browser, git, etc.)
 - Post `agent_action` initiatives as Jobs to the existing queue
 - New API endpoints for external agents to claim/complete jobs
-- Aeva-side cron job that polls Colony's job queue
+- the agent-side cron job that polls Colony's job queue
 
 **What we DO NOT build:**
 - A new queue system — use the existing one
@@ -112,13 +112,13 @@ The loop increments `actions_executed` and `actions_this_hour` after `delivery.p
 
 ### 4.1 Node Registration
 
-Aeva registers as a SOVEREIGN node in the Colony mesh:
+the agent registers as a SOVEREIGN node in the Colony mesh:
 
 ```python
 from colony_sidecar.task_queue import WorkerCapabilities
 
 caps = WorkerCapabilities(
-    node_id="aeva-hermes-01",
+    node_id="test-agent-hermes-01",
     capabilities={"terminal", "file", "web", "browser", "git", "python", "sqlite"},
     capacity={"cpu_cores": 8, "ram_gb": 16},
     max_concurrent=4,
@@ -144,15 +144,15 @@ When the initiative engine generates an `agent_action` initiative:
 
 ### 4.3 Agent Claiming and Execution
 
-Aeva polls the queue via cron (every 5 minutes):
+the agent polls the queue via cron (every 5 minutes):
 
 ```python
-# In Aeva's cron job
-job = await queue_manager.claim_job("aeva-hermes-01", aeva_capabilities)
+# In the agent's cron job
+job = await queue_manager.claim_job("test-agent-hermes-01", the-agent_capabilities)
 if job:
     # Execute with available tools
     result = await execute_with_tools(job.payload)
-    await queue_manager.complete_job(job.job_id, "aeva-hermes-01", result)
+    await queue_manager.complete_job(job.job_id, "test-agent-hermes-01", result)
 ```
 
 The existing `WorkerNode` pattern handles:
@@ -192,7 +192,7 @@ Non-destructive ops (default `destructive=False`):
 
 ### 4.5 Escalation and Digest
 
-When a job completes, Aeva decides whether to surface it:
+When a job completes, the agent decides whether to surface it:
 
 | Condition | Action |
 |-----------|--------|
@@ -315,7 +315,7 @@ The task queue exists but has NO API routes exposed. Add to `api/routers/host.py
 3. Add destructive operation detection and approval flow
 4. Implement `colony_claim_task`, `colony_complete_task`, `colony_fail_task` tools
 
-### Phase 4: Aeva Node Registration (Hermes Side)
+### Phase 4: the agent Node Registration (Hermes Side)
 
 1. Hermes cron job that registers as Colony mesh node
 2. Capability advertisement (terminal, file, web, browser, etc.)
@@ -354,9 +354,9 @@ Colony's mesh model already defines:
 - A research node (claims `JobType.RESEARCH`)
 - A monitoring node (claims `JobType.MONITORING`)
 
-The existing `Scheduler` handles affinity-based assignment automatically. Aeva posts jobs, the scheduler assigns them to the best worker, and results flow back.
+The existing `Scheduler` handles affinity-based assignment automatically. the agent posts jobs, the scheduler assigns them to the best worker, and results flow back.
 
-**Worker capacity:** Each node advertises `max_concurrent` jobs. The scheduler respects this and won't over-assign. Aeva's default: 4 concurrent jobs.
+**Worker capacity:** Each node advertises `max_concurrent` jobs. The scheduler respects this and won't over-assign. the agent's default: 4 concurrent jobs.
 
 ---
 
@@ -366,7 +366,7 @@ The existing `Scheduler` handles affinity-based assignment automatically. Aeva p
 - **Existing self-initiatives unchanged** — `subsystem_health`, `data_quality`, etc. still auto-execute via skills
 - **initiative_store becomes source of truth** — bridge in-memory list becomes a cache, not the primary store
 - **Task queue is additive** — Existing flows don't change; agent_action initiatives get a new path
-- **Agent registration** — The agent identifies itself as `"aeva-hermes-01"` (configurable via env var)
+- **Agent registration** — The agent identifies itself as `"test-agent-hermes-01"` (configurable via env var)
 
 ---
 
@@ -374,7 +374,7 @@ The existing `Scheduler` handles affinity-based assignment automatically. Aeva p
 
 ### 10.1 Dynamic Capabilities — YES
 
-Aeva derives her advertised capabilities from the Hermes toolsets enabled in `~/.hermes/config.yaml`:
+the agent derives her advertised capabilities from the Hermes toolsets enabled in `~/.hermes/config.yaml`:
 
 | Hermes Toolset | Colony Capability |
 |----------------|-------------------|
@@ -385,7 +385,7 @@ Aeva derives her advertised capabilities from the Hermes toolsets enabled in `~/
 | `git` (implicit via terminal) | `git` |
 | `code_exec` | `code_execution` |
 
-On cron startup, Aeva reads her current toolsets, builds a `WorkerCapabilities` object, and registers (or re-registers) with Colony. If toolsets change, the next cron tick updates her capabilities. This prevents claiming jobs she cannot execute.
+On cron startup, the agent reads her current toolsets, builds a `WorkerCapabilities` object, and registers (or re-registers) with Colony. If toolsets change, the next cron tick updates her capabilities. This prevents claiming jobs she cannot execute.
 
 ### 10.2 Job Type — Add `AGENT_ACTION`
 

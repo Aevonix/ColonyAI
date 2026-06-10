@@ -1,7 +1,7 @@
 # Colony Self-Initiative Architecture v1.0
 
 **Status:** Draft — awaiting review  
-**Author:** Aeva (ColonyAI)  
+**Author:** ColonyAI agent  
 **Date:** 2026-05-16  
 **Target Version:** v0.11.0 (minor bump — new capability class)  
 
