@@ -272,6 +272,9 @@ class AutonomyLoop:
         # Phase 6b: request fresh observations for stale domains (v0.16.0)
         await self._phase_observation_sync()
 
+        # Phase 6c: feed completed agent work back into memory (v0.17.0)
+        await self._phase_job_writeback()
+
         # Phase 7: cognition pipeline tick
         await self._phase_cognition()
 
@@ -464,6 +467,13 @@ class AutonomyLoop:
 
             if self._in_quiet_hours():
                 initiatives = [i for i in initiatives if getattr(i, "priority", 0) >= 0.9]
+
+            # Deferred initiatives queued by later phases of the previous
+            # tick (e.g. skill-capture reviews from Phase 6c).
+            deferred = getattr(self, "_deferred_initiatives", None)
+            if deferred:
+                initiatives = list(initiatives) + deferred
+                self._deferred_initiatives = []
 
             if initiatives:
                 logger.info("Phase initiative: %d new proposals", len(initiatives))
@@ -1163,6 +1173,250 @@ class AutonomyLoop:
                 engine.add_context("upcoming_commitments", upcoming)
         except Exception as e:
             logger.warning("Failed to feed commitment reminders: %s", e)
+
+    async def _phase_job_writeback(self) -> None:
+        """Phase 6c (v0.17.0): close the act → learn loop.
+
+        Completed/failed agent jobs become episodic memories, advance
+        their goals, complete their linked initiatives, and broadcast
+        events. Before this phase, agent work landed in the queue DB and
+        was invisible to memory — Colony could act but never learn from
+        acting. Idempotent via the ``memory_synced`` job tag; a poison
+        job is retried up to 3 ticks then tagged off.
+        """
+        task_queue = getattr(self._registry, "task_queue", None)
+        if task_queue is None:
+            return
+        qm = getattr(task_queue, "queue", None) or task_queue
+        if not hasattr(qm, "get_jobs_by_status"):
+            return
+        from colony_sidecar.task_queue.models import JobStatus
+
+        try:
+            done = list(await qm.get_jobs_by_status(JobStatus.COMPLETED))
+            done += list(await qm.get_jobs_by_status(JobStatus.FAILED))
+        except Exception as exc:
+            logger.debug("Job writeback: queue scan failed: %s", exc)
+            return
+
+        synced = 0
+        for job in done:
+            tags = job.tags or {}
+            if tags.get("memory_synced") == "true":
+                continue
+            if job.job_type != "agent_action":
+                continue
+            action_hint = (job.payload or {}).get("action_hint", "")
+            if str(action_hint).startswith("agent_sync_"):
+                # Observation syncs already land in the observation store;
+                # recording them as memories would be routine-plumbing noise.
+                await self._tag_job_synced(qm, job)
+                continue
+            try:
+                await self._writeback_one_job(job)
+                await self._tag_job_synced(qm, job)
+                synced += 1
+            except Exception as exc:
+                attempts = int(tags.get("memory_sync_attempts", "0")) + 1
+                logger.warning("Job writeback failed for %s (attempt %d): %s",
+                               job.job_id, attempts, exc)
+                new_tags = {"memory_sync_attempts": str(attempts)}
+                if attempts >= 3:
+                    new_tags["memory_synced"] = "true"  # give up, stop retrying
+                try:
+                    await qm.update_job_status(job.job_id, job.status,
+                                               tags=new_tags)
+                except Exception:
+                    pass
+        if synced:
+            logger.info("Phase job-writeback: %d agent job(s) fed back to memory",
+                        synced)
+
+    @staticmethod
+    async def _tag_job_synced(qm: Any, job: Any) -> None:
+        await qm.update_job_status(job.job_id, job.status,
+                                   tags={"memory_synced": "true"})
+
+    async def _writeback_one_job(self, job: Any) -> None:
+        """Propagate one finished agent job to goals, memory, initiatives."""
+        result = job.result
+        payload = job.payload or {}
+        succeeded = bool(result is not None and result.succeeded)
+        action = payload.get("action_hint") or job.job_type
+        description = payload.get("description", "")
+
+        # 1. Goal progress — the engine method existed since v0.13 but
+        # nothing ever called it.
+        goals = self._registry.goals
+        if (goals is not None and result is not None
+                and hasattr(goals, "on_job_completed")):
+            output = result.output or {}
+            if output.get("goal_id") and output.get("subtask_id"):
+                try:
+                    goals.on_job_completed(result)
+                except Exception as exc:
+                    logger.warning("Goal writeback failed for %s: %s",
+                                   job.job_id, exc)
+
+        # 2. Episodic memory of what the agent did.
+        graph = self._registry.graph
+        if graph is not None and hasattr(graph, "store_memory"):
+            outcome = "completed" if succeeded else (
+                f"FAILED ({(result.error if result else None) or 'unknown error'})")
+            summary = ""
+            if result is not None and isinstance(result.output, dict):
+                raw = result.output.get("summary") or result.output.get("result")
+                if raw:
+                    summary = f" Result: {str(raw)[:300]}"
+            content = (f"Agent {outcome} action '{action}'"
+                       + (f" — {description}" if description else "")
+                       + f".{summary}")
+            await graph.store_memory(
+                content=content,
+                memory_type="episodic",
+                entities=[],
+                metadata={"job_id": job.job_id, "action_hint": str(action),
+                          "succeeded": succeeded},
+                importance=0.6 if succeeded else 0.7,
+                source_type="tool_output",
+                source_uri=f"colony://jobs/{job.job_id}",
+            )
+
+        # 3. Linked initiative closure.
+        initiative_id = payload.get("initiative_id")
+        store = getattr(self._registry, "initiative_store", None)
+        if initiative_id and store is not None:
+            try:
+                if succeeded and hasattr(store, "complete"):
+                    store.complete(initiative_id,
+                                   agent_id=job.claimed_by or "agent",
+                                   result=f"job {job.job_id} completed")
+                elif not succeeded and hasattr(store, "update"):
+                    store.update(initiative_id, status="failed",
+                                 failed_reason=f"job {job.job_id} failed")
+            except Exception as exc:
+                logger.warning("Initiative closure failed for %s: %s",
+                               initiative_id, exc)
+
+        # 4. Skill capture (v0.17.0, COLONY_ENABLE_SKILL_SYNTHESIS) — feed
+        # successful novel work into the existing learning pipeline
+        # (novelty gate → pattern extraction → DRAFT skill package).
+        # Captured skills are DRAFT and deny-by-default; the v0.13
+        # approval workflow gates activation, so nothing synthesized can
+        # execute without the owner.
+        if succeeded:
+            await self._maybe_capture_skill(job, action, description)
+
+        # 5. Broadcast for anything listening (WS clients, audit log).
+        try:
+            from colony_sidecar.events.broadcaster import emit as broadcast
+            broadcast("job_completed" if succeeded else "job_failed",
+                      {"job_id": job.job_id, "action_hint": str(action),
+                       "initiative_id": initiative_id})
+        except Exception:
+            pass
+
+    def _get_skill_learning(self) -> Any:
+        """Lazily build the SkillLearningService (or None if disabled)."""
+        if os.environ.get("COLONY_ENABLE_SKILL_SYNTHESIS",
+                          "false").lower() != "true":
+            return None
+        service = getattr(self, "_skill_learning", None)
+        if service is not None:
+            return service
+        skills_registry = self._registry.skills
+        if skills_registry is None:
+            return None
+        try:
+            import pathlib
+
+            from colony_sidecar.skills.learning import (
+                NoveltyDetector,
+                PatternExtractor,
+                SkillLearningService,
+            )
+            from colony_sidecar.skills.packager import SkillPackager
+
+            library = pathlib.Path(
+                os.environ.get("COLONY_SKILL_LIBRARY")
+                or os.path.join(os.environ.get("COLONY_STATE_DIR", "."),
+                                "skill_library"))
+            packager = SkillPackager(
+                registry=skills_registry,
+                colony_id=os.environ.get("COLONY_NODE_ID", "colony"),
+                library_root=library,
+            )
+            service = SkillLearningService(
+                detector=NoveltyDetector(skills_registry),
+                extractor=PatternExtractor(),
+                packager=packager,
+            )
+            self._skill_learning = service
+            logger.info("Skill synthesis enabled (library=%s)", library)
+            return service
+        except Exception as exc:
+            logger.warning("Skill synthesis unavailable: %s", exc)
+            self._skill_learning = None
+            return None
+
+    async def _maybe_capture_skill(self, job: Any, action: str,
+                                   description: str) -> None:
+        service = self._get_skill_learning()
+        if service is None:
+            return
+        try:
+            from datetime import datetime, timezone
+
+            from colony_sidecar.skills.learning.triggers import (
+                LearningTriggerEvent,
+                TriggerSource,
+            )
+            from colony_sidecar.skills.models import TaskSolution
+
+            result = job.result
+            output = (result.output or {}) if result is not None else {}
+            solution = TaskSolution(
+                task_id=job.job_id,
+                task_description=description or str(action),
+                inputs=dict(job.payload or {}),
+                output=output,
+                trace=list(output.get("trace", [])),
+                dependencies=[],
+                embedding=None,
+                step_fingerprint=None,
+                duration_secs=float(
+                    getattr(result, "duration_seconds", None) or 0.0),
+                completed_at=getattr(result, "completed_at", None)
+                or datetime.now(timezone.utc),
+            )
+            skill_id = await service.handle(LearningTriggerEvent(
+                source=TriggerSource.POST_TASK_HOOK, solution=solution))
+            if skill_id:
+                self._queue_deferred_initiative(skill_id, description or action)
+        except Exception as exc:
+            logger.warning("Skill capture failed for %s: %s", job.job_id, exc)
+
+    def _queue_deferred_initiative(self, skill_id: str, task_desc: str) -> None:
+        """Surface a captured DRAFT skill to the owner next tick."""
+        from colony_sidecar.intelligence.components.initiative_engine import (
+            Initiative,
+            InitiativeType,
+        )
+        deferred = getattr(self, "_deferred_initiatives", None)
+        if deferred is None:
+            deferred = []
+            self._deferred_initiatives = deferred
+        deferred.append(Initiative(
+            id=f"init-skill-{skill_id[:24]}",
+            type=InitiativeType.CAPABILITY_GAP,
+            description=f"Review new draft skill '{skill_id}' captured from: "
+                        f"{task_desc[:120]}",
+            priority=0.7,
+            rationale="[skill synthesis] novel successful work was captured "
+                      "as a DRAFT skill; it cannot run until you approve it.",
+            action_hint=None,
+            dedup_key=f"skill_review:{skill_id}",
+        ))
 
     async def _phase_cognition(self) -> None:
         """Run cognition pipeline tick."""
