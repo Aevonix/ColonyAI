@@ -39,6 +39,7 @@ from colony_sidecar.api.schemas.host import (
     CognitionCycleResponse,
     CognitionGap,
     CognitivePerformanceIndex,
+    ContactCreateRequest,
     ContactListResponse,
     ContactResponse,
     ContactStyleRequest,
@@ -2207,6 +2208,45 @@ async def list_contacts(
     except Exception as exc:
         logger.warning("list_contacts failed: %s", exc)
         return ContactListResponse(contacts=[])
+
+
+@router.post("/contacts", response_model=ContactResponse, status_code=201)
+async def create_contact(body: ContactCreateRequest) -> ContactResponse:
+    """Create a curated contact (with optional handles) via the API.
+
+    Exists primarily so deployments can bootstrap the OWNER contact the
+    IdentityResolver requires — before this, contacts could only appear
+    as side effects of message ingestion.
+    """
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    try:
+        contact = await _contacts_store.create(
+            display_name=body.display_name,
+            given_name=body.given_name,
+            family_name=body.family_name,
+            organization=body.organization,
+            trust_tier=body.trust_tier,
+            tags=body.tags,
+            notes=body.notes,
+            import_source="manual",
+        )
+        for handle in body.handles:
+            await _contacts_store.add_handle(
+                contact.contact_id,
+                gateway=handle.gateway,
+                address=handle.address,
+                is_primary=handle.is_primary,
+                verified=handle.verified,
+                source="manual",
+            )
+        created = await _contacts_store.get(contact.contact_id)
+        return ContactResponse(**(created or contact).to_dict())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("create_contact failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/contacts/{contact_id}", response_model=ContactResponse)
