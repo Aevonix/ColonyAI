@@ -7,14 +7,31 @@ repo READMEs, webhook payloads); a free-form ``{"tool": ..., "command":
 <string>}`` payload would be a direct injection-to-execution path. The
 registry is the allow-list: nothing executes that isn't registered.
 
-Risk tiers and approval holders:
+Risk tiers (v0.18.0 graduated policy):
 
 - ``read_only`` — auto-execute, no approval needed.
-- ``mutating`` — requires HUMAN OWNER approval. The agent cannot approve
-  its own mutations; the same actor on both sides of a gate is a log
-  line, not a boundary.
-- ``outbound`` — sends something outside the system; requires HUMAN
-  OWNER approval.
+- ``mutating`` — reversible platform/system writes that touch no person
+  (close an issue, comment on a PR, webhook to own infra).
+- ``outbound`` — reaches a PERSON outside the system (email, message,
+  reminder). Reserved strictly for human recipients; platform writes
+  belong in ``mutating``.
+- ``destructive`` — deletes, overwrites, force-pushes, installs, spends,
+  or otherwise cannot be cheaply undone.
+
+Approval policy (``COLONY_APPROVAL_POLICY``, default ``strict``):
+
+- ``strict`` (v0.17 behavior): mutating/outbound/destructive all require
+  HUMAN OWNER approval. The agent cannot approve its own mutations; the
+  same actor on both sides of a gate is a log line, not a boundary.
+- ``graduated`` (v0.18.0, opt-in): mutating auto-executes with an audit
+  tag; destructive requires owner approval; outbound requires approval
+  UNLESS the resolved target is an authorized contact
+  (``interaction_allowed=True`` — see ``approval_policy``). This encodes
+  the owner's policy: no manual gate unless the action is potentially
+  destructive or reaches an unauthorized individual.
+
+Standing approvals (``standing_approvals``) override the gate for an
+exact action name in BOTH modes — the owner has said "always allow this".
 
 ``COLONY_AGENT_AUTO_APPROVE=true`` collapses the gate for trusted
 deployments (default false).
@@ -22,6 +39,7 @@ deployments (default false).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -33,6 +51,7 @@ class RiskTier(str, Enum):
     READ_ONLY = "read_only"
     MUTATING = "mutating"
     OUTBOUND = "outbound"
+    DESTRUCTIVE = "destructive"
 
 
 @dataclass(frozen=True)
@@ -53,6 +72,10 @@ class ActionSpec:
     description: str = ""
     initiative_type: Optional[str] = None
     required_params: List[str] = field(default_factory=list)
+    # v0.18.0: for OUTBOUND actions, the param that holds the recipient.
+    # The graduated policy resolves it against the contact store to decide
+    # whether the target is an authorized individual.
+    target_param: Optional[str] = None
 
     @property
     def auto_executable(self) -> bool:
@@ -153,24 +176,27 @@ _SPECS: List[ActionSpec] = [
         name="agent_cleanup_orphans",
         tool="terminal",
         command="colony graph cleanup-orphans $ID",
-        risk=RiskTier.MUTATING,
+        risk=RiskTier.DESTRUCTIVE,  # deletes graph nodes
         description="Delete orphan nodes from the knowledge graph",
         initiative_type="agent_action",
         required_params=["ID"],
     ),
-    # Legacy destructive hints (loop.py v0.13.0 DESTRUCTIVE_HINTS) —
-    # registered as mutating so the approval gate keeps holding.
+    # Legacy destructive hints (loop.py v0.13.0 DESTRUCTIVE_HINTS).
+    # v0.18.0 audit: delete/overwrite/restart stay DESTRUCTIVE so the
+    # graduated policy keeps blocking them; plain commit/push (non-force)
+    # are reversible MUTATING writes.
     ActionSpec("agent_git_push", "terminal", "git push", RiskTier.MUTATING,
                "Push commits to a remote", "agent_action"),
     ActionSpec("agent_git_commit", "terminal", "git commit", RiskTier.MUTATING,
                "Create a commit", "agent_action"),
     ActionSpec("agent_service_restart", "terminal", "systemctl restart $SERVICE",
-               RiskTier.MUTATING, "Restart a system service", "agent_action",
+               RiskTier.DESTRUCTIVE, "Restart a system service", "agent_action",
                ["SERVICE"]),
-    ActionSpec("agent_file_delete", "terminal", "rm $PATH", RiskTier.MUTATING,
+    ActionSpec("agent_file_delete", "terminal", "rm $PATH", RiskTier.DESTRUCTIVE,
                "Delete a file", "agent_action", ["PATH"]),
-    ActionSpec("agent_deploy", "terminal", "deploy $TARGET", RiskTier.MUTATING,
-               "Deploy to an environment", "agent_action", ["TARGET"]),
+    ActionSpec("agent_deploy", "terminal", "deploy $TARGET", RiskTier.DESTRUCTIVE,
+               "Deploy to an environment (overwrites the running version)",
+               "agent_action", ["TARGET"]),
 
     # --- TASK ---
     ActionSpec("task_list_open", "terminal",
@@ -195,10 +221,12 @@ _SPECS: List[ActionSpec] = [
                RiskTier.MUTATING, "Submit a PR review", "coding", ["PR"]),
     ActionSpec("coding_merge_pr", "terminal",
                "gh pr merge $PR --squash",
-               RiskTier.MUTATING, "Merge a PR", "coding", ["PR"]),
+               RiskTier.DESTRUCTIVE, "Merge a PR (rewrites the target branch)",
+               "coding", ["PR"]),
+    # Platform write — a PR comment doesn't message an individual.
     ActionSpec("coding_comment_on_pr", "terminal",
                "gh pr comment $PR --body \"$MSG\"",
-               RiskTier.OUTBOUND, "Comment on a PR", "coding", ["PR", "MSG"]),
+               RiskTier.MUTATING, "Comment on a PR", "coding", ["PR", "MSG"]),
 
     # --- PROJECT ---
     ActionSpec("project_list_milestones", "terminal",
@@ -220,10 +248,11 @@ _SPECS: List[ActionSpec] = [
                RiskTier.READ_ONLY, "Check recent error logs", "system"),
     ActionSpec("system_restart_service", "terminal",
                "systemctl restart $SERVICE",
-               RiskTier.MUTATING, "Restart a service", "system", ["SERVICE"]),
+               RiskTier.DESTRUCTIVE, "Restart a service", "system", ["SERVICE"]),
+    # Webhook to own infrastructure — a platform write, not a person.
     ActionSpec("system_send_alert", "terminal",
                "curl -X POST $WEBHOOK_URL -d \"$MSG\"",
-               RiskTier.OUTBOUND, "Send an alert webhook", "system",
+               RiskTier.MUTATING, "Send an alert webhook (own infra)", "system",
                ["WEBHOOK_URL", "MSG"]),
 
     # --- CALENDAR ---
@@ -234,10 +263,13 @@ _SPECS: List[ActionSpec] = [
                "gcal prepare $EVENT_ID",
                RiskTier.READ_ONLY, "Gather prep material for a meeting",
                "calendar", ["EVENT_ID"]),
+    # Reaches a person (the attendee) — OUTBOUND, with the recipient
+    # named so the graduated policy can resolve it against contacts.
     ActionSpec("calendar_send_reminder", "terminal",
                "curl -X POST $WEBHOOK_URL -d \"$MSG\"",
                RiskTier.OUTBOUND, "Send a meeting reminder", "calendar",
-               ["WEBHOOK_URL", "MSG"]),
+               ["WEBHOOK_URL", "MSG", "RECIPIENT"],
+               target_param="RECIPIENT"),
 
     # --- COMMITMENT ---
     ActionSpec("commitment_list_open", "terminal",
@@ -292,14 +324,50 @@ def requires_owner_approval(name: Optional[str]) -> bool:
     return spec.risk != RiskTier.READ_ONLY
 
 
-def classify_agent_action(action_hint: Optional[str]) -> Dict[str, object]:
+APPROVAL_POLICY_STRICT = "strict"
+APPROVAL_POLICY_GRADUATED = "graduated"
+
+
+def get_approval_policy() -> str:
+    """Resolve the approval policy mode from the environment.
+
+    ``COLONY_APPROVAL_POLICY=graduated`` opts a deployment into the
+    graduated gate; anything else (including unset/unknown values) is
+    ``strict`` — fail closed on typos.
+    """
+    mode = os.environ.get("COLONY_APPROVAL_POLICY", APPROVAL_POLICY_STRICT)
+    mode = (mode or "").strip().lower()
+    if mode == APPROVAL_POLICY_GRADUATED:
+        return APPROVAL_POLICY_GRADUATED
+    return APPROVAL_POLICY_STRICT
+
+
+def classify_agent_action(
+    action_hint: Optional[str],
+    params: Optional[Dict[str, object]] = None,
+    policy: Optional[str] = None,
+    target_authorized: Optional[bool] = None,
+) -> Dict[str, object]:
     """Single gating decision for the dispatch path.
+
+    Args:
+        action_hint: the named capability to classify.
+        params: the job params/context (carried for callers; target
+            resolution itself is async — see
+            ``approval_policy.is_authorized_target``).
+        policy: ``strict`` or ``graduated``; defaults to
+            ``get_approval_policy()`` (env, default strict).
+        target_authorized: for OUTBOUND actions under the graduated
+            policy, the verdict of ``is_authorized_target`` — True means
+            the recipient resolved to a contact with
+            ``interaction_allowed=True``. None/False keep the gate.
 
     Returns a dict with:
     - ``registered``: the hint names a known capability
     - ``executable``: safe to post to the task queue at all
     - ``requires_approval``: must block on human-owner approval first
     - ``risk``: the tier string, or None when unregistered
+    - ``reason``: why the gate decision was made
     """
     spec = get_action(action_hint)
     if spec is None:
@@ -308,12 +376,45 @@ def classify_agent_action(action_hint: Optional[str]) -> Dict[str, object]:
             "executable": False,
             "requires_approval": True,
             "risk": None,
+            "reason": "unregistered_action",
         }
+
+    mode = policy if policy in (APPROVAL_POLICY_STRICT, APPROVAL_POLICY_GRADUATED) \
+        else get_approval_policy()
+
+    # Standing approvals — the owner has said "always allow this exact
+    # action". Overrides the gate in BOTH modes. Best-effort: a broken
+    # approvals file must not break classification (gate stays closed).
+    standing = False
+    try:
+        from colony_sidecar.initiatives import standing_approvals
+        standing = standing_approvals.is_approved(spec.name)
+    except Exception:
+        standing = False
+
+    if standing:
+        requires_approval, reason = False, "standing_approval"
+    elif spec.risk == RiskTier.READ_ONLY:
+        requires_approval, reason = False, "read_only_auto"
+    elif mode == APPROVAL_POLICY_GRADUATED:
+        if spec.risk == RiskTier.MUTATING:
+            requires_approval, reason = False, "graduated_auto_mutating"
+        elif spec.risk == RiskTier.DESTRUCTIVE:
+            requires_approval, reason = True, "destructive_requires_owner"
+        else:  # OUTBOUND — gated unless the target is an authorized contact
+            if target_authorized is True:
+                requires_approval, reason = False, "outbound_authorized_contact"
+            else:
+                requires_approval, reason = True, "outbound_target_unverified"
+    else:  # strict — v0.17 behavior: everything non-read-only is gated
+        requires_approval, reason = True, "strict_policy_gate"
+
     return {
         "registered": True,
         "executable": True,
-        "requires_approval": spec.risk != RiskTier.READ_ONLY,
+        "requires_approval": requires_approval,
         "risk": spec.risk.value,
+        "reason": reason,
     }
 
 

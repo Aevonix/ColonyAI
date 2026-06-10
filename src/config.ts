@@ -94,6 +94,15 @@ export const ColonyPluginConfigSchema = z.object({
   requestTimeoutMs: z.number().int().positive().default(30_000),
 
   /**
+   * Directory where the host agent's instructional Hermes skills live
+   * (``<category>/<name>/SKILL.md`` trees). The plugin scans this
+   * directory at startup and every 24h and reports the index to Colony
+   * as ``skills``-domain observations so Colony knows what the agent
+   * can do. When unset, defaults to ``~/.hermes/skills`` at runtime.
+   */
+  hermesSkillsDir: z.string().min(1).optional(),
+
+  /**
    * Optional host LLM configuration forwarded to the sidecar at startup.
    * When present the plugin POSTs this to ``/v1/host/configure`` so the
    * sidecar can reason with the host's provider instead of requiring

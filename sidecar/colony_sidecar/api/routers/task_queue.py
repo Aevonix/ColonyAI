@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from colony_sidecar.initiatives import standing_approvals
 from colony_sidecar.task_queue.models import (
     Job,
     JobCapabilityRequirement,
@@ -85,6 +86,9 @@ class JobHeartbeatRequest(BaseModel):
 
 class JobApproveRequest(BaseModel):
     approved_by: str = "owner"
+    # v0.18.0: also grant a standing approval for this job's action —
+    # future jobs with the same action_hint skip the gate entirely.
+    always: bool = False
 
 
 class JobRejectRequest(BaseModel):
@@ -338,7 +342,12 @@ async def list_blocked_jobs(
 
 @router.post("/jobs/{job_id}/approve")
 async def approve_job(job_id: str, body: JobApproveRequest) -> Dict[str, Any]:
-    """Approve a BLOCKED job — transitions it to QUEUED for claiming (v0.17.0)."""
+    """Approve a BLOCKED job — transitions it to QUEUED for claiming (v0.17.0).
+
+    With ``{"always": true}`` (v0.18.0) the approval is also recorded as
+    a standing approval for the job's ``action_hint``, so future jobs
+    with the same action skip the gate.
+    """
     queue = _get_queue()
     job = await queue.queue.get_job(job_id)
     if job is None:
@@ -356,12 +365,27 @@ async def approve_job(job_id: str, body: JobApproveRequest) -> Dict[str, Any]:
         tags={"approved_by": body.approved_by, "approved_at": approved_at},
     )
     logger.info("Job %s approved by %s", job_id, body.approved_by)
+
+    standing_entry = None
+    if body.always:
+        action_hint = job.payload.get("action_hint")
+        if action_hint:
+            standing_entry = standing_approvals.grant(
+                action_hint, approved_by=body.approved_by,
+            )
+        else:
+            logger.warning(
+                "Job %s has no action_hint — standing approval not granted",
+                job_id,
+            )
+
     return {
         "success": True,
         "job_id": job_id,
         "status": JobStatus.QUEUED.value,
         "approved_by": body.approved_by,
         "approved_at": approved_at,
+        "standing_approval": standing_entry,
     }
 
 
@@ -396,6 +420,28 @@ async def reject_job(job_id: str, body: JobRejectRequest) -> Dict[str, Any]:
         "rejected_by": body.rejected_by,
         "reason": body.reason,
     }
+
+
+# ---------------------------------------------------------------------------
+# Standing approvals (v0.18.0)
+# ---------------------------------------------------------------------------
+
+@router.get("/approvals/standing")
+async def list_standing_approvals() -> List[Dict[str, Any]]:
+    """List all standing approvals (action name, approved_by, granted_at)."""
+    return standing_approvals.list()
+
+
+@router.delete("/approvals/standing/{action_name}")
+async def revoke_standing_approval(action_name: str) -> Dict[str, Any]:
+    """Revoke a standing approval — future jobs for the action block again."""
+    if not standing_approvals.revoke(action_name):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No standing approval for {action_name}",
+        )
+    logger.info("Standing approval revoked for %s", action_name)
+    return {"success": True, "action_name": action_name}
 
 
 @router.get("/jobs/pending")

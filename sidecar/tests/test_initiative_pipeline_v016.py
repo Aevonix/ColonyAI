@@ -564,9 +564,14 @@ class TestActionRegistry:
             assert verdict["requires_approval"] is True, name
 
     def test_outbound_requires_owner_approval(self):
+        # v0.18.0: OUTBOUND is reserved for actions that reach a PERSON;
+        # platform writes (PR comments, own-infra webhooks) are MUTATING.
+        # All of them still require approval under the default strict policy.
+        assert get_action("coding_comment_on_pr").risk == RiskTier.MUTATING
+        assert get_action("system_send_alert").risk == RiskTier.MUTATING
+        assert get_action("calendar_send_reminder").risk == RiskTier.OUTBOUND
         for name in ("coding_comment_on_pr", "system_send_alert",
                      "calendar_send_reminder"):
-            assert get_action(name).risk == RiskTier.OUTBOUND
             assert requires_owner_approval(name), name
 
     def test_legacy_destructive_hints_stay_gated(self):
