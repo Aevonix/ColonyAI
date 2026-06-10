@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.19.0 (2026-06-10)
+
+Setup catches up with autonomy: the wizard configures the v0.16-v0.18
+surface, and `colony doctor` becomes a real configuration diagnostic.
+
+### Added
+- **Wizard Step 8 "Autonomy & approvals"** (`colony init`, idempotent on
+  re-run): owner contact creation written directly into the contact
+  store (+ `COLONY_OWNER_CONTACT_ID`), plain-language strict/graduated
+  approval-policy choice, internal-thinking and skill-synthesis toggles,
+  home-channel selection. The wizard now ends with a doctor pass
+  (Step 12).
+- **`colony doctor` rebuilt as a config-aware check engine** (19 checks,
+  `--json`, exit codes): every production footgun is detected with an
+  exact remedy — LLM baseUrl missing `/v1` (the silent
+  "all tiers exhausted" cognition killer), empty apiKey, `:memory:`
+  contact store, unresolvable owner, invalid approval-policy values,
+  corrupt standing approvals, missing home channel, pending blocked
+  approvals, stale/missing agent skill index, launchd
+  kickstart-vs-bootstrap stale env. `--fix` applies the safe LLM-config
+  repairs; `--clean-orphans` preserved from the old doctor.
+- `GET /v1/host/health/llm` — authed, live-fires one tiny SMALL-tier
+  completion so router death can never hide again.
+
+### Fixed
+- Wizard LLM-config writes normalize `baseUrl` to `/v1` and never emit
+  an empty `apiKey` (the source of both footguns).
+- Wizard previously collected multimodal settings *after* writing
+  `.env`, silently dropping them; config is now re-written after all
+  steps.
+
 ## 0.18.0 (2026-06-10)
 
 Graduated approvals (the owner only hears about destructive actions and

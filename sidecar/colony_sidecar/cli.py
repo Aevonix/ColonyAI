@@ -71,13 +71,15 @@ def main() -> None:
     val_p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     # --- doctor ---
-    doctor_p = sub.add_parser("doctor", help="Run integration health check and diagnose issues")
-    doctor_p.add_argument("--fix", action="store_true", help="Automatically fix issues found")
-    doctor_p.add_argument("--clean-orphans", action="store_true", help="Kill orphaned sidecar processes")
+    doctor_p = sub.add_parser("doctor", help="Diagnose configuration and runtime health")
+    doctor_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     doctor_p.add_argument("--url", default=None, help="Sidecar URL (default: from .env)")
     doctor_p.add_argument("--api-key", default=None, help="API key (default: from .env)")
-    doctor_p.add_argument("--verbose", "-v", action="store_true", help="Show detailed results")
-    doctor_p.add_argument("--full", action="store_true", help="Run all checks including heavy ones (reasoning, research)")
+    doctor_p.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds (default: 10)")
+    doctor_p.add_argument("--fix", action="store_true",
+                          help="Apply safe automatic fixes (LLM config baseUrl/apiKey), then re-check")
+    doctor_p.add_argument("--clean-orphans", action="store_true",
+                          help="Kill orphaned sidecar processes (pre-v0.19 flag, preserved)")
 
     # --- generate-types ---
     sub.add_parser("generate-types", help="Export OpenAPI spec (for TypeScript generation)")
@@ -2077,297 +2079,46 @@ def _cmd_validate(args) -> None:
 
 
 def _cmd_doctor(args) -> None:
-    """Run integration health check against the running sidecar."""
-    import httpx
-
+    """Diagnose configuration and runtime health (v0.19.0 check engine)."""
     _load_dotenv()
-    url = args.url or os.environ.get("COLONY_SIDECAR_URL", f"http://{os.environ.get('COLONY_SIDECAR_HOST', '127.0.0.1')}:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}")
-    api_key = args.api_key or os.environ.get("COLONY_API_KEY", "")
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    verbose = args.verbose
+    from colony_sidecar.doctor import (
+        default_colony_url,
+        exit_code,
+        format_report,
+        results_to_json,
+        run_doctor,
+    )
 
-    print(f"\n🩺 Colony Doctor — checking {url}\n")
+    url = args.url or default_colony_url()
+    api_key = args.api_key if args.api_key is not None else os.environ.get("COLONY_API_KEY", "")
 
-    checks = []
+    if getattr(args, "clean_orphans", False):
+        killed = _cleanup_orphans(kill=True)
+        print(f"🧹 Cleaned {killed} orphaned sidecar process(es)\n")
 
-    def check(name, func):
+    if getattr(args, "fix", False):
+        # Safe, idempotent config repairs only — everything else gets a
+        # printed remedy instead of an automatic change.
         try:
-            result = func()
-            status = "✅" if result else "❌"
-            checks.append((name, result))
-            if verbose or not result:
-                print(f"  {status} {name}")
-        except Exception as e:
-            checks.append((name, False))
-            print(f"  ❌ {name}: {e}")
+            from colony_sidecar.setup import repair_persisted_llm_config
 
-    with httpx.Client(base_url=url, headers=headers, timeout=10) as c:
-        # 1. Health
-        def _health():
-            r = c.get("/v1/host/health")
-            d = r.json()
-            return d.get("status") == "ok" and len(d.get("capabilities", [])) >= 20
-        check("Health endpoint", _health)
+            fixed = repair_persisted_llm_config()
+            if fixed:
+                print("🔧 Applied LLM config fixes: " + ", ".join(fixed) + "\n")
+            else:
+                print("🔧 No automatic fixes applicable\n")
+        except Exception as exc:
+            print(f"🔧 Automatic fixes unavailable: {exc}\n")
 
-        # 2. Auth
-        def _auth():
-            if not api_key:
-                return True  # No auth configured, skip
-            r = httpx.post(f"{url}/v1/host/memory/search", json={"identity": {"host_id": "t"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "t"}, timeout=5)
-            return r.status_code == 401
-        check("Auth enforcement", _auth)
+    results = run_doctor(colony_url=url, api_key=api_key, timeout=args.timeout)
 
-        # 3. Memory write
-        def _mem_write():
-            r = c.post("/v1/host/memory/write", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "content": f"Doctor check {uuid.uuid4().hex[:6]}", "type": "episodic", "strength": 0.5})
-            return r.json().get("accepted", False)
-        check("Memory write", _mem_write)
-
-        # 4. Memory search
-        time.sleep(1)
-        def _mem_search():
-            r = c.post("/v1/host/memory/search", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "colony", "limit": 1})
-            return r.status_code == 200 and "entries" in r.json()
-        check("Memory search", _mem_search)
-
-        # 5. Response gate (clean)
-        def _gate_pass():
-            r = c.post("/v1/host/safety/check", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "response_text": "Hello", "turn_id": "d1"})
-            return r.json().get("blocked") is False
-        check("Response gate (pass)", _gate_pass)
-
-        # 6. Response gate (PII block)
-        def _gate_block():
-            r = c.post("/v1/host/safety/check", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "response_text": "SSN: 078-05-1120", "turn_id": "d2"})
-            d = r.json()
-            return d.get("blocked") is True and d.get("blocking_layer") == 2
-        check("Response gate (PII block)", _gate_block)
-
-        # 7. Goals
-        def _goals():
-            r = c.get("/v1/host/goals")
-            return r.status_code == 200
-        check("Goals", _goals)
-
-        # 8. Identity
-        def _identity():
-            r = c.get("/v1/host/identity/status")
-            return r.status_code == 200
-        check("Identity", _identity)
-
-        # 9. Secrets
-        def _secrets():
-            r = c.post("/v1/host/secrets/set", json={"identity": {"host_id": "doctor"}, "key": f"_dr_{uuid.uuid4().hex[:6]}", "value": "x"})
-            return r.json().get("stored", False)
-        check("Secrets vault", _secrets)
-
-        # 10. Embedding
-        def _embed():
-            r = c.get("/v1/host/embed/health")
-            d = r.json()
-            return d.get("status") == "ok" and d.get("dims", 0) > 0
-        check("Embedding pipeline", _embed)
-
-        # 11. Context assembly
-        def _context():
-            r = c.post("/v1/host/context/assemble", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "incoming_message": {"content": "test", "role": "user"}})
-            return len(r.json().get("sections", [])) > 0
-        check("Context assembly", _context)
-
-        # 12. Skills
-        def _skills():
-            r = c.get("/v1/host/skills/registry")
-            return len(r.json().get("skills", [])) > 0
-        check("Skills registry", _skills)
-
-        # 13. World model
-        def _world():
-            r = c.post("/v1/host/world/entities/query", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "query": "Colony", "limit": 3})
-            return r.status_code == 200
-        check("World model", _world)
-
-        # 14. Signals
-        def _signals():
-            r = c.post("/v1/host/signals/ingest", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "signals": [{"type": "engagement_depth", "source": "doctor", "value": 0.5}]})
-            return r.json().get("accepted", False)
-        check("Signal ingestion", _signals)
-
-        # 15. Autonomy
-        def _autonomy():
-            r = c.post("/v1/host/autonomy/cycle", json={"identity": {"host_id": "doctor"}})
-            return r.json().get("completed", False)
-        check("Autonomy cycle", _autonomy)
-
-        # 16. Contacts
-        def _contacts():
-            r = c.get("/v1/host/contacts")
-            return r.status_code == 200 and isinstance(r.json(), dict)
-        check("Contacts", _contacts)
-
-        # 17. Briefings
-        def _briefings():
-            r = c.get("/v1/host/briefings")
-            return r.status_code == 200
-        check("Briefings", _briefings)
-
-        # 18. Cognition
-        def _cognition():
-            r = c.get("/v1/host/cognition/cpi")
-            return r.status_code == 200
-        check("Cognition", _cognition)
-
-        # 19. Delivery
-        def _delivery():
-            r = c.get("/v1/host/delivery/pending")
-            return r.status_code == 200
-        check("Delivery", _delivery)
-
-        # 20. Reasoning (lightweight - just check endpoint exists)
-        def _reasoning():
-            r = c.get("/v1/host/reasoning/turn")
-            return r.status_code == 200 or r.status_code == 405  # 405 = method not allowed, endpoint exists
-        check("Reasoning endpoint", _reasoning)
-
-        # 21. Research
-        def _research():
-            r = c.get("/v1/host/research")
-            return r.status_code == 200
-        check("Research endpoint", _research)
-
-        # 22. Memory status diagnostic
-        def _memory_status():
-            r = c.get("/v1/host/memory/status")
-            d = r.json()
-            return r.status_code == 200 and d.get("wired", False)
-        check("Memory subsystem wiring", _memory_status)
-
-        # 23. Search providers
-        def _search_providers():
-            r = c.get("/v1/host/search/providers")
-            d = r.json()
-            return r.status_code == 200 and isinstance(d.get("providers", []), list)
-        check("Search providers", _search_providers)
-
-        # 24. Autonomy scheduler
-        def _scheduler():
-            r = c.get("/v1/host/autonomy/schedule")
-            d = r.json()
-            return r.status_code == 200 and len(d.get("schedules", [])) > 0
-        check("Autonomy scheduler", _scheduler)
-
-        # 25. Extraction pipeline
-        def _extraction():
-            import base64
-            test_doc = base64.b64encode(b'{"name": "doctor-test", "type": "test"}').decode()
-            r = c.post("/v1/host/world/extract", json={"identity": {"host_id": "doctor"}, "content": test_doc, "mime_type": "application/json"})
-            return r.status_code == 200
-        check("Extraction pipeline", _extraction)
-
-        # 26. Native tools (calculate)
-        def _native_calc():
-            r = c.post("/v1/host/reasoning/turn", json={
-                "identity": {"host_id": "doctor"},
-                "context": {"session_id": "doctor", "contact_id": "doctor"},
-                "messages": [{"role": "user", "content": "Use the calculate tool to evaluate 2+2"}],
-                "max_iterations": 1,
-            }, timeout=30)
-            # 200 = success, 501 = not wired (still means endpoint works)
-            return r.status_code in (200, 501)
-        check("Native tools (calculate)", _native_calc)
-
-        # 27. Commitments
-        def _commitments():
-            r = c.get("/v1/host/commitments?status=pending&limit=1")
-            return r.status_code == 200
-        check("Commitment tracking", _commitments)
-
-        # 28. Affect tracking
-        def _affect():
-            r = c.get("/v1/host/affect/state/doctor-contact")
-            return r.status_code == 200
-        check("Affect tracking", _affect)
-
-        # 29. Shared facts
-        def _facts():
-            r = c.get("/v1/host/shared-facts?limit=1")
-            return r.status_code == 200
-        check("Shared facts", _facts)
-
-        # 30. Patterns
-        def _patterns():
-            r = c.get("/v1/host/patterns?limit=1")
-            return r.status_code == 200
-        check("Pattern extraction", _patterns)
-
-        # 31. Surprises
-        def _surprises():
-            r = c.get("/v1/host/surprises?limit=1")
-            return r.status_code == 200
-        check("Surprise engine", _surprises)
-
-        # 32. World Model API (CRUD)
-        def _world_api():
-            r = c.get("/v1/host/world/stats")
-            return r.status_code == 200 and "total_entities" in r.json()
-        check("World model API", _world_api)
-
-        # 33. Event journal
-        def _events():
-            r = c.get("/v1/host/events/replay?limit=1")
-            return r.status_code in (200, 501)  # 501 if no events yet
-        check("Event journal", _events)
-
-        # 34. E2E pipeline validation
-        def _e2e_validated():
-            stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
-            return stamp.exists()
-        check("E2E pipeline validated", _e2e_validated)
-
-    # --- Orphan process check ---
-    if getattr(args, 'clean_orphans', False):
-        print("\n  Checking for orphaned sidecar processes...")
-        orphan_count = _cleanup_orphans(kill=True)
-        if orphan_count:
-            print(f"  ✅ Cleaned up {orphan_count} orphan process(es)")
-        else:
-            print("  ✅ No orphan processes found")
+    if args.json:
+        print(json.dumps(results_to_json(results), indent=2))
     else:
-        orphans = _find_orphan_processes()
-        if orphans:
-            print(f"\n  ⚠️ Found {len(orphans)} orphaned sidecar process(es): {orphans}")
-            print("  Run 'colony doctor --clean-orphans' to clean them up")
-            checks.append(("No orphan processes", False))
+        color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+        print(format_report(results, colony_url=url, color=color))
 
-        # --- Full checks (heavier, require LLM or async) ---
-        if args.full:
-            # Reasoning with LLM inference
-            def _reasoning_full():
-                r = c.post("/v1/host/reasoning/turn", json={"identity": {"host_id": "doctor"}, "context": {"session_id": "s", "contact_id": "c"}, "messages": [{"role": "user", "content": "What is 2+2?"}], "max_iterations": 1}, timeout=30)
-                return r.status_code == 200
-            check("Reasoning (LLM inference)", _reasoning_full)
-
-            # Research with actual task
-            def _research_full():
-                r = c.post("/v1/host/research/start", json={"identity": {"host_id": "doctor"}, "topic": "test", "depth": "quick"}, timeout=30)
-                # 200 = success, 501 = not wired, 500 = pipeline error (still means endpoint works)
-                return r.status_code in (200, 501)
-            check("Research (async task)", _research_full)
-
-            # Cognition cycle
-            def _cognition_full():
-                r = c.post("/v1/host/cognition/cycle", json={"identity": {"host_id": "doctor"}})
-                return r.status_code == 200
-            check("Cognition cycle", _cognition_full)
-
-    # Summary
-    passed = sum(1 for _, v in checks if v)
-    total = len(checks)
-    print(f"\n  {passed}/{total} checks passed")
-    if passed == total:
-        print("  🟢 All systems healthy\n")
-    else:
-        print("  🔴 Some systems unhealthy — check logs above\n")
-        raise SystemExit(1)
+    sys.exit(exit_code(results))
 
 
 def _load_dotenv() -> None:
