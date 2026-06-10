@@ -8,8 +8,11 @@ Guides the user through first-time configuration:
 5. Neo4j setup (auto-start via Docker or manual)
 6. Write .env
 7. Database setup
-8. Self-knowledge seeding
-9. Summary
+8. Autonomy & approvals (owner contact, approval policy, gates, home channel)
+9. Self-knowledge seeding
+10. Start sidecar + verify
+11. Summary
+12. Health check (colony doctor)
 """
 
 from __future__ import annotations
@@ -76,15 +79,18 @@ def _yellow(msg: str) -> str:
 def _bold(msg: str) -> str:
     return f"\033[1m{msg}\033[0m"
 
-def _prompt(prompt: str, default: str = "", non_interactive: bool = False) -> str:
+def _prompt(prompt: str, default: str = "", non_interactive: bool = False, ask=None) -> str:
     """Prompt for input with a default value. Returns default on EOF or non-interactive mode.
-    
+
     Also checks for COLONY_INIT_DEFAULTS env var for scripted defaults.
     Format: COLONY_INIT_DEFAULTS='key1=val1,key2=val2'
+
+    ``ask`` is an injectable input callable (defaults to ``input``) so tests
+    can script answers without monkeypatching stdin. UX is unchanged.
     """
     if non_interactive:
         return default
-    
+
     # Check for scripted defaults
     defaults_env = os.environ.get("COLONY_INIT_DEFAULTS", "")
     if defaults_env:
@@ -95,10 +101,10 @@ def _prompt(prompt: str, default: str = "", non_interactive: bool = False) -> st
                 prompt_lower = prompt.lower()
                 if key.lower() in prompt_lower or prompt_lower in key.lower():
                     return val
-    
+
     suffix = f" [{default}]" if default else ""
     try:
-        val = input(f"{prompt}{suffix}: ").strip()
+        val = (ask or input)(f"{prompt}{suffix}: ").strip()
         return val or default
     except EOFError:
         # Gracefully handle piped input exhaustion
@@ -1421,6 +1427,451 @@ def _load_existing_env(env_path: Path) -> dict[str, str]:
     return env
 
 
+# ── LLM host config helpers (.colony-llm-config.json) ──────────────────────
+
+# Providers that speak the OpenAI-compatible API. LiteLLM routes these via
+# OPENAI_API_BASE, which must point at the ``/v1`` API root.
+OPENAI_COMPAT_PROVIDERS = frozenset({
+    "zai", "local", "custom", "lmstudio", "vllm", "openai",
+    "openai-compatible", "openai_compatible",
+})
+
+
+def normalize_llm_base_url(url: str, provider: str) -> tuple[str, bool]:
+    """Ensure ``baseUrl`` ends with ``/v1`` for OpenAI-compatible providers.
+
+    A bare ``host:port`` base URL silently 404s on chat completions because
+    LiteLLM appends ``/chat/completions`` directly. Returns ``(url, changed)``;
+    non-OpenAI-compatible providers (e.g. ollama, anthropic) pass through.
+    """
+    if not url:
+        return url, False
+    if (provider or "").strip().lower() not in OPENAI_COMPAT_PROVIDERS:
+        return url, False
+    stripped = url.rstrip("/")
+    if stripped.endswith("/v1"):
+        return url, False
+    return stripped + "/v1", True
+
+
+def ensure_api_key(cfg: dict) -> tuple[dict, bool]:
+    """Never persist an empty ``apiKey`` for OpenAI-compatible providers.
+
+    LiteLLM requires a non-empty api_key even for keyless local servers
+    (vLLM, LM Studio, llama.cpp, ...) — an empty string breaks the auth
+    header. Defaults to ``"local-no-key"``. Returns ``(cfg, changed)``;
+    the input dict is never mutated.
+    """
+    provider = (cfg.get("provider") or "").strip().lower()
+    if provider in OPENAI_COMPAT_PROVIDERS and not (cfg.get("apiKey") or "").strip():
+        fixed = dict(cfg)
+        fixed["apiKey"] = "local-no-key"
+        return fixed, True
+    return cfg, False
+
+
+def apply_llm_config_fixes(cfg: dict) -> tuple[dict, list[str]]:
+    """Apply both LLM host-config footgun fixes. Returns ``(cfg, notes)``."""
+    notes: list[str] = []
+    fixed = dict(cfg)
+    url, changed = normalize_llm_base_url(fixed.get("baseUrl", ""), fixed.get("provider", ""))
+    if changed:
+        fixed["baseUrl"] = url
+        notes.append(f"baseUrl did not end with /v1 — normalized to {url}")
+    fixed, changed = ensure_api_key(fixed)
+    if changed:
+        notes.append(
+            'apiKey was empty — set to "local-no-key" '
+            "(LiteLLM requires a non-empty value even for keyless servers)"
+        )
+    return fixed, notes
+
+
+def write_llm_host_config(path: Path, cfg: dict) -> tuple[dict, list[str]]:
+    """Persist an LLM host config, applying both footgun fixes at the source.
+
+    Every wizard write of ``.colony-llm-config.json`` must go through here.
+    Returns the (possibly fixed) config and the human-readable fix notes.
+    """
+    import json
+    fixed, notes = apply_llm_config_fixes(cfg)
+    path.write_text(json.dumps(fixed, indent=2))
+    return fixed, notes
+
+
+def repair_persisted_llm_config() -> list[str]:
+    """Quiet variant of :func:`_normalize_persisted_llm_config` for
+    ``colony doctor --fix``: applies the same footgun fixes in place and
+    returns the fix notes (empty when nothing needed changing)."""
+    import json
+    from colony_sidecar import get_state_dir
+
+    config_path = get_state_dir() / ".colony-llm-config.json"
+    if not config_path.exists():
+        return []
+    cfg = json.loads(config_path.read_text())
+    fixed, notes = apply_llm_config_fixes(cfg)
+    if notes:
+        write_llm_host_config(config_path, fixed)
+    return notes
+
+
+def _normalize_persisted_llm_config() -> None:
+    """Fix footguns in an already-persisted ``.colony-llm-config.json``, if any."""
+    import json
+    try:
+        from colony_sidecar import get_state_dir
+        config_path = get_state_dir() / ".colony-llm-config.json"
+        if not config_path.exists():
+            print("  ⚪ No persisted LLM host config yet (written on first host connect)")
+            return
+        cfg = json.loads(config_path.read_text())
+        fixed, notes = apply_llm_config_fixes(cfg)
+        if notes:
+            write_llm_host_config(config_path, fixed)
+            for note in notes:
+                print(f"  ⚠️ {note}")
+            print(f"  ✅ LLM host config updated ({config_path})")
+        else:
+            print(f"  ✅ LLM host config OK ({config_path})")
+    except Exception as exc:
+        print(f"  ⚪ LLM config check skipped: {exc}")
+
+
+# ── Autonomy & approvals step ───────────────────────────────────────────────
+
+# Gateways the owner can register handles for in the wizard.
+OWNER_HANDLE_GATEWAYS = (
+    "whatsapp", "telegram", "imessage", "email", "sms", "signal", "discord", "slack",
+)
+
+# Platforms that can act as the home channel for proactive delivery.
+HOME_CHANNEL_PLATFORMS = ("whatsapp", "telegram", "discord", "slack", "signal")
+
+
+async def build_owner_contact(
+    store,
+    display_name: str,
+    handles: list[tuple[str, str]] | None = None,
+    *,
+    trust_tier: str = "inner_circle",
+    interaction_allowed: bool = True,
+    import_source: str = "wizard",
+) -> str:
+    """Create the owner contact (plus handles) and return its contact_id.
+
+    The first handle becomes primary. A handle already owned by another
+    contact is skipped rather than failing the owner record — identity
+    fail-closed needs the owner cid to exist either way.
+    """
+    contact = await store.create(
+        display_name=display_name,
+        trust_tier=trust_tier,
+        interaction_allowed=interaction_allowed,
+        import_source=import_source,
+    )
+    for i, (gateway, address) in enumerate(handles or []):
+        try:
+            await store.add_handle(
+                contact.contact_id,
+                gateway=gateway,
+                address=address,
+                is_primary=(i == 0),
+                source="wizard",
+                verified=True,
+            )
+        except ValueError:
+            # Address already assigned to another contact — skip it.
+            continue
+    return contact.contact_id
+
+
+def collect_owner_handles(ask=None, non_interactive: bool = False) -> list[tuple[str, str]]:
+    """Interactive gateway/address loop for the owner's handles."""
+    handles: list[tuple[str, str]] = []
+    if non_interactive:
+        return handles
+    print("  Add ways to reach you (leave gateway blank to finish).")
+    print(f"  Gateways: {', '.join(OWNER_HANDLE_GATEWAYS)}")
+    while True:
+        gateway = _prompt("  Gateway (blank to finish)", "", non_interactive, ask=ask).strip().lower()
+        if not gateway:
+            break
+        if gateway not in OWNER_HANDLE_GATEWAYS:
+            print(f"  Invalid gateway. Choose one of: {', '.join(OWNER_HANDLE_GATEWAYS)}")
+            continue
+        address = _prompt(f"  {gateway} address", "", non_interactive, ask=ask).strip()
+        if not address:
+            print("  No address given — skipped.")
+            continue
+        handles.append((gateway, address))
+    return handles
+
+
+def _run_owner_identity(
+    values: dict[str, str],
+    existing: dict[str, str],
+    non_interactive: bool = False,
+    ask=None,
+) -> dict[str, str]:
+    """Owner identity sub-step. Returns env updates ({} on failure)."""
+    from colony_sidecar.contacts.config import ContactsConfig
+    from colony_sidecar.contacts.store import SQLiteContactStore
+
+    print("  Colony fails closed on identity: owner-exclusion filters, check-ins")
+    print("  and outreach authorization all need to know who you are. Without an")
+    print("  owner contact, autonomous outreach stays disabled.")
+    print()
+
+    # Make sure ContactsConfig.from_env() resolves to the wizard's DB path.
+    if values.get("COLONY_CONTACTS_DB") and not os.environ.get("COLONY_CONTACTS_DB"):
+        os.environ["COLONY_CONTACTS_DB"] = values["COLONY_CONTACTS_DB"]
+    config = ContactsConfig.from_env()
+
+    async def _get(cid: str):
+        store = SQLiteContactStore(config=config)
+        await store.connect()
+        try:
+            return await store.get(cid)
+        finally:
+            await store.close()
+
+    # Idempotent re-run: keep an owner that still resolves.
+    prior_cid = (
+        existing.get("COLONY_OWNER_CONTACT_ID")
+        or os.environ.get("COLONY_OWNER_CONTACT_ID", "")
+    ).strip()
+    if prior_cid:
+        try:
+            prior = asyncio.run(_get(prior_cid))
+        except Exception:
+            prior = None
+        if prior is not None:
+            print(f"  Owner contact already configured: {prior.display_name} ({prior_cid})")
+            keep = _prompt("  Keep this owner? [Y/n]", "Y", non_interactive, ask=ask)
+            if keep.strip().lower() in ("y", "yes", ""):
+                print(f"  ✅ Owner contact kept: {prior_cid}")
+                return {"COLONY_OWNER_CONTACT_ID": prior_cid}
+        else:
+            print(f"  ⚠️ COLONY_OWNER_CONTACT_ID={prior_cid} no longer resolves — recreating.")
+
+    display_name = _prompt(
+        "  Your name (what Colony calls its owner)",
+        os.environ.get("USER", ""), non_interactive, ask=ask,
+    ).strip() or os.environ.get("USER", "owner")
+    handles = collect_owner_handles(ask=ask, non_interactive=non_interactive)
+
+    async def _create() -> str:
+        store = SQLiteContactStore(config=config)
+        await store.connect()
+        try:
+            return await build_owner_contact(store, display_name, handles)
+        finally:
+            await store.close()
+
+    try:
+        cid = asyncio.run(_create())
+    except Exception as exc:
+        print(f"  ⚠️ Could not create owner contact: {exc}")
+        print("     Set COLONY_OWNER_CONTACT_ID in .env manually once resolved.")
+        return {}
+    print(f"  ✅ Owner contact created: {display_name} ({cid})")
+    if handles:
+        print(f"     Handles: {', '.join(f'{g}:{a}' for g, a in handles)}")
+    return {"COLONY_OWNER_CONTACT_ID": cid}
+
+
+def collect_autonomy_env(
+    existing: dict[str, str],
+    ask=None,
+    non_interactive: bool = False,
+) -> dict[str, str]:
+    """Collect approval-policy, autonomy-gate and home-channel env values.
+
+    Pure prompt-assembly: takes the existing env (so re-runs default to the
+    current values) and an injectable ``ask`` callable; returns the env
+    updates the wizard persists.
+    """
+    updates: dict[str, str] = {}
+
+    # ── Approval policy ──
+    print("  How much should Colony check in before acting?")
+    print("    [1] strict    — every mutating or outbound agent action waits")
+    print("                    for your approval (default, safest)")
+    print("    [2] graduated — only destructive actions and outreach to people")
+    print("                    you haven't authorized wait for you; everything")
+    print("                    else runs with an audit trail")
+    current_policy = (existing.get("COLONY_APPROVAL_POLICY", "") or "").strip().lower()
+    default_choice = "2" if current_policy == "graduated" else "1"
+    choice = _prompt("  Approval policy [1/2]", default_choice, non_interactive, ask=ask).strip().lower()
+    policy = "graduated" if choice in ("2", "graduated") else "strict"
+    updates["COLONY_APPROVAL_POLICY"] = policy
+    print(f"  ✅ Approval policy: {policy}")
+    print()
+
+    # ── Autonomy gates ──
+    def _gate(env_key: str, question: str, blurb: str) -> None:
+        enabled = (existing.get(env_key, "") or "").strip().lower() == "true"
+        default = "Y" if enabled else "N"
+        hint = "[Y/n]" if enabled else "[y/N]"
+        print(f"  {blurb}")
+        answer = _prompt(f"  {question} {hint}", default, non_interactive, ask=ask)
+        on = answer.strip().lower() in ("y", "yes", "true")
+        updates[env_key] = "true" if on else "false"
+        print(f"  {'✅ Enabled' if on else '⚪ Disabled'}")
+        print()
+
+    _gate(
+        "COLONY_ENABLE_INTERNAL_THINKING",
+        "Enable internal thinking?",
+        "Colony periodically reflects and proposes novel work — requires the LLM router.",
+    )
+    _gate(
+        "COLONY_ENABLE_SKILL_SYNTHESIS",
+        "Enable skill synthesis?",
+        "Successful novel agent work is captured as draft skills you approve.",
+    )
+
+    # ── Home channel ──
+    print("  Which platform reaches you for proactive updates?")
+    print(f"  Options: {', '.join(HOME_CHANNEL_PLATFORMS)}, none")
+    print("  ('none' means initiatives queue for your review but are never pushed)")
+    existing_platform = ""
+    existing_chat = ""
+    for p in HOME_CHANNEL_PLATFORMS:
+        if existing.get(f"{p.upper()}_HOME_CHANNEL"):
+            existing_platform, existing_chat = p, existing[f"{p.upper()}_HOME_CHANNEL"]
+            break
+    while True:
+        platform_choice = _prompt(
+            "  Home channel platform", existing_platform or "none", non_interactive, ask=ask
+        ).strip().lower()
+        if platform_choice in HOME_CHANNEL_PLATFORMS or platform_choice in ("", "none"):
+            break
+        print(f"  Invalid platform. Choose one of: {', '.join(HOME_CHANNEL_PLATFORMS)}, none")
+    if platform_choice in ("", "none"):
+        print("  ⚪ No home channel — initiatives will queue but never be pushed")
+    else:
+        default_chat = existing_chat if platform_choice == existing_platform else ""
+        chat_id = _prompt(
+            f"  {platform_choice} channel/contact id", default_chat, non_interactive, ask=ask
+        ).strip()
+        if chat_id:
+            updates[f"{platform_choice.upper()}_HOME_CHANNEL"] = chat_id
+            print(f"  ✅ Home channel: {platform_choice} → {chat_id}")
+        else:
+            print("  ⚪ No channel id — initiatives will queue but never be pushed")
+
+    return updates
+
+
+def run_autonomy_step(
+    values: dict[str, str],
+    existing: dict[str, str],
+    non_interactive: bool = False,
+    ask=None,
+) -> dict[str, str]:
+    """Step 8: Autonomy & approvals.
+
+    Owner identity, approval policy, thinking/synthesis gates, home channel,
+    plus the LLM host-config footgun check. Returns the env updates to merge
+    into the values the wizard persists.
+    """
+    print(_bold("Step 8: Autonomy & approvals"))
+    print()
+
+    updates: dict[str, str] = {}
+    updates.update(_run_owner_identity(values, existing, non_interactive, ask=ask))
+    print()
+    updates.update(collect_autonomy_env({**existing, **values}, ask=ask, non_interactive=non_interactive))
+    print()
+
+    # LLM host config footgun check (baseUrl /v1 + non-empty apiKey).
+    _normalize_persisted_llm_config()
+    return updates
+
+
+# ── Final health check (colony doctor) ──────────────────────────────────────
+
+def _print_doctor_results(results) -> None:
+    """Print doctor CheckResults in the wizard's own style."""
+    icons = {
+        "ok": "✅", "pass": "✅", "passed": "✅",
+        "warn": "⚠️", "warning": "⚠️",
+        "skip": "⚪", "skipped": "⚪",
+        "fail": "❌", "failed": "❌", "error": "❌",
+    }
+    for check in results or []:
+        name = getattr(check, "name", str(check))
+        status = getattr(check, "status", "")
+        status = str(getattr(status, "value", status)).lower()
+        detail = getattr(check, "detail", "") or ""
+        remedy = getattr(check, "remedy", "") or ""
+        icon = icons.get(status, "⚪")
+        line = f"  {icon} {name}"
+        if detail:
+            line += f": {detail}"
+        print(line)
+        if remedy and icon in ("⚠️", "❌"):
+            print(f"     ↳ {remedy}")
+
+
+def _offer_doctor_run(
+    non_interactive: bool = False,
+    ask=None,
+    colony_url: str = "",
+    api_key: str = "",
+) -> None:
+    """Final wizard step: offer to run colony doctor's checks.
+
+    The doctor module may be mid-build, so import lazily and degrade to a
+    pointer at the CLI when unavailable. Server checks self-skip when the
+    sidecar isn't running yet.
+    """
+    print(_bold("Step 12: Health check (colony doctor)"))
+    print()
+    try:
+        from colony_sidecar.doctor import run_doctor
+    except Exception:
+        print("  ⚪ Doctor not available yet — run `colony doctor` after starting the sidecar.")
+        print()
+        return
+
+    answer = _prompt("  Run the doctor now? [Y/n]", "Y", non_interactive, ask=ask)
+    if answer.strip().lower() not in ("y", "yes", ""):
+        print("  ⚪ Skipped — run `colony doctor` any time.")
+        print()
+        return
+
+    print("  Running local checks (server checks skip if the sidecar isn't up)...")
+    try:
+        import inspect
+        base_kwargs: dict = {}
+        if colony_url:
+            base_kwargs["colony_url"] = colony_url
+        if api_key:
+            base_kwargs["api_key"] = api_key
+        results = None
+        # Be tolerant of signature drift while doctor.py is mid-build.
+        for kwargs in (base_kwargs, {}):
+            try:
+                results = run_doctor(**kwargs)
+                break
+            except TypeError:
+                continue
+        if inspect.iscoroutine(results):
+            results = asyncio.run(results)
+        results = list(results or [])
+        if results:
+            _print_doctor_results(results)
+        else:
+            print("  ⚪ Doctor returned no results")
+    except Exception as exc:
+        print(f"  ⚪ Doctor run failed: {exc}")
+        print("  Run `colony doctor` after starting the sidecar.")
+    print()
+
+
 # ── Main wizard ─────────────────────────────────────────────────────────────
 
 def run_init(root_dir: str | None = None, args=None) -> int:
@@ -2188,6 +2639,20 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     print()
 
+    # ── Step 8: Autonomy & approvals ────────────────────────────────────
+
+    # ContactsConfig.from_env() must resolve to the DB the wizard just set up.
+    os.environ["COLONY_CONTACTS_DB"] = str(contacts_db)
+    autonomy_updates = run_autonomy_step(values, existing, non_interactive)
+    if autonomy_updates:
+        values.update(autonomy_updates)
+        _write_env(env_path, values)
+        print(f"  ✅ Updated {env_path}")
+        # Make the new settings visible to everything the wizard starts next.
+        os.environ.update(autonomy_updates)
+
+    print()
+
     # ── Step 9: Self-knowledge seeding ──────────────────────────────────
 
     print(_bold("Step 9: Self-knowledge seeding"))
@@ -2571,5 +3036,13 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print()
         print(f"  Validate your setup: {_green('colony validate')}")
         print()
+
+    # ── Step 12: Health check (colony doctor) ───────────────────────────
+
+    _offer_doctor_run(
+        non_interactive,
+        colony_url=sidecar_url,
+        api_key=values.get("COLONY_API_KEY", ""),
+    )
 
     return 0
