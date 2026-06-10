@@ -76,8 +76,8 @@ class OpenAIAPIEmbeddingProvider(EmbeddingProvider):
             "model": self._config.model_id,
             "input": texts,
         }
-        if self._config.dimensions:
-            payload["dimensions"] = self._config.dimensions
+        # NOTE: do not send "dimensions" — non-matryoshka models (e.g.
+        # Qwen3-Embedding-8B, native 4096) reject it with HTTP 400 on vllm.
 
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(url, json=payload, headers=headers)

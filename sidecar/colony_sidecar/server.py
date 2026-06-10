@@ -277,6 +277,13 @@ async def lifespan(app: FastAPI):
         )
         from colony_sidecar.vector.embedder import make_provider
         provider = make_provider(embed_config)
+        if provider is not None and embed_provider == "openai_api" and hasattr(provider, "configure"):
+            # openai_api needs explicit endpoint config (the text-only path
+            # never called configure(); only the multimodal branch passed these).
+            provider.configure(
+                os.environ.get("COLONY_EMBED_BASE_URL", ""),
+                os.environ.get("COLONY_EMBED_API_KEY", ""),
+            )
         if provider is None:
             # 'skip' provider — embeddings disabled entirely
             logger.info("EmbeddingPipeline skipped (provider=skip) — embeddings disabled")
