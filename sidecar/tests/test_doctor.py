@@ -382,6 +382,7 @@ def _happy_responses(owner="cid-owner-1"):
                                       "latency_ms": 40, "error": None}),
         "/v1/host/embed/health": (200, {"status": "ok", "dims": 384, "latency_ms": 4}),
         "/v1/host/queue/jobs/blocked": (200, []),
+        "/v1/host/queue/jobs/pending?task_type=agent_action&limit=200": (200, []),
         "/v1/host/observations/skills": (200, {
             "domain": "skills",
             "observations": [{"entity_id": "s1", "observed_at": now}],
@@ -499,6 +500,71 @@ def test_server_blocked_jobs_warn(clean_env, monkeypatch):
     result = _by_name(run_server_checks(URL, "key"))["server-blocked-approvals"]
     assert result.status == WARN
     assert "2 job(s) pending owner approval" in result.detail
+
+
+_PENDING_URL = "/v1/host/queue/jobs/pending?task_type=agent_action&limit=200"
+
+
+def _queued_job(minutes_old: int, job_id: str = "j1", hint: str = "agent_sync_github"):
+    posted = datetime.now(timezone.utc) - timedelta(minutes=minutes_old)
+    return {
+        "job_id": job_id,
+        "job_type": "agent_action",
+        "status": "queued",
+        "posted_at": posted.isoformat(),
+        "payload": {"action_hint": hint},
+    }
+
+
+def test_server_worker_liveness_stale_queued_warns(clean_env, monkeypatch):
+    responses = _happy_responses()
+    responses[_PENDING_URL] = (200, [_queued_job(45), _queued_job(5, job_id="j2")])
+    monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
+    result = _by_name(run_server_checks(URL, "key"))["server-worker-liveness"]
+    assert result.status == WARN
+    assert "queue worker appears absent" in result.detail
+    assert "agent_sync_github" in result.detail
+    assert "colony-queue-worker" in result.remedy
+    assert "*/5 * * * *" in result.remedy
+
+
+def test_server_worker_liveness_fresh_queued_passes(clean_env, monkeypatch):
+    responses = _happy_responses()
+    responses[_PENDING_URL] = (200, [_queued_job(5)])
+    monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
+    result = _by_name(run_server_checks(URL, "key"))["server-worker-liveness"]
+    assert result.status == PASS
+    assert "younger than 15" in result.detail
+
+
+def test_server_worker_liveness_ignores_non_queued_statuses(clean_env, monkeypatch):
+    old_blocked = _queued_job(120)
+    old_blocked["status"] = "blocked"
+    old_running = _queued_job(120, job_id="j2")
+    old_running["status"] = "running"
+    responses = _happy_responses()
+    responses[_PENDING_URL] = (200, [old_blocked, old_running])
+    monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
+    result = _by_name(run_server_checks(URL, "key"))["server-worker-liveness"]
+    assert result.status == PASS
+    assert "no QUEUED agent_action jobs" in result.detail
+
+
+def test_server_worker_liveness_queue_unavailable_skips(clean_env, monkeypatch):
+    responses = _happy_responses()
+    responses[_PENDING_URL] = (503, {"detail": "Task queue not initialized"})
+    monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
+    result = _by_name(run_server_checks(URL, "key"))["server-worker-liveness"]
+    assert result.status == SKIP
+
+
+def test_server_worker_liveness_skips_when_server_down(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/health": urllib.error.URLError("connection refused"),
+    }))
+    result = _by_name(run_server_checks(URL, "key"))["server-worker-liveness"]
+    assert result.status == SKIP
+    assert "unreachable" in result.detail
 
 
 def test_server_skills_observations_empty_warns(clean_env, monkeypatch):
