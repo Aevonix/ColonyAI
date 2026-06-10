@@ -69,13 +69,15 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
                 )
             return await call_next(request)
 
+        # Both header styles are in active use: the gateway sends
+        # ``Authorization: Bearer``, the poller/queue-worker scripts send
+        # ``X-API-Key`` (and advertise it to agents in job payloads).
         auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-            if hmac.compare_digest(
-                token.encode("utf-8"), self._api_key.encode("utf-8")
-            ):
-                return await call_next(request)
+        token = auth[7:] if auth.startswith("Bearer ") else request.headers.get("X-API-Key", "")
+        if token and hmac.compare_digest(
+            token.encode("utf-8"), self._api_key.encode("utf-8")
+        ):
+            return await call_next(request)
 
         return JSONResponse(
             status_code=401,
