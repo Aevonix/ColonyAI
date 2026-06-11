@@ -531,7 +531,7 @@ def _create_or_update_autonomy_job(interval: str = "every 15m", client: Optional
                 prompt=_AUTONOMY_PROMPT,
                 schedule=interval,
                 name=_AUTONOMY_JOB_NAME,
-                deliver="origin",
+                deliver="whatsapp",  # home/ops channel, not the owner DM
                 enabled_toolsets=["web", "terminal", "file", "send_message", "colony"],
             )
             if client:
@@ -600,7 +600,7 @@ def _create_or_update_autonomy_job(interval: str = "every 15m", client: Optional
                 "last_status": None,
                 "last_error": None,
                 "last_delivery_error": None,
-                "deliver": "origin",
+                "deliver": "whatsapp",  # home/ops channel, not the owner DM
                 "origin": None,
                 "enabled_toolsets": ["web", "terminal", "file", "send_message", "colony"],
                 "workdir": None,

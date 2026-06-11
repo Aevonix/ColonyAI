@@ -218,6 +218,59 @@ def live_checks():
         warn("no persisted Colony LLM config (.colony-llm-config.json) — using defaults")
 
 # --------------------------------------------------------------------------
+def config_checks():
+    """Validate the durable, out-of-repo machine config this integration relies on
+    (these survive Hermes updates but aren't in the repo, so the doctor is their
+    safety net): SOUL doctrine, colony LLM, model output/context window, cron
+    delivery routing, and the scheduled launchd jobs."""
+    print("\n[config & durability]")
+    import subprocess as _sp
+    # SOUL.md colony doctrine
+    try:
+        s = open(os.path.join(HOME, ".hermes", "SOUL.md"), encoding="utf-8").read()
+        miss = [m for m, present in (
+            ("memory-as-self", ("my own mind" in s or "my own memory" in s)),
+            ("authoritative-time", "Current Time" in s),
+            ("outreach-governance", ("never spam" in s.lower() or "approval first" in s.lower())),
+        ) if not present]
+        (warn if miss else ok)(f"SOUL doctrine: {'missing ' + ', '.join(miss) if miss else 'memory-as-self + time + outreach all present'}")
+    except Exception:
+        warn("SOUL.md not found")
+    # config.yaml: colony LLM + model output/context
+    try:
+        from hermes_cli.config import load_config, cfg_get
+        c = load_config()
+        col = cfg_get(c, "plugins", "colony", default={}) or {}
+        large = str(col.get("llm_large", "")).lower()
+        if col.get("llm_provider") and "embed" not in large:
+            ok(f"colony LLM configured (provider={col.get('llm_provider')}, model={col.get('llm_large')})")
+        else:
+            warn("plugins.colony LLM not explicitly configured (relies on auto-detect)")
+        mt = cfg_get(c, "model", "max_tokens", default=None)
+        cl = cfg_get(c, "model", "context_length", default=None)
+        if mt:
+            ok(f"model output cap set ({mt}); context_length {cl}")
+        else:
+            warn("model.max_tokens unset — a reasoning model can burn the budget on reasoning and truncate replies")
+    except Exception as e:
+        warn(f"config.yaml check skipped: {e}")
+    # cron: colony jobs should not deliver to the owner DM (origin)
+    try:
+        jobs = (json.load(open(os.path.join(HOME, ".hermes", "cron", "jobs.json"))) or {}).get("jobs", [])
+        bad = [j.get("name") for j in jobs
+               if "olony" in (j.get("name") or "") and j.get("deliver") == "origin"]
+        (warn if bad else ok)(f"cron delivery: {'these colony jobs still hit the owner DM -> ' + str(bad) if bad else 'colony jobs route off the owner DM'}")
+    except Exception:
+        pass
+    # launchd scheduled jobs
+    for label in ("ai.aevonix.colony-doctor", "ai.hermes.activity-monitor"):
+        try:
+            r = _sp.run(["launchctl", "list", label], capture_output=True, text=True, timeout=5)
+            (ok if r.returncode == 0 else warn)(f"launchd {label}: {'loaded' if r.returncode == 0 else 'NOT loaded'}")
+        except Exception:
+            pass
+
+
 def main():
     print("=" * 64)
     print("Colony Doctor")
@@ -240,6 +293,9 @@ def main():
 
     print("\n--- LIVE checks ---")
     live_checks()
+
+    print("\n--- CONFIG & durability checks ---")
+    config_checks()
 
     print("\n" + "=" * 64)
     print(f"RESULT: {len(OKS)} ok, {len(WARNS)} warn, {len(FAILS)} fail"

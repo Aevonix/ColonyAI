@@ -1093,7 +1093,8 @@ def _install_hermes_addons(hermes_home: Path, ops_src: Path) -> None:
     scripts_dst = hermes_home / "scripts"
     scripts_dst.mkdir(parents=True, exist_ok=True)
     for f in ("colony-doctor.py", "colony-doctor-cron.sh",
-              "hermes-gateway-restart-runner.sh", "pre-restart-summary.py"):
+              "hermes-gateway-restart-runner.sh", "pre-restart-summary.py",
+              "aeva-activity-monitor.py"):
         src = ops_src / f
         if src.exists():
             shutil.copy2(src, scripts_dst / f)
@@ -1102,16 +1103,42 @@ def _install_hermes_addons(hermes_home: Path, ops_src: Path) -> None:
             except OSError:
                 pass
     print(f"    ✅ Ops add-ons      →  {scripts_dst}")
-    plist = ops_src / "ai.aevonix.colony-doctor.plist"
-    if sys.platform == "darwin" and plist.exists():
-        la = Path.home() / "Library" / "LaunchAgents"
-        if la.exists():
-            shutil.copy2(plist, la / plist.name)
-            print(f"    ✅ Doctor schedule  →  {la / plist.name}")
-            print(f"       enable: launchctl bootstrap gui/$(id -u) {la / plist.name}")
-    elif plist.exists():
-        print("    ℹ️  Schedule the doctor via cron, e.g.:")
+
+    if sys.platform != "darwin":
+        print("    ℹ️  On non-macOS, schedule the doctor via cron:")
         print("       0 */6 * * * ~/.hermes/scripts/colony-doctor-cron.sh")
+        return
+    la = Path.home() / "Library" / "LaunchAgents"
+    if not la.exists():
+        return
+    import plistlib
+    venv_py = str(hermes_home / "hermes-agent" / "venv" / "bin" / "python3")
+    logs = hermes_home / "logs"
+    # Generate launchd plists with THIS host's paths (portable; not copied hardcoded).
+    plists = {
+        "ai.aevonix.colony-doctor": {
+            "ProgramArguments": ["/bin/bash", str(scripts_dst / "colony-doctor-cron.sh")],
+            "RunAtLoad": True, "StartInterval": 21600,
+            "StandardOutPath": str(logs / "colony-doctor.out"),
+            "StandardErrorPath": str(logs / "colony-doctor.err"),
+        },
+        "ai.hermes.activity-monitor": {
+            "ProgramArguments": [venv_py, str(scripts_dst / "aeva-activity-monitor.py")],
+            "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 10,
+            "StandardOutPath": str(logs / "activity-monitor.out.log"),
+            "StandardErrorPath": str(logs / "activity-monitor.err.log"),
+        },
+    }
+    for label, body in plists.items():
+        body["Label"] = label
+        dst = la / f"{label}.plist"
+        try:
+            with open(dst, "wb") as fh:
+                plistlib.dump(body, fh)
+            print(f"    ✅ launchd          →  {dst.name}")
+            print(f"       enable: launchctl bootstrap gui/$(id -u) {dst}")
+        except Exception as exc:
+            print(f"    ⚠️  launchd {label} skipped: {exc}")
 
 
 def _run_colony_doctor(hermes_home: Path) -> None:
