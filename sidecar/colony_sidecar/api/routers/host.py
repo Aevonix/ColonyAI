@@ -1758,6 +1758,42 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.debug("context_assemble engagement failed: %s", exc)
 
+    # --- Communication landscape (cross-channel awareness) ---
+    if _comms_log is not None and _contacts_store is not None and contact_id:
+        try:
+            _lc = await _contacts_store.get(contact_id)
+            if _lc is not None:
+                _bits = []
+                _per = _comms_log.last_per_channel(contact_id)
+                if _per:
+                    _chs = ", ".join(f"{ch} {str(v['ts'])[:10]}" for ch, v in _per.items())
+                    _bits.append(f"Channels used: {_chs}.")
+                _lo = _comms_log.last_outbound(contact_id)
+                if _lo:
+                    _bits.append(f"I last reached out via {_lo['channel']} on {str(_lo['ts'])[:10]}.")
+                if _commitment_store is not None:
+                    try:
+                        _cm = _commitment_store.list(person_id=contact_id, status=["pending"], limit=5)
+                        if _cm:
+                            _descs = [c.get("description", "") for c in _cm if c.get("description")]
+                            if _descs:
+                                _bits.append("Open follow-ups: " + "; ".join(_descs[:3]) + ".")
+                    except Exception:
+                        pass
+                if _bits:
+                    from colony_sidecar.identity import get_owner_contact_id
+                    _is_owner = (get_owner_contact_id() == contact_id)
+                    if not _is_owner:
+                        _bits.append("Proactively reaching out to them needs Marc's approval first.")
+                    sections.append(ContextSection(
+                        id="colony-comms-landscape",
+                        title="Communication landscape",
+                        body=" ".join(_bits),
+                        priority=83,
+                    ))
+        except Exception as exc:
+            logger.debug("context_assemble comms landscape failed: %s", exc)
+
     # --- Shared Facts ---
     if _facts_store is not None and contact_id:
         try:
@@ -2063,6 +2099,23 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                         body.context.contact_id, _score)
             except Exception:
                 logger.debug("relationship score update failed", exc_info=True)
+            # Cross-channel communication ledger: record this inbound exchange.
+            try:
+                if _comms_log is not None:
+                    _channel = (body.context.channel_id or "direct")
+                    try:
+                        _hs = await _contacts_store.get_handles(body.context.contact_id)
+                        _prim = next((h for h in _hs if getattr(h, "is_primary", False)),
+                                     _hs[0] if _hs else None)
+                        if _prim is not None:
+                            _channel = getattr(_prim, "gateway", _channel)
+                    except Exception:
+                        pass
+                    _comms_log.log(body.context.contact_id, channel=_channel, direction="in",
+                                   summary=(body.summary or "")[:300],
+                                   session_id=body.context.session_id or "")
+            except Exception:
+                logger.debug("comms ledger inbound log failed", exc_info=True)
     except Exception:
         logger.debug("record_interaction failed", exc_info=True)
 
@@ -3116,6 +3169,14 @@ _engagement_store = None
 def set_engagement_store(store):
     global _engagement_store
     _engagement_store = store
+
+
+_comms_log = None
+
+
+def set_comms_log(store):
+    global _comms_log
+    _comms_log = store
 
 
 _tom_extractor = None
@@ -6092,10 +6153,88 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
         })
     except Exception:
         logger.debug("journal outreach.sent failed", exc_info=True)
+    try:
+        if _comms_log is not None and getattr(body, "contact_id", None):
+            _comms_log.log(body.contact_id, channel=body.channel or "unknown",
+                           direction="out", summary=(body.reason or "")[:300])
+    except Exception:
+        logger.debug("comms ledger outbound log failed", exc_info=True)
     return RecordOutreachResponse(
         recorded_at=now.isoformat(),
         last_agent_outreach_at=outreach_at,
     )
+
+
+@router.get("/contacts/{contact_id}/landscape")
+async def contact_landscape(contact_id: str) -> dict:
+    """Full cross-channel communication landscape + outreach recommendation for a
+    contact: channels used, when we last talked (each way), open follow-ups,
+    cadence, and whether/how/when to (re)initiate under the owner-approval policy."""
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="contacts store not wired")
+    contact = await _contacts_store.get(contact_id)
+    if contact is None:
+        raise HTTPException(status_code=404, detail="contact not found")
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc)
+
+    def _p(ts):
+        try:
+            d = _dt.fromisoformat(str(ts).replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=_tz.utc)
+        except Exception:
+            return None
+
+    cadence_days = None
+    overdue = False
+    days_since = None
+    first = _p(getattr(contact, "first_seen_at", None))
+    last = _p(getattr(contact, "last_interaction_at", None))
+    ic = int(getattr(contact, "interaction_count", 0) or 0)
+    if last is not None:
+        days_since = (now - last).total_seconds() / 86400.0
+        if first is not None and ic > 1:
+            cadence_days = max(0.5, min(90.0, (last - first).total_seconds() / 86400.0 / (ic - 1)))
+            overdue = days_since > max(2.0, cadence_days * 1.5)
+
+    channels = []
+    try:
+        for h in await _contacts_store.get_handles(contact_id):
+            channels.append({"gateway": getattr(h, "gateway", ""), "address": getattr(h, "address", ""),
+                             "is_primary": getattr(h, "is_primary", False)})
+    except Exception:
+        pass
+
+    followups = []
+    if _commitment_store is not None:
+        try:
+            for c in _commitment_store.list(person_id=contact_id, status=["pending"], limit=10):
+                if c.get("description"):
+                    followups.append(c["description"])
+        except Exception:
+            pass
+
+    per_channel = _comms_log.last_per_channel(contact_id) if _comms_log else {}
+    last_out = _comms_log.last_outbound(contact_id) if _comms_log else None
+    history = _comms_log.history(contact_id, limit=10) if _comms_log else []
+
+    from colony_sidecar.identity import get_owner_contact_id
+    is_owner = (get_owner_contact_id() == contact_id)
+    primary_ch = next((c["gateway"] for c in channels if c["is_primary"]),
+                      channels[0]["gateway"] if channels else "")
+    from colony_sidecar.contacts.comms import evaluate_outreach
+    decision = evaluate_outreach(contact, is_owner=is_owner,
+                                 last_outbound_ts=(last_out or {}).get("ts"),
+                                 cadence_days=cadence_days, overdue=overdue,
+                                 open_followups=followups, suggested_channel=primary_ch, now=now)
+    return {
+        "contact_id": contact_id, "display_name": getattr(contact, "display_name", None),
+        "is_owner": is_owner, "trust_tier": getattr(contact, "trust_tier", None),
+        "relationship_score": getattr(contact, "relationship_score", None),
+        "channels": channels, "cadence_days": cadence_days, "days_since_last": days_since,
+        "overdue": overdue, "last_per_channel": per_channel, "last_outbound": last_out,
+        "open_followups": followups, "recent_history": history, "outreach": decision,
+    }
 
 
 @router.post("/session-report", response_model=SessionReportResponse)

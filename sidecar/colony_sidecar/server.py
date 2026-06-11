@@ -70,6 +70,7 @@ from colony_sidecar.api.routers.host import (
     set_affect_store,
     set_facts_store,
     set_engagement_store,
+    set_comms_log,
     set_pattern_store,
     set_surprise_store,
     set_tom_extractor,
@@ -437,6 +438,11 @@ async def lifespan(app: FastAPI):
         engagement_store = EngagementStore(db_path=engagement_db)
         set_engagement_store(engagement_store)
         logger.info("EngagementStore initialized (db=%s)", engagement_db)
+
+        from colony_sidecar.contacts.comms import CommsLog
+        comms_log = CommsLog(db_path=state_dir / "colony-comms.db")
+        set_comms_log(comms_log)
+        logger.info("CommsLog initialized")
     except Exception as exc:
         logger.warning("Theory of Mind init failed: %s", exc)
 

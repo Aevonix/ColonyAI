@@ -221,6 +221,20 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "required": [],
         },
     },
+    {
+        "name": "colony_outreach_check",
+        "description": (
+            "Before reaching out to someone, check our full communication landscape with "
+            "them: channels we use, when we last talked each way, open follow-ups, their "
+            "cadence, and a recommendation on whether/how/when to (re)initiate \u2014 including "
+            "whether it needs Marc's approval. Use this before any proactive message."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"contact_id": {"type": "string", "description": "The contact's ID"}},
+            "required": ["contact_id"],
+        },
+    },
 ]
 
 
@@ -258,6 +272,17 @@ class _ToolDispatcher:
     def _handle_colony_list_goals(self, args: dict) -> str:
         goals = self._client.list_goals(status=args.get("status", "active"))
         return json.dumps({"goals": goals})
+
+    def _handle_colony_outreach_check(self, args: dict) -> str:
+        cid = args.get("contact_id", "")
+        if not cid:
+            return json.dumps({"error": "contact_id required"})
+        try:
+            resp = self._client.get(f"/v1/host/contacts/{cid}/landscape", timeout=8)
+            resp.raise_for_status()
+            return json.dumps(resp.json())
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
 
     def _handle_colony_get_briefing(self, args: dict) -> str:
         try:

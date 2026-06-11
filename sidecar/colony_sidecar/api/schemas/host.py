@@ -1561,6 +1561,7 @@ class RecordOutreachRequest(BaseModel):
         default_factory=lambda: _os.environ.get("COLONY_AGENT_NAME", "agent")
     )
     channel: str = "whatsapp"
+    contact_id: Optional[str] = None
     reason: Optional[str] = None
 
 
