@@ -264,8 +264,8 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "properties": {
                 "worker_id": {
                     "type": "string",
-                    "description": "Optional worker node ID (default: COLONY_WORKER_NODE_ID or agent-worker)",
-                    "default": "agent-worker",
+                    "description": "Optional worker node ID (default: aeva-worker)",
+                    "default": "aeva-worker",
                 },
                 "capabilities": {
                     "type": "array",
@@ -385,6 +385,43 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "required": ["initiative_id", "action"],
         },
     },
+    # v0.21.0 — temporal timeline
+    {
+        "name": "colony_timeline",
+        "description": (
+            "Recall Aeva's timeline of past events — conversations, outreach, "
+            "initiatives, tasks — ordered by time. Use to answer 'what happened "
+            "recently', 'what's been going on with <person>', 'what have I done "
+            "since yesterday', or to ground yourself in recent history. Returns a "
+            "human-readable digest plus structured events."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "since": {
+                    "type": "string",
+                    "description": "Window: relative ('6h','24h','7d','2w'), "
+                                   "'today'/'yesterday', or an ISO date. Default '24h'.",
+                    "default": "24h",
+                },
+                "contact_id": {
+                    "type": "string",
+                    "description": "Only events involving this contact (optional).",
+                },
+                "types": {
+                    "type": "string",
+                    "description": "Comma-separated event types to include, e.g. "
+                                   "'conversation.turn,outreach.sent' (optional).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max events (default 50).",
+                    "default": 50,
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -420,6 +457,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
         self._session_id = ""
         self._cached_context: str = ""
+        self._prefetch_thread = None  # background sync prefetch (v0.3.0)
         self._prefetch_ready = asyncio.Event()
         self._prefetch_ready.set()
         self._platform = "cli"
@@ -536,31 +574,135 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             "reference frame. If data appears stale, say so — do not fabricate a narrative to make it seem current."
         )
 
+    # -- Authoritative current time (pre_llm_call hook) ------------------------
+
+    def _current_time_line(self) -> str:
+        """Local, no-network current date/time in the agent's home timezone."""
+        import json as _json
+        from datetime import datetime, timezone as _tz
+        try:
+            from zoneinfo import ZoneInfo
+        except Exception:
+            ZoneInfo = None
+        tz = os.environ.get("COLONY_AGENT_TIMEZONE", "")
+        if not tz:
+            # Read the agent timezone from the SAME file the sidecar writes. The
+            # sidecar stores it at $COLONY_STATE_DIR/temporal.json (default
+            # ~/.colony/data/temporal.json); the gateway process does not export
+            # COLONY_STATE_DIR, so probe the known locations in order.
+            _candidates = []
+            _sd = os.environ.get("COLONY_STATE_DIR")
+            if _sd:
+                _candidates.append(os.path.join(_sd, "temporal.json"))
+            _candidates += [
+                os.path.expanduser("~/.colony/data/temporal.json"),
+                os.path.expanduser("~/.colony/temporal.json"),
+            ]
+            for _c in _candidates:
+                try:
+                    tz = (_json.load(open(_c)).get("agent_timezone") or "")
+                    if tz:
+                        break
+                except Exception:
+                    continue
+        now = datetime.now(_tz.utc)
+        if tz and ZoneInfo is not None:
+            try:
+                now = now.astimezone(ZoneInfo(tz))
+            except Exception:
+                pass
+        hm = now.strftime("%I:%M %p").lstrip("0")
+        return f"{now.strftime('%A, %B %d, %Y')}, {hm} {now.strftime('%Z') or 'UTC'}"
+
+    def inject_current_time(self, messages: list) -> list:
+        """pre_llm_call hook: inject the authoritative current time as a system
+        message so the model never anchors on the (cached, stale) session-start
+        date in long-running sessions. Generic — any Colony agent."""
+        try:
+            line = self._current_time_line()
+        except Exception:
+            return messages
+        note = {
+            "role": "system",
+            "content": (
+                f"⏰ CURRENT DATE & TIME, right now: {line}. This is TODAY — greet and "
+                "reason from THIS. Any 'Conversation started' date in your prompt is only "
+                "when this long-running session began (often days ago), NOT today."
+            ),
+        }
+        result = list(messages)
+        if result and isinstance(result[-1], dict) and result[-1].get("role") == "user":
+            result.insert(-1, note)
+        else:
+            result.append(note)
+        return result
+
+    def resolve_contact(self, platform: str, user_id: str) -> None:
+        """Resolve the real Colony contact from the message sender so per-contact
+        memory/affect/facts engage (instead of 'default'). Called from the
+        pre_llm_call hook (the lifecycle hook that carries the sender). Cached per
+        sender so it only hits the sidecar once per sender per session."""
+        if not user_id:
+            return
+        if getattr(self, "_resolved_for", None) == user_id:
+            return  # already attempted resolution for this sender
+        self._resolved_for = user_id
+        try:
+            with httpx.Client(timeout=4) as client:
+                resp = client.get(
+                    f"{self.sidecar_url}/v1/host/contacts/resolve",
+                    headers=self._headers(),
+                    params={"gateway": platform or "", "address": user_id},
+                )
+                if resp.status_code == 200:
+                    cid = (resp.json() or {}).get("contact_id")
+                    if cid:
+                        self._contact_id = cid
+                        logger.debug("Colony resolved contact %s for %s:%s", cid, platform, user_id)
+        except Exception as exc:
+            self._resolved_for = None  # transient error -> allow retry next turn
+            logger.debug("Colony contact resolve failed: %s", exc)
+
     # -- Prefetch (context injection) ------------------------------------------
 
-    async def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Recall relevant context from Colony for the upcoming turn."""
-        if self._cached_context:
-            return self._cached_context
+    def prefetch(self, query: str, *, session_id: str = "") -> str:
+        """Recall relevant Colony context for the upcoming turn.
 
+        SYNCHRONOUS by Hermes contract — MemoryManager.prefetch_all() calls this
+        synchronously and expects a string. (This was previously an ``async def``,
+        so prefetch_all received an un-awaited coroutine and silently dropped ALL
+        injected context — memories, temporal, affect, facts. That is the
+        "relevant info isn't injected live" bug.) If queue_prefetch() already
+        fetched in the background for this turn, return that; otherwise fetch now.
+        """
+        t = self._prefetch_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=9.0)
+        if self._cached_context:
+            ctx = self._cached_context
+            self._cached_context = ""  # one-shot per turn
+            return ctx
+        return self._prefetch_sync(query, session_id=session_id)
+
+    def _prefetch_sync(self, query: str, *, session_id: str = "") -> str:
+        """Blocking /context/assemble call → formatted context string."""
         try:
-            client = self._get_async_client()
-            headers = self._headers()
-            resp = await client.post(
-                f"{self.sidecar_url}/v1/host/context/assemble",
-                headers=headers,
-                json={
-                    "identity": {"host_id": "hermes"},
-                    "context": {
-                        "session_id": session_id or self._session_id,
-                        "contact_id": self._contact_id,
+            with httpx.Client(timeout=10) as client:
+                resp = client.post(
+                    f"{self.sidecar_url}/v1/host/context/assemble",
+                    headers=self._headers(),
+                    json={
+                        "identity": {"host_id": "hermes"},
+                        "context": {
+                            "session_id": session_id or self._session_id,
+                            "contact_id": self._contact_id,
+                        },
+                        "incoming_message": {"role": "user", "content": query},
+                        "include_initiatives": True,
                     },
-                    "incoming_message": {"role": "user", "content": query},
-                    "include_initiatives": True,  # v0.13.0
-                },
-                timeout=10,
-            )
-            resp.raise_for_status()
+                )
+                resp.raise_for_status()
+                data = resp.json()
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code
             if code in (401, 403):
@@ -571,33 +713,23 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         except (httpx.HTTPError, OSError) as exc:
             logger.debug("Colony prefetch failed: %s", exc)
             return ""
-
-        data = resp.json()
         sections = data.get("sections", [])
-        if not sections:
-            return ""
-
-        return self._format_sections(sections)
+        return self._format_sections(sections) if sections else ""
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        """Start a background prefetch for the next turn."""
+        """Kick off a background (thread) prefetch for the upcoming turn so the
+        synchronous prefetch() can return instantly with the cached result."""
         self._cached_context = ""
-        self._prefetch_ready.clear()
 
-        async def _fetch():
+        def _bg():
             try:
-                self._cached_context = await self.prefetch(query, session_id=session_id)
-            finally:
-                self._prefetch_ready.set()
+                self._cached_context = self._prefetch_sync(query, session_id=session_id)
+            except Exception:
+                self._cached_context = ""
 
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_fetch())
-        except RuntimeError:
-            self._cached_context = asyncio.get_event_loop().run_until_complete(
-                self.prefetch(query, session_id=session_id)
-            )
-            self._prefetch_ready.set()
+        t = threading.Thread(target=_bg, daemon=True)
+        self._prefetch_thread = t
+        t.start()
 
     # -- Turn sync -------------------------------------------------------------
 
@@ -832,6 +964,32 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
+    def _tool_colony_timeline(self, args: dict) -> str:
+        params = {"since": args.get("since", "24h"), "limit": args.get("limit", 50)}
+        if args.get("contact_id"):
+            params["contact_id"] = args["contact_id"]
+        if args.get("types"):
+            params["types"] = args["types"]
+        try:
+            with httpx.Client(timeout=8) as client:
+                resp = client.get(
+                    f"{self.sidecar_url}/v1/host/timeline",
+                    headers=self._headers(),
+                    params=params,
+                    timeout=8,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                # Return the agent-friendly digest up front, plus structured events.
+                return json.dumps({
+                    "digest": data.get("digest", ""),
+                    "count": data.get("count", 0),
+                    "since": data.get("since"),
+                    "events": data.get("events", []),
+                })
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
     # -- v0.13.0 task queue tool handlers --------------------------------------
 
     def _tool_colony_list_pending_tasks(self, args: dict) -> str:
@@ -855,7 +1013,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                     f"{self.sidecar_url}/v1/host/queue/jobs/claim",
                     headers=self._headers(),
                     json={
-                        "node_id": args.get("worker_id") or os.environ.get("COLONY_WORKER_NODE_ID", "agent-worker"),
+                        "node_id": args.get("worker_id", "aeva-worker"),
                         "capabilities": args.get("capabilities", ["agent_action"]),
                     },
                     timeout=5,
@@ -1039,14 +1197,17 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             except Exception:
                 pass
 
-    async def shutdown(self) -> None:
-        """Clean up."""
+    def shutdown(self) -> None:
+        """Clean up. SYNCHRONOUS by Hermes contract (MemoryManager calls this
+        synchronously; an async def here was never awaited)."""
         self._cached_context = ""
         if self._sync_thread and self._sync_thread.is_alive():
             self._sync_thread.join(timeout=3.0)
-        if self._async_client:
-            await self._async_client.aclose()
-            self._async_client = None
+        t = self._prefetch_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=3.0)
+        # _async_client (if ever created) closes on GC; nothing to await here.
+        self._async_client = None
 
     # -- Internals -------------------------------------------------------------
 

@@ -422,7 +422,7 @@ _AUTONOMY_JOB_NAME = "Colony Autonomy Bridge"
 _AUTONOMY_JOB_ID: Optional[str] = None  # cached after lookup
 
 _AUTONOMY_PROMPT = """\
-You are the Colony Autonomy Bridge — the owner's autonomous agent. You act ON THEIR
+You are the Colony Autonomy Bridge — Marc's autonomous agent. You act ON HIS
 BEHALF, not as a reminder service. You consume initiatives from the Colony
 sidecar (http://127.0.0.1:7777) and execute them directly.
 
@@ -431,21 +431,21 @@ YOUR JOB EACH CYCLE:
 2. For each initiative, classify its type and EXECUTE (don't suggest):
 
    RELATIONSHIP:
-   - The owner hasn't contacted someone in a while.
+   - Marc hasn't contacted someone in a while.
    - Fetch their briefing via colony_get_briefing to get context.
-   - Draft a warm, context-aware outreach message IN THE OWNER'S VOICE.
-   - SEND IT DIRECTLY TO THE CONTACT via send_message. Do NOT send it to the owner.
+   - Draft a warm, context-aware outreach message IN MARC'S VOICE.
+   - SEND IT DIRECTLY TO THE CONTACT via send_message. Do NOT send it to Marc.
    - Only skip sending if: (a) contact channel is unknown, (b) content feels
-     wrong — in which case, note it for the owner's review.
+     wrong — in which case, note it for Marc's review.
 
    FOLLOW_UP / TASK:
    - A goal needs action. Use available tools to complete it.
    - If you can finish it, do so and mark it complete.
-   - If blocked, note the blocker for the owner's review.
+   - If blocked, note the blocker for Marc's review.
 
    SCHEDULING:
    - A commitment is due soon. If you can schedule it (calendar, meeting),
-     do so. Otherwise, draft the request and note it for the owner.
+     do so. Otherwise, draft the request and note it for Marc.
 
 3. After handling all initiatives, report ONLY:
    - Actions taken autonomously (messages sent, tasks completed, etc.)
@@ -453,15 +453,15 @@ YOUR JOB EACH CYCLE:
    - Any errors encountered
 
 RULES:
-- You ARE the owner's agent. Act with his voice and judgment. Do not ask permission
+- You ARE Marc's agent. Act with his voice and judgment. Do not ask permission
   for obvious, low-risk actions (e.g., sending a "how are you" to a friend).
 - Stay silent (start your response with [SILENT]) if there are no initiatives
   and nothing to report.
 - Do not hallucinate contact details. Always use Colony's data.
-- NEVER send reminders TO the owner. They do not want to be pinged with "you should
-  text Jordan." Either send the message FOR them, or report that you couldn't.
+- NEVER send reminders TO Marc. He does not want to be pinged with "you should
+  text Bradley." Either send the message FOR him, or report that you couldn't.
 - If sending a message, confirm the recipient channel and send it. Do not
-  paraphrase the message back to the owner unless they ask.
+  paraphrase the message back to Marc unless he asks.
 """
 
 
@@ -703,6 +703,10 @@ def _detect_ollama_models() -> dict[str, str] | None:
         with urllib.request.urlopen(req, timeout=2) as resp:
             data = json.loads(resp.read().decode())
         models = [m["name"] for m in data.get("models", [])]
+        # Never use an embedding-only model as a chat/completion tier — Colony's
+        # LLM tiers must be generative. (nomic-embed-text et al. have no size hint
+        # and would otherwise sort to the top and become the "large" tier.)
+        models = [m for m in models if "embed" not in m.lower()]
         if not models:
             return None
         # Prefer larger models for LARGE tier if name hints at size
@@ -796,7 +800,24 @@ def register(ctx):
     """Register the Colony general plugin with Hermes."""
     global _colony_client, _event_subscriber, _tool_dispatcher, _contact_id
 
-    config = ctx.config.get("plugins", {}).get("colony", {})
+    # PluginContext has no `.config` in this Hermes version, so load config the
+    # same way the (working) colony-memory provider does: from Hermes config.yaml.
+    # This makes the plugin self-sufficient and gives it the real sidecar api_key
+    # (the gateway process env does not export COLONY_API_KEY).
+    config = {}
+    try:
+        from hermes_cli.config import load_config, cfg_get
+        _hc = load_config()
+        config = dict(cfg_get(_hc, "plugins", "colony", default={}) or {})
+        _mem = cfg_get(_hc, "memory", "config", default={}) or {}
+        for _k, _v in _mem.items():          # fill gaps from the memory provider block
+            config.setdefault(_k, _v)
+    except Exception:
+        pass
+    # Honour an explicit ctx.config if a future Hermes build provides one.
+    _raw_cfg = getattr(ctx, "config", None)
+    if isinstance(_raw_cfg, dict):
+        config.update(_raw_cfg.get("plugins", {}).get("colony", {}) or {})
     url = config.get("url", os.environ.get("COLONY_URL", "http://127.0.0.1:7777"))
     api_key = config.get("api_key", os.environ.get("COLONY_API_KEY", ""))
     contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
@@ -814,45 +835,134 @@ def register(ctx):
             name=schema["name"],
             toolset="colony",
             schema=schema,
-            handler=lambda name, args, _client=_colony_client: _tool_dispatcher.dispatch(name, args),
+            # Hermes invokes tool handlers as handler(args, **context) — args is
+            # the first positional, the tool NAME is NOT passed, and context
+            # kwargs (task_id, session_id, tool_call_id, ...) follow. Bind the
+            # name from the schema and absorb **kwargs so every Colony tool works.
+            handler=lambda args=None, _name=schema["name"], **kwargs: _tool_dispatcher.dispatch(_name, args or {}),
         )
 
-    # 2. Register slash commands
-    for cmd_name, handler in SLASH_COMMANDS.items():
-        ctx.register_slash_command(
-            f"colony {cmd_name}",
-            lambda args, h=handler, c=_colony_client: h(c, args),
-        )
+    # 2. Register slash commands. The method name varies across Hermes versions
+    # (register_command vs register_slash_command); resolve whichever exists and
+    # never let a slash-registration hiccup abort the rest of register() (which
+    # still has hooks to install below).
+    _reg_cmd = getattr(ctx, "register_command", None) or getattr(
+        ctx, "register_slash_command", None
+    )
+    if _reg_cmd is not None:
+        for cmd_name, handler in SLASH_COMMANDS.items():
+            try:
+                _reg_cmd(
+                    f"colony {cmd_name}",
+                    lambda args, h=handler, c=_colony_client: h(c, args),
+                )
+            except Exception as _e:
+                logger.debug("colony: slash command '%s' skipped: %s", cmd_name, _e)
+    else:
+        logger.debug("colony: no slash-command registration API on this Hermes build")
 
-    # 3. Register pre_llm_call hook for proactive events
-    async def _pre_llm_call(messages: list, **kwargs) -> list:
+    # 3-5. Lifecycle hooks. Hermes (this build) invokes hook callbacks
+    #      SYNCHRONOUSLY as cb(**kwargs); a pre_llm_call hook may return a str or
+    #      {"context": str} that gets injected into the user message. All args are
+    #      keyword (there is no `messages` positional). Hook names are validated
+    #      against VALID_HOOKS, so we register only names this Hermes supports.
+    def _read_events_sync():
+        """Best-effort snapshot of the event cache without awaiting its async
+        lock (we read the plain dict; a rare torn read just skips an event)."""
+        out = []
+        try:
+            cache = getattr(_event_subscriber, "cache", None)
+            store = getattr(cache, "_events", None)
+            if isinstance(store, dict):
+                for evts in store.values():
+                    out.extend(evts)
+                out.sort(key=lambda e: getattr(e, "seq", 0), reverse=True)
+        except Exception:
+            pass
+        return out
+
+    def _resolve_contact_id(platform, sender):
+        """Resolve the sender to a real Colony contact id (cached per sender)."""
+        if not sender:
+            return _session_state.get("contact_id") or _contact_id
+        if _session_state.get("_resolved_for") == sender and _session_state.get("contact_id"):
+            return _session_state["contact_id"]
+        cid = _session_state.get("contact_id") or _contact_id
+        try:
+            resp = _colony_client.get(
+                "/v1/host/contacts/resolve",
+                params={"gateway": platform or "", "address": sender},
+                timeout=4,
+            )
+            if resp.status_code == 200:
+                cid = (resp.json() or {}).get("contact_id") or cid
+            _session_state["_resolved_for"] = sender
+        except Exception:
+            pass
+        _session_state["contact_id"] = cid
+        return cid
+
+    def _pre_llm_call(**kwargs):
+        # Capture session metadata (used by turn journaling) + resolve contact.
+        _session_state["session_id"] = str(kwargs.get("session_id", "") or "")
+        _session_state["platform"] = str(kwargs.get("platform", "") or "")
+        _session_state["sender_id"] = str(kwargs.get("sender_id", "") or "")
+        _resolve_contact_id(_session_state["platform"], _session_state["sender_id"])
+        # Inject cached proactive Colony events into this turn, if any.
         if _event_subscriber is None:
-            return messages
-        events = await _event_subscriber.cache.get_all()
+            return None
+        events = _read_events_sync()
         if not events:
-            return messages
-        # Inject events as a system message before the user turn
-        lines = ["🔔 Colony proactive events:"]
+            return None
+        lines = ["\U0001f514 Colony proactive events:"]
         for ev in events[:5]:
-            lines.append(f"  [{ev.type}] {json.dumps(ev.payload, default=str)[:200]}")
-        event_msg = {"role": "system", "content": "\n".join(lines)}
-        # Insert before last user message
-        result = list(messages)
-        result.insert(-1, event_msg)
-        return result
+            try:
+                lines.append(f"  [{ev.type}] {json.dumps(ev.payload, default=str)[:200]}")
+            except Exception:
+                continue
+        return {"context": "\n".join(lines)}
 
-    ctx.register_hook("pre_llm_call", _pre_llm_call)
+    def _post_llm_call(**kwargs):
+        # Journal the completed turn to Colony's timeline (conversation.turn) so
+        # the agent gains temporal awareness of conversations over time. Runs in a
+        # daemon thread so it never delays response delivery.
+        if _colony_client is None:
+            return None
+        session_id = str(kwargs.get("session_id", "") or _session_state.get("session_id", ""))
+        if not session_id:
+            return None
+        user_msg = str(kwargs.get("user_message", "") or "")
+        assistant_msg = str(kwargs.get("assistant_response", "") or "")
+        if not (user_msg or assistant_msg):
+            return None
+        contact_id = _resolve_contact_id(
+            str(kwargs.get("platform", "") or _session_state.get("platform", "")),
+            _session_state.get("sender_id", ""),
+        )
+        summary = ""
+        if user_msg and assistant_msg:
+            summary = f"User: {user_msg[:300]}\nAgent: {assistant_msg[:300]}"
 
-    # 4. Register agent:start hook to capture session metadata for turns/sync
-    def _on_agent_start(hook_ctx: dict) -> None:
-        _session_state["session_id"] = hook_ctx.get("session_id", "")
-        _session_state["platform"] = hook_ctx.get("platform", "")
-        _session_state["user_id"] = hook_ctx.get("user_id", "")
+        def _do_sync():
+            try:
+                _colony_client.sync_turn(
+                    session_id=session_id,
+                    contact_id=contact_id,
+                    user_message=user_msg[:2000],
+                    assistant_message=assistant_msg[:2000],
+                    summary=summary[:1000],
+                )
+            except Exception as exc:
+                logger.debug("sync_turn (post_llm_call) failed: %s", exc)
 
-    ctx.register_hook("agent:start", _on_agent_start)
+        try:
+            import threading
+            threading.Thread(target=_do_sync, daemon=True).start()
+        except Exception:
+            _do_sync()
+        return None
 
-    # 5. Register on_session_end hook — stop subscriber AND sync turn to Colony
-    def _on_session_end(messages: list) -> None:
+    def _on_session_end(**kwargs):
         if _event_subscriber is not None:
             try:
                 loop = asyncio.get_event_loop()
@@ -860,40 +970,20 @@ def register(ctx):
             except RuntimeError:
                 pass
 
-        # Sync session summary to Colony (plugin-only telemetry)
-        if _colony_client is None:
-            return
-        session_id = _session_state.get("session_id", "")
-        if not session_id:
-            return
-
-        user_msg = ""
-        assistant_msg = ""
-        for msg in reversed(messages):
-            role = msg.get("role", "")
-            if role == "assistant" and not assistant_msg:
-                assistant_msg = msg.get("content", "")
-            elif role == "user" and not user_msg:
-                user_msg = msg.get("content", "")
-            if user_msg and assistant_msg:
-                break
-
-        summary = ""
-        if user_msg and assistant_msg:
-            summary = f"User: {user_msg[:300]}\nAgent: {assistant_msg[:300]}"
-
-        try:
-            _colony_client.sync_turn(
-                session_id=session_id,
-                contact_id=_contact_id,
-                user_message=user_msg[:2000],
-                assistant_message=assistant_msg[:2000],
-                summary=summary[:1000],
-            )
-        except Exception as exc:
-            logger.debug("sync_turn in on_session_end failed: %s", exc)
-
-    ctx.register_hook("on_session_end", _on_session_end)
+    try:
+        from hermes_cli.plugins import VALID_HOOKS as _VALID
+    except Exception:
+        _VALID = None
+    for _hname, _hfn in (
+        ("pre_llm_call", _pre_llm_call),
+        ("post_llm_call", _post_llm_call),
+        ("on_session_end", _on_session_end),
+    ):
+        if _VALID is None or _hname in _VALID:
+            try:
+                ctx.register_hook(_hname, _hfn)
+            except Exception as _e:
+                logger.debug("colony: hook %s registration skipped: %s", _hname, _e)
 
     # 6. Start WebSocket event subscriber (best-effort)
     try:

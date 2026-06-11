@@ -14,6 +14,33 @@ from .base import InitiativeExecutorSkill
 logger = logging.getLogger(__name__)
 
 
+class _SkillView:
+    """Read-only adapter exposing a registered executor skill in the shape the
+    host/API layer expects (name/description/skill_id/status).
+
+    Built-in executor skills are runtime executors, not persisted skill
+    manifests awaiting approval, so they are always 'active' and never appear
+    under a DRAFT filter.
+    """
+
+    def __init__(self, skill: "InitiativeExecutorSkill"):
+        name = (
+            getattr(skill, "skill_name", None)
+            or getattr(skill, "skill_id", None)
+            or skill.__class__.__name__
+        )
+        self.skill_id = name
+        self.name = name
+        doc = (getattr(skill, "__doc__", "") or "").strip()
+        self.description = doc.split("\n", 1)[0].strip() if doc else name
+        self.status = "active"
+        self.created_at = None
+        self.tags: List[str] = []
+        self.trigger_patterns: List[str] = []
+        self.version = getattr(skill, "skill_version", None)
+
+
+
 class SkillRegistry:
     """Registry of initiative executor skills.
 
@@ -81,6 +108,20 @@ class SkillRegistry:
     def list_skills(self) -> List[str]:
         """List all registered skill names."""
         return list(self._skills.keys())
+
+    async def list_all(self, status=None) -> List["_SkillView"]:
+        """List all registered skills as lightweight views.
+
+        Mirrors the persisted-skill API shape so host context-assembly and the
+        /skills endpoints can enumerate the runtime executor registry. A status
+        filter (e.g. SkillStatus.DRAFT) returns only matching skills; built-in
+        executors are always 'active', so a DRAFT filter yields an empty list.
+        """
+        views = [_SkillView(s) for s in self._skills.values()]
+        if status is not None:
+            wanted = getattr(status, "value", status)
+            views = [v for v in views if v.status == wanted]
+        return views
 
     async def find_skill_for_category(
         self, category: Dict[str, Any], context: Dict[str, Any]

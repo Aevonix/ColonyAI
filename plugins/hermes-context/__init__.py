@@ -162,6 +162,25 @@ class ColonyContextEngine(_ContextEngineABC):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = session_id
 
+    def update_from_response(self, usage: dict[str, Any]) -> None:
+        """Record token usage from the latest model response.
+
+        Required by Hermes' ContextEngine ABC. We track the running token total
+        so should_compress() can rely on a real count rather than the char-based
+        estimate when the host reports usage.
+        """
+        if not usage:
+            return
+        total = (
+            usage.get("total_tokens")
+            or (usage.get("input_tokens", 0) or 0) + (usage.get("output_tokens", 0) or 0)
+            or (usage.get("prompt_tokens", 0) or 0) + (usage.get("completion_tokens", 0) or 0)
+        )
+        try:
+            self._last_total_tokens = int(total or 0)
+        except (TypeError, ValueError):
+            self._last_total_tokens = 0
+
 
 def register(ctx):
     """Plugin-style registration."""
