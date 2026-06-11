@@ -1,5 +1,5 @@
 name: colony
-version: 0.2.3
+version: 0.2.4
 description: |
   Colony context engine for Hermes. Replaces the built-in compressor with
   Colony's cognitive summarization, keeping commitments, facts, and decisions

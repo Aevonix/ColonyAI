@@ -50,7 +50,7 @@ class ColonyContextEngine(_ContextEngineABC):
         self.max_tokens = config.get("max_context_tokens",
             int(os.environ.get("COLONY_MAX_CONTEXT_TOKENS", "1000000")))  # MiMo's full 1M window
         self.threshold = config.get("compression_threshold",
-            float(os.environ.get("COLONY_COMPRESSION_THRESHOLD", "0.92")))  # compress at ~920k, reserving ~80k for the reply + margin (1M is shared in/out)
+            float(os.environ.get("COLONY_COMPRESSION_THRESHOLD", "0.85")))  # compress at ~920k, reserving ~80k for the reply + margin (1M is shared in/out)
         self._session_id = ""
 
     @property
