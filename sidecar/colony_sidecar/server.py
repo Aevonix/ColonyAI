@@ -69,6 +69,7 @@ from colony_sidecar.api.routers.host import (
     set_commitment_store,
     set_affect_store,
     set_facts_store,
+    set_engagement_store,
     set_pattern_store,
     set_surprise_store,
     set_tom_extractor,
@@ -430,6 +431,12 @@ async def lifespan(app: FastAPI):
         facts_store = SharedFactsStore(db_path=facts_db)
         set_facts_store(facts_store)
         logger.info("SharedFactsStore initialized (db=%s)", facts_db)
+
+        from colony_sidecar.tom.engagement import EngagementStore
+        engagement_db = state_dir / "colony-engagement.db"
+        engagement_store = EngagementStore(db_path=engagement_db)
+        set_engagement_store(engagement_store)
+        logger.info("EngagementStore initialized (db=%s)", engagement_db)
     except Exception as exc:
         logger.warning("Theory of Mind init failed: %s", exc)
 

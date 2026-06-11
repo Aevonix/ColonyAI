@@ -1007,6 +1007,18 @@ def register(ctx):
                 )
             except Exception as exc:
                 logger.debug("sync_turn (post_llm_call) failed: %s", exc)
+            # Per-turn behavioral signal feed: hand the contact's message to the
+            # sidecar's signal collector so form/timing signals flow (baselines,
+            # engagement style) instead of only firing on compression.
+            if user_msg:
+                try:
+                    _colony_client.post("/v1/host/signals/ingest", json={
+                        "identity": {"host_id": "hermes"},
+                        "context": {"session_id": session_id, "contact_id": contact_id},
+                        "incoming_message": {"role": "user", "content": user_msg[:2000]},
+                    }, timeout=4)
+                except Exception as exc:
+                    logger.debug("signals/ingest (post_llm_call) failed: %s", exc)
 
         try:
             import threading

@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 MAX_INPUT_CHARS = 4_000
-MAX_RESPONSE_TOKENS = 512
+MAX_RESPONSE_TOKENS = int(os.environ.get("COLONY_TOM_MAX_TOKENS", "2048"))  # reasoning models (mimo) need room; 512 returns empty content
 THROTTLE_MINUTES = int(os.environ.get("COLONY_TOM_EXTRACTION_THROTTLE_MINUTES", "5"))
 
 # ---------------------------------------------------------------------------
@@ -55,12 +55,33 @@ _FACT_SYSTEM_PROMPT = (
 )
 
 
+_ENGAGEMENT_SYSTEM_PROMPT = (
+    "You build a profile of how to communicate effectively with a specific person. "
+    "Read the conversation and infer, ONLY where there is clear evidence, the "
+    "CONTACT's (not the assistant's) psychology and communication style. "
+    "Return ONE JSON object with these optional keys: "
+    '"ocean": object with any of openness, conscientiousness, extraversion, '
+    "agreeableness, neuroticism, each a float -1.0..1.0 (high=+1.0), omit a trait "
+    "if there is no evidence; "
+    '"style": object with any of formality (0=casual,1=formal), directness '
+    "(0=indirect,1=blunt), warmth (0=cool,1=warm), verbosity (0=terse,1=expansive), "
+    "emoji_ok (0=never,1=loves), humor (0=serious,1=playful), omit if no evidence; "
+    '"motivators": array of short strings (what drives or engages them); '
+    '"topics": array of short strings (subjects they engage on); '
+    '"avoid": array of short strings (what to avoid when communicating with them); '
+    '"confidence": float 0.0..1.0. '
+    "Base every value strictly on evidence in THIS conversation; omit anything you "
+    "would only be guessing. Return ONLY the JSON object, no prose or code fences."
+)
+
+
 class TomExtractor:
     """LLM-backed ToM extraction from conversation turns."""
 
     def __init__(self, llm_router: Any) -> None:
         self._router = llm_router
         self._last_extraction: Dict[str, str] = {}  # contact_id → ISO timestamp
+        self._last_engagement: Dict[str, str] = {}  # separate throttle for engagement
 
     async def extract_affect(
         self,
@@ -149,6 +170,59 @@ class TomExtractor:
             r["contact_id"] = contact_id
         return results
 
+    async def extract_engagement(
+        self,
+        conversation_text: str,
+        contact_id: str,
+        *,
+        session_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Extract OCEAN + communication-style observations about the contact.
+
+        Returns {ocean, style, motivators, topics, avoid} or None. Throttled per
+        contact independently of affect/fact extraction.
+        """
+        last = self._last_engagement.get(contact_id)
+        if last:
+            try:
+                from datetime import datetime as _dt
+                age_min = (datetime.now(timezone.utc) - _dt.fromisoformat(last)).total_seconds() / 60.0
+                if age_min < THROTTLE_MINUTES:
+                    return None
+            except Exception:
+                pass
+
+        snippet = (conversation_text or "").strip()
+        if not snippet:
+            return None
+        if len(snippet) > MAX_INPUT_CHARS:
+            snippet = snippet[:MAX_INPUT_CHARS]
+
+        user_prompt = (
+            f"Conversation:\n---\n{snippet}\n---\n\n"
+            "Profile the CONTACT's psychology and communication style."
+        )
+        try:
+            resp = await self._router.complete(
+                messages=[
+                    {"role": "system", "content": _ENGAGEMENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                context={"task": "tom_engagement_extraction", "max_tokens": MAX_RESPONSE_TOKENS},
+            )
+        except Exception as exc:
+            logger.warning("ToM engagement extraction LLM call failed: %s", exc)
+            return None
+
+        content = getattr(resp, "content", "") or ""
+        result = _parse_engagement_json(content)
+        if result is not None:
+            self._last_engagement[contact_id] = datetime.now(timezone.utc).isoformat()
+            result["contact_id"] = contact_id
+            if session_id:
+                result["session_id"] = session_id
+        return result
+
     def _can_extract(self, contact_id: str) -> bool:
         """Check throttle: min THROTTLE_MINUTES between extractions per contact."""
         last = self._last_extraction.get(contact_id)
@@ -174,6 +248,43 @@ _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 def _strip_code_fence(text: str) -> str:
     return _CODE_FENCE.sub("", text)
+
+
+def _parse_engagement_json(raw: str) -> Optional[Dict[str, Any]]:
+    candidate = _strip_code_fence((raw or "").strip())
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", candidate, re.DOTALL)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    out: Dict[str, Any] = {}
+    for key in ("ocean", "style"):
+        val = parsed.get(key)
+        if isinstance(val, dict):
+            clean = {}
+            for k, v in val.items():
+                try:
+                    clean[str(k).strip().lower()] = float(v)
+                except (TypeError, ValueError):
+                    continue
+            if clean:
+                out[key] = clean
+    for key in ("motivators", "topics", "avoid"):
+        val = parsed.get(key)
+        if isinstance(val, list):
+            items = [str(x).strip() for x in val if str(x).strip()]
+            if items:
+                out[key] = items[:8]
+    if not out:
+        return None
+    return out
 
 
 def _parse_affect_json(raw: str) -> Optional[Dict[str, Any]]:

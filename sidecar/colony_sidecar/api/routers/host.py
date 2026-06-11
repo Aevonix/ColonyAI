@@ -1743,6 +1743,21 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.debug("context_assemble relationship failed: %s", exc)
 
+    # --- How to engage (evolving engagement profile) ---
+    if _engagement_store is not None and contact_id:
+        try:
+            from colony_sidecar.tom.engagement import build_guidance
+            _guid = build_guidance(_engagement_store.get_profile(contact_id))
+            if _guid:
+                sections.append(ContextSection(
+                    id="colony-engagement",
+                    title="How to engage with them",
+                    body=_guid,
+                    priority=84,
+                ))
+        except Exception as exc:
+            logger.debug("context_assemble engagement failed: %s", exc)
+
     # --- Shared Facts ---
     if _facts_store is not None and contact_id:
         try:
@@ -1878,6 +1893,21 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
                 _LooseMessage(body.context.contact_id, incoming.content, now)
             )
             recorded += len(sigs or [])
+            # Fold objective FORM signals (how they actually write) into the same
+            # engagement profile as the LLM's CONTENT-derived style — unified edge.
+            if _engagement_store is not None and body.context and body.context.contact_id and sigs:
+                style = {}
+                for sig in sigs:
+                    st = getattr(sig, "signal_type", "")
+                    if st == "emoji_usage":
+                        style["emoji_ok"] = min(1.0, float(getattr(sig, "normalized_value", 0.0)) / 3.0)
+                    elif st == "message_length":
+                        style["verbosity"] = min(1.0, float(getattr(sig, "raw_value", 0.0)) / 600.0)
+                if style:
+                    try:
+                        _engagement_store.update_from_observation(body.context.contact_id, style=style)
+                    except Exception:
+                        logger.debug("engagement-from-signals failed", exc_info=True)
         except Exception as exc:
             logger.warning("signals_ingest collect(incoming) failed: %s", exc)
 
@@ -3078,6 +3108,14 @@ _facts_store = None
 def set_facts_store(store):
     global _facts_store
     _facts_store = store
+
+
+_engagement_store = None
+
+
+def set_engagement_store(store):
+    global _engagement_store
+    _engagement_store = store
 
 
 _tom_extractor = None
@@ -4750,6 +4788,22 @@ async def _run_tom_extraction(
                 pass
     except Exception:
         logger.debug("ToM fact extraction failed", exc_info=True)
+    # Engagement profile (OCEAN + communication style)
+    try:
+        eng = await _tom_extractor.extract_engagement(
+            conversation_text, contact_id, session_id=session_id,
+        )
+        if eng and _engagement_store is not None:
+            _engagement_store.update_from_observation(
+                contact_id,
+                ocean=eng.get("ocean"),
+                style=eng.get("style"),
+                motivators=eng.get("motivators"),
+                topics=eng.get("topics"),
+                avoid=eng.get("avoid"),
+            )
+    except Exception:
+        logger.debug("ToM engagement extraction failed", exc_info=True)
 
 
 @router.post("/tom/extract", response_model=TomExtractResponse)
