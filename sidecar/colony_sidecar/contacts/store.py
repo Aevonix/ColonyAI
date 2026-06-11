@@ -524,6 +524,72 @@ class SQLiteContactStore(ContactStore):
             performed_by=performed_by,
         )
 
+    async def compute_cadence_overdue(
+        self,
+        *,
+        now_iso: Optional[str] = None,
+        default_cadence_days: float = 7.0,
+        factor: float = 1.5,
+        min_silence_days: float = 2.0,
+        overdue_only: bool = True,
+        limit: int = 20,
+        exclude_ids: Optional[set] = None,
+    ) -> List[Dict[str, Any]]:
+        """Per-contact rhythm + silence (v0.21.0), SQLite-based.
+
+        Estimates each contact's typical cadence from their own interaction
+        history (active span / interactions) and flags those overdue relative
+        to *their* rhythm — so a daily contact is overdue after a few days while
+        a monthly one isn't for weeks. Independent of the Neo4j graph.
+        """
+        from colony_sidecar.util import temporal as _t
+        db = self._require_db()
+        now = _t.parse_iso(now_iso) or _t.now_utc()
+        exclude = set(exclude_ids or [])
+        async with db.execute(
+            "SELECT contact_id, display_name, given_name, first_seen_at, "
+            "last_interaction_at, interaction_count, timezone "
+            "FROM contacts WHERE deleted_at IS NULL AND interaction_allowed = 1 "
+            "AND last_interaction_at IS NOT NULL"
+        ) as cur:
+            rows = await cur.fetchall()
+
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            cid = r["contact_id"]
+            if cid in exclude:
+                continue
+            last = _t.parse_iso(r["last_interaction_at"])
+            if last is None:
+                continue
+            first = _t.parse_iso(r["first_seen_at"])
+            count = int(r["interaction_count"] or 0)
+            days_since = (now - last).total_seconds() / 86400.0
+            # cadence estimate
+            if count >= 2 and first is not None and last > first:
+                span = (last - first).total_seconds() / 86400.0
+                cadence = span / max(count - 1, 1)
+            else:
+                cadence = default_cadence_days
+            cadence = max(0.5, min(cadence, 90.0))
+            threshold = max(min_silence_days, cadence * factor)
+            is_overdue = days_since > threshold
+            if overdue_only and not is_overdue:
+                continue
+            out.append({
+                "contact_id": cid,
+                "name": r["display_name"] or r["given_name"] or cid,
+                "timezone": r["timezone"],
+                "last_interaction_at": r["last_interaction_at"],
+                "days_since": round(days_since, 1),
+                "cadence_days": round(cadence, 1),
+                "overdue": is_overdue,
+                "overdue_ratio": round(days_since / max(cadence, 0.5), 2),
+            })
+
+        out.sort(key=lambda x: x["overdue_ratio"], reverse=True)
+        return out[:limit]
+
     async def record_interaction(self, contact_id: str, at_iso: Optional[str] = None) -> bool:
         """Bump last_interaction_at (+count) for a contact. v0.21.0.
 

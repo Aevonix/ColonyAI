@@ -50,6 +50,8 @@ from colony_sidecar.api.schemas.host import (
     ContextSection,
     TemporalConfigRequest,
     TemporalConfigResponse,
+    TemporalContact,
+    TemporalContactsResponse,
     TimelineEvent,
     TimelineResponse,
     DeliveryListResponse,
@@ -1501,6 +1503,33 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
                 t_lines.append(f"Owner last messaged {_temporal.humanize_delta(last_owner)}.")
         except Exception:
             pass
+        # Heads-up: time-sensitive items (overdue commitments + cadence-overdue contacts)
+        heads = []
+        try:
+            if _commitment_store is not None:
+                for c in (_commitment_store.get_overdue() or [])[:3]:
+                    desc = (c.get("description") or "a commitment")[:80]
+                    heads.append(
+                        f"⚠️ Overdue: {desc} (was due {_temporal.humanize_delta(c.get('due_at'))})"
+                    )
+        except Exception:
+            pass
+        try:
+            if _contacts_store is not None:
+                exclude = {cid} if cid else set()
+                overdue_contacts = await _contacts_store.compute_cadence_overdue(
+                    overdue_only=True, limit=3, exclude_ids=exclude,
+                )
+                for o in overdue_contacts[:2]:
+                    heads.append(
+                        f"🕰️ Haven't talked to {o['name']} in {int(o['days_since'])}d "
+                        f"(usually ~{o['cadence_days']:g}d)."
+                    )
+        except Exception:
+            pass
+        if heads:
+            t_lines.append("Heads-up:")
+            t_lines.extend("  " + h for h in heads)
         t_lines.append(
             "Treat the times above as authoritative. Colony stores event times; "
             "compute elapsed/upcoming relative to this now."
@@ -2516,6 +2545,30 @@ async def get_timeline(
         digest=digest,
         events=events,
         has_more=has_more,
+    )
+
+
+@router.get("/temporal/contacts", response_model=TemporalContactsResponse)
+async def temporal_contacts(
+    overdue_only: bool = Query(True, description="Only contacts overdue vs their own cadence"),
+    limit: int = Query(20, ge=1, le=100),
+) -> TemporalContactsResponse:
+    """Per-contact cadence + silence (v0.21.0).
+
+    Estimates each contact's typical rhythm and flags those overdue relative to
+    *their* cadence. Powers cadence-aware proactive outreach (the worker/agent
+    queries this) and the per-turn 'heads-up' line.
+    """
+    from colony_sidecar.util import temporal as _t
+    if _contacts_store is None:
+        return TemporalContactsResponse(now=_t.now_utc().isoformat(), count=0, contacts=[])
+    rows = await _contacts_store.compute_cadence_overdue(
+        overdue_only=overdue_only, limit=limit,
+    )
+    return TemporalContactsResponse(
+        now=_t.now_utc().isoformat(),
+        count=len(rows),
+        contacts=[TemporalContact(**r) for r in rows],
     )
 
 

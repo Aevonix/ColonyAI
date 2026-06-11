@@ -3,9 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# v0.21.0 — persisted so last_*_at survive a restart (previously in-memory only,
+# which reset silence/last-outreach reasoning to null on every restart).
+_PERSIST_KEYS = (
+    "started_at", "last_sync_at", "last_tick_at",
+    "last_initiative_at", "last_prefetch_at", "last_agent_outreach_at",
+)
+
+
+def _telemetry_path() -> Path:
+    return Path(os.environ.get("COLONY_STATE_DIR", os.path.expanduser("~/.colony"))) / "telemetry.json"
 
 
 @dataclass
@@ -18,9 +35,40 @@ class TelemetryStore:
     last_agent_outreach_at: Optional[datetime] = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    def load(self) -> None:
+        """Restore persisted timestamps (except started_at) across restart."""
+        try:
+            data = json.loads(_telemetry_path().read_text())
+        except Exception:
+            return
+        for key in _PERSIST_KEYS:
+            if key == "started_at":
+                continue  # started_at is set fresh per process
+            val = data.get(key)
+            if val:
+                try:
+                    setattr(self, key, datetime.fromisoformat(val))
+                except (ValueError, TypeError):
+                    pass
+
+    def _persist(self) -> None:
+        try:
+            p = _telemetry_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                k: (getattr(self, k).isoformat() if getattr(self, k) else None)
+                for k in _PERSIST_KEYS
+            }
+            tmp = p.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data))
+            os.replace(tmp, p)
+        except Exception as exc:  # pragma: no cover
+            logger.debug("telemetry persist failed: %s", exc)
+
     async def touch(self, key: str) -> None:
         async with self._lock:
             setattr(self, key, datetime.now(timezone.utc))
+        self._persist()
 
     async def silence_hours(self, key: str) -> Optional[float]:
         """Return hours since the last event of the given type."""

@@ -580,6 +580,23 @@ class TimelineResponse(BaseModel):
     has_more: bool = False
 
 
+class TemporalContact(BaseModel):
+    contact_id: str
+    name: str
+    timezone: Optional[str] = None
+    last_interaction_at: Optional[str] = None
+    days_since: float
+    cadence_days: float
+    overdue: bool
+    overdue_ratio: float
+
+
+class TemporalContactsResponse(BaseModel):
+    now: str
+    count: int
+    contacts: List[TemporalContact] = Field(default_factory=list)
+
+
 class ContactHandleIn(BaseModel):
     gateway: str
     address: str
