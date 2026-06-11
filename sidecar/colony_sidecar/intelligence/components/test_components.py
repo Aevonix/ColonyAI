@@ -531,12 +531,25 @@ class TestPreferenceLearner:
     async def test_learn_from_behavior_accumulates(self, mock_graph):
         pl = PreferenceLearner(mock_graph)
 
-        # Behavior learning returns None by default (placeholder)
+        # A recognised action ("short") infers communication_style.length=short
+        # at implicit confidence (0.5), then accumulates with repetition.
         await pl.learn_from_behavior("clicked_short_response")
-
-        # No preferences stored since placeholder returns None
         prefs = await pl.get_all_preferences()
-        assert len(prefs) == 0
+        assert len(prefs) == 1
+        assert prefs[0].category == "communication_style"
+        assert prefs[0].value == "short"
+        assert prefs[0].confidence == pytest.approx(0.5)
+
+        await pl.learn_from_behavior("clicked_short_response")
+        prefs = await pl.get_all_preferences()
+        assert len(prefs) == 1
+        assert prefs[0].confidence == pytest.approx(0.6)
+
+    @pytest.mark.asyncio
+    async def test_unrecognised_behavior_stores_nothing(self, mock_graph):
+        pl = PreferenceLearner(mock_graph)
+        await pl.learn_from_behavior("opened_settings_panel")
+        assert len(await pl.get_all_preferences()) == 0
 
     @pytest.mark.asyncio
     async def test_get_preference_with_default(self, mock_graph):
@@ -547,10 +560,43 @@ class TestPreferenceLearner:
     @pytest.mark.asyncio
     async def test_get_preference_after_learn(self, mock_graph):
         pl = PreferenceLearner(mock_graph)
-        await pl.learn_from_feedback("style", "concise answers please")
+        # "concise" maps to the length dimension (short), not a raw 'general' value.
+        await pl.learn_from_feedback("communication_style", "concise answers please")
 
-        value = await pl.get_preference("style", "general")
-        assert value == "concise answers please"
+        value = await pl.get_preference("communication_style", "length")
+        assert value == "short"
+
+    # --- Owner-directive lane + persistence (wired into turn_sync) ----------
+
+    def test_detect_directive_matches_and_ignores(self, mock_graph):
+        pl = PreferenceLearner(mock_graph)
+        assert pl.detect_directive("be more concise") == ("communication_style", "length", "short")
+        assert pl.detect_directive("stop using emoji") == ("communication_style", "emoji", "off")
+        # A style word with no directive cue is not a directive.
+        assert pl.detect_directive("I took a short walk this morning") is None
+        # Ordinary conversation never trips it.
+        assert pl.detect_directive("what's the weather today") is None
+
+    @pytest.mark.asyncio
+    async def test_learn_directive_captures_multiple(self, mock_graph):
+        pl = PreferenceLearner(mock_graph)
+        primary = await pl.learn_directive("from now on be concise and use bullet points")
+        assert primary == ("communication_style", "length", "short")
+        brief = pl.build_brief()
+        assert "short" in brief.lower()
+        assert "bullet" in brief.lower()
+
+    @pytest.mark.asyncio
+    async def test_directives_persist_across_restart(self, tmp_path):
+        db = str(tmp_path / "prefs.db")
+        pl = PreferenceLearner(db_path=db)
+        await pl.learn_directive("keep replies short")
+        await pl.learn_directive("no emoji please")
+        # Reopen from disk — explicit directives survive.
+        pl2 = PreferenceLearner(db_path=db)
+        brief = pl2.build_brief()
+        assert "short" in brief.lower()
+        assert "emoji" in brief.lower()
 
 
 # ===========================================================================

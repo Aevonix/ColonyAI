@@ -1743,6 +1743,22 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.debug("context_assemble relationship failed: %s", exc)
 
+    # --- Owner's stated preferences (explicit directives the owner gave me) ---
+    if _preference_learner is not None and contact_id:
+        try:
+            from colony_sidecar.identity import get_owner_contact_id
+            if get_owner_contact_id() == contact_id:
+                _brief = _preference_learner.build_brief()
+                if _brief:
+                    sections.append(ContextSection(
+                        id="colony-owner-preferences",
+                        title="How they want me to communicate",
+                        body=_brief,
+                        priority=88,
+                    ))
+        except Exception as exc:
+            logger.debug("context_assemble owner preferences failed: %s", exc)
+
     # --- How to engage (evolving engagement profile) ---
     if _engagement_store is not None and contact_id:
         try:
@@ -2046,6 +2062,28 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
             save_last_user_message_at()
         except Exception:
             pass
+
+    # Owner directive learning: when the owner explicitly states how they want
+    # their assistant to communicate ("be concise", "use bullets", "no emoji"),
+    # capture it deterministically at high confidence. Owner-only; ordinary
+    # conversation never trips this (requires a style keyword + a directive cue).
+    if _preference_learner is not None and body.user_message is not None:
+        try:
+            from colony_sidecar.identity import get_owner_contact_id
+            owner_id = get_owner_contact_id()
+            if owner_id and body.context.contact_id == owner_id:
+                hit = await _preference_learner.learn_directive(
+                    getattr(body.user_message, "content", "") or ""
+                )
+                if hit is not None:
+                    try:
+                        from colony_sidecar.events.broadcaster import emit as _emit
+                        _emit("preference.directive_learned",
+                              {"category": hit[0], "key": hit[1], "value": hit[2]})
+                    except Exception:
+                        pass
+        except Exception:
+            logger.debug("owner directive learning failed", exc_info=True)
 
     # ToM LLM extraction (best-effort, non-blocking)
     try:
@@ -3177,6 +3215,64 @@ _comms_log = None
 def set_comms_log(store):
     global _comms_log
     _comms_log = store
+
+
+_preference_learner = None
+
+
+def set_preference_learner(learner):
+    global _preference_learner
+    _preference_learner = learner
+
+
+@router.get("/preferences")
+async def get_owner_preferences() -> dict:
+    """Return the owner's learned communication preferences and rendered brief."""
+    if _preference_learner is None:
+        return {"available": False, "brief": "", "preferences": []}
+    prefs = await _preference_learner.get_all_preferences()
+    return {
+        "available": True,
+        "brief": _preference_learner.build_brief(),
+        "preferences": [
+            {
+                "category": p.category, "key": p.key, "value": p.value,
+                "confidence": p.confidence, "learned_from": p.learned_from,
+                "last_updated": p.last_updated.isoformat(),
+            }
+            for p in prefs
+        ],
+    }
+
+
+@router.post("/preferences/learn")
+async def learn_owner_preference(body: dict) -> dict:
+    """Teach the owner-preference learner from text.
+
+    Body: ``{"text": "be concise", "explicit": true, "force": false}``
+      - explicit (default true): parse as a directive ("be concise"); learned at
+        high confidence only if it reads like a communication directive.
+      - force (with explicit): if the text isn't a recognized directive, still
+        store it as explicit feedback.
+      - explicit false: record as an observed behavior signal.
+    """
+    if _preference_learner is None:
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text required")
+    learned: Any = None
+    if body.get("explicit", True):
+        hit = await _preference_learner.learn_directive(text)
+        if hit is not None:
+            learned = {"category": hit[0], "key": hit[1], "value": hit[2]}
+        elif body.get("force"):
+            await _preference_learner.learn_from_feedback("communication_style", text)
+            learned = {"category": "communication_style", "key": "parsed"}
+    else:
+        await _preference_learner.learn_from_behavior(text)
+        learned = {"category": "behavior"}
+    return {"learned": learned, "brief": _preference_learner.build_brief()}
 
 
 _tom_extractor = None

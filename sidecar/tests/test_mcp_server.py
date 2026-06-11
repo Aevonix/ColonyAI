@@ -41,8 +41,8 @@ class TestServerCreation:
     def test_creates_server(self, server):
         assert server.name == "colony"
 
-    def test_has_14_tools(self, tool_names):
-        assert len(tool_names) == 14
+    def test_has_18_tools(self, tool_names):
+        assert len(tool_names) == 18
 
     def test_has_expected_tools(self, tool_names):
         expected = [
@@ -60,6 +60,11 @@ class TestServerCreation:
             "colony_forget_fact",
             "colony_record_affect",
             "colony_record_surprise",
+            # Task / initiative tools added after the original 14.
+            "colony_task_complete",
+            "colony_task_snooze",
+            "colony_task_dismiss",
+            "colony_initiative_feedback",
         ]
         for tool in expected:
             assert tool in tool_names, f"Missing tool: {tool}"
@@ -84,7 +89,7 @@ class TestServerCreation:
     def test_mutating_tools(self, server):
         tools = server._tool_manager._tools
         rw_tools = [name for name, t in tools.items() if not t.annotations.readOnlyHint]
-        assert len(rw_tools) == 7
+        assert len(rw_tools) == 11
         assert "colony_create_commitment" in rw_tools
         assert "colony_remember_fact" in rw_tools
 
@@ -213,10 +218,13 @@ class TestHTTPHelpers:
             MockClient.return_value = mock_client
 
             await _post("/v1/host/commitments", {"description": "test"})
-            assert captured_data.get("source") == "codex"
+            # Provenance is injected under metadata.provenance (a top-level
+            # 'source'/'provenance' is not in any sidecar schema and would be
+            # dropped by Pydantic validation).
+            assert captured_data.get("metadata", {}).get("provenance") == "codex"
 
     @pytest.mark.asyncio
-    async def test_post_doesnt_override_existing_source(self):
+    async def test_post_preserves_existing_metadata(self):
         from colony_sidecar.mcp.server import _post
         os.environ["COLONY_MCP_SOURCE"] = "codex"
 
@@ -237,8 +245,10 @@ class TestHTTPHelpers:
             mock_client.__aexit__ = AsyncMock(return_value=None)
             MockClient.return_value = mock_client
 
-            await _post("/v1/host/commitments", {"description": "test", "source": "openclaw"})
-            assert captured_data.get("source") == "openclaw"
+            # Existing metadata keys are preserved; provenance is added alongside.
+            await _post("/v1/host/commitments", {"description": "test", "metadata": {"priority": "high"}})
+            assert captured_data["metadata"]["priority"] == "high"
+            assert captured_data["metadata"]["provenance"] == "codex"
 
     @pytest.mark.asyncio
     async def test_post_connection_error(self):
@@ -289,7 +299,8 @@ class TestHTTPHelpers:
             MockClient.return_value = mock_client
 
             result = await _delete("/v1/host/commitments/abc")
-            assert result == 204
+            # _delete returns (status_code, error_message_or_empty).
+            assert result == (204, "")
 
 
 # ---------------------------------------------------------------------------

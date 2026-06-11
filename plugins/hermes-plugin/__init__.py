@@ -235,6 +235,29 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "required": ["contact_id"],
         },
     },
+    {
+        "name": "colony_research",
+        "description": (
+            "Research a topic across the web and my own knowledge, then return a "
+            "structured report. Use this when asked to look something up, gather "
+            "background, compare options, or compile findings. Depth 'quick' is a "
+            "fast scan; 'standard' and 'deep' gather and synthesize more sources "
+            "(and take longer). Returns the report text plus a run id."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "The question or topic to research."},
+                "depth": {
+                    "type": "string",
+                    "enum": ["quick", "standard", "deep"],
+                    "description": "How thorough to be (default: quick).",
+                    "default": "quick",
+                },
+            },
+            "required": ["topic"],
+        },
+    },
 ]
 
 
@@ -283,6 +306,36 @@ class _ToolDispatcher:
             return json.dumps(resp.json())
         except Exception as exc:
             return json.dumps({"error": str(exc)})
+
+    def _handle_colony_research(self, args: dict) -> str:
+        topic = (args.get("topic") or "").strip()
+        if not topic:
+            return json.dumps({"error": "topic required"})
+        depth = args.get("depth", "quick")
+        timeout = {"quick": 60, "standard": 150, "deep": 240}.get(depth, 60)
+        try:
+            resp = self._client.post(
+                "/v1/host/research/start",
+                json={"identity": {"host_id": "hermes"}, "topic": topic, "depth": depth},
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+        art = data.get("artifact") or {}
+        content = art.get("content") or ""
+        _max = 6000
+        return json.dumps({
+            "run_id": data.get("run_id"),
+            "status": data.get("status"),
+            "title": art.get("title"),
+            "word_count": art.get("word_count"),
+            "citation_count": art.get("citation_count"),
+            "grounded": art.get("grounded"),
+            "report": content[:_max],
+            "report_truncated": len(content) > _max,
+        })
 
     def _handle_colony_get_briefing(self, args: dict) -> str:
         try:

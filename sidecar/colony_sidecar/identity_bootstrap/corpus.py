@@ -367,8 +367,8 @@ COGNITION_PHASES: List[CognitionPhase] = [
     ),
     CognitionPhase(
         name="PreferenceLearning",
-        description="Extracts user preferences from interactions, updates contact style profiles.",
-        components=["PreferenceLearner", "ContactStyleAdapter"],
+        description="Learns the owner's explicit communication preferences and maintains an evolving per-contact engagement profile (OCEAN + style).",
+        components=["PreferenceLearner", "EngagementStore"],
         phase_index=5,
     ),
     CognitionPhase(

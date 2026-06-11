@@ -142,11 +142,17 @@ environment variables. The common ones:
 | `COLONY_API_KEY` | Bearer token required by the sidecar API |
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | Graph store connection |
 | `COLONY_AGENT_TIMEZONE` | The agent's authoritative timezone |
-| `COLONY_OWNER_CONTACT_ID` | The owner's contact, used by the approval gate |
+| `COLONY_OWNER_CONTACT_ID` | The owner's contact, used by the approval gate and owner-preference learning |
+| `COLONY_SEARCH_PROVIDER` | Web search provider for research (`tavily`, `brave`, `serpapi`); unset uses the keyless DuckDuckGo fallback |
+| `TAVILY_API_KEY` / `BRAVE_API_KEY` / `SERPAPI_KEY` | API key for the selected search provider |
 
 The host's LLM and embedding endpoints are pushed to the sidecar at runtime via
 `POST /v1/host/configure` and persisted, so the sidecar uses the same models as
 the agent.
+
+Web search works out of the box via DuckDuckGo (no key). To use a higher-quality
+provider, set `COLONY_SEARCH_PROVIDER` and the matching key; the research
+pipeline and the `colony_research` tool pick it up automatically on restart.
 
 ## Operations
 
@@ -165,13 +171,17 @@ for scheduling.
 ## Status
 
 The memory, temporal, contacts, relationship, theory-of-mind, engagement,
-commitments, goals, and communication-governance subsystems are in active use.
+owner-preference, commitments, goals, communication-governance, and research
+subsystems are in active use. Research runs through a six-stage pipeline (gather,
+synthesize, produce, review) exposed to the agent as the `colony_research` tool
+and over HTTP at `POST /v1/host/research/start`; web search defaults to
+DuckDuckGo with optional keyed providers.
 
 Several larger subsystems are present but not yet wired into a default runtime
 path and should be treated as experimental: the multi-agent / distributed
-identity chain, the research pipeline, and parts of the learning and skills
-machinery. They are guarded behind feature flags or simply not invoked, so they
-do not affect the production path.
+identity chain, and parts of the learning and skills machinery. They are guarded
+behind feature flags or simply not invoked, so they do not affect the production
+path.
 
 ## Development
 

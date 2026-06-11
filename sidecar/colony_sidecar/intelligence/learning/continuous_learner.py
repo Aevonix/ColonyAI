@@ -237,7 +237,7 @@ class ContinuousLearner:
     def _section_to_component(section: str) -> str:
         mapping = {
             "goals": "goal_engine",
-            "relationships": "contact_style_adapter",
+            "relationships": "engagement_profile",
             "insights": "research_orchestrator",
             "anomalies": "anomaly_detector",
             "predictions": "mind_predictor",

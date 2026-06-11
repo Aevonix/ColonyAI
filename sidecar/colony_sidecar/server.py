@@ -71,6 +71,7 @@ from colony_sidecar.api.routers.host import (
     set_facts_store,
     set_engagement_store,
     set_comms_log,
+    set_preference_learner,
     set_pattern_store,
     set_surprise_store,
     set_tom_extractor,
@@ -443,6 +444,14 @@ async def lifespan(app: FastAPI):
         comms_log = CommsLog(db_path=state_dir / "colony-comms.db")
         set_comms_log(comms_log)
         logger.info("CommsLog initialized")
+
+        # Owner preference learner — captures the owner's *explicit* directives
+        # about how to communicate ("be concise", "use bullets", "no emoji") at
+        # high confidence; complements the inferred per-contact EngagementStore.
+        from colony_sidecar.intelligence.components.preference_learner import PreferenceLearner
+        preference_learner = PreferenceLearner(db_path=str(state_dir / "colony-preferences.db"))
+        set_preference_learner(preference_learner)
+        logger.info("PreferenceLearner initialized (db=%s)", state_dir / "colony-preferences.db")
     except Exception as exc:
         logger.warning("Theory of Mind init failed: %s", exc)
 
