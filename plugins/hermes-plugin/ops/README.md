@@ -40,3 +40,17 @@ launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/ai.aevonix.colony-doct
 ```
 
 Override the plugins dir for testing: `COLONY_DOCTOR_PLUGINS_DIR=/path ./colony-doctor.py`.
+
+## Tool-activity stream (meaningful ops-channel lines)
+
+The general plugin's `pre_tool_call` hook records a friendly one-line summary of
+*what each tool call is doing* (the shell command, the file path, the search
+query, the colony verb+args) to `~/.hermes/.tool_activity.jsonl` — generic, any
+agent. `aeva-activity-monitor.py` (a reference consumer) enriches each home-channel
+line with it, so a muted ops channel still reads as meaningful actions:
+
+```
+↳ session · ⚡ shell · date · 0.03s · 73 chars
+↳ session · 📖 read · ~/.hermes/config.yaml · 0.09s · 264 chars
+↳ session · 🔧 colony_list_goals · list goals: active · 0.02s · 13 chars
+```

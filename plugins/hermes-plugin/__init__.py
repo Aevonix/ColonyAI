@@ -798,6 +798,57 @@ def _configure_colony_llm(client: ColonyClient, plugin_config: dict) -> None:
 # Plugin registration
 # ---------------------------------------------------------------------------
 
+def _summarize_tool(tool, args):
+    """Generic, friendly one-line summary of what a tool call is *doing*, derived
+    from its arguments. Feeds the host activity stream (~/.hermes/.tool_activity.jsonl)
+    so a muted ops channel still reads as meaningful actions. Returns <=90 chars."""
+    try:
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {"_": args}
+        if not isinstance(args, dict):
+            args = {}
+
+        def clip(s, n=88):
+            s = " ".join(str(s).split())
+            return (s[:n] + "…") if len(s) > n else s
+
+        t = (tool or "").lower()
+        if t in ("terminal", "shell", "bash", "run_terminal_cmd"):
+            return clip(args.get("command") or args.get("cmd") or "")
+        if t in ("read_file", "read", "write_file", "write", "create_file",
+                 "edit_file", "edit", "str_replace", "str_replace_editor", "apply_patch"):
+            # the tool label already carries the verb (read/write/edit) -> just the path
+            return clip(args.get("path") or args.get("file_path") or "", 70)
+        if "search" in t or t in ("web", "research"):
+            return clip(args.get("query") or args.get("q") or args.get("prompt") or "")
+        if t in ("send", "send_message", "message", "whatsapp_send"):
+            tgt = args.get("to") or args.get("target") or args.get("chat") or ""
+            body = args.get("text") or args.get("message") or args.get("body") or ""
+            return clip((f"to {tgt}: " if tgt else "") + str(body))
+        if t in ("delegate_task", "spawn", "agent", "task", "subagent"):
+            return clip(args.get("prompt") or args.get("task") or args.get("description") or "")
+        if t.startswith("colony_"):
+            verb = t.replace("colony_", "").replace("_", " ")
+            kv = []
+            for k, v in args.items():
+                if k in ("limit", "identity") or v in ("", None):
+                    continue
+                kv.append(str(v) if k in ("query", "status", "name", "id", "contact_id") else f"{k}={v}")
+            return clip(verb + (": " + ", ".join(kv) if kv else ""))
+        for k in ("query", "prompt", "text", "message", "content", "command",
+                  "path", "file_path", "name", "url", "id", "description"):
+            if args.get(k):
+                return clip(str(args[k]))
+        vals = [clip(v, 40) for v in args.values()
+                if isinstance(v, (str, int, float)) and str(v).strip()]
+        return clip(", ".join(vals)) if vals else ""
+    except Exception:
+        return ""
+
+
 def register(ctx):
     """Register the Colony general plugin with Hermes."""
     global _colony_client, _event_subscriber, _tool_dispatcher, _contact_id
@@ -972,6 +1023,35 @@ def register(ctx):
             except RuntimeError:
                 pass
 
+    def _pre_tool_call_activity(**kwargs):
+        # Generic observability hook: record a friendly summary of each tool call
+        # to ~/.hermes/.tool_activity.jsonl so the host activity stream is
+        # meaningful. NEVER blocks the tool (returns None / no block directive).
+        try:
+            import time as _time
+            tool = kwargs.get("tool_name", "") or ""
+            summary = _summarize_tool(tool, kwargs.get("args") or {})
+            rec = {
+                "ts": round(_time.time(), 3),
+                "session": kwargs.get("session_id", "") or "",
+                "tool": tool,
+                "summary": summary,
+            }
+            path = os.path.expanduser("~/.hermes/.tool_activity.jsonl")
+            with open(path, "a") as f:
+                f.write(json.dumps(rec, default=str) + "\n")
+            # cheap size cap: keep the file from growing unbounded
+            try:
+                if os.path.getsize(path) > 524288:
+                    lines = open(path).read().splitlines()
+                    with open(path, "w") as f:
+                        f.write("\n".join(lines[-1500:]) + "\n")
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return None
+
     try:
         from hermes_cli.plugins import VALID_HOOKS as _VALID
     except Exception:
@@ -980,6 +1060,7 @@ def register(ctx):
         ("pre_llm_call", _pre_llm_call),
         ("post_llm_call", _post_llm_call),
         ("on_session_end", _on_session_end),
+        ("pre_tool_call", _pre_tool_call_activity),
     ):
         if _VALID is None or _hname in _VALID:
             try:

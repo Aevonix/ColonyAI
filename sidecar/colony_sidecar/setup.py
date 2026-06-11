@@ -1082,6 +1082,57 @@ def _setup_mcp_harness(harness: str, api_key: str, sidecar_url: str, non_interac
         return False
 
 
+def _install_hermes_addons(hermes_home: Path, ops_src: Path) -> None:
+    """Install the GENERIC host-side Colony<->Hermes ops add-ons — doctor, restart
+    runner, pre-restart summary — and schedule the doctor. Not specific to any
+    agent; these make any Hermes+Colony integration self-validating and resilient.
+    Idempotent."""
+    if not ops_src.exists():
+        print("    ⚠️  Ops add-ons not found (skipping doctor / restart add-ons)")
+        return
+    scripts_dst = hermes_home / "scripts"
+    scripts_dst.mkdir(parents=True, exist_ok=True)
+    for f in ("colony-doctor.py", "colony-doctor-cron.sh",
+              "hermes-gateway-restart-runner.sh", "pre-restart-summary.py"):
+        src = ops_src / f
+        if src.exists():
+            shutil.copy2(src, scripts_dst / f)
+            try:
+                os.chmod(scripts_dst / f, 0o755)
+            except OSError:
+                pass
+    print(f"    ✅ Ops add-ons      →  {scripts_dst}")
+    plist = ops_src / "ai.aevonix.colony-doctor.plist"
+    if sys.platform == "darwin" and plist.exists():
+        la = Path.home() / "Library" / "LaunchAgents"
+        if la.exists():
+            shutil.copy2(plist, la / plist.name)
+            print(f"    ✅ Doctor schedule  →  {la / plist.name}")
+            print(f"       enable: launchctl bootstrap gui/$(id -u) {la / plist.name}")
+    elif plist.exists():
+        print("    ℹ️  Schedule the doctor via cron, e.g.:")
+        print("       0 */6 * * * ~/.hermes/scripts/colony-doctor-cron.sh")
+
+
+def _run_colony_doctor(hermes_home: Path) -> None:
+    """Run the integration doctor as a post-setup validation gate."""
+    doctor = hermes_home / "scripts" / "colony-doctor.py"
+    if not doctor.exists():
+        return
+    hermes_py = hermes_home / "hermes-agent" / "venv" / "bin" / "python"
+    py = str(hermes_py) if hermes_py.exists() else sys.executable
+    print("  Validating integration (colony-doctor)...")
+    try:
+        r = subprocess.run([py, str(doctor)], capture_output=True, text=True, timeout=40)
+        result = [l for l in r.stdout.splitlines() if l.startswith("RESULT")]
+        fails = [l for l in r.stdout.splitlines() if l.strip().startswith("❌")]
+        print("    " + (result[-1] if result else f"doctor exit {r.returncode}"))
+        for l in fails[:6]:
+            print("    " + l.strip())
+    except Exception as exc:
+        print(f"    ⚠️  doctor run skipped: {exc}")
+
+
 def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool = False, contact_id: str = "") -> bool:
     """Configure Colony as a Hermes MemoryProvider plugin.
 
@@ -1135,6 +1186,9 @@ def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool =
                 shutil.copy2(src, gen_dst / f)
         print(f"    ✅ General plugin   →  {gen_dst}")
 
+    # Generic host-side ops add-ons + scheduled doctor (any agent).
+    _install_hermes_addons(hermes_home, gen_src / "ops")
+
     # Write/update Hermes config.yaml
     print("  Configuring Hermes config...")
     _write_hermes_config(hermes_config, api_key, sidecar_url, contact_id)
@@ -1152,6 +1206,8 @@ def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool =
     except Exception as exc:
         print(f"    ⚠️  Sidecar not reachable: {exc}")
         print("       Start it with: colony start")
+
+    _run_colony_doctor(hermes_home)
 
     print()
     print("  Hermes integration complete!")
