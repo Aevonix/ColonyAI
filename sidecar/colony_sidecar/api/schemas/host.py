@@ -561,6 +561,25 @@ class ContactTimezoneRequest(BaseModel):
     timezone: Optional[str] = None  # None clears it
 
 
+class TimelineEvent(BaseModel):
+    seq: int
+    type: str
+    at: str                       # ISO timestamp the event was recorded
+    when: str                     # humanized, e.g. "3h ago"
+    bucket: str                   # coarse, e.g. "today"
+    summary: Optional[str] = None
+    contact_id: Optional[str] = None
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TimelineResponse(BaseModel):
+    since: str
+    count: int
+    digest: str                   # human-readable rollup for the agent
+    events: List[TimelineEvent] = Field(default_factory=list)
+    has_more: bool = False
+
+
 class ContactHandleIn(BaseModel):
     gateway: str
     address: str

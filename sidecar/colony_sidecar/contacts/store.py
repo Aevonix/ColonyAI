@@ -524,6 +524,22 @@ class SQLiteContactStore(ContactStore):
             performed_by=performed_by,
         )
 
+    async def record_interaction(self, contact_id: str, at_iso: Optional[str] = None) -> bool:
+        """Bump last_interaction_at (+count) for a contact. v0.21.0.
+
+        Returns True if a row was updated (i.e. the contact exists).
+        """
+        db = self._require_db()
+        ts = at_iso or _now_iso()
+        cur = await db.execute(
+            "UPDATE contacts SET last_interaction_at = ?, "
+            "interaction_count = interaction_count + 1, updated_at = ? "
+            "WHERE contact_id = ? AND deleted_at IS NULL",
+            (ts, ts, contact_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
     async def set_timezone(
         self, contact_id: str, timezone: Optional[str], performed_by: str = "operator"
     ) -> None:

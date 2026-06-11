@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -285,6 +286,37 @@ def bucket(ts, tz: Optional[str] = None) -> str:
     if d < 365:
         return f"{d // 30}mo ago"
     return f"{d // 365}y ago"
+
+
+_REL_RE = re.compile(r"^\s*(\d+)\s*([smhdw])\s*$", re.IGNORECASE)
+
+
+def parse_relative_since(value, default_hours: float = 24.0) -> str:
+    """Turn a window spec into an ISO 'since' timestamp (UTC).
+
+    Accepts relative durations ('30m', '24h', '7d', '2w'), the words
+    'today'/'yesterday', or an absolute ISO date/time. Falls back to
+    ``default_hours`` ago when empty/unparseable.
+    """
+    if not value:
+        return (now_utc() - timedelta(hours=default_hours)).isoformat()
+    s = str(value).strip()
+    m = _REL_RE.match(s)
+    if m:
+        n = int(m.group(1))
+        mult = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[m.group(2).lower()]
+        return (now_utc() - timedelta(seconds=n * mult)).isoformat()
+    low = s.lower()
+    if low in ("today", "yesterday"):
+        local = now_in(agent_timezone())
+        if low == "yesterday":
+            local = local - timedelta(days=1)
+        start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start.astimezone(UTC).isoformat()
+    dt = parse_iso(s)
+    if dt is not None:
+        return dt.isoformat()
+    return (now_utc() - timedelta(hours=default_hours)).isoformat()
 
 
 def hours_since(ts, ref: Optional[datetime] = None) -> Optional[float]:

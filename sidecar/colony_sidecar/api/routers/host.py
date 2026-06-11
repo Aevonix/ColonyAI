@@ -50,6 +50,8 @@ from colony_sidecar.api.schemas.host import (
     ContextSection,
     TemporalConfigRequest,
     TemporalConfigResponse,
+    TimelineEvent,
+    TimelineResponse,
     DeliveryListResponse,
     DeliveryMarkRequest,
     EmbedHealthResponse,
@@ -1942,6 +1944,26 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         except Exception:
             pass
 
+    # Timeline spine (v0.21.0): journal the conversation turn so it lands on
+    # the unified timeline, and bump the contact's recency (last_interaction_at).
+    if body.summary:
+        try:
+            from colony_sidecar.events.journal import append_event
+            append_event("conversation.turn", {
+                "contact_id": body.context.contact_id,
+                "session_id": body.context.session_id,
+                "summary": (body.summary or "")[:300],
+                "topics": (body.topics or [])[:10],
+                "tools_used": (body.tools_used or [])[:20],
+            })
+        except Exception:
+            logger.debug("journal conversation.turn failed", exc_info=True)
+    try:
+        if _contacts_store is not None and body.context.contact_id:
+            await _contacts_store.record_interaction(body.context.contact_id)
+    except Exception:
+        logger.debug("record_interaction failed", exc_info=True)
+
     return TurnSyncResponse(accepted=True, continuity_updated=graph_ok, skipped_reason=None if graph_ok else "no_graph_store")
 
 
@@ -2397,6 +2419,103 @@ async def set_temporal_config(body: TemporalConfigRequest) -> TemporalConfigResp
         now_utc=_temporal.now_utc().isoformat(),
         now_agent_local=_temporal.now_in(atz).isoformat(),
         agent_local_clock=_temporal.format_clock(_temporal.now_in(atz)),
+    )
+
+
+_TIMELINE_TYPE_LABELS = {
+    "conversation.turn": "💬 talked",
+    "outreach.sent": "📤 reached out",
+    "initiative.generated": "💡 initiative",
+    "initiative.completed": "✅ initiative done",
+    "task.created": "📋 task created",
+    "task.completed": "✅ task done",
+    "commitment.made": "🤝 promised",
+    "commitment.fulfilled": "✅ kept promise",
+    "memory.written": "🧠 remembered",
+}
+
+
+@router.get("/timeline", response_model=TimelineResponse)
+async def get_timeline(
+    since: str = Query("24h", description="Relative ('24h','7d') or ISO, or today/yesterday"),
+    types: Optional[str] = Query(None, description="Comma-separated event types to include"),
+    contact_id: Optional[str] = Query(None, description="Only events involving this contact"),
+    limit: int = Query(100, ge=1, le=500),
+) -> TimelineResponse:
+    """Chronological timeline across all Colony subsystems (v0.21.0).
+
+    Backed by the event journal. Lets the agent answer 'what happened recently',
+    'what's been going on with X', 'what changed since I last looked'.
+    """
+    from colony_sidecar.events.journal import replay_events
+    from colony_sidecar.util import temporal as _t
+
+    since_iso = _t.parse_relative_since(since)
+    type_list = [t.strip() for t in types.split(",") if t.strip()] if types else None
+    # Read the whole (retention-bounded) window, then keep the most RECENT N.
+    # replay_events caps at `limit` chronologically (oldest first), so a small
+    # limit there would return the START of the window, not recent activity.
+    raw = replay_events(since_iso, limit=500, types=type_list)
+
+    all_events: list[TimelineEvent] = []
+    for e in raw.get("events", []):
+        data = e.get("data", {}) or {}
+        cid = data.get("contact_id") or data.get("person_id")
+        if contact_id and cid != contact_id:
+            continue
+        at = e.get("recordedAt", "")
+        all_events.append(TimelineEvent(
+            seq=e.get("seq", 0),
+            type=e.get("type", "unknown"),
+            at=at,
+            when=_t.humanize_delta(at),
+            bucket=_t.bucket(at),
+            summary=(data.get("summary") or data.get("title") or data.get("text")
+                     or data.get("reason")),
+            contact_id=cid,
+            data=data,
+        ))
+
+    all_events.sort(key=lambda x: x.seq, reverse=True)  # newest first
+    events = all_events[:limit]
+    has_more = len(all_events) > limit or raw.get("hasMore", False)
+
+    # Resolve contact ids -> names for a readable digest (cached).
+    _name_cache: dict = {}
+    async def _contact_name(cid):
+        if not cid or cid == "default":
+            return None
+        if cid in _name_cache:
+            return _name_cache[cid]
+        nm = cid
+        if _contacts_store is not None:
+            try:
+                c = await _contacts_store.get(cid)
+                if c is not None:
+                    nm = c.display_name or c.given_name or cid
+            except Exception:
+                pass
+        _name_cache[cid] = nm
+        return nm
+
+    digest_lines = []
+    for ev in events[:40]:
+        label = _TIMELINE_TYPE_LABELS.get(ev.type, ev.type)
+        snippet = (ev.summary or "").replace("\n", " ").strip()
+        if len(snippet) > 120:
+            snippet = snippet[:117] + "…"
+        nm = await _contact_name(ev.contact_id)
+        who = f" with {nm}" if nm else ""
+        digest_lines.append(f"• {ev.when} — {label}{who}{': ' + snippet if snippet else ''}")
+    digest = ("\n".join(digest_lines)
+              if digest_lines else f"No journaled events since {since_iso}.")
+
+    return TimelineResponse(
+        since=since_iso,
+        count=len(events),
+        digest=digest,
+        events=events,
+        has_more=has_more,
     )
 
 
@@ -5285,6 +5404,17 @@ async def create_initiative(body: InitiativeCreateRequest) -> InitiativeResponse
         except Exception:
             pass
 
+    try:  # timeline (v0.21.0)
+        from colony_sidecar.events.journal import append_event
+        append_event("initiative.generated", {
+            "initiative_id": getattr(initiative, "id", None),
+            "contact_id": body.entity_id,
+            "summary": body.description,
+            "initiative_type": body.initiative_type,
+        })
+    except Exception:
+        logger.debug("journal initiative.generated failed", exc_info=True)
+
     return _initiative_to_response(initiative)
 
 
@@ -5777,6 +5907,16 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
         "Agent outreach recorded: agent=%s channel=%s reason=%s",
         body.agent_id, body.channel, body.reason,
     )
+    try:  # timeline (v0.21.0)
+        from colony_sidecar.events.journal import append_event
+        append_event("outreach.sent", {
+            "contact_id": getattr(body, "contact_id", None),
+            "channel": body.channel,
+            "reason": body.reason,
+            "summary": body.reason,
+        })
+    except Exception:
+        logger.debug("journal outreach.sent failed", exc_info=True)
     return RecordOutreachResponse(
         recorded_at=now.isoformat(),
         last_agent_outreach_at=outreach_at,

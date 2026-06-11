@@ -114,6 +114,26 @@ def test_now_and_format():
     )
 
 
+def test_parse_relative_since():
+    now = datetime.now(timezone.utc)
+    # relative
+    a = T.parse_iso(T.parse_relative_since("24h"))
+    assert 23.9 < (now - a).total_seconds() / 3600 < 24.1
+    b = T.parse_iso(T.parse_relative_since("30m"))
+    assert 29.0 < (now - b).total_seconds() / 60 < 31.0
+    c = T.parse_iso(T.parse_relative_since("7d"))
+    assert 6.9 < (now - c).total_seconds() / 86400 < 7.1
+    # empty -> default 24h
+    d = T.parse_iso(T.parse_relative_since(""))
+    assert 23.0 < (now - d).total_seconds() / 3600 < 25.0
+    # absolute ISO passes through
+    iso = "2026-06-01T00:00:00+00:00"
+    assert T.parse_iso(T.parse_relative_since(iso)).date().isoformat() == "2026-06-01"
+    # today -> midnight agent-local, in the past
+    T.set_agent_timezone("UTC")
+    assert T.parse_iso(T.parse_relative_since("today")) <= now
+
+
 def test_describe_now_includes_both_zones():
     T.set_agent_timezone("America/New_York")
     out = T.describe_now(contact_tz="Asia/Tokyo", contact_label="Ingrid")
