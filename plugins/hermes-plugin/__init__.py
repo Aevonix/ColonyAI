@@ -734,6 +734,7 @@ def _configure_colony_llm(client: ColonyClient, plugin_config: dict) -> None:
     """
     provider = plugin_config.get("llm_provider", os.environ.get("COLONY_LLM_PROVIDER", "")).lower()
     base_url = plugin_config.get("llm_base_url", os.environ.get("COLONY_LLM_BASE_URL", ""))
+    api_key_llm = plugin_config.get("llm_api_key", os.environ.get("COLONY_LLM_API_KEY", ""))
     models_env = os.environ.get("COLONY_LLM_MODELS", "")
     models: dict[str, str] = {}
 
@@ -773,6 +774,7 @@ def _configure_colony_llm(client: ColonyClient, plugin_config: dict) -> None:
         "llm": {
             "provider": provider,
             "baseUrl": base_url,
+            "apiKey": api_key_llm,
             "models": models,
         },
     }

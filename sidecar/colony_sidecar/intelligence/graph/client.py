@@ -125,6 +125,9 @@ class ColonyGraph:
             connection_timeout=config.connection_timeout_secs,
             max_transaction_retry_time=config.max_retry_secs,
             keep_alive=True,
+            # Suppress benign DBMS notifications (unknown-label/property warnings
+            # for nodes not yet created) — pure log noise, not errors.
+            notifications_min_severity="OFF",
         )
         self.database: str = config.database
         self._embed_fn: Optional[
