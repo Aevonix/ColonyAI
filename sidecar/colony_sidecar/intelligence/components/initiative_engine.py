@@ -1242,7 +1242,7 @@ class InitiativeEngine:
 
     def remove_initiative(self, initiative_id: str) -> bool:
         """Remove an initiative by ID.
-        
+
         Returns:
             True if removed, False if not found.
         """
@@ -1252,6 +1252,50 @@ class InitiativeEngine:
                 logger.debug("Removed initiative %s", initiative_id)
                 return True
         return False
+
+    @staticmethod
+    def _is_expired(initiative: "Initiative") -> bool:
+        """Whether *initiative* has passed its ``expires_at`` (no expiry → never).
+
+        A naive ``expires_at`` is interpreted in local time (Python convention);
+        an aware one is compared against UTC. Production generators use aware UTC
+        timestamps; this also tolerates naive ones.
+        """
+        exp = initiative.expires_at
+        if exp is None:
+            return False
+        if exp.tzinfo is None:
+            return exp <= datetime.now()
+        return exp <= datetime.now(timezone.utc)
+
+    async def get_active(self) -> List[Initiative]:
+        """Return current, non-expired initiatives, highest priority first.
+
+        Unlike :meth:`get_initiatives` (which returns everything still held in
+        memory), this drops anything past its ``expires_at`` so expired
+        suggestions are never surfaced.
+        """
+        active = [i for i in self._initiatives if not self._is_expired(i)]
+        active.sort(key=lambda i: i.priority, reverse=True)
+        return active
+
+    async def dismiss(self, initiative_id: str) -> bool:
+        """Dismiss an initiative the user rejected — drop it from the active set.
+
+        Mirrors :meth:`remove_initiative` but is the user-facing verb; when a
+        persistence store is attached, the dismissal is also recorded there so
+        the suggestion isn't immediately regenerated.
+
+        Returns:
+            True if the initiative was present, False otherwise.
+        """
+        removed = self.remove_initiative(initiative_id)
+        if removed and self._store is not None and hasattr(self._store, "cancel"):
+            try:
+                self._store.cancel(initiative_id)
+            except Exception:
+                logger.debug("InitiativeStore.cancel failed for %s", initiative_id, exc_info=True)
+        return removed
 
     async def execute_initiative(self, initiative_id: str) -> Dict[str, Any]:
         """Execute a self-initiative using the skill registry (v0.11.0).
