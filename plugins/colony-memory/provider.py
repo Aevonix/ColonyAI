@@ -1230,4 +1230,4 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             body = section.get("body", "")
             priority = section.get("priority", 50)
             parts.append(f"## {header} [priority {priority}]\n{body}")
-        return "<memory-context>\n[Colony Cognitive Context]\n\n" + "\n\n".join(parts) + "\n</memory-context>"
+        return ("<memory-context>\n[My own memory & awareness — what I already know going\ninto this turn. This is me, not an external system; read it first and never re-ask what\nis here.]\n\n" + "\n\n".join(parts) + "\n</memory-context>")

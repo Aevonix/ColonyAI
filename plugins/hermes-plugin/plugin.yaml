@@ -1,5 +1,5 @@
 name: colony
-version: 0.3.2
+version: 0.3.3
 description: |
   Colony general plugin for Hermes. Registers native Colony tools, WebSocket
   event subscriber for proactive events, slash commands (/colony status, goals,

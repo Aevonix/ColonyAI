@@ -1565,7 +1565,7 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     if identity_lines:
         sections.append(ContextSection(
             id="colony-identity",
-            title="Colony Identity",
+            title="Who I Am",
             body="\n".join(identity_lines),
             priority=100,
         ))
@@ -1719,6 +1719,29 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
                 ))
         except Exception as exc:
             logger.warning("context_assemble affect failed: %s", exc)
+
+    # --- Relationship closeness ---
+    if _contacts_store is not None and contact_id:
+        try:
+            _rc = await _contacts_store.get(contact_id)
+            if _rc is not None:
+                from colony_sidecar.contacts.scoring import closeness_label
+                _rs = float(getattr(_rc, "relationship_score", 0.0) or 0.0)
+                _rt = getattr(_rc, "trust_tier", "") or ""
+                _bits = [f"Closeness: {closeness_label(_rs)} ({_rs:.0%})"]
+                if _rt:
+                    _bits.append(f"standing: {_rt.replace('_', ' ')}")
+                _rl = getattr(_rc, "last_interaction_at", None)
+                if _rl:
+                    _bits.append(f"last talked: {str(_rl)[:10]}")
+                sections.append(ContextSection(
+                    id="colony-relationship",
+                    title="Relationship",
+                    body=" · ".join(_bits),
+                    priority=86,
+                ))
+        except Exception as exc:
+            logger.debug("context_assemble relationship failed: %s", exc)
 
     # --- Shared Facts ---
     if _facts_store is not None and contact_id:
@@ -1992,6 +2015,24 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     try:
         if _contacts_store is not None and body.context.contact_id:
             await _contacts_store.record_interaction(body.context.contact_id)
+            # Recompute the contact's relationship closeness from interaction
+            # history + affect (self-sufficient; independent of the behavioral
+            # signal graph, which can be sparse). Keeps every contact's score live.
+            try:
+                from colony_sidecar.contacts.scoring import compute_relationship_score
+                _c = await _contacts_store.get(body.context.contact_id)
+                if _c is not None:
+                    _aff = None
+                    if _affect_store is not None:
+                        try:
+                            _aff = _affect_store.get_state(body.context.contact_id)
+                        except Exception:
+                            _aff = None
+                    _score = compute_relationship_score(_c, _aff)
+                    await _contacts_store.update_relationship_score(
+                        body.context.contact_id, _score)
+            except Exception:
+                logger.debug("relationship score update failed", exc_info=True)
     except Exception:
         logger.debug("record_interaction failed", exc_info=True)
 

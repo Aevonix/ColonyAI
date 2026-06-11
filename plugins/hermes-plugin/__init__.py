@@ -32,7 +32,7 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "name": "colony_memory_search",
         "description": (
-            "Search Colony's memory graph for relevant context. "
+            "Search my own long-term memory for relevant context. "
             "Returns ranked memories with timestamps and relevance scores."
         ),
         "parameters": {
@@ -205,7 +205,7 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "colony_autonomy_disable",
-        "description": "Disable the Colony autonomy bridge. Removes the cron job.",
+        "description": "Turn off my background initiative handling (autonomy). Removes the cron job.",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -214,7 +214,7 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "colony_autonomy_status",
-        "description": "Check if the Colony autonomy bridge is active and show recent activity.",
+        "description": "Check whether my background initiative handling (autonomy) is active and show recent activity.",
         "parameters": {
             "type": "object",
             "properties": {},

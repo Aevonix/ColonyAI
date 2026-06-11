@@ -1461,7 +1461,9 @@ class ColonyGraph:
                 try:
                     contact = await store.find_by_person_node_id(person_id)
                     if contact:
-                        await store.update_relationship_score(contact.contact_id, new_score)
+                        # scorer works in 0-100; the contact field is 0-1
+                        _norm = new_score / 100.0 if new_score > 1.0 else new_score
+                        await store.update_relationship_score(contact.contact_id, _norm)
                 except Exception as exc:
                     logger.debug("Score sync to SQLite failed for %s: %s", person_id, exc)
         except Exception as exc:

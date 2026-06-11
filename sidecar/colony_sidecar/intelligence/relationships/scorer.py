@@ -404,8 +404,11 @@ class RelationshipScorer:
                     except Exception:
                         pass
 
-            # Only record if significant change
-            if abs(new_score - old_score) > 0.5:
+            # Skip the no-signal default (50/"regular") — persisting it would
+            # clobber the contact's interaction-derived score. Only record a
+            # genuine, signal-backed change.
+            is_no_signal_default = (new_score == 50.0 and new_tier == "regular")
+            if not is_no_signal_default and abs(new_score - old_score) > 0.5:
                 await self.record_score_change(
                     person_id, new_score, new_tier, old_score, "periodic_refresh"
                 )
