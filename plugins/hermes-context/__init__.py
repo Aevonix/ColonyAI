@@ -48,8 +48,9 @@ class ColonyContextEngine(_ContextEngineABC):
         self._api_key = config.get("api_key", os.environ.get("COLONY_API_KEY", ""))
         self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
         self.max_tokens = config.get("max_context_tokens",
-            int(os.environ.get("COLONY_MAX_CONTEXT_TOKENS", "900000")))  # MiMo serves 1M; leave headroom for output + overhead
-        self.threshold = config.get("compression_threshold", 0.8)
+            int(os.environ.get("COLONY_MAX_CONTEXT_TOKENS", "1000000")))  # MiMo's full 1M window
+        self.threshold = config.get("compression_threshold",
+            float(os.environ.get("COLONY_COMPRESSION_THRESHOLD", "0.92")))  # compress at ~920k, reserving ~80k for the reply + margin (1M is shared in/out)
         self._session_id = ""
 
     @property
