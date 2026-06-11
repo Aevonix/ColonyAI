@@ -75,10 +75,6 @@ class SignalCollector:
         self.graph = graph
         self._metrics = metrics  # Optional ColonyMetricsCollector
 
-    async def collect(self, message: Message) -> List[Signal]:
-        """Extract all signals from a single message in Colony's interaction stream."""
-        t0 = time.monotonic()
-
     async def ingest_raw(self, signal_data: dict) -> None:
         """Ingest a pre-computed signal from an external source."""
         try:

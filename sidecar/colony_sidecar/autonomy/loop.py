@@ -359,7 +359,7 @@ class AutonomyLoop:
                 for event in recent:
                     event_type = getattr(event, "event_type", None)
                     if event_type in ("message_received", "message_sent", "gateway_signal"):
-                        getattr(event, "person_id", None)
+                        pass  # event counted in stats; per-event routing not yet used
             self.stats.events_processed += new_count
         except Exception as exc:
             self.stats.errors += 1
