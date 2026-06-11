@@ -1531,8 +1531,10 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             t_lines.append("Heads-up:")
             t_lines.extend("  " + h for h in heads)
         t_lines.append(
-            "Treat the times above as authoritative. Colony stores event times; "
-            "compute elapsed/upcoming relative to this now."
+            "^ This is the authoritative CURRENT date/time — this is NOW. Ignore any "
+            "'Conversation started' date in your system prompt; that is only when this "
+            "long-running session began (often days ago), NOT today. Greet and compute "
+            "elapsed/upcoming relative to the time above."
         )
         sections.append(ContextSection(
             id="temporal-context",
@@ -2378,6 +2380,29 @@ async def create_contact(body: ContactCreateRequest) -> ContactResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/contacts/resolve", response_model=ContactResponse)
+async def resolve_contact_by_handle(gateway: str, address: str) -> ContactResponse:
+    """Resolve a contact from a messaging handle (v0.21.2).
+
+    Registered BEFORE /contacts/{contact_id} so it isn't shadowed by the
+    parameterized route. Lets the host plugin map an inbound sender
+    (platform + address) to the real Colony contact, so per-contact
+    memory/affect/facts engage instead of pooling everything under 'default'.
+    """
+    if _contacts_store is None:
+        raise HTTPException(status_code=404, detail="Contact store not initialized")
+    try:
+        contact = await _contacts_store.find_by_handle(gateway, address)
+        if contact is None:
+            raise HTTPException(status_code=404, detail="No contact for that handle")
+        return ContactResponse(**contact.to_dict())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("resolve_contact_by_handle failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/contacts/{contact_id}", response_model=ContactResponse)
 async def get_contact(contact_id: str) -> ContactResponse:
     if _contacts_store is None:
@@ -2392,6 +2417,8 @@ async def get_contact(contact_id: str) -> ContactResponse:
     except Exception as exc:
         logger.warning("get_contact failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
 
 
 @router.post("/contacts/{contact_id}/timezone", response_model=ContactResponse)
