@@ -44,9 +44,12 @@ from colony_sidecar.api.schemas.host import (
     ContactResponse,
     ContactStyleRequest,
     ContactStyleResponse,
+    ContactTimezoneRequest,
     ContextAssembleRequest,
     ContextAssembleResponse,
     ContextSection,
+    TemporalConfigRequest,
+    TemporalConfigResponse,
     DeliveryListResponse,
     DeliveryMarkRequest,
     EmbedHealthResponse,
@@ -1459,6 +1462,56 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     sections: list[ContextSection] = []
     query_text = body.incoming_message.content if body.incoming_message else ""
 
+    # --- Temporal Context (v0.21.0): the agent's reference frame for "now" ---
+    # The host is the authoritative clock; this section fulfils the promise the
+    # colony-memory plugin makes ("prefer the real current time provided by the
+    # host"). Agent home tz + the contact's local tz + elapsed-since-last-contact.
+    try:
+        from colony_sidecar.util import temporal as _temporal
+        agent_tz = _temporal.agent_timezone()
+        cid = body.context.contact_id if body.context else None
+        override_tz = getattr(body.context, "timezone", None) if body.context else None
+        contact_tz = None
+        contact_label = "the contact"
+        contact_obj = None
+        if _contacts_store is not None and cid:
+            try:
+                contact_obj = await _contacts_store.get(cid)
+                if contact_obj is not None:
+                    contact_tz = getattr(contact_obj, "timezone", None)
+                    contact_label = (
+                        contact_obj.display_name or contact_obj.given_name or "the contact"
+                    )
+            except Exception:
+                pass
+        comm_tz = _temporal.resolve_communication_timezone(contact_tz, override_tz)
+        t_lines = [_temporal.describe_now(agent_tz, comm_tz, contact_label)]
+        if contact_obj is not None and getattr(contact_obj, "last_interaction_at", None):
+            li = contact_obj.last_interaction_at
+            t_lines.append(
+                f"Last exchange with {contact_label}: {_temporal.humanize_delta(li)} "
+                f"({_temporal.bucket(li, agent_tz)})."
+            )
+        try:
+            from colony_sidecar.util.session_safety import load_last_user_message_at
+            last_owner = load_last_user_message_at()
+            if last_owner:
+                t_lines.append(f"Owner last messaged {_temporal.humanize_delta(last_owner)}.")
+        except Exception:
+            pass
+        t_lines.append(
+            "Treat the times above as authoritative. Colony stores event times; "
+            "compute elapsed/upcoming relative to this now."
+        )
+        sections.append(ContextSection(
+            id="temporal-context",
+            title="Current Time",
+            body="\n".join(t_lines),
+            priority=100,
+        ))
+    except Exception as exc:
+        logger.debug("context_assemble temporal section failed: %s", exc)
+
     # --- Colony Identity ---
     identity_lines = []
     try:
@@ -2288,6 +2341,63 @@ async def get_contact(contact_id: str) -> ContactResponse:
     except Exception as exc:
         logger.warning("get_contact failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/contacts/{contact_id}/timezone", response_model=ContactResponse)
+async def set_contact_timezone(contact_id: str, body: ContactTimezoneRequest) -> ContactResponse:
+    """Set (or clear, with null) a contact's IANA timezone (v0.21.0, editable)."""
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    try:
+        await _contacts_store.set_timezone(contact_id, body.timezone)
+        contact = await _contacts_store.get(contact_id)
+        if contact is None:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return ContactResponse(**contact.to_dict())
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("set_contact_timezone failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/temporal/config", response_model=TemporalConfigResponse)
+async def get_temporal_config() -> TemporalConfigResponse:
+    """Current temporal reference frame (agent home tz + defaults). v0.21.0."""
+    from colony_sidecar.util import temporal as _temporal
+    atz = _temporal.agent_timezone()
+    return TemporalConfigResponse(
+        agent_timezone=atz,
+        default_contact_timezone=_temporal.default_contact_timezone(),
+        now_utc=_temporal.now_utc().isoformat(),
+        now_agent_local=_temporal.now_in(atz).isoformat(),
+        agent_local_clock=_temporal.format_clock(_temporal.now_in(atz)),
+    )
+
+
+@router.post("/temporal/config", response_model=TemporalConfigResponse)
+async def set_temporal_config(body: TemporalConfigRequest) -> TemporalConfigResponse:
+    """Edit the agent home tz and/or the default contact tz. v0.21.0."""
+    from colony_sidecar.util import temporal as _temporal
+    try:
+        if body.agent_timezone is not None:
+            _temporal.set_agent_timezone(body.agent_timezone)
+        if body.clear_default_contact_timezone:
+            _temporal.set_default_contact_timezone(None)
+        elif body.default_contact_timezone is not None:
+            _temporal.set_default_contact_timezone(body.default_contact_timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    atz = _temporal.agent_timezone()
+    return TemporalConfigResponse(
+        agent_timezone=atz,
+        default_contact_timezone=_temporal.default_contact_timezone(),
+        now_utc=_temporal.now_utc().isoformat(),
+        now_agent_local=_temporal.now_in(atz).isoformat(),
+        agent_local_clock=_temporal.format_clock(_temporal.now_in(atz)),
+    )
 
 
 @router.post("/contacts/{contact_id}/style", response_model=ContactStyleResponse)

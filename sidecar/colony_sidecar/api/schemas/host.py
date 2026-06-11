@@ -33,6 +33,7 @@ class HostTurnContext(BaseModel):
     channel_id: Optional[str] = None
     turn_id: Optional[str] = None
     locale: Optional[str] = None
+    timezone: Optional[str] = None  # per-communication tz override (v0.21.0)
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -531,12 +532,33 @@ class ContactResponse(BaseModel):
     deleted_at: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    timezone: Optional[str] = None  # IANA tz for this contact (v0.21.0)
 
 
 class ContactListResponse(BaseModel):
     contacts: List[ContactResponse] = []
     source_filter: Optional[str] = None
     total: int = 0
+
+
+# --- Temporal awareness (v0.21.0) -------------------------------------------
+
+class TemporalConfigRequest(BaseModel):
+    agent_timezone: Optional[str] = None          # set the agent's home tz
+    default_contact_timezone: Optional[str] = None  # fallback tz for contacts
+    clear_default_contact_timezone: bool = False    # explicitly clear the fallback
+
+
+class TemporalConfigResponse(BaseModel):
+    agent_timezone: str
+    default_contact_timezone: Optional[str] = None
+    now_utc: str
+    now_agent_local: str
+    agent_local_clock: str
+
+
+class ContactTimezoneRequest(BaseModel):
+    timezone: Optional[str] = None  # None clears it
 
 
 class ContactHandleIn(BaseModel):

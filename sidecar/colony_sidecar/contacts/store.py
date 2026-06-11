@@ -212,6 +212,20 @@ class SQLiteContactStore(ContactStore):
         schema = _SCHEMA_FILE.read_text()
         await self._db.executescript(schema)
         await self._db.commit()
+        await self._apply_migrations()
+
+    async def _apply_migrations(self) -> None:
+        """Idempotent additive migrations for DBs created before a column existed.
+
+        SQLite has no ADD COLUMN IF NOT EXISTS, so we introspect first.
+        """
+        db = self._db
+        assert db is not None
+        async with db.execute("PRAGMA table_info(contacts)") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "timezone" not in cols:  # v0.21.0 — per-contact timezone
+            await db.execute("ALTER TABLE contacts ADD COLUMN timezone TEXT")
+            await db.commit()
 
     async def close(self) -> None:
         if self._db:
@@ -507,6 +521,32 @@ class SQLiteContactStore(ContactStore):
         await self.record_audit(
             contact_id, "interaction_toggled",
             {"interaction_allowed": allowed},
+            performed_by=performed_by,
+        )
+
+    async def set_timezone(
+        self, contact_id: str, timezone: Optional[str], performed_by: str = "operator"
+    ) -> None:
+        """Set (or clear, with None) a contact's IANA timezone. v0.21.0."""
+        from colony_sidecar.util.temporal import is_valid_timezone
+        if timezone is not None and not is_valid_timezone(timezone):
+            raise ValueError(f"Invalid IANA timezone: {timezone!r}")
+        db = self._require_db()
+        async with db.execute(
+            "SELECT timezone FROM contacts WHERE contact_id = ?", (contact_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise ValueError(f"Contact not found: {contact_id}")
+        old_tz = row["timezone"]
+        await db.execute(
+            "UPDATE contacts SET timezone = ?, updated_at = ? WHERE contact_id = ?",
+            (timezone, _now_iso(), contact_id),
+        )
+        await db.commit()
+        await self.record_audit(
+            contact_id, "timezone_changed",
+            {"old_timezone": old_tz, "new_timezone": timezone},
             performed_by=performed_by,
         )
 

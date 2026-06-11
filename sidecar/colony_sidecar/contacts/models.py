@@ -67,6 +67,7 @@ class Contact:
     deleted_at: Optional[str]
     created_at: str
     updated_at: str
+    timezone: Optional[str] = None  # IANA tz for this contact (v0.21.0), editable
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -91,6 +92,7 @@ class Contact:
             "deleted_at": self.deleted_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "timezone": self.timezone,
         }
 
     @classmethod
@@ -125,6 +127,7 @@ class Contact:
             deleted_at=row.get("deleted_at"),
             created_at=row.get("created_at", ""),
             updated_at=row.get("updated_at", ""),
+            timezone=row.get("timezone"),
         )
 
 
