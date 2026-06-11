@@ -47,7 +47,8 @@ class ColonyContextEngine(_ContextEngineABC):
         self.sidecar_url = config.get("url", os.environ.get("COLONY_URL", "http://127.0.0.1:7777"))
         self._api_key = config.get("api_key", os.environ.get("COLONY_API_KEY", ""))
         self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
-        self.max_tokens = config.get("max_context_tokens", 120_000)
+        self.max_tokens = config.get("max_context_tokens",
+            int(os.environ.get("COLONY_MAX_CONTEXT_TOKENS", "900000")))  # MiMo serves 1M; leave headroom for output + overhead
         self.threshold = config.get("compression_threshold", 0.8)
         self._session_id = ""
 
