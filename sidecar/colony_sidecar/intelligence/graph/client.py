@@ -209,7 +209,7 @@ class ColonyGraph:
         self._vector_store = store
 
     async def _embed(self, text: str) -> List[float]:
-        """Produce an embedding vector for *text*.
+        """Produce an embedding vector for *text* (document side).
 
         Raises:
             RuntimeError: If no embedding function has been registered.
@@ -219,6 +219,21 @@ class ColonyGraph:
                 "No embedding function registered. Call set_embed_fn() first."
             )
         return await self._embed_fn(text)
+
+    async def _embed_query(self, query: str) -> List[float]:
+        """Embed a *query* for retrieval (v0.21.1).
+
+        Instruct-tuned embedders (Qwen3-Embedding, E5, BGE, …) are ASYMMETRIC:
+        the query gets an instruction prefix while documents do not. Without it,
+        retrieval quality collapses (every result lands at ~0.9 cosine distance
+        and the right memory never surfaces). Configurable via
+        COLONY_EMBED_QUERY_INSTRUCTION (set to empty for symmetric models).
+        """
+        import os
+        default_instr = ("Instruct: Given a search query, retrieve relevant "
+                         "memories that answer it\nQuery: ")
+        instr = os.environ.get("COLONY_EMBED_QUERY_INSTRUCTION", default_instr)
+        return await self._embed((instr + query) if instr else query)
 
     @staticmethod
     def compute_effective_confidence(
@@ -337,6 +352,10 @@ class ColonyGraph:
             The UUID of the newly created Memory node.
         """
         metadata = metadata or {}
+        # Guard (v0.21.1): never store empty/whitespace memories — they were
+        # accumulating as duplicate junk nodes.
+        if not content or not content.strip():
+            return ""
         max_importance = MAX_IMPORTANCE.get(source_type, 0.7)
         if importance > max_importance:
             logger.warning(
@@ -354,7 +373,9 @@ class ColonyGraph:
         source_type = (source_type or MemorySourceType.INFERENCE.value).lower()
         source_uri = source_uri or None
         source_version = source_version or None
-        content_hash = content_hash or None
+        # Always derive a content hash so identical memories can be deduped
+        # (v0.21.1 — previously null, so every write created a duplicate node).
+        content_hash = content_hash or hashlib.sha256(content.encode("utf-8")).hexdigest()
         source_reliability = SOURCE_RELIABILITY.get(source_type, 0.5)
         protected = source_type == MemorySourceType.USER_ASSERTION
         base_confidence = importance
@@ -373,10 +394,41 @@ class ColonyGraph:
             now=created_at,
         )
 
-        # Compute embedding if available
+        # Dedup (v0.21.1): if an identical memory already exists (same content
+        # hash), reinforce it instead of creating a duplicate — and skip the
+        # embed cost entirely. This collapses the runaway duplication (e.g. a
+        # recurring cron prompt that had been stored 70+ times).
+        if content_hash:
+            async with self.driver.session(database=self.database) as session:
+                dq = await session.run(
+                    """
+                    MATCH (m:Memory {content_hash: $content_hash})
+                    WHERE m.superseded_by IS NULL
+                    SET m.accessed_at = datetime(),
+                        m.corroboration_count = coalesce(m.corroboration_count, 0) + 1,
+                        m.strength = CASE WHEN coalesce(m.strength, 0.0) < 1.0
+                                          THEN coalesce(m.strength, 0.0) + 0.05 ELSE 1.0 END
+                    RETURN m.id AS id
+                    ORDER BY m.created_at ASC
+                    LIMIT 1
+                    """,
+                    content_hash=content_hash,
+                )
+                existing = await dq.single()
+                if existing is not None:
+                    logger.debug("store_memory dedup: reinforced %s", existing["id"])
+                    return existing["id"]
+
+        # Compute embedding. If an embedder is configured but we can't get a
+        # usable vector (outage that survived retries), FAIL the write rather than
+        # create an unsearchable memory (silent loss). The vector lives in the
+        # LanceDB store; the Neo4j m.embedding property is secondary/best-effort.
         embedding: Optional[List[float]] = None
         if self._embed_fn is not None:
             embedding = await self._embed(content)
+            if not embedding:
+                raise RuntimeError(
+                    "embedding unavailable — refusing to store unsearchable memory")
 
         # Preserve dict for vector store before stringifying for Neo4j
         metadata_dict = metadata
@@ -556,10 +608,10 @@ class ColonyGraph:
             A list of memory dicts, each annotated with ``entities`` and
             sorted by relevance descending.
         """
-        # Vector search path: embed query → LanceDB ANN → Neo4j hydration
+        # Vector search path: embed query (with instruction) → LanceDB ANN → Neo4j hydration
         if self._vector_store is not None and self._embed_fn is not None:
             try:
-                embedding = await self._embed(query)
+                embedding = await self._embed_query(query)
                 from colony_sidecar.vector.collections import Collection
                 results = await self._vector_store.search(
                     collection=Collection.MEMORIES,

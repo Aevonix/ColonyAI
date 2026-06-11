@@ -7,6 +7,7 @@ LLM provider the host is configured with — no separate API key needed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -79,13 +80,20 @@ class OpenAIAPIEmbeddingProvider(EmbeddingProvider):
         # NOTE: do not send "dimensions" — non-matryoshka models (e.g.
         # Qwen3-Embedding-8B, native 4096) reject it with HTTP 400 on vllm.
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-
-        embeddings: list[list[float]] = []
-        for item in data.get("data", []):
-            embeddings.append(item["embedding"])
-
-        return embeddings
+        # Resilience (v0.21.1): the embedding endpoint is often remote (e.g. an
+        # SSH-tunnelled vLLM). Transient blips were silently failing memory writes
+        # AND recall (the agent then "loses" its memory). Retry with backoff.
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.post(url, json=payload, headers=headers)
+                    response.raise_for_status()
+                    data = response.json()
+                return [item["embedding"] for item in data.get("data", [])]
+            except (httpx.HTTPError, OSError) as exc:
+                last_exc = exc
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+        logger.warning("Embedding failed after 3 attempts: %s", last_exc)
+        raise last_exc  # type: ignore[misc]

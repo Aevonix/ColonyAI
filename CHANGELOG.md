@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.21.1 — memory reliability + recall quality
+
+Fixes that make Colony memory production-reliable:
+- **Recall quality**: embed retrieval queries with the asymmetric Qwen3 instruction
+  prefix (configurable via COLONY_EMBED_QUERY_INSTRUCTION). Without it, vector
+  retrieval was near-random (~0.9 cosine distance on everything) and the right
+  memory never surfaced; with it, the correct memory ranks first.
+- **No silent memory loss**: refuse to store a memory when an embedding was
+  expected but unavailable (was creating unsearchable, embeddingless nodes during
+  embed outages).
+- **Embed resilience**: retry the embedding endpoint with backoff (the embedder
+  is often a remote/tunnelled service).
+- **Dedup**: memories are deduped by content hash (a recurring prompt had been
+  stored 70+ times); empty memories are dropped.
+
+
 ## 0.20.0 (2026-06-10)
 
 Scheduled-worker installation: the agent-side workers become part of
