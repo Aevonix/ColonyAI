@@ -941,6 +941,7 @@ async def lifespan(app: FastAPI):
 
     from colony_sidecar.telemetry import TelemetryStore
     telemetry = TelemetryStore()
+    telemetry.load()  # restore last_*_at across restart (v0.21.0)
     telemetry.started_at = datetime.now(timezone.utc)
     app.state.telemetry = telemetry
     set_telemetry(telemetry)

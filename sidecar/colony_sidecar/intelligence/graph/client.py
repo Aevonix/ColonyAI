@@ -28,6 +28,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _recency_factor(days_old: float) -> float:
+    """Recency weight for retrieval ranking (v0.21.0).
+
+    Configurable exponential half-life with a floor, so recent memories surface
+    over stale ones without fully suppressing older context. Defaults:
+    half-life 90d, floor 0.5 (a year-old memory keeps ~0.53 weight; fresh = 1.0).
+    Set COLONY_RECENCY_HALF_LIFE_DAYS<=0 to disable. The previous behaviour was a
+    near-flat ~10%/year discount that barely affected ranking.
+    """
+    import os
+    try:
+        half_life = float(os.environ.get("COLONY_RECENCY_HALF_LIFE_DAYS", "90"))
+    except (ValueError, TypeError):
+        half_life = 90.0
+    if half_life <= 0:
+        return 1.0
+    try:
+        floor = float(os.environ.get("COLONY_RECENCY_FLOOR", "0.5"))
+    except (ValueError, TypeError):
+        floor = 0.5
+    floor = min(max(floor, 0.0), 1.0)
+    return floor + (1.0 - floor) * (0.5 ** (max(days_old, 0.0) / half_life))
+
+
 @dataclass
 class GraphConfig:
     """Connection settings for the Neo4j graph database."""
@@ -247,9 +271,11 @@ class ColonyGraph:
         # Recall reinforcement (diminishing returns)
         confidence *= min(1.3, 1.0 + recalls * 0.03)
 
-        # Recency discount (separate from Ebbinghaus decay)
+        # Recency weighting (v0.21.0, configurable half-life + floor — see
+        # _recency_factor). Recent memories surface; VERIFIED memories are
+        # additionally floored at 0.9 by the epistemic-state clamp below.
         days_old = max(0, (now - created_at).days)
-        recency_factor = math.exp(-days_old / 365.0 * 0.1)  # ~10% per year
+        recency_factor = _recency_factor(days_old)
         confidence *= recency_factor
 
         # Verification boost

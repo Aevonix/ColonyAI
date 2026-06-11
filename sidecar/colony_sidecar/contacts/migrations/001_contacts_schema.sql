@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   enrichment_last_at  TEXT,
   deleted_at          TEXT,                        -- NULL until soft-deleted
   created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-  updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+  updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  timezone            TEXT                          -- IANA tz for this contact (v0.21.0), editable
 );
 
 CREATE INDEX IF NOT EXISTS idx_contacts_tier

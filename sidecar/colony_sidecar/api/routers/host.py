@@ -44,9 +44,16 @@ from colony_sidecar.api.schemas.host import (
     ContactResponse,
     ContactStyleRequest,
     ContactStyleResponse,
+    ContactTimezoneRequest,
     ContextAssembleRequest,
     ContextAssembleResponse,
     ContextSection,
+    TemporalConfigRequest,
+    TemporalConfigResponse,
+    TemporalContact,
+    TemporalContactsResponse,
+    TimelineEvent,
+    TimelineResponse,
     DeliveryListResponse,
     DeliveryMarkRequest,
     EmbedHealthResponse,
@@ -1459,6 +1466,83 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     sections: list[ContextSection] = []
     query_text = body.incoming_message.content if body.incoming_message else ""
 
+    # --- Temporal Context (v0.21.0): the agent's reference frame for "now" ---
+    # The host is the authoritative clock; this section fulfils the promise the
+    # colony-memory plugin makes ("prefer the real current time provided by the
+    # host"). Agent home tz + the contact's local tz + elapsed-since-last-contact.
+    try:
+        from colony_sidecar.util import temporal as _temporal
+        agent_tz = _temporal.agent_timezone()
+        cid = body.context.contact_id if body.context else None
+        override_tz = getattr(body.context, "timezone", None) if body.context else None
+        contact_tz = None
+        contact_label = "the contact"
+        contact_obj = None
+        if _contacts_store is not None and cid:
+            try:
+                contact_obj = await _contacts_store.get(cid)
+                if contact_obj is not None:
+                    contact_tz = getattr(contact_obj, "timezone", None)
+                    contact_label = (
+                        contact_obj.display_name or contact_obj.given_name or "the contact"
+                    )
+            except Exception:
+                pass
+        comm_tz = _temporal.resolve_communication_timezone(contact_tz, override_tz)
+        t_lines = [_temporal.describe_now(agent_tz, comm_tz, contact_label)]
+        if contact_obj is not None and getattr(contact_obj, "last_interaction_at", None):
+            li = contact_obj.last_interaction_at
+            t_lines.append(
+                f"Last exchange with {contact_label}: {_temporal.humanize_delta(li)} "
+                f"({_temporal.bucket(li, agent_tz)})."
+            )
+        try:
+            from colony_sidecar.util.session_safety import load_last_user_message_at
+            last_owner = load_last_user_message_at()
+            if last_owner:
+                t_lines.append(f"Owner last messaged {_temporal.humanize_delta(last_owner)}.")
+        except Exception:
+            pass
+        # Heads-up: time-sensitive items (overdue commitments + cadence-overdue contacts)
+        heads = []
+        try:
+            if _commitment_store is not None:
+                for c in (_commitment_store.get_overdue() or [])[:3]:
+                    desc = (c.get("description") or "a commitment")[:80]
+                    heads.append(
+                        f"⚠️ Overdue: {desc} (was due {_temporal.humanize_delta(c.get('due_at'))})"
+                    )
+        except Exception:
+            pass
+        try:
+            if _contacts_store is not None:
+                exclude = {cid} if cid else set()
+                overdue_contacts = await _contacts_store.compute_cadence_overdue(
+                    overdue_only=True, limit=3, exclude_ids=exclude,
+                )
+                for o in overdue_contacts[:2]:
+                    heads.append(
+                        f"🕰️ Haven't talked to {o['name']} in {int(o['days_since'])}d "
+                        f"(usually ~{o['cadence_days']:g}d)."
+                    )
+        except Exception:
+            pass
+        if heads:
+            t_lines.append("Heads-up:")
+            t_lines.extend("  " + h for h in heads)
+        t_lines.append(
+            "Treat the times above as authoritative. Colony stores event times; "
+            "compute elapsed/upcoming relative to this now."
+        )
+        sections.append(ContextSection(
+            id="temporal-context",
+            title="Current Time",
+            body="\n".join(t_lines),
+            priority=100,
+        ))
+    except Exception as exc:
+        logger.debug("context_assemble temporal section failed: %s", exc)
+
     # --- Colony Identity ---
     identity_lines = []
     try:
@@ -1889,6 +1973,26 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         except Exception:
             pass
 
+    # Timeline spine (v0.21.0): journal the conversation turn so it lands on
+    # the unified timeline, and bump the contact's recency (last_interaction_at).
+    if body.summary:
+        try:
+            from colony_sidecar.events.journal import append_event
+            append_event("conversation.turn", {
+                "contact_id": body.context.contact_id,
+                "session_id": body.context.session_id,
+                "summary": (body.summary or "")[:300],
+                "topics": (body.topics or [])[:10],
+                "tools_used": (body.tools_used or [])[:20],
+            })
+        except Exception:
+            logger.debug("journal conversation.turn failed", exc_info=True)
+    try:
+        if _contacts_store is not None and body.context.contact_id:
+            await _contacts_store.record_interaction(body.context.contact_id)
+    except Exception:
+        logger.debug("record_interaction failed", exc_info=True)
+
     return TurnSyncResponse(accepted=True, continuity_updated=graph_ok, skipped_reason=None if graph_ok else "no_graph_store")
 
 
@@ -2288,6 +2392,184 @@ async def get_contact(contact_id: str) -> ContactResponse:
     except Exception as exc:
         logger.warning("get_contact failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/contacts/{contact_id}/timezone", response_model=ContactResponse)
+async def set_contact_timezone(contact_id: str, body: ContactTimezoneRequest) -> ContactResponse:
+    """Set (or clear, with null) a contact's IANA timezone (v0.21.0, editable)."""
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    try:
+        await _contacts_store.set_timezone(contact_id, body.timezone)
+        contact = await _contacts_store.get(contact_id)
+        if contact is None:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return ContactResponse(**contact.to_dict())
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("set_contact_timezone failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/temporal/config", response_model=TemporalConfigResponse)
+async def get_temporal_config() -> TemporalConfigResponse:
+    """Current temporal reference frame (agent home tz + defaults). v0.21.0."""
+    from colony_sidecar.util import temporal as _temporal
+    atz = _temporal.agent_timezone()
+    return TemporalConfigResponse(
+        agent_timezone=atz,
+        default_contact_timezone=_temporal.default_contact_timezone(),
+        now_utc=_temporal.now_utc().isoformat(),
+        now_agent_local=_temporal.now_in(atz).isoformat(),
+        agent_local_clock=_temporal.format_clock(_temporal.now_in(atz)),
+    )
+
+
+@router.post("/temporal/config", response_model=TemporalConfigResponse)
+async def set_temporal_config(body: TemporalConfigRequest) -> TemporalConfigResponse:
+    """Edit the agent home tz and/or the default contact tz. v0.21.0."""
+    from colony_sidecar.util import temporal as _temporal
+    try:
+        if body.agent_timezone is not None:
+            _temporal.set_agent_timezone(body.agent_timezone)
+        if body.clear_default_contact_timezone:
+            _temporal.set_default_contact_timezone(None)
+        elif body.default_contact_timezone is not None:
+            _temporal.set_default_contact_timezone(body.default_contact_timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    atz = _temporal.agent_timezone()
+    return TemporalConfigResponse(
+        agent_timezone=atz,
+        default_contact_timezone=_temporal.default_contact_timezone(),
+        now_utc=_temporal.now_utc().isoformat(),
+        now_agent_local=_temporal.now_in(atz).isoformat(),
+        agent_local_clock=_temporal.format_clock(_temporal.now_in(atz)),
+    )
+
+
+_TIMELINE_TYPE_LABELS = {
+    "conversation.turn": "💬 talked",
+    "outreach.sent": "📤 reached out",
+    "initiative.generated": "💡 initiative",
+    "initiative.completed": "✅ initiative done",
+    "task.created": "📋 task created",
+    "task.completed": "✅ task done",
+    "commitment.made": "🤝 promised",
+    "commitment.fulfilled": "✅ kept promise",
+    "memory.written": "🧠 remembered",
+}
+
+
+@router.get("/timeline", response_model=TimelineResponse)
+async def get_timeline(
+    since: str = Query("24h", description="Relative ('24h','7d') or ISO, or today/yesterday"),
+    types: Optional[str] = Query(None, description="Comma-separated event types to include"),
+    contact_id: Optional[str] = Query(None, description="Only events involving this contact"),
+    limit: int = Query(100, ge=1, le=500),
+) -> TimelineResponse:
+    """Chronological timeline across all Colony subsystems (v0.21.0).
+
+    Backed by the event journal. Lets the agent answer 'what happened recently',
+    'what's been going on with X', 'what changed since I last looked'.
+    """
+    from colony_sidecar.events.journal import replay_events
+    from colony_sidecar.util import temporal as _t
+
+    since_iso = _t.parse_relative_since(since)
+    type_list = [t.strip() for t in types.split(",") if t.strip()] if types else None
+    # Read the whole (retention-bounded) window, then keep the most RECENT N.
+    # replay_events caps at `limit` chronologically (oldest first), so a small
+    # limit there would return the START of the window, not recent activity.
+    raw = replay_events(since_iso, limit=500, types=type_list)
+
+    all_events: list[TimelineEvent] = []
+    for e in raw.get("events", []):
+        data = e.get("data", {}) or {}
+        cid = data.get("contact_id") or data.get("person_id")
+        if contact_id and cid != contact_id:
+            continue
+        at = e.get("recordedAt", "")
+        all_events.append(TimelineEvent(
+            seq=e.get("seq", 0),
+            type=e.get("type", "unknown"),
+            at=at,
+            when=_t.humanize_delta(at),
+            bucket=_t.bucket(at),
+            summary=(data.get("summary") or data.get("title") or data.get("text")
+                     or data.get("reason")),
+            contact_id=cid,
+            data=data,
+        ))
+
+    all_events.sort(key=lambda x: x.seq, reverse=True)  # newest first
+    events = all_events[:limit]
+    has_more = len(all_events) > limit or raw.get("hasMore", False)
+
+    # Resolve contact ids -> names for a readable digest (cached).
+    _name_cache: dict = {}
+    async def _contact_name(cid):
+        if not cid or cid == "default":
+            return None
+        if cid in _name_cache:
+            return _name_cache[cid]
+        nm = cid
+        if _contacts_store is not None:
+            try:
+                c = await _contacts_store.get(cid)
+                if c is not None:
+                    nm = c.display_name or c.given_name or cid
+            except Exception:
+                pass
+        _name_cache[cid] = nm
+        return nm
+
+    digest_lines = []
+    for ev in events[:40]:
+        label = _TIMELINE_TYPE_LABELS.get(ev.type, ev.type)
+        snippet = (ev.summary or "").replace("\n", " ").strip()
+        if len(snippet) > 120:
+            snippet = snippet[:117] + "…"
+        nm = await _contact_name(ev.contact_id)
+        who = f" with {nm}" if nm else ""
+        digest_lines.append(f"• {ev.when} — {label}{who}{': ' + snippet if snippet else ''}")
+    digest = ("\n".join(digest_lines)
+              if digest_lines else f"No journaled events since {since_iso}.")
+
+    return TimelineResponse(
+        since=since_iso,
+        count=len(events),
+        digest=digest,
+        events=events,
+        has_more=has_more,
+    )
+
+
+@router.get("/temporal/contacts", response_model=TemporalContactsResponse)
+async def temporal_contacts(
+    overdue_only: bool = Query(True, description="Only contacts overdue vs their own cadence"),
+    limit: int = Query(20, ge=1, le=100),
+) -> TemporalContactsResponse:
+    """Per-contact cadence + silence (v0.21.0).
+
+    Estimates each contact's typical rhythm and flags those overdue relative to
+    *their* cadence. Powers cadence-aware proactive outreach (the worker/agent
+    queries this) and the per-turn 'heads-up' line.
+    """
+    from colony_sidecar.util import temporal as _t
+    if _contacts_store is None:
+        return TemporalContactsResponse(now=_t.now_utc().isoformat(), count=0, contacts=[])
+    rows = await _contacts_store.compute_cadence_overdue(
+        overdue_only=overdue_only, limit=limit,
+    )
+    return TemporalContactsResponse(
+        now=_t.now_utc().isoformat(),
+        count=len(rows),
+        contacts=[TemporalContact(**r) for r in rows],
+    )
 
 
 @router.post("/contacts/{contact_id}/style", response_model=ContactStyleResponse)
@@ -5175,6 +5457,17 @@ async def create_initiative(body: InitiativeCreateRequest) -> InitiativeResponse
         except Exception:
             pass
 
+    try:  # timeline (v0.21.0)
+        from colony_sidecar.events.journal import append_event
+        append_event("initiative.generated", {
+            "initiative_id": getattr(initiative, "id", None),
+            "contact_id": body.entity_id,
+            "summary": body.description,
+            "initiative_type": body.initiative_type,
+        })
+    except Exception:
+        logger.debug("journal initiative.generated failed", exc_info=True)
+
     return _initiative_to_response(initiative)
 
 
@@ -5667,6 +5960,16 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
         "Agent outreach recorded: agent=%s channel=%s reason=%s",
         body.agent_id, body.channel, body.reason,
     )
+    try:  # timeline (v0.21.0)
+        from colony_sidecar.events.journal import append_event
+        append_event("outreach.sent", {
+            "contact_id": getattr(body, "contact_id", None),
+            "channel": body.channel,
+            "reason": body.reason,
+            "summary": body.reason,
+        })
+    except Exception:
+        logger.debug("journal outreach.sent failed", exc_info=True)
     return RecordOutreachResponse(
         recorded_at=now.isoformat(),
         last_agent_outreach_at=outreach_at,

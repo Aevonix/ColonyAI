@@ -212,6 +212,20 @@ class SQLiteContactStore(ContactStore):
         schema = _SCHEMA_FILE.read_text()
         await self._db.executescript(schema)
         await self._db.commit()
+        await self._apply_migrations()
+
+    async def _apply_migrations(self) -> None:
+        """Idempotent additive migrations for DBs created before a column existed.
+
+        SQLite has no ADD COLUMN IF NOT EXISTS, so we introspect first.
+        """
+        db = self._db
+        assert db is not None
+        async with db.execute("PRAGMA table_info(contacts)") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "timezone" not in cols:  # v0.21.0 — per-contact timezone
+            await db.execute("ALTER TABLE contacts ADD COLUMN timezone TEXT")
+            await db.commit()
 
     async def close(self) -> None:
         if self._db:
@@ -507,6 +521,114 @@ class SQLiteContactStore(ContactStore):
         await self.record_audit(
             contact_id, "interaction_toggled",
             {"interaction_allowed": allowed},
+            performed_by=performed_by,
+        )
+
+    async def compute_cadence_overdue(
+        self,
+        *,
+        now_iso: Optional[str] = None,
+        default_cadence_days: float = 7.0,
+        factor: float = 1.5,
+        min_silence_days: float = 2.0,
+        overdue_only: bool = True,
+        limit: int = 20,
+        exclude_ids: Optional[set] = None,
+    ) -> List[Dict[str, Any]]:
+        """Per-contact rhythm + silence (v0.21.0), SQLite-based.
+
+        Estimates each contact's typical cadence from their own interaction
+        history (active span / interactions) and flags those overdue relative
+        to *their* rhythm — so a daily contact is overdue after a few days while
+        a monthly one isn't for weeks. Independent of the Neo4j graph.
+        """
+        from colony_sidecar.util import temporal as _t
+        db = self._require_db()
+        now = _t.parse_iso(now_iso) or _t.now_utc()
+        exclude = set(exclude_ids or [])
+        async with db.execute(
+            "SELECT contact_id, display_name, given_name, first_seen_at, "
+            "last_interaction_at, interaction_count, timezone "
+            "FROM contacts WHERE deleted_at IS NULL AND interaction_allowed = 1 "
+            "AND last_interaction_at IS NOT NULL"
+        ) as cur:
+            rows = await cur.fetchall()
+
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            cid = r["contact_id"]
+            if cid in exclude:
+                continue
+            last = _t.parse_iso(r["last_interaction_at"])
+            if last is None:
+                continue
+            first = _t.parse_iso(r["first_seen_at"])
+            count = int(r["interaction_count"] or 0)
+            days_since = (now - last).total_seconds() / 86400.0
+            # cadence estimate
+            if count >= 2 and first is not None and last > first:
+                span = (last - first).total_seconds() / 86400.0
+                cadence = span / max(count - 1, 1)
+            else:
+                cadence = default_cadence_days
+            cadence = max(0.5, min(cadence, 90.0))
+            threshold = max(min_silence_days, cadence * factor)
+            is_overdue = days_since > threshold
+            if overdue_only and not is_overdue:
+                continue
+            out.append({
+                "contact_id": cid,
+                "name": r["display_name"] or r["given_name"] or cid,
+                "timezone": r["timezone"],
+                "last_interaction_at": r["last_interaction_at"],
+                "days_since": round(days_since, 1),
+                "cadence_days": round(cadence, 1),
+                "overdue": is_overdue,
+                "overdue_ratio": round(days_since / max(cadence, 0.5), 2),
+            })
+
+        out.sort(key=lambda x: x["overdue_ratio"], reverse=True)
+        return out[:limit]
+
+    async def record_interaction(self, contact_id: str, at_iso: Optional[str] = None) -> bool:
+        """Bump last_interaction_at (+count) for a contact. v0.21.0.
+
+        Returns True if a row was updated (i.e. the contact exists).
+        """
+        db = self._require_db()
+        ts = at_iso or _now_iso()
+        cur = await db.execute(
+            "UPDATE contacts SET last_interaction_at = ?, "
+            "interaction_count = interaction_count + 1, updated_at = ? "
+            "WHERE contact_id = ? AND deleted_at IS NULL",
+            (ts, ts, contact_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+    async def set_timezone(
+        self, contact_id: str, timezone: Optional[str], performed_by: str = "operator"
+    ) -> None:
+        """Set (or clear, with None) a contact's IANA timezone. v0.21.0."""
+        from colony_sidecar.util.temporal import is_valid_timezone
+        if timezone is not None and not is_valid_timezone(timezone):
+            raise ValueError(f"Invalid IANA timezone: {timezone!r}")
+        db = self._require_db()
+        async with db.execute(
+            "SELECT timezone FROM contacts WHERE contact_id = ?", (contact_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise ValueError(f"Contact not found: {contact_id}")
+        old_tz = row["timezone"]
+        await db.execute(
+            "UPDATE contacts SET timezone = ?, updated_at = ? WHERE contact_id = ?",
+            (timezone, _now_iso(), contact_id),
+        )
+        await db.commit()
+        await self.record_audit(
+            contact_id, "timezone_changed",
+            {"old_timezone": old_tz, "new_timezone": timezone},
             performed_by=performed_by,
         )
 
