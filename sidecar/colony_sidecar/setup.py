@@ -229,34 +229,7 @@ def _check_docker() -> tuple[DockerStatus, str]:
         return DockerStatus.ERROR, str(e)
 
 def _check_openclaw() -> bool:
-    """Check if OpenClaw CLI is available."""
-    # Try shutil.which first
-    if shutil.which("openclaw"):
-        return True
-    
-    # Try via login shell (for fnm/nvm PATH additions)
-    try:
-        result = subprocess.run(
-            ["bash", "-l", "-c", "which openclaw"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return True
-    except Exception:
-        pass
-    
-    # Try common paths
-    home = Path.home()
-    common_paths = [
-        home / ".openclaw" / "bin" / "openclaw",
-        home / ".local" / "bin" / "openclaw",
-        Path("/opt/homebrew/bin/openclaw"),
-        Path("/usr/local/bin/openclaw"),
-    ]
-    for p in common_paths:
-        if p.exists():
-            return True
-    
+    """OpenClaw support has been removed."""
     return False
 
 
@@ -277,8 +250,6 @@ def _detect_coding_harnesses() -> list[str]:
 def _detect_agent_harnesses() -> list[str]:
     """Detect installed agent harnesses."""
     harnesses = []
-    if shutil.which("openclaw"):
-        harnesses.append("openclaw")
     if shutil.which("hermes") or Path.home().joinpath(".hermes").exists():
         harnesses.append("hermes")
     return harnesses
@@ -857,190 +828,9 @@ def _start_neo4j_docker(neo4j_password: str) -> bool:
 
 # ── OpenClaw plugin setup ───────────────────────────────────────────────────
 
-def _configure_openclaw_plugin(values: dict[str, str], colony_root: Path, non_interactive: bool = False) -> bool:
-    """Configure Colony as an OpenClaw plugin. Returns True if successful."""
-    if not _check_openclaw():
-        print("  ⚠️ OpenClaw CLI not found in PATH")
-        return False
-
-    # Plugin connects to sidecar via localhost (even if sidecar binds to 0.0.0.0)
-    plugin_sidecar_url = f"http://127.0.0.1:{values['COLONY_SIDECAR_PORT']}"
-    api_key = values["COLONY_API_KEY"]
-
-    try:
-        # Check for Node.js (needed for OpenClaw plugins)
-        # Try shutil.which first, then shell PATH, then common paths
-        node_path = shutil.which("node")
-        if not node_path:
-            # Try via login shell (for fnm/nvm PATH additions)
-            try:
-                result = subprocess.run(
-                    ["bash", "-l", "-c", "which node"],
-                    capture_output=True, text=True, timeout=5
-                )
-                if result.returncode == 0:
-                    node_path = result.stdout.strip()
-            except Exception:
-                pass
-        
-        if not node_path:
-            # Try common fnm/nvm paths
-            home = Path.home()
-            fnm_paths = [
-                home / ".fnm" / "node-versions" / "installation" / "bin" / "node",
-                home / ".local" / "share" / "fnm" / "node-versions" / "installation" / "bin" / "node",
-            ]
-            nvm_base = home / ".nvm" / "versions" / "node"
-            for p in fnm_paths:
-                if p.exists():
-                    node_path = str(p)
-                    break
-            if not node_path and nvm_base.exists():
-                try:
-                    versions = sorted(nvm_base.iterdir(), reverse=True)
-                    for v in versions:
-                        candidate = v / "bin" / "node"
-                        if candidate.exists():
-                            node_path = str(candidate)
-                            break
-                except Exception:
-                    pass
-        
-        if not node_path:
-            print("  ⚠️ Node.js not found — Colony plugin requires Node.js v22+.")
-            print("     Install Node.js: https://nodejs.org/ or via nvm/brew")
-            print("  Skipping plugin install — Colony sidecar will still work.")
-            return False
-        
-        # Check Node.js version (plugin requires >= 22)
-        version_result = subprocess.run(
-            [node_path, "--version"],
-            capture_output=True, text=True, timeout=5
-        )
-        if version_result.returncode == 0:
-            node_version = version_result.stdout.strip().lstrip("v")
-            major = int(node_version.split(".")[0])
-            if major < 22:
-                print(f"  ⚠️ Node.js v{node_version} found, but Colony plugin requires v22+")
-                print("     Upgrade with: nvm install 22 && nvm use 22")
-                print("     Or: brew install node@22")
-                print("  Skipping plugin install — Colony sidecar will still work.")
-                return False
-        else:
-            print("  ⚠️ Could not determine Node.js version")
-            return False
-
-        # Check if Colony plugin is already installed
-        print("  Checking Colony plugin installation...")
-        list_result = subprocess.run(
-            ["openclaw", "plugins", "list", "--json"],
-            capture_output=True, text=True, timeout=30
-        )
-        
-        plugin_installed = False
-        if list_result.returncode == 0 and "colony" in list_result.stdout:
-            # Parse to confirm it's actually installed
-            try:
-                import json
-                data = json.loads(list_result.stdout)
-                for plugin in data.get("plugins", []):
-                    if plugin.get("id") == "colony" and plugin.get("status") in ("loaded", "enabled"):
-                        plugin_installed = True
-                        break
-            except:
-                pass
-        
-        if plugin_installed:
-            print("  ✅ Colony plugin already installed")
-        else:
-            # Install the plugin via OpenClaw CLI
-            print("  Installing Colony plugin via OpenClaw...")
-            install_result = subprocess.run(
-                ["openclaw", "plugins", "install", "@aevonix/colonyai"],
-                capture_output=True, text=True, timeout=120
-            )
-            
-            if install_result.returncode != 0:
-                # Check for common errors
-                stderr = install_result.stderr.lower()
-                if "eacces" in stderr or "permission denied" in stderr:
-                    print("  ⚠️ Permission denied — check OpenClaw extensions directory permissions")
-                elif "network" in stderr or "fetch" in stderr:
-                    print("  ⚠️ Network error — could not fetch plugin from npm registry")
-                else:
-                    # Show truncated error
-                    err_msg = install_result.stderr.strip()[:300] or install_result.stdout.strip()[:300]
-                    print(f"  ⚠️ Plugin install failed: {err_msg}")
-                print("  You can install manually with: openclaw plugins install @aevonix/colonyai")
-                return False
-            else:
-                print("  ✅ Colony plugin installed")
-                plugin_installed = True
-
-        # Set Colony as the active context engine
-        print("  Configuring Colony as context engine...")
-        ce_result = subprocess.run(
-            ["openclaw", "config", "set", "plugins.slots.contextEngine", "colony"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if ce_result.returncode == 0:
-            print("  ✅ Colony set as active context engine")
-        else:
-            print("  ⚠️ Could not set context engine slot — set manually:")
-            print("     openclaw config set plugins.slots.contextEngine colony")
-
-        # Write plugin config values (always, in case of reinstall with new key)
-        print("  Writing Colony plugin configuration...")
-        config_values = [
-            ("plugins.entries.colony.config.sidecarUrl", plugin_sidecar_url),
-            ("plugins.entries.colony.config.apiKey", api_key),
-            ("plugins.entries.colony.config.hostId", "openclaw"),
-            ("plugins.entries.colony.config.ownContextEngine", "true"),
-            ("plugins.entries.colony.config.ownMemoryCapability", "true"),
-        ]
-        config_errors = []
-        for key, value in config_values:
-            result = subprocess.run(
-                ["openclaw", "config", "set", key, value],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode != 0:
-                config_errors.append(key)
-
-        if config_errors:
-            print(f"  ⚠️ Could not write: {', '.join(config_errors)}")
-            print("  Set manually in ~/.openclaw/openclaw.json")
-        else:
-            print("  ✅ Plugin configuration written")
-        
-        # Write Colony context to OpenClaw workspace
-        from colony_sidecar.harness_integration import (
-            write_colony_check_skill,
-            write_colony_context,
-            write_colony_skill,
-        )
-        from colony_sidecar.harness_integration.detect import detect_openclaw_workspace
-        
-        workspace = detect_openclaw_workspace()
-        if workspace:
-            if write_colony_context(workspace):
-                print("  ✅ Colony context written to OpenClaw workspace")
-            
-            if write_colony_skill("openclaw", workspace):
-                print("  ✅ Colony diagnostic skill installed")
-            
-            if write_colony_check_skill(workspace):
-                print("  ✅ Colony check skill installed")
-        else:
-            print("  ⚠️ Could not detect OpenClaw workspace — context file not written")
-            print("     Manually create: ~/.openclaw/workspace/COLONY.md")
-        
-        # Gateway restart is handled in Step 10c after sidecar starts
-        return True
-
-    except Exception as exc:
-        print(f"  ⚠️ OpenClaw plugin setup failed: {exc}")
-        return False
+def _configure_openclaw_plugin(values, colony_root, non_interactive=False) -> bool:
+    """OpenClaw support has been removed (no-op)."""
+    return False
 
 
 def _setup_mcp_harnesses(harnesses: list[str], api_key: str, sidecar_url: str, non_interactive: bool = False) -> dict[str, bool]:

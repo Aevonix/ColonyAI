@@ -1,11 +1,11 @@
 """Colony Contacts Management System.
 
-Provides contact lifecycle management: import, deduplication, enrichment,
-export, and privacy controls. All contacts are Person nodes in the world model.
+Provides contact lifecycle management: storage, import, and privacy controls.
+All contacts are Person nodes in the world model.
 
 Quick start::
 
-    from colony_sidecar.contacts import ContactStore, ContactImporter, ContactMerger, ContactExporter
+    from colony_sidecar.contacts import ContactStore
     from colony_sidecar.contacts.store import SQLiteContactStore
     from colony_sidecar.contacts.config import ContactsConfig
 
@@ -17,32 +17,17 @@ Quick start::
 
 from .store import ContactStore, SQLiteContactStore
 from .importer import ContactImporter, SQLiteContactImporter
-from .merger import ContactMerger, SQLiteContactMerger
-from .exporter import ContactExporter, SQLiteContactExporter
-from .enricher import ContactEnricher
-from .block_manager import BlockManager, SQLiteBlockManager
 from .models import Contact, ContactHandle, MergeProposal, MergeAuditRecord
 from .config import ContactsConfig
 
 __all__ = [
-    # Interfaces
     "ContactStore",
     "ContactImporter",
-    "ContactMerger",
-    "ContactExporter",
-    "BlockManager",
-    # Implementations
     "SQLiteContactStore",
     "SQLiteContactImporter",
-    "SQLiteContactMerger",
-    "SQLiteContactExporter",
-    "SQLiteBlockManager",
-    "ContactEnricher",
-    # Models
     "Contact",
     "ContactHandle",
     "MergeProposal",
     "MergeAuditRecord",
-    # Config
     "ContactsConfig",
 ]

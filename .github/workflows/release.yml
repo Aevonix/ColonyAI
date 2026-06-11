@@ -33,25 +33,6 @@ jobs:
           # fail just because this version is already on PyPI.
           skip-existing: true
 
-  # --- TypeScript plugin → npm ---
-  npm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
-      - run: npm ci
-      - run: npm run build
-      # Blocking again as of v0.20.x: the @aevonix/colonyai package exists
-      # and publishes are gated on a valid NPM_TOKEN. (A bad/expired token
-      # makes `npm publish` return a 404 on PUT — npm's auth-failure
-      # signature — which previously hid behind continue-on-error.)
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
   # --- Docker image → GHCR ---
   docker:
     runs-on: ubuntu-latest

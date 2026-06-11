@@ -140,14 +140,9 @@ class AutonomyLoop:
         # Per-domain timestamps of the last observation-sync request, so
         # a slow agent isn't spammed with duplicate sync jobs every tick.
         self._last_sync_request: dict = {}
-        self._last_consolidation_hour: int = -1
+        self._periodic_last: dict = {}
         self._last_bootstrap_check: Optional[datetime] = None
         self._last_self_reflection: Optional[datetime] = None
-        self._last_decay_date: Optional[str] = None
-        self._last_prune_date: Optional[str] = None
-        self._last_reconcile_date: Optional[str] = None
-        self._last_archive_week: Optional[str] = None
-        self._last_distillation_week: str = ""
         self._last_task_completion_check: Optional[datetime] = None
 
     # ------------------------------------------------------------------
@@ -1070,22 +1065,23 @@ class AutonomyLoop:
                 # Push approval request to delivery
                 delivery = self._registry.delivery
                 if delivery and hasattr(delivery, "push_initiative"):
-                    if getattr(self.config, "proactive_delivery_enabled", False):
-                        await delivery.push_initiative({
-                            "id": initiative_id,
-                            "type": "agent_action",
-                            "priority": getattr(initiative, "priority", 0.5),
-                            "title": f"Approval required: {getattr(initiative, 'description', '')[:60]}",
-                            "description": getattr(initiative, "description", ""),
-                            "rationale": getattr(initiative, "rationale", ""),
-                            "suggested_action": "colony_approve_initiative",
-                            "entity_id": getattr(initiative, "entity_id", None),
-                            "channel_hint": "dm",
-                            "context": {"job_id": job_id, "action_hint": action_hint},
-                            "generated_at": datetime.now(timezone.utc).isoformat(),
-                        })
-                    else:
-                        logger.debug("Proactive delivery disabled — approval request stored for agent polling")
+                    # Approval requests must ALWAYS surface — proactive_delivery_enabled
+                    # gates Colony's *own* proactive outreach, not the owner's need to
+                    # unblock a gated job. Gating this dropped the request silently and
+                    # left the job blocked forever.
+                    await delivery.push_initiative({
+                        "id": initiative_id,
+                        "type": "agent_action",
+                        "priority": getattr(initiative, "priority", 0.5),
+                        "title": f"Approval required: {getattr(initiative, 'description', '')[:60]}",
+                        "description": getattr(initiative, "description", ""),
+                        "rationale": getattr(initiative, "rationale", ""),
+                        "suggested_action": "colony_approve_initiative",
+                        "entity_id": getattr(initiative, "entity_id", None),
+                        "channel_hint": "dm",
+                        "context": {"job_id": job_id, "action_hint": action_hint},
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                    })
 
             # Only count as executed if the job was not blocked awaiting approval
             if not gate_pending:
@@ -1526,112 +1522,67 @@ class AutonomyLoop:
             self.stats.errors += 1
             logger.error("Phase cognition error: %s", exc, exc_info=True)
 
-    async def _phase_memory_consolidation(self) -> None:
-        """Memory consolidation — runs once per hour."""
+    async def _run_periodic_phase(self, name: str, period: str, work) -> None:
+        """Run a memory-lifecycle phase at most once per period ("hour"|"day"|"week").
+        work(graph) does the phase-specific work; the dedup key is cached per name.
+        Replaces six near-identical _phase_memory_* skeletons (behavior preserved)."""
         graph = self._registry.graph
         if graph is None:
             return
-        current_hour = datetime.now(timezone.utc).hour
-        if current_hour == self._last_consolidation_hour:
+        now = datetime.now(timezone.utc)
+        key = {"hour": now.hour, "day": now.strftime("%Y-%m-%d"),
+               "week": now.strftime("%Y-W%W")}[period]
+        if self._periodic_last.get(name) == key:
             return
         try:
+            await work(graph)
+            self._periodic_last[name] = key
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase %s error: %s", name, exc, exc_info=True)
+
+    async def _phase_memory_consolidation(self) -> None:
+        async def work(graph):
             if hasattr(graph, "consolidate_memories"):
                 promoted = await graph.consolidate_memories()
                 self.stats.memories_promoted += len(promoted) if promoted else 0
-            self._last_consolidation_hour = current_hour
-        except Exception as exc:
-            self.stats.errors += 1
-            logger.error("Phase memory_consolidation error: %s", exc, exc_info=True)
+        await self._run_periodic_phase("memory_consolidation", "hour", work)
 
     async def _phase_memory_decay(self) -> None:
-        """Memory decay — runs once per day."""
-        graph = self._registry.graph
-        if graph is None:
-            return
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if today == self._last_decay_date:
-            return
-        try:
+        async def work(graph):
             if hasattr(graph, "decay_memories"):
                 await graph.decay_memories()
-            self._last_decay_date = today
-        except Exception as exc:
-            self.stats.errors += 1
-            logger.error("Phase memory_decay error: %s", exc, exc_info=True)
+        await self._run_periodic_phase("memory_decay", "day", work)
 
     async def _phase_memory_pruning(self) -> None:
-        """Memory pruning — runs once per week."""
-        graph = self._registry.graph
-        if graph is None:
-            return
-        week = datetime.now(timezone.utc).strftime("%Y-W%W")
-        if week == self._last_prune_date:
-            return
-        try:
+        async def work(graph):
             if hasattr(graph, "prune_memories"):
                 await graph.prune_memories()
-            self._last_prune_date = week
-        except Exception as exc:
-            self.stats.errors += 1
-            logger.error("Phase memory_pruning error: %s", exc, exc_info=True)
+        await self._run_periodic_phase("memory_pruning", "week", work)
 
     async def _phase_memory_reconciliation(self) -> None:
-        """Memory reconciliation — runs once per day."""
-        graph = self._registry.graph
-        if graph is None:
-            return
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if today == self._last_reconcile_date:
-            return
-        try:
+        async def work(graph):
             from colony_sidecar.intelligence.graph.reconciler import FileReconciler
-            reconciler = FileReconciler(graph)
-            result = await reconciler.reconcile(dry_run=False)
+            result = await FileReconciler(graph).reconcile(dry_run=False)
             logger.info(
                 "Phase memory_reconciliation: checked=%d verified=%d staled=%d superseded=%d errors=%d",
-                result["files_checked"],
-                result["memories_verified"],
-                result["memories_staled"],
-                result["memories_superseded"],
-                len(result["errors"]),
+                result["files_checked"], result["memories_verified"],
+                result["memories_staled"], result["memories_superseded"], len(result["errors"]),
             )
-            self._last_reconcile_date = today
-        except Exception as exc:
-            self.stats.errors += 1
-            logger.error("Phase memory_reconciliation error: %s", exc, exc_info=True)
+        await self._run_periodic_phase("memory_reconciliation", "day", work)
 
     async def _phase_memory_archive(self) -> None:
-        """Memory archive — runs once per week."""
-        graph = self._registry.graph
-        if graph is None:
-            return
-        week = datetime.now(timezone.utc).strftime("%Y-W%W")
-        if week == self._last_archive_week:
-            return
-        try:
+        async def work(graph):
             if hasattr(graph, "archive_memories"):
                 archived = await graph.archive_memories(max_age_days=30)
                 logger.info("Phase memory_archive: archived=%d", archived)
-            self._last_archive_week = week
-        except Exception as exc:
-            self.stats.errors += 1
-            logger.error("Phase memory_archive error: %s", exc, exc_info=True)
+        await self._run_periodic_phase("memory_archive", "week", work)
 
     async def _phase_memory_distillation(self) -> None:
-        """Memory distillation — runs once per week."""
-        graph = self._registry.graph
-        if graph is None:
-            return
-        week = datetime.now(timezone.utc).strftime("%Y-W%W")
-        if week == self._last_distillation_week:
-            return
-        try:
+        async def work(graph):
             if hasattr(graph, "distill_memories"):
                 await graph.distill_memories()
-            self._last_distillation_week = week
-        except Exception as exc:
-            self.stats.errors += 1
-            logger.error("Phase memory_distillation error: %s", exc, exc_info=True)
+        await self._run_periodic_phase("memory_distillation", "week", work)
 
     async def _phase_task_completion(self) -> None:
         """Emit follow-up events for goals that completed since the last check.

@@ -1,7 +1,6 @@
 """Harness integration - writes context files and skills to each harness.
 
 This module provides automatic integration with:
-- OpenClaw (plugin + context + skill)
 - Crush (MCP + skill)
 - Codex (MCP + skill)
 - Claude Code (MCP + skill)
@@ -22,9 +21,6 @@ from .skills import (
     COLONY_DIAGNOSTIC_SKILL,
     COLONY_CHECK_SKILL,
 )
-from .detect import (
-    detect_openclaw_workspace,
-)
 
 __all__ = [
     "write_colony_context",
@@ -33,7 +29,6 @@ __all__ = [
     "remove_colony_skill",
     "get_skill_path",
     "get_skill_config_path",
-    "detect_openclaw_workspace",
     "COLONY_CONTEXT_TEMPLATE",
     "COLONY_DIAGNOSTIC_SKILL",
     "COLONY_CHECK_SKILL",

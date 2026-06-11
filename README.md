@@ -103,13 +103,6 @@ MCP clients) can read and write the same stores — check commitments, look up
 facts, search the world model, and record knowledge — over the standard
 protocol.
 
-### OpenClaw (experimental)
-
-A TypeScript plugin (`src/plugin.ts`) integrates Colony with OpenClaw. It is
-currently **experimental**: its test suite mocks the OpenClaw SDK rather than
-exercising it, so integration drift is not caught in CI. Use the Hermes or MCP
-paths for production. See [the OpenClaw status note](docs/HARNESS_INTEGRATION.md).
-
 ## Quick start
 
 Requirements: Python 3.11+, Neo4j 5.x reachable over Bolt, and an
