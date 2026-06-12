@@ -225,6 +225,9 @@ def main() -> None:
         host = args.host or os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
         port = args.port or int(os.environ.get("COLONY_SIDECAR_PORT", "7777"))
 
+        # Fail closed: never serve an unauthenticated API on a public interface.
+        _guard_bind_auth(host)
+
         # Service-aware: error out if launchd is managing the sidecar
         if _is_service_loaded():
             print("❌ The launchd service is managing this sidecar.")
@@ -1047,9 +1050,49 @@ def _cmd_key(args) -> None:
 
 
 
+def _is_loopback_host(host: str) -> bool:
+    """True if the bind host only accepts local connections."""
+    h = (host or "").strip().lower()
+    return h in {"127.0.0.1", "::1", "localhost", ""}
+
+
+def _guard_bind_auth(host: str) -> None:
+    """Refuse to start an unauthenticated sidecar on a non-loopback interface.
+
+    Auth is enforced by ApiKeyMiddleware, but when COLONY_API_KEY is unset the
+    API runs fully open ("dev mode"). That is only safe on loopback. Binding to
+    0.0.0.0 / a LAN address without a key exposes every endpoint to the network,
+    so fail closed with an actionable message instead of silently serving open.
+    Set COLONY_ALLOW_OPEN_BIND=1 to override (e.g. behind a trusted proxy).
+    """
+    if _is_loopback_host(host):
+        return
+    if os.environ.get("COLONY_API_KEY"):
+        return
+    if os.environ.get("COLONY_ALLOW_OPEN_BIND", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print(
+            f"⚠️  Sidecar binding to non-loopback host {host!r} with NO "
+            "COLONY_API_KEY (COLONY_ALLOW_OPEN_BIND override set) — the API is "
+            "open to the network.",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"❌ Refusing to start: binding to {host!r} (non-loopback) with no "
+        "COLONY_API_KEY — the API would be open to the network.\n"
+        "  Fix one of:\n"
+        "    • set COLONY_API_KEY=<secret> to require bearer/X-API-Key auth, or\n"
+        "    • bind to 127.0.0.1 (default) and reach it via SSH/proxy, or\n"
+        "    • set COLONY_ALLOW_OPEN_BIND=1 to intentionally serve open "
+        "(only behind a trusted network/proxy).",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
 def _find_pid_on_port(port: int) -> int | None:
     """Find the PID of a process listening on the given port.
-    
+
     NOTE: This only finds LISTEN sockets, not client connections.
     """
     pids = _find_pids_on_port(port)
