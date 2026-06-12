@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import threading
 import zoneinfo
 from dataclasses import dataclass, field
 from datetime import date as _date, datetime, timedelta as _timedelta, timezone
@@ -223,19 +224,39 @@ class StubSynthesisAggregator:
 # ---------------------------------------------------------------------------
 
 
+_ASYNC_BRIDGE_POOL: Optional[concurrent.futures.ThreadPoolExecutor] = None
+_ASYNC_BRIDGE_LOCK = threading.Lock()
+
+
+def _async_bridge_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Lazily create one shared bridge pool, instead of a new executor per call.
+
+    A fresh ``ThreadPoolExecutor`` per ``_run_async`` thrashed thread+loop
+    create/destroy under tactical-briefing bursts (a composer makes 5–8 of these
+    calls per briefing). One small bounded pool is reused for the whole process.
+    """
+    global _ASYNC_BRIDGE_POOL
+    if _ASYNC_BRIDGE_POOL is None:
+        with _ASYNC_BRIDGE_LOCK:
+            if _ASYNC_BRIDGE_POOL is None:
+                _ASYNC_BRIDGE_POOL = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=2, thread_name_prefix="briefing-async"
+                )
+    return _ASYNC_BRIDGE_POOL
+
+
 def _run_async(coro: Any) -> Any:
     """Run an async coroutine from a synchronous call-site.
 
     Uses ``asyncio.run()`` when no event loop is active (the normal production
-    path where briefing generation is synchronous).  Falls back to a dedicated
-    worker thread when a loop is already running (e.g. inside pytest-asyncio
+    path where briefing generation is synchronous).  Falls back to a shared
+    worker pool when a loop is already running (e.g. inside pytest-asyncio
     tests), so we never deadlock by trying to nest ``asyncio.run()``.
     """
     try:
         asyncio.get_running_loop()
-        # Already inside a running loop — offload to a fresh thread.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
+        # Already inside a running loop — offload to the shared bridge pool.
+        return _async_bridge_pool().submit(asyncio.run, coro).result()
     except RuntimeError:
         # No running loop — safe to call asyncio.run directly.
         return asyncio.run(coro)

@@ -2,8 +2,13 @@
 
 Architecture:
   1. Rule-based pass (synchronous, < 5 ms) — keyword/pattern matching
-  2. LLM pass (async, optional) — structured interpretation for low-confidence candidates
-  3. GoalDeduplicator — semantic similarity check against active goals
+  2. GoalDeduplicator — semantic similarity check against active goals
+
+NOTE: an LLM second-pass for low-confidence candidates was envisioned but is
+NOT implemented — there is no hook or override seam in this module. Candidates
+below MIN_CONFIDENCE are simply dropped. (Wire one through the project's Anthropic
+client if low-confidence recall becomes a need; keep the rule-based path's <5 ms
+synchronous guarantee — any LLM call must be out of band.)
 """
 
 from __future__ import annotations
@@ -190,9 +195,9 @@ def _extract_title(text: str) -> str:
 class GoalInferencePipeline:
     """Detect implicit goals from conversation messages.
 
-    The rule-based pass runs synchronously on every user message.
-    For low-confidence candidates the engine can optionally run an LLM
-    interpretation pass (not implemented here — hook provided via override).
+    The rule-based pass runs synchronously on every user message. Candidates
+    below ``MIN_CONFIDENCE`` are dropped; there is no LLM second-pass wired in
+    (see module docstring).
     """
 
     MIN_CONFIDENCE = 0.35   # Below this, no candidate is produced
