@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.21.20 — remote reranker
+
+Recall now has a working rerank stage: the sidecar can use a reranker served
+off-box over an OpenAI/Jina-compatible `/v1/rerank` endpoint, the same way the
+embedder is served.
+
+- **Remote reranker:** new `openai_api` path in the reranker init. Set
+  `COLONY_RERANKER_PROVIDER=openai_api`, `COLONY_RERANKER_BASE_URL`,
+  `COLONY_RERANKER_API_KEY`, and `COLONY_RERANKER_MODEL`; without these env
+  vars the local MLX/CUDA/CPU path is unchanged.
+- **Qwen3-Reranker correctness:** `COLONY_RERANKER_PROMPT_STYLE=qwen3` wraps
+  rerank requests in the model's instruction template. Qwen3-Reranker scores
+  from yes/no token logits that are only calibrated under that template —
+  vLLM's `/v1/rerank` does not apply it server-side, and raw strings rank
+  noise above relevant passages.
+
 ## v0.21.19 — release tooling
 
 No functional or packaging changes; the sidecar is identical to v0.21.18. This
