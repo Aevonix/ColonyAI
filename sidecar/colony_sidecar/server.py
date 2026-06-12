@@ -928,7 +928,9 @@ async def lifespan(app: FastAPI):
             if c is None:
                 return {"status": "skipped", "reason": "consolidator_not_wired"}
             result = await c.run()
-            return {"status": "ok", "merged": getattr(result, "merged_count", 0)}
+            # ConsolidationResult exposes pairs_merged, not merged_count — the
+            # old attr name silently reported merged:0 every run.
+            return {"status": "ok", "merged": getattr(result, "pairs_merged", 0)}
 
         scheduler.register("memory_consolidate", _run_memory_consolidate, interval_seconds=3600, metadata={"description": "Deduplicate and merge near-duplicate memories"})
         scheduler.register("cpi_track", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Calculate Cognitive Performance Index"})

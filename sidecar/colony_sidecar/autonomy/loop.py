@@ -1516,8 +1516,22 @@ class AutonomyLoop:
             return
         try:
             if hasattr(cognition, "run_cycle"):
-                await cognition.run_cycle()
-                logger.debug("Phase cognition: cycle complete")
+                result = await cognition.run_cycle()
+                # run_cycle() catches each internal step's failure into
+                # result.errors and returns "successfully"; without inspecting
+                # them the self-improvement loop can be fully degraded while this
+                # phase reports a clean tick. Surface them (errors gate nothing —
+                # this is purely observability).
+                cycle_errors = list(getattr(result, "errors", None) or [])
+                if cycle_errors:
+                    self.stats.errors += len(cycle_errors)
+                    logger.warning(
+                        "Phase cognition: cycle completed with %d step error(s): %s",
+                        len(cycle_errors),
+                        "; ".join(str(e) for e in cycle_errors[:5]),
+                    )
+                else:
+                    logger.debug("Phase cognition: cycle complete")
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase cognition error: %s", exc, exc_info=True)
