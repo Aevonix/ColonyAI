@@ -389,24 +389,32 @@ class GoalEngine:
                 pass
             return candidate
 
-        # Auto-accept if confidence is high enough
+        # Preserve inference provenance and any detected deadline so the signal
+        # isn't silently lost. suggested_deadline is a matched phrase (e.g.
+        # "due by", "before the meeting"), not a parseable datetime, so it is
+        # carried as a context hint rather than the typed `deadline` field —
+        # downstream / the LLM can resolve it to a concrete date.
+        inferred_context: Dict[str, Any] = {
+            "inference_confidence": round(candidate.confidence, 3),
+            "inference_signals": [s.value for s in candidate.signals],
+            "source_messages": candidate.source_messages,
+        }
+        if candidate.suggested_deadline:
+            inferred_context["deadline_hint"] = candidate.suggested_deadline
+
+        goal = self.propose_goal(
+            title=candidate.title,
+            description=candidate.description,
+            source=GoalSource.INFERRED,
+            priority=candidate.priority,
+            context=inferred_context,
+        )
+
+        # Auto-accept if confidence is high enough; otherwise leave PROPOSED for
+        # the user to confirm.
         if candidate.should_auto_accept(self.config.auto_accept_threshold):
-            goal = self.propose_goal(
-                title=candidate.title,
-                description=candidate.description,
-                source=GoalSource.INFERRED,
-                priority=candidate.priority,
-            )
             self.accept_goal(goal.goal_id)
             logger.info("Auto-accepted inferred goal %s: %r", goal.goal_id, goal.title)
-        else:
-            # Propose but don't accept (wait for user)
-            self.propose_goal(
-                title=candidate.title,
-                description=candidate.description,
-                source=GoalSource.INFERRED,
-                priority=candidate.priority,
-            )
 
         return candidate
 
