@@ -1,8 +1,5 @@
 """Colony key resilience: Shamir Secret Sharing, encrypted share persistence, key rotation.
 
-Implements the colony key architecture as specified in
-docs/specs/colony-key-resilience.md §2 and §5.
-
 The private key is NEVER stored in plaintext at rest or between signing calls.
 All reconstruction happens in memory and is zeroed immediately after use.
 """

@@ -1,4 +1,4 @@
-"""CLI commands for Sentinel management (§8.5).
+"""CLI commands for Sentinel management.
 
 Usage:
     colony sentinel register   --key-file PATH --sentinel-id ID --colony-id ID

@@ -1,6 +1,6 @@
 """Plugin security attestation transaction types and chain state for ColonyChain.
 
-Implements §2 of docs/specs/plugin-security-attestation.md:
+Defines the plugin attestation transaction set:
   - PluginPublishPayload
   - PluginAttestationPayload
   - PluginFlagPayload

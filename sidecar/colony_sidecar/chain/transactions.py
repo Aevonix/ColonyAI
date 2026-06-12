@@ -32,7 +32,7 @@ class TxType(str, Enum):
     COLONY_REINSTATE = "colony_reinstate"
     PROTOCOL_UPGRADE = "protocol_upgrade"
 
-    # Plugin security extensions (plugin-security-attestation spec)
+    # Plugin security extensions
     PLUGIN_PUBLISH = "plugin_publish"
     PLUGIN_ATTESTATION = "plugin_attestation"
     PLUGIN_FLAG = "plugin_flag"
@@ -225,9 +225,9 @@ class ChainState:
     upgrade_history: list[ProtocolUpgradeRecord] = field(default_factory=list)
     genesis_admin_id: str = ""
     network_id: str = ""
-    # Plugin security registry (plugin-security-attestation spec §2.5)
+    # Plugin security registry
     plugin_registry: dict[str, Any] = field(default_factory=dict)  # plugin_hash -> PluginChainRecord
-    # Track publish counts per colony for rate limiting (§7.1)
+    # Track publish counts per colony for rate limiting
     plugin_publish_counts: dict[str, list[str]] = field(default_factory=dict)  # colony_id -> list of timestamps
 
     def colony_id_for_name(self, name: str) -> str | None:

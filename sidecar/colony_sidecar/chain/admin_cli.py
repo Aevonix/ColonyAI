@@ -1,4 +1,4 @@
-"""CLI commands for Genesis admin operations (§8.5).
+"""CLI commands for Genesis admin operations.
 
 Usage:
     colony admin suspend <colony-name>     Suspend a colony

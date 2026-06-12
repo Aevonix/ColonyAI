@@ -4,7 +4,7 @@ The Genesis admin is a runtime claim — whoever submits the genesis block
 becomes admin. Admin identity is tracked on-chain and transferable.
 All admin actions are recorded on-chain and fully auditable.
 
-Single-chain enforcement (§4 of colony-key-resilience spec):
+Single-chain enforcement:
 - Every block carries a network_id derived from the genesis block.
 - Blocks from other chains (different network_id) are rejected.
 - Genesis block creation is only offered when no existing network is found.
@@ -336,7 +336,7 @@ class GenesisAdmin:
             payload={
                 "upgrade_id": str(uuid.uuid4()),
                 "title": "strip_genesis_admin",
-                "description": "Unanimous Sentinel vote to strip Genesis admin (§4.5)",
+                "description": "Unanimous Sentinel vote to strip Genesis admin",
                 "spec_url": "",
                 "changes": {},
                 "activation_height": 0,
@@ -374,7 +374,7 @@ class GenesisAdmin:
 
 
 # ---------------------------------------------------------------------------
-# Single-chain enforcement (spec §4)
+# Single-chain enforcement
 # ---------------------------------------------------------------------------
 
 

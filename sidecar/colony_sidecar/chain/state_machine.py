@@ -357,7 +357,7 @@ class ChainStateMachine:
 
         # ── Special admin actions embedded as protocol_upgrade titles ────────
 
-        # Genesis admin transfer (§4.1, §4.6): title == "transfer_genesis_admin"
+        # Genesis admin transfer: title == "transfer_genesis_admin"
         if title == "transfer_genesis_admin":
             new_admin_id = changes.get("new_genesis_admin_id", "")
             if new_admin_id and tx.from_colony_id == state.genesis_admin_id:
@@ -388,7 +388,7 @@ class ChainStateMachine:
             ))
             return state
 
-        # Unanimous Sentinel strip of Genesis admin (§4.5, §7.3):
+        # Unanimous Sentinel strip of Genesis admin:
         # title == "strip_genesis_admin" with co-signatures from ALL active Sentinels
         if title == "strip_genesis_admin":
             active_sentinels = state.active_sentinels()
