@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.21.19 — release tooling
+
+No functional or packaging changes; the sidecar is identical to v0.21.18. This
+release exercises the new release pipeline end to end.
+
+- **CI/release:** GitHub Actions bumped off the deprecated Node 20 runtime
+  (`checkout` v6, `setup-python` v6, the docker actions v4/v7) ahead of GitHub's
+  forced Node 24 migration.
+- **Release automation:** pushing a tag now auto-creates the GitHub Release from
+  the matching `CHANGELOG.md` section, after the PyPI and GHCR publishes succeed.
+
 ## v0.21.18 — repository cleanup
 
 No functional changes; the shipped package is identical to v0.21.17. This release
