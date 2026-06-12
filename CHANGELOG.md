@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.21.18 — repository cleanup
+
+No functional changes; the shipped package is identical to v0.21.17. This release
+refreshes the PyPI project page with the polished README.
+
+- **Docs:** remove implemented and superseded design/spec documents (the root
+  `DESIGN-self-initiatives` drafts, `specs/`, `docs/specs/`, and the
+  `docs/*-spec.md` files) and the internal trackers (`TODOs.md`, `NIGHTLOG.md`,
+  `docs/deferred-items.md`, `docs/open-items-plan.md`, `docs/audits/`).
+- **Code comments:** drop dangling spec references — docstrings and `§`-section
+  pointers to specs that were never committed — from the `chain/` module.
+- **Tests:** remove an orphaned root-level test the runner never collected.
+- **README:** Mermaid architecture diagram and copy polish.
+
 ## v0.21.17 — correctness + hardening pass
 
 - **Initiatives:** normalize Neo4j datetimes to tz-aware UTC. Naive timestamps
