@@ -333,6 +333,30 @@ class NativeMLXRerankerProvider(RerankerProvider):
         return scores
 
 
+# Qwen3-Reranker scores relevance from yes/no token logits, which are only
+# calibrated when the request is wrapped in the model's instruction template
+# (vLLM's /v1/rerank does not apply it server-side — raw strings score noise).
+QWEN3_RERANK_PREFIX = (
+    "<|im_start|>system\nJudge whether the Document meets the requirements "
+    'based on the Query and the Instruct provided. Note that the answer can '
+    'only be "yes" or "no".<|im_end|>\n<|im_start|>user\n'
+)
+QWEN3_RERANK_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+QWEN3_RERANK_INSTRUCTION = (
+    "Given a web search query, retrieve relevant passages that answer the query"
+)
+
+
+def format_qwen3_rerank(query: str, documents: list[str]) -> tuple[str, list[str]]:
+    """Wrap a query and documents in the Qwen3-Reranker instruction template."""
+    wrapped_query = (
+        f"{QWEN3_RERANK_PREFIX}<Instruct>: {QWEN3_RERANK_INSTRUCTION}"
+        f"\n<Query>: {query}\n"
+    )
+    wrapped_docs = [f"<Document>: {d}{QWEN3_RERANK_SUFFIX}" for d in documents]
+    return wrapped_query, wrapped_docs
+
+
 class OpenAIAPIRerankerProvider(RerankerProvider):
     """Reranker via an OpenAI-compatible API endpoint."""
 
@@ -340,10 +364,12 @@ class OpenAIAPIRerankerProvider(RerankerProvider):
         super().__init__(model_id)
         self._base_url: str = ""
         self._api_key: str = ""
+        self._prompt_style: str = ""
 
-    def configure(self, base_url: str, api_key: str) -> None:
+    def configure(self, base_url: str, api_key: str, prompt_style: str = "") -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._prompt_style = prompt_style
 
     async def warmup(self) -> None:
         pass  # No local model to warm up
@@ -360,6 +386,10 @@ class OpenAIAPIRerankerProvider(RerankerProvider):
         # Use the Jina/Cohere rerank API format (widely supported)
         import httpx
 
+        send_query, send_docs = query, documents
+        if self._prompt_style == "qwen3":
+            send_query, send_docs = format_qwen3_rerank(query, documents)
+
         url = f"{self._base_url}/v1/rerank"
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -367,8 +397,8 @@ class OpenAIAPIRerankerProvider(RerankerProvider):
         }
         payload = {
             "model": self._model_id,
-            "query": query,
-            "documents": documents,
+            "query": send_query,
+            "documents": send_docs,
             "top_n": top_k,
         }
 

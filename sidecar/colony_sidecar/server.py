@@ -383,8 +383,14 @@ async def lifespan(app: FastAPI):
                 # Remote reranker over an OpenAI/Jina-compatible /v1/rerank
                 # endpoint, mirroring the embedder's openai_api path so the
                 # model stays off-box instead of loading in-process.
+                # COLONY_RERANKER_PROMPT_STYLE=qwen3 applies the Qwen3-Reranker
+                # instruction template, without which its scores are noise.
                 reranker_provider = OpenAIAPIRerankerProvider(reranker_model)
-                reranker_provider.configure(reranker_base_url, reranker_api_key)
+                reranker_provider.configure(
+                    reranker_base_url,
+                    reranker_api_key,
+                    os.environ.get("COLONY_RERANKER_PROMPT_STYLE", ""),
+                )
             else:
                 from colony_sidecar.vector.scanner import scan
                 hw = scan()
