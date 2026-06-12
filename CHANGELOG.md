@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.21.17 — correctness + hardening pass
+
+- **Initiatives:** normalize Neo4j datetimes to tz-aware UTC. Naive timestamps
+  raised a swallowed `TypeError` that silently dropped every blocked-goal and
+  pending-research initiative.
+- **Relationship scoring:** the scheduled phase now recomputes the SQLite
+  closeness score every consumer reads (previously only the dead Neo4j path ran),
+  so a contact's score keeps decaying when no turn arrives.
+- **Goal inference:** preserve the inferred deadline and provenance on proposed
+  goals instead of dropping them.
+- **Commitments:** persist `due_at` as canonical UTC ISO so overdue detection (a
+  string comparison) is reliable; mixed naive/offset values had broken it.
+- **Security:** the sidecar fails closed when bound to a non-loopback address with
+  no `COLONY_API_KEY` instead of serving open with only a warning; adds an auth
+  test over the full route table.
+- **Briefings:** reuse one shared async bridge pool instead of creating an
+  executor per aggregator call.
+- **Observability:** surface cognition-cycle step errors (previously discarded)
+  and report the real consolidation merged-count.
+
 ## v0.21.1 — memory reliability + recall quality
 
 Fixes that make Colony memory production-reliable:
