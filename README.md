@@ -28,26 +28,26 @@ layer underneath one.
 
 ## What it does
 
-Colony's foundation is durable memory and time. It stores and recalls memories
-with semantic search, recency weighting, and content-hash deduplication, keeping
-entities and their relationships in a Neo4j graph and embeddings in a LanceDB
-index. It also holds an authoritative clock for the agent and a timezone for each
-contact, and journals every turn onto one timeline, so the agent can reason about
-when something happened and what is now overdue.
-
-It models the people the agent talks to. Each person is a contact with one or
-more channel handles (WhatsApp, email, SMS), a trust tier, and a relationship
-score that follows interaction recency, frequency, and sentiment. From each
-conversation Colony extracts emotional affect and shared facts and refines a
-per-contact engagement profile (Big Five traits and communication style) that
-becomes concrete guidance on how to engage that person.
-
-It also governs what the agent does around conversations. Colony records
-commitments and goals and tracks their progress, keeps a cross-channel log of
-every exchange, and decides whether and when to reach out, gated by a cooldown
-and an owner-approval step so it never over-messages. An optional background loop
-turns this into proactive initiatives such as follow-ups, research, and
-relationship check-ins, generated on a schedule.
+- **Long-term memory.** Stores and recalls memories with semantic search,
+  recency weighting, and content-hash deduplication. Backed by a graph
+  (Neo4j) for entities and relationships and a vector index (LanceDB) for recall.
+- **Temporal awareness.** Tracks an authoritative current time per agent and a
+  timezone per contact, and journals every turn onto a unified timeline so the
+  agent can reason about when things happened and what is overdue.
+- **Contacts and relationships.** Maintains a contact per person with one or more
+  channel handles (WhatsApp, email, SMS), a trust tier, and a relationship
+  score derived from interaction recency, frequency, and sentiment.
+- **Theory of mind.** Extracts affect (emotional valence and arousal) and shared
+  facts from conversations, and builds an evolving engagement profile per contact
+  (Big Five traits plus communication style) that becomes concrete guidance on
+  how to engage that person.
+- **Commitments and goals.** Records what the agent and its owner have agreed to
+  and tracks goals and their progress.
+- **Communication governance.** Keeps a cross-channel record of every exchange and
+  decides whether and when to reach out, with a cooldown to avoid over-messaging
+  and an owner-approval gate for proactive outreach.
+- **Autonomy.** An optional background loop generates proactive initiatives
+  (follow-ups, research, relationship check-ins) on a schedule.
 
 ## Architecture
 
