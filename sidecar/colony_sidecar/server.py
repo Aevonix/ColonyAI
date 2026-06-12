@@ -367,30 +367,44 @@ async def lifespan(app: FastAPI):
         logger.warning("EmbeddingPipeline init failed: %s", exc)
 
     # --- 6b. Reranker pipeline ---
+    reranker_provider_name = os.environ.get("COLONY_RERANKER_PROVIDER", "")
     if reranker_model and reranker_model.lower() not in ("none", "", "null"):
         try:
             from colony_sidecar.vector.reranker import (
+                OpenAIAPIRerankerProvider,
                 NativeMLXRerankerProvider,
                 MLXRerankerProvider,
                 CPURerankerProvider,
                 CUDARerankerProvider,
             )
-            from colony_sidecar.vector.scanner import scan
-            hw = scan()
-            if hw.gpu_type == "mlx":
-                # Prefer native MLX when the package is available
-                try:
-                    import mlx_lm  # noqa: F401
-                    reranker_provider = NativeMLXRerankerProvider(reranker_model)
-                except ImportError:
-                    reranker_provider = MLXRerankerProvider(reranker_model)
-            elif hw.gpu_type == "cuda":
-                reranker_provider = CUDARerankerProvider(reranker_model)
+            reranker_base_url = os.environ.get("COLONY_RERANKER_BASE_URL", "")
+            reranker_api_key = os.environ.get("COLONY_RERANKER_API_KEY", "")
+            if reranker_provider_name == "openai_api" or reranker_base_url:
+                # Remote reranker over an OpenAI/Jina-compatible /v1/rerank
+                # endpoint, mirroring the embedder's openai_api path so the
+                # model stays off-box instead of loading in-process.
+                reranker_provider = OpenAIAPIRerankerProvider(reranker_model)
+                reranker_provider.configure(reranker_base_url, reranker_api_key)
             else:
-                reranker_provider = CPURerankerProvider(reranker_model)
+                from colony_sidecar.vector.scanner import scan
+                hw = scan()
+                if hw.gpu_type == "mlx":
+                    # Prefer native MLX when the package is available
+                    try:
+                        import mlx_lm  # noqa: F401
+                        reranker_provider = NativeMLXRerankerProvider(reranker_model)
+                    except ImportError:
+                        reranker_provider = MLXRerankerProvider(reranker_model)
+                elif hw.gpu_type == "cuda":
+                    reranker_provider = CUDARerankerProvider(reranker_model)
+                else:
+                    reranker_provider = CPURerankerProvider(reranker_model)
             await reranker_provider.warmup()
             set_reranker(reranker_provider)
-            logger.info("Reranker initialized (model=%s)", reranker_model)
+            logger.info(
+                "Reranker initialized (provider=%s model=%s)",
+                reranker_provider_name or "local", reranker_model,
+            )
         except Exception as exc:
             logger.warning("Reranker init failed: %s", exc)
     else:
