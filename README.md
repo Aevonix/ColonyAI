@@ -51,17 +51,23 @@ layer underneath one.
 
 ## Architecture
 
-```
-┌──────────────────────────┐     HTTP / WebSocket      ┌─────────────────────────┐
-│  Host harness (the agent) │  ───────────────────────► │  Colony sidecar          │
-│  - assembles a turn       │  ◄─────────────────────── │  127.0.0.1:7777 (FastAPI)│
-│  - calls a host plugin    │     context in / turn out │                          │
-└──────────────────────────┘                            │   ┌──────────────────┐  │
-                                                         │   │ Neo4j   (graph)  │  │
-                                                         │   │ LanceDB (vectors)│  │
-                                                         │   │ SQLite  (records)│  │
-                                                         │   └──────────────────┘  │
-                                                         └─────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph colony["Colony sidecar — FastAPI · 127.0.0.1:7777"]
+        direction TB
+        api["HTTP / WebSocket API"]
+        api --> graph[("Neo4j — graph<br/>entities · memories · relationships")]
+        api --> vectors[("LanceDB — vectors<br/>semantic recall")]
+        api --> records[("SQLite — records<br/>contacts · commitments · goals · affect · facts")]
+    end
+
+    agent["Host harness<br/>(the agent)"]
+    models["LLM + embeddings<br/>(OpenAI-compatible)"]
+
+    agent -- "1 - context request" --> api
+    api  -- "assembled context" --> agent
+    agent -- "2 - turn sync" --> api
+    api  -- "extract / embed / reason" --> models
 ```
 
 The sidecar exposes one HTTP API. A thin, host-specific plugin connects the
