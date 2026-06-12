@@ -192,8 +192,8 @@ pip install -e ".[dev]"
 python -m pytest
 ```
 
-The Python sidecar lives under `sidecar/`; the host plugins under `plugins/`;
-the OpenClaw TypeScript plugin under `src/`.
+The Python sidecar lives under `sidecar/`; the host integration plugins under
+`plugins/`.
 
 ## License
 
