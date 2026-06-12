@@ -292,17 +292,30 @@ class InitiativeEngine:
 
     @staticmethod
     def _parse_neo4j_datetime(value: Any) -> Optional[datetime]:
-        """Convert Neo4j datetime or string to Python datetime."""
+        """Convert Neo4j datetime or string to a tz-aware (UTC) Python datetime.
+
+        Always normalizes to tz-aware UTC. A naive datetime reaching the
+        callers (which subtract it from ``datetime.now(timezone.utc)``) raises
+        ``TypeError: can't subtract offset-naive and offset-aware datetimes``,
+        which the surrounding ``except Exception`` swallows — silently dropping
+        every blocked-goal / pending-research initiative for that query variant.
+        Normalizing here keeps that whole class of initiative from vanishing.
+        """
         if value is None:
             return None
+        dt: Optional[datetime] = None
         if isinstance(value, str):
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
-        if hasattr(value, 'to_native'):
+            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        elif hasattr(value, 'to_native'):
             # neo4j.time.DateTime
-            return value.to_native()
-        if isinstance(value, datetime):
-            return value
-        return None
+            dt = value.to_native()
+        elif isinstance(value, datetime):
+            dt = value
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
 
     # ------------------------------------------------------------------
     # Graph context loading

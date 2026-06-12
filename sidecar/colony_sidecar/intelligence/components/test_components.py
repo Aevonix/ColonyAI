@@ -12,7 +12,7 @@ Covers all 8 intelligence components:
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -717,6 +717,47 @@ class TestInitiativeModel:
         assert InitiativeType.RELATIONSHIP == "relationship"
         assert InitiativeType.HEALTH == "health"
         assert InitiativeType.SCHEDULING == "scheduling"
+
+
+class TestParseNeo4jDatetime:
+    """_parse_neo4j_datetime must always return tz-aware UTC so callers can
+    subtract it from datetime.now(timezone.utc) without TypeError (the bug that
+    silently dropped all blocked-goal / pending-research initiatives)."""
+
+    def test_naive_iso_string_normalized_to_utc(self):
+        dt = InitiativeEngine._parse_neo4j_datetime("2026-06-12T01:00:00")
+        assert dt.tzinfo is not None
+        assert dt.utcoffset() == timedelta(0)
+
+    def test_zulu_string_is_aware(self):
+        dt = InitiativeEngine._parse_neo4j_datetime("2026-06-12T01:00:00Z")
+        assert dt.tzinfo is not None
+
+    def test_naive_datetime_normalized(self):
+        dt = InitiativeEngine._parse_neo4j_datetime(datetime(2026, 6, 12, 1, 0, 0))
+        assert dt.tzinfo is not None
+        assert dt.utcoffset() == timedelta(0)
+
+    def test_aware_datetime_preserved(self):
+        src = datetime(2026, 6, 12, 1, 0, 0, tzinfo=timezone.utc)
+        assert InitiativeEngine._parse_neo4j_datetime(src) == src
+
+    def test_neo4j_to_native_naive_normalized(self):
+        class _FakeNeo4jDT:
+            def to_native(self):
+                return datetime(2026, 6, 12, 1, 0, 0)  # naive, like neo4j.time.DateTime
+        dt = InitiativeEngine._parse_neo4j_datetime(_FakeNeo4jDT())
+        assert dt.tzinfo is not None
+
+    def test_none_returns_none(self):
+        assert InitiativeEngine._parse_neo4j_datetime(None) is None
+
+    def test_result_subtractable_from_aware_now(self):
+        # The actual production crash: now(utc) - parsed must not raise.
+        for value in ("2026-06-12T01:00:00", datetime(2026, 6, 12, 1, 0, 0)):
+            parsed = InitiativeEngine._parse_neo4j_datetime(value)
+            delta = datetime.now(timezone.utc) - parsed  # would TypeError if naive
+            assert delta.days >= 0
 
 
 class TestInitiativeEngine:
