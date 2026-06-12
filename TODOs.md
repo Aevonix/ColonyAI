@@ -60,12 +60,15 @@ From `docs/deferred-items.md` (last updated 2026-04-23):
 
 ## 3. SPEC-LEVEL OPEN ITEMS
 
-### New (Today) — Needs Decision
-- **`specs/initiative-context-routing.md`** — Dead as written. Proposes modifying 4 Hermes core files (`webhook.py`, `run.py`, `hermes_state.py`, `tools/colony_proactive.py`). Requires rewriting to work within existing Hermes extension points, or abandoning in favor of a Colony-side-only contract.
+The loose design and analysis docs under `specs/` and `docs/specs/` have been
+removed (implemented or superseded). The decisions that still stand on their own:
 
-### From Recent Specs
-- **`docs/specs/2026-05-16-channel-registry-initiative-routing.md`** — Channel registry spec; unclear if implemented or still pending
-- **`docs/specs/colony-hermes-autonomy-v0.10.0.md`** — v0.10.0 autonomy spec; may have been superseded by v0.11.x
+- **Initiative → channel routing** — the original "modify 4 Hermes core files"
+  approach (`webhook.py`, `run.py`, `hermes_state.py`, `tools/colony_proactive.py`)
+  is dead. Any routing work must live within existing Hermes extension points or a
+  Colony-side-only contract.
+- **Channel registry** — confirm whether registry-driven routing landed or is
+  still pending.
 
 ---
 
@@ -80,7 +83,7 @@ From `docs/deferred-items.md` (last updated 2026-04-23):
 ## 5. SUMMARY BY PRIORITY
 
 ### Blockers (Do Before Next Release)
-1. Decide fate of `specs/initiative-context-routing.md` — rewrite or delete
+1. Initiative → channel routing — choose a Hermes-extension-point or Colony-side-only contract (the core-file-modification approach is dead)
 2. Node certificate/signing is fake — security risk if multi-agent networking goes live
 3. `current_assignments: 0` hardcoded — affects agent load balancing accuracy
 

@@ -213,7 +213,6 @@ Initiative pipeline fixes + autonomous work engine foundations.
   - Volatile auto-close: `POST /initiatives/{id}/context/refresh` cancels initiatives whose condition has cleared (CI green, service recovered) with `stale_reason="condition_cleared"`
   - Hermes plugin: `colony-queue-worker.py` claims agent jobs and hands them to the agent via the new `colony-jobs` webhook route with curl-able lifecycle URLs
 - **Agent-brain framing sweep** — `notify_user` defaults replaced with `review_and_decide` (regression-tested); relationship hint changed to `evaluate_relationship`; webhook prompts rewritten around five agent decision verbs (execute/snooze/dismiss/communicate/request-approval).
-- Spec: `specs/2026-06-09-initiative-pipeline-v0.16.0.md` (Step 0 identity findings, agent-as-sensor architecture, deploy-and-watch runbook, gap-layer map).
 
 ## 0.15.1 (2026-05-23)
 
@@ -413,7 +412,6 @@ Anti-spam initiative delivery and autonomy pipeline spec.
 - **Initiative dedup reactivation** — only FAILED initiatives are reactivated on duplicate `dedup_key`. Completed and cancelled initiatives stay terminal, eliminating infinite-loop follow-up spam.
 
 ### Added
-- **`docs/autonomy-pipeline-spec.md`** — full spec for Colony-Hermes autonomy without Hermes source changes.
 - **`plugins/hermes-plugin/examples/colony-initiative-poller.py`** — production poller with `dedup_key` tracking, `delivery_context` injection, and env-var configuration.
 - **`plugins/hermes-plugin/examples/hook-handler.py`** — example Hermes hook handler with nested payload support.
 
