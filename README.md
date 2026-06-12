@@ -53,22 +53,35 @@ layer underneath one.
 
 ```mermaid
 flowchart LR
-    agent["Host harness (the agent)"]
+    agent(["Host harness<br/>(the agent)"])
+    models(["LLM + embeddings<br/>(OpenAI-compatible)"])
 
-    subgraph Colony sidecar
-        direction TB
-        api["FastAPI HTTP / WS API<br/>127.0.0.1:7777"]
-        api --> neo[("Neo4j<br/>graph")]
-        api --> lance[("LanceDB<br/>vectors")]
-        api --> sqlite[("SQLite<br/>records")]
+    subgraph colony["Colony sidecar · FastAPI · 127.0.0.1:7777"]
+        direction LR
+        api["HTTP / WebSocket<br/>API"]
+        subgraph stores["stores"]
+            direction TB
+            neo[("Neo4j · graph")]
+            lance[("LanceDB · vectors")]
+            sqlite[("SQLite · records")]
+        end
+        api --> neo
+        api --> lance
+        api --> sqlite
     end
 
-    models["LLM + embeddings (OpenAI-compatible)"]
+    agent -->|"request, turn sync"| api
+    api -.->|"assembled context"| agent
+    api -->|"extract, embed"| models
 
-    agent -->|context request| api
-    api -->|assembled context| agent
-    agent -->|turn sync| api
-    api -->|extract, embed| models
+    style colony fill:#f6f8fa,stroke:#d0d7de,color:#24292f
+    style stores fill:#ffffff,stroke:#d8dee4,color:#57606a
+    classDef store fill:#ddf4ff,stroke:#54aeff,color:#0a3069
+    classDef ext fill:#eaeef2,stroke:#9aa5b1,color:#24292f
+    classDef apinode fill:#dafbe1,stroke:#4ac26b,color:#0a3622
+    class neo,lance,sqlite store
+    class agent,models ext
+    class api apinode
 ```
 
 The sidecar exposes one HTTP API. A thin, host-specific plugin connects the
