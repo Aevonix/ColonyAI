@@ -192,3 +192,25 @@ class TestCommitmentStoreOverdue:
         store.update(c["id"], status="fulfilled")
         result = store.get_pending_for_person("owner")
         assert len(result) == 0
+
+
+class TestCommitmentDueAtNormalization:
+    """due_at must be persisted as canonical UTC ISO so get_overdue's string
+    comparison is chronologically valid (mixed naive/offset broke detection)."""
+
+    def test_naive_due_at_stored_as_utc_aware(self, store):
+        naive = (datetime.now(timezone.utc) + timedelta(days=7)).replace(tzinfo=None).isoformat()
+        res = store.create(person_id="owner", description="x", due_at=naive)
+        stored = store.get(res["id"])["due_at"]
+        parsed = datetime.fromisoformat(stored)
+        assert parsed.tzinfo is not None
+        assert parsed.utcoffset() == timedelta(0)
+        assert stored.endswith("+00:00")
+
+    def test_offset_due_at_normalized_to_utc_same_instant(self, store):
+        dt = datetime.now(timezone.utc) + timedelta(days=3)
+        plus5 = dt.astimezone(timezone(timedelta(hours=5))).isoformat()
+        res = store.create(person_id="owner", description="y", due_at=plus5)
+        stored = datetime.fromisoformat(store.get(res["id"])["due_at"])
+        assert stored.utcoffset() == timedelta(0)
+        assert abs((stored - dt).total_seconds()) < 1

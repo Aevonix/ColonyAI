@@ -94,14 +94,20 @@ class CommitmentStore:
         commitment_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
-        # Validate due_at is in the future
+        # Validate due_at is in the future AND normalize it to canonical UTC ISO.
+        # get_overdue() compares due_at as a STRING against a +00:00 `now`, so a
+        # naive or non-UTC-offset stored value sorts wrong — overdue commitments
+        # then surface late or never (a forgotten promise). Persist the
+        # normalized value, not the caller's raw string.
         if due_at:
             try:
                 due_dt = datetime.fromisoformat(due_at)
                 if due_dt.tzinfo is None:
                     due_dt = due_dt.replace(tzinfo=timezone.utc)
+                due_dt = due_dt.astimezone(timezone.utc)
                 if due_dt < datetime.now(timezone.utc):
                     raise ValueError("due_at must be in the future")
+                due_at = due_dt.isoformat()
             except ValueError:
                 raise
 
