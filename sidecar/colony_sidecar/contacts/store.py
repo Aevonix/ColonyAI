@@ -52,6 +52,29 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+# A phone number is ONE identity across channels. Phone-bearing gateways resolve a number to the
+# same contact regardless of which transport it arrived on (sms/rcs/imessage/signal/whatsapp).
+_PHONE_GATEWAYS = ("imessage", "sms", "signal", "whatsapp")
+
+
+def _looks_like_phone(address: str) -> bool:
+    """True if `address` is a phone number (digits/+, no letters) — used to route an unknown-gateway
+    sender (e.g. a 'custom' platform) into the phone-identity resolution path."""
+    s = (address or "").strip()
+    if not s or any(c.isalpha() for c in s):
+        return False
+    digits = _PHONE_DIGITS.sub("", s.lstrip("+"))
+    return len(digits) >= 7
+
+
+def _phone_key(address: str) -> str:
+    """Identity key for a phone number: the national significant digits (last 10), so that +1…, 1…,
+    a bare 10-digit number, and any formatting all collapse to the same key. Matches how the rest of
+    the stack compares numbers (last-10 digits). Falls back to all digits when fewer than 10."""
+    digits = _PHONE_DIGITS.sub("", (address or "").lstrip("+"))
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
 def _name_similarity(a: Optional[str], b: Optional[str]) -> float:
     """Simple character bigram similarity in [0, 1]."""
     if not a or not b:
@@ -207,6 +230,11 @@ class SQLiteContactStore(ContactStore):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(path)
         self._db.row_factory = aiosqlite.Row
+        # In-query phone identity key so messaging resolution matches a number to its contact even
+        # when stored handles are formatted differently / under a different gateway — works without
+        # a data migration (the stored side is keyed at query time).
+        await self._db.create_function(
+            "phone_key", 1, lambda v: _phone_key(v) if v else "")
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
         schema = _SCHEMA_FILE.read_text()
@@ -265,6 +293,33 @@ class SQLiteContactStore(ContactStore):
         if row is None:
             return None
         return Contact.from_row(dict(row))
+
+    async def resolve_messaging_handle(self, gateway: str, address: str) -> Optional[Contact]:
+        """Resolve an inbound messaging sender to a LIVE contact, treating a phone number as ONE
+        identity across all phone-bearing gateways (a number is the same person whether it arrives
+        as sms/rcs/imessage/signal/whatsapp). Both sides are normalized. This is the resolution path
+        for /contacts/resolve — distinct from find_by_handle (exact, soft-deleted-inclusive, dedup)."""
+        db = self._require_db()
+        g = (gateway or "").strip().lower()
+        if g == "rcs":  # D1: RCS canonicalizes to the shared phone identity (no separate gateway)
+            g = "sms"
+        if g == "email":
+            sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
+                   "WHERE h.gateway = 'email' AND lower(h.address) = ? AND c.deleted_at IS NULL LIMIT 1")
+            params: tuple = (_normalize_email(address),)
+        elif g in _PHONE_GATEWAYS or _looks_like_phone(address):
+            placeholders = ",".join("?" for _ in _PHONE_GATEWAYS)
+            sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
+                   f"WHERE h.gateway IN ({placeholders}) AND phone_key(h.address) = ? "
+                   "AND c.deleted_at IS NULL LIMIT 1")
+            params = (*_PHONE_GATEWAYS, _phone_key(address))
+        else:
+            sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
+                   "WHERE h.gateway = ? AND h.address = ? AND c.deleted_at IS NULL LIMIT 1")
+            params = (g, address)
+        async with db.execute(sql, params) as cur:
+            row = await cur.fetchone()
+        return Contact.from_row(dict(row)) if row else None
 
     async def get_handles(self, contact_id: str) -> List[ContactHandle]:
         db = self._require_db()

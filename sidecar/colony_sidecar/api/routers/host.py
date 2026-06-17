@@ -2554,7 +2554,9 @@ async def resolve_contact_by_handle(gateway: str, address: str) -> ContactRespon
     if _contacts_store is None:
         raise HTTPException(status_code=404, detail="Contact store not initialized")
     try:
-        contact = await _contacts_store.find_by_handle(gateway, address)
+        # Normalized, cross-gateway phone-identity resolution (a number is one contact regardless of
+        # the transport it arrived on). find_by_handle stays exact-match for dedup callers.
+        contact = await _contacts_store.resolve_messaging_handle(gateway, address)
         if contact is None:
             raise HTTPException(status_code=404, detail="No contact for that handle")
         return ContactResponse(**contact.to_dict())
