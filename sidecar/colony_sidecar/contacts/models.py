@@ -10,19 +10,25 @@ from typing import Any, Dict, List, Optional
 
 # ── Trust tiers ──────────────────────────────────────────────────────────────
 
-TRUST_TIERS = ("inner_circle", "trusted", "regular", "peripheral", "silenced", "acquaintance", "unknown")
+# "group_guest" is a *scoped* tier: it is the trust a person is granted WITHIN a
+# trust_scope (e.g. a group chat) — converse in-context, but no 1:1 DM rights and
+# no proactive reach-out. A contact's global trust_tier is unaffected by it.
+TRUST_TIERS = ("inner_circle", "trusted", "regular", "group_guest", "peripheral", "silenced", "acquaintance", "unknown")
 
 # Higher index = more permissive
-_TIER_RANK = {t: i for i, t in enumerate(("unknown", "acquaintance", "silenced", "peripheral", "regular", "trusted", "inner_circle"))}
+_TIER_RANK = {t: i for i, t in enumerate(("unknown", "acquaintance", "silenced", "peripheral", "group_guest", "regular", "trusted", "inner_circle"))}
 
 PRIVACY_LEVELS = ("public", "private", "restricted")
 GATEWAYS = ("imessage", "telegram", "email", "sms", "signal", "custom", "internal")
 
-# Default interaction_allowed per trust tier (spec §8.1)
+# Default interaction_allowed per trust tier (spec §8.1).
+# group_guest is False here because that flag governs *global* (1:1) interaction;
+# in-scope interaction is authorized by the trust_scope, not this flag.
 TIER_DEFAULT_INTERACTION: Dict[str, bool] = {
     "inner_circle": True,
     "trusted": True,
     "regular": True,
+    "group_guest": False,
     "peripheral": False,
     "silenced": False,
     "acquaintance": False,
@@ -214,3 +220,78 @@ class MergeAuditRecord:
     def __post_init__(self):
         if self.merged_at is None:
             self.merged_at = datetime.now(timezone.utc)
+
+
+# ── Trust scopes (context-scoped trust: group chats, households, project rooms) ──
+#
+# A trust_scope grants its members a trust tier that applies ONLY inside the scope
+# (e.g. a specific group conversation). Membership never confers global 1:1 rights —
+# a member's contact.trust_tier / interaction_allowed are independent. This is the
+# generic primitive any agent uses to say "trusted in this room, not in my DMs".
+
+SCOPE_TYPES = ("group", "household", "project", "event", "custom")
+SCOPE_MEMBER_ROLES = ("owner", "member", "observer")
+
+
+@dataclass
+class TrustScope:
+    """A context that grants its members a tier of trust scoped to itself."""
+    scope_id: str
+    scope_type: str                  # one of SCOPE_TYPES
+    platform: Optional[str]          # e.g. "rcs"; NULL for abstract scopes
+    external_id: Optional[str]       # platform conversation/group id (relay conv_id, etc.)
+    label: Optional[str]             # human name ("Marc & Ingrid")
+    granted_tier: str                # tier members get WITHIN this scope (default group_guest)
+    created_by: str                  # "owner" | "agent" | contact_id
+    active: bool
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "scope_id": self.scope_id,
+            "scope_type": self.scope_type,
+            "platform": self.platform,
+            "external_id": self.external_id,
+            "label": self.label,
+            "granted_tier": self.granted_tier,
+            "created_by": self.created_by,
+            "active": self.active,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: Dict[str, Any]) -> "TrustScope":
+        return cls(
+            scope_id=row["scope_id"],
+            scope_type=row["scope_type"],
+            platform=row.get("platform"),
+            external_id=row.get("external_id"),
+            label=row.get("label"),
+            granted_tier=row.get("granted_tier", "group_guest"),
+            created_by=row.get("created_by", "agent"),
+            active=bool(row.get("active", 1)),
+            created_at=row.get("created_at", ""),
+            updated_at=row.get("updated_at", ""),
+        )
+
+
+@dataclass
+class ScopeMember:
+    """A contact's membership in a trust scope (current while left_at is None)."""
+    scope_id: str
+    contact_id: str
+    role: str                        # one of SCOPE_MEMBER_ROLES
+    joined_at: str
+    left_at: Optional[str]
+
+    @classmethod
+    def from_row(cls, row: Dict[str, Any]) -> "ScopeMember":
+        return cls(
+            scope_id=row["scope_id"],
+            contact_id=row["contact_id"],
+            role=row.get("role", "member"),
+            joined_at=row.get("joined_at", ""),
+            left_at=row.get("left_at"),
+        )

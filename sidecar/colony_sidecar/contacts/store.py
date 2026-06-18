@@ -16,6 +16,8 @@ from .config import ContactsConfig
 from .models import (
     Contact,
     ContactHandle,
+    ScopeMember,
+    TrustScope,
     TRUST_TIERS,
     TIER_DEFAULT_INTERACTION,
     more_permissive_tier,
@@ -24,6 +26,7 @@ from .models import (
 logger = logging.getLogger("colony.contacts.store")
 
 _SCHEMA_FILE = Path(__file__).parent / "migrations" / "001_contacts_schema.sql"
+_SCHEMA_FILE_002 = Path(__file__).parent / "migrations" / "002_trust_scopes.sql"
 
 _PHONE_DIGITS = re.compile(r'\D')
 
@@ -239,6 +242,7 @@ class SQLiteContactStore(ContactStore):
         await self._db.execute("PRAGMA foreign_keys=ON")
         schema = _SCHEMA_FILE.read_text()
         await self._db.executescript(schema)
+        await self._db.executescript(_SCHEMA_FILE_002.read_text())
         await self._db.commit()
         await self._apply_migrations()
 
@@ -823,3 +827,124 @@ class SQLiteContactStore(ContactStore):
                         candidates.append((sim * 0.7, c.contact_id, f"name_similarity:{sim:.2f}"))
 
         return sorted(candidates, key=lambda x: x[0], reverse=True)
+
+    # ── Trust scopes (context-scoped trust) ────────────────────────────────────
+
+    async def create_scope(
+        self,
+        *,
+        scope_type: str = "group",
+        platform: Optional[str] = None,
+        external_id: Optional[str] = None,
+        label: Optional[str] = None,
+        granted_tier: str = "group_guest",
+        created_by: str = "agent",
+    ) -> TrustScope:
+        """Create a trust scope, or return the existing active one for
+        (platform, external_id) if it already exists (idempotent upsert)."""
+        if granted_tier not in TRUST_TIERS:
+            raise ValueError(f"invalid granted_tier: {granted_tier}")
+        db = self._require_db()
+        if platform is not None and external_id is not None:
+            existing = await self.get_scope(platform=platform, external_id=external_id)
+            if existing is not None:
+                return existing
+        scope_id = _gen_id("ts")
+        now = _now_iso()
+        await db.execute(
+            "INSERT INTO trust_scopes (scope_id, scope_type, platform, external_id, label, "
+            "granted_tier, created_by, active, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            (scope_id, scope_type, platform, external_id, label, granted_tier, created_by, now, now),
+        )
+        await db.commit()
+        return TrustScope(
+            scope_id=scope_id, scope_type=scope_type, platform=platform, external_id=external_id,
+            label=label, granted_tier=granted_tier, created_by=created_by, active=True,
+            created_at=now, updated_at=now,
+        )
+
+    async def get_scope(
+        self,
+        *,
+        scope_id: Optional[str] = None,
+        platform: Optional[str] = None,
+        external_id: Optional[str] = None,
+    ) -> Optional[TrustScope]:
+        """Fetch a scope by scope_id, or by (platform, external_id)."""
+        db = self._require_db()
+        if scope_id is not None:
+            sql, params = "SELECT * FROM trust_scopes WHERE scope_id = ?", (scope_id,)
+        elif platform is not None and external_id is not None:
+            sql = "SELECT * FROM trust_scopes WHERE platform = ? AND external_id = ?"
+            params = (platform, external_id)
+        else:
+            raise ValueError("get_scope needs scope_id or (platform, external_id)")
+        async with db.execute(sql, params) as cur:
+            row = await cur.fetchone()
+        return TrustScope.from_row(dict(row)) if row else None
+
+    async def add_scope_member(
+        self, scope_id: str, contact_id: str, role: str = "member"
+    ) -> None:
+        """Add (or re-activate) a contact's membership in a scope."""
+        db = self._require_db()
+        await db.execute(
+            "INSERT INTO scope_members (scope_id, contact_id, role, joined_at, left_at) "
+            "VALUES (?, ?, ?, ?, NULL) "
+            "ON CONFLICT(scope_id, contact_id) DO UPDATE SET role = excluded.role, left_at = NULL",
+            (scope_id, contact_id, role, _now_iso()),
+        )
+        await db.commit()
+
+    async def remove_scope_member(self, scope_id: str, contact_id: str) -> None:
+        """Mark a member as having left the scope (soft; preserves history)."""
+        db = self._require_db()
+        await db.execute(
+            "UPDATE scope_members SET left_at = ? WHERE scope_id = ? AND contact_id = ? AND left_at IS NULL",
+            (_now_iso(), scope_id, contact_id),
+        )
+        await db.commit()
+
+    async def scope_members(self, scope_id: str, *, current_only: bool = True) -> List[ScopeMember]:
+        db = self._require_db()
+        sql = "SELECT * FROM scope_members WHERE scope_id = ?"
+        if current_only:
+            sql += " AND left_at IS NULL"
+        async with db.execute(sql, (scope_id,)) as cur:
+            rows = await cur.fetchall()
+        return [ScopeMember.from_row(dict(r)) for r in rows]
+
+    async def scopes_for_contact(self, contact_id: str, *, active_only: bool = True) -> List[TrustScope]:
+        """All scopes a contact is a current member of (optionally active scopes only)."""
+        db = self._require_db()
+        sql = (
+            "SELECT s.* FROM trust_scopes s "
+            "JOIN scope_members m ON m.scope_id = s.scope_id "
+            "WHERE m.contact_id = ? AND m.left_at IS NULL"
+        )
+        if active_only:
+            sql += " AND s.active = 1"
+        async with db.execute(sql, (contact_id,)) as cur:
+            rows = await cur.fetchall()
+        return [TrustScope.from_row(dict(r)) for r in rows]
+
+    async def is_authorized_in_scope(self, contact_id: str, scope_id: str) -> bool:
+        """True iff the contact is a current member of the (active) scope.
+        This is group-scoped authorization — it says nothing about 1:1 rights."""
+        db = self._require_db()
+        async with db.execute(
+            "SELECT 1 FROM scope_members m JOIN trust_scopes s ON s.scope_id = m.scope_id "
+            "WHERE m.scope_id = ? AND m.contact_id = ? AND m.left_at IS NULL AND s.active = 1",
+            (scope_id, contact_id),
+        ) as cur:
+            return await cur.fetchone() is not None
+
+    async def deactivate_scope(self, scope_id: str) -> None:
+        """Deactivate a scope (revokes group-trust for all members at once)."""
+        db = self._require_db()
+        await db.execute(
+            "UPDATE trust_scopes SET active = 0, updated_at = ? WHERE scope_id = ?",
+            (_now_iso(), scope_id),
+        )
+        await db.commit()
