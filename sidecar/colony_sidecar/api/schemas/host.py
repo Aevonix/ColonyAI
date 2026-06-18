@@ -1618,3 +1618,49 @@ class ContextDigestResponse(BaseModel):
     pending_initiatives: List[AgentSnapshotInitiative] = Field(default_factory=list)
     system_state: AgentSnapshotSystemState
     last_outreach: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Trust scopes (context-scoped authorization) ──────────────────────────────
+
+class ScopeAuthzResponse(BaseModel):
+    """Whether a sender is authorized WITHIN a scope (group). Says nothing about 1:1."""
+    authorized: bool
+    scope_id: Optional[str] = None
+    granted_tier: Optional[str] = None
+    contact_id: Optional[str] = None
+    active: bool = False
+
+
+class ScopeMemberIn(BaseModel):
+    gateway: Optional[str] = None      # handle gateway (resolve / auto-create a shadow)
+    address: Optional[str] = None      # handle address
+    contact_id: Optional[str] = None   # or a known contact directly
+    name: Optional[str] = None         # display name for an auto-created shadow
+    role: str = "member"
+
+
+class ScopeCreateRequest(BaseModel):
+    platform: str
+    external_id: str                   # the group/conversation id on the platform
+    label: Optional[str] = None
+    scope_type: str = "group"
+    granted_tier: str = "group_guest"
+    created_by: str = "agent"
+    members: List[ScopeMemberIn] = Field(default_factory=list)
+
+
+class ScopeResponse(BaseModel):
+    scope_id: str
+    scope_type: str
+    platform: Optional[str] = None
+    external_id: Optional[str] = None
+    label: Optional[str] = None
+    granted_tier: str
+    active: bool
+    members: List[str] = Field(default_factory=list)   # contact_ids
+
+
+class ScopeDeactivateRequest(BaseModel):
+    scope_id: Optional[str] = None
+    platform: Optional[str] = None
+    external_id: Optional[str] = None

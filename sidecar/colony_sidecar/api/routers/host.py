@@ -45,6 +45,11 @@ from colony_sidecar.api.schemas.host import (
     ContactStyleRequest,
     ContactStyleResponse,
     ContactTimezoneRequest,
+    ScopeAuthzResponse,
+    ScopeCreateRequest,
+    ScopeDeactivateRequest,
+    ScopeMemberIn,
+    ScopeResponse,
     ContextAssembleRequest,
     ContextAssembleResponse,
     ContextSection,
@@ -2580,6 +2585,103 @@ async def get_contact(contact_id: str) -> ContactResponse:
         raise
     except Exception as exc:
         logger.warning("get_contact failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/authz/scope", response_model=ScopeAuthzResponse)
+async def authz_scope(platform: str, external_id: str, gateway: str, address: str) -> ScopeAuthzResponse:
+    """Is this sender authorized WITHIN this group scope? Context-scoped only — it
+    says nothing about 1:1 DM rights. Used by the messaging bridge to admit group
+    members of an agent-created/joined group without granting them per-user access."""
+    if _contacts_store is None:
+        return ScopeAuthzResponse(authorized=False)
+    try:
+        scope = await _contacts_store.get_scope(platform=platform, external_id=external_id)
+        if scope is None or not scope.active:
+            return ScopeAuthzResponse(
+                authorized=False,
+                scope_id=(scope.scope_id if scope else None),
+                active=bool(scope and scope.active),
+            )
+        contact = await _contacts_store.resolve_messaging_handle(gateway, address)
+        if contact is None:
+            return ScopeAuthzResponse(
+                authorized=False, scope_id=scope.scope_id,
+                granted_tier=scope.granted_tier, active=True,
+            )
+        ok = await _contacts_store.is_authorized_in_scope(contact.contact_id, scope.scope_id)
+        return ScopeAuthzResponse(
+            authorized=ok, scope_id=scope.scope_id, granted_tier=scope.granted_tier,
+            contact_id=contact.contact_id, active=True,
+        )
+    except Exception as exc:
+        logger.warning("authz_scope failed: %s", exc)
+        return ScopeAuthzResponse(authorized=False)
+
+
+@router.post("/authz/scope", response_model=ScopeResponse, status_code=201)
+async def create_authz_scope(body: ScopeCreateRequest) -> ScopeResponse:
+    """Create (idempotent by platform+external_id) a trust scope and add members.
+    Unknown member handles are auto-created as shadow contacts on first sight
+    (acquaintance tier, no 1:1 interaction) — see social-graph-autonomy spec."""
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    try:
+        scope = await _contacts_store.create_scope(
+            scope_type=body.scope_type, platform=body.platform, external_id=body.external_id,
+            label=body.label, granted_tier=body.granted_tier, created_by=body.created_by,
+        )
+        member_ids: List[str] = []
+        for m in body.members:
+            cid = m.contact_id
+            if cid is None and m.gateway and m.address:
+                contact = await _contacts_store.resolve_messaging_handle(m.gateway, m.address)
+                if contact is None:
+                    contact = await _contacts_store.create(
+                        display_name=(m.name or m.address),
+                        trust_tier="acquaintance", import_source="agent_scope",
+                    )
+                    # rcs is a transport over the phone identity; store the handle under the
+                    # canonical phone gateway (sms) so it resolves across phone-bearing channels.
+                    store_gw = "sms" if m.gateway == "rcs" else m.gateway
+                    await _contacts_store.add_handle(
+                        contact.contact_id, gateway=store_gw, address=m.address,
+                        source="agent_scope", confidence=0.6,
+                    )
+                cid = contact.contact_id
+            if cid:
+                await _contacts_store.add_scope_member(scope.scope_id, cid, role=m.role)
+                member_ids.append(cid)
+        return ScopeResponse(
+            scope_id=scope.scope_id, scope_type=scope.scope_type, platform=scope.platform,
+            external_id=scope.external_id, label=scope.label, granted_tier=scope.granted_tier,
+            active=scope.active, members=member_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("create_authz_scope failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/authz/scope/deactivate")
+async def deactivate_authz_scope(body: ScopeDeactivateRequest) -> Dict[str, Any]:
+    """Revoke group-trust for a whole scope at once (e.g. owner mutes/leaves the group)."""
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    try:
+        scope_id = body.scope_id
+        if scope_id is None and body.platform and body.external_id:
+            scope = await _contacts_store.get_scope(platform=body.platform, external_id=body.external_id)
+            scope_id = scope.scope_id if scope else None
+        if scope_id is None:
+            raise HTTPException(status_code=404, detail="scope not found")
+        await _contacts_store.deactivate_scope(scope_id)
+        return {"ok": True, "scope_id": scope_id, "active": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("deactivate_authz_scope failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
