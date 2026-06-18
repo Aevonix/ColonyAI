@@ -1664,3 +1664,8 @@ class ScopeDeactivateRequest(BaseModel):
     scope_id: Optional[str] = None
     platform: Optional[str] = None
     external_id: Optional[str] = None
+
+
+class ScopePromoteRequest(BaseModel):
+    contact_id: str
+    to_tier: str = "regular"

@@ -956,3 +956,43 @@ class SQLiteContactStore(ContactStore):
         for m in members:
             await self.record_audit(m.contact_id, "scope_deactivated",
                                     {"scope_id": scope_id}, performed_by="agent")
+
+    async def group_promotion_candidates(
+        self, *, min_interactions: int = 5, limit: int = 50
+    ) -> List["Contact"]:
+        """Current members of an ACTIVE scope with sustained contact but no global 1:1 rights yet.
+        These are who the owner could promote (group_guest -> regular), or who get auto-promoted
+        when ``auto_promote_group_to_1on1`` is on. Group membership alone never promotes."""
+        db = self._require_db()
+        async with db.execute(
+            "SELECT DISTINCT c.* FROM contacts c "
+            "JOIN scope_members m ON m.contact_id = c.contact_id AND m.left_at IS NULL "
+            "JOIN trust_scopes s ON s.scope_id = m.scope_id AND s.active = 1 "
+            "WHERE c.deleted_at IS NULL AND c.interaction_allowed = 0 "
+            "AND c.interaction_count >= ? ORDER BY c.interaction_count DESC LIMIT ?",
+            (int(min_interactions), int(limit)),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [Contact.from_row(dict(r)) for r in rows]
+
+    async def promote_scope_member(
+        self, contact_id: str, *, to_tier: str = "regular", performed_by: str = "agent"
+    ) -> bool:
+        """Grant a group-scope member global 1:1 rights (tier >= ``to_tier`` + interaction
+        allowed). Only ever RAISES standing; returns True iff something changed."""
+        from colony_sidecar.contacts.models import _TIER_RANK
+        c = await self.get(contact_id)
+        if c is None:
+            return False
+        changed = False
+        if _TIER_RANK.get(c.trust_tier, 0) < _TIER_RANK.get(to_tier, 0):
+            await self.update_tier(contact_id, to_tier, reason="promoted from group scope",
+                                   performed_by=performed_by)
+            changed = True
+        if not c.interaction_allowed:
+            await self.update_interaction_allowed(contact_id, True, performed_by=performed_by)
+            changed = True
+        if changed:
+            await self.record_audit(contact_id, "scope_promoted_to_1on1",
+                                    {"to_tier": to_tier}, performed_by=performed_by)
+        return changed
