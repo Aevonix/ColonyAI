@@ -36,6 +36,9 @@ class TrustTier(str, Enum):
     INNER_CIRCLE = "inner_circle"
     TRUSTED = "trusted"
     REGULAR = "regular"
+    # group_guest: trust granted WITHIN a shared context (a group) only, never 1:1.
+    # Sits below regular; gated as strictly as peripheral for disclosure.
+    GROUP_GUEST = "group_guest"
     PERIPHERAL = "peripheral"
     SILENCED = "silenced"
 
@@ -62,6 +65,17 @@ TIER_CAPABILITIES = {
         "contact_can_modify_tasks": False,
     },
     TrustTier.REGULAR: {
+        "colony_proactive_reach_out": False,
+        "colony_priority_notifications": False,
+        "colony_full_context_sharing": False,
+        "colony_proposes_tier_changes": False,
+
+        "contact_can_request_reminders": False,
+        "contact_can_modify_tasks": False,
+    },
+    TrustTier.GROUP_GUEST: {
+        # Converses only within the shared group; Colony does nothing autonomously for
+        # them and they cannot drive Colony. Granted by group membership, never 1:1.
         "colony_proactive_reach_out": False,
         "colony_priority_notifications": False,
         "colony_full_context_sharing": False,

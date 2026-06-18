@@ -896,6 +896,8 @@ class SQLiteContactStore(ContactStore):
             (scope_id, contact_id, role, _now_iso()),
         )
         await db.commit()
+        await self.record_audit(contact_id, "scope_member_added",
+                                {"scope_id": scope_id, "role": role}, performed_by="agent")
 
     async def remove_scope_member(self, scope_id: str, contact_id: str) -> None:
         """Mark a member as having left the scope (soft; preserves history)."""
@@ -905,6 +907,8 @@ class SQLiteContactStore(ContactStore):
             (_now_iso(), scope_id, contact_id),
         )
         await db.commit()
+        await self.record_audit(contact_id, "scope_member_removed",
+                                {"scope_id": scope_id}, performed_by="agent")
 
     async def scope_members(self, scope_id: str, *, current_only: bool = True) -> List[ScopeMember]:
         db = self._require_db()
@@ -943,8 +947,12 @@ class SQLiteContactStore(ContactStore):
     async def deactivate_scope(self, scope_id: str) -> None:
         """Deactivate a scope (revokes group-trust for all members at once)."""
         db = self._require_db()
+        members = await self.scope_members(scope_id, current_only=True)
         await db.execute(
             "UPDATE trust_scopes SET active = 0, updated_at = ? WHERE scope_id = ?",
             (_now_iso(), scope_id),
         )
         await db.commit()
+        for m in members:
+            await self.record_audit(m.contact_id, "scope_deactivated",
+                                    {"scope_id": scope_id}, performed_by="agent")

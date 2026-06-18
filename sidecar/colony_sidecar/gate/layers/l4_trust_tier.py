@@ -47,7 +47,7 @@ class TrustTierChecker:
 
         text = payload.response_text
 
-        if tier in (TrustTier.REGULAR, TrustTier.PERIPHERAL):
+        if tier in (TrustTier.REGULAR, TrustTier.GROUP_GUEST, TrustTier.PERIPHERAL):
             for pattern in _ASSESSMENT_PATTERNS:
                 if pattern.search(text):
                     return LayerResult(
@@ -65,13 +65,13 @@ class TrustTierChecker:
                         flagged_excerpt="[internal state pattern]",
                     )
 
-        if tier == TrustTier.PERIPHERAL:
+        if tier in (TrustTier.GROUP_GUEST, TrustTier.PERIPHERAL):
             for pattern in _PRIVATE_DETAIL_PATTERNS:
                 if pattern.search(text):
                     return LayerResult(
                         blocked=True,
                         code="block_trust_tier",
-                        reason="private detail patterns not permitted at peripheral tier",
+                        reason=f"private detail patterns not permitted at tier={tier.value}",
                         flagged_excerpt="[private detail]",
                     )
 
