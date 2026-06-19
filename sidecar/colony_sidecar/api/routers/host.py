@@ -2045,6 +2045,30 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         except Exception as exc:
             logger.warning("turns_sync failed: %s", exc)
 
+    # Context provenance: record this turn's entities under its conversation context, so a
+    # later reply in a DIFFERENT context that surfaces an entity known only from here can be
+    # flagged as a cross-context leak. Entities come from the host plus rule-based NER on the
+    # incoming message (what the other party brought up = what belongs to this conversation).
+    if _context_provenance is not None and body.context.channel_id:
+        ents = list(body.entities or [])
+        _user_text = getattr(body.user_message, "content", "") if body.user_message else ""
+        if _user_text:
+            _extractor = _get_conversation_extractor()
+            if _extractor is not None:
+                try:   # extraction is additive; a failure here must not drop host entities
+                    _src = body.context.turn_id or body.context.session_id or "turn"
+                    _res = await _extractor.extract(_user_text, _src)
+                    ents += [getattr(c, "text", None) or getattr(c, "name", "")
+                             for c in getattr(_res, "entities", [])]
+                except Exception:
+                    logger.debug("provenance entity extraction failed", exc_info=True)
+        if ents:
+            try:
+                _context_provenance.record(
+                    body.context.channel_id, ents, contact_id=body.context.contact_id)
+            except Exception:
+                logger.debug("context provenance record failed", exc_info=True)
+
     # Fire cognition trigger (best-effort, non-blocking)
     try:
         from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled
@@ -3339,6 +3363,31 @@ _facts_store = None
 def set_facts_store(store):
     global _facts_store
     _facts_store = store
+
+
+_context_provenance = None
+
+
+def set_context_provenance_store(store):
+    global _context_provenance
+    _context_provenance = store
+
+
+_conversation_extractor = None
+
+
+def _get_conversation_extractor():
+    """Lazily build a shared rule-based entity extractor (regex NER, no LLM)."""
+    global _conversation_extractor
+    if _conversation_extractor is None:
+        try:
+            from colony_sidecar.world_model.extraction.conversation_extractor import (
+                ConversationExtractor,
+            )
+            _conversation_extractor = ConversationExtractor()
+        except Exception:
+            _conversation_extractor = False  # tried and failed; don't retry every turn
+    return _conversation_extractor or None
 
 
 _engagement_store = None

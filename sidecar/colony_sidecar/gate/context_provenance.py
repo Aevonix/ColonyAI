@@ -130,8 +130,9 @@ class ProvenanceCrossContextGuard(CrossContextGuard):
         ents = {normalize_entity(e) for e in (mentioned_entities or ())}
         if self._extractor is not None and response_text:
             try:
-                res = await self._extractor.extract(response_text)
-                ents |= {normalize_entity(c.name) for c in getattr(res, "entities", [])}
+                res = await self._extractor.extract(response_text, "response_guard")
+                ents |= {normalize_entity(getattr(c, "text", None) or getattr(c, "name", ""))
+                         for c in getattr(res, "entities", [])}
             except Exception:
                 pass
         return {e for e in ents if e}

@@ -78,8 +78,8 @@ async def test_extractor_pulls_entities_from_response_text(store):
         def __init__(self, name):
             self.name = name
 
-    class FakeExtractor:
-        async def extract(self, text, existing_entities=None):
+    class FakeExtractor:   # matches ConversationExtractor.extract(text, source_id, ...)
+        async def extract(self, text, source_id=None, existing_entities=None):
             class R:
                 entities = [FakeCand("Project Falcon")] if "falcon" in text.lower() else []
             return R()

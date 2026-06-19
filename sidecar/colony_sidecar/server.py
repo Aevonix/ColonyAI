@@ -69,6 +69,7 @@ from colony_sidecar.api.routers.host import (
     set_commitment_store,
     set_affect_store,
     set_facts_store,
+    set_context_provenance_store,
     set_engagement_store,
     set_comms_log,
     set_preference_learner,
@@ -453,6 +454,11 @@ async def lifespan(app: FastAPI):
         facts_store = SharedFactsStore(db_path=facts_db)
         set_facts_store(facts_store)
         logger.info("SharedFactsStore initialized (db=%s)", facts_db)
+
+        from colony_sidecar.gate.context_provenance import ContextProvenanceStore
+        provenance_db = state_dir / "colony-context-provenance.db"
+        set_context_provenance_store(ContextProvenanceStore(db_path=str(provenance_db)))
+        logger.info("ContextProvenanceStore initialized (db=%s)", provenance_db)
 
         from colony_sidecar.tom.engagement import EngagementStore
         engagement_db = state_dir / "colony-engagement.db"
@@ -1066,6 +1072,7 @@ async def lifespan(app: FastAPI):
     set_commitment_store(None)
     set_affect_store(None)
     set_facts_store(None)
+    set_context_provenance_store(None)
     set_pattern_store(None)
     set_surprise_store(None)
     set_tom_extractor(None)
