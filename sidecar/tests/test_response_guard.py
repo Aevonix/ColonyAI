@@ -17,11 +17,16 @@ LEAK = "his home address is on file"   # trips L4 private-detail at group_guest/
 
 
 @pytest.mark.asyncio
-async def test_voice_is_never_gated():
-    guard = ResponseGuard(default_mode=GuardMode.ENFORCE)
+async def test_excluded_gateway_is_never_gated():
+    # a deployment supplies the gateways to skip (e.g. its voice path); Colony hardcodes none
+    guard = ResponseGuard(default_mode=GuardMode.ENFORCE, excluded_gateways={"voice"})
     r = await guard.evaluate(response_text=LEAK, trust_tier=TrustTier.GROUP_GUEST,
                              target_gateway="voice")
     assert r.decision == "allow" and not r.findings
+    # the same leak on a non-excluded gateway IS caught, proving exclusion is what skipped it
+    r2 = await guard.evaluate(response_text=LEAK, trust_tier=TrustTier.GROUP_GUEST,
+                              target_gateway="rcs")
+    assert r2.decision == "revise"
 
 
 @pytest.mark.asyncio
@@ -64,9 +69,9 @@ async def test_fail_open_when_a_check_raises():
 async def test_cross_context_findings_flow_through():
     class Leaky(CrossContextGuard):
         async def check(self, **kw):
-            return [GuardFinding("cross_context", "block", "entity 'Fran' from another chat")]
+            return [GuardFinding("cross_context", "block", "entity 'Robin' from another chat")]
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE, cross_context=Leaky())
-    r = await guard.evaluate(response_text="Fran said hi", trust_tier=TrustTier.REGULAR,
+    r = await guard.evaluate(response_text="Robin said hi", trust_tier=TrustTier.REGULAR,
                              target_gateway="rcs")
     assert r.decision == "revise"
     assert any(f.check == "cross_context" for f in r.findings)

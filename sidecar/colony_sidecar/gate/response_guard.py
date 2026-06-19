@@ -15,9 +15,10 @@ cross-context leak check, in one of two modes:
 Contract guarantees:
   * **Fail-open.** Any internal error returns ALLOW. A gate fault must never silence
     the agent.
-  * **Never on the audio path.** Voice replies must not be routed here (latency, and
-    the voice pipeline is a separate process). ``evaluate`` refuses ``gateway="voice"``
-    defensively, returning ALLOW.
+  * **Configurable gateway exclusion.** A deployment can name gateways that must never
+    be gated (e.g. a low-latency real-time / voice path) via ``excluded_gateways``; a
+    reply on an excluded gateway returns ALLOW. The list of excluded gateways is supplied
+    by the deployment, never baked into Colony.
 
 The deterministic checks reuse the existing layer implementations (PII, trust tier,
 injection); the cross-context check is an injected, provenance-backed dependency
@@ -30,7 +31,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence
 
 from colony_sidecar.gate.config import GateConfig
 from colony_sidecar.gate.layers.l2_pii import PIIScanner
@@ -41,9 +42,6 @@ from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
 
 logger = logging.getLogger(__name__)
 _guard_audit = logging.getLogger("colony.gate.guard")
-
-# Voice/audio is never gated here (latency + separate pipeline).
-VOICE_GATEWAYS = frozenset({"voice", "audio", "phone_call", "pipecat"})
 
 # Contact-layer tiers that the 5-value gate enum does not carry map to the nearest
 # gate tier so disclosure gating still applies (acquaintance/unknown -> peripheral).
@@ -117,8 +115,12 @@ class CrossContextGuard:
 class ResponseGuard:
     def __init__(self, config: Optional[GateConfig] = None,
                  cross_context: Optional[CrossContextGuard] = None,
-                 default_mode: GuardMode = GuardMode.SHADOW) -> None:
+                 default_mode: GuardMode = GuardMode.SHADOW,
+                 excluded_gateways: Optional[Iterable[str]] = None) -> None:
         self._config = config or GateConfig()
+        # Gateways the embedding deployment never wants gated (e.g. its voice path).
+        # Empty by default — Colony ships no deployment-specific gateway names.
+        self._excluded = frozenset((g or "").lower() for g in (excluded_gateways or ()))
         self._pii = PIIScanner(self._config)
         self._tier = TrustTierChecker(self._config)
         try:
@@ -144,8 +146,8 @@ class ResponseGuard:
         mode: Optional[GuardMode] = None,
     ) -> GuardResult:
         mode = mode or self._default_mode
-        # Hard exclusion: never gate the voice path.
-        if (target_gateway or "").lower() in VOICE_GATEWAYS:
+        # Deployment-configured gateway exclusion (e.g. a real-time / voice path).
+        if self._excluded and (target_gateway or "").lower() in self._excluded:
             return GuardResult(decision=GuardDecision.ALLOW.value, mode=str(getattr(mode, "value", mode)))
         try:
             tier = to_gate_tier(trust_tier)

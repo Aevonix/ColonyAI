@@ -240,7 +240,7 @@ class TrustScope:
     scope_type: str                  # one of SCOPE_TYPES
     platform: Optional[str]          # e.g. "rcs"; NULL for abstract scopes
     external_id: Optional[str]       # platform conversation/group id (relay conv_id, etc.)
-    label: Optional[str]             # human name ("Marc & Ingrid")
+    label: Optional[str]             # human name (e.g. a group's display name)
     granted_tier: str                # tier members get WITHIN this scope (default group_guest)
     created_by: str                  # "owner" | "agent" | contact_id
     active: bool

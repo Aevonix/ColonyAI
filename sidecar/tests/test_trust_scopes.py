@@ -1,7 +1,7 @@
 """Context-scoped trust: a trust_scope (e.g. a group chat) grants its members a tier
 that applies ONLY inside the scope. Membership never confers global 1:1 rights — a
 member's contacts row is untouched. This is the generic "trusted in this room, not in
-my DMs" primitive (any Hermes agent can use it).
+my DMs" primitive (any agent that embeds Colony can use it).
 """
 
 import pytest

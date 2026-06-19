@@ -65,7 +65,7 @@ async def test_group_guest_gated_like_peripheral():
     checker = TrustTierChecker()
     # internal-state, relationship-assessment, and private-detail disclosures all blocked
     assert (await checker.check(_payload("I store and track everything about you", TrustTier.GROUP_GUEST))).blocked
-    assert (await checker.check(_payload("based on my interactions with Marc he stays busy", TrustTier.GROUP_GUEST))).blocked
+    assert (await checker.check(_payload("based on my interactions with Sam he stays busy", TrustTier.GROUP_GUEST))).blocked
     assert (await checker.check(_payload("his home address is on file", TrustTier.GROUP_GUEST))).blocked
     # benign group chatter passes
     assert not (await checker.check(_payload("sounds good, see you at 6", TrustTier.GROUP_GUEST))).blocked
