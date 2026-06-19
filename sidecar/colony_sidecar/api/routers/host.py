@@ -2771,8 +2771,19 @@ async def response_guard_check(body: ResponseGuardCheckRequest) -> Dict[str, Any
         conversation_key=body.conversation_key,
         mentioned_entities=body.mentioned_entities,
         mode=mode,
+        authorized=bool(body.authorized),
     )
     return result.to_dict()
+
+
+@router.get("/response-guard/audit")
+async def response_guard_audit(limit: int = 50, authorized: Optional[bool] = None) -> Dict[str, Any]:
+    """Review cross-context guard events, split by authorized (owner-directed) vs not — used to
+    judge, in shadow, whether the classifier separates valid transfers from leaks before enforce."""
+    audit = getattr(_response_guard, "_audit", None) if _response_guard is not None else None
+    if audit is None:
+        return {"summary": {"total": 0}, "events": []}
+    return {"summary": audit.summary(), "events": audit.recent(limit=limit, authorized=authorized)}
 
 
 

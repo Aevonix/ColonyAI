@@ -474,11 +474,14 @@ async def lifespan(app: FastAPI):
                        else GuardMode.SHADOW)
         _excluded = [g.strip() for g in
                      os.environ.get("COLONY_GUARD_EXCLUDED_GATEWAYS", "").split(",") if g.strip()]
+        from colony_sidecar.gate.guard_audit import GuardAuditStore
+        guard_audit_db = state_dir / "colony-guard-audit.db"
+        guard_audit_store = GuardAuditStore(db_path=str(guard_audit_db))
         set_response_guard(ResponseGuard(
             cross_context=ProvenanceCrossContextGuard(provenance_store, extractor=ConversationExtractor()),
-            default_mode=_guard_mode, excluded_gateways=_excluded))
-        logger.info("ResponseGuard initialized (mode=%s, excluded_gateways=%s)",
-                    _guard_mode.value, _excluded or "[]")
+            default_mode=_guard_mode, excluded_gateways=_excluded, audit_store=guard_audit_store))
+        logger.info("ResponseGuard initialized (mode=%s, excluded_gateways=%s, audit=%s)",
+                    _guard_mode.value, _excluded or "[]", guard_audit_db)
 
         from colony_sidecar.tom.engagement import EngagementStore
         engagement_db = state_dir / "colony-engagement.db"

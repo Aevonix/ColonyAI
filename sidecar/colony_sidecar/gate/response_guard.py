@@ -116,8 +116,10 @@ class ResponseGuard:
     def __init__(self, config: Optional[GateConfig] = None,
                  cross_context: Optional[CrossContextGuard] = None,
                  default_mode: GuardMode = GuardMode.SHADOW,
-                 excluded_gateways: Optional[Iterable[str]] = None) -> None:
+                 excluded_gateways: Optional[Iterable[str]] = None,
+                 audit_store: Optional[Any] = None) -> None:
         self._config = config or GateConfig()
+        self._audit = audit_store
         # Gateways the embedding deployment never wants gated (e.g. its voice path).
         # Empty by default — Colony ships no deployment-specific gateway names.
         self._excluded = frozenset((g or "").lower() for g in (excluded_gateways or ()))
@@ -144,6 +146,7 @@ class ResponseGuard:
         mentioned_entities: Optional[Sequence[str]] = None,
         conversation_key: Optional[str] = None,
         mode: Optional[GuardMode] = None,
+        authorized: bool = False,
     ) -> GuardResult:
         mode = mode or self._default_mode
         # Deployment-configured gateway exclusion (e.g. a real-time / voice path).
@@ -175,8 +178,26 @@ class ResponseGuard:
                 except Exception as exc:
                     logger.warning("ResponseGuard: cross_context check failed (skipped): %s", exc)
 
+            # Owner-directed (authorized) cross-context transfers are legitimate, not leaks:
+            # downgrade them so enforce never blocks them, while still keeping the audit row.
+            cross = [f for f in findings if f.check == "cross_context"]
+            if authorized:
+                for f in cross:
+                    f.severity = "info"
+                    f.reason = "authorized owner-directed transfer: " + f.reason
+
             decision = self._decide(findings, mode)
             result = GuardResult(decision=decision, mode=str(getattr(mode, "value", mode)), findings=findings)
+            # Record every cross-context event (authorized or not) so an operator can measure,
+            # in shadow, whether the classifier separates valid transfers from real leaks.
+            if cross and self._audit is not None:
+                try:
+                    self._audit.record(
+                        conversation_key=conversation_key, mode=result.mode, decision=decision,
+                        authorized=authorized, checks=[f.check for f in cross],
+                        entities=[f.excerpt or "" for f in cross], response_text=response_text or "")
+                except Exception:
+                    logger.debug("guard audit record failed", exc_info=True)
             if findings:
                 _guard_audit.info(
                     "guard mode=%s decision=%s contact=%s turn=%s findings=%s",

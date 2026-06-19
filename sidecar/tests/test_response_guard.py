@@ -83,3 +83,31 @@ def test_tier_coercion():
     assert to_gate_tier("unknown") is TrustTier.PERIPHERAL
     assert to_gate_tier(TrustTier.TRUSTED) is TrustTier.TRUSTED
     assert to_gate_tier("garbage") is TrustTier.REGULAR
+
+
+@pytest.mark.asyncio
+async def test_authorized_cross_context_is_exempt_and_audited():
+    from colony_sidecar.gate.guard_audit import GuardAuditStore
+    from colony_sidecar.gate.response_guard import CrossContextGuard, GuardFinding
+
+    class Leaky(CrossContextGuard):
+        async def check(self, **kw):
+            return [GuardFinding("cross_context", "block", "entity X from another chat", "[x]")]
+
+    audit = GuardAuditStore(":memory:")
+    guard = ResponseGuard(default_mode=GuardMode.ENFORCE, cross_context=Leaky(), audit_store=audit)
+
+    # unauthorized cross-context -> revise (blocked) in enforce
+    r1 = await guard.evaluate(response_text="re X", target_gateway="rcs",
+                              conversation_key="rcs:B", mentioned_entities=["X"], authorized=False)
+    assert r1.decision == "revise"
+
+    # owner-directed (authorized) -> exempt: allowed, finding downgraded to info
+    r2 = await guard.evaluate(response_text="re X", target_gateway="rcs",
+                              conversation_key="rcs:B", mentioned_entities=["X"], authorized=True)
+    assert r2.decision == "allow"
+    assert any(f.check == "cross_context" and f.severity == "info" for f in r2.findings)
+
+    # both events tracked, split by authorized
+    s = audit.summary()
+    assert s["total"] == 2 and s["authorized_transfers"] == 1 and s["unauthorized_flags"] == 1

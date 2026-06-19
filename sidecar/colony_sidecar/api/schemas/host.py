@@ -1683,3 +1683,4 @@ class ResponseGuardCheckRequest(BaseModel):
     conversation_key: Optional[str] = None
     mentioned_entities: Optional[List[str]] = None
     mode: Optional[str] = None   # override the configured default ("shadow" | "enforce")
+    authorized: bool = False     # True when the disclosure is owner-directed (exempt from leak block)
