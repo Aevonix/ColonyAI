@@ -1669,3 +1669,17 @@ class ScopeDeactivateRequest(BaseModel):
 class ScopePromoteRequest(BaseModel):
     contact_id: str
     to_tier: str = "regular"
+
+
+class ResponseGuardCheckRequest(BaseModel):
+    """A host asks the gate to evaluate an outbound reply before sending it."""
+    response_text: str
+    incoming_message_text: Optional[str] = None
+    trust_tier: Optional[str] = None
+    target_contact_id: Optional[str] = None
+    target_gateway: Optional[str] = None
+    session_id: Optional[str] = None
+    turn_id: Optional[str] = None
+    conversation_key: Optional[str] = None
+    mentioned_entities: Optional[List[str]] = None
+    mode: Optional[str] = None   # override the configured default ("shadow" | "enforce")

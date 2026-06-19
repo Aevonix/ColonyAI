@@ -70,6 +70,7 @@ from colony_sidecar.api.routers.host import (
     set_affect_store,
     set_facts_store,
     set_context_provenance_store,
+    set_response_guard,
     set_engagement_store,
     set_comms_log,
     set_preference_learner,
@@ -455,10 +456,29 @@ async def lifespan(app: FastAPI):
         set_facts_store(facts_store)
         logger.info("SharedFactsStore initialized (db=%s)", facts_db)
 
-        from colony_sidecar.gate.context_provenance import ContextProvenanceStore
+        from colony_sidecar.gate.context_provenance import (
+            ContextProvenanceStore, ProvenanceCrossContextGuard)
         provenance_db = state_dir / "colony-context-provenance.db"
-        set_context_provenance_store(ContextProvenanceStore(db_path=str(provenance_db)))
+        provenance_store = ContextProvenanceStore(db_path=str(provenance_db))
+        set_context_provenance_store(provenance_store)
         logger.info("ContextProvenanceStore initialized (db=%s)", provenance_db)
+
+        # Outbound response gate (opt-in; shadow by default). The embedding deployment
+        # supplies the mode and any excluded gateways (e.g. its voice path) via env —
+        # Colony hardcodes neither.
+        from colony_sidecar.gate.response_guard import ResponseGuard, GuardMode
+        from colony_sidecar.world_model.extraction.conversation_extractor import (
+            ConversationExtractor)
+        _guard_mode = (GuardMode.ENFORCE
+                       if os.environ.get("COLONY_GUARD_MODE", "").strip().lower() == "enforce"
+                       else GuardMode.SHADOW)
+        _excluded = [g.strip() for g in
+                     os.environ.get("COLONY_GUARD_EXCLUDED_GATEWAYS", "").split(",") if g.strip()]
+        set_response_guard(ResponseGuard(
+            cross_context=ProvenanceCrossContextGuard(provenance_store, extractor=ConversationExtractor()),
+            default_mode=_guard_mode, excluded_gateways=_excluded))
+        logger.info("ResponseGuard initialized (mode=%s, excluded_gateways=%s)",
+                    _guard_mode.value, _excluded or "[]")
 
         from colony_sidecar.tom.engagement import EngagementStore
         engagement_db = state_dir / "colony-engagement.db"
@@ -1073,6 +1093,7 @@ async def lifespan(app: FastAPI):
     set_affect_store(None)
     set_facts_store(None)
     set_context_provenance_store(None)
+    set_response_guard(None)
     set_pattern_store(None)
     set_surprise_store(None)
     set_tom_extractor(None)

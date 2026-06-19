@@ -51,6 +51,7 @@ from colony_sidecar.api.schemas.host import (
     ScopeMemberIn,
     ScopePromoteRequest,
     ScopeResponse,
+    ResponseGuardCheckRequest,
     ContextAssembleRequest,
     ContextAssembleResponse,
     ContextSection,
@@ -2746,6 +2747,34 @@ async def scope_promote(body: ScopePromoteRequest) -> Dict[str, Any]:
     return {"ok": True, "contact_id": body.contact_id, "changed": changed}
 
 
+@router.post("/response-guard/check")
+async def response_guard_check(body: ResponseGuardCheckRequest) -> Dict[str, Any]:
+    """Evaluate an outbound reply before sending. Returns {decision, mode, findings}.
+    When no guard is configured, allows everything (the gate is opt-in)."""
+    if _response_guard is None:
+        return {"decision": "allow", "mode": "disabled", "findings": []}
+    from colony_sidecar.gate.response_guard import GuardMode
+    mode = None
+    if body.mode:
+        try:
+            mode = GuardMode(body.mode)
+        except ValueError:
+            mode = None
+    result = await _response_guard.evaluate(
+        response_text=body.response_text,
+        incoming_message_text=body.incoming_message_text or "",
+        trust_tier=body.trust_tier or "regular",
+        target_contact_id=body.target_contact_id or "",
+        target_gateway=body.target_gateway or "",
+        session_id=body.session_id or "",
+        turn_id=body.turn_id or "",
+        conversation_key=body.conversation_key,
+        mentioned_entities=body.mentioned_entities,
+        mode=mode,
+    )
+    return result.to_dict()
+
+
 
 @router.post("/contacts/{contact_id}/timezone", response_model=ContactResponse)
 async def set_contact_timezone(contact_id: str, body: ContactTimezoneRequest) -> ContactResponse:
@@ -3388,6 +3417,14 @@ def _get_conversation_extractor():
         except Exception:
             _conversation_extractor = False  # tried and failed; don't retry every turn
     return _conversation_extractor or None
+
+
+_response_guard = None
+
+
+def set_response_guard(guard):
+    global _response_guard
+    _response_guard = guard
 
 
 _engagement_store = None
