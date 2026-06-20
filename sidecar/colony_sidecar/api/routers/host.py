@@ -2574,13 +2574,18 @@ async def create_contact(body: ContactCreateRequest) -> ContactResponse:
 
 
 @router.get("/contacts/resolve", response_model=ContactResponse)
-async def resolve_contact_by_handle(gateway: str, address: str) -> ContactResponse:
+async def resolve_contact_by_handle(gateway: str, address: str, create: bool = False) -> ContactResponse:
     """Resolve a contact from a messaging handle (v0.21.2).
 
     Registered BEFORE /contacts/{contact_id} so it isn't shadowed by the
     parameterized route. Lets the host plugin map an inbound sender
     (platform + address) to the real Colony contact, so per-contact
     memory/affect/facts engage instead of pooling everything under 'default'.
+
+    With ``create=true`` an unknown messaging sender is PROVISIONED as an inert
+    contact (trust_tier=unknown, interaction_allowed=false -> no proactive
+    outreach) so its memory attributes to a real person instead of being lost;
+    contact merge / promotion reconcile it later.
     """
     if _contacts_store is None:
         raise HTTPException(status_code=404, detail="Contact store not initialized")
@@ -2589,6 +2594,18 @@ async def resolve_contact_by_handle(gateway: str, address: str) -> ContactRespon
         # the transport it arrived on). find_by_handle stays exact-match for dedup callers.
         contact = await _contacts_store.resolve_messaging_handle(gateway, address)
         if contact is None:
+            if create and gateway and address:
+                contact = await _contacts_store.create(
+                    display_name=address, trust_tier="unknown",
+                    interaction_allowed=False, import_source="auto_provision",
+                )
+                try:
+                    await _contacts_store.add_handle(
+                        contact.contact_id, gateway=gateway, address=address, source="auto_provision")
+                except Exception as exc:
+                    logger.warning("auto-provision add_handle failed: %s", exc)
+                logger.info("auto-provisioned contact %s for %s:%s", contact.contact_id, gateway, address)
+                return ContactResponse(**contact.to_dict())
             raise HTTPException(status_code=404, detail="No contact for that handle")
         return ContactResponse(**contact.to_dict())
     except HTTPException:
