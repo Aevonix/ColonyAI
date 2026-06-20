@@ -579,6 +579,16 @@ class ColonyGraph:
         """
         if not summary:
             return None
+        # Salience gate: don't memorialize internal-plumbing turns (context-compaction references and
+        # host-specific system-prompt wrappers / self-checks). Generic markers are built in; a
+        # deployment adds its own via COLONY_MEMORY_SKIP_MARKERS ('|'-separated, case-insensitive).
+        # This is what keeps the memory graph facts-and-events, not a verbatim transcript log.
+        _sl = summary.lower()
+        _skip = ("[context compaction", "[post-compaction", "reference only]", "[context summary]")
+        _env = os.environ.get("COLONY_MEMORY_SKIP_MARKERS", "")
+        if any(m in _sl for m in _skip) or any(m.strip().lower() in _sl for m in _env.split("|") if m.strip()):
+            logger.debug("record_turn: skipped low-salience / internal-marker turn")
+            return None
 
         content = summary
         importance = 0.7
