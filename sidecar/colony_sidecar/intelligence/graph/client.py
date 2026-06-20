@@ -370,6 +370,17 @@ class ColonyGraph:
 
         # Resolve person_id from explicit arg or metadata fallback
         person_id = person_id or metadata.get("person_id")
+        # Never mint a :Person node for a non-contact sentinel. Ids like 'default'/'unknown'/empty are
+        # NOT real people; attributing memories to them created a catch-all junk Person that polluted
+        # per-person recall (a host whose resolver fell back to "default" dumped most of its memory
+        # onto one pseudo-contact). Such memories are stored UNATTRIBUTED (no :ABOUT edge) instead.
+        # Real contact ids still create/link a Person normally (that is the graph's discovery design).
+        if isinstance(person_id, str):
+            person_id = person_id.strip() or None
+            if person_id and person_id.lower() in {"default", "unknown", "none", "null", "anonymous"}:
+                person_id = None
+        elif person_id is not None:
+            person_id = None
         # Resolve session_id from explicit arg or metadata fallback
         session_id = session_id or (metadata.get("session_id") if metadata else None)
 
