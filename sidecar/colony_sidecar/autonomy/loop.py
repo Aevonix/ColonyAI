@@ -1355,8 +1355,15 @@ class AutonomyLoop:
         # update_job_status would refuse it. merge_job_tags persists the
         # idempotency marker so this finished job is not re-written every
         # cycle. Falls back to update_job_status on older queue managers.
+        # A failed tag write means this job WILL be re-processed next cycle —
+        # log it loudly rather than silently looping (the bug class this guards).
         if hasattr(qm, "merge_job_tags"):
-            await qm.merge_job_tags(job.job_id, {"memory_synced": "true"})
+            ok = await qm.merge_job_tags(job.job_id, {"memory_synced": "true"})
+            if ok is False:
+                logger.warning(
+                    "Writeback could not persist memory_synced on job %s; it "
+                    "will be re-processed next cycle (re-written to memory).",
+                    job.job_id)
         else:
             await qm.update_job_status(job.job_id, job.status,
                                        tags={"memory_synced": "true"})

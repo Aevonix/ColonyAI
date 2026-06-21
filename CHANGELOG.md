@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.21.24 — writeback idempotency guardrails
+
+Hardening so the v0.21.23 writeback-idempotency bug class cannot silently recur or be
+misdiagnosed again. No behavior change to the happy path; all additions are backward
+compatible.
+
+- **Idempotency regression test:** `test_writeback_phase_is_idempotent_across_runs` drives a
+  job to COMPLETED through a real queue, runs `_phase_job_writeback()` twice, and asserts the
+  job is processed exactly once (memory written once, initiative closed once, `memory_synced`
+  persisted). A future regression in tag persistence now fails in CI instead of silently
+  re-writing memory and re-fulfilling commitments every cycle in production.
+- **Loud failure on a stuck marker:** the writeback now logs a warning if `merge_job_tags`
+  cannot persist `memory_synced` (the original bug was invisible because the failed tag write
+  was a silent no-op). An infinite re-process loop now announces itself.
+- **Honest `/autonomy/cycle`:** the response now includes `mode`, `ran_synchronously`, and a
+  `note`. In proactive mode it returns `ran_synchronously: false` (the endpoint only wakes the
+  loop; the tick — including job-writeback — runs asynchronously, so the DB is not yet
+  updated). Callers and e2e tests must poll. `completed` and `result` are unchanged.
+
 ## v0.21.23 — autonomy dispatch + writeback durability
 
 Three fixes that make the autonomy initiative loop actually deliver and converge. The

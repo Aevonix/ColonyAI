@@ -163,3 +163,61 @@ async def test_merge_job_tags_persists_on_terminal_job(tmp_path):
         assert job.status == JobStatus.CANCELLED  # status untouched
     finally:
         await mgr.queue.stop()
+        TaskQueueManager._instance = None  # don't leak a stopped singleton
+
+
+@pytest.mark.asyncio
+async def test_writeback_phase_is_idempotent_across_runs(tmp_path):
+    """Whole-phase regression guard: a finished job is processed exactly once.
+
+    Uses a REAL queue so the memory_synced marker must actually persist
+    (via merge_job_tags) for run 2 to skip the job. If tag persistence ever
+    regresses, this fails in CI instead of silently re-writing memory and
+    re-fulfilling commitments every autonomy cycle in production.
+    """
+    from datetime import datetime, timezone
+
+    from colony_sidecar.task_queue.models import WorkerCapabilities
+    from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+
+    TaskQueueManager._instance = None
+    mgr = await TaskQueueManager.initialize(db_path=tmp_path / "q.db")
+    try:
+        submitted = await mgr.submit(
+            task_type="agent_action",
+            params={"action_hint": "coding_check_ci",
+                    "description": "check CI", "initiative_id": "init-1"})
+        job_id = submitted["id"]
+
+        # Drive it to COMPLETED through the real claim → complete path.
+        now = datetime.now(timezone.utc)
+        caps = WorkerCapabilities(node_id="w1", capabilities=set(), capacity={},
+                                  max_concurrent=5, job_types=set(),
+                                  available=True, load=0.0,
+                                  registered_at=now, last_seen=now)
+        await mgr.queue.register_worker(caps)
+        claimed = await mgr.queue.claim_job("w1", caps)
+        assert claimed is not None and claimed.job_id == job_id
+        await mgr.queue.complete_job(job_id=job_id, worker_id="w1",
+                                     output={"summary": "green"})
+
+        registry = MagicMock()
+        registry.task_queue = mgr  # _phase_job_writeback reads `.queue` off this
+        graph = MagicMock()
+        graph.store_memory = AsyncMock()
+        store = MagicMock()
+        registry.graph = graph
+        registry.goals = None
+        registry.initiative_store = store
+        loop = AutonomyLoop(registry=registry)
+
+        await loop._phase_job_writeback()  # run 1: process + persist marker
+        await loop._phase_job_writeback()  # run 2: must SKIP (marker persisted)
+
+        graph.store_memory.assert_awaited_once()  # not twice
+        store.complete.assert_called_once()
+        job = await mgr.queue.get_job(job_id)
+        assert job.tags.get("memory_synced") == "true"
+    finally:
+        await mgr.queue.stop()
+        TaskQueueManager._instance = None  # don't leak a stopped singleton

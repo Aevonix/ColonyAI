@@ -4538,13 +4538,28 @@ async def autonomy_cycle() -> dict:
     if _autonomy_loop is None:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
-        # In reactive mode the loop isn't actively ticking — run one directly
-        if getattr(_autonomy_loop, "config", None) and _autonomy_loop.config.mode.value == "reactive":
+        mode = (_autonomy_loop.config.mode.value
+                if getattr(_autonomy_loop, "config", None) else "unknown")
+        # In reactive mode the loop isn't actively ticking — run one directly and
+        # the DB reflects the tick on return. In proactive mode we only WAKE the
+        # loop: the tick (incl. job-writeback, phase 6c near the end) runs async,
+        # so the DB is NOT yet updated when this returns. Callers/e2e tests must
+        # poll rather than read immediately — `ran_synchronously` says which.
+        ran_synchronously = mode == "reactive"
+        if ran_synchronously:
             await _autonomy_loop._tick()
         else:
             _autonomy_loop.wake()
         status = _autonomy_loop.status()
-        return {"completed": True, "result": status}
+        return {
+            "completed": True,
+            "mode": mode,
+            "ran_synchronously": ran_synchronously,
+            "note": (None if ran_synchronously else
+                     "proactive mode: loop woken; tick runs asynchronously, "
+                     "DB not yet updated — poll for results"),
+            "result": status,
+        }
     except Exception as exc:
         logger.warning("autonomy_cycle failed: %s", exc)
         return {"completed": False, "error": str(exc)}
