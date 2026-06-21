@@ -11,7 +11,7 @@ Disabled by default. Activated with ``COLONY_INTROSPECT_ENABLED=true`` and a con
 endpoint; deployment-agnostic (point ``COLONY_INTROSPECT_BASE_URL`` at a local model):
 
   COLONY_INTROSPECT_ENABLED     "true"|"false"      (default false)
-  COLONY_INTROSPECT_BASE_URL    OpenAI-compatible base, e.g. http://127.0.0.1:5006/v1
+  COLONY_INTROSPECT_BASE_URL    OpenAI-compatible base, e.g. http://127.0.0.1:8000/v1
   COLONY_INTROSPECT_MODEL       model id the endpoint serves (required to run)
   COLONY_INTROSPECT_API_KEY     bearer token, blank for a local model
   COLONY_INTROSPECT_TIMEOUT     seconds (default 30)
@@ -89,7 +89,7 @@ def introspect_enabled() -> bool:
 
 def _config() -> Dict[str, Any]:
     return {
-        "base_url": os.environ.get("COLONY_INTROSPECT_BASE_URL", "http://127.0.0.1:5005/v1").rstrip("/"),
+        "base_url": os.environ.get("COLONY_INTROSPECT_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/"),
         "model": os.environ.get("COLONY_INTROSPECT_MODEL", "").strip(),
         "api_key": os.environ.get("COLONY_INTROSPECT_API_KEY", "").strip(),
         "timeout": float(os.environ.get("COLONY_INTROSPECT_TIMEOUT", "30")),
