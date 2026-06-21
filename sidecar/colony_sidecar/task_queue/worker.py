@@ -141,6 +141,15 @@ class WorkerNode:
         self._queue = queue
         self._handlers: Dict[JobType, JobHandler] = handlers or {}
         self._capabilities = capabilities or self._build_capabilities()
+        # Advertise ONLY the job types we can actually run. Handlers passed via the
+        # constructor (build_default_handlers) never touched job_types — only
+        # register_handler did — so an embedded worker left job_types empty, which
+        # WorkerCapabilities.can_accept treats as "accept ALL types". It then claimed
+        # AGENT_ACTION jobs it has no handler for and failed every one ("No handler
+        # registered for job_type=..."). AGENT_ACTION is executed by a separate
+        # agent-backed worker; keep this node scoped to the types it handles.
+        if self._handlers and not self._capabilities.job_types:
+            self._capabilities.job_types = set(self._handlers.keys())
         self._poll_interval = poll_interval_secs
         self._heartbeat_interval = heartbeat_interval_secs
         self._running_jobs: Dict[str, asyncio.Task] = {}

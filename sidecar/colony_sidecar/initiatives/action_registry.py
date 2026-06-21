@@ -197,6 +197,14 @@ _SPECS: List[ActionSpec] = [
     ActionSpec("agent_deploy", "terminal", "deploy $TARGET", RiskTier.DESTRUCTIVE,
                "Deploy to an environment (overwrites the running version)",
                "agent_action", ["TARGET"]),
+    # Deliver an OWED message/result to a person — the immediate-deliverable half of the
+    # per-turn introspection reflex (e.g. "text me the findings"). OUTBOUND because it reaches
+    # a person, with the recipient named so the graduated policy auto-passes when it resolves
+    # to an authorized contact (the person who asked for it). The executing agent renders this
+    # with its own send tool on whatever channel the contact uses.
+    ActionSpec("agent_deliver_message", "messaging", "send to $RECIPIENT: \"$MSG\"",
+               RiskTier.OUTBOUND, "Deliver an owed message/result to a person",
+               "agent_action", ["RECIPIENT", "MSG"], target_param="RECIPIENT"),
 
     # --- TASK ---
     ActionSpec("task_list_open", "terminal",

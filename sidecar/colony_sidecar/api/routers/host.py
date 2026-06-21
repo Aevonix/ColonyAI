@@ -2078,6 +2078,13 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                 trigger_type="turn_sync",
                 context={
                     "conversation_text": body.summary or "",
+                    # verbatim turn so introspection can see an owed deliverable
+                    # ("text me the result") and whether the assistant already did it;
+                    # a condensed summary often drops both.
+                    "user_message": (getattr(body.user_message, "content", "") or "")
+                                    if body.user_message else "",
+                    "assistant_message": (getattr(body.assistant_message, "content", "") or "")
+                                         if body.assistant_message else "",
                     "person_id": body.context.contact_id,
                     "session_id": body.context.session_id,
                 },

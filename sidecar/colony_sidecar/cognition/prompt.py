@@ -41,11 +41,40 @@ When recording a commitment:
 - Set source_type to "cognition"
 - Set priority: urgent/critical promises = 70-90, casual = 40-60
 
-### 2. When NOT to Act
+### 2. IMMEDIATE OWED DELIVERABLES
+Something the person asked to be DELIVERED to them in THIS just-finished exchange that
+was NOT actually done in it. The classic case: they asked you to send/text/email/show them
+the result, a link, a file, a summary, or a number, and the answer was only spoken or never
+sent. This is distinct from a commitment: it is owed NOW, not on a future date.
+
+Examples of immediate owed deliverables:
+- "text me the findings" / "send me that summary" / "shoot me his number" → deliverable, send now
+- "email me the link" → deliverable via email
+- "send me the chart you described" → deliverable
+
+NOT deliverables (do not record):
+- The assistant ALREADY sent/did it in this exchange (check the assistant's message first)
+- The person only wanted to KNOW or be TOLD something (answering aloud already satisfied it)
+- A vague or future "send it over sometime" (that is a commitment, not an immediate deliverable)
+
+When recording an immediate owed deliverable, use commitment_create with:
+- person_id = the person who is owed it
+- source_type = "introspection"
+- due_at = about two minutes from now (it is owed now; the store rejects a past due_at)
+- priority = 75-90 (they are waiting on it)
+- description = "Deliver to <person>: <short label>"
+- metadata = {"kind": "deliverable", "content": "<the exact, self-contained thing to send,
+  ready to send as-is, drawn from this exchange>", "channel_hint": "sms" | "dm" | "email"
+  as they asked}
+The "content" must be the real material to send, not a description of it. If you cannot
+recover the actual content from this exchange, do not record a deliverable.
+
+### 3. When NOT to Act
 - Casual small talk with no actionable content
-- Information exchange with no commitments
+- Information exchange with no commitments or owed deliverables
 - Jokes, humor, or social pleasantries
 - Already-recorded commitments (check before creating duplicates)
+- Anything the assistant already handled in this same exchange
 
 ## Critical Rules
 
@@ -82,6 +111,17 @@ def build_cognition_prompt(
         person_id = context.get("person_id", "unknown")
         parts.append(f"Contact: {person_id}\n")
         parts.append(f"Recent conversation:\n{conversation_text}\n")
+        # Verbatim last turn (when available) so an owed deliverable and whether the
+        # assistant ALREADY did it can both be judged from the actual words.
+        user_msg = context.get("user_message", "")
+        asst_msg = context.get("assistant_message", "")
+        if user_msg or asst_msg:
+            parts.append(
+                "\nLast turn, verbatim (use this to tell if the person asked to be "
+                "sent something and whether the assistant already did it):\n"
+                f"  They said: {user_msg}\n"
+                f"  Assistant replied: {asst_msg}\n"
+            )
 
     elif trigger_type == "signal_ingest":
         signal_type = context.get("signal_type", "unknown")

@@ -197,7 +197,14 @@ async def create_job(body: JobPostRequest) -> Dict[str, Any]:
     """Post a new job to the queue."""
     queue = _get_queue()
     job_type = JobType(body.job_type) if body.job_type else JobType.AGENT_ACTION
-    priority = JobPriority(body.priority.upper()) if body.priority else JobPriority.NORMAL
+    # JobPriority is an int Enum (NORMAL=50, HIGH=80, ...); look up by NAME, not value —
+    # JobPriority("HIGH") tries to match a member whose value is the string "HIGH" and always
+    # raises (it even 500'd the default "normal"). Accept the name or the numeric value.
+    if body.priority:
+        _p = str(body.priority).upper()
+        priority = JobPriority[_p] if _p in JobPriority.__members__ else JobPriority(int(body.priority))
+    else:
+        priority = JobPriority.NORMAL
 
     caps: List[JobCapabilityRequirement] = []
     if body.capabilities:

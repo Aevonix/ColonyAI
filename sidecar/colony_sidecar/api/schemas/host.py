@@ -983,7 +983,13 @@ class CommitmentCreateRequest(BaseModel):
     description: str = Field(..., min_length=1, max_length=1000)
     due_at: Optional[str] = None
     priority: int = Field(default=50, ge=0, le=100)
-    source_type: Literal["manual", "autonomy", "cognition"] = "manual"
+    # "introspection": a same-interaction owed follow-up surfaced by the per-turn
+    # introspection reflex (e.g. "text me the result"), as opposed to a durable
+    # future promise ("cognition"). Such a commitment carries a deliverable tag in
+    # `metadata`: {"kind": "deliverable", "content": <what to send>,
+    # "channel_hint": "sms"|"dm"|..., "delivered": bool}. The autonomy loop turns an
+    # undelivered deliverable into an agent_action so the host actually sends it.
+    source_type: Literal["manual", "autonomy", "cognition", "introspection"] = "manual"
     source_context: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 

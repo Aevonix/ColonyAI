@@ -1577,6 +1577,45 @@ class InitiativeEngine:
             hours_until_due = c.get("hours_until_due")
             overdue = bool(c.get("overdue"))
 
+            # An IMMEDIATE OWED DELIVERABLE (the introspection reflex's second output:
+            # "text me the result") is not a reminder — the host must actually SEND it.
+            # Route it to an agent_action carrying the recipient + content, so the queue
+            # worker delivers it. Falls through to a normal reminder if it is malformed.
+            meta = c.get("metadata") or {}
+            is_deliverable = (
+                (meta.get("kind") == "deliverable" or c.get("source_type") == "introspection")
+                and not meta.get("delivered")
+            )
+            if is_deliverable:
+                content = str(meta.get("content") or "").strip()
+                person = c.get("person_id") or ""
+                channel = meta.get("channel_hint") or "dm"
+                if content and person:
+                    initiatives.append(
+                        Initiative(
+                            id=f"deliver-{commitment_id}",
+                            type=InitiativeType.AGENT_ACTION,
+                            description=f"Deliver to {person} via {channel}: {content}",
+                            # max priority: someone is actively waiting on this, so it must
+                            # win the generation cap over routine proactive initiatives.
+                            priority=1.0,
+                            rationale="Owed deliverable from a recent conversation (introspection)",
+                            action_hint="agent_deliver_message",
+                            entity_id=commitment_id,
+                            dedup_key=f"deliver:{commitment_id}",
+                            expires_at=now + timedelta(hours=24),
+                            # carried into the job context; RECIPIENT is the target_param the
+                            # graduated policy resolves to auto-pass an authorized recipient.
+                            trigger_data={
+                                "RECIPIENT": person,
+                                "MSG": content,
+                                "channel_hint": channel,
+                                "commitment_id": commitment_id,
+                            },
+                        )
+                    )
+                    continue  # do not ALSO emit a reminder for this commitment
+
             if overdue:
                 priority = 0.9
                 rationale = "Commitment is overdue"

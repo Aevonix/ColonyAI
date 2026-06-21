@@ -950,6 +950,16 @@ class AutonomyLoop:
 
         auto_approve = os.environ.get("COLONY_AGENT_AUTO_APPROVE", "false").lower() == "true"
 
+        # Mirror _phase_execute's fallback: when there is no focused context for this type,
+        # carry the initiative's own trigger_data. Agent_action initiatives (e.g. a deliverable)
+        # stash their executable params there — including the recipient the graduated policy
+        # resolves to decide auto-approval — so the worker and the gate both see them.
+        action_context = self._build_initiative_context(initiative, type_value)
+        if not action_context:
+            trigger_data = getattr(initiative, "trigger_data", None)
+            if trigger_data:
+                action_context = dict(trigger_data)
+
         job_payload = {
             "initiative_id": initiative_id,
             "action_hint": action_hint,
@@ -957,7 +967,7 @@ class AutonomyLoop:
             "entity_id": getattr(initiative, "entity_id", None),
             "risk": verdict["risk"],
             "auto_approve": auto_approve,
-            "context": self._build_initiative_context(initiative, type_value),
+            "context": action_context,
         }
 
         # v0.18.0 graduated policy: an OUTBOUND action auto-passes only
@@ -1261,6 +1271,11 @@ class AutonomyLoop:
                         "overdue": hours_until <= 0,
                         "status": c.get("status", "pending"),
                         "person_id": c.get("person_id"),
+                        # carried through so the initiative engine can route a
+                        # deliverable (metadata.kind == "deliverable") to an
+                        # agent_action that actually SENDS it, vs a plain reminder.
+                        "metadata": c.get("metadata") or {},
+                        "source_type": c.get("source_type"),
                     })
 
             if upcoming:
@@ -1391,6 +1406,21 @@ class AutonomyLoop:
             except Exception as exc:
                 logger.warning("Initiative closure failed for %s: %s",
                                initiative_id, exc)
+
+        # 3b. Deliverable commitment fulfillment. A completed delivery flips its linked
+        # commitment to fulfilled so it stops being re-surfaced; a FAILED one is left pending
+        # so the next tick regenerates the agent_action and retries.
+        if action == "agent_deliver_message" and succeeded:
+            commitment_id = payload.get("entity_id")
+            commitments = getattr(self._registry, "commitment_store", None)
+            if commitment_id and commitments is not None and hasattr(commitments, "update"):
+                try:
+                    commitments.update(
+                        commitment_id, status="fulfilled",
+                        fulfilled_at=datetime.now(timezone.utc).isoformat())
+                except Exception as exc:
+                    logger.warning("Deliverable commitment %s fulfill failed: %s",
+                                   commitment_id, exc)
 
         # 4. Skill capture (v0.17.0, COLONY_ENABLE_SKILL_SYNTHESIS) — feed
         # successful novel work into the existing learning pipeline

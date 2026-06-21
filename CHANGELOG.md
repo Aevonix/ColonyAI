@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.21.21 — introspection follow-through + agent_action execution
+
+Per-turn cognition can now record an *owed deliverable* — something the person
+asked to be sent in this exchange that wasn't done — as a first-class commitment,
+and the autonomy loop actually delivers it. Plus two worker bugs that were
+silently failing every queued `agent_action`.
+
+- **Deliverable commitments:** the per-turn cognition prompt now recognizes an
+  immediate owed deliverable (e.g. "text me the result") alongside durable future
+  commitments. It is recorded as a commitment tagged `metadata.kind="deliverable"`
+  with `source_type="introspection"`; the autonomy loop turns an undelivered one
+  into an `agent_deliver_message` agent_action, and job-writeback marks the
+  commitment fulfilled once it is sent. Adds the `agent_deliver_message` action
+  (outbound, recipient-gated by the graduated policy). `/turns/sync` now forwards
+  the verbatim user+assistant turn to cognition so the deliverable and its content
+  can be judged.
+- **Worker job-type scoping (fix):** a `WorkerNode` built with a handler dict left
+  `job_types` empty, which `WorkerCapabilities.can_accept` treats as "accept all
+  types" — so an embedded worker claimed `agent_action` jobs it had no handler for
+  and failed every one. It now advertises only the job types it can run.
+- **create_job priority (fix):** `JobPriority(body.priority.upper())` raised on
+  every call (an int-Enum constructed by name-as-value, even for the default
+  "normal"). It is now a by-name lookup that also accepts the numeric value.
+
 ## v0.21.20 — remote reranker
 
 Recall now has a working rerank stage: the sidecar can use a reranker served
