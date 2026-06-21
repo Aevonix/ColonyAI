@@ -285,6 +285,9 @@ class AutonomyLoop:
         # Phase 11: memory pruning (weekly)
         await self._phase_memory_pruning()
 
+        # Phase 11b: memory distillation — promote recalled episodics into semantic facts (daily)
+        await self._phase_memory_distillation()
+
         # Phase 12: memory archive (weekly)
         await self._phase_memory_archive()
 
@@ -1573,6 +1576,22 @@ class AutonomyLoop:
             if hasattr(graph, "prune_memories"):
                 await graph.prune_memories()
         await self._run_periodic_phase("memory_pruning", "week", work)
+
+    async def _phase_memory_distillation(self) -> None:
+        """Daily: promote frequently-recalled episodic memories into durable semantic facts via
+        MemoryDistiller. The distiller was built but never scheduled — this is the missing wiring
+        that turns accumulated conversation history into lasting knowledge instead of decaying logs."""
+        async def work(graph):
+            try:
+                from colony_sidecar.intelligence.graph.distiller import MemoryDistiller
+                result = await MemoryDistiller(graph).run()
+                self.stats.memories_promoted += result.memories_promoted
+                if result.memories_promoted:
+                    logger.info("memory distillation: %d semantic fact(s) from %d cluster(s)",
+                                result.memories_promoted, result.clusters_found)
+            except Exception:
+                logger.debug("memory distillation phase failed", exc_info=True)
+        await self._run_periodic_phase("memory_distillation", "day", work)
 
     async def _phase_memory_reconciliation(self) -> None:
         async def work(graph):
