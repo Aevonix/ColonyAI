@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.21.22 — inline turn introspection
+
+A sidecar-side per-turn introspection that runs the owed-follow-up judgment in-process
+against a configured local LLM and records commitments directly — the path that works on
+deployments where no host plugin consumes the `cognition.requested` event.
+
+- **Inline introspection** (`cognition/introspection.py`): on `/turns/sync`, when
+  `COLONY_INTROSPECT_ENABLED=true`, the sidecar judges the turn with an OpenAI-compatible
+  endpoint (`COLONY_INTROSPECT_BASE_URL` / `_MODEL` / `_API_KEY`) and records any durable
+  commitment or immediate owed deliverable directly via the commitment store. A focused,
+  JSON-only few-shot prompt (so small/no-think local models comply). Disabled by default;
+  deployment-agnostic.
+- **test:** pin `agent_deliver_message` in the outbound registry-tier audit.
+
 ## v0.21.21 — introspection follow-through + agent_action execution
 
 Per-turn cognition can now record an *owed deliverable* — something the person

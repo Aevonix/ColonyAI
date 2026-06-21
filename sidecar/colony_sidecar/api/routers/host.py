@@ -2093,6 +2093,30 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     except Exception:
         logger.debug("cognition trigger from turn_sync failed", exc_info=True)
 
+    # Inline introspection (best-effort, non-blocking). Runs the same per-turn judgment
+    # in-process against a configured local LLM and records owed follow-ups directly —
+    # the path that works when no host plugin consumes the cognition.requested event.
+    try:
+        from colony_sidecar.cognition.introspection import introspect_enabled, run_turn_introspection
+        if introspect_enabled() and _commitment_store is not None and (
+                body.user_message is not None or body.assistant_message is not None):
+            _existing = []
+            try:
+                _existing = _commitment_store.get_pending_for_person(body.context.contact_id) or []
+            except Exception:
+                pass
+            _spawn_task(run_turn_introspection(
+                user_message=(getattr(body.user_message, "content", "") or "") if body.user_message else "",
+                assistant_message=(getattr(body.assistant_message, "content", "") or "")
+                                  if body.assistant_message else "",
+                conversation_text=body.summary or "",
+                person_id=body.context.contact_id,
+                existing_commitments=_existing,
+                commitment_store=_commitment_store,
+            ))
+    except Exception:
+        logger.debug("inline introspection from turn_sync failed", exc_info=True)
+
     # Track last user message for concurrent-session safety (v0.13.0)
     if body.user_message is not None:
         try:
