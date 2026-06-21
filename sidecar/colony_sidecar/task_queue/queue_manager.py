@@ -569,6 +569,30 @@ class QueueManager:
         await self._db.commit()
         return True
 
+    async def merge_job_tags(self, job_id: str, tags: Dict[str, str]) -> bool:
+        """Merge ``tags`` into a job's tag map WITHOUT changing its status.
+
+        Unlike :meth:`update_job_status`, this is allowed on terminal jobs:
+        post-completion bookkeeping (e.g. the autonomy writeback's
+        ``memory_synced`` idempotency marker) tags jobs that are already
+        COMPLETED/FAILED. ``update_job_status`` refuses terminal jobs to
+        prevent illegal status revivals, so tag-only updates need their own
+        path. Returns True if the job was found and updated.
+        """
+        assert self._db is not None
+        if not tags:
+            return False
+        job = await self.get_job(job_id)
+        if job is None:
+            return False
+        job.tags.update(tags)
+        await self._db.execute(
+            "UPDATE jobs SET tags = ? WHERE job_id = ?",
+            (json.dumps(job.tags), job_id),
+        )
+        await self._db.commit()
+        return True
+
     async def cancel_job(self, job_id: str, reason: str = "") -> bool:
         """Cancel a job from any non-terminal state. Returns True if cancelled."""
         assert self._db is not None

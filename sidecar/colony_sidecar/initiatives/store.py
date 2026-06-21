@@ -14,7 +14,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .models import AssignmentHistory, InitiativeStatus, StoredInitiative
 
@@ -146,6 +146,12 @@ class InitiativeStore:
                 conn.execute("ALTER TABLE initiatives ADD COLUMN context TEXT")
                 conn.commit()
                 logger.info("Migrated initiatives table: added context column")
+            if "dedup_base" not in columns:
+                # v0.21.23: logical (un-bucketed) dedup key for the cross-period
+                # in-flight guard. Old rows keep it NULL (they behave as before).
+                conn.execute("ALTER TABLE initiatives ADD COLUMN dedup_base TEXT")
+                conn.commit()
+                logger.info("Migrated initiatives table: added dedup_base column")
         except Exception as exc:
             logger.warning("Initiative migration check failed (non-fatal): %s", exc)
 
@@ -158,6 +164,9 @@ class InitiativeStore:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_initiatives_dedup ON initiatives(dedup_key)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_initiatives_dedup_base ON initiatives(dedup_base)"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_initiatives_priority ON initiatives(priority DESC)"
@@ -195,7 +204,13 @@ class InitiativeStore:
     # CRUD Operations
     # ------------------------------------------------------------------
 
-    def create(
+    def create(self, *args, **kwargs) -> StoredInitiative:
+        """Create an initiative. Back-compat shim returning just the initiative; the
+        dispatch loop uses :meth:`create_with_outcome` to learn whether it was newly
+        created vs deduped."""
+        return self.create_with_outcome(*args, **kwargs)[0]
+
+    def create_with_outcome(
         self,
         type: str,
         description: str,
@@ -204,6 +219,7 @@ class InitiativeStore:
         action_hint: Optional[str] = None,
         entity_id: Optional[str] = None,
         dedup_key: Optional[str] = None,
+        dedup_base: Optional[str] = None,
         source_type: Optional[str] = None,
         source_id: Optional[str] = None,
         created_by: Optional[str] = None,
@@ -213,8 +229,20 @@ class InitiativeStore:
         job_id: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         **extra,
-    ) -> StoredInitiative:
-        """Create a new initiative."""
+    ) -> Tuple[StoredInitiative, str]:
+        """Create an initiative and report WHAT HAPPENED so the caller knows whether to
+        dispatch. The outcome is one of:
+
+          "created"          — a fresh row was inserted; dispatch it.
+          "reactivated"      — a previously FAILED instance was reset to pending; dispatch it.
+          "deduped_active"   — an active instance already exists (same dedup_key, or any active
+                               one sharing dedup_base across a period rollover); do NOT dispatch.
+          "deduped_terminal" — this period's instance already completed/cancelled; do NOT
+                               dispatch (a recurring type re-arms on its next-period dedup_key).
+
+        This replaces the old id-comparison heuristic in the loop, which could never tell a
+        fresh create from a dedup hit (the store assigns its own uuid).
+        """
         # Check pending limit
         pending_count = self.count(status=["pending"])
         if pending_count >= MAX_PENDING_INITIATIVES:
@@ -222,28 +250,34 @@ class InitiativeStore:
                 f"Too many pending initiatives (max {MAX_PENDING_INITIATIVES})"
             )
 
-        # Check dedup
+        # Cross-period in-flight guard: never create a second instance of the same logical
+        # work while one is still active, even after the period (dedup_key) rolls over.
+        if dedup_base:
+            active = self.get_active_by_dedup_base(dedup_base)
+            if active:
+                logger.debug(
+                    "dedup_base %s already has active initiative %s; suppressing",
+                    dedup_base, active.id,
+                )
+                return active, "deduped_active"
+
+        # Period-key dedup (at most one row per dedup_key; UNIQUE).
         if dedup_key:
             existing = self.get_by_dedup_key(dedup_key)
             if existing:
                 if existing.is_active:
                     logger.info(
                         "Initiative with dedup_key %s already exists: %s",
-                        dedup_key,
-                        existing.id,
+                        dedup_key, existing.id,
                     )
-                    return existing
-                # Only reactivate FAILED initiatives so they can be retried.
-                # Completed and cancelled initiatives are terminal — do NOT
-                # resurrect them, or the autonomy loop will spam the agent
-                # with stale follow-ups forever.
+                    return existing, "deduped_active"
+                # FAILED reactivates so the work can be retried.
                 if existing.status == InitiativeStatus.FAILED.value:
                     logger.info(
                         "Reactivating failed initiative %s with dedup_key %s",
-                        existing.id,
-                        dedup_key,
+                        existing.id, dedup_key,
                     )
-                    return self.update(
+                    reactivated = self.update(
                         existing.id,
                         status=InitiativeStatus.PENDING.value,
                         failed_at=None,
@@ -254,13 +288,14 @@ class InitiativeStore:
                         assigned_at=None,
                         acknowledged_at=None,
                     )
-                # Terminal state (completed/cancelled) — return as-is.
-                logger.info(
-                    "Dedup hit on terminal initiative %s (status=%s), not reactivating",
-                    existing.id,
-                    existing.status,
+                    return reactivated, "reactivated"
+                # Completed/cancelled for THIS period — already ran; don't re-fire within it.
+                # A recurring type gets a new dedup_key next period and re-arms there.
+                logger.debug(
+                    "dedup_key %s already ran this period (status=%s); suppressing",
+                    dedup_key, existing.status,
                 )
-                return existing
+                return existing, "deduped_terminal"
 
         # Bug 26: Validate priority range
         priority = max(0.0, min(1.0, priority))
@@ -271,15 +306,16 @@ class InitiativeStore:
         self._db.execute(
             """
             INSERT INTO initiatives (
-                id, dedup_key, type, description, priority, rationale,
+                id, dedup_key, dedup_base, type, description, priority, rationale,
                 action_hint, entity_id, source_type, source_id, created_by,
                 timeout_seconds, expires_at, preferred_agent_id, job_id,
                 context, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 initiative_id,
                 dedup_key,
+                dedup_base,
                 type,
                 description,
                 priority,
@@ -299,7 +335,7 @@ class InitiativeStore:
         )
         self._db.commit()
 
-        return self.get(initiative_id)
+        return self.get(initiative_id), "created"
 
     def get(self, initiative_id: str) -> Optional[StoredInitiative]:
         """Get initiative by ID."""
@@ -323,13 +359,28 @@ class InitiativeStore:
             return StoredInitiative.from_row(dict(row))
         return None
 
+    def get_active_by_dedup_base(self, dedup_base: str) -> Optional[StoredInitiative]:
+        """The most recent ACTIVE initiative sharing this logical (un-bucketed) key, or None.
+        Used to suppress a duplicate when a recurring initiative's period rolls over while a
+        prior instance is still in flight."""
+        cursor = self._db.execute(
+            "SELECT * FROM initiatives WHERE dedup_base = ? "
+            "AND status IN ('pending', 'assigned', 'acknowledged') "
+            "ORDER BY created_at DESC LIMIT 1",
+            [dedup_base],
+        )
+        row = cursor.fetchone()
+        if row:
+            return StoredInitiative.from_row(dict(row))
+        return None
+
     # Columns accepted by update(). Kept in sync with _create_tables() so a
     # typo or a renamed column fails loudly at the API boundary instead of
     # being swallowed by an outer except clause that calls the failure
     # "non-fatal" (see autonomy/loop.py:_phase_ghost_cleanup for the bug class
     # this whitelist was added to prevent).
     _UPDATABLE_COLUMNS = frozenset({
-        "dedup_key", "type", "description", "priority", "rationale",
+        "dedup_key", "dedup_base", "type", "description", "priority", "rationale",
         "action_hint", "entity_id", "source_type", "source_id", "created_by",
         "status", "assigned_agent_id", "assigned_agent_name", "assigned_at",
         "acknowledged_at", "completed_at", "cancelled_at", "cancelled_by",

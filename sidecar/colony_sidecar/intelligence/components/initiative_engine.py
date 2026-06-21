@@ -135,9 +135,51 @@ class Initiative:
     action_hint: Optional[str] = None
     entity_id: Optional[str] = None
     dedup_key: Optional[str] = None
+    # Logical (un-bucketed) dedup key. For recurring types, generate() rewrites dedup_key to a
+    # per-period key and sets dedup_base to the original, so the store re-arms each period yet
+    # still suppresses a duplicate while a prior instance is in flight. None for one-shot types.
+    dedup_base: Optional[str] = None
     expires_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     trigger_data: Optional[Dict[str, Any]] = None
+
+
+# Recurring initiative classes keyed by their dedup_key PREFIX (the part before the first ":"),
+# mapped to a re-arm period in seconds. An initiative of one of these classes gets a per-period
+# dedup_key so it can fire again each period; anything not listed (deliver, commitment,
+# capability_gap, knowledge_gap, behavioral_correction, agent_action, ...) stays one-shot.
+RECURRENCE_INTERVALS_SECS: Dict[str, int] = {
+    "relationship": 72 * 3600,
+    "health": 24 * 3600,
+    "followup": 12 * 3600,
+    "coding": 6 * 3600,
+    "task": 6 * 3600,
+    "calendar": 6 * 3600,
+    "research": 12 * 3600,
+    "project": 12 * 3600,
+    "system": 6 * 3600,
+    "subsystem": 6 * 3600,
+    "dataquality": 12 * 3600,
+    "operational": 12 * 3600,
+}
+
+
+def _apply_recurrence_buckets(initiatives: "List[Initiative]") -> None:
+    """For each recurring initiative, move its dedup_key to dedup_base and append a time bucket,
+    so the store re-arms it every period instead of being permanently blocked by the prior
+    period's terminal record. Mutates in place; no-op for one-shot types or already-bucketed."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+    for init in initiatives:
+        key = getattr(init, "dedup_key", None)
+        if not key or getattr(init, "dedup_base", None):
+            continue
+        prefix = key.split(":", 1)[0]
+        interval = RECURRENCE_INTERVALS_SECS.get(prefix)
+        if not interval:
+            continue
+        bucket = int(now_ts // interval)
+        init.dedup_base = key
+        init.dedup_key = f"{key}:{bucket}"
 
 
 class InitiativeEngine:
@@ -1185,6 +1227,12 @@ class InitiativeEngine:
                 else:
                     initiatives.extend(result)
 
+        # Re-arm recurring initiatives: rewrite their dedup_key to a per-period key (and stash the
+        # logical key in dedup_base) so the store creates a fresh instance each period instead of
+        # being blocked forever by the prior period's terminal record. One-shot types (deliver,
+        # commitment, capability_gap, ...) are absent from the map and keep their stable key.
+        _apply_recurrence_buckets(initiatives)
+
         filtered = [i for i in initiatives if i.priority >= min_priority]
 
         # Dedup: filter by cooldown per entity (v0.7.10)
@@ -1229,10 +1277,18 @@ class InitiativeEngine:
 
         # Sort by priority desc
         deduped.sort(key=lambda i: i.priority, reverse=True)
-        
+
         # Cap to max
         self._initiatives = deduped[:max_initiatives]
-        
+        # An owed deliverable ("text me the result") is not a discretionary proposal competing
+        # for the proposal budget — someone is actively waiting on it. Never let the cap drop one;
+        # add back any that were cut so a busy loop can't starve delivery.
+        if len(deduped) > max_initiatives:
+            owed = [i for i in deduped[max_initiatives:]
+                    if getattr(i, "action_hint", "") == "agent_deliver_message"]
+            if owed:
+                self._initiatives = self._initiatives + owed
+
         logger.info(
             "Generated %d initiatives (requested max %d, min_priority %.2f)",
             len(self._initiatives),

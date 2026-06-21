@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.21.23 — autonomy dispatch + writeback durability
+
+Three fixes that make the autonomy initiative loop actually deliver and converge. The
+deliverable backstop (v0.21.21) was generating commitments but the loop silently dropped
+every fresh initiative before it could be dispatched, recurring initiatives never re-armed,
+and finished jobs were re-processed forever.
+
+- **Dispatch guard fix (Fix 1):** the store assigns its own UUID primary key, so the engine's
+  logical id (e.g. `deliver-{cid}`) never equaled the stored id — the old `_phase_execute`
+  guard `stored.id != original_id` therefore skipped *every* freshly created initiative,
+  blocking all initiative dispatch (observation syncs used a separate path and masked it).
+  `store.create_with_outcome` now returns an explicit outcome
+  (`created` / `reactivated` / `deduped_active` / `deduped_terminal`); the loop dispatches
+  only on `created`/`reactivated`. `store.create` is kept as a back-compat shim.
+- **Recurring re-arm + cross-period guard (Fix 2):** recurring initiative types
+  (relationship, health, followup, ...) get a time-bucketed `dedup_key`
+  (`{base}:{bucket}`) so they re-arm each period, while the new `dedup_base` column holds the
+  un-bucketed logical key. The store suppresses a new instance whenever *any* active one
+  shares the base, so a still-pending instance is never duplicated when the period rolls over.
+  One-shot types (commitment, agent_action, gaps) keep their stable key and stay one-shot.
+  Adds the `dedup_base` column (auto-migrated) + index and `get_active_by_dedup_base`.
+- **Writeback idempotency fix:** `update_job_status` refuses terminal jobs (to block illegal
+  status revivals), but the autonomy writeback tags *completed/failed* jobs with its
+  `memory_synced` marker — so the tag never persisted and every finished `agent_action` was
+  re-written to memory (and re-fulfilled) on every cycle. New `merge_job_tags` persists
+  tag-only updates on terminal jobs without touching status; the writeback uses it.
+- **Deliverable cap-exemption:** an owed deliverable (`agent_deliver_message`) is never
+  dropped by the per-cycle initiative cap — someone is actively waiting on it.
+
 ## v0.21.22 — inline turn introspection
 
 A sidecar-side per-turn introspection that runs the owed-follow-up judgment in-process

@@ -316,3 +316,53 @@ class TestInitiativePriority:
         updated = store.update(initiative.id, priority=0.95)
         assert updated is not None
         assert updated.priority == 0.95
+
+
+class TestDedupOutcomes:
+    """create_with_outcome: explicit outcomes + time-bucketed re-arm + cross-period guard."""
+
+    @pytest.fixture
+    def store(self, tmp_path: Path) -> InitiativeStore:
+        return InitiativeStore(state_dir=tmp_path)
+
+    def test_fresh_create_reports_created(self, store: InitiativeStore) -> None:
+        init, outcome = store.create_with_outcome(type="task", description="x", dedup_key="task:1")
+        assert outcome == "created" and init.is_active
+
+    def test_active_dup_is_deduped_active(self, store: InitiativeStore) -> None:
+        a, _ = store.create_with_outcome(type="task", description="x", dedup_key="task:1")
+        b, outcome = store.create_with_outcome(type="task", description="x", dedup_key="task:1")
+        assert outcome == "deduped_active" and b.id == a.id
+
+    def test_completed_same_period_is_deduped_terminal(self, store: InitiativeStore) -> None:
+        a, _ = store.create_with_outcome(type="task", description="x", dedup_key="task:1")
+        store.complete(a.id, agent_id="agent", result="done")
+        _, outcome = store.create_with_outcome(type="task", description="x", dedup_key="task:1")
+        assert outcome == "deduped_terminal"
+
+    def test_failed_reactivates(self, store: InitiativeStore) -> None:
+        a, _ = store.create_with_outcome(type="deliver", description="x", dedup_key="deliver:1")
+        store.fail(a.id, agent_id="agent", reason="boom")
+        b, outcome = store.create_with_outcome(type="deliver", description="x", dedup_key="deliver:1")
+        assert outcome == "reactivated" and b.is_active
+
+    def test_next_period_re_arms_after_completion(self, store: InitiativeStore) -> None:
+        a, _ = store.create_with_outcome(type="relationship", description="x",
+                                         dedup_key="rel:1:wk1", dedup_base="rel:1")
+        store.complete(a.id, agent_id="agent", result="done")
+        # new period key, base no longer active -> fresh instance
+        _, outcome = store.create_with_outcome(type="relationship", description="x",
+                                               dedup_key="rel:1:wk2", dedup_base="rel:1")
+        assert outcome == "created"
+
+    def test_cross_period_active_is_suppressed(self, store: InitiativeStore) -> None:
+        # wk1 instance still ACTIVE when wk2 comes around -> no duplicate
+        store.create_with_outcome(type="relationship", description="x",
+                                  dedup_key="rel:1:wk1", dedup_base="rel:1")
+        b, outcome = store.create_with_outcome(type="relationship", description="x",
+                                               dedup_key="rel:1:wk2", dedup_base="rel:1")
+        assert outcome == "deduped_active"
+
+    def test_create_shim_returns_initiative(self, store: InitiativeStore) -> None:
+        init = store.create(type="task", description="x", dedup_key="task:9")
+        assert isinstance(init, StoredInitiative)

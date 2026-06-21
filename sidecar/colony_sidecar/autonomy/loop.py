@@ -727,7 +727,7 @@ class AutonomyLoop:
                     try:
                         loop = asyncio.get_event_loop()
                         create_call = functools.partial(
-                            store.create,
+                            store.create_with_outcome,
                             type=type_value,
                             description=getattr(initiative, "description", ""),
                             priority=getattr(initiative, "priority", 0.5),
@@ -735,16 +735,21 @@ class AutonomyLoop:
                             action_hint=getattr(initiative, "action_hint", None),
                             entity_id=getattr(initiative, "entity_id", None),
                             dedup_key=getattr(initiative, "dedup_key", None),
+                            dedup_base=getattr(initiative, "dedup_base", None),
                             context=initiative_context or None,
                             expires_at=getattr(initiative, "expires_at", None),
                             source_type=type_value,
                             created_by="autonomy_loop",
                         )
-                        stored = await loop.run_in_executor(None, create_call)
-                        # If dedup hit and initiative is still active, skip dispatch
-                        original_id = getattr(initiative, "id", None)
-                        if stored and stored.is_active and (original_id is None or stored.id != original_id):
-                            logger.info("Initiative dedup hit, skipping dispatch: %s", stored.id)
+                        stored, outcome = await loop.run_in_executor(None, create_call)
+                        # Dispatch ONLY genuinely-new work: a fresh row ("created") or a retried
+                        # failure ("reactivated"). An already-active instance, or one that already
+                        # ran this period, must not be re-dispatched. (This replaces the old
+                        # id-comparison guard, which compared the store's uuid to the engine's
+                        # logical id — never equal — and so skipped every fresh initiative.)
+                        if outcome not in ("created", "reactivated"):
+                            logger.debug("Initiative %s: %s, skipping dispatch",
+                                         getattr(initiative, "id", "?"), outcome)
                             continue
                         # Use the persisted id for the payload
                         initiative_id = stored.id if stored else getattr(initiative, "id", str(uuid.uuid4()))
@@ -1333,8 +1338,11 @@ class AutonomyLoop:
                 if attempts >= 3:
                     new_tags["memory_synced"] = "true"  # give up, stop retrying
                 try:
-                    await qm.update_job_status(job.job_id, job.status,
-                                               tags=new_tags)
+                    if hasattr(qm, "merge_job_tags"):
+                        await qm.merge_job_tags(job.job_id, new_tags)
+                    else:
+                        await qm.update_job_status(job.job_id, job.status,
+                                                   tags=new_tags)
                 except Exception:
                     pass
         if synced:
@@ -1343,8 +1351,15 @@ class AutonomyLoop:
 
     @staticmethod
     async def _tag_job_synced(qm: Any, job: Any) -> None:
-        await qm.update_job_status(job.job_id, job.status,
-                                   tags={"memory_synced": "true"})
+        # Tag-only merge: the job is terminal (completed/failed), so
+        # update_job_status would refuse it. merge_job_tags persists the
+        # idempotency marker so this finished job is not re-written every
+        # cycle. Falls back to update_job_status on older queue managers.
+        if hasattr(qm, "merge_job_tags"):
+            await qm.merge_job_tags(job.job_id, {"memory_synced": "true"})
+        else:
+            await qm.update_job_status(job.job_id, job.status,
+                                       tags={"memory_synced": "true"})
 
     async def _writeback_one_job(self, job: Any) -> None:
         """Propagate one finished agent job to goals, memory, initiatives."""

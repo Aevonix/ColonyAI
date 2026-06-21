@@ -30,6 +30,7 @@ def _loop(jobs, graph=None, goals=None, store=None):
 
     qm.get_jobs_by_status = AsyncMock(side_effect=by_status)
     qm.update_job_status = AsyncMock()
+    qm.merge_job_tags = AsyncMock()
     registry.task_queue = SimpleNamespace(queue=qm)
     registry.graph = graph
     registry.goals = goals
@@ -53,9 +54,12 @@ async def test_completed_job_writes_memory_and_closes_initiative():
     assert kwargs["memory_type"] == "episodic"
     assert kwargs["source_uri"] == "colony://jobs/j1"
     store.complete.assert_called_once()
-    qm.update_job_status.assert_awaited()  # memory_synced tag
-    tag_call = qm.update_job_status.await_args
-    assert tag_call.kwargs.get("tags", tag_call.args[-1]) == {"memory_synced": "true"}
+    # Terminal jobs are tagged via merge_job_tags (update_job_status refuses
+    # terminal jobs, which would re-process this job every cycle forever).
+    qm.merge_job_tags.assert_awaited_once()
+    tag_call = qm.merge_job_tags.await_args
+    assert tag_call.args[-1] == {"memory_synced": "true"}
+    qm.update_job_status.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -81,6 +85,7 @@ async def test_already_synced_jobs_skipped():
     await loop._phase_job_writeback()
     graph.store_memory.assert_not_awaited()
     qm.update_job_status.assert_not_awaited()
+    qm.merge_job_tags.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -90,7 +95,7 @@ async def test_observation_sync_jobs_tagged_not_memorized():
     loop, qm = _loop([_job(action="agent_sync_coding")], graph=graph)
     await loop._phase_job_writeback()
     graph.store_memory.assert_not_awaited()
-    qm.update_job_status.assert_awaited_once()
+    qm.merge_job_tags.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -109,7 +114,7 @@ async def test_poison_job_gives_up_after_three_attempts():
     job = _job(tags={"memory_sync_attempts": "2"})
     loop, qm = _loop([job], graph=graph)
     await loop._phase_job_writeback()
-    tags = qm.update_job_status.await_args.kwargs["tags"]
+    tags = qm.merge_job_tags.await_args.args[-1]
     assert tags["memory_sync_attempts"] == "3"
     assert tags["memory_synced"] == "true"
 
@@ -120,3 +125,41 @@ async def test_no_queue_is_safe():
     registry.task_queue = None
     loop = AutonomyLoop(registry=registry)
     await loop._phase_job_writeback()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_merge_job_tags_persists_on_terminal_job(tmp_path):
+    """Regression: writeback idempotency tag must stick on a COMPLETED job.
+
+    update_job_status refuses terminal jobs (to block illegal revivals), so
+    before merge_job_tags existed the ``memory_synced`` marker never persisted
+    and every finished agent_action job was re-processed every cycle forever.
+    """
+    from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+
+    TaskQueueManager._instance = None
+    mgr = await TaskQueueManager.initialize(db_path=tmp_path / "q.db")
+    try:
+        queue = mgr.queue
+        submitted = await mgr.submit(task_type="agent_action",
+                                     params={"action_hint": "agent_deliver_message"})
+        job_id = submitted["id"]
+        # Drive the job to a terminal state (cancel_job works from any
+        # non-terminal status, so no worker setup is needed).
+        assert await queue.cancel_job(job_id) is True
+
+        # update_job_status refuses the now-terminal job (returns False, no tag).
+        ok = await queue.update_job_status(job_id, JobStatus.CANCELLED,
+                                           tags={"memory_synced": "true"})
+        assert ok is False
+        job = await queue.get_job(job_id)
+        assert job.tags.get("memory_synced") is None
+
+        # merge_job_tags persists it AND survives a fresh read from disk.
+        ok = await queue.merge_job_tags(job_id, {"memory_synced": "true"})
+        assert ok is True
+        job = await queue.get_job(job_id)
+        assert job.tags.get("memory_synced") == "true"
+        assert job.status == JobStatus.CANCELLED  # status untouched
+    finally:
+        await mgr.queue.stop()

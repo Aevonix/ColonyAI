@@ -60,7 +60,13 @@ class StoredInitiative:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # === Deduplication ===
+    # dedup_key is the PERIOD key (recurring types append a time bucket, e.g.
+    # "relationship:{id}:{week}") — re-arm across periods + idempotency within one.
+    # dedup_base is the LOGICAL key without the bucket ("relationship:{id}"); the store
+    # suppresses a new instance whenever ANY active one shares the base, so a still-pending
+    # instance is never duplicated when the period rolls over. None for non-recurring types.
     dedup_key: Optional[str] = None
+    dedup_base: Optional[str] = None
 
     # === Situational context (v0.16.0) ===
     # Snapshot built at generation time (contact name, days since contact,
@@ -184,6 +190,7 @@ class StoredInitiative:
             entity_id=row.get("entity_id"),
             created_at=parse_dt(row.get("created_at")) or datetime.now(timezone.utc),
             dedup_key=row.get("dedup_key"),
+            dedup_base=row.get("dedup_base"),
             context=context,
             source_type=row.get("source_type"),
             source_id=row.get("source_id"),
