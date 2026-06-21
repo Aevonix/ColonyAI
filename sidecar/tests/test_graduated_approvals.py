@@ -206,7 +206,7 @@ def test_registry_tier_audit():
     }
     # OUTBOUND is reserved for actions that reach a person; every
     # remaining outbound spec must name its recipient param.
-    assert outbound == {"calendar_send_reminder"}
+    assert outbound == {"calendar_send_reminder", "agent_deliver_message"}
     for name in outbound:
         assert get_action(name).target_param, name
     # Platform writes that message no individual moved to MUTATING.
