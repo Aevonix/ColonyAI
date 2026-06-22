@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.21.30 — official Hermes plugin moves into the repo (generic adapter)
+
+The Hermes "colony" plugin now lives in this repo at `integrations/hermes/colony/` as the
+official, deployment-agnostic adapter, co-located with the API it calls so their contract
+can't silently drift.
+
+- **Generic plugin** (tools, ColonyClient, event subscriber, slash commands, hooks, autonomy
+  bridge). All owner/persona specifics are removed: the autonomy bridge ships a generic
+  default prompt and reads `plugins.colony.autonomy_prompt` (inline or file path) +
+  `plugins.colony.autonomy_deliver` from Hermes config, so a deployment injects its persona
+  and channel without touching the core.
+- **Contract test** (`tests/test_hermes_plugin_contract.py`): auto-discovers every
+  `/v1/host/...` path the plugin references and asserts each is a registered route across the
+  host/queue/observations routers. This is the guard that would have caught the
+  `/tasks` → `/initiatives` drift that failed silently in production.
+
+
 ## v0.21.29 — introduction proposals clear the confidence gate
 
 Final fix for Slice 2, found in live verification: an introduction was generated but never
