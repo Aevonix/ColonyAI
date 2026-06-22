@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.21.28 — introduction proposals survive a saturated cap
+
+Completes Slice 2: introduction proposals are low-priority by design, so on a busy loop that
+saturates the per-cycle initiative cap they were generated but always cut. Verified live — the
+loop reported "20 new proposals" every cycle and the intro never surfaced.
+
+- **Bounded social headroom:** the initiative cap now tops up to `_INTRO_HEADROOM`
+  (`COLONY_INTRO_HEADROOM`, default 2) introduction proposals from the cut tail, so an
+  operational backlog can't permanently starve them. Owed deliverables remain unbounded.
+- **Refactor:** the cap + starvation guards moved into a testable `_apply_cap()` helper
+  (behaviour unchanged for the deliverable exemption).
+
 ## v0.21.27 — organic introduction proposals (social-graph autonomy, Slice 2)
 
 The agent can now proactively notice that two people it knows should probably meet, and propose

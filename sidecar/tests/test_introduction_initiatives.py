@@ -97,6 +97,47 @@ async def test_engine_proposes_owner_gated_introduction(monkeypatch):
         reset_identity_resolver()
 
 
+def _engine():
+    return InitiativeEngine(graph_client=None, event_bus=None, mind_model=None)
+
+
+def _init(type_, priority, n, action_hint=None):
+    from colony_sidecar.intelligence.components.initiative_engine import Initiative
+    return Initiative(
+        id=f"{type_.value}-{n}", type=type_, description=f"{type_.value} {n}",
+        priority=priority, rationale="x", dedup_key=f"{type_.value}:{n}",
+        action_hint=action_hint,
+    )
+
+
+def test_apply_cap_reserves_headroom_for_introductions():
+    """A saturated cap must still surface bounded intros (not starve them)."""
+    engine = _engine()
+    flood = [_init(InitiativeType.OPERATIONAL, 0.95, n) for n in range(40)]
+    intros = [_init(InitiativeType.INTRODUCTION, 0.5, n) for n in range(5)]
+    capped = engine._apply_cap(flood + intros, max_initiatives=20)
+    surfaced = [i for i in capped if i.type == InitiativeType.INTRODUCTION]
+    assert len(surfaced) == 2          # default _INTRO_HEADROOM
+    assert len([i for i in capped if i.type == InitiativeType.OPERATIONAL]) == 20
+
+
+def test_apply_cap_keeps_all_owed_deliverables():
+    """Owed deliverables are unbounded — never dropped by the cap."""
+    engine = _engine()
+    flood = [_init(InitiativeType.OPERATIONAL, 0.95, n) for n in range(20)]
+    owed = [_init(InitiativeType.AGENT_ACTION, 0.1, n,
+                  action_hint="agent_deliver_message") for n in range(3)]
+    capped = engine._apply_cap(flood + owed, max_initiatives=20)
+    assert sum(1 for i in capped
+               if getattr(i, "action_hint", "") == "agent_deliver_message") == 3
+
+
+def test_apply_cap_no_overflow_when_under_limit():
+    engine = _engine()
+    items = [_init(InitiativeType.OPERATIONAL, 0.9, n) for n in range(5)]
+    assert len(engine._apply_cap(items, max_initiatives=20)) == 5
+
+
 @pytest.mark.asyncio
 async def test_engine_skips_owner_party(monkeypatch):
     reset_identity_resolver()

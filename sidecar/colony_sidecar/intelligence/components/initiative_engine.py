@@ -164,6 +164,12 @@ RECURRENCE_INTERVALS_SECS: Dict[str, int] = {
     "operational": 12 * 3600,
 }
 
+# Bounded headroom for proactive social proposals (introductions). They are
+# low-priority by design, so a busy operational loop saturating the cap would
+# otherwise permanently starve them. Surface at most this many per cycle even
+# when the cap is full (0 disables).
+_INTRO_HEADROOM = max(0, int(os.environ.get("COLONY_INTRO_HEADROOM", "2")))
+
 
 def _apply_recurrence_buckets(initiatives: "List[Initiative]") -> None:
     """For each recurring initiative, move its dedup_key to dedup_base and append a time bucket,
@@ -1278,19 +1284,7 @@ class InitiativeEngine:
             
             deduped.append(init)
 
-        # Sort by priority desc
-        deduped.sort(key=lambda i: i.priority, reverse=True)
-
-        # Cap to max
-        self._initiatives = deduped[:max_initiatives]
-        # An owed deliverable ("text me the result") is not a discretionary proposal competing
-        # for the proposal budget — someone is actively waiting on it. Never let the cap drop one;
-        # add back any that were cut so a busy loop can't starve delivery.
-        if len(deduped) > max_initiatives:
-            owed = [i for i in deduped[max_initiatives:]
-                    if getattr(i, "action_hint", "") == "agent_deliver_message"]
-            if owed:
-                self._initiatives = self._initiatives + owed
+        self._initiatives = self._apply_cap(deduped, max_initiatives)
 
         logger.info(
             "Generated %d initiatives (requested max %d, min_priority %.2f)",
@@ -1300,6 +1294,39 @@ class InitiativeEngine:
         )
         
         return self._initiatives
+
+    def _apply_cap(
+        self, deduped: List[Initiative], max_initiatives: int
+    ) -> List[Initiative]:
+        """Cap the proposal batch to ``max_initiatives`` by priority, with two
+        starvation guards on the cut tail:
+
+        - **Owed deliverables** (``agent_deliver_message``) are added back
+          UNBOUNDED — someone is actively waiting on them, they are not
+          discretionary, and a busy loop must never drop one.
+        - **Introductions** are topped up to ``_INTRO_HEADROOM`` total —
+          proactive social proposals are low-priority by design, so without a
+          little reserved headroom an operational backlog would permanently
+          starve them.
+        """
+        ranked = sorted(deduped, key=lambda i: i.priority, reverse=True)
+        capped = ranked[:max_initiatives]
+        if len(ranked) <= max_initiatives:
+            return capped
+        cut = ranked[max_initiatives:]
+        owed = [i for i in cut
+                if getattr(i, "action_hint", "") == "agent_deliver_message"]
+        if owed:
+            capped = capped + owed
+        if _INTRO_HEADROOM:
+            already = sum(1 for i in capped
+                          if getattr(i, "type", None) == InitiativeType.INTRODUCTION)
+            if already < _INTRO_HEADROOM:
+                intros = [i for i in cut
+                          if getattr(i, "type", None) == InitiativeType.INTRODUCTION]
+                if intros:
+                    capped = capped + intros[:_INTRO_HEADROOM - already]
+        return capped
 
     def get_initiatives(self) -> List[Initiative]:
         """Return current initiatives."""
