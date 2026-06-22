@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.21.27 — organic introduction proposals (social-graph autonomy, Slice 2)
+
+The agent can now proactively notice that two people it knows should probably meet, and propose
+the introduction for the owner to approve. PROPOSE-ONLY and owner-gated by construction — an
+INTRODUCTION is its own initiative type, not an `agent_action`, so the loop surfaces it and never
+auto-executes it.
+
+- **`INTRODUCTION` initiative type** + `_generate_introduction_initiatives()`: consumes
+  introduction candidates and proposes "introduce A and B" with `action_hint=propose_introduction`.
+  Owner exclusion fails closed (never introduce the owner). One-shot `dedup_key` (`intro:<lo>:<hi>`,
+  ids sorted) so a pair is proposed once; the store's terminal-dedup stops re-proposing after the
+  owner acts. Marked DURABLE in context-freshness.
+- **`SQLiteContactStore.introduction_candidates()`**: finds pairs sharing an organization (a
+  "related work" signal) where BOTH sit at/above a trust floor; excludes the owner and soft-deleted
+  contacts. Deployment-agnostic (pure contacts SQL, no graph dependency).
+- **Autonomy feed:** `_feed_introduction_candidates()` runs in the initiative phase, gated by
+  `COLONY_INTROS_ENABLED` (default true) with `COLONY_INTRO_TRUST_FLOOR` (default `regular`). Owner
+  exclusion fails closed.
+
 ## v0.21.26 — introduction capture (social-graph autonomy, Slice 1)
 
 The generic, deployment-agnostic foundation for organic relationship-building: the agent can

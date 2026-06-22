@@ -520,6 +520,57 @@ class SQLiteContactStore(ContactStore):
         await self.record_audit(contact_id, "introduction_recorded", details)
         return await self.get(contact_id)
 
+    async def introduction_candidates(
+        self,
+        trust_floor: str = "regular",
+        owner_contact_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Find pairs of contacts who plausibly should meet (social-graph autonomy).
+
+        A candidate pair shares an organization (a "related work" signal) and BOTH
+        sides sit at or above ``trust_floor`` — the agent only proposes connecting
+        people it has standing with. The owner is never a candidate (the owner is
+        served, not introduced). Soft-deleted contacts are excluded. Returns at most
+        ``limit`` ordered pairs; the autonomy loop turns each into an owner-approved
+        INTRODUCTION proposal (never an auto-executed action).
+        """
+        from .models import _TIER_RANK
+
+        db = self._require_db()
+        floor_rank = _TIER_RANK.get(trust_floor, _TIER_RANK["regular"])
+        allowed = [t for t, r in _TIER_RANK.items() if r >= floor_rank]
+        if not allowed:
+            return []
+        ph = ",".join("?" for _ in allowed)
+        owner = owner_contact_id or ""
+        sql = f"""
+            SELECT a.contact_id AS a_id, a.display_name AS a_name,
+                   b.contact_id AS b_id, b.display_name AS b_name,
+                   a.organization AS org
+            FROM contacts a
+            JOIN contacts b
+              ON lower(a.organization) = lower(b.organization)
+             AND a.contact_id < b.contact_id
+            WHERE a.deleted_at IS NULL AND b.deleted_at IS NULL
+              AND a.organization IS NOT NULL AND trim(a.organization) != ''
+              AND a.trust_tier IN ({ph}) AND b.trust_tier IN ({ph})
+              AND a.contact_id != ? AND b.contact_id != ?
+            ORDER BY lower(a.organization), a.contact_id, b.contact_id
+            LIMIT ?
+        """
+        params = [*allowed, *allowed, owner, owner, limit]
+        async with db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+        return [
+            {
+                "a_id": r["a_id"], "a_name": r["a_name"],
+                "b_id": r["b_id"], "b_name": r["b_name"],
+                "organization": r["org"],
+            }
+            for r in rows
+        ]
+
     async def add_handle(
         self,
         contact_id: str,

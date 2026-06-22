@@ -452,6 +452,7 @@ class AutonomyLoop:
             await self._feed_pending_tasks(engine)
             await self._feed_neglected_contacts(engine)
             await self._feed_commitment_reminders(engine)
+            await self._feed_introduction_candidates(engine)
 
             initiatives = await engine.generate(
                 min_priority=self.config.initiative_confidence_threshold,
@@ -1234,6 +1235,47 @@ class AutonomyLoop:
                 engine.add_context("neglected_contacts", neglected)
         except Exception as e:
             logger.warning("Failed to feed neglected contacts: %s", e)
+
+    async def _feed_introduction_candidates(self, engine: Any) -> None:
+        """Feed pairs of contacts the agent might organically introduce.
+
+        Pairs share related work and both sit above the trust floor; the engine
+        turns each into an OWNER-APPROVED introduction proposal (never an
+        auto-executed action). Owner exclusion fails closed. Disabled by setting
+        COLONY_INTROS_ENABLED=false; trust floor via COLONY_INTRO_TRUST_FLOOR.
+        """
+        if os.environ.get("COLONY_INTROS_ENABLED", "true").lower() != "true":
+            return
+        contacts = getattr(self._registry, "contacts", None)
+        if contacts is None or not hasattr(contacts, "introduction_candidates"):
+            return
+
+        from colony_sidecar.identity.resolver import (
+            OwnerIdentityError,
+            get_identity_resolver,
+            get_owner_contact_id,
+        )
+        resolver = get_identity_resolver()
+        try:
+            await resolver.owner_identities()
+        except OwnerIdentityError as exc:
+            logger.critical(
+                "Owner identity unresolved — introduction feed disabled "
+                "(fail closed): %s", exc,
+            )
+            return
+
+        try:
+            floor = os.environ.get("COLONY_INTRO_TRUST_FLOOR", "regular")
+            candidates = await contacts.introduction_candidates(
+                trust_floor=floor,
+                owner_contact_id=get_owner_contact_id(),
+                limit=10,
+            )
+            if candidates:
+                engine.add_context("introduction_candidates", candidates)
+        except Exception as e:
+            logger.warning("Failed to feed introduction candidates: %s", e)
 
     async def _feed_commitment_reminders(self, engine: Any) -> None:
         """Feed upcoming/overdue commitments for COMMITMENT initiatives.

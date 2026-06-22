@@ -84,6 +84,7 @@ class InitiativeType(str, Enum):
 
     FOLLOW_UP = "follow_up"
     RELATIONSHIP = "relationship"
+    INTRODUCTION = "introduction"  # propose connecting two people (owner-approved)
     HEALTH = "health"
     SCHEDULING = "scheduling"
     CODING = "coding"  # Code execution / refactoring tasks
@@ -1182,6 +1183,8 @@ class InitiativeEngine:
             generators.append(self._generate_task_completion_follow_ups())
         if not types or InitiativeType.RELATIONSHIP in types:
             generators.append(self._generate_relationship_suggestions())
+        if not types or InitiativeType.INTRODUCTION in types:
+            generators.append(self._generate_introduction_initiatives())
         if not types or InitiativeType.HEALTH in types:
             generators.append(self._generate_health_suggestions())
         if not types or InitiativeType.SCHEDULING in types:
@@ -1564,6 +1567,57 @@ class InitiativeEngine:
                     entity_id=entity_id,
                     dedup_key=f"relationship:{entity_id}",
                     expires_at=datetime.now(timezone.utc) + timedelta(days=3),
+                )
+            )
+        return initiatives
+
+    async def _generate_introduction_initiatives(self) -> List[Initiative]:
+        """Propose connecting two people who share related work (social-graph autonomy).
+
+        PROPOSE-ONLY by construction: an INTRODUCTION is NOT an agent_action, so the
+        loop surfaces it for the OWNER to approve and never auto-executes it. The feed
+        only supplies pairs where both sides are above the trust floor and neither is
+        the owner; this re-checks owner exclusion (fail closed) since context can be
+        fed externally. One-shot dedup_key (no time bucket): propose a given pair once,
+        and the store's terminal-dedup stops it being re-proposed after it is acted on.
+        """
+        from colony_sidecar.identity.resolver import (
+            OwnerIdentityError,
+            get_identity_resolver,
+        )
+        resolver = get_identity_resolver()
+        try:
+            await resolver.owner_identities()
+        except OwnerIdentityError as exc:
+            logger.critical(
+                "Owner identity unresolved — introduction generation disabled "
+                "(fail closed): %s", exc,
+            )
+            return []
+
+        initiatives: List[Initiative] = []
+        for cand in self._context.get("introduction_candidates", []):
+            a_id, b_id = cand.get("a_id"), cand.get("b_id")
+            if not a_id or not b_id or a_id == b_id:
+                continue
+            if await resolver.is_owner(a_id) or await resolver.is_owner(b_id):
+                continue
+            a_name = cand.get("a_name") or a_id
+            b_name = cand.get("b_name") or b_id
+            shared = cand.get("organization") or "shared context"
+            lo, hi = sorted((a_id, b_id))
+            initiatives.append(
+                Initiative(
+                    id=f"intro-{lo}-{hi}",
+                    type=InitiativeType.INTRODUCTION,
+                    description=f"Introduce {a_name} and {b_name} (both at {shared})",
+                    priority=0.5,
+                    rationale=f"Both are connected to {shared} but may not know each other",
+                    # Owner-directed proposal: the agent never sends an intro unprompted.
+                    action_hint="propose_introduction",
+                    entity_id=f"{lo}:{hi}",
+                    dedup_key=f"intro:{lo}:{hi}",
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=7),
                 )
             )
         return initiatives

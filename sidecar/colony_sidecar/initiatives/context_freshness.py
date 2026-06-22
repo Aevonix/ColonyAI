@@ -30,6 +30,7 @@ CONTEXT_DURABILITY: Dict[str, str] = {
     # Existing types
     "follow_up": DURABLE,
     "relationship": DURABLE,
+    "introduction": DURABLE,
     "health": VOLATILE,
     "scheduling": DURABLE,
     "coding": VOLATILE,
