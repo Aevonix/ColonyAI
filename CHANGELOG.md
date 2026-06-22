@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.21.25 — health: stop reading conversational idle as "degraded"
+
+The `/health` endpoint flagged `prefetch` stale at 2h and forced the whole system to
+`degraded`. But `last_prefetch_at` is touched only by `/context/assemble`, which is driven
+by inbound conversation turns — so any normal quiet period (overnight, focus time) tripped it.
+That both cried wolf and masked real degradation.
+
+- **Prefetch staleness threshold 2h → 24h** (`COLONY_STALE_PREFETCH_HOURS` default), matching
+  the agent-snapshot views. 24h means "the host has not requested context in a full day" — the
+  point where idle becomes a genuine integration-down signal. Internal-loop metrics (sync 2h,
+  tick 24h, initiative 48h) are unchanged, so a stuck loop is still caught.
+- **test:** `test_telemetry_staleness.py` pins the profile — a multi-hour conversational idle
+  stays healthy, a >24h prefetch gap flags, and a stuck `sync` is still flagged.
+
 ## v0.21.24 — writeback idempotency guardrails
 
 Hardening so the v0.21.23 writeback-idempotency bug class cannot silently recur or be

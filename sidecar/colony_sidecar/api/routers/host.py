@@ -645,7 +645,14 @@ async def health() -> HostHealthResponse:
                 "sync": float(os.environ.get("COLONY_STALE_SYNC_HOURS", "2.0")),
                 "tick": float(os.environ.get("COLONY_STALE_TICK_HOURS", "24.0")),
                 "initiative": float(os.environ.get("COLONY_STALE_INITIATIVE_HOURS", "48.0")),
-                "prefetch": float(os.environ.get("COLONY_STALE_PREFETCH_HOURS", "2.0")),
+                # prefetch = last /context/assemble, which is driven by INBOUND
+                # conversation turns, not an internal schedule. Multi-hour gaps are
+                # normal idle (overnight, focus time), so a tight threshold would
+                # false-flag the whole system "degraded" during any quiet period AND
+                # mask real degradation. 24h matches the agent-snapshot views and
+                # means "the host hasn't asked for context in a full day" — the point
+                # at which idle becomes a genuine integration-down signal.
+                "prefetch": float(os.environ.get("COLONY_STALE_PREFETCH_HOURS", "24.0")),
             }
             temporal_data = await _telemetry.to_dict(thresholds)
             if temporal_data.get("stale_flags"):
