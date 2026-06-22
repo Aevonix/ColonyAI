@@ -258,6 +258,15 @@ class SQLiteContactStore(ContactStore):
         if "timezone" not in cols:  # v0.21.0 — per-contact timezone
             await db.execute("ALTER TABLE contacts ADD COLUMN timezone TEXT")
             await db.commit()
+        # Introduction provenance (social-graph autonomy): who introduced this
+        # contact + how/where the agent met them. First-class on the contact so
+        # it is always available even when no world-model Person node exists yet.
+        if "introduced_by" not in cols:
+            await db.execute("ALTER TABLE contacts ADD COLUMN introduced_by TEXT")
+            await db.commit()
+        if "met_via_json" not in cols:
+            await db.execute("ALTER TABLE contacts ADD COLUMN met_via_json TEXT")
+            await db.commit()
 
     async def close(self) -> None:
         if self._db:
@@ -431,6 +440,8 @@ class SQLiteContactStore(ContactStore):
         privacy_level: str = "private",
         import_source: str = "manual",
         notes: Optional[str] = None,
+        introduced_by: Optional[str] = None,
+        met_via: Optional[Dict[str, Any]] = None,
     ) -> Contact:
         db = self._require_db()
         if trust_tier not in TRUST_TIERS:
@@ -447,21 +458,67 @@ class SQLiteContactStore(ContactStore):
             INSERT INTO contacts
               (contact_id, display_name, given_name, family_name, organization,
                trust_tier, interaction_allowed, tags_json, privacy_level,
-               import_source, notes, first_seen_at, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               import_source, notes, introduced_by, met_via_json,
+               first_seen_at, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 contact_id, dn, given_name, family_name, organization,
                 trust_tier, 1 if interaction_allowed else 0,
                 json.dumps(tags or []), privacy_level,
-                import_source, notes, now, now, now,
+                import_source, notes, introduced_by,
+                json.dumps(met_via) if met_via else None,
+                now, now, now,
             ),
         )
         await db.commit()
-        await self.record_audit(contact_id, "created", {"import_source": import_source})
+        audit = {"import_source": import_source}
+        if introduced_by:
+            audit["introduced_by"] = introduced_by
+        await self.record_audit(contact_id, "created", audit)
         contact = await self.get(contact_id)
         assert contact is not None
         return contact
+
+    async def record_introduction(
+        self,
+        contact_id: str,
+        introduced_by: Optional[str] = None,
+        met_via: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Contact]:
+        """Annotate an EXISTING contact with introduction provenance.
+
+        Used when an intro names someone Colony already knows: we record who
+        introduced them / how they were met without duplicating the contact, and
+        do NOT touch their trust_tier or interaction_allowed (an intro never
+        grants standing). Only fills blanks — an existing introduced_by/met_via
+        is preserved (first introduction wins).
+        """
+        db = self._require_db()
+        existing = await self.get(contact_id)
+        if existing is None:
+            return None
+        set_parts, params, details = [], [], {}
+        if introduced_by and not existing.introduced_by:
+            set_parts.append("introduced_by = ?")
+            params.append(introduced_by)
+            details["introduced_by"] = introduced_by
+        if met_via and not existing.met_via:
+            set_parts.append("met_via_json = ?")
+            params.append(json.dumps(met_via))
+            details["met_via"] = met_via
+        if not set_parts:
+            return existing
+        set_parts.append("updated_at = ?")
+        params.append(_now_iso())
+        params.append(contact_id)
+        await db.execute(
+            f"UPDATE contacts SET {', '.join(set_parts)} WHERE contact_id = ?",
+            params,
+        )
+        await db.commit()
+        await self.record_audit(contact_id, "introduction_recorded", details)
+        return await self.get(contact_id)
 
     async def add_handle(
         self,

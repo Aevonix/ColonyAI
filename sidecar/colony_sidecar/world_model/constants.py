@@ -23,6 +23,7 @@ RELATIONSHIP_TYPES = frozenset({
     "WM_MANAGES",
     "WM_REPORTS_TO",
     "WM_KNOWS",
+    "WM_INTRODUCED_BY",  # provenance: who introduced this person to the agent's graph
     "WM_PARTNER_OF",
     "WM_ACQUIRED",
     "WM_PART_OF",

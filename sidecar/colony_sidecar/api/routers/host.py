@@ -40,6 +40,8 @@ from colony_sidecar.api.schemas.host import (
     CognitionGap,
     CognitivePerformanceIndex,
     ContactCreateRequest,
+    ContactIntroRequest,
+    ContactIntroResponse,
     ContactListResponse,
     ContactResponse,
     ContactStyleRequest,
@@ -2608,6 +2610,70 @@ async def create_contact(body: ContactCreateRequest) -> ContactResponse:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         logger.warning("create_contact failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/contacts/intro", response_model=ContactIntroResponse, status_code=201)
+async def capture_introduction(body: ContactIntroRequest) -> ContactIntroResponse:
+    """Capture an organic introduction (social-graph autonomy, generic).
+
+    The agent met or learned of a person; record them as a durable, queryable
+    graph node WITH provenance (introduced_by + met_via) but WITHOUT any
+    interaction standing. If the handle already resolves to a known contact, the
+    provenance is recorded on that contact instead of duplicating it. A
+    provisional contact is always inert: interaction_allowed is forced false so
+    an intro can never become outreach — promotion/merge reconciles it later.
+    """
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    try:
+        # If a handle was given and already resolves to a known person, annotate
+        # rather than duplicate (a number is one identity across phone gateways).
+        existing = None
+        if body.gateway and body.address:
+            existing = await _contacts_store.resolve_messaging_handle(
+                body.gateway, body.address)
+        if existing is not None:
+            updated = await _contacts_store.record_introduction(
+                existing.contact_id,
+                introduced_by=body.introduced_by,
+                met_via=body.met_via,
+            )
+            return ContactIntroResponse(
+                contact=ContactResponse(**(updated or existing).to_dict()),
+                created=False,
+            )
+
+        contact = await _contacts_store.create(
+            display_name=body.name,
+            trust_tier=body.trust_tier,
+            interaction_allowed=False,   # provisional: an intro never grants standing
+            import_source="agent_intro",
+            notes=body.note,
+            introduced_by=body.introduced_by,
+            met_via=body.met_via,
+        )
+        if body.gateway and body.address:
+            try:
+                # rcs is a transport over the phone identity; store the handle under
+                # the canonical phone gateway (sms) so it resolves across channels.
+                store_gw = "sms" if body.gateway == "rcs" else body.gateway
+                await _contacts_store.add_handle(
+                    contact.contact_id, gateway=store_gw,
+                    address=body.address, source="agent_intro")
+            except ValueError as exc:
+                # Handle raced onto another contact between resolve and create.
+                logger.info("intro add_handle conflict for %s: %s",
+                            contact.contact_id, exc)
+        created = await _contacts_store.get(contact.contact_id)
+        return ContactIntroResponse(
+            contact=ContactResponse(**(created or contact).to_dict()),
+            created=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("capture_introduction failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

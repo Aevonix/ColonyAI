@@ -74,6 +74,11 @@ class Contact:
     created_at: str
     updated_at: str
     timezone: Optional[str] = None  # IANA tz for this contact (v0.21.0), editable
+    # Introduction provenance (social-graph autonomy): the contact_id of whoever
+    # introduced this person, and a met_via dict ({channel, scope_id, ...}) for
+    # how/where the agent met them. None for contacts not created via an intro.
+    introduced_by: Optional[str] = None
+    met_via: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -99,6 +104,8 @@ class Contact:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "timezone": self.timezone,
+            "introduced_by": self.introduced_by,
+            "met_via": self.met_via,
         }
 
     @classmethod
@@ -111,6 +118,8 @@ class Contact:
             if isinstance(enrichment_source_json, str)
             else (enrichment_source_json or [])
         )
+        met_via_raw = row.get("met_via_json")
+        met_via = json.loads(met_via_raw) if isinstance(met_via_raw, str) and met_via_raw else None
         return cls(
             contact_id=row["contact_id"],
             display_name=row.get("display_name"),
@@ -134,6 +143,8 @@ class Contact:
             created_at=row.get("created_at", ""),
             updated_at=row.get("updated_at", ""),
             timezone=row.get("timezone"),
+            introduced_by=row.get("introduced_by"),
+            met_via=met_via,
         )
 
 

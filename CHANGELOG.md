@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.21.26 — introduction capture (social-graph autonomy, Slice 1)
+
+The generic, deployment-agnostic foundation for organic relationship-building: the agent can
+record a person it just met or learned of as a durable contact WITH provenance, but WITHOUT any
+interaction standing. Slice 1 of the social-graph-autonomy arc (Feature B); the world-model edge
++ introduction initiative come in Slice 2.
+
+- **Introduction provenance on contacts:** new `introduced_by` (contact_id) + `met_via` (`{channel,
+  scope_id, ...}`) fields, auto-migrated onto the contacts table. First-class on the contact so they
+  are always available even before a world-model Person node exists.
+- **`POST /v1/host/contacts/intro`:** capture an introduction. Creates a PROVISIONAL contact
+  (`import_source=agent_intro`, `interaction_allowed` forced false — an intro never grants outreach
+  standing) or, when the handle already resolves to a known person, records the provenance on that
+  contact instead of duplicating it (first introduction wins; standing untouched). RCS handles are
+  stored under the canonical phone gateway.
+- **`WM_INTRODUCED_BY` relationship type** added to the world model (consumed in Slice 2).
+- **Store:** `create()` accepts `introduced_by`/`met_via`; new `record_introduction()` annotates an
+  existing contact. Audited.
+
 ## v0.21.25 — health: stop reading conversational idle as "degraded"
 
 The `/health` endpoint flagged `prefetch` stale at 2h and forced the whole system to

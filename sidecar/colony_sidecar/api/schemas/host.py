@@ -533,6 +533,8 @@ class ContactResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     timezone: Optional[str] = None  # IANA tz for this contact (v0.21.0)
+    introduced_by: Optional[str] = None        # contact_id of whoever introduced them
+    met_via: Optional[Dict[str, Any]] = None   # {channel, scope_id, ...} provenance
 
 
 class ContactListResponse(BaseModel):
@@ -613,6 +615,28 @@ class ContactCreateRequest(BaseModel):
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
     handles: List[ContactHandleIn] = []
+
+
+class ContactIntroRequest(BaseModel):
+    """Capture an organic introduction: the agent met/learned of a new person.
+
+    Creates (or annotates) a PROVISIONAL contact with introduction provenance.
+    A provisional contact is inert by design — trust_tier defaults to 'unknown'
+    and interaction_allowed is forced false — so capturing an intro never grants
+    anyone outreach standing; promotion/merge reconciles them later.
+    """
+    name: str
+    gateway: Optional[str] = None              # optional handle to attach
+    address: Optional[str] = None
+    introduced_by: Optional[str] = None        # contact_id of the introducer
+    met_via: Optional[Dict[str, Any]] = None   # {channel, scope_id, ...}
+    note: Optional[str] = None
+    trust_tier: str = "unknown"                # provisional; never grants 1:1 rights
+
+
+class ContactIntroResponse(BaseModel):
+    contact: ContactResponse
+    created: bool        # True if a new provisional contact was made; False if annotated existing
 
 
 class ContactStyleRequest(BaseModel):
