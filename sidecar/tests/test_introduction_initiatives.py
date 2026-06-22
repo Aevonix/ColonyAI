@@ -93,6 +93,9 @@ async def test_engine_proposes_owner_gated_introduction(monkeypatch):
         assert i.dedup_key == "intro:cid-a:cid-b"
         assert i.entity_id == "cid-a:cid-b"
         assert "Bo" in i.description and "Alex" in i.description
+        # Must clear the default min_priority confidence gate (0.7) or it would
+        # be filtered out before the cap/headroom ever apply.
+        assert i.priority >= 0.7
     finally:
         reset_identity_resolver()
 

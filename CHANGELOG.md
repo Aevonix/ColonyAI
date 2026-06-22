@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.21.29 — introduction proposals clear the confidence gate
+
+Final fix for Slice 2, found in live verification: an introduction was generated but never
+surfaced because `generate()` applies the `min_priority` confidence filter (autonomy default
+**0.7**) BEFORE the cap, and the intro's flat priority 0.5 was filtered out first — so the v0.21.28
+cap headroom never got a chance to run.
+
+- **Introduction priority 0.5 → 0.7** so it clears the default confidence gate. An intro is
+  high-CONFIDENCE (a real shared-work signal plus both parties above the trust floor), just
+  low-urgency; the cap's social headroom (v0.21.28) handles volume once it is past the filter.
+
+Verified end-to-end on a live deployment: two same-org contacts above the trust floor produced
+an owner-facing `INTRODUCTION` proposal ("Introduce A and B (both at <org>)").
+
 ## v0.21.28 — introduction proposals survive a saturated cap
 
 Completes Slice 2: introduction proposals are low-priority by design, so on a busy loop that

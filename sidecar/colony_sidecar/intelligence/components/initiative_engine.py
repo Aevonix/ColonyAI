@@ -1638,7 +1638,11 @@ class InitiativeEngine:
                     id=f"intro-{lo}-{hi}",
                     type=InitiativeType.INTRODUCTION,
                     description=f"Introduce {a_name} and {b_name} (both at {shared})",
-                    priority=0.5,
+                    # Must clear the generate() min_priority confidence gate
+                    # (autonomy default 0.7). An intro is high-CONFIDENCE (real
+                    # shared-work signal + both above the trust floor), just
+                    # low-urgency; the cap's social headroom handles volume.
+                    priority=0.7,
                     rationale=f"Both are connected to {shared} but may not know each other",
                     # Owner-directed proposal: the agent never sends an intro unprompted.
                     action_hint="propose_introduction",
