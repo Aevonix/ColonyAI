@@ -8,7 +8,6 @@ endpoints had an explicit 401 assertion), so a future route can't regress it.
 import re
 
 import pytest
-from starlette.routing import Mount, Route
 from fastapi.testclient import TestClient
 
 
@@ -16,15 +15,9 @@ def _fill_params(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "x", path)
 
 
-def _collect_routes(routes, prefix=""):
-    """Recursively walk the route tree (newer Starlette nests include_router under Mount)."""
-    result = []
-    for route in routes:
-        if isinstance(route, Route):
-            result.append((prefix + route.path, route))
-        elif isinstance(route, Mount) and hasattr(route, "routes"):
-            result.extend(_collect_routes(route.routes, prefix + route.path))
-    return result
+def _api_paths(app):
+    """All API paths from the OpenAPI schema (works across FastAPI versions)."""
+    return sorted(app.openapi().get("paths", {}))
 
 
 @pytest.fixture
@@ -40,14 +33,14 @@ def test_all_http_routes_reject_unauthenticated_requests(app):
     client = TestClient(app, raise_server_exceptions=False)
     checked = 0
     offenders = []
-    for full_path, route in _collect_routes(app.routes):
-        if full_path in _DEV_MODE_ALLOWED:
+    for path in _api_paths(app):
+        if path in _DEV_MODE_ALLOWED:
             continue
-        url = _fill_params(full_path)
+        url = _fill_params(path)
         resp = client.get(url)
         checked += 1
         if resp.status_code != 401:
-            offenders.append((full_path, resp.status_code))
+            offenders.append((path, resp.status_code))
 
     assert checked > 50, f"expected to check the full route table, only saw {checked}"
     assert not offenders, f"routes reachable without auth: {offenders}"
