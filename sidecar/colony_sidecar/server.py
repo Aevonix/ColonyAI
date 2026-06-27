@@ -86,6 +86,7 @@ from colony_sidecar.api.routers.host import (
     set_telemetry,
     set_session_report_store,
     set_agent_bridge,
+    set_initiative_executor,
     supported_capabilities,
 )
 
@@ -1029,6 +1030,23 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("AgentBridgeService init failed (non-fatal): %s", exc)
 
+    # --- 23. Initiative Executor service (autonomous initiative processing) ---
+    try:
+        from colony_sidecar.services.initiative_executor import (
+            create_from_env as _create_executor,
+        )
+        _executor_svc = _create_executor(
+            initiative_store=locals().get("initiative_store"),
+            reasoning_loop=locals().get("reasoning_loop"),
+            tool_executor=locals().get("tool_executor"),
+        )
+        if _executor_svc is not None:
+            set_initiative_executor(_executor_svc)
+            asyncio.create_task(_executor_svc.start())
+            logger.info("InitiativeExecutorService auto-start scheduled")
+    except Exception as exc:
+        logger.warning("InitiativeExecutorService init failed (non-fatal): %s", exc)
+
     from colony_sidecar.telemetry import TelemetryStore
     telemetry = TelemetryStore()
     telemetry.load()  # restore last_*_at across restart (v0.21.0)
@@ -1122,6 +1140,7 @@ async def lifespan(app: FastAPI):
     set_session_store(None)
     set_session_report_store(None)
     set_agent_bridge(None)
+    set_initiative_executor(None)
     # Stop worker node (before queue so in-flight jobs can drain).
     try:
         worker = getattr(app.state, "worker", None)

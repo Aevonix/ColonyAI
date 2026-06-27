@@ -624,6 +624,15 @@ async def health() -> HostHealthResponse:
             )
         else:
             notes["agent_bridge"] = "AgentBridge wired (not started)"
+    if _initiative_executor is not None:
+        if getattr(_initiative_executor, "is_running", False):
+            s = getattr(_initiative_executor, "stats", {})
+            notes["executor"] = (
+                f"Executor running (done={s.get('initiatives_completed', 0)}, "
+                f"fail={s.get('initiatives_failed', 0)}, tokens={s.get('total_tokens', 0)})"
+            )
+        else:
+            notes["executor"] = "Executor wired (not started)"
     if _session_store is not None:
         notes["sessions"] = "InMemorySessionStore wired"
     if _task_queue is not None:
@@ -4512,6 +4521,7 @@ _session_store = None
 _task_queue = None
 _session_report_store = None
 _agent_bridge = None
+_initiative_executor = None
 
 def set_autonomy_loop(loop) -> None:
     global _autonomy_loop
@@ -4521,6 +4531,11 @@ def set_autonomy_loop(loop) -> None:
 def set_agent_bridge(bridge) -> None:
     global _agent_bridge
     _agent_bridge = bridge
+
+
+def set_initiative_executor(executor) -> None:
+    global _initiative_executor
+    _initiative_executor = executor
 
 
 _scheduler = None
@@ -4665,6 +4680,21 @@ async def bridge_status() -> dict:
         "running": getattr(_agent_bridge, "is_running", False),
         "wired": True,
         "stats": getattr(_agent_bridge, "stats", {}),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Initiative Executor status
+# ---------------------------------------------------------------------------
+
+@router.get("/executor/status")
+async def executor_status() -> dict:
+    if _initiative_executor is None:
+        return {"running": False, "wired": False}
+    return {
+        "running": getattr(_initiative_executor, "is_running", False),
+        "wired": True,
+        "stats": getattr(_initiative_executor, "stats", {}),
     }
 
 
