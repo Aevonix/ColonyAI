@@ -615,6 +615,15 @@ async def health() -> HostHealthResponse:
             notes["autonomy"] = f"AutonomyLoop running (ticks={getattr(_autonomy_loop.stats, 'ticks', 0)})"
         else:
             notes["autonomy"] = "AutonomyLoop wired (not started)"
+    if _agent_bridge is not None:
+        if getattr(_agent_bridge, "is_running", False):
+            s = getattr(_agent_bridge, "stats", {})
+            notes["agent_bridge"] = (
+                f"AgentBridge running (fwd={s.get('initiatives_forwarded', 0)}, "
+                f"jobs={s.get('jobs_dispatched', 0)}, wh_fail={s.get('webhook_failures', 0)})"
+            )
+        else:
+            notes["agent_bridge"] = "AgentBridge wired (not started)"
     if _session_store is not None:
         notes["sessions"] = "InMemorySessionStore wired"
     if _task_queue is not None:
@@ -4502,10 +4511,16 @@ _reranker = None
 _session_store = None
 _task_queue = None
 _session_report_store = None
+_agent_bridge = None
 
 def set_autonomy_loop(loop) -> None:
     global _autonomy_loop
     _autonomy_loop = loop
+
+
+def set_agent_bridge(bridge) -> None:
+    global _agent_bridge
+    _agent_bridge = bridge
 
 
 _scheduler = None
@@ -4636,6 +4651,21 @@ async def autonomy_cycle() -> dict:
     except Exception as exc:
         logger.warning("autonomy_cycle failed: %s", exc)
         return {"completed": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Agent Bridge status
+# ---------------------------------------------------------------------------
+
+@router.get("/bridge/status")
+async def bridge_status() -> dict:
+    if _agent_bridge is None:
+        return {"running": False, "wired": False}
+    return {
+        "running": getattr(_agent_bridge, "is_running", False),
+        "wired": True,
+        "stats": getattr(_agent_bridge, "stats", {}),
+    }
 
 
 # ---------------------------------------------------------------------------

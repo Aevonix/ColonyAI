@@ -85,6 +85,7 @@ from colony_sidecar.api.routers.host import (
     set_websocket_manager,
     set_telemetry,
     set_session_report_store,
+    set_agent_bridge,
     supported_capabilities,
 )
 
@@ -1012,6 +1013,22 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("AutonomyLoop init failed: %s", exc)
 
+    # --- 22. Agent Bridge service (auto-wired initiative/job forwarding) ---
+    try:
+        from colony_sidecar.services.agent_bridge import create_from_env as _create_bridge
+        _bridge_svc = _create_bridge(
+            initiative_store=locals().get("initiative_store"),
+            autonomy_loop=autonomy_loop,
+            task_queue=task_queue,
+            observation_store=locals().get("observation_store"),
+        )
+        if _bridge_svc is not None:
+            set_agent_bridge(_bridge_svc)
+            asyncio.create_task(_bridge_svc.start())
+            logger.info("AgentBridgeService auto-start scheduled")
+    except Exception as exc:
+        logger.warning("AgentBridgeService init failed (non-fatal): %s", exc)
+
     from colony_sidecar.telemetry import TelemetryStore
     telemetry = TelemetryStore()
     telemetry.load()  # restore last_*_at across restart (v0.21.0)
@@ -1104,6 +1121,7 @@ async def lifespan(app: FastAPI):
     set_secrets_manager(None)
     set_session_store(None)
     set_session_report_store(None)
+    set_agent_bridge(None)
     # Stop worker node (before queue so in-flight jobs can drain).
     try:
         worker = getattr(app.state, "worker", None)
