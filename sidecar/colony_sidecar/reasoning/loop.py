@@ -164,6 +164,12 @@ class ReasoningLoop:
             # Call the LLM
             try:
                 tier_hint = model_override or self._config.force_tier
+                if isinstance(tier_hint, str):
+                    from colony_sidecar.router.tiers import ModelTier
+                    try:
+                        tier_hint = ModelTier(tier_hint)
+                    except ValueError:
+                        tier_hint = None
                 response = await self._model.complete(
                     working,
                     tools=tool_defs if tool_defs else None,

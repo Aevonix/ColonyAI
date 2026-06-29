@@ -535,6 +535,22 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("ToM Extractor init failed: %s", exc)
 
+    # --- 7e. Channel Registration Store ---
+    channel_store = None
+    try:
+        from colony_sidecar.channels.store import ChannelStore
+        from colony_sidecar.channels.router import set_channel_store
+        from colony_sidecar.channels.phone_gateways import set_channel_store_ref
+
+        channels_db = os.path.join(state_dir, "colony-channels.db")
+        channel_store = ChannelStore(db_path=channels_db)
+        channel_store.connect()
+        set_channel_store(channel_store)
+        set_channel_store_ref(channel_store)
+        logger.info("ChannelStore initialized (db=%s)", channels_db)
+    except Exception as exc:
+        logger.warning("ChannelStore init failed: %s", exc)
+
     # --- 8. Contacts ---
     contacts_store = None
     try:
@@ -1014,6 +1030,21 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("AutonomyLoop init failed: %s", exc)
 
+    # Wire SubsystemRegistry into ToolExecutor so Colony-native tools
+    # (memory_search, goals, relationships, etc.) are available to the
+    # initiative executor's reasoning loop.
+    if registry is not None and locals().get("tool_executor") is not None:
+        te = locals()["tool_executor"]
+        from colony_sidecar.tools.handlers import TOOL_HANDLERS as _colony_handlers
+        for _tname, _thandler in _colony_handlers.items():
+            if _tname not in te._handlers:
+                te._handlers[_tname] = lambda args, h=_thandler, r=registry: h(args, r)
+        logger.info(
+            "Colony tool handlers wired into ToolExecutor (%d colony tools, %d total)",
+            len(_colony_handlers),
+            len(te._handlers),
+        )
+
     # --- 22. Agent Bridge service (auto-wired initiative/job forwarding) ---
     try:
         from colony_sidecar.services.agent_bridge import create_from_env as _create_bridge
@@ -1135,6 +1166,16 @@ async def lifespan(app: FastAPI):
     set_pattern_store(None)
     set_surprise_store(None)
     set_tom_extractor(None)
+    if channel_store is not None:
+        try:
+            channel_store.close()
+        except Exception:
+            logger.debug("ChannelStore close failed", exc_info=True)
+    try:
+        from colony_sidecar.channels.router import set_channel_store as _set_ch_store
+        _set_ch_store(None)
+    except Exception:
+        pass
     set_chain_manager(None)
     set_secrets_manager(None)
     set_session_store(None)
@@ -1210,6 +1251,10 @@ def create_app() -> FastAPI:
         logger.warning("No COLONY_API_KEY set — API is open (dev mode)")
 
     app.include_router(host_router)
+
+    # Channel registration router
+    from colony_sidecar.channels.router import router as channels_router
+    app.include_router(channels_router)
 
     # Task queue router (v0.13.0)
     from colony_sidecar.api.routers import task_queue as task_queue_router

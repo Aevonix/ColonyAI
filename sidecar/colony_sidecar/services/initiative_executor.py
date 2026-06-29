@@ -39,8 +39,11 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TYPES = {
-    "follow_up", "relationship", "health", "scheduling",
-    "commitment", "calendar", "research", "task", "project", "system",
+    "follow_up", "relationship", "introduction", "health", "scheduling",
+    "coding", "subsystem_health", "data_quality", "operational",
+    "capability_gap", "knowledge_acquisition", "behavioral_correction",
+    "agent_action", "commitment", "calendar", "research", "task",
+    "project", "system",
 }
 
 _SYSTEM_PROMPT = """\

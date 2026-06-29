@@ -299,8 +299,92 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+# Native server-side tools (calculate, web_search, file_ops)
+NATIVE_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "calculate",
+        "description": "Evaluate a mathematical expression and return the result.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "The math expression to evaluate (e.g. '2 + 2', 'sqrt(144)')",
+                },
+            },
+            "required": ["expression"],
+        },
+    },
+    {
+        "name": "web_search",
+        "description": "Search the web for information on a topic. Returns relevant snippets.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 5)",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_file",
+        "description": "Read the contents of a file in the sandbox directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path within the sandbox",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": "Write content to a file in the sandbox directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path within the sandbox",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content to write",
+                },
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "list_directory",
+        "description": "List files and directories in a sandbox directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path within the sandbox (default: root)",
+                    "default": ".",
+                },
+            },
+            "required": [],
+        },
+    },
+]
+
 # All tools combined
-COLONY_TOOLS: list[dict[str, Any]] = COLONY_CORE_TOOLS + COLONY_EXTENDED_TOOLS
+COLONY_TOOLS: list[dict[str, Any]] = COLONY_CORE_TOOLS + COLONY_EXTENDED_TOOLS + NATIVE_TOOLS
 
 
 def _wrap_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:

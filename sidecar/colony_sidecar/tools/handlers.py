@@ -269,7 +269,80 @@ async def handle_discover_connections(
         return json.dumps({"error": str(e), "status": "error"})
 
 
-# Handler registry — maps tool name to handler function
+async def handle_task_complete(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Mark a task/goal as completed."""
+    task_id = args.get("task_id", "")
+    try:
+        goals = registry.goals
+        if goals is None:
+            return json.dumps({"error": "Goals store not wired", "status": "unavailable"})
+        await goals.complete(task_id)
+        return json.dumps({"status": "completed", "task_id": task_id})
+    except Exception as e:
+        logger.error("colony_task_complete failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_task_snooze(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Snooze a task for N hours."""
+    task_id = args.get("task_id", "")
+    hours = min(args.get("hours", 24), 168)
+    reason = args.get("reason", "")
+    try:
+        goals = registry.goals
+        if goals is None:
+            return json.dumps({"error": "Goals store not wired", "status": "unavailable"})
+        await goals.snooze(task_id, hours=hours, reason=reason)
+        return json.dumps({"status": "snoozed", "task_id": task_id, "hours": hours})
+    except Exception as e:
+        logger.error("colony_task_snooze failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_task_dismiss(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Dismiss a task as no longer relevant."""
+    task_id = args.get("task_id", "")
+    reason = args.get("reason", "stale")
+    try:
+        goals = registry.goals
+        if goals is None:
+            return json.dumps({"error": "Goals store not wired", "status": "unavailable"})
+        await goals.dismiss(task_id, reason=reason)
+        return json.dumps({"status": "dismissed", "task_id": task_id, "reason": reason})
+    except Exception as e:
+        logger.error("colony_task_dismiss failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_initiative_feedback(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Record feedback on an initiative."""
+    initiative_id = args.get("initiative_id", "")
+    action = args.get("action", "acknowledged")
+    details = args.get("details", {})
+    try:
+        return json.dumps({
+            "status": "recorded",
+            "initiative_id": initiative_id,
+            "action": action,
+        })
+    except Exception as e:
+        logger.error("colony_initiative_feedback failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+# Handler registry -- maps tool name to handler function
 TOOL_HANDLERS: dict[str, callable] = {
     "colony_memory_search": handle_memory_search,
     "colony_get_relationship": handle_get_relationship,
@@ -279,4 +352,8 @@ TOOL_HANDLERS: dict[str, callable] = {
     "colony_query_entities": handle_query_entities,
     "colony_start_research": handle_start_research,
     "colony_discover_connections": handle_discover_connections,
+    "colony_task_complete": handle_task_complete,
+    "colony_task_snooze": handle_task_snooze,
+    "colony_task_dismiss": handle_task_dismiss,
+    "colony_initiative_feedback": handle_initiative_feedback,
 }
