@@ -2044,6 +2044,12 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
 
 @router.post("/turns/sync", response_model=TurnSyncResponse)
 async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
+    # Auto-derive channel_id when the host does not provide one, so
+    # context provenance and cross-context leak detection always work.
+    body.context.channel_id = await _ensure_channel_id(
+        body.context, identity=body.identity,
+    )
+
     # If structured fields are empty but raw messages are present,
     # extract topics/entities/summary from the raw messages.
     if not body.topics and not body.entities and not body.summary:
@@ -2077,7 +2083,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # later reply in a DIFFERENT context that surfaces an entity known only from here can be
     # flagged as a cross-context leak. Entities come from the host plus rule-based NER on the
     # incoming message (what the other party brought up = what belongs to this conversation).
-    if _context_provenance is not None and body.context.channel_id:
+    if _context_provenance is not None:
         ents = list(body.entities or [])
         _user_text = getattr(body.user_message, "content", "") if body.user_message else ""
         if _user_text:
@@ -3550,6 +3556,51 @@ _context_provenance = None
 def set_context_provenance_store(store):
     global _context_provenance
     _context_provenance = store
+
+
+async def _ensure_channel_id(
+    context,
+    identity=None,
+) -> str:
+    """Derive a stable channel_id when the host does not provide one.
+
+    Resolution order:
+    1. Host-provided channel_id (pass-through)
+    2. Active session's gateway + contact_id
+    3. Contact's primary handle gateway + contact_id
+    4. host_id + contact_id
+    5. "unknown:" + contact_id
+    """
+    if context.channel_id:
+        return context.channel_id
+
+    contact = context.contact_id or "anonymous"
+    gateway = None
+
+    if _session_store is not None and context.contact_id:
+        try:
+            session = await _session_store.get_by_contact(context.contact_id)
+            if session is not None:
+                gateway = session.gateway
+        except Exception:
+            pass
+
+    if not gateway and _contacts_store is not None and context.contact_id:
+        try:
+            handles = await _contacts_store.get_handles(context.contact_id)
+            primary = next(
+                (h for h in handles if getattr(h, "is_primary", False)),
+                handles[0] if handles else None,
+            )
+            if primary is not None:
+                gateway = getattr(primary, "gateway", None)
+        except Exception:
+            pass
+
+    if not gateway and identity is not None:
+        gateway = getattr(identity, "host_id", None)
+
+    return f"{gateway or 'unknown'}:{contact}"
 
 
 _conversation_extractor = None

@@ -27,6 +27,7 @@ logger = logging.getLogger("colony.contacts.store")
 
 _SCHEMA_FILE = Path(__file__).parent / "migrations" / "001_contacts_schema.sql"
 _SCHEMA_FILE_002 = Path(__file__).parent / "migrations" / "002_trust_scopes.sql"
+_MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 _PHONE_DIGITS = re.compile(r'\D')
 
@@ -57,7 +58,7 @@ def _normalize_email(email: str) -> str:
 
 # A phone number is ONE identity across channels. Phone-bearing gateways resolve a number to the
 # same contact regardless of which transport it arrived on (sms/rcs/imessage/signal/whatsapp).
-_PHONE_GATEWAYS = ("imessage", "sms", "signal", "whatsapp")
+from colony_sidecar.channels.phone_gateways import get_phone_gateways as _get_phone_gateways
 
 
 def _looks_like_phone(address: str) -> bool:
@@ -234,16 +235,14 @@ class SQLiteContactStore(ContactStore):
         self._db = await aiosqlite.connect(path)
         self._db.row_factory = aiosqlite.Row
         # In-query phone identity key so messaging resolution matches a number to its contact even
-        # when stored handles are formatted differently / under a different gateway — works without
+        # when stored handles are formatted differently / under a different gateway -- works without
         # a data migration (the stored side is keyed at query time).
         await self._db.create_function(
             "phone_key", 1, lambda v: _phone_key(v) if v else "")
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
-        schema = _SCHEMA_FILE.read_text()
-        await self._db.executescript(schema)
-        await self._db.executescript(_SCHEMA_FILE_002.read_text())
-        await self._db.commit()
+        from colony_sidecar.migrations import run_migrations
+        await run_migrations(self._db, _MIGRATIONS_DIR)
         await self._apply_migrations()
 
     async def _apply_migrations(self) -> None:
@@ -320,12 +319,13 @@ class SQLiteContactStore(ContactStore):
             sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
                    "WHERE h.gateway = 'email' AND lower(h.address) = ? AND c.deleted_at IS NULL LIMIT 1")
             params: tuple = (_normalize_email(address),)
-        elif g in _PHONE_GATEWAYS or _looks_like_phone(address):
-            placeholders = ",".join("?" for _ in _PHONE_GATEWAYS)
+        elif g in _get_phone_gateways() or _looks_like_phone(address):
+            _pgw = tuple(_get_phone_gateways())
+            placeholders = ",".join("?" for _ in _pgw)
             sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
                    f"WHERE h.gateway IN ({placeholders}) AND phone_key(h.address) = ? "
                    "AND c.deleted_at IS NULL LIMIT 1")
-            params = (*_PHONE_GATEWAYS, _phone_key(address))
+            params = (*_pgw, _phone_key(address))
         else:
             sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
                    "WHERE h.gateway = ? AND h.address = ? AND c.deleted_at IS NULL LIMIT 1")

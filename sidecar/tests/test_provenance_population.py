@@ -28,17 +28,21 @@ async def test_turn_sync_records_entities_under_conversation(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_turn_sync_without_channel_is_safe(monkeypatch):
+async def test_turn_sync_without_channel_derives_channel_id(monkeypatch):
     store = ContextProvenanceStore(":memory:")
     monkeypatch.setattr(host_mod, "_context_provenance", store)
     monkeypatch.setattr(host_mod, "_graph", None)
+    monkeypatch.setattr(host_mod, "_session_store", None)
+    monkeypatch.setattr(host_mod, "_contacts_store", None)
     body = TurnSyncRequest(
         identity=HostIdentity(host_id="test-host"),
         context=HostTurnContext(session_id="s1", contact_id="c1"),  # no channel_id
         entities=["Project Falcon"],
     )
     await host_mod.turns_sync(body)   # must not raise
-    assert store.contexts_for("Project Falcon") == []
+    # _ensure_channel_id derives "test-host:c1" from host_id fallback
+    contexts = store.contexts_for("Project Falcon")
+    assert any(c["conversation_key"] == "test-host:c1" for c in contexts)
 
 
 @pytest.mark.asyncio

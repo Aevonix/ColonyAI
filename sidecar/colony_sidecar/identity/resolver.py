@@ -34,8 +34,7 @@ logger = logging.getLogger(__name__)
 
 _PHONE_RE = re.compile(r"^\+?[\d\s().-]{7,}$")
 
-# Gateways that store phone-number addresses (normalized digit-only).
-_PHONE_GATEWAYS = ("imessage", "sms", "signal")
+from colony_sidecar.channels.phone_gateways import get_phone_gateways as _get_phone_gateways
 
 
 class OwnerIdentityError(RuntimeError):
@@ -199,7 +198,7 @@ class IdentityResolver:
 
         # Phone-like handle.
         if _PHONE_RE.match(any_id):
-            for gateway in _PHONE_GATEWAYS:
+            for gateway in _get_phone_gateways():
                 contact = await store.resolve_handle(gateway, any_id)
                 if contact is not None:
                     return contact

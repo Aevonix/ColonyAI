@@ -15,9 +15,6 @@ from .store import SQLiteContactStore, _name_similarity, _normalize_email, _norm
 
 logger = logging.getLogger("colony.contacts.world_bridge")
 
-# Gateways we can auto-populate from Person properties
-_PHONE_GATEWAYS = ("imessage", "sms", "signal")
-
 
 def _person_handle_gaps(person: Dict[str, Any]) -> List[tuple[str, str]]:
     """Extract (gateway, address) pairs from a Person node's properties."""
