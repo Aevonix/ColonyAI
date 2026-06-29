@@ -144,17 +144,49 @@ def main() -> None:
     node_sub.add_parser("info", help="Show node_id, public key, and certificate status")
 
     # --- backup ---
-    backup_p = sub.add_parser("backup", help="Export Colony identity as a portable backup")
-    backup_p.add_argument("--output", "-o", default=None, help="Output file path (default: stdout)")
-    backup_p.add_argument("--passphrase", default=None, help="Encrypt private key with this passphrase (prompted if --encrypt)")
-    backup_p.add_argument("--encrypt", action="store_true", help="Encrypt private key (prompts for passphrase)")
+    backup_p = sub.add_parser("backup", help="Export Colony identity or full state as a portable backup")
+    backup_p.add_argument("--full", action="store_true", help="Full-state backup (databases, identity, config, vectors, graph)")
+    backup_p.add_argument("--output", "-o", default=None, help="Output file/directory path")
+    backup_p.add_argument("--passphrase", default=None, help="Encrypt backup with this passphrase (prompted if --encrypt)")
+    backup_p.add_argument("--encrypt", action="store_true", help="Encrypt backup (prompts for passphrase)")
+    backup_p.add_argument("--no-graph", action="store_true", help="Skip Neo4j graph export (--full only)")
+    backup_p.add_argument("--no-vectors", action="store_true", help="Skip LanceDB vector store (--full only)")
 
     # --- restore ---
     restore_p = sub.add_parser("restore", help="Restore Colony from a backup")
+    restore_p.add_argument("--full", action="store_true", help="Full-state restore from archive")
     restore_p.add_argument("--input", "-i", default=None, help="Backup file path (default: prompts for it)")
     restore_p.add_argument("--passphrase", default=None, help="Passphrase to decrypt (default: prompts for it)")
+    restore_p.add_argument("--force-identity", action="store_true", help="Allow restoring onto a different colony identity")
     mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
     mm_p.add_argument("--skip-download", action="store_true", help="Skip model download")
+
+    # --- persona ---
+    persona_p = sub.add_parser("persona", help="Manage persona deployment")
+    persona_sub = persona_p.add_subparsers(dest="persona_command")
+
+    persona_setup = persona_sub.add_parser("setup", help="Deploy a persona from a manifest repo")
+    persona_setup.add_argument("repo", help="Path to persona repo containing persona.yaml")
+    persona_setup.add_argument("--config", default=None, help="Variables YAML file (non-interactive)")
+
+    persona_validate = persona_sub.add_parser("validate", help="Validate a persona manifest (dry run)")
+    persona_validate.add_argument("repo", help="Path to persona repo containing persona.yaml")
+
+    persona_services = persona_sub.add_parser("services", help="Manage persona services")
+    persona_services.add_argument("action", choices=["status", "start", "stop", "restart", "install", "uninstall"])
+    persona_services.add_argument("service_name", nargs="?", default=None, help="Specific service name (for restart)")
+
+    persona_backup_p = persona_sub.add_parser("backup", help="Backup Colony + persona state")
+    persona_backup_p.add_argument("--output", "-o", default=None, help="Output directory")
+    persona_backup_p.add_argument("--encrypt", action="store_true", help="Encrypt backup")
+    persona_backup_p.add_argument("--passphrase", default=None, help="Encryption passphrase")
+
+    persona_restore_p = persona_sub.add_parser("restore", help="Restore persona from backup archive")
+    persona_restore_p.add_argument("archive", help="Path to backup archive")
+    persona_restore_p.add_argument("--passphrase", default=None, help="Decryption passphrase")
+    persona_restore_p.add_argument("--force-identity", action="store_true", help="Allow identity mismatch")
+
+    persona_sub.add_parser("uninstall", help="Stop services, remove overlays, deregister channels")
 
     # --- agent ---
     agent_p = sub.add_parser("agent", help="Manage connected agents")
@@ -585,13 +617,15 @@ def main() -> None:
     elif args.command == "initiative":
         _cmd_initiative(args)
 
+    elif args.command == "persona":
+        _cmd_persona(args)
 
     else:
         parser.print_help()
 
 
 def _cmd_backup(args) -> None:
-    """Export Colony identity as a portable, optionally encrypted backup."""
+    """Export Colony identity or full state as a portable backup."""
     _load_dotenv()
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
 
@@ -601,6 +635,23 @@ def _cmd_backup(args) -> None:
     elif args.encrypt:
         import getpass
         passphrase = getpass.getpass("Backup passphrase: ").encode()
+
+    if args.full:
+        from colony_sidecar.backup import create_full_backup
+        output_dir = args.output or os.path.expanduser("~/colony-backups")
+        try:
+            archive = create_full_backup(
+                state_dir, output_dir,
+                passphrase=passphrase,
+                include_graph=not getattr(args, "no_graph", False),
+                include_vectors=not getattr(args, "no_vectors", False),
+            )
+            print(f"  Full backup saved to {archive}")
+        except FileNotFoundError as e:
+            print(f"  Error: {e}")
+            print("  Run 'colony init' first to create an identity.")
+            raise SystemExit(1)
+        return
 
     try:
         from colony_sidecar.chain.identity import backup_colony
@@ -619,11 +670,44 @@ def _cmd_backup(args) -> None:
 
 
 def _cmd_restore(args) -> None:
-    """Restore Colony from a backup — interactive by default."""
+    """Restore Colony from a backup -- interactive by default."""
     _load_dotenv()
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
 
-    # Check if identity already exists
+    if args.input:
+        backup_path = args.input
+    else:
+        backup_path = input("  Backup file path: ").strip()
+
+    if not backup_path or not Path(backup_path).exists():
+        print(f"  Error: File not found: {backup_path}")
+        raise SystemExit(1)
+
+    passphrase = None
+    if args.passphrase:
+        passphrase = args.passphrase.encode()
+
+    if args.full:
+        if passphrase is None and backup_path.endswith(".enc"):
+            import getpass
+            passphrase = getpass.getpass("  Backup passphrase: ").encode()
+
+        from colony_sidecar.backup import restore_full_backup
+        try:
+            summary = restore_full_backup(
+                backup_path, state_dir,
+                passphrase=passphrase,
+                force_identity=getattr(args, "force_identity", False),
+            )
+            print(f"\n  Colony restored: {summary['colony_id']}")
+            print(f"  Databases: {', '.join(summary.get('databases', []))}")
+            print(f"\n  Run 'colony start' to bring the Colony online.")
+        except ValueError as e:
+            print(f"  Error: {e}")
+            raise SystemExit(1)
+        return
+
+    # Legacy identity-only restore
     id_path = Path(state_dir) / "colony-id"
     if id_path.exists():
         print("  A Colony identity already exists in this state directory.")
@@ -634,37 +718,22 @@ def _cmd_restore(args) -> None:
             print("  Restore cancelled.")
             return
 
-    # Get backup file
-    if args.input:
-        backup_path = args.input
-    else:
-        backup_path = input("  Backup file path: ").strip()
-
-    if not backup_path or not Path(backup_path).exists():
-        print(f"  Error: File not found: {backup_path}")
-        raise SystemExit(1)
-
     try:
         backup_data = json.loads(Path(backup_path).read_text())
     except json.JSONDecodeError:
         print("  Error: Invalid backup JSON")
         raise SystemExit(1)
 
-    # Get passphrase if encrypted
-    passphrase = None
-    if backup_data.get("encrypted"):
-        if args.passphrase:
-            passphrase = args.passphrase.encode()
-        else:
-            import getpass
-            passphrase = getpass.getpass("  Backup passphrase: ").encode()
+    if backup_data.get("encrypted") and passphrase is None:
+        import getpass
+        passphrase = getpass.getpass("  Backup passphrase: ").encode()
 
     try:
         from colony_sidecar.chain.identity import restore_colony
         colony_id = restore_colony(state_dir, backup_data, passphrase=passphrase)
-        print(f"\n  ✅ Colony restored: {colony_id}")
+        print(f"\n  Colony restored: {colony_id}")
         if backup_data.get("genesis"):
-            print(f"  ⚡ Genesis status restored")
+            print(f"  Genesis status restored")
         print(f"\n  Run 'colony start' to bring the Colony online.")
     except ValueError as e:
         print(f"  Error: {e}")
@@ -2196,6 +2265,200 @@ def _load_dotenv() -> None:
         
         # Only load first found .env
         break
+
+
+def _cmd_persona(args) -> None:
+    """Handle persona subcommands."""
+    _load_dotenv()
+
+    cmd = getattr(args, "persona_command", None)
+    if not cmd:
+        print("Usage: colony persona [setup|validate|services|backup|restore|uninstall]")
+        return
+
+    state_dir = os.environ.get("COLONY_STATE_DIR", str(Path.home() / ".colony" / "data"))
+
+    if cmd == "validate":
+        from colony_sidecar.persona.manifest import load_manifest
+        try:
+            manifest = load_manifest(args.repo)
+        except Exception as e:
+            print(f"  Manifest error: {e}")
+            raise SystemExit(1)
+        from colony_sidecar.persona.engine import PersonaEngine
+        engine = PersonaEngine(manifest, Path(args.repo), state_dir=Path(state_dir))
+        issues = engine.validate()
+        if issues:
+            print("  Validation issues:")
+            for issue in issues:
+                print(f"    - {issue}")
+            raise SystemExit(1)
+        print(f"  Persona '{manifest.name}' v{manifest.version} is valid")
+        print(f"  Services: {len(manifest.services)}")
+        print(f"  Companion apps: {len(manifest.companion_apps)}")
+        print(f"  Tunnels: {len(manifest.tunnels)}")
+        print(f"  Secrets: {len(manifest.secrets)}")
+        print(f"  Variables: {len(manifest.variables)}")
+
+    elif cmd == "setup":
+        from colony_sidecar.persona.manifest import load_manifest
+        try:
+            manifest = load_manifest(args.repo)
+        except Exception as e:
+            print(f"  Manifest error: {e}")
+            raise SystemExit(1)
+
+        provided_vars = None
+        provided_secrets = None
+        if args.config:
+            try:
+                import yaml
+                config_data = yaml.safe_load(Path(args.config).read_text())
+                provided_vars = config_data.get("variables", {})
+                provided_secrets = config_data.get("secrets", {})
+            except Exception as e:
+                print(f"  Config file error: {e}")
+                raise SystemExit(1)
+
+        colony_url = f"http://{os.environ.get('COLONY_SIDECAR_HOST', '127.0.0.1')}:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}"
+        api_key = os.environ.get("COLONY_API_KEY", "")
+
+        from colony_sidecar.persona.engine import PersonaEngine
+        engine = PersonaEngine(
+            manifest, Path(args.repo),
+            state_dir=Path(state_dir),
+            colony_url=colony_url,
+            colony_api_key=api_key,
+        )
+        summary = engine.setup(
+            variables=provided_vars,
+            secrets=provided_secrets,
+            interactive=args.config is None,
+        )
+        if "errors" in summary:
+            print("  Setup failed:")
+            for err in summary["errors"]:
+                print(f"    - {err}")
+            raise SystemExit(1)
+        print(f"  Persona '{manifest.name}' setup complete")
+        print(f"  Steps: {', '.join(summary.get('steps', []))}")
+
+    elif cmd == "services":
+        active_persona = _find_active_persona(state_dir)
+        if not active_persona:
+            print("  No active persona found")
+            raise SystemExit(1)
+        manifest, repo_path, engine = active_persona
+
+        action = args.action
+        if action == "status":
+            statuses = engine.services_status()
+            for s in statuses:
+                print(f"  {s['name']}: {s['status']}")
+        elif action == "start":
+            results = engine.services_start()
+            for r in results:
+                print(f"  {r['name']}: {r['result']}")
+        elif action == "stop":
+            results = engine.services_stop()
+            for r in results:
+                print(f"  {r['name']}: {r['result']}")
+        elif action == "install":
+            engine._install_services()
+            print("  Service definitions installed")
+        elif action == "uninstall":
+            results = engine.services_uninstall()
+            for r in results:
+                print(f"  {r['name']}: {r['result']}")
+
+    elif cmd == "backup":
+        from colony_sidecar.backup import create_full_backup
+
+        active = _find_active_persona(state_dir)
+        host_paths = []
+        if active:
+            _, _, engine = active
+            manifest = engine._manifest
+            if manifest.backup:
+                host_paths = manifest.backup.host_state + manifest.backup.custom
+
+        passphrase = None
+        if args.passphrase:
+            passphrase = args.passphrase.encode()
+        elif args.encrypt:
+            import getpass
+            passphrase = getpass.getpass("Backup passphrase: ").encode()
+
+        output_dir = args.output or os.path.expanduser("~/colony-backups")
+        archive = create_full_backup(
+            state_dir, output_dir,
+            passphrase=passphrase,
+            include_host_paths=host_paths if host_paths else None,
+        )
+        print(f"  Persona backup saved to {archive}")
+
+    elif cmd == "restore":
+        from colony_sidecar.backup import restore_full_backup
+
+        passphrase = None
+        if args.passphrase:
+            passphrase = args.passphrase.encode()
+        elif args.archive.endswith(".enc"):
+            import getpass
+            passphrase = getpass.getpass("Backup passphrase: ").encode()
+
+        summary = restore_full_backup(
+            args.archive, state_dir,
+            passphrase=passphrase,
+            force_identity=getattr(args, "force_identity", False),
+        )
+        print(f"  Restored colony: {summary['colony_id']}")
+        print(f"  Databases: {', '.join(summary.get('databases', []))}")
+
+    elif cmd == "uninstall":
+        active = _find_active_persona(state_dir)
+        if not active:
+            print("  No active persona found")
+            return
+        _, _, engine = active
+        results = engine.services_uninstall()
+        for r in results:
+            print(f"  {r['name']}: {r['result']}")
+        print("  Persona uninstalled")
+
+    else:
+        print("Usage: colony persona [setup|validate|services|backup|restore|uninstall]")
+
+
+def _find_active_persona(state_dir: str):
+    """Find the active persona from saved state. Returns (manifest, repo_path, engine) or None."""
+    persona_base = Path.home() / ".colony" / "persona"
+    if not persona_base.is_dir():
+        return None
+
+    for persona_dir in persona_base.iterdir():
+        if not persona_dir.is_dir():
+            continue
+        manifest_snapshot = persona_dir / "manifest.json"
+        if manifest_snapshot.exists():
+            try:
+                from colony_sidecar.persona.manifest import PersonaManifest
+                from colony_sidecar.persona.engine import PersonaEngine
+
+                data = json.loads(manifest_snapshot.read_text())
+                manifest = PersonaManifest.model_validate(data)
+
+                repo_path = Path(".")
+                engine = PersonaEngine(
+                    manifest, repo_path,
+                    state_dir=Path(state_dir),
+                    colony_url=f"http://{os.environ.get('COLONY_SIDECAR_HOST', '127.0.0.1')}:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}",
+                    colony_api_key=os.environ.get("COLONY_API_KEY", ""),
+                )
+                return manifest, repo_path, engine
+            except Exception:
+                continue
+    return None
 
 
 if __name__ == "__main__":
