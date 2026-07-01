@@ -652,13 +652,24 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 resp = client.get(
                     f"{self.sidecar_url}/v1/host/contacts/resolve",
                     headers=self._headers(),
-                    params={"gateway": platform or "", "address": user_id},
+                    # create=true: an unknown sender is auto-provisioned as an inert
+                    # contact (trust=unknown, interaction_allowed=false) so this turn's
+                    # memory/affect/facts attribute to a REAL person id instead of
+                    # pooling onto the 'default' sentinel (which the graph stores
+                    # unattributed and can never recall per-contact). Contact merge
+                    # reconciles the provisional record later.
+                    params={"gateway": platform or "", "address": user_id, "create": "true"},
                 )
                 if resp.status_code == 200:
                     cid = (resp.json() or {}).get("contact_id")
                     if cid:
                         self._contact_id = cid
                         logger.debug("Colony resolved contact %s for %s:%s", cid, platform, user_id)
+                else:
+                    # Non-200 (e.g. store not ready) is not a permanent verdict for this
+                    # sender — allow a retry next turn instead of caching 'default'.
+                    self._resolved_for = None
+                    logger.debug("Colony contact resolve HTTP %s for %s:%s", resp.status_code, platform, user_id)
         except Exception as exc:
             self._resolved_for = None  # transient error -> allow retry next turn
             logger.debug("Colony contact resolve failed: %s", exc)

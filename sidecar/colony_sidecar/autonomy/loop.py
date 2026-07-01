@@ -1815,7 +1815,9 @@ class AutonomyLoop:
                 from colony_sidecar.intelligence.relationships.scorer import RelationshipScorer
                 scorer = RelationshipScorer(graph)
                 if hasattr(scorer, "refresh_all_scores"):
-                    changes = await scorer.refresh_all_scores()
+                    # Pass the SQLite contact store so behavioral scores reverse-sync
+                    # onto contact rows instead of dead-ending in the graph.
+                    changes = await scorer.refresh_all_scores(store=self._registry.contacts)
                     if changes:
                         did_work = True
                         logger.info("Phase relationships: %d behavioral score updates", len(changes))

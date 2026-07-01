@@ -350,8 +350,14 @@ class RelationshipScorer:
         new_tier: str,
         old_score: float,
         reason: str,
+        store=None,
     ) -> ScoreAuditEntry:
-        """Atomic score update with audit trail."""
+        """Atomic score update with audit trail.
+
+        ``store`` (optional SQLiteContactStore) is forwarded to the graph so the
+        behavioral score reverse-syncs onto the linked contact row. Without it the
+        computed score dead-ends in the graph and the contact's relationship_score
+        never reflects behavioral signals (the "scoring starved" symptom)."""
         old_tier = self.tier_for(old_score)
         entry = ScoreAuditEntry(
             person_id=person_id,
@@ -364,19 +370,23 @@ class RelationshipScorer:
             timestamp=datetime.now(timezone.utc),
         )
 
-        # Persist to graph
+        # Persist to graph (and reverse-sync to SQLite when a store is supplied)
         await self.graph.record_score_change(
             person_id=person_id,
             new_score=new_score,
             new_tier=new_tier,
             old_score=old_score,
             reason=reason,
+            store=store,
         )
 
         return entry
 
-    async def refresh_all_scores(self) -> Dict[str, tuple]:
-        """Recompute scores for all active persons."""
+    async def refresh_all_scores(self, store=None) -> Dict[str, tuple]:
+        """Recompute scores for all active persons.
+
+        ``store`` is forwarded to each ``record_score_change`` so behavioral scores
+        reverse-sync onto the linked SQLite contact rows."""
         t0 = time.monotonic()
         results = {}
         no_signal_count = 0
@@ -410,7 +420,7 @@ class RelationshipScorer:
             is_no_signal_default = (new_score == 50.0 and new_tier == "regular")
             if not is_no_signal_default and abs(new_score - old_score) > 0.5:
                 await self.record_score_change(
-                    person_id, new_score, new_tier, old_score, "periodic_refresh"
+                    person_id, new_score, new_tier, old_score, "periodic_refresh", store=store
                 )
 
             results[person_id] = (new_score, new_tier)
