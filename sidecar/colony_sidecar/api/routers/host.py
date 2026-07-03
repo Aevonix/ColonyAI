@@ -2208,6 +2208,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
             append_event("conversation.turn", {
                 "contact_id": body.context.contact_id,
                 "session_id": body.context.session_id,
+                "channel_id": body.context.channel_id,   # cross-channel provenance for the timeline / handoff
                 "summary": (body.summary or "")[:300],
                 "topics": (body.topics or [])[:10],
                 "tools_used": (body.tools_used or [])[:20],
