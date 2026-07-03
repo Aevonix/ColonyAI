@@ -591,12 +591,40 @@ class ColonyGraph:
             logger.debug("record_turn: skipped low-salience / internal-marker turn")
             return None
 
+        # Real salience score (attribution redesign Phase 2), replacing the old hardcoded
+        # importance=0.85 that overrode the computed value. Signal from what the turn
+        # actually carries: named entities (facts about people/things), tool use (an
+        # action happened), and substance (length). A throwaway "ok thanks" scores low
+        # and decays fast; a fact-dense exchange scores high and persists.
+        _ent_n = len(entities or [])
+        _score = 0.35
+        _score += min(0.30, 0.10 * _ent_n)        # up to +0.30 for entities
+        if tools_used:
+            _score += 0.15                         # an action was taken
+        if len(summary) > 240:
+            _score += 0.10                         # substantive exchange
+        if "?" in summary:
+            _score += 0.05                         # a question = intent/curiosity worth recalling
+        importance = round(min(_score, 0.95), 3)
+
+        # Optional distillation (shadow by default): store the salient content rather
+        # than the verbatim "User:/Agent:" wrapper. Off => log what it WOULD store so
+        # we can validate before flipping live. On => strip the wrapper prefix.
         content = summary
-        importance = 0.7
+        _distill = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
+        if _distill:
+            _lines = [ln.split(":", 1)[1].strip() if ":" in ln else ln
+                      for ln in summary.splitlines()]
+            content = " — ".join(x for x in _lines if x) or summary
+        else:
+            logger.debug("distill(shadow): would store salient content for session %s (imp=%.2f)",
+                         session_id, importance)
+
         metadata: Dict[str, Any] = {
             "turn": True,
             "topics": topics,
             "tools_used": tools_used,
+            "salience": importance,
         }
 
         try:
@@ -606,7 +634,7 @@ class ColonyGraph:
                 memory_type="episodic",
                 entities=entities or [],
                 metadata=metadata,
-                importance=0.85,
+                importance=importance,
                 person_id=contact_id,
                 source_type=MemorySourceType.CONVERSATION.value,
                 source_uri=f"session:{session_id}",

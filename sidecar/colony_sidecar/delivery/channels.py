@@ -51,6 +51,7 @@ class ChannelRegistry:
         gateway_map: Dict[str, str],
         contacts_store: Optional[Any] = None,
         owner_contact_id: Optional[str] = None,
+        channel_store: Optional[Any] = None,
     ) -> None:
         self._env = env_channels
         self._json = json_channels
@@ -58,6 +59,7 @@ class ChannelRegistry:
         self._handle_inference = handle_inference
         self._gateway_map = gateway_map
         self._contacts_store = contacts_store
+        self._channel_store = channel_store
         self._json_path_value: str = ""
         self._owner_contact_id = self._normalize_person_id(owner_contact_id) if owner_contact_id else None
 
@@ -115,13 +117,45 @@ class ChannelRegistry:
             if inferred:
                 return inferred
 
-        # 5. Home channel env vars (home only, lowest priority)
+        # 5. Registered channels (dynamic): a live registered channel that declares a
+        #    home_chat_id can serve as the home route. Freshest last_seen_at wins, so
+        #    routing follows the surface that is actually alive. Explicit env/JSON
+        #    config above still outranks this (operator intent beats observation).
+        if channel_type == "home":
+            store_home = self._resolve_home_from_store()
+            if store_home:
+                return store_home
+
+        # 6. Home channel env vars (home only, lowest priority)
         if channel_type == "home":
             home = self._resolve_home_from_env()
             if home:
                 return home
 
         return None
+
+    def _resolve_home_from_store(self) -> Optional[Channel]:
+        """Home route from the channel registration DB (Framework Part 4)."""
+        if self._channel_store is None:
+            return None
+        try:
+            candidates = [
+                ch for ch in self._channel_store.list_active()
+                if getattr(ch.manifest, "home_chat_id", None)
+            ]
+            if not candidates:
+                return None
+            candidates.sort(key=lambda c: c.last_seen_at or c.registered_at, reverse=True)
+            best = candidates[0]
+            platform = best.manifest.platform_hint or best.gateway_family
+            return Channel(
+                platform=platform,
+                chat_id=best.manifest.home_chat_id,
+                channel_type="home",
+            )
+        except Exception:
+            logger.debug("channel-store home resolution failed", exc_info=True)
+            return None
 
     def reload(self) -> None:
         """Re-read env vars and JSON config without restarting the sidecar.
@@ -149,6 +183,7 @@ class ChannelRegistry:
         handle_inference: Optional[bool] = None,
         gateway_map: Optional[Dict[str, str]] = None,
         contacts_store: Optional[Any] = None,
+        channel_store: Optional[Any] = None,
     ) -> "ChannelRegistry":
         """Load a ChannelRegistry from all configured sources.
 
@@ -193,6 +228,7 @@ class ChannelRegistry:
             gateway_map=gateway_map,
             contacts_store=contacts_store,
             owner_contact_id=owner_contact_id or None,
+            channel_store=channel_store,
         )
         registry._json_path_value = json_path  # stash for reload()
 

@@ -1012,32 +1012,56 @@ def register(ctx):
             pass
         return out
 
+    _contact_by_sender = {}   # "platform:sender" -> contact_id (per-sender, not one shared slot)
+
     def _resolve_contact_id(platform, sender):
-        """Resolve the sender to a real Colony contact id (cached per sender)."""
+        """Resolve the sender to a real Colony contact id (cached PER SENDER).
+
+        Attribution redesign Phase 1: one shared _session_state slot let concurrent
+        sessions journal under the wrong sender, and lookup-only resolution let
+        unknown senders fall through to the default sentinel. Now: per-sender cache,
+        create=true provisioning, and sender-less turns attribute to the agent-self
+        contact instead of 'default'.
+        """
         if not sender:
-            return _session_state.get("contact_id") or _contact_id
-        if _session_state.get("_resolved_for") == sender and _session_state.get("contact_id"):
-            return _session_state["contact_id"]
-        cid = _session_state.get("contact_id") or _contact_id
+            return os.environ.get("COLONY_SELF_CONTACT_ID", "colony-self")
+        key = f"{platform}:{sender}"
+        cached = _contact_by_sender.get(key)
+        if cached:
+            _session_state["contact_id"] = cached
+            return cached
+        cid = ""
         try:
             resp = _colony_client.get(
                 "/v1/host/contacts/resolve",
-                params={"gateway": platform or "", "address": sender},
+                params={"gateway": platform or "", "address": sender, "create": "true"},
                 timeout=4,
             )
             if resp.status_code == 200:
-                cid = (resp.json() or {}).get("contact_id") or cid
-            _session_state["_resolved_for"] = sender
+                cid = (resp.json() or {}).get("contact_id") or ""
+                if cid:
+                    _contact_by_sender[key] = cid
         except Exception:
             pass
+        if not cid:
+            cid = _session_state.get("contact_id") or _contact_id
+        if not cid or cid == "default":
+            cid = os.environ.get("COLONY_SELF_CONTACT_ID", "colony-self")
         _session_state["contact_id"] = cid
         return cid
+
+    _sender_by_session = {}   # session_id -> (platform, sender): survives concurrent sessions
 
     def _pre_llm_call(**kwargs):
         # Capture session metadata (used by turn journaling) + resolve contact.
         _session_state["session_id"] = str(kwargs.get("session_id", "") or "")
         _session_state["platform"] = str(kwargs.get("platform", "") or "")
         _session_state["sender_id"] = str(kwargs.get("sender_id", "") or "")
+        if _session_state["session_id"]:
+            _sender_by_session[_session_state["session_id"]] = (
+                _session_state["platform"], _session_state["sender_id"])
+            if len(_sender_by_session) > 512:   # bounded
+                _sender_by_session.pop(next(iter(_sender_by_session)))
         _resolve_contact_id(_session_state["platform"], _session_state["sender_id"])
         # Inject cached proactive Colony events into this turn, if any.
         if _event_subscriber is None:
@@ -1066,10 +1090,14 @@ def register(ctx):
         assistant_msg = str(kwargs.get("assistant_response", "") or "")
         if not (user_msg or assistant_msg):
             return None
-        contact_id = _resolve_contact_id(
-            str(kwargs.get("platform", "") or _session_state.get("platform", "")),
-            _session_state.get("sender_id", ""),
+        # Per-SESSION sender lookup, not the shared last-turn slot: with concurrent
+        # sessions the shared slot journals turns under whichever sender ran last.
+        _plat, _snd = _sender_by_session.get(
+            session_id,
+            (_session_state.get("platform", ""), _session_state.get("sender_id", "")),
         )
+        contact_id = _resolve_contact_id(
+            str(kwargs.get("platform", "") or _plat), _snd)
         summary = ""
         if user_msg and assistant_msg:
             summary = f"User: {user_msg[:300]}\nAgent: {assistant_msg[:300]}"

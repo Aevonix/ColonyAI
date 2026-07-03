@@ -11,6 +11,7 @@ Config key: memory.provider = "colony"
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -19,6 +20,21 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+# Per-TURN contact binding (attribution redesign Phase 1). The provider instance is
+# shared by every concurrent session in the host process; a single mutable
+# self._contact_id lets parallel turns journal under the wrong sender. resolve_contact
+# binds the current turn's contact here (task-scoped), and every write/read prefers it.
+_turn_contact: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "colony_turn_contact", default=""
+)
+
+
+def _self_contact_id() -> str:
+    """Attribution for sender-less turns (cron, autonomy worker, self-checks):
+    the agent's own contact, never the 'default' sentinel."""
+    return os.environ.get("COLONY_SELF_CONTACT_ID", "colony-self")
+
 
 logger = logging.getLogger(__name__)
 
@@ -455,6 +471,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             raw_key = os.environ.get(env_name, "")
         self._api_key = raw_key
         self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
+        self._contact_by_sender: Dict[str, str] = {}   # (platform:user) -> contact_id
         self._session_id = ""
         self._cached_context: str = ""
         self._prefetch_thread = None  # background sync prefetch (v0.3.0)
@@ -643,10 +660,14 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         pre_llm_call hook (the lifecycle hook that carries the sender). Cached per
         sender so it only hits the sidecar once per sender per session."""
         if not user_id:
+            _turn_contact.set("")          # sender-less turn: no stale binding from a prior turn
             return
-        if getattr(self, "_resolved_for", None) == user_id:
-            return  # already attempted resolution for this sender
-        self._resolved_for = user_id
+        cache_key = f"{platform}:{user_id}"
+        cached = self._contact_by_sender.get(cache_key)
+        if cached:
+            self._contact_id = cached
+            _turn_contact.set(cached)      # bind THIS turn even on the cached path
+            return
         try:
             with httpx.Client(timeout=4) as client:
                 resp = client.get(
@@ -664,14 +685,12 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                     cid = (resp.json() or {}).get("contact_id")
                     if cid:
                         self._contact_id = cid
+                        self._contact_by_sender[cache_key] = cid
+                        _turn_contact.set(cid)
                         logger.debug("Colony resolved contact %s for %s:%s", cid, platform, user_id)
                 else:
-                    # Non-200 (e.g. store not ready) is not a permanent verdict for this
-                    # sender — allow a retry next turn instead of caching 'default'.
-                    self._resolved_for = None
                     logger.debug("Colony contact resolve HTTP %s for %s:%s", resp.status_code, platform, user_id)
         except Exception as exc:
-            self._resolved_for = None  # transient error -> allow retry next turn
             logger.debug("Colony contact resolve failed: %s", exc)
 
     # -- Prefetch (context injection) ------------------------------------------
@@ -706,7 +725,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                         "identity": {"host_id": "hermes"},
                         "context": {
                             "session_id": session_id or self._session_id,
-                            "contact_id": self._contact_id,
+                            "contact_id": _turn_contact.get() or self._contact_id,
                         },
                         "incoming_message": {"role": "user", "content": query},
                         "include_initiatives": True,
@@ -750,7 +769,9 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         NON-BLOCKING: runs in a daemon thread per Hermes threading contract.
         """
         sid = session_id or self._session_id
-        contact_id = self._contact_id
+        contact_id = _turn_contact.get() or self._contact_id
+        if not contact_id or contact_id == "default":
+            contact_id = _self_contact_id()   # sender-less: attribute to the agent itself
         url = self.sidecar_url
         headers = self._headers()
         self._last_sync_attempt = datetime.now(timezone.utc).isoformat()

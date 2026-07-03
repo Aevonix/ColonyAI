@@ -2049,6 +2049,9 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     body.context.channel_id = await _ensure_channel_id(
         body.context, identity=body.identity,
     )
+    # Keep the channel registry alive from real traffic: first sighting
+    # auto-registers, every turn refreshes last_seen_at (channel health).
+    _observe_channel(body.context.channel_id)
 
     # If structured fields are empty but raw messages are present,
     # extract topics/entities/summary from the raw messages.
@@ -3556,6 +3559,47 @@ _context_provenance = None
 def set_context_provenance_store(store):
     global _context_provenance
     _context_provenance = store
+
+
+_channel_store = None
+
+
+def set_channel_store(store) -> None:
+    """Wire the channel registration store so turn traffic keeps it alive."""
+    global _channel_store
+    _channel_store = store
+
+
+def _observe_channel(channel_id: str) -> None:
+    """Auto-register a channel on first sighting and keep last_seen_at fresh.
+
+    Channels become first-class registered entities from real traffic alone: a
+    surface that has never called /v1/channels/register still appears in the
+    registry (as an observed, minimally-described channel) the moment a turn
+    flows through it. Explicit registration with a fuller manifest can later
+    upsert over this using the channel token.
+    """
+    if _channel_store is None or not channel_id:
+        return
+    try:
+        if _channel_store.get(channel_id) is None:
+            from colony_sidecar.channels.manifest import ChannelManifest
+
+            gateway = channel_id.split(":", 1)[0] if ":" in channel_id else channel_id
+            _channel_store.register(
+                ChannelManifest(
+                    channel_key=channel_id,
+                    display_name=channel_id,
+                    gateway_family=gateway,
+                    platform_hint=gateway,
+                )
+            )
+            logger.info("channel observed + auto-registered: %s", channel_id)
+        else:
+            _channel_store.touch(channel_id)
+    except Exception:
+        # registration must never affect turn processing
+        logger.debug("channel observe failed for %s", channel_id, exc_info=True)
 
 
 async def _ensure_channel_id(

@@ -547,6 +547,8 @@ async def lifespan(app: FastAPI):
         channel_store.connect()
         set_channel_store(channel_store)
         set_channel_store_ref(channel_store)
+        from colony_sidecar.api.routers.host import set_channel_store as _host_set_channel_store
+        _host_set_channel_store(channel_store)   # turn traffic auto-registers + touches channels
         logger.info("ChannelStore initialized (db=%s)", channels_db)
     except Exception as exc:
         logger.warning("ChannelStore init failed: %s", exc)
@@ -726,7 +728,7 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.delivery.bridge import ProactiveDeliveryBridge
         from colony_sidecar.delivery.channels import ChannelRegistry
-        channel_registry = ChannelRegistry.load(contacts_store=contacts_store)
+        channel_registry = ChannelRegistry.load(contacts_store=contacts_store, channel_store=channel_store)
         delivery = ProactiveDeliveryBridge(channel_registry=channel_registry)
         set_delivery_bridge(delivery)
         logger.info("Delivery bridge initialized")
