@@ -280,8 +280,8 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "properties": {
                 "worker_id": {
                     "type": "string",
-                    "description": "Optional worker node ID (default: aeva-worker)",
-                    "default": "aeva-worker",
+                    "description": "Optional worker node ID (default: colony-worker)",
+                    "default": "colony-worker",
                 },
                 "capabilities": {
                     "type": "array",
@@ -405,7 +405,7 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "name": "colony_timeline",
         "description": (
-            "Recall Aeva's timeline of past events — conversations, outreach, "
+            "Recall the assistant's timeline of past events — conversations, outreach, "
             "initiatives, tasks — ordered by time. Use to answer 'what happened "
             "recently', 'what's been going on with <person>', 'what have I done "
             "since yesterday', or to ground yourself in recent history. Returns a "
@@ -1045,7 +1045,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                     f"{self.sidecar_url}/v1/host/queue/jobs/claim",
                     headers=self._headers(),
                     json={
-                        "node_id": args.get("worker_id", "aeva-worker"),
+                        "node_id": args.get("worker_id", "colony-worker"),
                         "capabilities": args.get("capabilities", ["agent_action"]),
                     },
                     timeout=5,

@@ -61,6 +61,25 @@ def get_owner_contact_id() -> Optional[str]:
     return None
 
 
+def get_owner_name(default: str = "the owner") -> str:
+    """Human-readable owner name for prompts/messages.
+
+    Deployment-agnostic: the generic build must never hardcode a person's name.
+    Set ``COLONY_OWNER_NAME`` in the deployment env; otherwise a neutral term
+    ("the owner") is used so the public code carries no personal identity.
+    """
+    return os.environ.get("COLONY_OWNER_NAME") or default
+
+
+def get_persona_name(default: str = "the assistant") -> str:
+    """Human-readable persona/agent name for tool descriptions and prompts.
+
+    Same rule: the deployment sets ``COLONY_PERSONA_NAME``; the generic default
+    is neutral so the public code names no specific product.
+    """
+    return os.environ.get("COLONY_PERSONA_NAME") or default
+
+
 class IdentityResolver:
     """Resolve any identifier for a person to the set of all known forms.
 

@@ -10,6 +10,8 @@ from colony_sidecar.identity.resolver import (
     OwnerIdentityError,
     get_identity_resolver,
     get_owner_contact_id,
+    get_owner_name,
+    get_persona_name,
     reset_identity_resolver,
 )
 
@@ -18,5 +20,7 @@ __all__ = [
     "OwnerIdentityError",
     "get_identity_resolver",
     "get_owner_contact_id",
+    "get_owner_name",
+    "get_persona_name",
     "reset_identity_resolver",
 ]

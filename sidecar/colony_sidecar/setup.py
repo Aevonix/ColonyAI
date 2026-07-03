@@ -884,7 +884,7 @@ def _install_hermes_addons(hermes_home: Path, ops_src: Path) -> None:
     scripts_dst.mkdir(parents=True, exist_ok=True)
     for f in ("colony-doctor.py", "colony-doctor-cron.sh",
               "hermes-gateway-restart-runner.sh", "pre-restart-summary.py",
-              "aeva-activity-monitor.py"):
+              "colony-activity-monitor.py"):
         src = ops_src / f
         if src.exists():
             shutil.copy2(src, scripts_dst / f)
@@ -913,7 +913,7 @@ def _install_hermes_addons(hermes_home: Path, ops_src: Path) -> None:
             "StandardErrorPath": str(logs / "colony-doctor.err"),
         },
         "ai.hermes.activity-monitor": {
-            "ProgramArguments": [venv_py, str(scripts_dst / "aeva-activity-monitor.py")],
+            "ProgramArguments": [venv_py, str(scripts_dst / "colony-activity-monitor.py")],
             "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 10,
             "StandardOutPath": str(logs / "activity-monitor.out.log"),
             "StandardErrorPath": str(logs / "activity-monitor.err.log"),

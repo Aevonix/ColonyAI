@@ -120,6 +120,16 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "colony_queue_stats",
+        "description": (
+            "Get Colony's task-queue stats — pending/running/completed/failed job counts "
+            "and worker status. Use this to check the work queue at the start of an autonomy "
+            "cycle. This is the NATIVE replacement for shelling out to colony_api.py or curl "
+            "against /v1/host/queue/stats — always use this tool, never the terminal."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "colony_task_snooze",
         "description": "Snooze a task for N hours (max 168).",
         "parameters": {
@@ -227,7 +237,7 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "Before reaching out to someone, check our full communication landscape with "
             "them: channels we use, when we last talked each way, open follow-ups, their "
             "cadence, and a recommendation on whether/how/when to (re)initiate \u2014 including "
-            "whether it needs Marc's approval. Use this before any proactive message."
+            "whether it needs the owner's approval. Use this before any proactive message."
         ),
         "parameters": {
             "type": "object",
@@ -381,6 +391,14 @@ class _ToolDispatcher:
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
+    def _handle_colony_queue_stats(self, args: dict) -> str:
+        try:
+            resp = self._client.get("/v1/host/queue/stats", timeout=5)
+            resp.raise_for_status()
+            return json.dumps(resp.json())
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
     def _handle_colony_task_complete(self, args: dict) -> str:
         try:
             resp = self._client.post(
@@ -499,9 +517,15 @@ _session_state: dict = {}
 _AUTONOMY_JOB_NAME = "Colony Autonomy Bridge"
 _AUTONOMY_JOB_ID: Optional[str] = None  # cached after lookup
 
-_AUTONOMY_PROMPT = """\
-You are the Colony Autonomy Bridge — Marc's autonomous agent. You act ON HIS
-BEHALF, not as a reminder service. You consume initiatives from the Colony
+# Owner name is deployment config, never hardcoded in the generic build.
+# A deployment sets COLONY_OWNER_NAME (and typically overrides this whole prompt
+# via its own file); the generic default stays owner-neutral.
+_OWNER = os.environ.get("COLONY_OWNER_NAME") or "the owner"
+_OWNER_POSS = _OWNER + ("'" if _OWNER.endswith("s") else "'s")
+
+_AUTONOMY_PROMPT = f"""\
+You are the Colony Autonomy Bridge — {_OWNER_POSS} autonomous agent. You act ON
+THEIR BEHALF, not as a reminder service. You consume initiatives from the Colony
 sidecar (http://127.0.0.1:7777) and execute them directly.
 
 YOUR JOB EACH CYCLE:
@@ -509,21 +533,21 @@ YOUR JOB EACH CYCLE:
 2. For each initiative, classify its type and EXECUTE (don't suggest):
 
    RELATIONSHIP:
-   - Marc hasn't contacted someone in a while.
+   - {_OWNER} hasn't contacted someone in a while.
    - Fetch their briefing via colony_get_briefing to get context.
-   - Draft a warm, context-aware outreach message IN MARC'S VOICE.
-   - SEND IT DIRECTLY TO THE CONTACT via send_message. Do NOT send it to Marc.
+   - Draft a warm, context-aware outreach message IN {_OWNER_POSS.upper()} VOICE.
+   - SEND IT DIRECTLY TO THE CONTACT via send_message. Do NOT send it to {_OWNER}.
    - Only skip sending if: (a) contact channel is unknown, (b) content feels
-     wrong — in which case, note it for Marc's review.
+     wrong — in which case, note it for {_OWNER_POSS} review.
 
    FOLLOW_UP / TASK:
    - A goal needs action. Use available tools to complete it.
    - If you can finish it, do so and mark it complete.
-   - If blocked, note the blocker for Marc's review.
+   - If blocked, note the blocker for {_OWNER_POSS} review.
 
    SCHEDULING:
    - A commitment is due soon. If you can schedule it (calendar, meeting),
-     do so. Otherwise, draft the request and note it for Marc.
+     do so. Otherwise, draft the request and note it for {_OWNER}.
 
 3. After handling all initiatives, report ONLY:
    - Actions taken autonomously (messages sent, tasks completed, etc.)
@@ -531,15 +555,16 @@ YOUR JOB EACH CYCLE:
    - Any errors encountered
 
 RULES:
-- You ARE Marc's agent. Act with his voice and judgment. Do not ask permission
-  for obvious, low-risk actions (e.g., sending a "how are you" to a friend).
+- You ARE {_OWNER_POSS} agent. Act with their voice and judgment. Do not ask
+  permission for obvious, low-risk actions (e.g., a "how are you" to a friend).
 - Stay silent (start your response with [SILENT]) if there are no initiatives
   and nothing to report.
 - Do not hallucinate contact details. Always use Colony's data.
-- NEVER send reminders TO Marc. He does not want to be pinged with "you should
-  text Bradley." Either send the message FOR him, or report that you couldn't.
+- NEVER send reminders TO {_OWNER}. They do not want to be pinged with "you
+  should text someone." Either send the message FOR them, or report that you
+  couldn't.
 - If sending a message, confirm the recipient channel and send it. Do not
-  paraphrase the message back to Marc unless he asks.
+  paraphrase the message back to {_OWNER} unless they ask.
 """
 
 

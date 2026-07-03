@@ -27,8 +27,8 @@ if [ -f "$HOME/.hermes/scripts/pre-restart-summary.py" ]; then
   SUMMARY="$(cat "$HOME/.hermes/.post_restart_resume" 2>/dev/null || true)"
 fi
 WA="$(grep '^WHATSAPP_HOME_CHANNEL=' "$HOME/.hermes/.env" 2>/dev/null | cut -d= -f2-)"
-MARC_DM="$(python3 -c "import json,os; j=json.load(open(os.path.expanduser('~/.hermes/cron/jobs.json'))); it=j if isinstance(j,list) else j.get('jobs',[]); o=[x.get('origin') or {} for x in it if x.get('id')=='efa5a0d53e43']; print((o[0].get('chat_id') if o else '') or '')" 2>/dev/null)"
-[ -z "$MARC_DM" ] && MARC_DM="$WA"
+HOME_DM="$(python3 -c "import json,os; j=json.load(open(os.path.expanduser('~/.hermes/cron/jobs.json'))); it=j if isinstance(j,list) else j.get('jobs',[]); o=[x.get('origin') or {} for x in it if x.get('id')==os.environ.get('COLONY_RESTART_JOB_ID','')]; print((o[0].get('chat_id') if o else '') or '')" 2>/dev/null)"
+[ -z "$HOME_DM" ] && HOME_DM="$WA"
 
 launchctl bootout "gui/${UID_N}/${GW_LABEL}" 2>/dev/null
 # Wait for the service to FULLY unload (port free AND not in launchctl list) —
@@ -78,7 +78,7 @@ if $ok; then
     MSG="✅ Back online after a refresh. All channels healthy."
   fi
   # Restart notices go to the home/ops channel ($WA), NOT the owner's main chat
-  # ($MARC_DM) — keeps the main Aeva conversation clean. Suppressed if no home
+  # ($HOME_DM) — keeps the main conversation clean. Suppressed if no home
   # channel is configured (WHATSAPP_HOME_CHANNEL).
   { echo "--- wake $(now) | HOME=$WA | note_len=${#NOTE} ---"; } >> "$WLOG" 2>&1
   if [ -n "$WA" ]; then

@@ -1,6 +1,6 @@
 """Contract test: the Hermes colony plugin's endpoints must exist in the host API.
 
-The plugin (integrations/hermes/colony) lives in this repo precisely so its
+The plugin (plugins/hermes-plugin) lives in this repo precisely so its
 tool->endpoint mappings stay in lockstep with the API. This test auto-discovers
 every `/v1/host/...` path the plugin references and asserts each one matches a
 registered route. It exists because a `colony_task_*` tool quietly called a
@@ -20,7 +20,7 @@ from colony_sidecar.api.routers.task_queue import router as task_queue_router
 # Every router the app mounts under /v1/host — the plugin may hit any of them.
 _HOST_ROUTERS = (host_router, task_queue_router, observations_router)
 
-_INTEGRATION = pathlib.Path(__file__).resolve().parents[2] / "integrations" / "hermes" / "colony"
+_INTEGRATION = pathlib.Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin"
 
 
 def _normalize(path: str) -> str:

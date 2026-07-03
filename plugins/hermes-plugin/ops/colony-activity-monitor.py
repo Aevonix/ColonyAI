@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Aeva activity monitor — external observer (NO Hermes code changes).
+"""Colony activity monitor — external observer (NO Hermes code changes).
+
+Persona label is deployment config (COLONY_PERSONA_NAME); the generic default is neutral.
 
 Tails Hermes' unified activity log (~/.hermes/logs/agent.log), reconstructs
 each agent turn per session, and mirrors activity to the WhatsApp home channel:
@@ -11,7 +13,7 @@ each agent turn per session, and mirrors activity to the WhatsApp home channel:
     entirely when the job returns [SILENT] (routine "nothing to do" cycles) so
     the home channel isn't spammed every cycle.
   - A fuller, unthrottled line-by-line stream is always appended to
-    ~/.hermes/logs/aeva-activity.log (the "deep view").
+    ~/.hermes/logs/${COLONY_ACTIVITY_LOG:-colony-activity.log} (the "deep view").
 
 Sends run on a background thread fed by a queue, so log-tailing never blocks on
 WhatsApp. Read-only mirror: it only reacts to log lines, never touches Hermes.
@@ -28,7 +30,7 @@ from collections import OrderedDict, deque
 
 HOME = os.path.expanduser("~")
 LOG = os.path.join(HOME, ".hermes/logs/agent.log")
-ACTIVITY = os.path.join(HOME, ".hermes/logs/aeva-activity.log")
+ACTIVITY = os.path.join(HOME, ".hermes/logs", os.environ.get("COLONY_ACTIVITY_LOG", "colony-activity.log"))
 ENV = os.path.join(HOME, ".hermes/.env")
 JOBS = os.path.join(HOME, ".hermes/cron/jobs.json")
 HERMES = os.path.join(HOME, ".hermes/hermes-agent/venv/bin/hermes")
@@ -184,7 +186,7 @@ def emit_header(t):
         send_home(f"\U0001f9e9 {who} working…")
         return
     txt = (t.get("text") or "").replace("\n", " ").strip()
-    head = f"\U0001f4ac {who} → Aeva"
+    head = f"\U0001f4ac {who} → {os.environ.get("COLONY_PERSONA_NAME", "assistant")}"
     if txt:
         head += f"\n  \"{txt[:140]}\""
     send_home(head)
@@ -350,7 +352,7 @@ def _flush_pending_cron():
 
 
 def follow():
-    append_local(f"--- aeva-activity-monitor started {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+    append_local(f"--- colony-activity-monitor started {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
     f = None
     inode = None
     pos = 0

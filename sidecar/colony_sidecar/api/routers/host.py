@@ -1831,10 +1831,10 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
                     except Exception:
                         pass
                 if _bits:
-                    from colony_sidecar.identity import get_owner_contact_id
+                    from colony_sidecar.identity import get_owner_contact_id, get_owner_name
                     _is_owner = (get_owner_contact_id() == contact_id)
                     if not _is_owner:
-                        _bits.append("Proactively reaching out to them needs Marc's approval first.")
+                        _bits.append("Proactively reaching out to them needs %s's approval first." % get_owner_name())
                     sections.append(ContextSection(
                         id="colony-comms-landscape",
                         title="Communication landscape",
