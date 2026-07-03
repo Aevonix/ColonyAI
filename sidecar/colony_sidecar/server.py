@@ -732,6 +732,44 @@ async def lifespan(app: FastAPI):
         delivery = ProactiveDeliveryBridge(channel_registry=channel_registry)
         set_delivery_bridge(delivery)
         logger.info("Delivery bridge initialized")
+
+        # --- 13b. Briefings: full wiring (delivery + persistence + schedule) ---
+        # The bare engine from section 9 can compose briefings but has no gateway, no
+        # persistent store, and no scheduler -- proactive output never reaches anyone.
+        # Rebuild it here, now that the delivery bridge exists: the bridge-backed
+        # gateway auto-registers when a home channel is configured, the store persists
+        # under COLONY_STATE_DIR, and the scheduler fires daily/weekly briefings and
+        # drains pending deliveries. All deployment specifics come from env.
+        try:
+            from pathlib import Path as _P
+
+            from colony_sidecar.briefings.config import BriefingConfig
+            from colony_sidecar.briefings.engine import BriefingEngine
+            from colony_sidecar.briefings.scheduler import BriefingScheduler
+            from colony_sidecar.briefings.store import BriefingStore
+
+            b_cfg = BriefingConfig()
+            b_cfg.daily.time = os.environ.get("COLONY_BRIEFING_DAILY_TIME", b_cfg.daily.time)
+            b_cfg.daily.timezone = os.environ.get("COLONY_BRIEFING_TZ", b_cfg.daily.timezone)
+            b_cfg.weekly.timezone = b_cfg.daily.timezone
+            b_cfg.delivery_gateway = os.environ.get("COLONY_BRIEFING_GATEWAY", "whatsapp")
+            b_cfg.lm_enhancement_enabled = (
+                os.environ.get("COLONY_BRIEFING_LM_ENHANCE", "0") not in ("0", "false", "no")
+            )
+            _b_state_dir = os.environ.get("COLONY_STATE_DIR", ".")
+            b_store = BriefingStore(db_path=str(_P(_b_state_dir) / "briefings.db"))
+            briefings = BriefingEngine(config=b_cfg, store=b_store, delivery_bridge=delivery)
+            set_briefings_engine(briefings)
+            if os.environ.get("COLONY_BRIEFINGS_SCHEDULE", "1") not in ("0", "false", "no"):
+                b_sched = BriefingScheduler(config=b_cfg, engine=briefings, store=b_store)
+                briefings.attach_scheduler(b_sched)
+                b_sched.start()
+            logger.info(
+                "BriefingEngine rewired: gateway=%s daily=%s %s scheduler=on",
+                b_cfg.delivery_gateway, b_cfg.daily.time, b_cfg.daily.timezone,
+            )
+        except Exception as exc:
+            logger.warning("Briefing delivery wiring failed: %s", exc)
     except Exception as exc:
         logger.warning("ProactiveDeliveryBridge init failed: %s", exc)
 

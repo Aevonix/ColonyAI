@@ -134,8 +134,26 @@ async def handle_get_briefing(
         if briefings is None:
             return json.dumps({"error": "Briefings engine not wired", "status": "unavailable"})
 
-        briefing = await briefings.generate(contact_id)
-        return json.dumps(briefing)
+        # API drift fix: the engine has no generate(); expose recent + pending
+        # briefings (read-only, no LLM cost, no delivery side effects).
+        from dataclasses import asdict, is_dataclass
+
+        def _plain(b):
+            try:
+                if is_dataclass(b):
+                    return asdict(b)
+                if hasattr(b, "model_dump"):
+                    return b.model_dump()
+                return b.__dict__
+            except Exception:
+                return {"repr": str(b)}
+
+        recent = [_plain(b) for b in briefings.get_recent(limit=3)]
+        pending = [_plain(b) for b in briefings.get_pending()]
+        return json.dumps(
+            {"recent": recent, "pending": pending, "contact_id": contact_id},
+            default=str,
+        )
     except Exception as e:
         logger.error("colony_get_briefing failed: %s", e)
         return json.dumps({"error": str(e), "status": "error"})
