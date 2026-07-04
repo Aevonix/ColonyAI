@@ -41,13 +41,34 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TYPES = {
+# Every initiative type this internal-tool backend is capable of processing.
+_EXECUTABLE_TYPES = {
     "follow_up", "relationship", "introduction", "health", "scheduling",
     "coding", "subsystem_health", "data_quality", "operational",
     "capability_gap", "knowledge_acquisition", "behavioral_correction",
     "agent_action", "commitment", "calendar", "research", "task",
     "project", "system",
 }
+
+
+def _default_allowed_types() -> set[str]:
+    """Internal-execution types = everything except reach-out types.
+
+    Reach-out (person-facing) initiatives are delivered through the autonomy
+    loop's guarded delivery path (push_initiative -> Hermes), where the host
+    agent composes and sends them under the delivery rate limiter. Executing
+    them here with the internal-only toolset would just swallow them into
+    bookkeeping and starve delivery, so they are excluded by default. A
+    deployment can still opt them back in via COLONY_EXECUTOR_TYPES.
+    """
+    try:
+        from colony_sidecar.delivery.classification import reachout_types
+        return set(_EXECUTABLE_TYPES) - set(reachout_types())
+    except Exception:
+        return set(_EXECUTABLE_TYPES)
+
+
+_DEFAULT_TYPES = _default_allowed_types()
 
 _SYSTEM_PROMPT = """\
 You are an autonomous initiative executor for Colony, a personal \

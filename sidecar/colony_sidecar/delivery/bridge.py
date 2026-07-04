@@ -240,17 +240,19 @@ class ProactiveDeliveryBridge:
             logger.warning("push_to_gateway failed: %s", exc)
             return False
 
-    async def push_initiative(self, initiative: Dict[str, Any]) -> bool:
-        """Push a structured initiative to Hermes via webhook.
+    def _prepare_initiative_dispatch(self, initiative: Dict[str, Any]) -> Dict[str, Any]:
+        """Build everything needed to dispatch an initiative to Hermes.
 
-        Returns True if Hermes accepted (202), False otherwise.
+        Pure/side-effect-free: resolves the recipient bucket and target
+        channel, builds the webhook payload, and signs the exact bytes that
+        go on the wire. Both :meth:`push_initiative` (which sends) and
+        :meth:`preview_initiative` (which does not) share this so the shadow
+        view is byte-identical to what a real send would transmit.
+
+        Returns a dict with: url, headers, body_bytes, payload, person_id
+        (rate-limit recipient bucket), urgency (0-1), channel_hint, target
+        ({user_chat, home_chat}).
         """
-        try:
-            import aiohttp
-        except ImportError:
-            logger.warning("aiohttp not available — cannot push initiative")
-            return False
-
         # Hermes webhook URL — override via env var for flexibility
         hermes_webhook_url = os.environ.get(
             "COLONY_HERMES_WEBHOOK_URL",
@@ -262,6 +264,9 @@ class ProactiveDeliveryBridge:
 
         # Resolve agent name from env var — never hardcode
         agent_name = os.environ.get("COLONY_AGENT_NAME", "the assistant")
+
+        # Rate-limit urgency stays on the 0-1 scale the limiter expects.
+        urgency = float(initiative.get("priority", 0.5) or 0.5)
 
         # Normalize priority: if it's a float <= 1.0, scale to 0-100
         raw_priority = initiative.get("priority", 0.5)
@@ -313,6 +318,7 @@ class ProactiveDeliveryBridge:
 
         if not raw_entity_id or is_self_initiative:
             # System/self initiative — no DM, always home
+            person_id = os.environ.get("COLONY_OWNER_CONTACT_ID", "owner")
             user_channel = None
             home_channel = self._channel_registry.resolve("__system__", "home")
         else:
@@ -347,6 +353,55 @@ class ProactiveDeliveryBridge:
                 webhook_secret.encode("utf-8"), body_bytes, hashlib.sha256
             ).hexdigest()
             headers["X-Webhook-Signature"] = sig
+
+        return {
+            "url": hermes_webhook_url,
+            "headers": headers,
+            "body_bytes": body_bytes,
+            "payload": payload,
+            "person_id": person_id,
+            "urgency": urgency,
+            "channel_hint": channel_hint,
+            "target": dict(delivery_context),
+        }
+
+    def preview_initiative(self, initiative: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve where/what an initiative WOULD be delivered, without sending.
+
+        Read-only. Returns the same recipient/target/payload a real
+        :meth:`push_initiative` would transmit, for shadow logging and
+        operator review.
+        """
+        prep = self._prepare_initiative_dispatch(initiative)
+        return {
+            "person_id": prep["person_id"],
+            "urgency": prep["urgency"],
+            "channel_hint": prep["channel_hint"],
+            "target": prep["target"],
+            "initiative_type": initiative.get("type", "unknown"),
+            "title": initiative.get("title", ""),
+            "description": initiative.get("description", ""),
+            "rationale": initiative.get("rationale", ""),
+            "suggested_action": initiative.get("suggested_action", ""),
+            "webhook_payload": prep["payload"],
+        }
+
+    async def push_initiative(self, initiative: Dict[str, Any]) -> bool:
+        """Push a structured initiative to Hermes via webhook.
+
+        Returns True if Hermes accepted (202), False otherwise.
+        """
+        try:
+            import aiohttp
+        except ImportError:
+            logger.warning("aiohttp not available — cannot push initiative")
+            return False
+
+        prep = self._prepare_initiative_dispatch(initiative)
+        hermes_webhook_url = prep["url"]
+        headers = prep["headers"]
+        body_bytes = prep["body_bytes"]
+        priority = prep["payload"]["payload"]["priority"]
 
         try:
             async with aiohttp.ClientSession() as session:

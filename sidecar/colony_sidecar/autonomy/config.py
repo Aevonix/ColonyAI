@@ -80,6 +80,13 @@ class AutonomyConfig:
     # The agent must poll via context-digest to see pending work.
     proactive_delivery_enabled: bool = False
 
+    # ── Delivery shadow mode (outward-facing rollout safety) ────────────
+    # When True, reach-out initiatives that would be delivered are LOGGED
+    # (target + payload) but never sent, regardless of proactive_delivery_enabled.
+    # Lets an operator eyeball the intended first batch before enabling real
+    # sends. Real delivery requires proactive_delivery_enabled AND shadow off.
+    delivery_shadow_mode: bool = False
+
     # ── Conversation synthesis (periodic memory scan for goals) ─────────
     # Scans stored conversation memories for implicit goals and commitments.
     conversation_synthesis_enabled: bool = True
@@ -176,6 +183,9 @@ class AutonomyConfig:
             proactive_delivery_enabled=bool(
                 _get("proactive_delivery_enabled", defaults.proactive_delivery_enabled)
             ),
+            delivery_shadow_mode=bool(
+                _get("delivery_shadow_mode", defaults.delivery_shadow_mode)
+            ),
             conversation_synthesis_enabled=bool(_get(
                 "conversation_synthesis_enabled",
                 defaults.conversation_synthesis_enabled,
@@ -216,6 +226,7 @@ class AutonomyConfig:
             COLONY_OWNER_CHECK_IN_COOLDOWN_HOURS
             COLONY_OWNER_CONTACT_ID
             COLONY_PROACTIVE_DELIVERY_ENABLED
+            COLONY_DELIVERY_SHADOW
             COLONY_CONVERSATION_SYNTHESIS_ENABLED
             COLONY_CONVERSATION_SYNTHESIS_INTERVAL_SECS
             COLONY_CONVERSATION_SYNTHESIS_LOOKBACK_HOURS
@@ -327,6 +338,10 @@ class AutonomyConfig:
             proactive_delivery_enabled=_bool(
                 "COLONY_PROACTIVE_DELIVERY_ENABLED",
                 defaults.proactive_delivery_enabled,
+            ),
+            delivery_shadow_mode=_bool(
+                "COLONY_DELIVERY_SHADOW",
+                defaults.delivery_shadow_mode,
             ),
             conversation_synthesis_enabled=_bool(
                 "COLONY_CONVERSATION_SYNTHESIS_ENABLED",
