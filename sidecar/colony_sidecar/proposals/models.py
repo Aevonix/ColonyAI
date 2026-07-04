@@ -35,10 +35,15 @@ class Proposal:
     def render(self) -> str:
         """Owner-facing text handed to the composing agent."""
         lines = [self.title.strip()]
-        if self.finding:
-            lines.append(f"What I found: {self.finding.strip()}")
-        if self.why_it_helps:
-            lines.append(f"Why it helps you: {self.why_it_helps.strip()}")
+        finding = self.finding.strip()
+        why = self.why_it_helps.strip()
+        if finding:
+            lines.append(f"What I found: {finding}")
+        # Skip the why-line when it merely restates the finding (the grounded
+        # why is often the finding's lead sentence) — no honest information is
+        # lost and the message stays tight.
+        if why and not (finding and finding.startswith(why)):
+            lines.append(f"Why it helps you: {why}")
         if self.suggested_action:
             lines.append(f"Suggested next step: {self.suggested_action.strip()}")
         if self.citations:

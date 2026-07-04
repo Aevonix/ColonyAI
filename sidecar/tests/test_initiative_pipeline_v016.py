@@ -398,9 +398,14 @@ class TestOwnerExclusion:
 
     @pytest.mark.asyncio
     async def test_owner_excluded_from_relationship_initiatives(self, engine):
+        # Both carry direct-interlocutor signal so the provenance/signal floor
+        # passes and this test isolates OWNER EXCLUSION (distinct scores avoid
+        # the identical-batch drop).
         engine.add_context("neglected_contacts", [
-            {"entity_id": "uuid-owner", "name": "Jane Doe", "days_since_contact": 30},
-            {"entity_id": "uuid-bob", "name": "Bob Jones", "days_since_contact": 30},
+            {"entity_id": "uuid-owner", "name": "Jane Doe", "days_since_contact": 30,
+             "interaction_count": 20, "relationship_score": 0.55},
+            {"entity_id": "uuid-bob", "name": "Bob Jones", "days_since_contact": 30,
+             "interaction_count": 11, "relationship_score": 0.62},
         ])
         initiatives = await engine._generate_relationship_suggestions()
         subjects = {i.entity_id for i in initiatives}
@@ -410,7 +415,8 @@ class TestOwnerExclusion:
     @pytest.mark.asyncio
     async def test_owner_excluded_by_display_name(self, engine):
         engine.add_context("neglected_contacts", [
-            {"entity_id": "some-node", "name": "Jane Doe", "days_since_contact": 30},
+            {"entity_id": "some-node", "name": "Jane Doe", "days_since_contact": 30,
+             "interaction_count": 15, "relationship_score": 0.58},
         ])
         initiatives = await engine._generate_relationship_suggestions()
         assert initiatives == []
@@ -429,7 +435,8 @@ class TestOwnerExclusion:
             config=InitiativeConfig(),
         )
         engine.add_context("neglected_contacts", [
-            {"entity_id": "uuid-bob", "name": "Bob Jones", "days_since_contact": 30},
+            {"entity_id": "uuid-bob", "name": "Bob Jones", "days_since_contact": 30,
+             "interaction_count": 11, "relationship_score": 0.62},
         ])
         initiatives = await engine._generate_relationship_suggestions()
         assert initiatives == []
@@ -468,9 +475,12 @@ class TestDedupKeying:
             mind_model=None,
             config=InitiativeConfig(),
         )
+        # Direct interlocutors with distinct real scores (clear the floor).
         engine.add_context("neglected_contacts", [
-            {"entity_id": "uuid-bob", "name": "Bob Jones", "days_since_contact": 14},
-            {"entity_id": "uuid-carol", "name": "Carol White", "days_since_contact": 21},
+            {"entity_id": "uuid-bob", "name": "Bob Jones", "days_since_contact": 14,
+             "interaction_count": 9, "relationship_score": 0.61},
+            {"entity_id": "uuid-carol", "name": "Carol White", "days_since_contact": 21,
+             "interaction_count": 6, "relationship_score": 0.44},
         ])
         initiatives = await engine._generate_relationship_suggestions()
         keys = {i.dedup_key for i in initiatives}

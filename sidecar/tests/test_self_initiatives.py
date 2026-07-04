@@ -145,8 +145,12 @@ class TestRelationshipGating:
             event_bus=FakeEventBus(),
             mind_model=FakeMindModel(),
         )
+        # Must be a genuine DIRECT INTERLOCUTOR with real score signal to
+        # clear the relationship provenance + signal floor (passively
+        # observed third parties are out of scope).
         engine.add_context("neglected_contacts", [
-            {"entity_id": "person-1", "name": "Test Person", "days_since_contact": 10},
+            {"entity_id": "person-1", "name": "Test Person", "days_since_contact": 10,
+             "interaction_count": 12, "relationship_score": 0.63},
         ])
         initiatives = await engine._generate_relationship_suggestions()
         assert len(initiatives) == 1

@@ -603,6 +603,29 @@ class InitiativeEngine:
         except Exception as e:
             logger.warning("Neglected contacts query failed: %s", e)
 
+        # Relationship provenance + signal floor: graph Person nodes include
+        # passively-observed third parties (people mentioned in the owner's
+        # channels). Only direct interlocutors with real score signal are
+        # relationship candidates; a batch of identical default scores is an
+        # ingestion artifact and yields nothing. Fail closed when the contact
+        # record (direct-exchange evidence) is unavailable.
+        try:
+            from colony_sidecar.intelligence.relationships.signal_floor import (
+                enrich_interaction_counts, filter_relationship_candidates,
+            )
+            contacts_store = None
+            try:
+                from colony_sidecar.api.routers.host import _contacts_store
+                contacts_store = _contacts_store
+            except Exception:
+                contacts_store = None
+            await enrich_interaction_counts(contacts, contacts_store)
+            contacts = filter_relationship_candidates(contacts)
+        except Exception as exc:
+            logger.warning(
+                "relationship signal floor failed (failing closed): %s", exc)
+            contacts = []
+
         self._context["neglected_contacts"] = contacts
         if not contacts:
             self._context.setdefault("neglected_contacts", [])
@@ -1566,8 +1589,32 @@ class InitiativeEngine:
             )
             return []
 
+        # Relationship provenance + signal floor (defense in depth): context
+        # may be fed externally (loop affect feeder, thinker), so re-apply the
+        # gates here even though the graph loader also filters. Passively
+        # observed third parties and degenerate identical-score batches are
+        # dropped before any relationship initiative is generated.
+        from colony_sidecar.intelligence.relationships.signal_floor import (
+            enrich_interaction_counts, filter_relationship_candidates,
+        )
+        candidates = list(self._context.get("neglected_contacts", []))
+        try:
+            contacts_store = None
+            try:
+                from colony_sidecar.api.routers.host import _contacts_store
+                contacts_store = _contacts_store
+            except Exception:
+                contacts_store = None
+            await enrich_interaction_counts(candidates, contacts_store)
+            candidates = filter_relationship_candidates(candidates)
+        except Exception as exc:
+            logger.warning(
+                "relationship signal floor failed in generator "
+                "(failing closed): %s", exc)
+            candidates = []
+
         initiatives: List[Initiative] = []
-        for contact in self._context.get("neglected_contacts", []):
+        for contact in candidates:
             entity_id = contact.get("entity_id")
             name = contact.get("name", "Unknown")
             days = contact.get("days_since_contact", 0)

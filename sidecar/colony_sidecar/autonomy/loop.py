@@ -534,6 +534,10 @@ class AutonomyLoop:
             for init in initiatives:
                 try:
                     prop = build_from_thinker(init)
+                    if prop is None:
+                        # Ungrounded thought: no honest why_it_helps, so it
+                        # does not ship (item 4).
+                        continue
                     # Outcome-driven priority: decay proposal classes the owner
                     # ignores/dismisses, boost the ones he acts on (item 3b).
                     if fb is not None:
@@ -842,6 +846,26 @@ class AutonomyLoop:
 
         self._pending_initiatives = []
 
+    async def _recipient_is_owner(self, person_id: str, payload: dict) -> bool:
+        """True when a delivery is owner-directed (exempt from the outbound
+        third-party approval gate).
+
+        Proposals target the owner by construction. Otherwise resolve the
+        recipient identity: fail closed (treat as NON-owner, so the approval
+        gate engages) if the owner identity cannot be established.
+        """
+        if payload.get("entity_type") == "proposal":
+            return True
+        if not person_id or person_id == "owner":
+            return True
+        try:
+            from colony_sidecar.identity.resolver import get_identity_resolver
+            resolver = get_identity_resolver()
+            return bool(await resolver.is_owner(person_id))
+        except Exception:
+            # Owner unresolved -> cannot prove owner-directed -> gate engages.
+            return False
+
     async def _route_reachout_delivery(self, payload: dict, delivery: Any) -> bool:
         """Sanitise, staleness-guard, rate-check and (shadow-)deliver ONE
         reach-out initiative through the guarded Hermes path.
@@ -932,6 +956,22 @@ class AutonomyLoop:
                 (payload.get("title") or payload.get("description", ""))[:200],
             )
             return False
+
+        # Outbound third-party gate: any delivery whose recipient is NOT the
+        # owner requires an explicit standing owner approval, independent of
+        # the rate limiter. Owner-directed delivery (proposals, owner
+        # check-ins) is exempt and unchanged. The agent must never message a
+        # third party on its own initiative.
+        if not await self._recipient_is_owner(person_id, payload):
+            from colony_sidecar.initiatives import standing_approvals
+            if not standing_approvals.is_approved("outbound_third_party_delivery"):
+                logger.warning(
+                    "Reach-out %s (%s) to non-owner recipient %s BLOCKED: "
+                    "outbound third-party delivery requires owner approval "
+                    "(grant 'outbound_third_party_delivery')",
+                    iid, type_value, person_id,
+                )
+                return False
 
         if not allowed:
             logger.debug("Reach-out push rate-limited for %s: %s (urgency=%.2f)",
