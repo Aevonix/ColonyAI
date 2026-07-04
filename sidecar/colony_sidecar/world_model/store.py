@@ -17,6 +17,17 @@ from .sqlite.backend import SQLiteBackend
 
 logger = logging.getLogger(__name__)
 
+# Optional inline belief-maintenance hook (item 7): called as
+# cb(entity_id, key, old_value, new_value, old_conf, new_conf) when a
+# property UPDATE changes an existing value, so the superseded value gets an
+# audit row. Set at boot by the server; never raises into the write path.
+_property_audit_hook = None
+
+
+def set_property_audit_hook(cb) -> None:
+    global _property_audit_hook
+    _property_audit_hook = cb
+
 
 @dataclass
 class GraphNeighborhoodResult:
@@ -304,9 +315,31 @@ class WorldModelStore:
         confidence: float,
     ) -> None:
         """Update a single property if the new confidence is higher."""
+        # Capture the pre-update value so a supersession can be audited
+        # (item 7 inline hook). Best-effort; never blocks the write.
+        old_value, old_conf = None, 0.0
+        if _property_audit_hook is not None:
+            try:
+                prior = await self._backend.get_entity(entity_id)
+                if prior is not None:
+                    props = getattr(prior, "properties", {}) or {}
+                    old_value = props.get(property_key,
+                                          getattr(prior, property_key, None))
+                    old_conf = float(props.get(f"_conf_{property_key}",
+                                               prior.confidence) or 0.0)
+            except Exception:
+                old_value = None
         await self._backend.update_entity_property(
             entity_id, property_key, property_value, confidence
         )
+        if (_property_audit_hook is not None and old_value not in (None, "")
+                and str(old_value) != str(property_value)
+                and confidence >= old_conf):
+            try:
+                _property_audit_hook(entity_id, property_key, old_value,
+                                     property_value, old_conf, confidence)
+            except Exception:
+                logger.debug("property audit hook failed", exc_info=True)
         self._emit_change("entity_property_update", entity_id=entity_id, property_key=property_key)
 
     async def add_entity_alias(self, entity_id: str, alias: str) -> None:
