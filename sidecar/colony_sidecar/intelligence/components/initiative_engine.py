@@ -1477,17 +1477,28 @@ class InitiativeEngine:
 
     async def _generate_follow_ups(self) -> List[Initiative]:
         """Generate follow-up initiatives from pending task context."""
+        from colony_sidecar.delivery.reachout_policy import meaningful_reachout_text
+
         initiatives: List[Initiative] = []
         for task in self._context.get("pending_tasks", []):
             # Only generate follow-ups for truly blocked tasks
             days_pending = task.get("days_pending", 0)
             if days_pending < self._config.goal_block_threshold_days:
                 continue
-            
-            desc = task.get("description", "Unknown task")
+
+            # Only surface reach-outs built from genuine, human-meaningful
+            # content. Skip system/skill-origin or empty-after-sanitise sources
+            # so we never emit near-empty "Follow up on:" junk.
+            desc = meaningful_reachout_text(task.get("description"))
+            if not desc:
+                logger.debug(
+                    "follow-up skipped: no meaningful content in source %r",
+                    str(task.get("description"))[:80],
+                )
+                continue
             entity_id = task.get("entity_id")
             priority = float(task.get("priority", 0.5))
-            
+
             initiatives.append(
                 Initiative(
                     id=f"followup-{entity_id or _uuid_module.uuid4().hex[:12]}",
@@ -1510,9 +1521,13 @@ class InitiativeEngine:
         AutonomyLoop) and produces ``FOLLOW_UP`` initiatives asking the
         user to document the outcome.
         """
+        from colony_sidecar.delivery.reachout_policy import meaningful_reachout_text
+
         initiatives: List[Initiative] = []
         for task in self._context.get("completed_tasks", []):
-            desc = task.get("description", "a completed task")
+            desc = meaningful_reachout_text(task.get("description"))
+            if not desc:
+                continue
             entity_id = task.get("entity_id")
             initiatives.append(
                 Initiative(
@@ -1756,6 +1771,14 @@ class InitiativeEngine:
                         )
                     )
                     continue  # do not ALSO emit a reminder for this commitment
+
+            # Reminder path: only surface commitments with genuine, meaningful
+            # text (skip system/skill-origin or empty-after-sanitise sources).
+            from colony_sidecar.delivery.reachout_policy import meaningful_reachout_text
+            desc = meaningful_reachout_text(desc)
+            if not desc:
+                logger.debug("commitment reminder skipped: no meaningful content")
+                continue
 
             if overdue:
                 priority = 0.9

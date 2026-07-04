@@ -98,3 +98,34 @@ def test_explicit_urgent_bypasses_cap():
 
 def test_low_urgency_passes_through():
     assert rp.quiet_hours_urgency({}, 0.4) == 0.4
+
+
+# ---------------------------------------------------------------------------
+# Generation gate (meaningful_reachout_text / is_system_origin)
+# ---------------------------------------------------------------------------
+
+def test_meaningful_keeps_real_conversation():
+    src = 'Sam: send me a direct RCS message <<RCSCTX conversation_id="6" is_gr'
+    out = rp.meaningful_reachout_text(src)
+    assert out == "Sam: send me a direct RCS message"
+
+
+def test_meaningful_drops_skill_invocation():
+    src = '[IMPORTANT: The user has invoked the "colony-operations" skill, do X]'
+    assert rp.is_system_origin(src) is True
+    assert rp.meaningful_reachout_text(src) == ""
+
+
+def test_meaningful_drops_system_note_and_interrupted():
+    assert rp.meaningful_reachout_text("[System note: previous turn was interrupted]") == ""
+    assert rp.meaningful_reachout_text("conversation was truncated") == ""
+
+
+def test_meaningful_drops_pure_markup_and_empty():
+    assert rp.meaningful_reachout_text("<<RCSCTX only=1>>") == ""
+    assert rp.meaningful_reachout_text("") == ""
+    assert rp.meaningful_reachout_text(None) == ""
+
+
+def test_meaningful_keeps_short_real_subject():
+    assert rp.meaningful_reachout_text("Call Bob") == "Call Bob"

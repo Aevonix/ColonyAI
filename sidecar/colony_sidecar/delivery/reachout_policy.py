@@ -76,6 +76,51 @@ def sanitize_payload(payload: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Meaningful-content gate (applied at reach-out GENERATION time)
+# ---------------------------------------------------------------------------
+
+# Minimum real alphanumeric substance a reach-out source must retain after
+# sanitisation to be worth generating an initiative from. Low enough to keep
+# legitimately short subjects ("Call Bob"), high enough to drop fragments.
+_MIN_MEANINGFUL_CHARS = 4
+
+# Markers that a source turn is system / skill / non-conversational, i.e. not
+# genuine conversation or a real commitment. These identify origins that
+# sanitisation alone might leave partial residue from.
+_SYSTEM_ORIGIN = re.compile(
+    r"\binvoked\b.{0,60}?\bskill\b"          # "... invoked the <name> skill ..."
+    r"|previous turn was interrupted"
+    r"|\bsystem note\b"
+    r"|\bsystem[- ]?generated\b"
+    r"|conversation (?:was )?(?:interrupted|truncated|reset)"
+    r"|<\s*/?\s*system[\s>]",                 # <system> ... </system> style tags
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_system_origin(text: Optional[str]) -> bool:
+    """True if the raw source text is a system/skill/non-conversational turn."""
+    return bool(text) and bool(_SYSTEM_ORIGIN.search(str(text)))
+
+
+def meaningful_reachout_text(text: Optional[str]) -> str:
+    """Clean reach-out source text, or "" if it is not worth surfacing.
+
+    Returns the sanitised text when the source is genuine, human-meaningful
+    content; returns "" when the source is empty, of system/skill origin, or
+    has no real substance after sanitisation. Use at reach-out GENERATION time
+    so near-empty / system-origin junk never becomes an initiative.
+    """
+    if not text or is_system_origin(text):
+        return ""
+    cleaned = sanitize_text(text)
+    substance = re.sub(r"[^0-9a-z]+", "", cleaned.lower())
+    if len(substance) < _MIN_MEANINGFUL_CHARS:
+        return ""
+    return cleaned
+
+
+# ---------------------------------------------------------------------------
 # Staleness
 # ---------------------------------------------------------------------------
 

@@ -305,10 +305,30 @@ class ConversationSynthesisTask:
                                 break
                         continue
 
+            # Root-cause guard: conversation memory content can carry raw
+            # messaging/skill markup (e.g. <<RCSCTX ...>> injected by the RCS
+            # bridge, or [IMPORTANT: ...skill...] system turns). Do not mint
+            # goals from system/skill-origin turns, and store only clean titles
+            # so downstream follow-ups are meaningful rather than junk.
+            from colony_sidecar.delivery.reachout_policy import (
+                is_system_origin, sanitize_text,
+            )
+            if is_system_origin(cand.title) or is_system_origin(cand.description):
+                logger.debug(
+                    "ConversationSynthesis: skipping system/skill-origin candidate %r",
+                    str(cand.title)[:80],
+                )
+                continue
+            clean_title = sanitize_text(cand.title)
+            if not clean_title:
+                logger.debug("ConversationSynthesis: skipping empty-after-sanitise candidate")
+                continue
+            clean_description = sanitize_text(cand.description) or clean_title
+
             try:
                 goal = goals.propose_goal(
-                    title=cand.title,
-                    description=cand.description,
+                    title=clean_title,
+                    description=clean_description,
                     priority=cand.priority,
                     source=GoalSource.INFERRED,
                     context={
