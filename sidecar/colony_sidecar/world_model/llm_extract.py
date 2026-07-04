@@ -179,7 +179,10 @@ class WorldLLMExtractor:
             return report
         if texts is None:
             texts = await self._recent_memory_texts()
+        report["texts"] = len(texts or [])
         if not texts:
+            logger.info("world-llm-extract[%s]: no recent memory texts to "
+                        "process", mode)
             return report
 
         name_to_id: Dict[str, str] = {}

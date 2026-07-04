@@ -4091,6 +4091,19 @@ async def get_world_llm_extract_status() -> dict:
             "last_report": getattr(_world_llm_extractor, "last_report", {})}
 
 
+@router.post("/world/llm-extract/run")
+async def run_world_llm_extract() -> dict:
+    """Manually trigger one extraction batch (ops/verification surface;
+    the daily autonomy phase is the normal cadence)."""
+    if _world_llm_extractor is None:
+        return {"available": False}
+    try:
+        report = await _world_llm_extractor.run()
+        return {"available": True, "report": report}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
 @router.get("/proposals")
 async def list_proposals(status: str = "", limit: int = 30) -> dict:
     """List proposals Colony has generated (observability)."""
