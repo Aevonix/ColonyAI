@@ -30,6 +30,11 @@ class SubsystemRegistry:
         return _goals_store
 
     @property
+    def world_model(self) -> Any:
+        from colony_sidecar.api.routers.host import _world_store
+        return _world_store
+
+    @property
     def initiative(self) -> Any:
         from colony_sidecar.api.routers.host import _metalearner
         return _metalearner  # InitiativeEngine is part of cognition

@@ -17,6 +17,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _as_int(value: Any, default: int) -> int:
+    """Coerce a tool-supplied value to int.
+
+    LLM tool calls frequently deliver numbers as strings ("5") or floats
+    (10.0). Downstream stores (Neo4j LIMIT, list slicing) require a real int,
+    so normalise here rather than crashing deep in a query.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 async def handle_memory_search(
     args: dict[str, Any],
     registry: SubsystemRegistry,
@@ -24,33 +37,43 @@ async def handle_memory_search(
     """Search Colony's memory graph."""
     query = args.get("query", "")
     person_id = args.get("person_id")
-    limit = args.get("limit", 5)
+    limit = _as_int(args.get("limit", 5), 5)
 
     try:
         graph = registry.graph
         if graph is None:
             return json.dumps({"error": "Memory graph not wired", "status": "unavailable"})
 
-        results = await graph.search(
+        # ColonyGraph exposes semantic memory retrieval as recall(); there is
+        # no search() method (the old name was API drift). recall does its own
+        # ANN + strength decay and returns dicts annotated with relevance.
+        # person_id is not a recall parameter, so it is advisory only here.
+        results = await graph.recall(
             query=query,
-            person_id=person_id,
             limit=limit,
         )
 
+        def _ts(v: Any) -> Any:
+            # Neo4j hydration returns neo4j.time.DateTime, which json can't
+            # serialise. Normalise any date-like value to an ISO string.
+            return v.isoformat() if hasattr(v, "isoformat") else v
+
         memories = [
             {
-                "content": m.get("content", "")[:200],
-                "timestamp": m.get("timestamp"),
-                "relevance": m.get("score", 0),
+                "content": (m.get("content") or "")[:200],
+                "timestamp": _ts(m.get("created_at") or m.get("timestamp")),
+                "relevance": m.get("relevance", m.get("score", 0)),
             }
             for m in results[:limit]
         ]
 
+        # default=str is a belt-and-suspenders guard for any other non-JSON
+        # types (e.g. stray DateTime/Decimal) surfacing from the graph.
         return json.dumps({
             "query": query,
             "count": len(memories),
             "memories": memories,
-        })
+        }, default=str)
     except Exception as e:
         logger.error("colony_memory_search failed: %s", e)
         return json.dumps({"error": str(e), "status": "error"})
@@ -198,30 +221,40 @@ async def handle_query_entities(
     """Query the world model for entities."""
     query = args.get("query", "")
     entity_type = args.get("entity_type", "all")
-    limit = args.get("limit", 10)
+    limit = _as_int(args.get("limit", 10), 10)
 
     try:
         world = registry.world_model
         if world is None:
             return json.dumps({"error": "World model not wired", "status": "unavailable"})
 
-        entities = await world.query(
+        # WorldModelStore searches entities via find_entities() (there is no
+        # query() method -- API drift). "all" (the tool default) means no type
+        # filter. Results are BaseEntity dataclasses, so read fields by
+        # attribute (with a dict fallback) rather than .get().
+        etype = None if entity_type in (None, "", "all") else entity_type
+        entities = await world.find_entities(
             query=query,
-            entity_type=entity_type,
+            entity_type=etype,
             limit=limit,
         )
+
+        def _field(e: Any, name: str, default: Any = None) -> Any:
+            if isinstance(e, dict):
+                return e.get(name, default)
+            return getattr(e, name, default)
 
         return json.dumps({
             "count": len(entities),
             "entities": [
                 {
-                    "id": e.get("id"),
-                    "name": e.get("name"),
-                    "type": e.get("type"),
+                    "id": _field(e, "id"),
+                    "name": _field(e, "name"),
+                    "type": _field(e, "entity_type"),
                 }
                 for e in entities
             ],
-        })
+        }, default=str)
     except Exception as e:
         logger.error("colony_query_entities failed: %s", e)
         return json.dumps({"error": str(e), "status": "error"})
