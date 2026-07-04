@@ -14,10 +14,15 @@ import aiosqlite
 def _fts_escape(q: str, max_len: int = 200) -> str:
     """Strip FTS5 operators and special chars; keep only word chars and spaces.
 
-    Caps input at max_len before processing to prevent regex DoS on huge inputs.
+    Caps input at max_len before processing to prevent regex DoS on huge
+    inputs. Specials are replaced with SPACES (not deleted): deleting fused
+    hyphenated names into single tokens ("huggingface-hub" ->
+    "huggingfacehub") that the FTS tokenizer (which splits on the hyphen)
+    could never match, so exact-name resolution silently failed and every
+    mention minted a duplicate entity.
     """
-    safe = re.sub(r'[^\w\s]', '', q[:max_len], flags=re.UNICODE)
-    return safe.strip()
+    safe = re.sub(r'[^\w\s]', ' ', q[:max_len], flags=re.UNICODE)
+    return re.sub(r'\s+', ' ', safe).strip()
 
 from ..constants import (
     ENTITY_ID_PREFIX,
@@ -225,7 +230,12 @@ class SQLiteBackend:
         min_confidence: float = 0.30,
         limit: int = 20,
     ) -> List[BaseEntity]:
-        """Full-text search on name + aliases."""
+        """Full-text search on name + aliases (plus exact-name fallback).
+
+        Exact canonical-name matching must never depend on FTS tokenizer
+        quirks, so a direct case-insensitive name lookup is unioned in; the
+        EntityResolver's dedup depends on it.
+        """
         rows = []
         if query:
             sql = """
@@ -240,8 +250,24 @@ class SQLiteBackend:
                 params.append(entity_type)
             sql += " LIMIT ?"
             params.append(limit)
-            async with self._db.execute(sql, params) as cur:
-                rows = await cur.fetchall()
+            try:
+                async with self._db.execute(sql, params) as cur:
+                    rows = list(await cur.fetchall())
+            except Exception:
+                rows = []
+            # Exact-name fallback/union.
+            sql2 = ("SELECT * FROM wm_entities WHERE lower(name) = lower(?) "
+                    "AND confidence >= ?")
+            params2: list = [query.strip(), min_confidence]
+            if entity_type:
+                sql2 += " AND entity_type = ?"
+                params2.append(entity_type)
+            sql2 += " LIMIT ?"
+            params2.append(limit)
+            async with self._db.execute(sql2, params2) as cur:
+                exact = await cur.fetchall()
+            seen = {r["id"] for r in rows} if rows else set()
+            rows.extend(r for r in exact if r["id"] not in seen)
         else:
             sql = "SELECT * FROM wm_entities WHERE confidence >= ?"
             params = [min_confidence]

@@ -103,6 +103,22 @@ def _noise_names() -> frozenset:
     return _GENERIC_NOISE | extra
 
 
+# Common English nouns/verbs that never form part of a real person's name.
+# Title-cased operational phrases ("Root Cause", "Orphan Messages") are the
+# dominant person-noise class observed in live data.
+_NON_NAME_WORDS = frozenset({
+    "cause", "root", "message", "messages", "session", "sessions",
+    "initiative", "initiatives", "operation", "operations", "orphan",
+    "fresh", "spawn", "error", "errors", "task", "tasks", "queue", "memory",
+    "review", "reviews", "summary", "report", "reports", "update", "updates",
+    "status", "issue", "issues", "problem", "problems", "fix", "fixes",
+    "bug", "bugs", "test", "tests", "daily", "weekly", "briefing", "digest",
+    "reminder", "alert", "alerts", "notification", "delivery", "channel",
+    "gateway", "bridge", "worker", "workers", "pending", "stale", "self",
+    "improvement", "cleanup", "backlog", "audit", "check", "checks",
+})
+
+
 def _is_low_quality(name: str, etype: str) -> bool:
     """High-precision gate for world-model population.
 
@@ -112,6 +128,11 @@ def _is_low_quality(name: str, etype: str) -> bool:
     low = name.strip().lower()
     _noise = _noise_names()
     if low in _noise:
+        return True
+    # URLs, paths, emails, and placeholder fragments are never entity NAMES
+    # (they belong in external_ids/properties, not as canonical names).
+    if ("://" in low or low.startswith(("http", "www."))
+            or low.endswith(("...", "/")) or "/" in name.strip()):
         return True
     toks = name.split()
     # Any token being a role/system/greeting word taints the whole name
@@ -123,6 +144,10 @@ def _is_low_quality(name: str, etype: str) -> bool:
     # words at sentence start are the main noise source). Companies/products
     # come from structured signals (org-suffix, domain, url) and are kept.
     if etype in ("person", "location") and len(toks) < 2:
+        return True
+    # A "person" whose name contains a common operational noun is a
+    # title-cased phrase, not a human ("Root Cause", "Orphan Messages").
+    if etype == "person" and tok_lows & _NON_NAME_WORDS:
         return True
     return False
 
