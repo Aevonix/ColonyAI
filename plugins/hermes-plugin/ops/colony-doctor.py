@@ -196,6 +196,20 @@ def live_checks():
     except Exception as e:
         fail(f"sidecar unreachable: {e}")
         return
+    # Temporal DELIVERY check: the Current Time brief must be fresh, not just
+    # promised in doctrine (a stale/cached block was invisible to the old
+    # SOUL-text-only check; this catches the "looks green, isn't delivered" class).
+    try:
+        from datetime import datetime as _dt
+        t = http_json("/v1/host/context/temporal", key)
+        body = (t or {}).get("body", "")
+        stamp = _dt.now().astimezone().strftime("%b %d")
+        if "is NOW" in body and stamp in body:
+            ok("temporal brief delivers fresh time (/v1/host/context/temporal)")
+        else:
+            fail(f"temporal brief stale or malformed (expected today {stamp!r}): {body[:100]!r}")
+    except Exception as e:
+        fail(f"temporal brief endpoint unreachable: {e}")
     try:
         http_json("/v1/host/contacts/resolve", key, "gateway=whatsapp&address=__doctor_probe__")
         ok("contact-resolve endpoint answers")

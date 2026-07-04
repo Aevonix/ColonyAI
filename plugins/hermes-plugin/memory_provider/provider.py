@@ -14,17 +14,17 @@ import asyncio
 import json
 import logging
 import os
-import re
 import threading
-import time as _time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
+import re as _tre
+import time as _ttime
+from datetime import datetime as _tdt
 
 
-def _humanize_secs(secs: float) -> str:
-    """Compact human delta for the in-session gap line: 45s / 12m / 3h 05m / 2d 4h."""
+def _humanize_secs(secs):
     secs = int(secs)
     if secs < 60:
         return f"{secs}s"
@@ -248,6 +248,194 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "required": ["query"],
         },
     },
+    # v0.13.0 — Task queue tools
+    {
+        "name": "colony_list_pending_tasks",
+        "description": (
+            "List pending AGENT_ACTION jobs in the Colony task queue. "
+            "Returns jobs waiting to be claimed or blocked awaiting approval."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max jobs to return (default: 10)",
+                    "default": 10,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "colony_claim_task",
+        "description": (
+            "Claim an AGENT_ACTION job from the Colony task queue. "
+            "Returns the job payload to execute, or empty if none available."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "worker_id": {
+                    "type": "string",
+                    "description": "Optional worker node ID (default: from COLONY_WORKER_NODE_ID)",
+                    "default": os.environ.get("COLONY_WORKER_NODE_ID", "colony-worker"),
+                },
+                "capabilities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional capability tags (default: [agent_action])",
+                    "default": ["agent_action"],
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "colony_complete_task",
+        "description": (
+            "Report a completed job to Colony. "
+            "Call after successfully executing a claimed task."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "ID of the job to complete",
+                },
+                "output": {
+                    "type": "object",
+                    "description": "Result payload (arbitrary JSON)",
+                },
+            },
+            "required": ["job_id"],
+        },
+    },
+    {
+        "name": "colony_fail_task",
+        "description": (
+            "Report a failed job to Colony. "
+            "Call when a claimed task cannot be completed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "ID of the job that failed",
+                },
+                "error": {
+                    "type": "string",
+                    "description": "Error message or reason",
+                },
+            },
+            "required": ["job_id"],
+        },
+    },
+    {
+        "name": "colony_heartbeat_task",
+        "description": (
+            "Send a progress heartbeat for a running job. "
+            "Call periodically during long-running tasks."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "ID of the running job",
+                },
+                "progress": {
+                    "type": "number",
+                    "description": "Progress 0.0—1.0",
+                    "minimum": 0,
+                    "maximum": 1,
+                },
+            },
+            "required": ["job_id"],
+        },
+    },
+    {
+        "name": "colony_approve_initiative",
+        "description": (
+            "Approve a blocked AGENT_ACTION initiative. "
+            "Only the owner can call this. Transitions the linked job from BLOCKED to QUEUED."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "initiative_id": {
+                    "type": "string",
+                    "description": "ID of the initiative to approve",
+                },
+            },
+            "required": ["initiative_id"],
+        },
+    },
+    {
+        "name": "colony_initiative_feedback",
+        "description": (
+            "Provide feedback on an initiative: acknowledge, dismiss, or snooze. "
+            "Stops the initiative from being re-injected into context."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "initiative_id": {
+                    "type": "string",
+                    "description": "ID of the initiative",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["acknowledged", "dismissed", "snoozed"],
+                    "description": "Feedback action",
+                },
+                "details": {
+                    "type": "object",
+                    "description": "Optional extra context (e.g. snooze duration)",
+                },
+            },
+            "required": ["initiative_id", "action"],
+        },
+    },
+    # v0.21.0 — temporal timeline
+    {
+        "name": "colony_timeline",
+        "description": (
+            "Recall the agent's timeline of past events — conversations, outreach, "
+            "initiatives, tasks — ordered by time. Use to answer 'what happened "
+            "recently', 'what's been going on with <person>', 'what have I done "
+            "since yesterday', or to ground yourself in recent history. Returns a "
+            "human-readable digest plus structured events."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "since": {
+                    "type": "string",
+                    "description": "Window: relative ('6h','24h','7d','2w'), "
+                                   "'today'/'yesterday', or an ISO date. Default '24h'.",
+                    "default": "24h",
+                },
+                "contact_id": {
+                    "type": "string",
+                    "description": "Only events involving this contact (optional).",
+                },
+                "types": {
+                    "type": "string",
+                    "description": "Comma-separated event types to include, e.g. "
+                                   "'conversation.turn,outreach.sent' (optional).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max events (default 50).",
+                    "default": 50,
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -283,10 +471,10 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
         self._session_id = ""
         self._cached_context: str = ""
-        # Per-turn temporal freshness (the cached context must never freeze "now")
-        self._temporal_cache: tuple = (0.0, "")  # (monotonic ts, block)
-        self._last_turn_started_at: float = 0.0
-        self._prev_turn_gap_secs: Optional[float] = None
+        self._temporal_cache = (0.0, "")  # (monotonic ts, block)
+        self._last_turn_started_at = 0.0
+        self._prev_turn_gap_secs = None
+        self._prefetch_thread = None  # background sync prefetch (v0.3.0)
         self._prefetch_ready = asyncio.Event()
         self._prefetch_ready.set()
         self._platform = "cli"
@@ -392,7 +580,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
 
     def system_prompt_block(self) -> str:
         """Return static context about Colony for the system prompt."""
-        return (
+        base = (
             "Colony cognitive infrastructure is active. You have access to commitments, "
             "affect state, shared facts, patterns, and world model through Colony tools. "
             "Use colony_check_commitments, colony_list_goals, and colony_search_memory to stay informed. "
@@ -400,82 +588,191 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             "\n\n"
             "When evaluating temporal claims, always prefer the real current time (provided by the host) "
             "over any timestamps from Colony data. Colony stores event times; the host provides the "
-            "reference frame. If data appears stale, say so — do not fabricate a narrative to make it seem current."
+            "reference frame. If data appears stale, say so, do not fabricate a narrative to make it seem current."
         )
+        return base + self._last_session_block()
+
+    def _last_session_block(self) -> str:
+        """Inject the rotating last-session handoff brief (where she left off before the overnight
+        reset) so a daily session reset keeps continuity instead of amnesia. Fresh-only, fail-soft."""
+        import time as _t
+        p = os.path.expanduser("~/.hermes/.handoff_brief.md")
+        try:
+            if not os.path.exists(p) or _t.time() - os.path.getmtime(p) > 30 * 3600:
+                return ""
+            txt = open(p, encoding="utf-8").read().strip()
+        except Exception:
+            return ""
+        if not txt:
+            return ""
+        return (
+            "\n\n## Where you left off (last-session handoff)\n"
+            "This is your rotating last-session store from before the overnight reset. Treat it as your "
+            "own recent memory. At the start of the session, fold anything still live (open commitments, "
+            "threads, things you are waiting on) into durable memory with colony_write_memory so it "
+            "persists. Do not re-announce it to the owner unprompted.\n\n" + txt
+        )
+
+    # -- Authoritative current time (pre_llm_call hook) ------------------------
+
+    def _current_time_line(self) -> str:
+        """Local, no-network current date/time in the agent's home timezone."""
+        import json as _json
+        from datetime import datetime, timezone as _tz
+        try:
+            from zoneinfo import ZoneInfo
+        except Exception:
+            ZoneInfo = None
+        tz = os.environ.get("COLONY_AGENT_TIMEZONE", "")
+        if not tz:
+            # Read the agent timezone from the SAME file the sidecar writes. The
+            # sidecar stores it at $COLONY_STATE_DIR/temporal.json (default
+            # ~/.colony/data/temporal.json); the gateway process does not export
+            # COLONY_STATE_DIR, so probe the known locations in order.
+            _candidates = []
+            _sd = os.environ.get("COLONY_STATE_DIR")
+            if _sd:
+                _candidates.append(os.path.join(_sd, "temporal.json"))
+            _candidates += [
+                os.path.expanduser("~/.colony/data/temporal.json"),
+                os.path.expanduser("~/.colony/temporal.json"),
+            ]
+            for _c in _candidates:
+                try:
+                    tz = (_json.load(open(_c)).get("agent_timezone") or "")
+                    if tz:
+                        break
+                except Exception:
+                    continue
+        now = datetime.now(_tz.utc)
+        if tz and ZoneInfo is not None:
+            try:
+                now = now.astimezone(ZoneInfo(tz))
+            except Exception:
+                pass
+        hm = now.strftime("%I:%M %p").lstrip("0")
+        return f"{now.strftime('%A, %B %d, %Y')}, {hm} {now.strftime('%Z') or 'UTC'}"
+
+    def inject_current_time(self, messages: list) -> list:
+        """pre_llm_call hook: inject the authoritative current time as a system
+        message so the model never anchors on the (cached, stale) session-start
+        date in long-running sessions. Generic — any Colony agent."""
+        try:
+            line = self._current_time_line()
+        except Exception:
+            return messages
+        note = {
+            "role": "system",
+            "content": (
+                f"⏰ CURRENT DATE & TIME, right now: {line}. This is TODAY — greet and "
+                "reason from THIS. Any 'Conversation started' date in your prompt is only "
+                "when this long-running session began (often days ago), NOT today."
+            ),
+        }
+        result = list(messages)
+        if result and isinstance(result[-1], dict) and result[-1].get("role") == "user":
+            result.insert(-1, note)
+        else:
+            result.append(note)
+        return result
+
+    def resolve_contact(self, platform: str, user_id: str) -> None:
+        """Resolve the real Colony contact from the message sender so per-contact
+        memory/affect/facts engage (instead of 'default'). Called from the
+        pre_llm_call hook (the lifecycle hook that carries the sender). Cached per
+        sender so it only hits the sidecar once per sender per session."""
+        if not user_id:
+            return
+        if getattr(self, "_resolved_for", None) == user_id:
+            return  # already attempted resolution for this sender
+        self._resolved_for = user_id
+        try:
+            with httpx.Client(timeout=4) as client:
+                resp = client.get(
+                    f"{self.sidecar_url}/v1/host/contacts/resolve",
+                    headers=self._headers(),
+                    params={"gateway": platform or "", "address": user_id},
+                )
+                if resp.status_code == 200:
+                    cid = (resp.json() or {}).get("contact_id")
+                    if cid:
+                        self._contact_id = cid
+                        logger.debug("Colony resolved contact %s for %s:%s", cid, platform, user_id)
+        except Exception as exc:
+            self._resolved_for = None  # transient error -> allow retry next turn
+            logger.debug("Colony contact resolve failed: %s", exc)
 
     # -- Prefetch (context injection) ------------------------------------------
 
-    # -- Per-turn temporal freshness --------------------------------------------
-    # The full assemble result is session-cached by design, but "now" must never
-    # be: a long-running session would otherwise carry a frozen Current Time
-    # block (and frozen last-exchange deltas) for hours or days. Every returned
-    # context gets a FRESH temporal section: fetched from the sidecar with a
-    # short micro-TTL, with a local host-clock fallback so the block can never
-    # be absent (the "prefer the real current time provided by the host"
-    # doctrine must always be fulfilled, not just promised).
+    def prefetch(self, query: str, *, session_id: str = "") -> str:
+        """Recall relevant Colony context for the upcoming turn.
 
+        SYNCHRONOUS by Hermes contract — MemoryManager.prefetch_all() calls this
+        synchronously and expects a string. (This was previously an ``async def``,
+        so prefetch_all received an un-awaited coroutine and silently dropped ALL
+        injected context — memories, temporal, affect, facts. That is the
+        "relevant info isn't injected live" bug.) If queue_prefetch() already
+        fetched in the background for this turn, return that; otherwise fetch now.
+        """
+        t = self._prefetch_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=9.0)
+        if self._cached_context:
+            ctx = self._cached_context
+            self._cached_context = ""  # one-shot per turn
+            return self._with_fresh_temporal_sync(ctx)
+        return self._with_fresh_temporal_sync(
+            self._prefetch_sync(query, session_id=session_id))
+
+    # -- Per-turn temporal freshness (a returned context must never carry a ---
+    # frozen "now": the cached/assembled Current Time section is stripped and
+    # replaced with a live one every time context is handed to the host).
     _TEMPORAL_TTL_SECS = 15.0
-    _TEMPORAL_SECTION_RE = re.compile(
+    _TEMPORAL_SECTION_RE = _tre.compile(
         r"## Current Time \[priority \d+\]\n.*?(?=\n\n## |\n</memory-context>)",
-        re.DOTALL,
+        _tre.DOTALL,
     )
 
-    def _local_temporal_block(self) -> str:
-        now = datetime.now().astimezone()
-        lines = [
-            f"Now: {now.strftime('%A %Y-%m-%d %H:%M %Z')} (host clock; sidecar temporal brief unavailable)."
-        ]
+    def _local_temporal_block(self):
+        now = _tdt.now().astimezone()
+        lines = [f"Now: {now.strftime('%A %Y-%m-%d %H:%M %Z')} (host clock; sidecar temporal brief unavailable)."]
         gap = self._prev_turn_gap_secs
         if gap is not None and gap > 0:
-            lines.append(
-                f"Previous message in this conversation: {_humanize_secs(gap)} ago."
-            )
-        lines.append(
-            "^ This is the authoritative CURRENT date/time — this is NOW. Ignore any "
-            "'Conversation started' date in your system prompt."
-        )
+            lines.append(f"Previous message in this conversation: {_humanize_secs(gap)} ago.")
+        lines.append("^ This is the authoritative CURRENT date/time — this is NOW. Ignore any 'Conversation started' date in your system prompt.")
         return "## Current Time [priority 100]\n" + "\n".join(lines)
 
-    async def _fresh_temporal_block(self) -> str:
+    def _fresh_temporal_block_sync(self):
         ts, cached = self._temporal_cache
-        if cached and (_time.monotonic() - ts) < self._TEMPORAL_TTL_SECS:
+        if cached and (_ttime.monotonic() - ts) < self._TEMPORAL_TTL_SECS:
             return cached
         block = ""
         try:
-            client = self._get_async_client()
-            resp = await client.get(
-                f"{self.sidecar_url}/v1/host/context/temporal",
-                headers=self._headers(),
-                params={"contact_id": self._contact_id},
-                timeout=2.5,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            with httpx.Client(timeout=2.5) as client:
+                resp = client.get(
+                    f"{self.sidecar_url}/v1/host/context/temporal",
+                    headers=self._headers(),
+                    params={"contact_id": self._contact_id},
+                )
+                resp.raise_for_status()
+                data = resp.json()
             body = data.get("body", "")
             if body:
                 gap = self._prev_turn_gap_secs
                 if gap is not None and gap > 0:
-                    body += (
-                        f"\nPrevious message in this conversation: "
-                        f"{_humanize_secs(gap)} ago."
-                    )
+                    body += f"\nPrevious message in this conversation: {_humanize_secs(gap)} ago."
                 block = f"## {data.get('title', 'Current Time')} [priority 100]\n{body}"
         except Exception as exc:
             logger.debug("Colony temporal brief fetch failed: %s", exc)
         if not block:
             block = self._local_temporal_block()
-        self._temporal_cache = (_time.monotonic(), block)
+        self._temporal_cache = (_ttime.monotonic(), block)
         return block
 
-    async def _with_fresh_temporal(self, context: str) -> str:
-        """Return the context block with an always-fresh Current Time section."""
-        fresh = await self._fresh_temporal_block()
+    def _with_fresh_temporal_sync(self, context):
+        fresh = self._fresh_temporal_block_sync()
         if not context:
-            return (
-                "<memory-context>\n[Colony Cognitive Context]\n\n"
-                + fresh
-                + "\n</memory-context>"
-            )
+            return ("<memory-context>\n[Colony Cognitive Context]\n\n" + fresh + "\n</memory-context>")
         stripped = self._TEMPORAL_SECTION_RE.sub("", context)
         marker = "[Colony Cognitive Context]\n"
         if marker in stripped:
@@ -483,28 +780,25 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             return head + marker + "\n" + fresh + "\n\n" + tail.lstrip("\n")
         return fresh + "\n\n" + stripped
 
-    async def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Recall relevant context from Colony for the upcoming turn."""
-        if self._cached_context:
-            return await self._with_fresh_temporal(self._cached_context)
-
+    def _prefetch_sync(self, query: str, *, session_id: str = "") -> str:
+        """Blocking /context/assemble call → formatted context string."""
         try:
-            client = self._get_async_client()
-            headers = self._headers()
-            resp = await client.post(
-                f"{self.sidecar_url}/v1/host/context/assemble",
-                headers=headers,
-                json={
-                    "identity": {"host_id": "hermes"},
-                    "context": {
-                        "session_id": session_id or self._session_id,
-                        "contact_id": self._contact_id,
+            with httpx.Client(timeout=10) as client:
+                resp = client.post(
+                    f"{self.sidecar_url}/v1/host/context/assemble",
+                    headers=self._headers(),
+                    json={
+                        "identity": {"host_id": "hermes"},
+                        "context": {
+                            "session_id": session_id or self._session_id,
+                            "contact_id": self._contact_id,
+                        },
+                        "incoming_message": {"role": "user", "content": query},
+                        "include_initiatives": True,
                     },
-                    "incoming_message": {"role": "user", "content": query},
-                },
-                timeout=10,
-            )
-            resp.raise_for_status()
+                )
+                resp.raise_for_status()
+                data = resp.json()
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code
             if code in (401, 403):
@@ -515,35 +809,69 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         except (httpx.HTTPError, OSError) as exc:
             logger.debug("Colony prefetch failed: %s", exc)
             return ""
-
-        data = resp.json()
         sections = data.get("sections", [])
-        if not sections:
-            return await self._with_fresh_temporal("")
-
-        return await self._with_fresh_temporal(self._format_sections(sections))
+        return self._format_sections(sections) if sections else ""
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        """Start a background prefetch for the next turn."""
+        """Kick off a background (thread) prefetch for the upcoming turn so the
+        synchronous prefetch() can return instantly with the cached result."""
         self._cached_context = ""
-        self._prefetch_ready.clear()
 
-        async def _fetch():
+        def _bg():
             try:
-                self._cached_context = await self.prefetch(query, session_id=session_id)
-            finally:
-                self._prefetch_ready.set()
+                self._cached_context = self._prefetch_sync(query, session_id=session_id)
+            except Exception:
+                self._cached_context = ""
 
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_fetch())
-        except RuntimeError:
-            self._cached_context = asyncio.get_event_loop().run_until_complete(
-                self.prefetch(query, session_id=session_id)
-            )
-            self._prefetch_ready.set()
+        t = threading.Thread(target=_bg, daemon=True)
+        self._prefetch_thread = t
+        t.start()
 
     # -- Turn sync -------------------------------------------------------------
+
+    def _resolve_channel_id(self) -> str:
+        """Current conversation key 'platform:chat_id' from Hermes' per-turn session context
+        (ContextVar-backed -> concurrency-safe). Empty when not inside a platform turn."""
+        try:
+            from gateway.session_context import get_session_env
+            plat = (get_session_env("HERMES_SESSION_PLATFORM", "") or "").strip()
+            cid = (get_session_env("HERMES_SESSION_CHAT_ID", "") or "").strip()
+            if plat and cid:
+                return "%s:%s" % (plat, cid)
+        except Exception:
+            pass
+        return ""
+
+    def _resolve_handle(self, platform: str, sender: str) -> Optional[str]:
+        """Resolve a gateway sender handle -> Colony contact_id (None if unknown). Lookup-only today;
+        Phase 1b switches this to get-or-create so unknown real senders provision a contact."""
+        if not sender:
+            return None
+        try:
+            with httpx.Client(timeout=4) as client:
+                resp = client.get(
+                    f"{self.sidecar_url}/v1/host/contacts/resolve",
+                    headers=self._headers(),
+                    params={"gateway": platform or "", "address": sender, "create": "true"},
+                )
+                if resp.status_code == 200:
+                    return (resp.json() or {}).get("contact_id")
+        except Exception as exc:
+            logger.debug("Colony resolve_handle failed: %s", exc)
+        return None
+
+    def _turn_contact(self) -> Optional[str]:
+        """The REAL contact for THIS turn, resolved per-turn from Hermes' ContextVar sender
+        (concurrency-safe — unlike the single shared self._contact_id, which races across the
+        WhatsApp/iMessage/SMS/RCS/voice/worker sessions that share one provider instance). Returns a
+        contact_id, or None when there is no resolvable human participant on this turn."""
+        try:
+            from gateway.session_context import get_session_env
+            platform = (get_session_env("HERMES_SESSION_PLATFORM", "") or "").strip()
+            sender = (get_session_env("HERMES_SESSION_USER_ID", "") or "").strip()
+        except Exception:
+            return None
+        return self._resolve_handle(platform, sender) if sender else None
 
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
         """Persist a completed turn to Colony for extraction.
@@ -551,7 +879,16 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         NON-BLOCKING: runs in a daemon thread per Hermes threading contract.
         """
         sid = session_id or self._session_id
-        contact_id = self._contact_id
+        channel_id = self._resolve_channel_id()
+        # Per-turn participant resolution (concurrency-safe), auto-provisioning unknown senders.
+        _turn_cid = self._turn_contact()
+        if _turn_cid:
+            contact_id = _turn_cid
+        elif channel_id:
+            contact_id = self._contact_id        # inside a real conversation but sender unresolved: keep, don't drop
+        else:
+            logger.debug("Colony sync_turn skipped: no participant + no conversation context (system/self turn)")
+            return
         url = self.sidecar_url
         headers = self._headers()
         self._last_sync_attempt = datetime.now(timezone.utc).isoformat()
@@ -572,6 +909,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                                 "context": {
                                     "session_id": sid,
                                     "contact_id": contact_id,
+                                    "channel_id": channel_id,
                                 },
                                 "user_message": {"role": "user", "content": user_content},
                                 "assistant_message": {"role": "assistant", "content": assistant_content},
@@ -651,7 +989,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         try:
             with httpx.Client(timeout=5) as client:
                 resp = client.get(
-                    f"{self.sidecar_url}/v1/host/affect/{contact_id}",
+                    f"{self.sidecar_url}/v1/host/affect/state/{contact_id}",
                     headers=self._headers(),
                     timeout=5,
                 )
@@ -668,9 +1006,9 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         try:
             with httpx.Client(timeout=5) as client:
                 resp = client.get(
-                    f"{self.sidecar_url}/v1/host/mind/facts/{contact_id}",
+                    f"{self.sidecar_url}/v1/host/mind/facts",
                     headers=self._headers(),
-                    params={"limit": limit},
+                    params={"contact_id": contact_id, "limit": limit},
                     timeout=5,
                 )
                 resp.raise_for_status()
@@ -684,7 +1022,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         try:
             with httpx.Client(timeout=5) as client:
                 resp = client.get(
-                    f"{self.sidecar_url}/v1/host/patterns/{contact_id}",
+                    f"{self.sidecar_url}/v1/host/patterns",
                     headers=self._headers(),
                     params={"limit": limit},
                     timeout=5,
@@ -776,6 +1114,138 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
+    def _tool_colony_timeline(self, args: dict) -> str:
+        params = {"since": args.get("since", "24h"), "limit": args.get("limit", 50)}
+        if args.get("contact_id"):
+            params["contact_id"] = args["contact_id"]
+        if args.get("types"):
+            params["types"] = args["types"]
+        try:
+            with httpx.Client(timeout=8) as client:
+                resp = client.get(
+                    f"{self.sidecar_url}/v1/host/timeline",
+                    headers=self._headers(),
+                    params=params,
+                    timeout=8,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                # Return the agent-friendly digest up front, plus structured events.
+                return json.dumps({
+                    "digest": data.get("digest", ""),
+                    "count": data.get("count", 0),
+                    "since": data.get("since"),
+                    "events": data.get("events", []),
+                })
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    # -- v0.13.0 task queue tool handlers --------------------------------------
+
+    def _tool_colony_list_pending_tasks(self, args: dict) -> str:
+        try:
+            with httpx.Client(timeout=5) as client:
+                resp = client.get(
+                    f"{self.sidecar_url}/v1/host/queue/jobs/pending",
+                    headers=self._headers(),
+                    params={"limit": args.get("limit", 10)},
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                return json.dumps(resp.json())
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _tool_colony_claim_task(self, args: dict) -> str:
+        try:
+            with httpx.Client(timeout=5) as client:
+                resp = client.post(
+                    f"{self.sidecar_url}/v1/host/queue/jobs/claim",
+                    headers=self._headers(),
+                    json={
+                        "node_id": args.get("worker_id", os.environ.get("COLONY_WORKER_NODE_ID", "colony-worker")),
+                        "capabilities": args.get("capabilities", ["agent_action"]),
+                    },
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                return json.dumps(resp.json())
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _tool_colony_complete_task(self, args: dict) -> str:
+        try:
+            with httpx.Client(timeout=5) as client:
+                resp = client.post(
+                    f"{self.sidecar_url}/v1/host/queue/jobs/{args['job_id']}/complete",
+                    headers=self._headers(),
+                    json={"output": args.get("output", {})},
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                return json.dumps({"success": True})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _tool_colony_fail_task(self, args: dict) -> str:
+        try:
+            with httpx.Client(timeout=5) as client:
+                resp = client.post(
+                    f"{self.sidecar_url}/v1/host/queue/jobs/{args['job_id']}/fail",
+                    headers=self._headers(),
+                    json={"error": args.get("error", "unknown error")},
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                return json.dumps({"success": True})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _tool_colony_heartbeat_task(self, args: dict) -> str:
+        try:
+            with httpx.Client(timeout=5) as client:
+                resp = client.post(
+                    f"{self.sidecar_url}/v1/host/queue/jobs/{args['job_id']}/heartbeat",
+                    headers=self._headers(),
+                    json={"progress": args.get("progress")},
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                return json.dumps({"success": True})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _tool_colony_approve_initiative(self, args: dict) -> str:
+        try:
+            with httpx.Client(timeout=5) as client:
+                resp = client.post(
+                    f"{self.sidecar_url}/v1/host/initiatives/{args['initiative_id']}/respond",
+                    headers=self._headers(),
+                    json={"action": "approved"},
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                return json.dumps({"success": True, "status": "approved"})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _tool_colony_initiative_feedback(self, args: dict) -> str:
+        try:
+            with httpx.Client(timeout=5) as client:
+                resp = client.post(
+                    f"{self.sidecar_url}/v1/host/initiatives/{args['initiative_id']}/respond",
+                    headers=self._headers(),
+                    json={
+                        "action": args["action"],
+                        "details": args.get("details"),
+                    },
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                return json.dumps({"success": True, "action": args["action"]})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
     # -- Optional hooks --------------------------------------------------------
 
     def on_session_switch(
@@ -794,11 +1264,11 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         logger.debug("Colony memory provider switched to session=%s (reset=%s)", new_session_id, reset)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
-        """Called at the start of each turn (also feeds the in-session gap line)."""
-        now = _time.time()
+        """Called at the start of each turn."""
+        _now = _ttime.time()
         if self._last_turn_started_at:
-            self._prev_turn_gap_secs = now - self._last_turn_started_at
-        self._last_turn_started_at = now
+            self._prev_turn_gap_secs = _now - self._last_turn_started_at
+        self._last_turn_started_at = _now
         logger.debug("Colony: turn %d started (session=%s)", turn_number, self._session_id)
 
     def on_memory_write(self, action: str, target: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
@@ -881,14 +1351,17 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             except Exception:
                 pass
 
-    async def shutdown(self) -> None:
-        """Clean up."""
+    def shutdown(self) -> None:
+        """Clean up. SYNCHRONOUS by Hermes contract (MemoryManager calls this
+        synchronously; an async def here was never awaited)."""
         self._cached_context = ""
         if self._sync_thread and self._sync_thread.is_alive():
             self._sync_thread.join(timeout=3.0)
-        if self._async_client:
-            await self._async_client.aclose()
-            self._async_client = None
+        t = self._prefetch_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=3.0)
+        # _async_client (if ever created) closes on GC; nothing to await here.
+        self._async_client = None
 
     # -- Internals -------------------------------------------------------------
 
@@ -911,4 +1384,4 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             body = section.get("body", "")
             priority = section.get("priority", 50)
             parts.append(f"## {header} [priority {priority}]\n{body}")
-        return "<memory-context>\n[Colony Cognitive Context]\n\n" + "\n\n".join(parts) + "\n</memory-context>"
+        return ("<memory-context>\n[My own memory & awareness — what I already know going\ninto this turn. This is me, not an external system; read it first and never re-ask what\nis here.]\n\n" + "\n\n".join(parts) + "\n</memory-context>")
