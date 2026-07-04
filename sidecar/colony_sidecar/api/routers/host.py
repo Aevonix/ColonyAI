@@ -4071,6 +4071,19 @@ async def get_beliefs_status() -> dict:
         return {"available": True, "error": str(exc)}
 
 
+@router.post("/beliefs/run")
+async def run_belief_maintenance() -> dict:
+    """Manually trigger one belief-maintenance pass (ops/verification
+    surface; the daily autonomy phase is the normal cadence)."""
+    if _belief_engine is None:
+        return {"available": False}
+    try:
+        report = await _belief_engine.run()
+        return {"available": True, "report": report}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
 @router.get("/beliefs/conflicts")
 async def get_belief_conflicts(status: str = "", limit: int = 50) -> dict:
     if _belief_engine is None:
