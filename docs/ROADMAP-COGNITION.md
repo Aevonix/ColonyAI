@@ -856,10 +856,49 @@ llm_request middleware) should migrate off the registry when next touched.
     (shadow first, inspect the normalized output, then live). Write the env to
     the Mac and list for the private-repo sync; no connector runs out of
     process (all in the sidecar phase), so no extra launchd unit is needed.
-- PROGRAM STATUS: all seven capabilities delivered. Phase A (items 1/3/4/7 +
-  Amendment 1) complete; Phase B (items 5/6) complete; Phase C (item 2)
-  complete. Awaiting the coordinator's independent verification gate before
-  any stale-branch cleanup + final confirmation.
+- PROGRAM STATUS: PROGRAM CLOSED (2026-07-04). All seven capabilities
+  delivered: Phase A (items 1/3/4/7 + Amendment 1), Phase B (items 5/6),
+  Phase C (item 2). Independent verification gate: GO -- all range commits
+  and the tip tree verified content-clean (zero leaks, fixtures clean,
+  deploy templates clean). One finding WAIVED per the standing first-gate
+  ruling: 23 range commits carry the long-standing build-agent committer
+  identity already present on 85+ published baseline commits (range
+  discloses nothing new; no history rewrite of published commits); fixed
+  forward -- both checkouts now commit as Claude <noreply@anthropic.com>.
+  Close-out executed: stale refs deleted on both checkouts (build box:
+  backup-pre-scrub + refs/original/refs/heads/main; Mac:
+  live-overlay-20260704), only main remains locally and on origin; the
+  three Phase B/C mode envs pinned explicitly in the live sidecar unit
+  (COLONY_WORKERS_MODE=shadow, COLONY_SANDBOX_MODE=off,
+  COLONY_CONNECTORS_MODE=off) so a future code-default change cannot
+  silently flip live behavior -- service rebootstrapped, boot clean, flags
+  read back through the live API.
+
+## Backlog (successor tasks, no build in this program)
+
+Recorded at program close from the verifier's standing findings and the
+close-out review; none are blockers, all are content-clean today:
+
+- Repo-hygiene scrub candidates (legacy references that predate this
+  program; sweep when next touched): example host names in
+  docs/MULTI_AGENT.md, agents/models.py, and two test files; checkout-path
+  literals in initiatives/action_registry.py and
+  intelligence/components/initiative_engine.py; deployment-prose trim in
+  this file's Program State history.
+- Directed-action delegate shim replacement: the deployment's interim
+  dispatch shim (bridging the ScopedTask contract to the local agent
+  gateway) is DESIGNATED to be replaced by the Phase B worker daemon path
+  (colony-worker claiming directed jobs under the WorkerGovernor, or the
+  host framework's kanban/structured-runs surface per the Hermes survey).
+  Same contract, server-side enforcement already in place; deployment-layer
+  swap only.
+- Connector enablement (deployment layer): configure + shadow -> live per
+  connector as the owner provides mailbox/ICS/folder/metrics config (see
+  Phase C private deployment layer notes above).
+- Worker fleet rollout (deployment layer): place colony-worker on hosts
+  per the Phase B private deployment layer notes; graduate
+  COLONY_WORKERS_MODE shadow -> live once the shadow calibration record
+  looks clean.
 
 ## Resumption note for a successor agent
 
