@@ -736,6 +736,18 @@ llm_request middleware) should migrate off the registry when next touched.
   persisted and stated-vs-realized calibration is recorded in the
   self-model; PROMPT_VERSION journaled per action; golden-set prompt eval
   harness added (tests/test_prompt_evals.py).
+- 2026-07-04 (live course-corrections, the amendment posture working as
+  intended): reviewing the journaled world writes after the populate-live
+  flip exposed three precision faults, all fixed same-day with regression
+  tests: FTS token fusion broke exact-name dedup (every hyphenated mention
+  minted a duplicate; exact-name fallback added), URLs/paths passed as
+  entity names, and title-cased operational phrases became persons. The
+  world sqlite store is now anchored to COLONY_STATE_DIR (was cwd-relative
+  and checkout-resident on the reference deployment; relocated live, seeded
+  from the bootstrap corpus, conversation entities re-extracted through the
+  hardened gates, incident journaled). The graph client's run_query Cypher
+  allowlist gained a registration seam (register_allowed_cypher) because it
+  silently rejected the new belief/world read queries.
 - Phase B: NOT STARTED.
 - Phase C: NOT STARTED (world-model LLM extraction pulled forward from the
   item 2 wiring as an Amendment-era deliverable; connectors proper remain).
