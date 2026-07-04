@@ -87,7 +87,20 @@ persona. `COLONY_AGENT_NAME` supplies the agent's name at compose time.
 
 New adopters should import `build_system_prompt` and delete their inline
 prompt constants. Existing modules migrate as they are touched (see
-ROADMAP-COGNITION.md program state for which have adopted).
+ROADMAP-COGNITION.md program state for which have adopted). Adopted so far:
+executor (initiative executor), thinker (confidence + evidence now
+mandatory; ungrounded items dropped), planner (per-step confidence,
+persisted), project step runner.
+
+## Eval harness and attribution
+
+Any prompt change must keep `tests/test_prompt_evals.py` green: a golden
+set of composition contracts (doctrine present, sections injected only when
+supplied, budgets enforced, confidence-mandatory schemas) and decision
+goldens (canned model outputs -> the exact parse/gate decision the system
+must reach). `PROMPT_VERSION` is recorded on every action-journal entry so
+behavior shifts in the live journal are attributable to prompt versions.
+Doctrine changes go ONLY in the charter, never in role blocks.
 
 ## Changelog
 
