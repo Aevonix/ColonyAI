@@ -186,6 +186,7 @@ class WorldLLMExtractor:
         self.last_report = report
         if mode == "off" or self._store is None:
             return report
+        self._seen_rels: set = set()
         if texts is None:
             texts = await self._recent_memory_texts()
         report["texts"] = len(texts or [])
@@ -293,11 +294,25 @@ class WorldLLMExtractor:
     async def _upsert_rel(self, src_id: str, rel: str, tgt_id: str,
                           conf: float, mode: str,
                           report: Dict[str, Any]) -> None:
+        key = (src_id, rel, tgt_id)
+        if key in self._seen_rels:
+            return
+        self._seen_rels.add(key)
         report["relationships"].append(
             {"source": src_id, "rel": rel, "target": tgt_id})
         if mode != "live":
             return
         try:
+            # Repeated mentions must corroborate, not duplicate: an existing
+            # edge of the same type between the same pair is left alone.
+            try:
+                existing = await self._store.query_relationships(
+                    source_id=src_id, target_id=tgt_id,
+                    relationship_type=rel, min_confidence=0.0, limit=1)
+            except Exception:
+                existing = []
+            if existing:
+                return
             from colony_sidecar.world_model.relationships import WorldRelationship
             await self._store.upsert_relationship(WorldRelationship(
                 id="", source_id=src_id, target_id=tgt_id,
