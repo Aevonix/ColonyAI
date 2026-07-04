@@ -106,23 +106,32 @@ class WorldLLMExtractor:
         self.last_report: Dict[str, Any] = {}
 
     # -- source text -------------------------------------------------------
+
+    _RECENT_MEMORY_QUERY = (
+        """MATCH (m:Memory)
+                   WHERE m.created_at >= datetime() - duration({hours: $hours})
+                     AND m.type IN ['episodic', 'semantic']
+                     AND m.superseded_by IS NULL
+                   RETURN m.content AS content
+                   ORDER BY m.created_at DESC LIMIT $limit""")
+
     async def _recent_memory_texts(self, hours: float = 24.0,
                                    limit: int = 30) -> List[str]:
         if self._graph is None or not hasattr(self._graph, "run_query"):
             return []
         try:
+            # Register this exact parameterized read query with the graph
+            # client's Cypher allowlist (single-sourced here).
+            if hasattr(type(self._graph), "register_allowed_cypher"):
+                type(self._graph).register_allowed_cypher(
+                    self._RECENT_MEMORY_QUERY)
             rows = await self._graph.run_query(
-                """MATCH (m:Memory)
-                   WHERE m.created_at >= datetime() - duration({hours: $hours})
-                     AND m.type IN ['episodic', 'semantic']
-                     AND m.superseded_by IS NULL
-                   RETURN m.content AS content
-                   ORDER BY m.created_at DESC LIMIT $limit""",
+                self._RECENT_MEMORY_QUERY,
                 {"hours": int(hours), "limit": int(limit)})
             return [str(r.get("content") or "") for r in rows or []
                     if r.get("content")]
         except Exception as exc:
-            logger.debug("world llm-extract memory query failed: %s", exc)
+            logger.info("world llm-extract memory query failed: %s", exc)
             return []
 
     # -- one LLM batch -------------------------------------------------------

@@ -1177,6 +1177,19 @@ class ColonyGraph:
         "       m1.content AS content_a, m2.content AS content_b",
     })
 
+    # Additional allowlisted queries registered by callers via
+    # register_allowed_cypher(). Same discipline as _ALLOWED_CYPHER: exact,
+    # fully-parameterized strings only, never built from user input. This
+    # keeps each query single-sourced next to the code that owns it instead
+    # of duplicating string literals here.
+    _EXTRA_ALLOWED_CYPHER: set = set()
+
+    @classmethod
+    def register_allowed_cypher(cls, cypher: str) -> str:
+        """Register one exact, parameterized Cypher string for run_query."""
+        cls._EXTRA_ALLOWED_CYPHER.add(cypher)
+        return cypher
+
     async def run_query(self, cypher: str, params: dict) -> List[Dict[str, Any]]:
         """Execute a Cypher query and return results as dicts.
 
@@ -1195,10 +1208,12 @@ class ColonyGraph:
         Raises:
             ValueError: If ``cypher`` is not in the allowlist.
         """
-        if cypher not in self._ALLOWED_CYPHER:
+        if (cypher not in self._ALLOWED_CYPHER
+                and cypher not in self._EXTRA_ALLOWED_CYPHER):
             raise ValueError(
                 "run_query: cypher string not in allowlist. "
-                "Add to GraphClient._ALLOWED_CYPHER after security review."
+                "Add to GraphClient._ALLOWED_CYPHER or register via "
+                "register_allowed_cypher() after security review."
             )
         async with self.driver.session(database=self.database) as session:
             result = await session.run(cypher, **params)

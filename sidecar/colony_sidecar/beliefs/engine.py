@@ -195,6 +195,10 @@ class BeliefEngine:
         if self._graph is None or not hasattr(self._graph, "run_query"):
             return []
         try:
+            # Register this exact parameterized read query with the graph
+            # client's Cypher allowlist (single-sourced here).
+            if hasattr(type(self._graph), "register_allowed_cypher"):
+                type(self._graph).register_allowed_cypher(_MEMORY_QUERY)
             rows = await self._graph.run_query(_MEMORY_QUERY,
                                                {"limit": int(limit)})
         except Exception as exc:
