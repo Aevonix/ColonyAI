@@ -271,6 +271,66 @@ def config_checks():
             pass
 
 
+# --------------------------------------------------------------------------
+def patch_checks():
+    """Verify/heal the guarded host-side patch registry via the patch runner.
+
+    Deployment patches to the Hermes framework source are managed exclusively
+    by hermes-patch-runner.py over a registry directory (default
+    ~/.hermes/patches, override HERMES_PATCH_DIR). Each patch self-verifies
+    its anchors per the runner contract: the runner re-applies anything a
+    framework update reverted, and reports FUNDAMENTAL_CHANGE (never
+    blind-patching) when a patch must be re-authored for the installed
+    version. Deployments with no patch registry skip this section entirely.
+    """
+    print("\n[framework patches]")
+    import subprocess as _sp
+    patch_dir = os.environ.get("HERMES_PATCH_DIR",
+                               os.path.join(HOME, ".hermes", "patches"))
+    try:
+        entries = os.listdir(patch_dir)
+    except Exception:
+        entries = []
+    has_patches = any(
+        (n.endswith("_patch.py") or n.endswith("_patch")) and not n.startswith(".")
+        for n in entries
+    )
+    if not has_patches:
+        print("  (no patch registry: nothing to verify)")
+        return
+    runner = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "hermes-patch-runner.py")
+    if not os.path.exists(runner):
+        fail(f"patch registry {patch_dir} exists but hermes-patch-runner.py "
+             "is missing next to the doctor (cannot verify/heal)")
+        return
+    try:
+        r = _sp.run([sys.executable, runner, "apply", "--dir", patch_dir, "--json"],
+                    capture_output=True, text=True, timeout=180)
+        data = json.loads(r.stdout or "{}")
+    except Exception as e:
+        fail(f"patch runner failed to execute: {e}")
+        return
+    for res in data.get("results", []):
+        name = res.get("name", "?")
+        state = res.get("state", "error")
+        detail = res.get("detail", "")
+        if state == "ok":
+            ok(f"patch {name}: applied")
+        elif state == "applied":
+            warn(f"patch {name}: was missing and has been RE-APPLIED")
+        elif state == "fundamental-change":
+            fail(f"patch {name}: FUNDAMENTAL_CHANGE, anchors no longer match the "
+                 f"installed Hermes; re-author the patch (target NOT modified). {detail}")
+        elif state == "rollback":
+            fail(f"patch {name}: apply failed validation and was rolled back. {detail}")
+        else:
+            fail(f"patch {name}: {detail}")
+    if data.get("restart_needed"):
+        warn("patches were re-applied this run: restart the gateway to load them "
+             "(launchctl kickstart -k gui/$(id -u)/ai.hermes.gateway)")
+
+
 def main():
     print("=" * 64)
     print("Colony Doctor")
@@ -296,6 +356,9 @@ def main():
 
     print("\n--- CONFIG & durability checks ---")
     config_checks()
+
+    print("\n--- FRAMEWORK PATCH checks ---")
+    patch_checks()
 
     print("\n" + "=" * 64)
     print(f"RESULT: {len(OKS)} ok, {len(WARNS)} warn, {len(FAILS)} fail"
