@@ -9,6 +9,8 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from colony_sidecar.delivery.classification import is_reachout, reachout_types
 from colony_sidecar.delivery.bridge import ProactiveDeliveryBridge
 from colony_sidecar.delivery.channels import Channel
@@ -142,3 +144,95 @@ def test_executor_defaults_exclude_reachout():
         assert t in _DEFAULT_TYPES
     # And the exclusion is exactly the reach-out set.
     assert set(_EXECUTABLE_TYPES) - set(_DEFAULT_TYPES) == set(reachout_types())
+
+
+# ---------------------------------------------------------------------------
+# Delivery transport selection (env-driven): gateway vs hermes_webhook
+# ---------------------------------------------------------------------------
+
+def test_gateway_transport_uses_push_to_gateway(monkeypatch):
+    """COLONY_DELIVERY_TRANSPORT=gateway routes the sanitised text through
+    push_to_gateway (flat contract) instead of the structured webhook."""
+    import asyncio
+    from colony_sidecar.autonomy.loop import AutonomyLoop
+    from colony_sidecar.autonomy.config import AutonomyConfig
+
+    monkeypatch.setenv("COLONY_DELIVERY_TRANSPORT", "gateway")
+    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-xyz")
+
+    cfg = AutonomyConfig()
+    cfg.proactive_delivery_enabled = True
+    cfg.delivery_shadow_mode = False
+    loop = AutonomyLoop(registry=SimpleNamespace(directives=None), config=cfg)
+
+    calls = {}
+
+    class FakeDelivery:
+        _rate_limiter = None
+
+        def preview_initiative(self, payload):
+            return {"person_id": "cid-owner-xyz", "urgency": 0.7,
+                    "channel_hint": "dm",
+                    "target": {"user_chat": "whatsapp:home-chat-1"}}
+
+        async def push_to_gateway(self, *, platform, chat_id, message, source):
+            calls["gateway"] = (platform, chat_id, message, source)
+            return True
+
+        async def push_initiative(self, payload):
+            calls["webhook"] = payload
+            return True
+
+    payload = {
+        "id": "prop-1", "type": "proposal", "priority": 0.7,
+        "title": "A useful finding", "description": "A useful finding.\nDetails here.",
+        "rationale": "", "suggested_action": "", "entity_id": None,
+        "entity_type": "proposal", "channel_hint": "dm", "context": {},
+        "generated_at": "2099-01-01T00:00:00+00:00",
+    }
+    ok = asyncio.run(loop._route_reachout_delivery(payload, FakeDelivery()))
+    assert ok is True
+    assert "webhook" not in calls          # structured path NOT used
+    platform, chat_id, message, source = calls["gateway"]
+    assert platform == "whatsapp" and chat_id == "home-chat-1"
+    assert "A useful finding" in message and source == "proposal"
+
+
+def test_default_transport_still_uses_webhook(monkeypatch):
+    import asyncio
+    from colony_sidecar.autonomy.loop import AutonomyLoop
+    from colony_sidecar.autonomy.config import AutonomyConfig
+
+    monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
+    cfg = AutonomyConfig()
+    cfg.proactive_delivery_enabled = True
+    cfg.delivery_shadow_mode = False
+    loop = AutonomyLoop(registry=SimpleNamespace(directives=None), config=cfg)
+
+    calls = {}
+
+    class FakeDelivery:
+        _rate_limiter = None
+
+        def preview_initiative(self, payload):
+            return {"person_id": "p", "urgency": 0.7, "channel_hint": "dm",
+                    "target": {"user_chat": "whatsapp:home-chat-1"}}
+
+        async def push_to_gateway(self, **kw):
+            calls["gateway"] = kw
+            return True
+
+        async def push_initiative(self, payload):
+            calls["webhook"] = payload
+            return True
+
+    payload = {
+        "id": "prop-2", "type": "proposal", "priority": 0.7,
+        "title": "T", "description": "D", "rationale": "",
+        "suggested_action": "", "entity_id": None, "entity_type": "proposal",
+        "channel_hint": "dm", "context": {},
+        "generated_at": "2099-01-01T00:00:00+00:00",
+    }
+    ok = asyncio.run(loop._route_reachout_delivery(payload, FakeDelivery()))
+    assert ok is True
+    assert "webhook" in calls and "gateway" not in calls

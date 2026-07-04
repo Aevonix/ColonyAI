@@ -942,7 +942,33 @@ class AutonomyLoop:
             logger.debug("Proactive delivery disabled — initiative stored for agent polling")
             return False
 
-        ok = await delivery.push_initiative(payload)
+        # Transport selection (env-driven, generic):
+        #   hermes_webhook (default) -- POST the structured initiative to a
+        #     composing agent's webhook (push_initiative), which writes the
+        #     final owner-facing message itself.
+        #   gateway -- POST the sanitised text directly to the deployment's
+        #     message gateway /internal/deliver (push_to_gateway), for
+        #     deployments whose channel transport speaks the flat
+        #     {platform, chat_id, message} contract.
+        transport = os.environ.get(
+            "COLONY_DELIVERY_TRANSPORT", "hermes_webhook").strip().lower()
+        if transport == "gateway" and hasattr(delivery, "push_to_gateway"):
+            target = (preview or {}).get("target", {})
+            chat = target.get("user_chat") or target.get("home_chat") or ""
+            platform, _, chat_id = chat.partition(":")
+            message = (payload.get("description") or payload.get("title") or "").strip()
+            if not (platform and chat_id and message):
+                logger.warning(
+                    "Reach-out %s: gateway transport missing target/message "
+                    "(target=%r) — not delivered", iid, target,
+                )
+                return False
+            ok = await delivery.push_to_gateway(
+                platform=platform, chat_id=chat_id, message=message,
+                source=type_value,
+            )
+        else:
+            ok = await delivery.push_initiative(payload)
         if ok:
             # Consume the per-recipient rate budget so the 3/day + cooldown
             # caps actually bind (the push path previously never recorded).
