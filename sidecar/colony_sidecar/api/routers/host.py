@@ -3941,6 +3941,156 @@ async def repos_refresh() -> dict:
     return {"available": True, "results": _repo_mirrors.refresh_all()}
 
 
+# --- Cognition program (items 1/3/4/7 + Amendment 1) ---
+_self_model = None
+_skill_store = None
+_project_engine = None
+_belief_engine = None
+_world_llm_extractor = None
+
+
+def set_self_model(sm) -> None:
+    global _self_model
+    _self_model = sm
+
+
+def set_skill_store(store) -> None:
+    global _skill_store
+    _skill_store = store
+
+
+def set_project_engine(engine) -> None:
+    global _project_engine
+    _project_engine = engine
+
+
+def set_belief_engine(engine) -> None:
+    global _belief_engine
+    _belief_engine = engine
+
+
+def set_world_llm_extractor(x) -> None:
+    global _world_llm_extractor
+    _world_llm_extractor = x
+
+
+@router.get("/self")
+async def get_self_model() -> dict:
+    """Self-model: per-domain competence, live load, trust stages."""
+    if _self_model is None:
+        return {"available": False}
+    try:
+        out = {"available": True}
+        out.update(_self_model.status())
+        out["brief"] = _self_model.brief()
+        return out
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+@router.get("/self/journal")
+async def get_action_journal(limit: int = 50, domain: str = "",
+                             today: bool = False) -> dict:
+    """Unified action journal (what was done, why, with what confidence)."""
+    journal = getattr(_self_model, "journal", None) if _self_model else None
+    if journal is None:
+        return {"available": False, "entries": []}
+    try:
+        entries = (journal.today(domain=domain or None) if today
+                   else journal.recent(limit=limit, domain=domain or None))
+        return {"available": True, "count": len(entries), "entries": entries}
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "entries": []}
+
+
+@router.get("/skills-memory")
+async def get_skills_memory() -> dict:
+    """Procedure-memory skills (item 3) observability."""
+    if _skill_store is None:
+        return {"available": False}
+    try:
+        return {"available": True, **_skill_store.snapshot()}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+@router.get("/projects")
+async def list_projects(status: str = "", limit: int = 30) -> dict:
+    if _project_engine is None:
+        return {"available": False, "projects": []}
+    try:
+        from colony_sidecar.projects.models import projects_mode
+        items = _project_engine.store.list_projects(status=status or None,
+                                                    limit=limit)
+        return {"available": True, "count": len(items),
+                "mode": projects_mode(),
+                "projects": [p.to_row() for p in items]}
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "projects": []}
+
+
+@router.get("/projects/{project_id}")
+async def get_project(project_id: str) -> dict:
+    if _project_engine is None:
+        return {"available": False}
+    out = _project_engine.project_status(project_id)
+    return {"available": True, **(out or {"error": "not_found"})}
+
+
+@router.post("/projects")
+async def create_project(body: dict = Body(default={})) -> dict:
+    """Owner-directed project creation (boundary-gated; planning happens on
+    the next autonomy tick; step dispatch carries its own gates)."""
+    if _project_engine is None:
+        return {"ok": False, "reason": "projects_not_wired"}
+    objective = (body or {}).get("objective", "").strip()
+    project, reason = _project_engine.create_project(
+        objective, title=(body or {}).get("title", ""),
+        source=(body or {}).get("source", "owner"))
+    return {"ok": project is not None, "reason": reason,
+            "project": project.to_row() if project else None}
+
+
+@router.post("/projects/{project_id}/abandon")
+async def abandon_project(project_id: str, body: dict = Body(default={})) -> dict:
+    if _project_engine is None:
+        return {"ok": False, "reason": "projects_not_wired"}
+    project = _project_engine.abandon(
+        project_id, reason=(body or {}).get("reason", "owner_request"))
+    return {"ok": project is not None,
+            "project": project.to_row() if project else None}
+
+
+@router.get("/beliefs")
+async def get_beliefs_status() -> dict:
+    if _belief_engine is None:
+        return {"available": False}
+    try:
+        return {"available": True, **_belief_engine.status()}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+@router.get("/beliefs/conflicts")
+async def get_belief_conflicts(status: str = "", limit: int = 50) -> dict:
+    if _belief_engine is None:
+        return {"available": False, "conflicts": []}
+    try:
+        items = _belief_engine.conflicts(status=status or None, limit=limit)
+        return {"available": True, "count": len(items), "conflicts": items}
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "conflicts": []}
+
+
+@router.get("/world/llm-extract/status")
+async def get_world_llm_extract_status() -> dict:
+    if _world_llm_extractor is None:
+        return {"available": False}
+    from colony_sidecar.world_model.llm_extract import llm_extract_mode
+    return {"available": True, "mode": llm_extract_mode(),
+            "last_report": getattr(_world_llm_extractor, "last_report", {})}
+
+
 @router.get("/proposals")
 async def list_proposals(status: str = "", limit: int = 30) -> dict:
     """List proposals Colony has generated (observability)."""

@@ -235,3 +235,35 @@ class SubsystemRegistry:
         """Get the contact store (graduated approval policy, v0.18.0)."""
         from colony_sidecar.api.routers.host import _contacts_store
         return _contacts_store
+
+    # === Cognition program (items 1/3/4/7 + Amendment 1) ===
+
+    @property
+    def self_model(self) -> Any:
+        """SelfModel (competence store + trust engine + action journal)."""
+        from colony_sidecar.api.routers.host import _self_model
+        return _self_model
+
+    @property
+    def skill_store(self) -> Any:
+        """Procedure-memory SkillStore (skills_memory, item 3)."""
+        from colony_sidecar.api.routers.host import _skill_store
+        return _skill_store
+
+    @property
+    def project_engine(self) -> Any:
+        """ProjectEngine (goal persistence, item 1)."""
+        from colony_sidecar.api.routers.host import _project_engine
+        return _project_engine
+
+    @property
+    def belief_engine(self) -> Any:
+        """BeliefEngine (belief maintenance, item 7)."""
+        from colony_sidecar.api.routers.host import _belief_engine
+        return _belief_engine
+
+    @property
+    def world_llm_extractor(self) -> Any:
+        """LLM-assisted world-model extractor (batch, journaled)."""
+        from colony_sidecar.api.routers.host import _world_llm_extractor
+        return _world_llm_extractor

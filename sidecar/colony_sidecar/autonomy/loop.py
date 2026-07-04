@@ -264,6 +264,12 @@ class AutonomyLoop:
         # Phase 6: execute approved actions
         await self._phase_execute()
 
+        # Phase 6a: sustained project pursuit (cognition item 1)
+        await self._phase_projects()
+
+        # Phase 6a2: trust-engine graduation/demotion notices (Amendment 1)
+        await self._phase_trust_notices()
+
         # Phase 6b: request fresh observations for stale domains (v0.16.0)
         await self._phase_observation_sync()
 
@@ -290,6 +296,12 @@ class AutonomyLoop:
 
         # Phase 12: memory archive (weekly)
         await self._phase_memory_archive()
+
+        # Phase 11c: belief maintenance (daily, cognition item 7)
+        await self._phase_belief_maintenance()
+
+        # Phase 11d: LLM-assisted world-model extraction (daily, batch)
+        await self._phase_world_llm_extract()
 
         # Phase 13: memory distillation (weekly)
         await self._phase_memory_distillation()
@@ -1009,6 +1021,14 @@ class AutonomyLoop:
             )
         else:
             ok = await delivery.push_initiative(payload)
+        # Self-model: real push attempts build (or erode) the "delivery"
+        # domain's track record, which the adaptive daily cap draws on.
+        sm = getattr(self._registry, "self_model", None)
+        if sm is not None:
+            try:
+                sm.record("delivery", "success" if ok else "failure")
+            except Exception:
+                pass
         if ok:
             # Consume the per-recipient rate budget so the 3/day + cooldown
             # caps actually bind (the push path previously never recorded).
@@ -1827,6 +1847,120 @@ class AutonomyLoop:
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase cognition error: %s", exc, exc_info=True)
+
+    async def _phase_projects(self) -> None:
+        """Phase 6a: sustained multi-tick project pursuit (cognition item 1).
+
+        The engine plans (LLM, validated), boundary-checks and advances one
+        ready step per due project; every step dispatch routes through that
+        action kind's own gated sub-path. Shadow mode simulates and logs.
+        """
+        try:
+            from colony_sidecar.projects.models import projects_mode
+            if projects_mode() == "off":
+                return
+        except Exception:
+            return
+        engine = getattr(self._registry, "project_engine", None)
+        if engine is None:
+            return
+        try:
+            report = await engine.tick()
+            if (report.get("adopted") or report.get("planned")
+                    or report.get("steps_dispatched")):
+                logger.info("Phase projects[%s]: adopted=%d planned=%d steps=%d",
+                            report.get("mode"), report.get("adopted", 0),
+                            report.get("planned", 0),
+                            report.get("steps_dispatched", 0))
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase projects error: %s", exc, exc_info=True)
+
+    async def _phase_trust_notices(self) -> None:
+        """Drain trust-engine graduation/demotion notices to the owner
+        (Amendment 1.2: notifications, not permission requests)."""
+        sm = getattr(self._registry, "self_model", None)
+        trust = getattr(sm, "trust", None) if sm is not None else None
+        if trust is None or not getattr(trust, "pending_notices", None):
+            return
+        delivery = self._registry.delivery
+        try:
+            from colony_sidecar.proposals import Proposal, proposal_to_payload
+        except Exception:
+            return
+        while trust.pending_notices:
+            n = trust.pending_notices.popleft()
+            try:
+                if n.get("demotion"):
+                    title = f"Autonomy pulled back: {n['domain']}"
+                    finding = (
+                        f"I demoted myself to ask-first on {n['domain']}: "
+                        f"{n.get('reason', 'circuit breaker')}. I will ask "
+                        "before doing this class of work again.")
+                else:
+                    stage_txt = ("asking you first before"
+                                 if n.get("stage") == "ask_first"
+                                 else "handling autonomously")
+                    title = f"Autonomy update: {n['domain']}"
+                    finding = (
+                        f"My track record on {n['domain']} crossed the "
+                        f"threshold ({n.get('reason', '')}), so I am now "
+                        f"{stage_txt} this class of work. Say stop if you "
+                        "do not want that.")
+                prop = Proposal(
+                    title=title[:100], finding=finding,
+                    why_it_helps="you always know exactly what I do on my own",
+                    suggested_action="Say 'stop acting' any time to pause "
+                                     "all autonomy.",
+                    source="trust-engine", initiative_type="proposal",
+                    confidence=0.85)
+                pstore = getattr(self._registry, "proposal_store", None)
+                if pstore is not None:
+                    pstore.add(prop)
+                if delivery is not None:
+                    await self._route_reachout_delivery(
+                        proposal_to_payload(prop), delivery)
+            except Exception:
+                logger.debug("trust notice delivery failed", exc_info=True)
+
+    async def _phase_belief_maintenance(self) -> None:
+        """Phase 11c (daily): belief maintenance (cognition item 7)."""
+        engine = getattr(self._registry, "belief_engine", None)
+        if engine is None:
+            return
+        key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._periodic_last.get("belief_maintenance") == key:
+            return
+        try:
+            await engine.run()
+            self._periodic_last["belief_maintenance"] = key
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase belief_maintenance error: %s", exc,
+                         exc_info=True)
+
+    async def _phase_world_llm_extract(self) -> None:
+        """Phase 11d (daily): LLM-assisted world-model extraction (batch,
+        journaled; piggybacks the daily memory-distillation cadence)."""
+        extractor = getattr(self._registry, "world_llm_extractor", None)
+        if extractor is None:
+            return
+        try:
+            from colony_sidecar.world_model.llm_extract import llm_extract_mode
+            if llm_extract_mode() == "off":
+                return
+        except Exception:
+            return
+        key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._periodic_last.get("world_llm_extract") == key:
+            return
+        try:
+            await extractor.run()
+            self._periodic_last["world_llm_extract"] = key
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase world_llm_extract error: %s", exc,
+                         exc_info=True)
 
     async def _run_periodic_phase(self, name: str, period: str, work) -> None:
         """Run a memory-lifecycle phase at most once per period ("hour"|"day"|"week").

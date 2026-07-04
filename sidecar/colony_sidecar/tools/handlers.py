@@ -567,6 +567,168 @@ async def handle_initiative_feedback(
         return json.dumps({"error": str(e), "status": "error"})
 
 
+# --- Cognition program handlers (items 1/3/4/7 + Amendment 1) ---
+
+async def handle_list_projects(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    status = args.get("status", "all")
+    try:
+        engine = registry.project_engine
+        if engine is None:
+            return json.dumps({"error": "Projects not wired", "status": "unavailable"})
+        items = engine.store.list_projects(
+            status=None if status in ("", "all") else status, limit=30)
+        return json.dumps({
+            "count": len(items),
+            "projects": [
+                {"id": p.id, "title": p.title, "status": p.status,
+                 "source": p.source, "reason": p.reason}
+                for p in items
+            ],
+        }, default=str)
+    except Exception as e:
+        logger.error("list_projects failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_project_status(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        engine = registry.project_engine
+        if engine is None:
+            return json.dumps({"error": "Projects not wired", "status": "unavailable"})
+        out = engine.project_status(args.get("project_id", ""))
+        return json.dumps(out or {"error": "not_found"}, default=str)
+    except Exception as e:
+        logger.error("project_status failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_create_project(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        engine = registry.project_engine
+        if engine is None:
+            return json.dumps({"error": "Projects not wired", "status": "unavailable"})
+        project, reason = engine.create_project(
+            args.get("objective", ""), title=args.get("title", ""),
+            source="owner")
+        if project is None:
+            return json.dumps({"created": False, "reason": reason})
+        return json.dumps({"created": True, "project_id": project.id,
+                           "title": project.title,
+                           "note": "planned and pursued on the autonomy loop"})
+    except Exception as e:
+        logger.error("create_project failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_abandon_project(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        engine = registry.project_engine
+        if engine is None:
+            return json.dumps({"error": "Projects not wired", "status": "unavailable"})
+        project = engine.abandon(args.get("project_id", ""),
+                                 reason=args.get("reason", "owner_request"))
+        return json.dumps({"abandoned": project is not None,
+                           "status": getattr(project, "status", None)})
+    except Exception as e:
+        logger.error("abandon_project failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_recall_skills(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        store = registry.skill_store
+        if store is None:
+            return json.dumps({"error": "Skills memory not wired", "status": "unavailable"})
+        from colony_sidecar.skills_memory import relevant_skills
+        skills = relevant_skills(store, args.get("situation", ""), k=3)
+        return json.dumps({
+            "count": len(skills),
+            "skills": [
+                {"title": s.title, "situation": s.situation,
+                 "steps": s.steps, "gotchas": s.gotchas, "domain": s.domain}
+                for s in skills
+            ],
+        }, default=str)
+    except Exception as e:
+        logger.error("recall_skills failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_self_status(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        sm = registry.self_model
+        if sm is None:
+            return json.dumps({"error": "Self-model not wired", "status": "unavailable"})
+        out = sm.status()
+        out["brief"] = sm.brief()
+        return json.dumps(out, default=str)
+    except Exception as e:
+        logger.error("self_status failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_action_journal(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        sm = registry.self_model
+        journal = getattr(sm, "journal", None) if sm is not None else None
+        if journal is None:
+            return json.dumps({"error": "Action journal not wired", "status": "unavailable"})
+        entries = journal.recent(limit=_as_int(args.get("limit", 20), 20),
+                                 domain=args.get("domain") or None)
+        return json.dumps({
+            "count": len(entries),
+            "entries": [
+                {"when": _iso_ts(e.get("ts")), "domain": e.get("domain"),
+                 "action": e.get("description"), "decision": e.get("decision"),
+                 "reasoning": e.get("reasoning"),
+                 "confidence": e.get("confidence"),
+                 "outcome": e.get("outcome")}
+                for e in entries
+            ],
+        }, default=str)
+    except Exception as e:
+        logger.error("action_journal failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_belief_conflicts(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        engine = registry.belief_engine
+        if engine is None:
+            return json.dumps({"error": "Belief engine not wired", "status": "unavailable"})
+        status = args.get("status", "all")
+        items = engine.conflicts(status=None if status in ("", "all") else status,
+                                 limit=30)
+        return json.dumps({"count": len(items), "conflicts": items}, default=str)
+    except Exception as e:
+        logger.error("belief_conflicts failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
 # Handler registry -- maps tool name to handler function
 TOOL_HANDLERS: dict[str, callable] = {
     "colony_memory_search": handle_memory_search,
@@ -587,4 +749,12 @@ TOOL_HANDLERS: dict[str, callable] = {
     "repo_read_file": handle_repo_read_file,
     "repo_search": handle_repo_search,
     "colony_flag_boundary_concern": handle_flag_boundary_concern,
+    "list_projects": handle_list_projects,
+    "project_status": handle_project_status,
+    "create_project": handle_create_project,
+    "abandon_project": handle_abandon_project,
+    "recall_skills": handle_recall_skills,
+    "self_status": handle_self_status,
+    "action_journal": handle_action_journal,
+    "belief_conflicts": handle_belief_conflicts,
 }

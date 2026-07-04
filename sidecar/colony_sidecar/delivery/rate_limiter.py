@@ -65,8 +65,14 @@ class DeliveryRateLimiter:
         quiet_end_hour: int = _QUIET_END_HOUR,
         metrics: Optional[Any] = None,
         db_path: Optional[Path] = None,
+        cap_provider: Optional[Any] = None,
     ) -> None:
         self._max_per_day = max_per_day
+        # Adaptive cap (Amendment 1.6): an optional callable(base:int)->int
+        # (the trust engine) that EARNS the daily cap upward with a proven
+        # delivery track record. Bounded by the provider; base is the floor
+        # semantics owners already know. Failure falls back to base.
+        self._cap_provider = cap_provider
         self._cooldown = timedelta(hours=cooldown_hours)
         self._quiet_start = quiet_start_hour
         self._quiet_end = quiet_end_hour
@@ -125,10 +131,16 @@ class DeliveryRateLimiter:
                         pass
                 return False, f"person_frustrated (p={frust:.0%})"
 
-        # Daily limit
+        # Daily limit (adaptive when a trust cap provider is wired)
+        effective_max = self._max_per_day
+        if self._cap_provider is not None:
+            try:
+                effective_max = max(1, int(self._cap_provider(self._max_per_day)))
+            except Exception:
+                effective_max = self._max_per_day
         count = len(self._daily_counts[person_id])
-        if count >= self._max_per_day:
-            return False, f"daily_limit_reached ({count}/{self._max_per_day})"
+        if count >= effective_max:
+            return False, f"daily_limit_reached ({count}/{effective_max})"
 
         # Cooldown
         last = self._last_delivery[person_id]

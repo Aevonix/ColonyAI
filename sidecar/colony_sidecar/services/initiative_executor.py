@@ -188,6 +188,8 @@ class InitiativeExecutorService:
         agent_id: str = "colony-executor",
         max_tool_iterations: int = 8,
         directive_manager: Any = None,
+        skill_store: Any = None,
+        self_model: Any = None,
     ):
         self._store = initiative_store
         self._reasoning = reasoning_loop
@@ -195,6 +197,9 @@ class InitiativeExecutorService:
         # Boundary enforcement: consulted before executing an initiative so the
         # executor never acts on a subject the owner told it to leave alone.
         self._directives = directive_manager
+        # Compounding learning (item 3) + self-model/trust (item 4).
+        self._skills = skill_store
+        self._self_model = self_model
         self._cycle_secs = cycle_secs
         self._max_per_cycle = max_per_cycle
         self._model_tier = model_tier
@@ -396,6 +401,31 @@ class InitiativeExecutorService:
                 except Exception:
                     pass
 
+            # Relevant past procedures (item 3) + self-assessment (item 4):
+            # purely additive prompt context; informs, never acts.
+            if self._skills is not None:
+                try:
+                    from colony_sidecar.skills_memory import (
+                        format_block, relevant_skills, skills_enabled,
+                    )
+                    if skills_enabled():
+                        block = format_block(
+                            relevant_skills(self._skills,
+                                            f"{itype} {getattr(initiative, 'description', '')}",
+                                            k=3, domain=itype),
+                            strategy_note=self._skills.get_note(itype))
+                        if block:
+                            system_prompt += "\n\n" + block
+                except Exception:
+                    logger.debug("skills block failed", exc_info=True)
+            if self._self_model is not None:
+                try:
+                    sm_brief = self._self_model.brief()
+                    if sm_brief:
+                        system_prompt += "\n\n## Self-assessment\n" + sm_brief
+                except Exception:
+                    pass
+
             # Conversation accumulated across continuation rounds. The reasoning
             # loop runs its own internal tool loop, but returns ``needs_tool``
             # when its per-call iteration budget is exhausted while an action is
@@ -431,6 +461,8 @@ class InitiativeExecutorService:
                         iid, elapsed, total_tokens, iterations,
                         response_text[:120],
                     )
+                    self._record_outcome(itype, "success", elapsed)
+                    await self._maybe_distill(initiative, itype, response_text)
                     done = True
                     break
 
@@ -441,6 +473,11 @@ class InitiativeExecutorService:
                     self._stats["initiatives_failed"] += 1
                     self._stats["total_tokens"] += total_tokens
                     logger.warning("Initiative %s failed: %s", iid, result.error)
+                    self._record_outcome(
+                        itype,
+                        "timeout" if _is_timeout_error(result.error) else "failure",
+                        time.monotonic() - start)
+                    self._note_failure(initiative, itype, result.error or "")
                     done = True
                     break
 
@@ -541,6 +578,8 @@ class InitiativeExecutorService:
                 )
                 self._stats["initiatives_failed"] += 1
                 self._stats["total_tokens"] += total_tokens
+                self._record_outcome(itype, "failure",
+                                     time.monotonic() - start)
                 logger.warning(
                     "Initiative %s hit tool-loop cap (%d rounds) without completing",
                     iid, self._max_tool_iterations,
@@ -551,8 +590,59 @@ class InitiativeExecutorService:
             logger.error("Initiative %s execution error (%.1fs): %s", iid, elapsed, exc)
             await self._fail_initiative(iid, str(exc), retry=True)
             self._stats["initiatives_failed"] += 1
+            self._record_outcome(
+                itype, "timeout" if _is_timeout_error(str(exc)) else "failure",
+                elapsed)
 
         self._stats["initiatives_processed"] += 1
+
+    # ------------------------------------------------------------------
+    # Self-model + skills-memory hooks (items 3 + 4)
+    # ------------------------------------------------------------------
+
+    def _record_outcome(self, itype: str, outcome: str,
+                        latency: Optional[float] = None) -> None:
+        if self._self_model is None:
+            return
+        try:
+            self._self_model.record(itype, outcome, latency_secs=latency)
+        except Exception:
+            pass
+
+    def _note_failure(self, initiative: Any, itype: str, error: str) -> None:
+        """Failure post-mortem: keep a short per-domain strategy note."""
+        if self._skills is None:
+            return
+        try:
+            desc = (getattr(initiative, "description", "") or "")[:80]
+            self._skills.record_failure_note(
+                itype, f"'{desc}' failed: {(error or 'unknown')[:120]}")
+        except Exception:
+            pass
+
+    async def _maybe_distill(self, initiative: Any, itype: str,
+                             response_text: str) -> None:
+        """Distill a reusable procedure from a qualifying completion."""
+        if self._skills is None:
+            return
+        try:
+            from colony_sidecar.skills_memory import (
+                distill_from_completion, should_distill, skills_distill_mode,
+            )
+            if skills_distill_mode() == "off":
+                return
+            attempts = int(getattr(initiative, "attempt_count", 0) or 0)
+            if not should_distill(max(0, attempts - 1), response_text,
+                                  self._skills):
+                return
+            router = getattr(self._reasoning, "_model", None)
+            await distill_from_completion(
+                router, self._skills, domain=itype,
+                task_text=getattr(initiative, "description", "") or "",
+                result_text=response_text,
+                source_ref=getattr(initiative, "id", "") or "")
+        except Exception:
+            logger.debug("skill distillation failed", exc_info=True)
 
     def _filter_tool_calls_by_boundary(
         self, pending: list, working: list,
@@ -688,6 +778,8 @@ def create_from_env(
     reasoning_loop: Any = None,
     tool_executor: Any = None,
     directive_manager: Any = None,
+    skill_store: Any = None,
+    self_model: Any = None,
 ) -> Optional[InitiativeExecutorService]:
     """Create an InitiativeExecutorService from environment variables.
 
@@ -724,6 +816,8 @@ def create_from_env(
         reasoning_loop=reasoning_loop,
         tool_executor=tool_executor,
         directive_manager=directive_manager,
+        skill_store=skill_store,
+        self_model=self_model,
         cycle_secs=float(os.environ.get("COLONY_EXECUTOR_CYCLE_SECS", "30")),
         max_per_cycle=int(os.environ.get("COLONY_EXECUTOR_MAX_PER_CYCLE", "5")),
         model_tier=os.environ.get("COLONY_EXECUTOR_MODEL_TIER", "small"),

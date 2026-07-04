@@ -52,12 +52,35 @@ class DirectedActionService:
         mirrors: Any = None,           # RepoMirrorManager (audit + target resolution)
         feedback_store: Any = None,
         delivery_router: Any = None,   # awaitable (payload) -> bool, e.g. loop._route_reachout_delivery bound with delivery
+        self_model: Any = None,        # SelfModel (trust engine + journal, Amendment 1)
     ) -> None:
         self.store = store
         self._directives = directive_manager
         self._mirrors = mirrors
         self._feedback = feedback_store
         self._deliver = delivery_router
+        self._self_model = self_model
+
+    # -- trust helpers (Amendment 1.7) -----------------------------------
+    @staticmethod
+    def _trust_domain(task: ScopedTask) -> str:
+        """Trust domain per scope class: all read-only scopes pool their
+        track record; mutating scopes earn trust per approval_key."""
+        return f"directed:{task.approval_key}" if task.mutating else "directed:read"
+
+    def _journal(self, task: ScopedTask, decision: str, why: str,
+                 confidence: Any = None) -> None:
+        journal = getattr(self._self_model, "journal", None)
+        if journal is None:
+            return
+        try:
+            journal.record(
+                self._trust_domain(task), task.objective[:300],
+                reasoning=why, confidence=confidence,
+                reversibility="recoverable" if task.mutating else "reversible",
+                decision=decision, ref=task.id)
+        except Exception:
+            logger.debug("directed journal failed", exc_info=True)
 
     # -- known targets --------------------------------------------------
     def known_targets(self) -> List[Dict[str, str]]:
@@ -98,10 +121,16 @@ class DirectedActionService:
             except Exception:
                 logger.debug("directed boundary check failed (allowing)", exc_info=True)
 
-        # Gate 2: approval tiering.
+        # Gate 2: approval tiering, now trust-graduated (Amendment 1.7).
+        # Read-only scopes act with journaling. Mutating scopes honor a
+        # standing owner approval; otherwise the trust engine decides: an
+        # earned act_first class self-approves (journaled + reported), an
+        # ask_first class asks the owner WITH the reasoning and confidence.
+        # The immutable floor always asks.
         if not task.mutating:
             task.approval = {"required": False, "reason": "read_only_auto"}
             task.status = "approved"
+            self._journal(task, "acted", "read-only scope auto-approved")
         else:
             standing = False
             try:
@@ -113,12 +142,64 @@ class DirectedActionService:
                 task.approval = {"required": True, "granted_by": "standing",
                                  "standing": True, "key": task.approval_key}
                 task.status = "approved"
+                self._journal(task, "acted", "standing owner approval")
             else:
-                task.approval = {"required": True, "standing": False,
-                                 "key": task.approval_key}
-                task.status = "awaiting_approval"
+                gate = None
+                trust = getattr(self._self_model, "trust", None)
+                if trust is not None:
+                    try:
+                        gate = trust.gate(
+                            self._trust_domain(task),
+                            task.objective,
+                            reasoning=f"owner directive: {task.directive_text[:200]}",
+                            reversibility="recoverable",
+                            default_stage="ask_first",
+                            ref=task.id)
+                    except Exception:
+                        logger.debug("directed trust gate failed", exc_info=True)
+                if gate is not None and gate["decision"] == "act":
+                    task.approval = {
+                        "required": True, "granted_by": "trust_engine",
+                        "standing": False, "key": task.approval_key,
+                        "confidence": round(gate["confidence"], 3),
+                    }
+                    task.status = "approved"
+                else:
+                    task.approval = {"required": True, "standing": False,
+                                     "key": task.approval_key}
+                    if gate is not None:
+                        task.approval["confidence"] = round(gate["confidence"], 3)
+                    task.status = "awaiting_approval"
+                    await self._request_approval(task, gate)
         self.store.save(task)
         return task
+
+    async def _request_approval(self, task: ScopedTask,
+                                gate: Optional[Dict[str, Any]]) -> None:
+        """Ask-first (Amendment 1.1): the approval request carries the
+        reasoning and the confidence, through the guarded delivery path."""
+        if self._deliver is None:
+            return
+        try:
+            from colony_sidecar.proposals import Proposal, proposal_to_payload
+            conf = (gate or {}).get("confidence")
+            conf_txt = f" My confidence on this class of work is {conf:.2f}." if conf is not None else ""
+            prop = Proposal(
+                title=f"Approval needed: {task.objective[:60]}",
+                finding=(f"I want to run this directed task: {task.objective[:300]}. "
+                         f"Scope: ops={','.join(task.allowed_ops)}, "
+                         f"targets={[t.get('name') for t in task.targets]}, "
+                         f"branch prefix {task.limits.branch_prefix!r}, "
+                         f"max {task.limits.max_commits} commits.{conf_txt}"),
+                why_it_helps="it is mutating work, so you decide until I have "
+                             "earned act-first trust on this scope",
+                suggested_action=f"Approve with: directed approve {task.id} "
+                                 "(or tell me to drop it)",
+                source=task.id, initiative_type="proposal",
+                confidence=0.8)
+            await self._deliver(proposal_to_payload(prop))
+        except Exception:
+            logger.debug("approval request delivery failed", exc_info=True)
 
     def approve(self, task_id: str, approved_by: str = "owner",
                 standing: bool = False) -> Optional[ScopedTask]:
@@ -225,6 +306,23 @@ class DirectedActionService:
                 )
             except Exception:
                 pass
+
+        # Trust engine: audited outcomes are the earned-autonomy evidence
+        # (Amendment 1.7); a violation trips the circuit breaker. An
+        # unverified MUTATING completion is recorded as nothing: it must
+        # neither graduate a scope class nor trip its breaker.
+        if self._self_model is not None:
+            try:
+                if verdict == "violation":
+                    self._self_model.record(self._trust_domain(task),
+                                            "failure", violation=True)
+                elif verdict == "clean" or not task.mutating:
+                    self._self_model.record(self._trust_domain(task),
+                                            "success")
+            except Exception:
+                pass
+        self._journal(task, "noted",
+                      f"completion audited: {verdict}")
 
         # Owner-facing report through the guarded reach-out path (still held
         # by delivery shadow until go-live).

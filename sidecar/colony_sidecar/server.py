@@ -541,6 +541,54 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("TypeFeedbackStore init failed: %s", exc)
 
+    # --- Self-model / trust engine + action journal (item 4, Amendment 1) ---
+    # Wired before directed action so approval tiering can consult trust.
+    _sm_for_directed = None
+    try:
+        from colony_sidecar.self_model import (
+            ActionJournal, CompetenceStore, SelfModel, TrustEngine,
+            self_model_enabled,
+        )
+        from colony_sidecar.api.routers.host import (
+            set_self_model, _feedback_store as _fb_for_trust,
+        )
+        if self_model_enabled():
+            from colony_sidecar.autonomy.registry import SubsystemRegistry as _Reg
+            _competence = CompetenceStore(
+                db_path=str(state_dir / "colony-self-model.db"))
+            _journal = ActionJournal(
+                db_path=str(state_dir / "colony-action-journal.db"))
+            _trust = TrustEngine(
+                _competence, db_path=str(state_dir / "colony-self-model.db"),
+                feedback_store=_fb_for_trust, journal=_journal)
+            _sm_for_directed = SelfModel(_competence, registry=_Reg(),
+                                         trust=_trust, journal=_journal)
+            set_self_model(_sm_for_directed)
+            logger.info(
+                "SelfModel/TrustEngine initialized (db=%s, journal=%s, "
+                "autograduate=%s)",
+                state_dir / "colony-self-model.db",
+                state_dir / "colony-action-journal.db",
+                os.environ.get("COLONY_TRUST_AUTOGRADUATE", "true"))
+        else:
+            logger.info("SelfModel disabled (COLONY_SELF_MODEL_ENABLED=false)")
+    except Exception as exc:
+        logger.warning("SelfModel init failed: %s", exc)
+
+    # --- Skills memory (procedure memory, item 3) ---
+    _skills_mem_store = None
+    try:
+        from colony_sidecar.skills_memory import SkillStore, skills_distill_mode
+        from colony_sidecar.api.routers.host import set_skill_store
+        _skills_mem_store = SkillStore(
+            db_path=str(state_dir / "colony-skills.db"))
+        set_skill_store(_skills_mem_store)
+        logger.info("SkillStore initialized (db=%s, %d skill(s), distill=%s)",
+                    state_dir / "colony-skills.db",
+                    _skills_mem_store.count(), skills_distill_mode())
+    except Exception as exc:
+        logger.warning("SkillStore init failed: %s", exc)
+
     # --- Read-only repo mirrors + directed action (option A) ---
     try:
         from colony_sidecar.repos import RepoMirrorManager
@@ -595,6 +643,7 @@ async def lifespan(app: FastAPI):
             mirrors=_mirrors_mgr,
             feedback_store=_fb_store,
             delivery_router=_directed_deliver,
+            self_model=_sm_for_directed,
         )
         set_directed_service(_directed_svc)
         logger.info("DirectedActionService initialized (mode=%s)", directed_mode())
@@ -719,6 +768,43 @@ async def lifespan(app: FastAPI):
             logger.info("WorldModelPopulator initialized (mode=%s)", populate_mode())
         except Exception as pexc:
             logger.warning("WorldModelPopulator init failed: %s", pexc)
+
+        # LLM-assisted world-model extraction (batch, journaled; daily phase).
+        try:
+            from colony_sidecar.world_model.llm_extract import (
+                WorldLLMExtractor, llm_extract_mode,
+            )
+            from colony_sidecar.api.routers.host import (
+                get_directive_manager as _get_dm3, set_world_llm_extractor,
+            )
+            _wle = WorldLLMExtractor(
+                world_store, graph=graph, directive_manager=_get_dm3(),
+                journal=getattr(_sm_for_directed, "journal", None))
+            set_world_llm_extractor(_wle)
+            logger.info("WorldLLMExtractor initialized (mode=%s)",
+                        llm_extract_mode())
+        except Exception as wexc:
+            logger.warning("WorldLLMExtractor init failed: %s", wexc)
+
+        # Belief maintenance (item 7): contradiction detection, resolution,
+        # stale decay + the inline property-supersession audit hook.
+        try:
+            from colony_sidecar.beliefs import BeliefEngine, BeliefStore, beliefs_mode
+            from colony_sidecar.api.routers.host import set_belief_engine
+            from colony_sidecar.world_model.store import set_property_audit_hook
+            _belief_store = BeliefStore(
+                db_path=str(state_dir / "colony-beliefs.db"))
+            _belief_eng = BeliefEngine(
+                _belief_store, world_store=world_store, graph=graph,
+                initiative_store=None,  # attached below once wired
+                journal=getattr(_sm_for_directed, "journal", None),
+                self_model=_sm_for_directed)
+            set_belief_engine(_belief_eng)
+            set_property_audit_hook(_belief_eng.note_property_update)
+            logger.info("BeliefEngine initialized (db=%s, mode=%s)",
+                        state_dir / "colony-beliefs.db", beliefs_mode())
+        except Exception as bexc:
+            logger.warning("BeliefEngine init failed: %s", bexc)
 
         # Wire extraction pipeline
         try:
@@ -846,6 +932,19 @@ async def lifespan(app: FastAPI):
         delivery = ProactiveDeliveryBridge(channel_registry=channel_registry)
         set_delivery_bridge(delivery)
         logger.info("Delivery bridge initialized")
+
+        # Adaptive daily cap (Amendment 1.6): the trust engine can EARN the
+        # per-recipient cap upward with a proven delivery track record.
+        try:
+            _trust_for_cap = getattr(_sm_for_directed, "trust", None)
+            if (_trust_for_cap is not None
+                    and getattr(delivery, "_rate_limiter", None) is not None):
+                delivery._rate_limiter._cap_provider = _trust_for_cap.delivery_cap
+                logger.info("Delivery rate cap wired to trust engine "
+                            "(adaptive, max=%s)",
+                            os.environ.get("COLONY_TRUST_DELIVERY_CAP_MAX", "6"))
+        except Exception:
+            logger.debug("adaptive cap wiring failed", exc_info=True)
 
         # --- 13b. Briefings: full wiring (delivery + persistence + schedule) ---
         # The bare engine from section 9 can compose briefings but has no gateway, no
@@ -1215,6 +1314,57 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("AgentBridgeService init failed (non-fatal): %s", exc)
 
+    # --- 22b. Project engine (goal persistence, cognition item 1) ---
+    try:
+        from colony_sidecar.projects import ProjectEngine, ProjectStore, projects_mode
+        from colony_sidecar.api.routers.host import (
+            set_project_engine,
+            get_directive_manager as _get_dm_p,
+            _directed_service as _dsvc_for_projects,
+            _proposal_store as _pstore_for_projects,
+            _feedback_store as _fb_for_projects,
+        )
+
+        async def _project_deliver(payload: dict) -> bool:
+            try:
+                from colony_sidecar.api.routers.host import (
+                    _autonomy_loop, _delivery_bridge,
+                )
+                if _autonomy_loop is not None and _delivery_bridge is not None:
+                    return await _autonomy_loop._route_reachout_delivery(
+                        payload, _delivery_bridge)
+            except Exception:
+                logger.debug("project deliver failed", exc_info=True)
+            return False
+
+        _project_engine_obj = ProjectEngine(
+            ProjectStore(db_path=str(state_dir / "colony-projects.db")),
+            directive_manager=_get_dm_p(),
+            llm_router=llm_router,
+            reasoning_loop=locals().get("reasoning_loop"),
+            tool_executor=locals().get("tool_executor"),
+            directed_service=_dsvc_for_projects,
+            proposal_store=_pstore_for_projects,
+            feedback_store=_fb_for_projects,
+            self_model=_sm_for_directed,
+            skill_store=_skills_mem_store,
+            delivery_router=_project_deliver,
+            initiative_store=locals().get("initiative_store"),
+        )
+        set_project_engine(_project_engine_obj)
+        logger.info("ProjectEngine initialized (db=%s, mode=%s)",
+                    state_dir / "colony-projects.db", projects_mode())
+        # Late-attach the initiative store to the belief engine (it is wired
+        # after the world-model section where the engine was created).
+        try:
+            from colony_sidecar.api.routers.host import _belief_engine as _be
+            if _be is not None:
+                _be._initiatives = locals().get("initiative_store")
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.warning("ProjectEngine init failed: %s", exc)
+
     # --- 23. Initiative Executor service (autonomous initiative processing) ---
     try:
         from colony_sidecar.services.initiative_executor import (
@@ -1226,6 +1376,8 @@ async def lifespan(app: FastAPI):
             reasoning_loop=locals().get("reasoning_loop"),
             tool_executor=locals().get("tool_executor"),
             directive_manager=_get_dm(),
+            skill_store=_skills_mem_store,
+            self_model=_sm_for_directed,
         )
         if _executor_svc is not None:
             set_initiative_executor(_executor_svc)

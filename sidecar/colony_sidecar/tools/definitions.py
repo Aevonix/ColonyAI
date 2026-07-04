@@ -386,6 +386,123 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
             "required": ["repo", "query"],
         },
     },
+    # --- Cognition program tools (items 1/3/4/7 + Amendment 1) ---
+    {
+        "name": "list_projects",
+        "description": (
+            "List the durable projects you are pursuing across sessions "
+            "(goal persistence), with status and progress."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string",
+                           "enum": ["planning", "active", "blocked",
+                                    "completed", "abandoned", "all"],
+                           "description": "Filter by status (default: all)",
+                           "default": "all"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "project_status",
+        "description": "Full status of one project: its steps, results, and progress.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "The project id"},
+            },
+            "required": ["project_id"],
+        },
+    },
+    {
+        "name": "create_project",
+        "description": (
+            "Create a durable multi-step project from an objective the owner "
+            "gave you. It is planned and pursued autonomously across ticks; "
+            "every step is boundary-checked and gated. Use for work that "
+            "cannot finish in one sitting."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "objective": {"type": "string",
+                              "description": "What the project should achieve"},
+                "title": {"type": "string", "description": "Optional short title"},
+            },
+            "required": ["objective"],
+        },
+    },
+    {
+        "name": "abandon_project",
+        "description": "Abandon a project (owner asked, or it is no longer relevant).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "reason": {"type": "string", "default": "owner_request"},
+            },
+            "required": ["project_id"],
+        },
+    },
+    {
+        "name": "recall_skills",
+        "description": (
+            "Recall relevant procedures you learned from your own past work "
+            "(steps + gotchas) for a situation you are about to tackle."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "situation": {"type": "string",
+                              "description": "What you are about to do"},
+            },
+            "required": ["situation"],
+        },
+    },
+    {
+        "name": "self_status",
+        "description": (
+            "Your live self-model: per-domain success rates, timeouts, "
+            "current load, and earned trust stages (what you may do "
+            "autonomously vs must ask first)."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "action_journal",
+        "description": (
+            "Your unified action journal: what autonomous actions you took "
+            "or asked about, with reasoning, confidence, and outcome. Use to "
+            "answer 'what did you do today and why'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "domain": {"type": "string",
+                           "description": "Optional domain filter (e.g. world_model, directed:read)"},
+                "limit": {"type": "integer", "default": 20},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "belief_conflicts",
+        "description": (
+            "Open or reviewed belief conflicts (contradictory facts detected "
+            "across memory and the world model) and recent supersessions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string",
+                           "enum": ["open", "resolved", "review", "all"],
+                           "default": "all"},
+            },
+            "required": [],
+        },
+    },
 ]
 
 # Native server-side tools (calculate, web_search, file_ops)
