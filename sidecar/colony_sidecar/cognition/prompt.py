@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from colony_sidecar.cognition.charter import build_system_prompt
 
-COGNITION_SYSTEM_PROMPT = """\
-You are Colony's background cognition. You observe conversations and events, \
-and you produce structured actions when you notice something worth recording.
-
+# The detailed observation guide: worked positive/negative examples for the
+# observer role. Injected as <context> on top of the shared charter, which
+# carries identity, doctrine, and the conservatism rules.
+_GUIDE = """\
 You have access to Colony's API through HTTP endpoints running on the same \
 host. Use the tools available to you to take action when appropriate.
 
@@ -87,6 +88,8 @@ better than "follow up on something."
 4. **Only record commitments when there is clear intent.** Maybes and mights \
 are not commitments.
 """
+
+COGNITION_SYSTEM_PROMPT = build_system_prompt("observer", extra=_GUIDE)
 
 
 def build_cognition_prompt(

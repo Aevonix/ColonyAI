@@ -45,6 +45,9 @@ Rules:
 - Skip generic words, greetings, dates, the assistant itself, and anything
   that is not a proper name.
 - confidence reflects how clearly the text establishes the entity (0-1).
+- Weight owner relevance: entities recurring in the excerpt or tied to the
+  owner's work, projects, or relationships score higher; incidental one-off
+  names score low (<=0.4).
 
 Respond with ONLY a JSON object (no prose, no markdown fences):
 {"entities": [{"name": str, "type": one of ["person","company","project",

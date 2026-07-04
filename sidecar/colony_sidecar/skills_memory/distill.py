@@ -42,6 +42,10 @@ Respond with ONLY a JSON object (no prose, no markdown fences):
 {"title": str (<80 chars, imperative), "situation": str (when this applies,
 <200 chars), "steps": [str, ...] (2-8 concrete steps), "gotchas": [str, ...]
 (0-4 pitfalls, may be empty)}.
+Generalize: replace deployment-specific names (hosts, people, repos, ids)
+with role placeholders like <host>, <repo>, <person> so the procedure
+transfers to similar situations. Every step must be grounded in what
+actually happened in the work log; never invent steps.
 If the work contains no reusable procedure, respond with exactly: null"""
 
 

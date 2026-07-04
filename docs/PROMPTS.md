@@ -90,7 +90,16 @@ prompt constants. Existing modules migrate as they are touched (see
 ROADMAP-COGNITION.md program state for which have adopted). Adopted so far:
 executor (initiative executor), thinker (confidence + evidence now
 mandatory; ungrounded items dropped), planner (per-step confidence,
-persisted), project step runner.
+persisted), project step runner, observer (cognition trigger; worked
+examples ride in as `<context>`), narrator (briefing enhancer).
+
+Deliberately standalone (mechanical, purpose-built prompts where the full
+charter adds tokens without behavior gain): introspection turn-audit,
+theory-of-mind affect/fact extractors, context compressor, gate L6 review,
+world-model extractors (harmonized to the canonical entity taxonomy and
+doctrine-consistent: grounded-only, honest confidence, no invention), and
+the no-tools subtask worker (explicitly forbidden from claiming external
+actions).
 
 ## Eval harness and attribution
 
@@ -107,3 +116,4 @@ Doctrine changes go ONLY in the charter, never in role blocks.
 | Version | Change |
 |---|---|
 | 1.0.0 | Initial charter: 8-point doctrine, 7 roles, budgeted sections, confidence-mandatory contracts. |
+| 1.1.0 | + narrator role; observer recomposed onto the charter (guide as context); secondary-prompt pass: extractor taxonomy unified + synonym normalization, honest no-tools subtask worker, skill genericization + grounded-steps rules, owner-relevance confidence weighting, gate L6 concrete flag criteria. |

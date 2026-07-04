@@ -15,11 +15,9 @@ from .models import Briefing, BriefingSection
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = (
-    "You are Colony's briefing narrator. Transform structured data into concise, "
-    "natural-language summaries. Be direct and specific. Do not invent information "
-    "not present in the data. Tone: calm, professional, actionable."
-)
+from colony_sidecar.cognition.charter import build_system_prompt as _charter_prompt
+
+_SYSTEM_PROMPT = _charter_prompt("narrator")
 
 
 @runtime_checkable

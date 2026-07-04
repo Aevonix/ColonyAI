@@ -30,9 +30,9 @@ MAX_RESPONSE_TOKENS = 1_024
 _SYSTEM_PROMPT = (
     "You are an entity extraction engine. Read the document and return a "
     "JSON array of entities. Each entity must be an object with keys: "
-    '"name" (string, required), "type" (one of: person, organization, '
-    'place, concept, event, product), "attributes" (object, optional), '
-    '"confidence" (number 0-1, optional). Return ONLY the JSON array — '
+    '"name" (string, required), "type" (one of: person, company, project, '
+    'product, location, event, concept), "attributes" (object, optional), '
+    '"confidence" (number 0-1, optional). Return ONLY the JSON array: '
     "no prose, no code fences, no explanation. Return [] if no entities "
     "are present. Do not invent entities not grounded in the text."
 )
@@ -94,6 +94,12 @@ def _build_user_prompt(text: str, metadata: Dict[str, Any]) -> str:
     return f"{prefix}Document:\n---\n{text}\n---\n\nReturn the JSON array."
 
 
+_TYPE_SYNONYMS = {
+    "organization": "company", "org": "company", "business": "company",
+    "place": "location",
+}
+
+
 def _parse_entity_array(raw: str) -> List[ExtractedEntity]:
     """Best-effort parse of an LLM response into ``ExtractedEntity`` objects.
 
@@ -130,6 +136,8 @@ def _parse_entity_array(raw: str) -> List[ExtractedEntity]:
         entity_type = item.get("type") or item.get("entity_type")
         if not isinstance(name, str) or not isinstance(entity_type, str):
             continue
+        entity_type = _TYPE_SYNONYMS.get(
+            entity_type.strip().lower(), entity_type.strip().lower())
         attributes = item.get("attributes")
         if not isinstance(attributes, dict):
             attributes = None
