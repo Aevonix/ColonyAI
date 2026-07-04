@@ -1,7 +1,22 @@
 """World Model configuration dataclass."""
 
+import os
 from dataclasses import dataclass, field
 from typing import List
+
+
+def _default_sqlite_path() -> str:
+    """State-dir-anchored default (env-overridable via
+    WORLD_MODEL_SQLITE_PATH). A bare cwd-relative filename made the store
+    land wherever the process happened to start (a git checkout, on the
+    reference deployment), which is fragile across restarts and updates."""
+    explicit = os.environ.get("WORLD_MODEL_SQLITE_PATH", "").strip()
+    if explicit:
+        return explicit
+    state_dir = os.environ.get("COLONY_STATE_DIR", "").strip()
+    if state_dir:
+        return os.path.join(state_dir, "colony_world_model.db")
+    return "colony_world_model.db"
 
 
 @dataclass
@@ -17,7 +32,7 @@ class WorldModelConfig:
     backend: str = "sqlite"         # "neo4j" | "sqlite"
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_database: str = "neo4j"
-    sqlite_path: str = "colony_world_model.db"
+    sqlite_path: str = field(default_factory=_default_sqlite_path)
 
     # ── Confidence thresholds ──────────────────────────────────────────
     min_confidence_for_storage: float = 0.20
