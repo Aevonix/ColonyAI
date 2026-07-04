@@ -1494,88 +1494,111 @@ async def memory_index(body: IndexRequest) -> IndexResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+async def _build_temporal_section(
+    contact_id: Optional[str], override_tz: Optional[str] = None
+) -> ContextSection:
+    """The agent's reference frame for "now" (v0.21.0, factored for per-turn use).
+
+    The host is the authoritative clock; this fulfils the promise the
+    colony-memory plugin makes ("prefer the real current time provided by the
+    host"). Agent home tz + the contact's local tz + elapsed-since-last-contact
+    + time-sensitive heads-up items. Cheap (no memory search): safe per turn.
+    """
+    from colony_sidecar.util import temporal as _temporal
+    agent_tz = _temporal.agent_timezone()
+    contact_tz = None
+    contact_label = "the contact"
+    contact_obj = None
+    if _contacts_store is not None and contact_id:
+        try:
+            contact_obj = await _contacts_store.get(contact_id)
+            if contact_obj is not None:
+                contact_tz = getattr(contact_obj, "timezone", None)
+                contact_label = (
+                    contact_obj.display_name or contact_obj.given_name or "the contact"
+                )
+        except Exception:
+            pass
+    comm_tz = _temporal.resolve_communication_timezone(contact_tz, override_tz)
+    t_lines = [_temporal.describe_now(agent_tz, comm_tz, contact_label)]
+    if contact_obj is not None and getattr(contact_obj, "last_interaction_at", None):
+        li = contact_obj.last_interaction_at
+        t_lines.append(
+            f"Last exchange with {contact_label}: {_temporal.humanize_delta(li)} "
+            f"({_temporal.bucket(li, agent_tz)})."
+        )
+    try:
+        from colony_sidecar.util.session_safety import load_last_user_message_at
+        last_owner = load_last_user_message_at()
+        if last_owner:
+            t_lines.append(f"Owner last messaged {_temporal.humanize_delta(last_owner)}.")
+    except Exception:
+        pass
+    # Heads-up: time-sensitive items (overdue commitments + cadence-overdue contacts)
+    heads = []
+    try:
+        if _commitment_store is not None:
+            for c in (_commitment_store.get_overdue() or [])[:3]:
+                desc = (c.get("description") or "a commitment")[:80]
+                heads.append(
+                    f"⚠️ Overdue: {desc} (was due {_temporal.humanize_delta(c.get('due_at'))})"
+                )
+    except Exception:
+        pass
+    try:
+        if _contacts_store is not None:
+            exclude = {contact_id} if contact_id else set()
+            overdue_contacts = await _contacts_store.compute_cadence_overdue(
+                overdue_only=True, limit=3, exclude_ids=exclude,
+            )
+            for o in overdue_contacts[:2]:
+                heads.append(
+                    f"🕰️ Haven't talked to {o['name']} in {int(o['days_since'])}d "
+                    f"(usually ~{o['cadence_days']:g}d)."
+                )
+    except Exception:
+        pass
+    if heads:
+        t_lines.append("Heads-up:")
+        t_lines.extend("  " + h for h in heads)
+    t_lines.append(
+        "^ This is the authoritative CURRENT date/time — this is NOW. Ignore any "
+        "'Conversation started' date in your system prompt; that is only when this "
+        "long-running session began (often days ago), NOT today. Greet and compute "
+        "elapsed/upcoming relative to the time above."
+    )
+    return ContextSection(
+        id="temporal-context",
+        title="Current Time",
+        body="\n".join(t_lines),
+        priority=100,
+    )
+
+
+@router.get("/context/temporal")
+async def context_temporal(contact_id: Optional[str] = None,
+                           tz: Optional[str] = None) -> dict:
+    """Always-fresh temporal brief for per-turn injection (no caching layer).
+
+    The memory provider calls this every turn so the agent's Current Time
+    block can never go stale inside a long-running session (the full
+    /context/assemble result is session-cached by design; time must not be).
+    """
+    section = await _build_temporal_section(contact_id, tz)
+    return {"id": section.id, "title": section.title, "body": section.body}
+
+
 @router.post("/context/assemble", response_model=ContextAssembleResponse)
 async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleResponse:
     # Context assembly pulls from identity + memory + goals + contacts + world model + skills
     sections: list[ContextSection] = []
     query_text = body.incoming_message.content if body.incoming_message else ""
 
-    # --- Temporal Context (v0.21.0): the agent's reference frame for "now" ---
-    # The host is the authoritative clock; this section fulfils the promise the
-    # colony-memory plugin makes ("prefer the real current time provided by the
-    # host"). Agent home tz + the contact's local tz + elapsed-since-last-contact.
+    # --- Temporal Context: see _build_temporal_section ---
     try:
-        from colony_sidecar.util import temporal as _temporal
-        agent_tz = _temporal.agent_timezone()
         cid = body.context.contact_id if body.context else None
         override_tz = getattr(body.context, "timezone", None) if body.context else None
-        contact_tz = None
-        contact_label = "the contact"
-        contact_obj = None
-        if _contacts_store is not None and cid:
-            try:
-                contact_obj = await _contacts_store.get(cid)
-                if contact_obj is not None:
-                    contact_tz = getattr(contact_obj, "timezone", None)
-                    contact_label = (
-                        contact_obj.display_name or contact_obj.given_name or "the contact"
-                    )
-            except Exception:
-                pass
-        comm_tz = _temporal.resolve_communication_timezone(contact_tz, override_tz)
-        t_lines = [_temporal.describe_now(agent_tz, comm_tz, contact_label)]
-        if contact_obj is not None and getattr(contact_obj, "last_interaction_at", None):
-            li = contact_obj.last_interaction_at
-            t_lines.append(
-                f"Last exchange with {contact_label}: {_temporal.humanize_delta(li)} "
-                f"({_temporal.bucket(li, agent_tz)})."
-            )
-        try:
-            from colony_sidecar.util.session_safety import load_last_user_message_at
-            last_owner = load_last_user_message_at()
-            if last_owner:
-                t_lines.append(f"Owner last messaged {_temporal.humanize_delta(last_owner)}.")
-        except Exception:
-            pass
-        # Heads-up: time-sensitive items (overdue commitments + cadence-overdue contacts)
-        heads = []
-        try:
-            if _commitment_store is not None:
-                for c in (_commitment_store.get_overdue() or [])[:3]:
-                    desc = (c.get("description") or "a commitment")[:80]
-                    heads.append(
-                        f"⚠️ Overdue: {desc} (was due {_temporal.humanize_delta(c.get('due_at'))})"
-                    )
-        except Exception:
-            pass
-        try:
-            if _contacts_store is not None:
-                exclude = {cid} if cid else set()
-                overdue_contacts = await _contacts_store.compute_cadence_overdue(
-                    overdue_only=True, limit=3, exclude_ids=exclude,
-                )
-                for o in overdue_contacts[:2]:
-                    heads.append(
-                        f"🕰️ Haven't talked to {o['name']} in {int(o['days_since'])}d "
-                        f"(usually ~{o['cadence_days']:g}d)."
-                    )
-        except Exception:
-            pass
-        if heads:
-            t_lines.append("Heads-up:")
-            t_lines.extend("  " + h for h in heads)
-        t_lines.append(
-            "^ This is the authoritative CURRENT date/time — this is NOW. Ignore any "
-            "'Conversation started' date in your system prompt; that is only when this "
-            "long-running session began (often days ago), NOT today. Greet and compute "
-            "elapsed/upcoming relative to the time above."
-        )
-        sections.append(ContextSection(
-            id="temporal-context",
-            title="Current Time",
-            body="\n".join(t_lines),
-            priority=100,
-        ))
+        sections.append(await _build_temporal_section(cid, override_tz))
     except Exception as exc:
         logger.debug("context_assemble temporal section failed: %s", exc)
 

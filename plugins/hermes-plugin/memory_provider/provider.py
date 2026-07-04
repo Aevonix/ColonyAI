@@ -14,11 +14,25 @@ import asyncio
 import json
 import logging
 import os
+import re
 import threading
+import time as _time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+
+def _humanize_secs(secs: float) -> str:
+    """Compact human delta for the in-session gap line: 45s / 12m / 3h 05m / 2d 4h."""
+    secs = int(secs)
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    if secs < 86400:
+        return f"{secs // 3600}h {(secs % 3600) // 60:02d}m"
+    return f"{secs // 86400}d {(secs % 86400) // 3600}h"
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +283,10 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
         self._session_id = ""
         self._cached_context: str = ""
+        # Per-turn temporal freshness (the cached context must never freeze "now")
+        self._temporal_cache: tuple = (0.0, "")  # (monotonic ts, block)
+        self._last_turn_started_at: float = 0.0
+        self._prev_turn_gap_secs: Optional[float] = None
         self._prefetch_ready = asyncio.Event()
         self._prefetch_ready.set()
         self._platform = "cli"
@@ -387,10 +405,88 @@ class ColonyMemoryProvider(_MemoryProviderABC):
 
     # -- Prefetch (context injection) ------------------------------------------
 
+    # -- Per-turn temporal freshness --------------------------------------------
+    # The full assemble result is session-cached by design, but "now" must never
+    # be: a long-running session would otherwise carry a frozen Current Time
+    # block (and frozen last-exchange deltas) for hours or days. Every returned
+    # context gets a FRESH temporal section: fetched from the sidecar with a
+    # short micro-TTL, with a local host-clock fallback so the block can never
+    # be absent (the "prefer the real current time provided by the host"
+    # doctrine must always be fulfilled, not just promised).
+
+    _TEMPORAL_TTL_SECS = 15.0
+    _TEMPORAL_SECTION_RE = re.compile(
+        r"## Current Time \[priority \d+\]\n.*?(?=\n\n## |\n</memory-context>)",
+        re.DOTALL,
+    )
+
+    def _local_temporal_block(self) -> str:
+        now = datetime.now().astimezone()
+        lines = [
+            f"Now: {now.strftime('%A %Y-%m-%d %H:%M %Z')} (host clock; sidecar temporal brief unavailable)."
+        ]
+        gap = self._prev_turn_gap_secs
+        if gap is not None and gap > 0:
+            lines.append(
+                f"Previous message in this conversation: {_humanize_secs(gap)} ago."
+            )
+        lines.append(
+            "^ This is the authoritative CURRENT date/time — this is NOW. Ignore any "
+            "'Conversation started' date in your system prompt."
+        )
+        return "## Current Time [priority 100]\n" + "\n".join(lines)
+
+    async def _fresh_temporal_block(self) -> str:
+        ts, cached = self._temporal_cache
+        if cached and (_time.monotonic() - ts) < self._TEMPORAL_TTL_SECS:
+            return cached
+        block = ""
+        try:
+            client = self._get_async_client()
+            resp = await client.get(
+                f"{self.sidecar_url}/v1/host/context/temporal",
+                headers=self._headers(),
+                params={"contact_id": self._contact_id},
+                timeout=2.5,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            body = data.get("body", "")
+            if body:
+                gap = self._prev_turn_gap_secs
+                if gap is not None and gap > 0:
+                    body += (
+                        f"\nPrevious message in this conversation: "
+                        f"{_humanize_secs(gap)} ago."
+                    )
+                block = f"## {data.get('title', 'Current Time')} [priority 100]\n{body}"
+        except Exception as exc:
+            logger.debug("Colony temporal brief fetch failed: %s", exc)
+        if not block:
+            block = self._local_temporal_block()
+        self._temporal_cache = (_time.monotonic(), block)
+        return block
+
+    async def _with_fresh_temporal(self, context: str) -> str:
+        """Return the context block with an always-fresh Current Time section."""
+        fresh = await self._fresh_temporal_block()
+        if not context:
+            return (
+                "<memory-context>\n[Colony Cognitive Context]\n\n"
+                + fresh
+                + "\n</memory-context>"
+            )
+        stripped = self._TEMPORAL_SECTION_RE.sub("", context)
+        marker = "[Colony Cognitive Context]\n"
+        if marker in stripped:
+            head, tail = stripped.split(marker, 1)
+            return head + marker + "\n" + fresh + "\n\n" + tail.lstrip("\n")
+        return fresh + "\n\n" + stripped
+
     async def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Recall relevant context from Colony for the upcoming turn."""
         if self._cached_context:
-            return self._cached_context
+            return await self._with_fresh_temporal(self._cached_context)
 
         try:
             client = self._get_async_client()
@@ -423,9 +519,9 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         data = resp.json()
         sections = data.get("sections", [])
         if not sections:
-            return ""
+            return await self._with_fresh_temporal("")
 
-        return self._format_sections(sections)
+        return await self._with_fresh_temporal(self._format_sections(sections))
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         """Start a background prefetch for the next turn."""
@@ -698,7 +794,11 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         logger.debug("Colony memory provider switched to session=%s (reset=%s)", new_session_id, reset)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
-        """Called at the start of each turn."""
+        """Called at the start of each turn (also feeds the in-session gap line)."""
+        now = _time.time()
+        if self._last_turn_started_at:
+            self._prev_turn_gap_secs = now - self._last_turn_started_at
+        self._last_turn_started_at = now
         logger.debug("Colony: turn %d started (session=%s)", turn_number, self._session_id)
 
     def on_memory_write(self, action: str, target: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
