@@ -1415,6 +1415,28 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("SandboxManager init failed: %s", exc)
 
+    # --- 22e. Connector framework (read-only pull senses, item 2) ---
+    try:
+        from colony_sidecar.connectors import (
+            ConnectorManager, connectors_mode,
+        )
+        from colony_sidecar.api.routers.host import (
+            set_connector_manager, get_directive_manager as _get_dm_c,
+            _world_populator as _pop_for_conn,
+        )
+        _conn_mgr = ConnectorManager(
+            observation_store=locals().get("observation_store"),
+            populator=_pop_for_conn,
+            directive_manager=_get_dm_c(),
+            self_model=_sm_for_directed,
+        )
+        n_conn = _conn_mgr.register_default_connectors()
+        set_connector_manager(_conn_mgr)
+        logger.info("ConnectorManager initialized (mode=%s, %d connector(s) enabled)",
+                    connectors_mode(), n_conn)
+    except Exception as exc:
+        logger.warning("ConnectorManager init failed: %s", exc)
+
     # --- 23. Initiative Executor service (autonomous initiative processing) ---
     try:
         from colony_sidecar.services.initiative_executor import (

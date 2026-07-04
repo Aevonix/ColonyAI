@@ -303,6 +303,9 @@ class AutonomyLoop:
         # Phase 11d: LLM-assisted world-model extraction (daily, batch)
         await self._phase_world_llm_extract()
 
+        # Phase 11e: connector ingest (read-only pull senses, cognition item 2)
+        await self._phase_connectors()
+
         # Phase 13: memory distillation (weekly)
         await self._phase_memory_distillation()
 
@@ -1976,6 +1979,27 @@ class AutonomyLoop:
             self.stats.errors += 1
             logger.error("Phase world_llm_extract error: %s", exc,
                          exc_info=True)
+
+    async def _phase_connectors(self) -> None:
+        """Phase 11e: poll due read-only connectors (cognition item 2).
+
+        The manager owns per-connector cadence and mode gating (off/shadow/
+        live); this phase just gives it a tick. Off by default -- a no-op
+        until connectors are configured and enabled per deployment."""
+        manager = getattr(self._registry, "connector_manager", None)
+        if manager is None:
+            return
+        try:
+            from colony_sidecar.connectors import connectors_mode
+            if connectors_mode() == "off":
+                return
+        except Exception:
+            return
+        try:
+            await manager.poll_due()
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase connectors error: %s", exc, exc_info=True)
 
     async def _run_periodic_phase(self, name: str, period: str, work) -> None:
         """Run a memory-lifecycle phase at most once per period ("hour"|"day"|"week").

@@ -3949,6 +3949,7 @@ _belief_engine = None
 _world_llm_extractor = None
 _worker_governor = None
 _sandbox = None
+_connector_manager = None
 
 
 def set_self_model(sm) -> None:
@@ -3984,6 +3985,11 @@ def set_worker_governor(g) -> None:
 def set_sandbox(s) -> None:
     global _sandbox
     _sandbox = s
+
+
+def set_connector_manager(m) -> None:
+    global _connector_manager
+    _connector_manager = m
 
 
 @router.get("/self")
@@ -4132,6 +4138,30 @@ async def run_sandbox(body: dict = Body(default={})) -> dict:
         purpose=b.get("purpose", ""),
         owner_directed=bool(b.get("owner_directed", True)),
         approved=bool(b.get("approved", False)))
+
+
+@router.get("/connectors/status")
+async def get_connectors_status() -> dict:
+    """Connector framework (item 2): mode + per-connector cadence/last-poll."""
+    if _connector_manager is None:
+        return {"available": False}
+    try:
+        return {"available": True, **_connector_manager.status()}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+@router.post("/connectors/poll")
+async def poll_connectors() -> dict:
+    """Manually run one connector ingest pass (ops/verification surface; the
+    autonomy phase is the normal cadence)."""
+    if _connector_manager is None:
+        return {"available": False}
+    try:
+        report = await _connector_manager.poll_due()
+        return {"available": True, "report": report}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
 
 
 @router.get("/world/llm-extract/status")

@@ -281,3 +281,9 @@ class SubsystemRegistry:
         """SandboxManager: gated, isolated code execution (item 6)."""
         from colony_sidecar.api.routers.host import _sandbox
         return _sandbox
+
+    @property
+    def connector_manager(self) -> Any:
+        """ConnectorManager: read-only pull senses (item 2)."""
+        from colony_sidecar.api.routers.host import _connector_manager
+        return _connector_manager

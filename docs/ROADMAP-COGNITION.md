@@ -814,8 +814,52 @@ llm_request middleware) should migrate off the registry when next touched.
     workers/deploy unit (COLONY_API_KEY provisioning), and -- if a sandbox host
     is ever wanted -- Docker availability + image + egress policy on that host
     (stays off/dry_run on the Mac unless the owner enables it).
-- Phase C: NOT STARTED (world-model LLM extraction pulled forward from the
-  item 2 wiring as an Amendment-era deliverable; connectors proper remain).
+- Phase C: COMPLETE (2026-07-04, successor session). Landed:
+  - `connectors/` (item 2, senses / connector framework): base Connector ABC +
+    Observation (domain, external_id, ts, payload, EntityHint[], text render) +
+    ConnectorConfig (env-only COLONY_CONNECTOR_<NAME>_*, no creds in code).
+    ConnectorManager owns per-connector cadence + the ingest phase: poll ->
+    OBSERVE-boundary check per observation (a perception blackout on a subject
+    suppresses ingest; reads survive an ACT-level boundary) -> record to the
+    observation store (feeds the initiative engine) -> feed the world-model
+    populator via populate_from_text (reusing ALL its hardened boundary /
+    quality / shadow-first gating). Belief maintenance rides the populator's
+    inline property-audit hook, so changed facts reconcile without a second
+    pass. Mode COLONY_CONNECTORS_MODE off|shadow|live (default off; shadow =
+    calibration: poll + log normalized output + would-populate entities,
+    writing nothing; live = record + populate). Autonomy phase
+    `_phase_connectors` (11e); API GET /connectors/status + POST
+    /connectors/poll. Registry accessor connector_manager; set_connector_manager;
+    boot section 22e (auto-registers only env-enabled connectors).
+  - Reference connectors (all read-only, pure-normalize + fixture-testable,
+    stdlib fetch): imap_email (IMAP headers+snippet -> email domain +
+    person/company from sender; BODY.PEEK, never marks read), caldav_calendar
+    (ICS-feed pull + minimal RFC-5545 VEVENT parser -> calendar domain + event/
+    person/location; CalDAV/OAuth is the documented deployment option),
+    fs_documents (folder watch by mtime -> document domain + document entity +
+    text snippet), webhook_pull (JSON GET + dotted-path field map -> metrics
+    domain + Project/Product entity; PULL only -- push ingress stays with the
+    host framework's webhook adapter per the Hermes survey).
+  - Tests: test_connectors (each connector's normalize against a canned
+    fixture, ICS unfolding, dotted-path dig, base contract, cadence, and the
+    manager's off/shadow/live gate + boundary suppression + populator/obs
+    wiring). Full unit suite green.
+  - Flags added: COLONY_CONNECTORS_ENABLED, COLONY_CONNECTORS_MODE (off),
+    COLONY_CONNECTOR_IMAP_* (HOST/PORT/USER/PASSWORD/MAILBOX/MAX/ENABLED/
+    POLL_SECS), COLONY_CONNECTOR_CALENDAR_* (ICS_URL/USER/PASSWORD/MAX),
+    COLONY_CONNECTOR_FS_* (PATH/EXTENSIONS/MAX), COLONY_CONNECTOR_WEBHOOK_*
+    (URL/AUTH_HEADER/AUTH_VALUE/FIELD_MAP/ID_FIELD/ENTITY_NAME/ENTITY_KIND).
+  - Private deployment layer (aeva repo + Mac): actual mailbox host/user/
+    app-password, the calendar ICS feed URL (+ the one-time Google/CalDAV
+    OAuth consent step if a token path is used instead), the watched folder
+    path(s), and the metrics endpoint URL + auth header. Enable per connector
+    (shadow first, inspect the normalized output, then live). Write the env to
+    the Mac and list for the private-repo sync; no connector runs out of
+    process (all in the sidecar phase), so no extra launchd unit is needed.
+- PROGRAM STATUS: all seven capabilities delivered. Phase A (items 1/3/4/7 +
+  Amendment 1) complete; Phase B (items 5/6) complete; Phase C (item 2)
+  complete. Awaiting the coordinator's independent verification gate before
+  any stale-branch cleanup + final confirmation.
 
 ## Resumption note for a successor agent
 
