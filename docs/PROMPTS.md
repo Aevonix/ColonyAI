@@ -5,7 +5,7 @@ All internal LLM cognition roles share one composable prompt system:
 system prompts that had drifted into inconsistent identities, duplicated
 output rules, and no shared agency doctrine.
 
-Current version: **1.0.0** (`charter.PROMPT_VERSION`). Bump on any doctrine
+Current version: **1.1.0** (`charter.PROMPT_VERSION`). Bump on any doctrine
 or contract change and add a row to the changelog below.
 
 ## Why
