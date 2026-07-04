@@ -30,6 +30,16 @@ The doctor catches all of these statically, and re-runs automatically when the
 Hermes version changes — so a Hermes upgrade that shifts hook conventions is
 surfaced immediately instead of silently degrading Colony.
 
+Convention status as of Hermes v0.18.0 (v2026.7.1): verified UNCHANGED. Hooks
+are still sync `cb(**kwargs)`; `pre_llm_call` still receives `sender_id` and
+now also `task_id`, `turn_id`, `conversation_history`, `is_first_turn`,
+`model`, `platform`; `{"context": str}` returns still inject into the user
+message. New at 0.18 (not used by this plugin yet): the `pre_verify` hook, the
+`kanban_task_*` lifecycle hooks, a middleware layer (`register_middleware`)
+for payload rewriting, and a `plugins.entries.<id>.allow_tool_override` trust
+gate for `register_tool(override=True)` (we register no overrides). See
+`docs/ROADMAP-COGNITION.md`, "Hermes integration", for the full capability map.
+
 ## Install
 
 ```bash

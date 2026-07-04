@@ -390,9 +390,162 @@ backup-pre-scrub, refs/original/*) and confirm no stale branches on either repo.
 
 ---
 
+## Hermes integration (capability map at Hermes v0.18.0 / tag v2026.7.1)
+
+Surveyed 2026-07-04 against the v2026.7.1 release checkout. This section is the
+authoritative map of what the host framework now offers, what this integration
+uses, and which roadmap items must NOT duplicate native Hermes capability.
+Hook conventions were re-verified at 0.18: hooks are still invoked SYNC as
+cb(**kwargs), pre_llm_call still carries sender_id (plus new kwargs task_id,
+turn_id, conversation_history, is_first_turn, model, platform), and a returned
+{"context": str} still injects into the user message. The doctor's dynamic
+checks (VALID_HOOKS, sync, **kwargs) remain the right validation and pass
+unchanged at 0.18.
+
+### Extension surfaces (what Hermes 0.18 exposes without code changes)
+
+- Plugin hooks (23 VALID_HOOKS): the 0.15-era set plus pre_verify (keep-going
+  gate after code edits, bounded by agent.max_verify_nudges) and the kanban
+  lifecycle trio (kanban_task_claimed in the dispatcher process,
+  kanban_task_completed / kanban_task_blocked in the worker subprocess).
+- Middleware (hermes_cli/middleware.py, distinct from observer hooks):
+  llm_request / tool_request rewrite the outgoing payload, llm_execution /
+  tool_execution wrap the actual call onion-style. This is the sanctioned way
+  to alter sampling parameters, request shape, or tool args per model or per
+  policy WITHOUT a core patch.
+- PluginContext beyond register_tool/register_hook/register_command:
+  ctx.llm (PluginLlm facade running on the host's model with fail-closed
+  per-plugin trust gates), register_auxiliary_task (declare an LLM side-job
+  with its own auxiliary.<key> model config), register_context_engine,
+  register_skill, register_platform, register_middleware, provider
+  registration for tts/stt/web-search/browser/image/video, inject_message.
+  New trust gate: register_tool(override=True) on a built-in requires
+  plugins.entries.<plugin_id>.allow_tool_override: true (we do not override,
+  so no action needed).
+- HTTP surfaces: the "api" platform (gateway/platforms/api_server.py) gives an
+  authenticated OpenAI-compatible endpoint PLUS session CRUD/chat/fork, cron
+  job CRUD over HTTP, and structured runs (POST /v1/runs, SSE events, approval
+  and stop endpoints). The generic inbound webhook adapter
+  (gateway/platforms/webhook.py, config platforms.webhook.extra.routes) takes
+  external POSTs with HMAC secrets, prompt templates, and deliver/deliver_only
+  targets (deliver_only sends the rendered message to a channel with NO agent
+  turn). hermes send / send_message_tool is the native outbound path.
+- Relay connector contract (docs/relay-connector-contract.md, EXPERIMENTAL):
+  front an arbitrary messaging platform from an external process over a
+  WebSocket wire contract; the gateway never learns the platform. Relevant to
+  the channel-framework work as the native alternative to custom platform
+  plugins for out-of-process channels.
+- Background work: cron with pluggable scheduler providers (cron.provider) and
+  per-job deliver targets; kanban board with dispatcher plus worker-subprocess
+  execution and the lifecycle hooks above; gateway file-hooks
+  (~/.hermes/hooks/<name>/HOOK.yaml + handler.py) for gateway/session/agent
+  lifecycle events, living OUTSIDE the framework checkout so they survive
+  updates.
+- Memory/context: MemoryProvider ABC (exclusive, selected by memory.provider;
+  our provider plugin is one of these), ContextEngine ABC selected by
+  context.engine (NOTE: top-level context_engine: <name> is a DEAD key at
+  0.18; only context.engine is read. Audit found a deployment carrying the
+  dead key with the engine plugin present but inactive; decide deliberately
+  whether to activate via context.engine or drop the plugin).
+- Model routing: Mixture-of-Agents as a selectable model (moa: presets),
+  Vertex AI provider, per-task auxiliary.<key> model config, fallback chains.
+- Ops: scale-to-zero gateway (env HERMES_SCALE_TO_ZERO + config
+  scale_to_zero.idle_timeout_minutes). Keep it OFF for an always-on messaging
+  spine. Config migrations to _config_version 32 flip agent.verify_on_stop to
+  false (good default for a chat-first deployment; pre_verify remains
+  available for policy).
+
+### What the integration uses today
+
+register_tool (colony toolset), register_command with register_slash_command
+fallback, hooks pre_llm_call / post_llm_call / on_session_end / pre_tool_call,
+the memory provider plugin, a WebSocket subscription to the sidecar for
+proactive events, sidecar-webhook delivery plus a deployment deliver-shim, and
+the ops layer (doctor, patch runner, restart runner, activity monitor).
+
+### Adoption recommendations (ordered by leverage)
+
+1. Delivery via the native webhook adapter: the sidecar's proactive delivery
+   POST should target a platforms.webhook.extra.routes route (HMAC secret,
+   deliver_only for pure notification delivery, or a prompt template when the
+   agent should compose). This resolves the KNOWN DEPLOYMENT BLOCKER below
+   natively and retires the deployment deliver-shim (which bypasses the
+   gateway and re-implements transport).
+2. Sampling/model tweaks as llm_request middleware, not core patches: a
+   middleware can set temperature per model family, which retires the
+   mimo-temperature class of core patch entirely. Policy: before authoring any
+   new core patch, check middleware and hooks first (see
+   plugins/hermes-plugin/ops/PATCHES.md).
+3. pre_gateway_dispatch for inbound gating: the response-gate/guard work has a
+   native pre-auth flow-control point (skip / rewrite / allow) and
+   transform_llm_output is the native outbound seam for provenance/persona
+   checks on the reply text.
+4. on_session_reset / on_session_finalize for session-handoff briefs instead
+   of external glue scripts watching session state.
+5. kanban_task_* hooks as a self-model/journaling feed for agent work items
+   (zero-cost observability into dispatcher/worker activity).
+6. register_auxiliary_task for integration LLM side-jobs so operators tune
+   their model/provider under auxiliary.<key> like every built-in side-task.
+7. ctx.llm for plugin-side quick classification instead of shipping separate
+   LLM client config in the plugin.
+8. Structured runs API (/v1/runs + SSE + approval) as the programmatic drive
+   surface for external orchestrators and workers, replacing bespoke
+   subprocess or chat-simulation glue.
+
+### Impact on the seven items (do not duplicate native capability)
+
+- Item 1 (Projects): keep project/goal persistence in the sidecar (cognition
+  state, Hermes has no equivalent). For step EXECUTION, prefer dispatching
+  into Hermes kanban (board + worker subprocess + lifecycle hooks) or the
+  /v1/runs API over building a private execution runner; consume
+  kanban_task_* hooks for step outcome tracking.
+- Item 2 (Connectors): Hermes's generic webhook adapter already handles
+  push-style ingress (HMAC, templates, rate limits, idempotency); build only
+  the pull-style connectors (IMAP, CalDAV, fs, metrics-pull) and normalize
+  into observations. Do not build a push webhook receiver.
+- Item 3 (Skills): Hermes 0.18 has a full agent-facing skills system plus
+  /learn and /journey. Colony's skills_memory remains sidecar-internal
+  procedure memory for its own loops; where a distilled skill is useful to
+  the AGENT, export it to a directory listed in skills.external_dirs (or
+  ctx.register_skill) instead of inventing an import path. Never rebuild
+  /learn.
+- Item 4 (Self-model): feed it from post_tool_call / post_api_request /
+  kanban_task_* hooks (latency, status, error_type are provided as kwargs);
+  no polling needed.
+- Item 5 (Workers): Hermes kanban's dispatcher/worker model and the delegation
+  subsystem (subagent_start/stop, delegation.* config) already provide typed
+  work execution with process isolation. Colony's value-add is SERVER-SIDE
+  enforcement (boundary/approval re-check on claim and completion), the
+  capability registry, and the audit trail; implement those in the sidecar
+  queue as planned, but strongly consider the worker daemon CLAIMING work as
+  a Hermes kanban worker or /v1/runs driver instead of a fully bespoke
+  executor.
+- Item 6 (Sandbox): no native isolated-execution backend confirmed in 0.18
+  (terminal tool policy is approval-based, not containment); proceed as
+  planned, keep server-side enforcement.
+- Item 7 (Beliefs): no native equivalent; proceed as planned.
+
+### Core-patch policy at 0.18
+
+The only sanctioned mechanism for altering Hermes behavior beyond
+config/plugins/hooks/middleware is the guarded patch registry
+(plugins/hermes-plugin/ops/hermes-patch-runner.py + PATCHES.md; the doctor
+heals the registry every run and fails loudly on anchor drift). Current
+deployment patches that still lack a native seam: rerouting the background
+review and long-running-heartbeat notifications to a home channel (no
+notification-routing hook exists at 0.18; re-check each release). Patches
+whose behavior 0.18 can express natively (sampling overrides via
+llm_request middleware) should migrate off the registry when next touched.
+
 ## Program State (update as phases land)
 
 - 2026-07-04: Plan committed. Build not started.
+- 2026-07-04 (later): Hermes v0.18.0 (v2026.7.1) capability survey + integration
+  audit landed (see "Hermes integration" section above). Generic guarded-patch
+  mechanism (ops/hermes-patch-runner.py + PATCHES.md + doctor wiring) shipped;
+  deployment patch definitions migrated to the private deployment repo and the
+  live registry. Items 1 to 5 have native-capability notes that constrain their
+  designs; read that section before building each item.
 - Pre-req landed earlier this session (already pushed at tip 2726698):
   directives (tiered), proposals, feedback, directed-action (dry_run),
   read-only repo mirrors, world-model populator (shadow), thinker (shadow),
