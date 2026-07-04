@@ -50,6 +50,11 @@ class SubsystemRegistry:
         return _proposal_store
 
     @property
+    def feedback_store(self) -> Any:
+        from colony_sidecar.api.routers.host import _feedback_store
+        return _feedback_store
+
+    @property
     def initiative(self) -> Any:
         from colony_sidecar.api.routers.host import _metalearner
         return _metalearner  # InitiativeEngine is part of cognition

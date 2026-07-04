@@ -529,10 +529,19 @@ class AutonomyLoop:
             from colony_sidecar.proposals import build_from_thinker, proposal_to_payload
             delivery = self._registry.delivery
             pstore = getattr(self._registry, "proposal_store", None)
+            fb = getattr(self._registry, "feedback_store", None)
             n = 0
             for init in initiatives:
                 try:
                     prop = build_from_thinker(init)
+                    # Outcome-driven priority: decay proposal classes the owner
+                    # ignores/dismisses, boost the ones he acts on (item 3b).
+                    if fb is not None:
+                        try:
+                            prop.confidence = max(0.0, min(1.0,
+                                prop.confidence * fb.multiplier(prop.initiative_type)))
+                        except Exception:
+                            pass
                     if delivery is not None:
                         await self._route_reachout_delivery(proposal_to_payload(prop), delivery)
                     if pstore is not None:

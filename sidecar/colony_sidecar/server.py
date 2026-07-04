@@ -532,6 +532,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("ProposalStore init failed: %s", exc)
 
+    # --- Type feedback store (outcome-driven priority decay/boost) ---
+    try:
+        from colony_sidecar.feedback import TypeFeedbackStore
+        from colony_sidecar.api.routers.host import set_feedback_store
+        set_feedback_store(TypeFeedbackStore(db_path=str(state_dir / "colony-feedback.db")))
+        logger.info("TypeFeedbackStore initialized (db=%s)", state_dir / "colony-feedback.db")
+    except Exception as exc:
+        logger.warning("TypeFeedbackStore init failed: %s", exc)
+
     # --- Pattern Extraction + Surprise ---
     try:
         from colony_sidecar.patterns.store import PatternStore

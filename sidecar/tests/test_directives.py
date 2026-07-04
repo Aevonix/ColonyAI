@@ -141,6 +141,21 @@ def test_guard_records_recent_blocks():
     assert len(g.recent_blocks()) == 1
 
 
+def test_guard_entity_scoped_match_by_alias():
+    """A boundary on an entity blocks actions naming it by an ALIAS (2)."""
+    # owner said "don't touch the guitar shop"; that shop's repo is 'gcs-repo'
+    g = _guard_with(Directive(subject="the guitar shop", polarity=Polarity.PROHIBIT,
+                              raw_text="don't touch the guitar shop"))
+    g.set_entity_index({"we-shop-1": ["guitar shop", "gcs-repo"]})
+    # keyword hit still works
+    assert g.check(Action(kind="directed_action", text="update the guitar shop site")).allowed is False
+    # entity-scoped: 'gcs-repo' shares no keyword with 'guitar shop' but is the
+    # same entity, so it is blocked
+    assert g.check(Action(kind="directed_action", text="open a PR in gcs-repo")).allowed is False
+    # unrelated entity/action allowed
+    assert g.check(Action(kind="directed_action", text="update the billing repo")).allowed is True
+
+
 def test_guard_context_brief():
     g = _guard_with(
         Directive(subject="colony-web", polarity=Polarity.PROHIBIT, raw_text="don't touch colony-web"),

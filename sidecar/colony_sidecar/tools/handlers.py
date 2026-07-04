@@ -459,11 +459,24 @@ async def handle_initiative_feedback(
     args: dict[str, Any],
     registry: SubsystemRegistry,
 ) -> str:
-    """Record feedback on an initiative."""
+    """Record feedback on an initiative (also drives per-type priority feedback)."""
     initiative_id = args.get("initiative_id", "")
     action = args.get("action", "acknowledged")
     details = args.get("details", {})
     try:
+        # Outcome-driven feedback (item 3b): nudge the initiative's TYPE
+        # multiplier so classes the owner acts on rise and dismissed ones decay.
+        try:
+            fb = getattr(registry, "feedback_store", None)
+            store = getattr(registry, "initiative_store", None)
+            itype = args.get("initiative_type") or details.get("type")
+            if not itype and store is not None:
+                init = store.get(initiative_id) if hasattr(store, "get") else None
+                itype = getattr(init, "type", None)
+            if fb is not None and itype:
+                fb.record(itype, action)
+        except Exception:
+            logger.debug("type feedback record failed", exc_info=True)
         return json.dumps({
             "status": "recorded",
             "initiative_id": initiative_id,

@@ -111,6 +111,21 @@ class DirectiveManager:
             self._last_ack = result.ack
         return result
 
+    async def capture_llm(self, message: str) -> List[Directive]:
+        """LLM-assisted capture (1b), run only when the deterministic pass found
+        nothing. Inferred directives are lower-confidence and surfaced for the
+        owner to correct."""
+        from colony_sidecar.directives.extractor import llm_extract_directives
+        found = await llm_extract_directives(message)
+        stored: List[Directive] = []
+        for d in found:
+            self.store.add(d)
+            stored.append(d)
+            verb = "will not" if d.polarity == Polarity.PROHIBIT else "will make sure to"
+            self._last_ack = (f"I inferred a standing instruction: I {verb} {d.subject}. "
+                              "Tell me if that is wrong.")
+        return stored
+
     def consume_ack(self) -> Optional[str]:
         """Return and clear the one-shot acknowledgment (echoed once)."""
         ack, self._last_ack = self._last_ack, None
@@ -143,6 +158,29 @@ class DirectiveManager:
             source=source, entity_ids=entity_ids or [],
         )
         return self.store.add(d)
+
+    # -- entity-scoped matching (2) ------------------------------------
+    def set_entity_index(self, entities: dict) -> None:
+        """Provide {entity_id: [names/aliases]} so boundaries resolve by entity."""
+        self.guard.set_entity_index(entities)
+
+    async def refresh_entity_index(self, world_store: Any, limit: int = 500) -> int:
+        """Load entities + aliases from the world model into the guard index."""
+        if world_store is None:
+            return 0
+        try:
+            ents = await world_store.find_entities(query="", limit=limit)
+        except Exception:
+            return 0
+        mapping = {}
+        for e in ents or []:
+            eid = getattr(e, "id", None) or (e.get("id") if isinstance(e, dict) else None)
+            name = getattr(e, "name", None) or (e.get("name") if isinstance(e, dict) else None)
+            aliases = getattr(e, "aliases", None) or (e.get("aliases") if isinstance(e, dict) else []) or []
+            if eid and name:
+                mapping[eid] = [name] + list(aliases)
+        self.guard.set_entity_index(mapping)
+        return len(mapping)
 
     # -- enforce -------------------------------------------------------
     def check(self, action: Action) -> Verdict:

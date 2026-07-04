@@ -114,6 +114,26 @@ class DirectiveGuard:
         self._store = store
         # Recent refusals, for observability / "why didn't you do X" answers.
         self._recent_blocks: deque = deque(maxlen=100)
+        # Entity-scoped matching (2): {frozenset(alias_tokens): entity_id}. Built
+        # from the world model as entities are learned; empty -> keyword-only.
+        self._entity_index: Dict[frozenset, str] = {}
+
+    def set_entity_index(self, entities: Dict[str, List[str]]) -> None:
+        """Refresh the alias->entity_id index. entities = {entity_id: [names/aliases]}."""
+        index: Dict[frozenset, str] = {}
+        for eid, aliases in (entities or {}).items():
+            for alias in aliases:
+                toks = frozenset(normalize_terms(alias))
+                if toks:
+                    index[toks] = eid
+        self._entity_index = index
+
+    def _resolve_entities(self, terms: set) -> set:
+        """Entity IDs whose alias tokens are all present in `terms`."""
+        if not self._entity_index or not terms:
+            return set()
+        return {eid for alias_toks, eid in self._entity_index.items()
+                if alias_toks <= terms}
 
     def _active_prohibitions(self) -> List[Directive]:
         if self._store is None:
@@ -131,13 +151,19 @@ class DirectiveGuard:
             return Verdict(allowed=True, reason="no_active_boundaries")
 
         action_terms = action.searchable_terms()
+        action_term_set = set(action_terms)
+        # Entity-scoped: resolve the action's target/terms to entity IDs so a
+        # directive about an entity blocks actions naming it by ANY alias, not
+        # just a keyword hit. Keyword matching (below) stays as the fallback.
         action_entities = {action.entity_id} if action.entity_id else set()
+        action_entities |= self._resolve_entities(action_term_set)
         violations: List[Directive] = []
         for d in prohibitions:
             # scope by action kind if the directive restricts kinds
             if d.action_kinds and action.kind not in d.action_kinds:
                 continue
-            if action_entities and set(d.entity_ids) & action_entities:
+            directive_entities = set(d.entity_ids) | self._resolve_entities(set(d.match_terms))
+            if action_entities and directive_entities & action_entities:
                 violations.append(d)
                 continue
             if _terms_match(d.match_terms, action_terms):

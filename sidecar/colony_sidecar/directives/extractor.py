@@ -122,3 +122,70 @@ def extract_directives(message: str, *, source: str = "owner_explicit") -> List[
 
 def is_revocation(directive: Directive) -> bool:
     return bool(directive.__dict__.get("_revocation"))
+
+
+# ---------------------------------------------------------------------------
+# Optional LLM-assisted extraction (behind the deterministic pass) -- 1b
+# ---------------------------------------------------------------------------
+
+def llm_assist_enabled() -> bool:
+    import os
+    return os.environ.get("COLONY_DIRECTIVE_LLM_ASSIST", "false").strip().lower() == "true"
+
+
+_LLM_SYS = (
+    "You extract STANDING directives from an owner message: lasting instructions "
+    "to DO or AVOID something (not one-off requests, not writing-style tweaks). "
+    "Reply ONLY with JSON: {\"polarity\":\"prohibit|require|none\",\"subject\":\"...\"}. "
+    "Use none unless the message clearly sets a lasting boundary or rule."
+)
+
+
+async def llm_extract_directives(text: str) -> List[Directive]:
+    """A cheap classifier for turns the regex missed. Default OFF; only runs when
+    COLONY_DIRECTIVE_LLM_ASSIST=true and an introspection endpoint is configured.
+    Inferred directives are stored at lower confidence + source 'inferred' so the
+    owner can correct them via the acknowledgment echo."""
+    import os, json as _json
+    if not text or not llm_assist_enabled():
+        return []
+    base = os.environ.get("COLONY_INTROSPECT_BASE_URL", "").rstrip("/")
+    model = os.environ.get("COLONY_INTROSPECT_MODEL", "")
+    if not base or not model:
+        return []
+    try:
+        import aiohttp
+    except ImportError:
+        return []
+    headers = {"Content-Type": "application/json"}
+    key = os.environ.get("COLONY_INTROSPECT_API_KEY", "")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    payload = {
+        "model": model, "temperature": 0,
+        "max_tokens": 120,
+        "messages": [{"role": "system", "content": _LLM_SYS},
+                     {"role": "user", "content": text[:800]}],
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=float(os.environ.get("COLONY_INTROSPECT_TIMEOUT", "20")))
+        async with aiohttp.ClientSession() as s:
+            async with s.post(base + "/chat/completions", json=payload,
+                              headers=headers, timeout=timeout) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+        content = data["choices"][0]["message"]["content"]
+        m = re.search(r"\{.*\}", content, re.DOTALL)
+        obj = _json.loads(m.group(0) if m else content)
+    except Exception:
+        return []
+    pol = str(obj.get("polarity", "none")).strip().lower()
+    subj = str(obj.get("subject", "")).strip()
+    if pol not in ("prohibit", "require") or not subj or len(subj) < 2:
+        return []
+    terms = normalize_terms(subj)
+    if not terms:
+        return []
+    return [Directive(subject=subj, polarity=Polarity(pol), raw_text=text,
+                      match_terms=terms, source="inferred", confidence=0.55)]

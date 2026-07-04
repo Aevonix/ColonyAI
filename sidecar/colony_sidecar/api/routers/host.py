@@ -2247,6 +2247,16 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                                "needs_confirmation": bool(_cap.needs_confirmation)})
                     except Exception:
                         pass
+                else:
+                    # Deterministic pass found nothing: optionally fall back to
+                    # the LLM classifier (1b), non-blocking, default OFF.
+                    try:
+                        from colony_sidecar.directives.extractor import llm_assist_enabled
+                        if llm_assist_enabled():
+                            _spawn_task(_directive_manager.capture_llm(
+                                getattr(body.user_message, "content", "") or ""))
+                    except Exception:
+                        pass
         except Exception:
             logger.debug("owner directive capture failed", exc_info=True)
 
@@ -3822,6 +3832,25 @@ _proposal_store = None
 def set_proposal_store(store) -> None:
     global _proposal_store
     _proposal_store = store
+
+
+_feedback_store = None
+
+
+def set_feedback_store(store) -> None:
+    global _feedback_store
+    _feedback_store = store
+
+
+@router.get("/feedback")
+async def get_type_feedback() -> dict:
+    """Per-type outcome feedback + priority multipliers (observability)."""
+    if _feedback_store is None:
+        return {"available": False, "types": []}
+    try:
+        return {"available": True, "types": _feedback_store.snapshot()}
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "types": []}
 
 
 @router.get("/proposals")
