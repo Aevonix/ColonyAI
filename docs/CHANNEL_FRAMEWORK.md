@@ -40,7 +40,7 @@ Terms used consistently throughout this spec:
 | Term | Meaning |
 |------|---------|
 | **channel_key** | Unique identifier for a registered channel (e.g., `"whatsapp"`, `"terminal-01"`). Primary key in the channel store. |
-| **channel_id** | Per-conversation identifier sent by the host on each turn (e.g., `"whatsapp:120363425135486141@g.us"`). Used for provenance tracking. Auto-derived from `gateway:contact_id` when the host does not provide one. |
+| **channel_id** | Per-conversation identifier sent by the host on each turn (e.g., `"whatsapp:GROUP_ID@g.us"`). Used for provenance tracking. Auto-derived from `gateway:contact_id` when the host does not provide one. |
 | **gateway** | The transport a contact handle is associated with (e.g., `"sms"`, `"whatsapp"`). Stored on contact handles. Maps to a registered channel's `channel_key`. |
 | **gateway_family** | Grouping of related gateways (e.g., `"phone"` for sms/whatsapp/signal). Used for policy, not routing. |
 | **platform** | Host-framework term for a messaging adapter (e.g., Hermes platform). Colony receives this as the `gateway` value. |
