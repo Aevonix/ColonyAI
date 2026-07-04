@@ -789,94 +789,7 @@ class AutonomyLoop:
                 }
 
                 if delivery:
-                    # Only user-facing reach-out initiatives are delivered to a
-                    # person via the guarded Hermes path. Internal / self-
-                    # maintenance initiatives are handled in-place by the
-                    # execution backend and are never messaged out.
-                    from colony_sidecar.delivery.classification import is_reachout
-                    if not is_reachout(type_value):
-                        logger.debug(
-                            "Initiative %s (%s) is internal — not routed to delivery",
-                            payload["id"], type_value,
-                        )
-                    else:
-                        # Resolve the ACTUAL recipient bucket + target the same
-                        # way a real send would, so the rate gate binds per
-                        # recipient (not per entity/goal id) and the shadow view
-                        # matches reality byte-for-byte.
-                        preview = None
-                        if hasattr(delivery, "preview_initiative"):
-                            try:
-                                preview = delivery.preview_initiative(payload)
-                            except Exception as exc:
-                                logger.warning(
-                                    "Delivery preview failed for %s: %s",
-                                    payload["id"], exc,
-                                )
-                        person_id = (
-                            (preview or {}).get("person_id")
-                            or payload.get("entity_id")
-                            or "owner"
-                        )
-                        urgency = float(
-                            (preview or {}).get("urgency", payload.get("priority", 0.5))
-                            or 0.5
-                        )
-
-                        rate_limiter = getattr(delivery, "_rate_limiter", None)
-                        allowed, reason = True, "ok"
-                        if rate_limiter is not None:
-                            allowed, reason = rate_limiter.can_deliver(
-                                person_id, urgency=urgency,
-                            )
-
-                        if getattr(self.config, "delivery_shadow_mode", False):
-                            # Shadow: log the intended delivery, send nothing,
-                            # consume no rate budget. Lets an operator review the
-                            # first outward batch before real sends are enabled.
-                            target = (preview or {}).get("target", {})
-                            logger.info(
-                                "SHADOW-DELIVERY reach-out id=%s type=%s "
-                                "recipient=%s target=%s rate_allowed=%s(%s) "
-                                "urgency=%.2f title=%r",
-                                payload["id"], type_value, person_id, target,
-                                allowed, reason, urgency,
-                                (payload.get("title") or payload.get("description", ""))[:200],
-                            )
-                        elif not allowed:
-                            logger.debug(
-                                "Initiative push rate-limited for %s: %s (urgency=%.2f)",
-                                person_id, reason, urgency,
-                            )
-                            # Keep in store for retry next tick
-                        elif getattr(self.config, "proactive_delivery_enabled", False):
-                            ok = await delivery.push_initiative(payload)
-                            if ok:
-                                # Consume the per-recipient rate budget so the
-                                # 3/day + cooldown caps actually bind. The push
-                                # path previously never recorded a delivery, so
-                                # the cap silently never fired.
-                                if rate_limiter is not None:
-                                    try:
-                                        rate_limiter.record_delivery(person_id)
-                                    except Exception:
-                                        logger.debug(
-                                            "record_delivery failed", exc_info=True,
-                                        )
-                                self.stats.actions_executed += 1
-                                self.stats.actions_this_hour += 1
-                                logger.info(
-                                    "Pushed initiative: %s -> %s",
-                                    payload["id"], person_id,
-                                )
-                                try:
-                                    from colony_sidecar.api.routers.host import _telemetry
-                                    if _telemetry is not None:
-                                        await _telemetry.touch("last_initiative_at")
-                                except Exception:
-                                    logger.warning("Telemetry touch failed (non-critical)")
-                        else:
-                            logger.debug("Proactive delivery disabled — initiative stored for agent polling")
+                    await self._route_reachout_delivery(payload, delivery)
 
                 # WebSocket broadcast
                 try:
@@ -892,6 +805,101 @@ class AutonomyLoop:
                 logger.error("Failed to push initiative: %s", exc)
 
         self._pending_initiatives = []
+
+    async def _route_reachout_delivery(self, payload: dict, delivery: Any) -> bool:
+        """Sanitise, staleness-guard, rate-check and (shadow-)deliver ONE
+        reach-out initiative through the guarded Hermes path.
+
+        Shared by _phase_execute and _phase_startup_repush so both apply
+        identical gating (classification, sanitisation, staleness, quiet-hours
+        urgency cap, per-recipient rate limit). Internal initiatives are a
+        no-op here. Returns True only when a real push was sent.
+        """
+        from colony_sidecar.delivery.classification import is_reachout
+        from colony_sidecar.delivery import reachout_policy as rp
+
+        type_value = payload.get("type", "")
+        iid = payload.get("id")
+
+        # Only user-facing reach-out initiatives leave the machine.
+        if not is_reachout(type_value):
+            logger.debug("Initiative %s (%s) is internal — not routed to delivery",
+                         iid, type_value)
+            return False
+
+        # Staleness guard: a long-overdue reach-out is noise, not a timely ping.
+        if rp.is_aged_out(payload):
+            logger.info(
+                "Reach-out %s (%s) aged out (%.1fd > %.1fd) — not delivered",
+                iid, type_value, rp.reachout_age_days(payload), rp.max_age_days(),
+            )
+            return False
+
+        # Clean the outward-facing text before it reaches Hermes.
+        payload = rp.sanitize_payload(payload)
+
+        # Resolve the ACTUAL recipient bucket + target the same way a real send
+        # would, so the rate gate binds per recipient and the shadow view
+        # matches reality.
+        preview = None
+        if hasattr(delivery, "preview_initiative"):
+            try:
+                preview = delivery.preview_initiative(payload)
+            except Exception as exc:
+                logger.warning("Delivery preview failed for %s: %s", iid, exc)
+        person_id = (preview or {}).get("person_id") or payload.get("entity_id") or "owner"
+        raw_urgency = float(
+            (preview or {}).get("urgency", payload.get("priority", 0.5)) or 0.5
+        )
+        # Reach-out respects quiet hours unless explicitly urgent.
+        gate_urgency = rp.quiet_hours_urgency(payload, raw_urgency)
+
+        rate_limiter = getattr(delivery, "_rate_limiter", None)
+        allowed, reason = True, "ok"
+        if rate_limiter is not None:
+            allowed, reason = rate_limiter.can_deliver(person_id, urgency=gate_urgency)
+
+        if getattr(self.config, "delivery_shadow_mode", False):
+            # Shadow: log the intended (sanitised) delivery; send nothing,
+            # consume no budget.
+            target = (preview or {}).get("target", {})
+            logger.info(
+                "SHADOW-DELIVERY reach-out id=%s type=%s recipient=%s target=%s "
+                "rate_allowed=%s(%s) urgency=%.2f(gate=%.2f) age=%.1fd title=%r",
+                iid, type_value, person_id, target, allowed, reason,
+                raw_urgency, gate_urgency, rp.reachout_age_days(payload),
+                (payload.get("title") or payload.get("description", ""))[:200],
+            )
+            return False
+
+        if not allowed:
+            logger.debug("Reach-out push rate-limited for %s: %s (urgency=%.2f)",
+                         person_id, reason, gate_urgency)
+            return False
+
+        if not getattr(self.config, "proactive_delivery_enabled", False):
+            logger.debug("Proactive delivery disabled — initiative stored for agent polling")
+            return False
+
+        ok = await delivery.push_initiative(payload)
+        if ok:
+            # Consume the per-recipient rate budget so the 3/day + cooldown
+            # caps actually bind (the push path previously never recorded).
+            if rate_limiter is not None:
+                try:
+                    rate_limiter.record_delivery(person_id)
+                except Exception:
+                    logger.debug("record_delivery failed", exc_info=True)
+            self.stats.actions_executed += 1
+            self.stats.actions_this_hour += 1
+            logger.info("Pushed initiative: %s -> %s", iid, person_id)
+            try:
+                from colony_sidecar.api.routers.host import _telemetry
+                if _telemetry is not None:
+                    await _telemetry.touch("last_initiative_at")
+            except Exception:
+                logger.warning("Telemetry touch failed (non-critical)")
+        return bool(ok)
 
     async def _phase_observation_sync(self) -> None:
         """Request fresh observations for stale domains (v0.16.0).
@@ -2071,7 +2079,11 @@ class AutonomyLoop:
                 if pruned:
                     logger.info("Pruned %d orphaned initiatives on startup", pruned)
 
-            # 2. Re-push remaining pending initiatives to delivery bridge
+            # 2. Re-push remaining pending initiatives to delivery bridge.
+            #    Routed through the SAME gated path as the main loop, so a
+            #    go-live restart cannot flush an unfiltered / unrated backlog:
+            #    only reach-out types, sanitised, staleness-guarded, and rate-
+            #    limited per recipient are (shadow-)delivered.
             if delivery is not None:
                 pending = initiative_store.list(status=["pending"], limit=100)
                 repushed = 0
@@ -2086,21 +2098,17 @@ class AutonomyLoop:
                         "suggested_action": initiative.action_hint or "review_and_decide",
                         "entity_id": initiative.entity_id,
                         "entity_type": initiative.type,
-                        "context": {},
+                        "context": getattr(initiative, "context", None) or {},
                         "generated_at": initiative.created_at.isoformat() if initiative.created_at else datetime.now(timezone.utc).isoformat(),
                     }
                     try:
-                        if getattr(self.config, "proactive_delivery_enabled", False):
-                            ok = await delivery.push_initiative(payload)
-                            if ok:
-                                repushed += 1
-                        else:
-                            logger.debug("Proactive delivery disabled — skipping startup re-push")
+                        if await self._route_reachout_delivery(payload, delivery):
+                            repushed += 1
                     except Exception as exc:
                         logger.debug("Failed to re-push initiative %s: %s", initiative.id, exc)
 
                 if repushed:
-                    logger.info("Re-pushed %d pending initiatives to delivery bridge", repushed)
+                    logger.info("Re-pushed %d pending reach-out initiatives to delivery bridge", repushed)
 
         except Exception as exc:
             self.stats.errors += 1
