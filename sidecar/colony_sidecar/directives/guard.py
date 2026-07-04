@@ -16,6 +16,8 @@ model can neither forget nor talk its way past a standing boundary.
 from __future__ import annotations
 
 import logging
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -110,6 +112,8 @@ class DirectiveGuard:
 
     def __init__(self, store: Any) -> None:
         self._store = store
+        # Recent refusals, for observability / "why didn't you do X" answers.
+        self._recent_blocks: deque = deque(maxlen=100)
 
     def _active_prohibitions(self) -> List[Directive]:
         if self._store is None:
@@ -141,13 +145,30 @@ class DirectiveGuard:
 
         if violations:
             subjects = "; ".join(v.subject for v in violations)
+            ids = ",".join(v.id for v in violations)
+            action_summary = (action.text or action.target or action.tool_name)[:120]
             logger.warning(
-                "DirectiveGuard BLOCKED %s action (%r): violates boundary(ies): %s",
-                action.kind, (action.text or action.target)[:80], subjects,
+                "DirectiveGuard BLOCKED %s action (%r): violates boundary(ies) "
+                "[%s]: %s",
+                action.kind, action_summary, ids, subjects,
             )
+            self._recent_blocks.append({
+                "ts": time.time(),
+                "action_kind": action.kind,
+                "action_summary": action_summary,
+                "directive_ids": [v.id for v in violations],
+                "subjects": [v.subject for v in violations],
+                "directives": [v.raw_text or v.subject for v in violations],
+            })
             return Verdict(allowed=False, violations=violations,
                            reason=f"boundary_violation: {subjects}")
         return Verdict(allowed=True, reason="ok")
+
+    def recent_blocks(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Most-recent refusals (for the 'why didn't you do X' introspection)."""
+        items = list(self._recent_blocks)[-limit:]
+        items.reverse()
+        return items
 
     def obligations(self) -> List[Directive]:
         """Active REQUIRE directives (standing obligations)."""

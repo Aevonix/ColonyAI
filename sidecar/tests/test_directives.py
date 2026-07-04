@@ -128,6 +128,19 @@ def test_guard_action_kind_scope():
     assert g.check(Action(kind="deliver", text="message acme-corp")).allowed is False
 
 
+def test_guard_records_recent_blocks():
+    g = _guard_with(Directive(subject="colony-web", polarity=Polarity.PROHIBIT,
+                              raw_text="don't touch colony-web"))
+    assert g.check(Action(kind="directed_action", text="refactor colony-web")).allowed is False
+    blocks = g.recent_blocks()
+    assert len(blocks) == 1
+    assert "colony-web" in blocks[0]["subjects"]
+    assert blocks[0]["directive_ids"] and blocks[0]["action_kind"] == "directed_action"
+    # an allowed action is not recorded
+    g.check(Action(kind="research", text="unrelated topic"))
+    assert len(g.recent_blocks()) == 1
+
+
 def test_guard_context_brief():
     g = _guard_with(
         Directive(subject="colony-web", polarity=Polarity.PROHIBIT, raw_text="don't touch colony-web"),
@@ -151,10 +164,27 @@ def test_manager_capture_then_enforce():
     assert v.allowed is False
 
 
-def test_manager_revocation_lifts_boundary():
+def test_manager_revocation_requires_confirmation():
+    """Asymmetric friction: a lift must be confirmed, never one-turn (1c)."""
     m = DirectiveManager(DirectiveStore(db_path=None))
-    m.capture_from_message("stop working on the acme-corp integration")
+    cap = m.capture_from_message("stop working on the acme-corp integration")
     assert m.store.count_active() == 1
-    m.capture_from_message("actually you can work on acme-corp again")
-    assert m.store.count_active() == 0  # boundary lifted
+    assert cap.ack and "will not" in cap.ack  # confirmation echo (1a)
+    # A revocation attempt does NOT lift immediately; it stages a confirmation.
+    r = m.capture_from_message("actually you can work on acme-corp again")
+    assert r.needs_confirmation is not None
+    assert m.store.count_active() == 1  # still in place
+    assert m.check(Action(kind="directed_action", text="acme-corp integration")).allowed is False
+    # Only an explicit affirmation lifts it.
+    c = m.capture_from_message("yes, confirm")
+    assert c.revoked and c.ack
+    assert m.store.count_active() == 0
     assert m.check(Action(kind="directed_action", text="acme-corp integration")).allowed is True
+
+
+def test_manager_non_affirmation_does_not_lift():
+    m = DirectiveManager(DirectiveStore(db_path=None))
+    m.capture_from_message("don't touch the payments repo")
+    m.capture_from_message("you can work on payments again")   # stages pending
+    m.capture_from_message("what's the weather")               # not an affirmation
+    assert m.store.count_active() == 1  # boundary held; stray text can't confirm

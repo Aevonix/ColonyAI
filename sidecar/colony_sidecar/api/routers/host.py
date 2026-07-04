@@ -1799,12 +1799,25 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     # at each action chokepoint is the enforced floor.
     if _directive_manager is not None:
         try:
+            _parts = []
+            # One-shot acknowledgment to echo (confirms a just-captured/lifted
+            # directive so the owner sees it -- 1a).
+            _ack = _directive_manager.consume_ack()
+            if _ack:
+                _parts.append("Tell the owner, in your own voice: " + _ack)
+            # A boundary lift awaiting explicit confirmation (asymmetric friction
+            # -- 1c). Ask for confirmation; do not resume until confirmed.
+            _pending = _directive_manager.pending_confirmation()
+            if _pending:
+                _parts.append(_pending)
             _boundaries = _directive_manager.context_brief()
             if _boundaries:
+                _parts.append(_boundaries)
+            if _parts:
                 sections.append(ContextSection(
                     id="colony-boundaries",
                     title="Standing boundaries the owner set (obey without exception)",
-                    body=_boundaries,
+                    body="\n".join(_parts),
                     priority=99,
                 ))
         except Exception as exc:
@@ -2209,20 +2222,29 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
             from colony_sidecar.identity import get_owner_contact_id
             owner_id = get_owner_contact_id()
             if owner_id and body.context.contact_id == owner_id:
-                _captured = _directive_manager.capture_from_message(
+                _cap = _directive_manager.capture_from_message(
                     getattr(body.user_message, "content", "") or ""
                 )
-                if _captured:
+                if _cap.captured:
                     logger.info(
                         "Captured %d owner directive(s): %s",
-                        len(_captured),
-                        "; ".join(f"[{d.polarity.value}] {d.subject}" for d in _captured),
+                        len(_cap.captured),
+                        "; ".join(f"[{d.polarity.value}] {d.subject}" for d in _cap.captured),
                     )
+                if _cap.revoked:
+                    logger.info("Lifted %d boundary(ies) on owner confirmation: %s",
+                                len(_cap.revoked),
+                                "; ".join(d.subject for d in _cap.revoked))
+                if _cap.needs_confirmation:
+                    logger.info("Boundary-lift staged, awaiting confirmation: %s",
+                                _cap.needs_confirmation)
+                if _cap.any():
                     try:
                         from colony_sidecar.events.broadcaster import emit as _emit
                         _emit("directive.captured",
-                              {"count": len(_captured),
-                               "subjects": [d.subject for d in _captured]})
+                              {"captured": [d.subject for d in _cap.captured],
+                               "revoked": [d.subject for d in _cap.revoked],
+                               "needs_confirmation": bool(_cap.needs_confirmation)})
                     except Exception:
                         pass
         except Exception:

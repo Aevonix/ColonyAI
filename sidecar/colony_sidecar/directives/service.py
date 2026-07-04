@@ -9,6 +9,9 @@ calls ``guard.context_brief()``.
 from __future__ import annotations
 
 import logging
+import re
+import time
+from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from colony_sidecar.directives.extractor import extract_directives, is_revocation
@@ -18,40 +21,119 @@ from colony_sidecar.directives.store import DirectiveStore
 
 logger = logging.getLogger(__name__)
 
+# Affirmations that confirm a pending boundary lift. Deliberately short/explicit.
+_AFFIRM = re.compile(
+    r"^\s*(?:yes|yep|yeah|yup|confirm(?:ed)?|do it|go ahead|correct|affirmative|"
+    r"sure|ok(?:ay)?|please do|resume it|lift it)\b", re.IGNORECASE,
+)
+# How long a pending confirmation stays valid (owner must confirm promptly).
+_PENDING_TTL_SECS = 900.0
+
+
+@dataclass
+class CaptureResult:
+    captured: List[Directive] = field(default_factory=list)
+    revoked: List[Directive] = field(default_factory=list)
+    ack: Optional[str] = None                 # confirmation echo for the owner
+    needs_confirmation: Optional[str] = None  # a lift awaiting explicit confirmation
+
+    def any(self) -> bool:
+        return bool(self.captured or self.revoked or self.ack or self.needs_confirmation)
+
 
 class DirectiveManager:
     def __init__(self, store: DirectiveStore) -> None:
         self.store = store
         self.guard = DirectiveGuard(store)
+        # Pending boundary lift awaiting explicit owner confirmation (1c).
+        self._pending_lift: Optional[dict] = None
+        # One-shot acknowledgment to echo back to the owner (1a).
+        self._last_ack: Optional[str] = None
 
     # -- capture -------------------------------------------------------
-    def capture_from_message(self, message: str, *, source: str = "owner_explicit") -> List[Directive]:
+    def capture_from_message(self, message: str, *, source: str = "owner_explicit") -> CaptureResult:
         """Extract directives from an OWNER message and persist them.
 
-        Revocations are matched against active prohibitions and revoke them
-        instead of adding a new row. Caller MUST gate this to owner messages.
+        Asymmetric friction (1c): SETTING a boundary is one-turn easy; LIFTING
+        one is staged as a pending confirmation and only applied when the owner
+        explicitly confirms on a subsequent message. Caller MUST gate to owner.
         """
-        found = extract_directives(message, source=source)
-        stored: List[Directive] = []
-        for d in found:
-            if is_revocation(d):
-                self._apply_revocation(d)
-                continue
-            self.store.add(d)
-            stored.append(d)
-        return stored
+        result = CaptureResult()
+        text = (message or "").strip()
 
-    def _apply_revocation(self, revocation: Directive) -> None:
-        """Revoke active prohibitions whose subject the owner just lifted."""
-        terms = set(revocation.match_terms or normalize_terms(revocation.subject))
-        if not terms:
-            return
-        for d in self.store.active(polarity=Polarity.PROHIBIT):
-            dterms = set(d.match_terms)
-            # revoke if the lifted subject shares a distinctive term
-            if dterms & terms:
-                self.store.revoke(d.id)
-                logger.info("Directive revoked by owner: %r (id=%s)", d.subject, d.id)
+        # 1) If a lift is pending, ONLY an explicit affirmation on the immediate
+        #    next message confirms it; anything else clears it (fail-safe: a
+        #    prohibition is never lifted by an attribution error or stray text).
+        if self._pending_lift is not None:
+            expired = time.time() - self._pending_lift["ts"] > _PENDING_TTL_SECS
+            if not expired and _AFFIRM.match(text):
+                revoked = self._apply_revocation_ids(self._pending_lift["ids"])
+                subj = self._pending_lift["subject"]
+                self._pending_lift = None
+                result.revoked = revoked
+                result.ack = f"Confirmed. I will resume {subj}."
+                self._last_ack = result.ack
+                return result
+            # not confirmed -> the boundary stays; drop the pending lift
+            self._pending_lift = None
+
+        found = extract_directives(text, source=source)
+
+        # 2) A revocation stages a pending confirmation (never lifts immediately).
+        revocations = [d for d in found if is_revocation(d)]
+        if revocations:
+            rev = revocations[0]
+            terms = set(rev.match_terms or normalize_terms(rev.subject))
+            matches = [d for d in self.store.active(polarity=Polarity.PROHIBIT)
+                       if set(d.match_terms) & terms]
+            if matches:
+                self._pending_lift = {
+                    "subject": rev.subject, "ids": [d.id for d in matches],
+                    "ts": time.time(),
+                }
+                subs = "; ".join(d.raw_text or d.subject for d in matches)
+                result.needs_confirmation = (
+                    f"You asked me to resume: {rev.subject}. That lifts a boundary "
+                    f"you set ({subs}). Confirm and I will resume it; otherwise it stays in place."
+                )
+            return result
+
+        # 3) New prohibitions / requirements are stored immediately.
+        for d in found:
+            self.store.add(d)
+            result.captured.append(d)
+        if result.captured:
+            parts = []
+            for d in result.captured:
+                verb = "will not" if d.polarity == Polarity.PROHIBIT else "will make sure to"
+                parts.append(f"I {verb} {d.subject}")
+            result.ack = "Noted: " + "; ".join(parts) + "."
+            self._last_ack = result.ack
+        return result
+
+    def consume_ack(self) -> Optional[str]:
+        """Return and clear the one-shot acknowledgment (echoed once)."""
+        ack, self._last_ack = self._last_ack, None
+        return ack
+
+    def pending_confirmation(self) -> Optional[str]:
+        """The current pending boundary-lift prompt, if any (for context echo)."""
+        if self._pending_lift is None:
+            return None
+        if time.time() - self._pending_lift["ts"] > _PENDING_TTL_SECS:
+            self._pending_lift = None
+            return None
+        subj = self._pending_lift["subject"]
+        return f"AWAITING CONFIRMATION: the owner asked to resume {subj}; do not resume until they confirm."
+
+    def _apply_revocation_ids(self, ids: List[str]) -> List[Directive]:
+        revoked = []
+        for did in ids:
+            d = self.store.get(did)
+            if d and self.store.revoke(did):
+                revoked.append(d)
+                logger.info("Directive revoked by owner (confirmed): %r (id=%s)", d.subject, did)
+        return revoked
 
     def add_explicit(self, subject: str, polarity: str = "prohibit",
                      raw_text: str = "", source: str = "owner_explicit",

@@ -297,6 +297,30 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
             "required": ["initiative_id", "action"],
         },
     },
+    {
+        "name": "colony_list_boundaries",
+        "description": (
+            "List the owner's active standing directives / boundaries (things "
+            "you must not do or must always do). Use when asked what your "
+            "boundaries or standing instructions are."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "colony_recent_boundary_blocks",
+        "description": (
+            "List autonomous actions you recently refused and which boundary "
+            "refused each. Use to explain WHY you did not do something (cite the "
+            "directive and date)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max entries (default 10)", "default": 10},
+            },
+            "required": [],
+        },
+    },
 ]
 
 # Native server-side tools (calculate, web_search, file_ops)

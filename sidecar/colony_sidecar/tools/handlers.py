@@ -336,6 +336,71 @@ async def handle_discover_connections(
         return json.dumps({"error": str(e), "status": "error"})
 
 
+def _iso_ts(epoch: Any) -> str:
+    try:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(float(epoch), timezone.utc).isoformat()
+    except Exception:
+        return str(epoch)
+
+
+async def handle_list_boundaries(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """List the owner's active standing directives / boundaries."""
+    try:
+        dm = registry.directives
+        if dm is None:
+            return json.dumps({"error": "Directives not wired", "status": "unavailable"})
+        active = dm.active()
+        return json.dumps({
+            "count": len(active),
+            "boundaries": [
+                {
+                    "id": d.id,
+                    "polarity": d.polarity.value,   # prohibit | require | prefer
+                    "subject": d.subject,
+                    "stated": d.raw_text or d.subject,
+                    "since": _iso_ts(d.created_at),
+                }
+                for d in active
+            ],
+        }, default=str)
+    except Exception as e:
+        logger.error("colony_list_boundaries failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_recent_boundary_blocks(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """What autonomous actions were recently refused, and which boundary refused them."""
+    limit = _as_int(args.get("limit", 10), 10)
+    try:
+        dm = registry.directives
+        if dm is None:
+            return json.dumps({"error": "Directives not wired", "status": "unavailable"})
+        blocks = dm.guard.recent_blocks(limit=limit)
+        return json.dumps({
+            "count": len(blocks),
+            "blocks": [
+                {
+                    "when": _iso_ts(b.get("ts")),
+                    "action_kind": b.get("action_kind"),
+                    "action": b.get("action_summary"),
+                    "refused_because": b.get("directives"),
+                    "directive_ids": b.get("directive_ids"),
+                }
+                for b in blocks
+            ],
+        }, default=str)
+    except Exception as e:
+        logger.error("colony_recent_boundary_blocks failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
 async def handle_task_complete(
     args: dict[str, Any],
     registry: SubsystemRegistry,
@@ -423,4 +488,6 @@ TOOL_HANDLERS: dict[str, callable] = {
     "colony_task_snooze": handle_task_snooze,
     "colony_task_dismiss": handle_task_dismiss,
     "colony_initiative_feedback": handle_initiative_feedback,
+    "colony_list_boundaries": handle_list_boundaries,
+    "colony_recent_boundary_blocks": handle_recent_boundary_blocks,
 }

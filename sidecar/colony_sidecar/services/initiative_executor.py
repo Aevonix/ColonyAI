@@ -36,7 +36,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,32 @@ def _build_initiative_prompt(initiative: Any) -> str:
         "When done, summarize what you accomplished in 1-2 sentences."
     )
     return "\n".join(parts)
+
+
+_TIMEOUT_MARKERS = (
+    "timeout", "timed out", "deadline", "read operation timed out",
+    "readtimeout", "timeouterror", "etimedout",
+)
+
+_TERM_STOP = frozenset({
+    "the", "a", "an", "to", "of", "on", "in", "for", "with", "and", "or",
+    "follow", "up", "check", "review", "investigate", "diagnose", "verify",
+    "initiative", "task", "this", "that", "about", "into", "your", "my",
+})
+
+
+def _is_timeout_error(err: Optional[str]) -> bool:
+    if not err:
+        return False
+    low = str(err).lower()
+    return any(m in low for m in _TIMEOUT_MARKERS)
+
+
+def _subject_terms(text: Optional[str]) -> set:
+    """Significant tokens of an initiative subject, for repeat-work matching."""
+    import re as _re
+    toks = _re.findall(r"[a-z0-9][a-z0-9_\-]{2,}", (text or "").lower())
+    return {t for t in toks if t not in _TERM_STOP}
 
 
 def _assistant_tool_message(
@@ -333,9 +359,27 @@ class InitiativeExecutorService:
             except Exception:
                 logger.debug("boundary pre-check failed (allowing)", exc_info=True)
 
+        # Repeat-work suppression: if a recent completion already covers this
+        # subject, close it with a pointer instead of re-running the reasoning.
+        try:
+            dup = await self._find_recent_completion(initiative)
+        except Exception:
+            dup = None
+        if dup is not None:
+            dup_id = getattr(dup, "id", "?")
+            dup_res = (getattr(dup, "result", "") or "")[:200]
+            logger.info("Initiative %s (%s) already covered by %s — skipping re-run",
+                        iid, itype, dup_id)
+            await self._complete_initiative(
+                iid, f"Already addressed by recent completion {dup_id}. {dup_res}")
+            self._stats["initiatives_completed"] += 1
+            self._stats["initiatives_processed"] += 1
+            return
+
         try:
             prompt = _build_initiative_prompt(initiative)
             session_id = f"executor-{iid}"
+            is_research = itype in ("research", "knowledge_acquisition")
 
             # Make the reasoner aware of standing boundaries (soft layer atop the
             # hard gate above and the per-tool gate below).
@@ -364,11 +408,11 @@ class InitiativeExecutorService:
 
             while iterations < self._max_tool_iterations:
                 iterations += 1
-                result = await self._reasoning.run_turn(
+                result = await self._run_turn_resilient(
                     session_id=session_id,
                     messages=working,
                     system_prompt=system_prompt,
-                    model_override=self._model_tier,
+                    is_research=is_research,
                 )
 
                 usage = result.usage or {}
@@ -542,6 +586,66 @@ class InitiativeExecutorService:
     # ------------------------------------------------------------------
     # Store callbacks
     # ------------------------------------------------------------------
+
+    async def _run_turn_resilient(self, *, session_id, messages, system_prompt, is_research):
+        """run_turn with adaptive retry+backoff on M3 timeouts (resilience -- 5).
+
+        A transient timeout is absorbed by retrying in-call (no store attempt is
+        burned). Research-type work gets more retries. Only a persistent timeout
+        falls through to the normal error handling.
+        """
+        max_retries = 3 if is_research else 2
+        backoff = 2.0
+        result = None
+        for attempt in range(max_retries + 1):
+            result = await self._reasoning.run_turn(
+                session_id=session_id, messages=messages,
+                system_prompt=system_prompt, model_override=self._model_tier,
+            )
+            if result.status != "error" or not _is_timeout_error(result.error):
+                return result
+            if attempt < max_retries:
+                logger.info("run_turn timeout (attempt %d/%d), backing off %.0fs",
+                            attempt + 1, max_retries + 1, backoff)
+                try:
+                    await asyncio.sleep(backoff)
+                except Exception:
+                    pass
+                backoff *= 2
+        return result
+
+    async def _find_recent_completion(self, initiative: Any) -> Any:
+        """A recently-completed initiative that already covers this subject."""
+        if self._store is None:
+            return None
+        itype = getattr(initiative, "type", "") or getattr(initiative, "initiative_type", "")
+        iid = getattr(initiative, "id", "")
+        entity_id = getattr(initiative, "entity_id", "") or ""
+        my_terms = _subject_terms(getattr(initiative, "description", ""))
+        if not itype:
+            return None
+        window_h = float(os.environ.get("COLONY_EXECUTOR_REPEAT_WINDOW_HOURS", "48"))
+        since = datetime.now(timezone.utc) - timedelta(hours=window_h)
+        try:
+            loop = asyncio.get_event_loop()
+            recent = await loop.run_in_executor(
+                None,
+                lambda: self._store.list(
+                    status=["completed"], type=itype, created_after=since, limit=50),
+            )
+        except Exception:
+            return None
+        for r in recent or []:
+            if getattr(r, "id", "") == iid:
+                continue
+            if entity_id and getattr(r, "entity_id", "") == entity_id:
+                return r
+            rt = _subject_terms(getattr(r, "description", ""))
+            if my_terms and rt:
+                overlap = len(my_terms & rt) / max(1, min(len(my_terms), len(rt)))
+                if overlap >= 0.7:
+                    return r
+        return None
 
     async def _complete_initiative(self, initiative_id: str, result: str) -> None:
         try:

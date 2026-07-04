@@ -334,6 +334,49 @@ async def test_execute_one_unexpected_status_logs_and_fails():
     assert "unexpected status: banana" in store._failed[0][1]
 
 
+class _RepeatStore(FakeStore):
+    def list(self, status=None, type=None, created_after=None, limit=100):
+        if status == ["completed"]:
+            return [FakeInitiative(id="done-1", type="system",
+                                   description="Diagnose the widget loop", entity_id="widget")]
+        return [i for i in self._initiatives if not status or i.status in status][:limit]
+
+
+@pytest.mark.asyncio
+async def test_execute_one_suppresses_repeat_work():
+    """A recent completion covering the same subject skips the re-run (6)."""
+    store = _RepeatStore([])
+    reasoning = FakeReasoningLoop()
+    svc = InitiativeExecutorService(
+        initiative_store=store, reasoning_loop=reasoning, allowed_types={"system"})
+    init = FakeInitiative(id="new-1", type="system",
+                          description="Diagnose the widget loop again", entity_id="widget")
+    await svc._execute_one(init)
+    assert len(reasoning.calls) == 0  # never re-reasoned
+    assert svc._stats["initiatives_completed"] == 1
+    assert store._completed and "Already addressed by recent completion done-1" in store._completed[0][1]
+
+
+@pytest.mark.asyncio
+async def test_execute_one_retries_on_timeout(monkeypatch):
+    """A transient M3 timeout is retried in-call without burning an attempt (5)."""
+    import asyncio as _a
+    async def _fast(*a, **k):
+        return None
+    monkeypatch.setattr(_a, "sleep", _fast)
+    store = FakeStore([FakeInitiative()])
+    seq = SequenceReasoningLoop([
+        FakeReasoningResult(status="error", error="LLM call failed: read operation timed out"),
+        FakeReasoningResult(status="completed", message={"role": "assistant", "content": "done"}),
+    ])
+    svc = InitiativeExecutorService(
+        initiative_store=store, reasoning_loop=seq, allowed_types={"follow_up"})
+    await svc._execute_one(FakeInitiative())
+    assert len(seq.calls) == 2                       # retried past the timeout
+    assert svc._stats["initiatives_completed"] == 1
+    assert svc._stats["initiatives_failed"] == 0     # attempt not burned
+
+
 @pytest.mark.asyncio
 async def test_execute_one_refuses_boundary_violation():
     """A boundary the owner set must stop the executor before it acts."""

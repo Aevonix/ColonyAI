@@ -26,6 +26,25 @@ _MAX_PER_DAY = 3
 _COOLDOWN_HOURS = 2
 _QUIET_START_HOUR = 22
 _QUIET_END_HOUR = 8
+
+
+def _resolve_tz():
+    """Owner-local timezone for quiet hours: COLONY_TIMEZONE, else system, else UTC."""
+    import os
+    name = os.environ.get("COLONY_TIMEZONE", "").strip()
+    if name:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(name)
+        except Exception:
+            logger.warning("rate_limiter: invalid COLONY_TIMEZONE %r, using system tz", name)
+    try:
+        local = datetime.now().astimezone().tzinfo
+        if local is not None:
+            return local
+    except Exception:
+        pass
+    return timezone.utc
 # Deliveries older than this many days are pruned at startup; nothing in the
 # rate-limit logic needs more than ~48h of history.
 _HISTORY_RETENTION_DAYS = 3
@@ -52,12 +71,15 @@ class DeliveryRateLimiter:
         self._quiet_start = quiet_start_hour
         self._quiet_end = quiet_end_hour
         self._metrics = metrics
+        # Quiet hours + the daily bucket are evaluated in the OWNER's local
+        # timezone (22:00-08:00 must mean their night, not a UTC window).
+        self._tz = _resolve_tz()
 
         # person_id → list of delivery timestamps (UTC) today
         self._daily_counts: Dict[str, List[datetime]] = defaultdict(list)
         # person_id → last delivery timestamp (UTC)
         self._last_delivery: Dict[str, Optional[datetime]] = defaultdict(lambda: None)
-        self._today = datetime.now(timezone.utc).date()
+        self._today = datetime.now(self._tz).date()
 
         # Frustration back-off: person_id → probability (updated by autonomy loop)
         self._frustration_cache: Dict[str, float] = {}
@@ -161,14 +183,14 @@ class DeliveryRateLimiter:
 
     def _reset_if_new_day(self) -> None:
         """Reset daily counters when the UTC date rolls over."""
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(self._tz).date()
         if today != self._today:
             self._daily_counts.clear()
             self._today = today
 
     def _in_quiet_hours(self) -> bool:
-        """Return True if current time is within quiet hours."""
-        now = datetime.now(timezone.utc)
+        """Return True if current time is within quiet hours (owner-local tz)."""
+        now = datetime.now(self._tz)
         h = now.hour
         if self._quiet_start > self._quiet_end:
             # Spans midnight (22:00–08:00)
