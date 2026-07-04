@@ -58,6 +58,61 @@ Program State here. Refresh bundles at each push.
 
 ---
 
+## Amendment 1 (2026-07-04, owner-approved): graduated autonomy, the
+## self-model as trust engine
+
+Static capability gating and manually-decided readiness are NOT the goal.
+The owner wants an agent that acts when its track record supports it, asks
+when unsure, and course-corrects automatically, with comprehensive logging as
+the accountability layer. Item 4 (self-model) is therefore promoted from
+advisory measurement to the CENTRAL TRUST ENGINE. Design principle baked into
+every item: default toward action-with-journaling; blocking is reserved for
+the immutable floor, owner boundaries, and genuine below-threshold
+uncertainty (which becomes ask-first, never silent inaction).
+
+1. Confidence-gated action. Every autonomous action class carries a
+   calibrated confidence from real outcomes: CompetenceStore success/failure/
+   timeout history, audit verdicts, and owner reactions (TypeFeedbackStore).
+   Above threshold: act + journal + report. Below: ASK FIRST, and the
+   approval request carries the reasoning and the confidence ("I want to do
+   X, confidence 0.62, because Y"). The approval machinery is something the
+   agent INVOKES when unsure, not a static wall.
+2. Auto-graduation. COLONY_<X>_MODE shadow phases are CALIBRATION phases,
+   not waiting rooms. A capability class auto-graduates shadow -> ask_first
+   -> act_first as its track record crosses thresholds
+   (COLONY_TRUST_* envs, sensible defaults), with an owner NOTIFICATION on
+   each graduation ("I am now doing X autonomously; say stop if not"), not a
+   permission request. The env mode remains an owner override: off stays
+   off; an env set to live is live; shadow means "start in calibration".
+3. Circuit breakers. N failures (COLONY_TRUST_BREAKER_FAILURES, default 3)
+   within a window (COLONY_TRUST_BREAKER_WINDOW_HOURS, default 24) or ANY
+   audit violation auto-demotes that class to ask_first and journals why.
+   Course correction is automatic, not post-mortem.
+4. Unified action journal. Every autonomous action is logged with reasoning,
+   confidence, reversibility class, decision (acted/asked/held) and outcome;
+   introspectable via a tool ("what did you do today and why") and the API.
+5. One-command pause. An owner utterance like "stop acting" / "pause
+   autonomy" becomes an immediate GLOBAL ACT-level boundary through the
+   directive system (the kill switch). Lifting it uses the existing staged
+   confirmation. Verified end to end.
+6. Immutable floor (small and principled: irreversibility x blast radius).
+   Owner directives, plus a short hard list that is never self-decidable
+   regardless of confidence: money movement, non-recoverable deletion,
+   credential/security changes, bulk messaging of third parties. Everything
+   else, including individual third-party messages, directed repo actions,
+   and delivery volume (the daily cap becomes ADAPTIVE, earned upward with
+   track record), moves to the earned model.
+7. Directed retrofit. Directed action runs LIVE now: read-only scopes
+   auto-approve with journaling; mutating scopes ask with reasoning +
+   confidence; act-first is earned per scope class as the audit record
+   accumulates.
+
+Category note: engineering rollout of hot-path infrastructure (e.g. the
+context.engine activation) is deployment hygiene, stays staged, and is NOT
+subject to trust-engine graduation.
+
+---
+
 ## Item 1 - GOAL PERSISTENCE (Projects) [Phase A, centerpiece]
 
 Turn one-shot initiatives into sustained multi-tick pursuit.
@@ -103,8 +158,11 @@ still routes through each sub-path's own gate (directed dry_run, delivery
 shadow/live). `COLONY_PROJECTS_MAX_STEPS` (default 12), `COLONY_PROJECTS_
 REVIEW_SECS`, `COLONY_PROJECTS_MAX_REPLANS` (default 3).
 
-Rollout gate: shadow until a sample project plans + logs a clean step sequence
-with boundary checks and a milestone-proposal in shadow; live only per the owner.
+Rollout gate (amended): shadow is the CALIBRATION stage; a sample project
+must plan + log a clean step sequence with boundary checks and a
+milestone-proposal in shadow, after which the trust engine auto-graduates
+project pursuit per Amendment 1 (owner notified on each graduation). Step
+sub-paths keep their own gates either way.
 
 Tests: planner validation (unknown kind dropped, dep cycle broken, cap), engine
 step selection + dep ordering, boundary-blocked step -> project blocked, replan
@@ -153,30 +211,61 @@ signature, cap/evict, retrieval block format, post-mortem note update.
 
 Private deployment layer: none.
 
-## Item 4 - SELF-MODEL [Phase A]
+## Item 4 - SELF-MODEL / TRUST ENGINE [Phase A, amended: the centerpiece of
+## Amendment 1]
 
-Live competence/calibration per capability domain from real outcomes.
+Live competence/calibration per capability domain from real outcomes,
+promoted to the central trust engine that grants, gates, and revokes
+autonomy per action class.
 
 Design:
-- Reuse/extend `feedback/`: add `self_model/` with `store.CompetenceStore`
-  (SQLite `colony-self-model.db`) keyed by domain (initiative_type | project |
-  directed | research | delivery | worker-job-type): counts success/failure/
-  timeout, ewma latency, last_outcome_at. Load = active executor initiatives +
-  active projects + queued jobs (read live).
-- `brief.py`: `self_brief()` -> compact text: "You reliably do X (n, p=..),
-  you often time out on Y, current load L." Injected into thinker + executor +
-  project-planner prompts so she routes/declines/escalates.
-- Recording: hook the executor completion/fail, project step outcome, directed
-  audit verdict, and worker job results (item 5) into CompetenceStore.record.
-- Tool: `self_status()` (read) -> domains, rates, load. Registry:
-  `registry.self_model`.
-- API: GET /self.
+- `self_model/` package.
+  - `store.CompetenceStore` (SQLite `colony-self-model.db`) keyed by domain
+    (initiative_type | project | directed[:scope-class] | research |
+    delivery | worker-job-type): counts success/failure/timeout, ewma
+    latency, last_outcome_at, PLUS a per-event log (domain, outcome, ts) for
+    windowed circuit-breaker queries. Load = active executor initiatives +
+    active projects + queued jobs (read live).
+  - `brief.py`: `self_brief()` -> compact text: "You reliably do X (n, p=..),
+    you often time out on Y, current load L." Injected into thinker +
+    executor + project-planner prompts so she routes/declines/escalates.
+  - `journal.py`: unified ActionJournal (SQLite `colony-action-journal.db`):
+    record(domain, description, reasoning, confidence, reversibility,
+    decision acted|asked|held|blocked, outcome, ref). Read APIs: today(),
+    recent(). Every autonomous action chokepoint writes here.
+  - `trust.py`: TrustEngine.
+    - `confidence(domain)`: Laplace-smoothed success rate from the
+      CompetenceStore, scaled by the TypeFeedbackStore multiplier, penalized
+      by audit violations.
+    - Stage per domain (shadow -> ask_first -> act_first) persisted in the
+      store; `gate(domain, description, reasoning, reversibility,
+      floor_class)` -> decision act|ask|hold, journaled automatically.
+    - Auto-graduation on threshold crossings (COLONY_TRUST_ASK_THRESHOLD
+      default 0.45/n>=3, COLONY_TRUST_ACT_THRESHOLD default 0.8/n>=5), owner
+      notification (not a request) through guarded delivery on each
+      graduation; COLONY_TRUST_AUTOGRADUATE=false disables.
+    - Circuit breaker: failures in window / any audit violation ->
+      auto-demote to ask_first + journal + owner note.
+    - Immutable floor: `is_floor(...)`: money movement, non-recoverable
+      deletion, credential/security changes, bulk third-party messaging.
+      Never self-decidable; always ask.
+- Recording: executor completion/fail, project step outcome, directed audit
+  verdict, delivery pushes, and worker job results (item 5) all feed
+  CompetenceStore.record + the journal.
+- Adaptive delivery cap: the per-recipient daily cap scales with the
+  "delivery" domain's earned confidence (base COLONY_MAX_DAILY, earned
+  upward, bounded by COLONY_TRUST_DELIVERY_CAP_MAX).
+- Tools: `self_status()` (read) -> domains, rates, load, stages;
+  `action_journal(day?)` (read). Registry: `registry.self_model`.
+- API: GET /self, GET /self/journal.
 
-Config: `COLONY_SELF_MODEL_ENABLED` (default true - measurement + prompt brief
-only, no action path). Safe to live directly.
+Config: `COLONY_SELF_MODEL_ENABLED` (default true), COLONY_TRUST_* thresholds
+(above). Measurement/journal live directly; gating decisions apply wherever a
+capability consults `gate()`.
 
 Tests: record math (ewma latency, rates), brief text thresholds, load count,
-self_status tool.
+confidence calibration, graduation + demotion (breaker) transitions, floor
+never graduates, journal write/read, adaptive cap bounds, self_status tool.
 
 Private deployment layer: none.
 
@@ -253,9 +342,10 @@ Config flags: `COLONY_WORKER_ENABLED`, `COLONY_WORKER_CAPABILITIES`,
 server-side `COLONY_WORKERS_MODE` off|shadow|live (shadow: accept registration
 + claims but execute in dry-run reporting only). Default shadow.
 
-Rollout gate: shadow until one worker registers, claims a read-only job,
-reports, and the server audit passes; live per the owner, and only read/internal
-job types first.
+Rollout gate (amended): shadow is calibration; after one worker registers,
+claims a read-only job, reports, and the server audit passes, worker job
+classes graduate via the trust engine (read/internal classes first; each
+worker-job-type is its own trust domain feeding item 4).
 
 Tests: capability-filtered claim, server-side boundary re-check on claim AND
 completion (a worker claiming a boundaried job is refused server-side), lease
@@ -376,11 +466,14 @@ repo (generic, env-driven). Instance specifics (creds, hosts, plists, persona
 glue, connector endpoints, worker placement, sandbox host) = documented here
 per item and written to the Mac live locations for aeva-repo sync.
 
-Safety invariants (do not regress): DirectiveGuard checked before every act;
-approval tiering for mutating/outbound/directed/sandbox/worker; shadow/dry-run
-default for every new action path; server-side (never client-side) enforcement
-for workers + sandbox; do not disturb the live delivery path or held directed
-dry_run.
+Safety invariants (amended, do not regress): DirectiveGuard checked before
+every act; the immutable floor (Amendment 1.6) is never self-decidable;
+below-threshold confidence asks first with reasoning + confidence; every
+autonomous action is journaled; new action paths start in calibration
+(shadow) and graduate via the trust engine rather than manual flips;
+server-side (never client-side) enforcement for workers + sandbox; do not
+disturb the live delivery path. Directed action is LIVE per Amendment 1.7
+(read-only auto + journal, mutating ask-first).
 
 Hygiene per push: per-commit leak self-scan (the pattern set used at program
 start, ground-truthed against live config), refresh bundles both locations,
@@ -550,16 +643,74 @@ llm_request middleware) should migrate off the registry when next touched.
   directives (tiered), proposals, feedback, directed-action (dry_run),
   read-only repo mirrors, world-model populator (shadow), thinker (shadow),
   delivery go-LIVE flip (Colony side).
-- KNOWN DEPLOYMENT BLOCKER (not code): the live Hermes gateway (:8644) has no
-  `colony-initiatives` webhook route in ~/.hermes/config.yaml (deliberately
-  removed per a prior Hermes architecture plan), so proactive delivery POSTs
-  return 404 and no message reaches the owner (rate bucket correctly unconsumed).
-  Resolve at the Hermes deployment layer (restore the route OR point
-  COLONY_HERMES_WEBHOOK_URL at the correct current endpoint) before real
-  delivery works. Colony delivery code is correct.
-- Phase A: NOT STARTED.
+- RESOLVED (was: KNOWN DEPLOYMENT BLOCKER): proactive delivery now runs
+  LIVE via COLONY_DELIVERY_TRANSPORT=gateway to the deployment's message
+  gateway (rate caps + cooldown bind and were observed doing so); the old
+  Hermes webhook-route 404 path is moot for this deployment.
+- 2026-07-04 (Amendment 1): owner-approved graduated-autonomy amendment
+  landed (section above). Item 4 promoted to trust engine; per-item designs
+  touched; safety invariants rewritten to action-with-journaling.
+- 2026-07-04 (ops flips, owner-ordered, deployment layer): COLONY_DIRECTED_MODE
+  dry_run -> live (with a deployment delegate shim bridging the dispatch
+  contract to the local agent gateway's async task surface; E2E verified:
+  intake -> read-only auto-approval -> real dispatch -> agent execution ->
+  structured report -> audit verdict clean -> feedback recorded; the owner
+  report was correctly gated by the delivery cooldown). COLONY_THINKING_MODE
+  shadow -> live (semantic note: shadow ALREADY delivered thinker proposals
+  through guarded delivery; live additionally executes the thought-up items
+  as internal work). COLONY_WORLD_POPULATE_MODE shadow -> live (first real
+  entity writes observed same day). COLONY_DIRECTIVE_LLM_ASSIST off -> on
+  (verified against the deployment's fast classifier endpoint). The former
+  Colony-side delivery blocker is resolved at the deployment layer
+  (COLONY_DELIVERY_TRANSPORT=gateway); delivery is LIVE with rate caps
+  binding. context.engine deliberately NOT flipped (engineering-rollout
+  category).
+- Phase A: COMPLETE (2026-07-04). Landed:
+  - `self_model/` (item 4 as trust engine): CompetenceStore + event log,
+    self-brief, ActionJournal (`colony-action-journal.db`), TrustEngine
+    (confidence, stages shadow/ask_first/act_first, auto-graduation with
+    owner notices, circuit breakers, immutable floor, adaptive delivery
+    cap). Wired into: initiative executor (outcomes + prompt brief),
+    directed action (trust-graduated approval tiering + ask-first proposals
+    carrying reasoning+confidence + audit-fed track record), delivery
+    (outcome recording + adaptive cap), projects, beliefs. Flags:
+    COLONY_SELF_MODEL_ENABLED (true), COLONY_TRUST_* thresholds.
+  - `skills_memory/` (item 3): SkillStore (`colony-skills.db`), distillation
+    (retry-success / novel-diagnosis triggers, strict-JSON validation,
+    signature dedup, cap+evict), retrieval blocks + per-domain failure
+    notes; wired into executor + project planner/engine. Flags:
+    COLONY_SKILLS_ENABLED (true), COLONY_SKILLS_DISTILL (shadow default;
+    live on the reference deployment), COLONY_SKILLS_MAX.
+  - `projects/` (item 1): Project/Step models + ProjectStore
+    (`colony-projects.db`), planner (one LLM pass, deterministic
+    validation: kind whitelist, cycle-breaking, cap), ProjectEngine
+    (autonomy phase `_phase_projects`: adoption of project-type
+    initiatives, boundary-checked step dispatch through existing sub-gates,
+    bounded replans, milestone proposals, self-model defer + trust
+    graduation of the shadow calibration stage). Tools list_projects /
+    project_status / create_project / abandon_project; API /projects.
+    Flags: COLONY_PROJECTS_MODE (shadow default), _MAX_STEPS,
+    _REVIEW_SECS, _MAX_REPLANS, _MAX_CONCURRENT, _DEFER_LOAD.
+  - `beliefs/` (item 7): claim extraction (conservative), conflict
+    detection, resolution (recency > confidence > source-trust; env
+    COLONY_SOURCE_TRUST), supersession audit (`colony-beliefs.db`), inline
+    property-audit hook on world-model updates, stale-entity decay,
+    unresolvable -> data_quality review initiative; daily phase
+    `_phase_belief_maintenance`. Live resolution requires the earned
+    act_first stage (env live = owner override). Tool belief_conflicts;
+    API /beliefs.
+  - Amendment extras: one-command global pause (extractor + guard +
+    manager ack; "stop acting" binds instantly, staged lift), world-model
+    LLM-assist extraction (`world_model/llm_extract.py`, daily batch phase,
+    journaled writes, COLONY_WORLD_LLM_EXTRACT), action_journal +
+    self_status tools, GET /self + /self/journal + /skills-memory +
+    /world/llm-extract/status.
+  - Tests: test_self_model, test_skills_memory, test_projects,
+    test_beliefs, test_global_pause, test_directed_trust,
+    test_world_llm_extract; full unit suite green.
 - Phase B: NOT STARTED.
-- Phase C: NOT STARTED.
+- Phase C: NOT STARTED (world-model LLM extraction pulled forward from the
+  item 2 wiring as an Amendment-era deliverable; connectors proper remain).
 
 ## Resumption note for a successor agent
 
