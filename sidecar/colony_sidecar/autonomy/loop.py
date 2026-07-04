@@ -827,6 +827,27 @@ class AutonomyLoop:
                          iid, type_value)
             return False
 
+        # Boundary gate: never message about a subject the owner set off-limits.
+        directives = getattr(self._registry, "directives", None)
+        if directives is not None:
+            try:
+                from colony_sidecar.directives import Action
+                verdict = directives.check(Action(
+                    kind="deliver",
+                    text=f"{payload.get('title','')} {payload.get('description','')}",
+                    target=payload.get("entity_id", "") or "",
+                    entity_id=payload.get("entity_id", "") or "",
+                    high_risk=True,
+                ))
+                if not verdict.allowed:
+                    logger.warning(
+                        "Reach-out %s (%s) REFUSED by boundary: %s",
+                        iid, type_value, verdict.reason,
+                    )
+                    return False
+            except Exception:
+                logger.debug("delivery boundary check failed (allowing)", exc_info=True)
+
         # Staleness guard: a long-overdue reach-out is noise, not a timely ping.
         if rp.is_aged_out(payload):
             logger.info(

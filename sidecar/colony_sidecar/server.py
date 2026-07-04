@@ -506,6 +506,22 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Theory of Mind init failed: %s", exc)
 
+    # --- Directive / boundary memory (safety foundation) ---
+    # Durable store of the owner's standing directives (MUST NOT / MUST) with an
+    # enforcement guard consulted before autonomous actions. Boundaries must be
+    # available before any action-taking, so this is wired unconditionally.
+    try:
+        from colony_sidecar.directives import DirectiveManager, DirectiveStore
+        from colony_sidecar.api.routers.host import set_directive_manager
+        _directive_store = DirectiveStore(db_path=str(state_dir / "colony-directives.db"))
+        set_directive_manager(DirectiveManager(_directive_store))
+        logger.info(
+            "DirectiveManager initialized (db=%s, active=%d)",
+            state_dir / "colony-directives.db", _directive_store.count_active(),
+        )
+    except Exception as exc:
+        logger.warning("DirectiveManager init failed (boundaries disabled): %s", exc)
+
     # --- Pattern Extraction + Surprise ---
     try:
         from colony_sidecar.patterns.store import PatternStore
@@ -1106,10 +1122,12 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.services.initiative_executor import (
             create_from_env as _create_executor,
         )
+        from colony_sidecar.api.routers.host import get_directive_manager as _get_dm
         _executor_svc = _create_executor(
             initiative_store=locals().get("initiative_store"),
             reasoning_loop=locals().get("reasoning_loop"),
             tool_executor=locals().get("tool_executor"),
+            directive_manager=_get_dm(),
         )
         if _executor_svc is not None:
             set_initiative_executor(_executor_svc)

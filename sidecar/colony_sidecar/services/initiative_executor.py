@@ -161,10 +161,14 @@ class InitiativeExecutorService:
         allowed_types: Optional[set[str]] = None,
         agent_id: str = "colony-executor",
         max_tool_iterations: int = 8,
+        directive_manager: Any = None,
     ):
         self._store = initiative_store
         self._reasoning = reasoning_loop
         self._tools = tool_executor
+        # Boundary enforcement: consulted before executing an initiative so the
+        # executor never acts on a subject the owner told it to leave alone.
+        self._directives = directive_manager
         self._cycle_secs = cycle_secs
         self._max_per_cycle = max_per_cycle
         self._model_tier = model_tier
@@ -300,9 +304,53 @@ class InitiativeExecutorService:
 
         logger.info("Executing initiative %s (%s)", iid, itype)
 
+        # Boundary gate: refuse to act on anything the owner set as off-limits.
+        if self._directives is not None:
+            try:
+                from colony_sidecar.directives import Action
+                desc = getattr(initiative, "description", "") or ""
+                rationale = getattr(initiative, "rationale", "") or ""
+                entity_id = getattr(initiative, "entity_id", "") or ""
+                verdict = self._directives.check(Action(
+                    kind="execute",
+                    text=f"{desc} {rationale}",
+                    target=entity_id,
+                    entity_id=entity_id,
+                ))
+                if not verdict.allowed:
+                    logger.warning(
+                        "Initiative %s (%s) REFUSED by boundary: %s",
+                        iid, itype, verdict.reason,
+                    )
+                    # Terminal: a boundary is not a transient failure, so do not
+                    # retry (it would just be refused again until lifted).
+                    await self._fail_initiative(
+                        iid, f"refused: {verdict.reason}", retry=False,
+                    )
+                    self._stats["initiatives_failed"] += 1
+                    self._stats["initiatives_processed"] += 1
+                    return
+            except Exception:
+                logger.debug("boundary pre-check failed (allowing)", exc_info=True)
+
         try:
             prompt = _build_initiative_prompt(initiative)
             session_id = f"executor-{iid}"
+
+            # Make the reasoner aware of standing boundaries (soft layer atop the
+            # hard gate above and the per-tool gate below).
+            system_prompt = _SYSTEM_PROMPT
+            if self._directives is not None:
+                try:
+                    brief = self._directives.context_brief()
+                    if brief:
+                        system_prompt = (
+                            _SYSTEM_PROMPT
+                            + "\n\n## Standing boundaries from the owner "
+                            + "(obey without exception)\n" + brief
+                        )
+                except Exception:
+                    pass
 
             # Conversation accumulated across continuation rounds. The reasoning
             # loop runs its own internal tool loop, but returns ``needs_tool``
@@ -319,7 +367,7 @@ class InitiativeExecutorService:
                 result = await self._reasoning.run_turn(
                     session_id=session_id,
                     messages=working,
-                    system_prompt=_SYSTEM_PROMPT,
+                    system_prompt=system_prompt,
                     model_override=self._model_tier,
                 )
 
@@ -385,6 +433,24 @@ class InitiativeExecutorService:
                         done = True
                         break
 
+                    # Per-tool boundary gate (defense in depth): a boundary-
+                    # violating tool call the model produced mid-reasoning is
+                    # dropped and reported back so it adapts, rather than run.
+                    if self._directives is not None:
+                        pending = self._filter_tool_calls_by_boundary(
+                            pending, working,
+                        )
+                        if not pending:
+                            # everything was blocked; give the model the refusal
+                            # and let it continue or wrap up.
+                            working.append({
+                                "role": "user",
+                                "content": "Those actions violate a standing boundary "
+                                           "from the owner and were refused. Do not "
+                                           "attempt them; summarise and stop.",
+                            })
+                            continue
+
                     # Execute the pending tool calls through the SAME executor the
                     # reasoning loop uses internally (identical gating/handlers),
                     # then feed the results back for another round.
@@ -444,6 +510,35 @@ class InitiativeExecutorService:
 
         self._stats["initiatives_processed"] += 1
 
+    def _filter_tool_calls_by_boundary(
+        self, pending: list, working: list,
+    ) -> list:
+        """Drop tool calls that violate a standing boundary. Returns survivors."""
+        if self._directives is None:
+            return pending
+        try:
+            from colony_sidecar.directives import Action
+        except Exception:
+            return pending
+        survivors = []
+        for tc in pending:
+            name = tc.get("name", "")
+            args = tc.get("arguments", {}) if isinstance(tc.get("arguments"), dict) else {}
+            try:
+                verdict = self._directives.check(Action(
+                    kind="execute_tool", tool_name=name, args=args,
+                    text=name, high_risk=True,
+                ))
+            except Exception:
+                verdict = None
+            if verdict is not None and not verdict.allowed:
+                logger.warning(
+                    "Tool call %s REFUSED by boundary: %s", name, verdict.reason,
+                )
+                continue
+            survivors.append(tc)
+        return survivors
+
     # ------------------------------------------------------------------
     # Store callbacks
     # ------------------------------------------------------------------
@@ -488,6 +583,7 @@ def create_from_env(
     initiative_store: Any = None,
     reasoning_loop: Any = None,
     tool_executor: Any = None,
+    directive_manager: Any = None,
 ) -> Optional[InitiativeExecutorService]:
     """Create an InitiativeExecutorService from environment variables.
 
@@ -523,6 +619,7 @@ def create_from_env(
         initiative_store=initiative_store,
         reasoning_loop=reasoning_loop,
         tool_executor=tool_executor,
+        directive_manager=directive_manager,
         cycle_secs=float(os.environ.get("COLONY_EXECUTOR_CYCLE_SECS", "30")),
         max_per_cycle=int(os.environ.get("COLONY_EXECUTOR_MAX_PER_CYCLE", "5")),
         model_tier=os.environ.get("COLONY_EXECUTOR_MODEL_TIER", "small"),

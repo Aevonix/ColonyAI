@@ -335,6 +335,52 @@ async def test_execute_one_unexpected_status_logs_and_fails():
 
 
 @pytest.mark.asyncio
+async def test_execute_one_refuses_boundary_violation():
+    """A boundary the owner set must stop the executor before it acts."""
+    from colony_sidecar.directives import DirectiveManager, DirectiveStore
+    dm = DirectiveManager(DirectiveStore(db_path=None))
+    dm.capture_from_message("Don't touch the colony-web repo")
+    store = FakeStore([FakeInitiative()])
+    reasoning = FakeReasoningLoop()
+    svc = InitiativeExecutorService(
+        initiative_store=store,
+        reasoning_loop=reasoning,
+        allowed_types={"follow_up"},
+        directive_manager=dm,
+    )
+    init = FakeInitiative(
+        description="clone and refactor the colony-web repo",
+        entity_id="colony-web",
+    )
+    await svc._execute_one(init)
+    # never reasoned or executed
+    assert len(reasoning.calls) == 0
+    assert svc._stats["initiatives_failed"] == 1
+    assert store._failed and "refused" in store._failed[0][1]
+    assert store._failed[0][2] is False  # terminal, retry=False
+
+
+@pytest.mark.asyncio
+async def test_execute_one_allows_when_no_boundary_matches():
+    from colony_sidecar.directives import DirectiveManager, DirectiveStore
+    dm = DirectiveManager(DirectiveStore(db_path=None))
+    dm.capture_from_message("Don't touch the colony-web repo")
+    store = FakeStore([FakeInitiative()])
+    reasoning = FakeReasoningLoop()
+    svc = InitiativeExecutorService(
+        initiative_store=store,
+        reasoning_loop=reasoning,
+        allowed_types={"follow_up"},
+        directive_manager=dm,
+    )
+    # unrelated subject -> proceeds normally
+    await svc._execute_one(FakeInitiative(description="Update the billing dashboard",
+                                          entity_id="billing"))
+    assert len(reasoning.calls) == 1
+    assert svc._stats["initiatives_completed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_execute_one_exception():
     store = FakeStore([FakeInitiative()])
     reasoning = FakeReasoningLoop()

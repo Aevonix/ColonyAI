@@ -1793,6 +1793,23 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.debug("context_assemble owner preferences failed: %s", exc)
 
+    # --- Standing boundaries (owner directives: MUST NOT / MUST) ---
+    # Injected for every context so the reasoner is always aware of the owner's
+    # binding boundaries. This is the SOFT layer; the DirectiveGuard hard-gate
+    # at each action chokepoint is the enforced floor.
+    if _directive_manager is not None:
+        try:
+            _boundaries = _directive_manager.context_brief()
+            if _boundaries:
+                sections.append(ContextSection(
+                    id="colony-boundaries",
+                    title="Standing boundaries the owner set (obey without exception)",
+                    body=_boundaries,
+                    priority=99,
+                ))
+        except Exception as exc:
+            logger.debug("context_assemble boundaries failed: %s", exc)
+
     # --- How to engage (evolving engagement profile) ---
     if _engagement_store is not None and contact_id:
         try:
@@ -2182,6 +2199,34 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                         pass
         except Exception:
             logger.debug("owner directive learning failed", exc_info=True)
+
+    # Owner boundary/directive capture: durably record standing directives the
+    # owner states ("don't touch X", "always check before Y", "you can do Z
+    # again"). Owner-ONLY (a boundary can only be set/lifted by the owner) so a
+    # third party can never install or remove the assistant's boundaries.
+    if _directive_manager is not None and body.user_message is not None:
+        try:
+            from colony_sidecar.identity import get_owner_contact_id
+            owner_id = get_owner_contact_id()
+            if owner_id and body.context.contact_id == owner_id:
+                _captured = _directive_manager.capture_from_message(
+                    getattr(body.user_message, "content", "") or ""
+                )
+                if _captured:
+                    logger.info(
+                        "Captured %d owner directive(s): %s",
+                        len(_captured),
+                        "; ".join(f"[{d.polarity.value}] {d.subject}" for d in _captured),
+                    )
+                    try:
+                        from colony_sidecar.events.broadcaster import emit as _emit
+                        _emit("directive.captured",
+                              {"count": len(_captured),
+                               "subjects": [d.subject for d in _captured]})
+                    except Exception:
+                        pass
+        except Exception:
+            logger.debug("owner directive capture failed", exc_info=True)
 
     # ToM LLM extraction (best-effort, non-blocking)
     try:
@@ -3695,6 +3740,72 @@ _preference_learner = None
 def set_preference_learner(learner):
     global _preference_learner
     _preference_learner = learner
+
+
+# --- Directive / boundary memory (owner standing directives + enforcement) ---
+_directive_manager = None
+
+
+def set_directive_manager(manager) -> None:
+    global _directive_manager
+    _directive_manager = manager
+
+
+def get_directive_manager():
+    return _directive_manager
+
+
+@router.get("/directives")
+async def list_directives(status: str = "active") -> dict:
+    """List the owner's standing directives / boundaries (observability)."""
+    if _directive_manager is None:
+        return {"available": False, "directives": []}
+    try:
+        items = (_directive_manager.store.active() if status == "active"
+                 else _directive_manager.store.list(status=status))
+        return {
+            "available": True,
+            "count": len(items),
+            "directives": [
+                {
+                    "id": d.id, "polarity": d.polarity.value, "subject": d.subject,
+                    "raw_text": d.raw_text, "source": d.source,
+                    "status": d.status.value, "match_terms": d.match_terms,
+                    "entity_ids": d.entity_ids,
+                }
+                for d in items
+            ],
+        }
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "directives": []}
+
+
+@router.post("/directives")
+async def add_directive(body: dict) -> dict:
+    """Explicitly record an owner directive/boundary.
+
+    body: {subject, polarity(prohibit|require|prefer), raw_text?, entity_ids?}
+    """
+    if _directive_manager is None:
+        return {"stored": False, "reason": "directives_not_wired"}
+    subject = (body or {}).get("subject", "").strip()
+    if not subject:
+        return {"stored": False, "reason": "subject_required"}
+    d = _directive_manager.add_explicit(
+        subject=subject,
+        polarity=(body or {}).get("polarity", "prohibit"),
+        raw_text=(body or {}).get("raw_text", ""),
+        entity_ids=(body or {}).get("entity_ids") or [],
+    )
+    return {"stored": True, "id": d.id, "polarity": d.polarity.value, "subject": d.subject}
+
+
+@router.post("/directives/{directive_id}/revoke")
+async def revoke_directive(directive_id: str) -> dict:
+    if _directive_manager is None:
+        return {"revoked": False, "reason": "directives_not_wired"}
+    ok = _directive_manager.store.revoke(directive_id)
+    return {"revoked": ok, "id": directive_id}
 
 
 @router.get("/preferences")
