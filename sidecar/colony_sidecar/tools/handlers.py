@@ -273,12 +273,19 @@ async def handle_start_research(
         if research is None:
             return json.dumps({"error": "Research pipeline not wired", "status": "unavailable"})
 
-        task_id = await research.start(topic=topic, depth=depth)
-
+        # The ResearchPipeline runs its stages inline and returns a finished
+        # artifact (the previous `.start()` method never existed -> API drift).
+        run = await research.run(goal=topic)
+        artifact = getattr(run, "artifact", None)
+        content = getattr(artifact, "content", "") if artifact else ""
+        status = getattr(run, "status", "completed")
+        status = getattr(status, "value", None) or str(status)
         return json.dumps({
-            "status": "started",
-            "task_id": task_id,
+            "status": status,
+            "run_id": getattr(run, "id", None),
             "topic": topic,
+            "finding": (content or "")[:1500],
+            "word_count": getattr(artifact, "word_count", 0) if artifact else 0,
         })
     except Exception as e:
         logger.error("colony_start_research failed: %s", e)
@@ -294,27 +301,36 @@ async def handle_discover_connections(
     min_novelty = args.get("min_novelty", 0.3)
 
     try:
-        synthesis = registry.synthesis
-        if synthesis is None:
-            return json.dumps({"error": "Synthesis engine not wired", "status": "unavailable"})
+        # The real accessor is connection_discoverer (registry.synthesis never
+        # existed -> API drift), and the method is discover_connections().
+        discoverer = registry.connection_discoverer
+        if discoverer is None:
+            return json.dumps({"error": "Connection discoverer not wired", "status": "unavailable"})
 
-        connections = await synthesis.discover(
-            entity_id=entity_id,
-            min_novelty=min_novelty,
+        connections = await discoverer.discover_connections(
+            person_id=entity_id,
+            min_confidence=float(min_novelty),
         )
+
+        def _f(c, *names, default=None):
+            for n in names:
+                v = c.get(n) if isinstance(c, dict) else getattr(c, n, None)
+                if v is not None:
+                    return v
+            return default
 
         return json.dumps({
             "count": len(connections),
             "connections": [
                 {
-                    "from": c.get("from"),
-                    "to": c.get("to"),
-                    "type": c.get("type"),
-                    "novelty": c.get("novelty"),
+                    "from": _f(c, "source", "from", "source_id"),
+                    "to": _f(c, "target", "to", "target_id"),
+                    "type": _f(c, "connection_type", "type", "relationship_type"),
+                    "confidence": _f(c, "confidence", "novelty", default=0),
                 }
-                for c in connections
+                for c in connections[:20]
             ],
-        })
+        }, default=str)
     except Exception as e:
         logger.error("colony_discover_connections failed: %s", e)
         return json.dumps({"error": str(e), "status": "error"})

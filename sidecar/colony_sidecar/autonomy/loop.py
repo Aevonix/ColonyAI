@@ -496,8 +496,13 @@ class AutonomyLoop:
         dedup, quiet-hours, rate-limit, and approval treatment.
         Disabled unless COLONY_ENABLE_INTERNAL_THINKING=true.
         """
-        if os.environ.get("COLONY_ENABLE_INTERNAL_THINKING",
-                          "false").lower() != "true":
+        # Mode: off | shadow | live (COLONY_THINKING_MODE). Back-compat:
+        # COLONY_ENABLE_INTERNAL_THINKING=true means "live".
+        mode = os.environ.get("COLONY_THINKING_MODE", "").strip().lower()
+        if mode not in ("off", "shadow", "live"):
+            mode = "live" if os.environ.get(
+                "COLONY_ENABLE_INTERNAL_THINKING", "false").lower() == "true" else "off"
+        if mode == "off":
             return
         router = self._registry.llm_router
         if router is None:
@@ -515,12 +520,34 @@ class AutonomyLoop:
         try:
             situation = self._build_thinking_situation()
             initiatives = await thinker.think(situation)
-            if initiatives:
+            if not initiatives:
+                return
+
+            # Package each thought into a well-formed Proposal and route it
+            # through the guarded (shadow-held, boundary-checked, rate-limited)
+            # delivery path. Nothing is sent while delivery shadow is on.
+            from colony_sidecar.proposals import build_from_thinker, proposal_to_payload
+            delivery = self._registry.delivery
+            pstore = getattr(self._registry, "proposal_store", None)
+            n = 0
+            for init in initiatives:
+                try:
+                    prop = build_from_thinker(init)
+                    if delivery is not None:
+                        await self._route_reachout_delivery(proposal_to_payload(prop), delivery)
+                    if pstore is not None:
+                        pstore.add(prop)
+                    n += 1
+                except Exception:
+                    logger.debug("proposal routing failed", exc_info=True)
+            logger.info("Phase thinking[%s]: %d proposal(s) generated", mode, n)
+
+            # Only in LIVE mode do the thought-up items ALSO become internal
+            # work (research/knowledge initiatives the executor will run).
+            if mode == "live":
                 self._pending_initiatives = list(
                     self._pending_initiatives or []) + initiatives
                 self.stats.initiatives_generated += len(initiatives)
-                logger.info("Phase thinking: %d novel proposal(s)",
-                            len(initiatives))
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase thinking error: %s", exc, exc_info=True)
@@ -821,8 +848,11 @@ class AutonomyLoop:
         type_value = payload.get("type", "")
         iid = payload.get("id")
 
-        # Only user-facing reach-out initiatives leave the machine.
-        if not is_reachout(type_value):
+        # Reach-out initiatives AND proposals (a dedicated type) leave the
+        # machine; everything else is internal. reachout_types() is NOT
+        # overloaded -- proposals are handled as their own delivered type.
+        is_proposal = (type_value == "proposal")
+        if not is_reachout(type_value) and not is_proposal:
             logger.debug("Initiative %s (%s) is internal — not routed to delivery",
                          iid, type_value)
             return False
@@ -849,7 +879,8 @@ class AutonomyLoop:
                 logger.debug("delivery boundary check failed (allowing)", exc_info=True)
 
         # Staleness guard: a long-overdue reach-out is noise, not a timely ping.
-        if rp.is_aged_out(payload):
+        # Proposals are timely by construction and exempt.
+        if not is_proposal and rp.is_aged_out(payload):
             logger.info(
                 "Reach-out %s (%s) aged out (%.1fd > %.1fd) — not delivered",
                 iid, type_value, rp.reachout_age_days(payload), rp.max_age_days(),

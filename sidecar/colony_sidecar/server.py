@@ -522,6 +522,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("DirectiveManager init failed (boundaries disabled): %s", exc)
 
+    # --- Proposal store (self-directed thinking + research -> proposals) ---
+    try:
+        from colony_sidecar.proposals import ProposalStore
+        from colony_sidecar.api.routers.host import set_proposal_store
+        _proposal_store = ProposalStore(db_path=str(state_dir / "colony-proposals.db"))
+        set_proposal_store(_proposal_store)
+        logger.info("ProposalStore initialized (db=%s)", state_dir / "colony-proposals.db")
+    except Exception as exc:
+        logger.warning("ProposalStore init failed: %s", exc)
+
     # --- Pattern Extraction + Surprise ---
     try:
         from colony_sidecar.patterns.store import PatternStore

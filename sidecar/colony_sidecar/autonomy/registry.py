@@ -40,6 +40,16 @@ class SubsystemRegistry:
         return _directive_manager
 
     @property
+    def research(self) -> Any:
+        from colony_sidecar.api.routers.host import _research_pipeline
+        return _research_pipeline
+
+    @property
+    def proposal_store(self) -> Any:
+        from colony_sidecar.api.routers.host import _proposal_store
+        return _proposal_store
+
+    @property
     def initiative(self) -> Any:
         from colony_sidecar.api.routers.host import _metalearner
         return _metalearner  # InitiativeEngine is part of cognition

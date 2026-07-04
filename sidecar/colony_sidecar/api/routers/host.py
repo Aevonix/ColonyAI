@@ -3794,6 +3794,39 @@ def get_world_populator():
     return _world_populator
 
 
+_proposal_store = None
+
+
+def set_proposal_store(store) -> None:
+    global _proposal_store
+    _proposal_store = store
+
+
+@router.get("/proposals")
+async def list_proposals(status: str = "", limit: int = 30) -> dict:
+    """List proposals Colony has generated (observability)."""
+    if _proposal_store is None:
+        return {"available": False, "proposals": []}
+    try:
+        items = _proposal_store.list(status=status or None, limit=limit)
+        return {
+            "available": True,
+            "count": len(items),
+            "proposals": [
+                {
+                    "id": p.id, "title": p.title, "finding": p.finding,
+                    "why_it_helps": p.why_it_helps, "suggested_action": p.suggested_action,
+                    "citations": p.citations, "source": p.source,
+                    "type": p.initiative_type, "confidence": p.confidence,
+                    "status": p.status, "rendered": p.render(),
+                }
+                for p in items
+            ],
+        }
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "proposals": []}
+
+
 @router.get("/world/populate/status")
 async def world_populate_status() -> dict:
     if _world_populator is None:
