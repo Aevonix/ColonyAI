@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from colony_sidecar.directives.models import (
-    Directive, Level, Polarity, normalize_terms,
+    GLOBAL_PAUSE_TERM, Directive, Level, Polarity, normalize_terms,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,6 +165,31 @@ class DirectiveGuard:
         action_terms = action.searchable_terms()
         action_term_set = set(action_terms)
         capability = action_capability(action.kind)
+
+        # Global pause (Amendment 1.5): an active kill-switch boundary refuses
+        # every act-capability action immediately, no matching required.
+        # Reads/perception stay open (ACT semantics).
+        if capability != "read":
+            paused = [d for d in prohibitions
+                      if GLOBAL_PAUSE_TERM in (d.match_terms or [])]
+            if paused:
+                d = paused[0]
+                action_summary = (action.text or action.target or action.tool_name)[:120]
+                logger.warning(
+                    "DirectiveGuard GLOBAL PAUSE active [%s]: %s action (%r) "
+                    "refused", d.id, action.kind, action_summary,
+                )
+                self._recent_blocks.append({
+                    "ts": time.time(),
+                    "action_kind": action.kind,
+                    "capability": capability,
+                    "action_summary": action_summary,
+                    "directive_ids": [d.id],
+                    "subjects": [d.subject],
+                    "directives": [d.raw_text or d.subject],
+                })
+                return Verdict(allowed=False, violations=[d],
+                               reason="global_pause_active")
         # Entity-scoped: resolve the action's target/terms to entity IDs so a
         # directive about an entity blocks actions naming it by ANY alias, not
         # just a keyword hit. Keyword matching (below) stays as the fallback.

@@ -109,7 +109,13 @@ class DirectiveManager:
             for d in result.captured:
                 # The echo STATES the interpretation (tiered semantics) so the
                 # owner can correct it in one turn.
-                if d.polarity != Polarity.PROHIBIT:
+                from colony_sidecar.directives.models import GLOBAL_PAUSE_TERM
+                if GLOBAL_PAUSE_TERM in (d.match_terms or []):
+                    parts.append(
+                        "GLOBAL PAUSE engaged: I will take no autonomous "
+                        "actions until you tell me to resume (say 'resume "
+                        "autonomy')")
+                elif d.polarity != Polarity.PROHIBIT:
                     parts.append(f"I will make sure to {d.subject}")
                 elif d.level == Level.OBSERVE:
                     parts.append(

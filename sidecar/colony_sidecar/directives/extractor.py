@@ -36,7 +36,36 @@ _REQUIRE_PATTERNS = [
 # Revocation openers -> the owner is lifting a prior boundary.
 _REVOKE_PATTERNS = [
     re.compile(r"\b(?:you\s+can\s+now|go\s+ahead\s+and|actually,?\s+(?:you\s+can|go\s+ahead)|nevermind|never\s+mind|disregard(?:\s+(?:that|what\s+i\s+said))?|forget\s+what\s+i\s+said)\s*(?P<subj>.*)", re.I),
+    re.compile(r"\b(?:resume|unpause|restart)\s+(?P<subj>.+)", re.I),
 ]
+
+# One-command global pause (Amendment 1.5): the owner's kill switch. Any of
+# these phrasings becomes an immediate GLOBAL ACT-level boundary: every
+# autonomous act is refused until the owner lifts it (staged confirmation,
+# like any boundary lift). Perception/reads stay open (ACT semantics).
+_GLOBAL_PAUSE_PATTERNS = [
+    re.compile(r"\b(?:stop|pause|halt|freeze|suspend)\s+(?:(?:all|your|the|any)\s+)*"
+               r"(?:acting|autonomy|autonomous\s+(?:actions?|work|mode)|"
+               r"taking\s+actions?|doing\s+things)\b", re.I),
+    re.compile(r"\bstand\s+down\b", re.I),
+    re.compile(r"\bstop\s+acting\s+on\s+your\s+own\b", re.I),
+]
+
+
+def make_global_pause_directive(raw_text: str = "",
+                                source: str = "owner_explicit") -> Directive:
+    """The global ACT-level pause boundary (kill switch)."""
+    from colony_sidecar.directives.models import GLOBAL_PAUSE_TERM, Level
+    return Directive(
+        subject="all autonomous actions (global pause)",
+        polarity=Polarity.PROHIBIT,
+        raw_text=raw_text or "stop acting",
+        # GLOBAL_PAUSE_TERM makes the guard refuse every act-capability
+        # action; the plain terms let "resume autonomy/acting" find and lift
+        # this directive through the normal staged confirmation.
+        match_terms=[GLOBAL_PAUSE_TERM, "autonomy", "acting", "autonomous"],
+        source=source, confidence=1.0, level=Level.ACT,
+    )
 
 # Clause terminators: cut the subject at the first of these.
 _CLAUSE_END = re.compile(r"[.;,!?\n]| but | and then | because | since | unless | so that ", re.I)
@@ -69,6 +98,13 @@ def extract_directives(message: str, *, source: str = "owner_explicit") -> List[
     if not message or not message.strip():
         return []
     text = message.strip()
+
+    # Global pause first (Amendment 1.5): "stop acting" must never be diluted
+    # into a keyword boundary; it is THE kill switch and stands alone.
+    for pat in _GLOBAL_PAUSE_PATTERNS:
+        if pat.search(text):
+            return [make_global_pause_directive(text, source=source)]
+
     out: List[Directive] = []
     seen_subjects = set()
 

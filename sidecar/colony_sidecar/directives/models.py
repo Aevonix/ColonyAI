@@ -29,6 +29,13 @@ class Polarity(str, Enum):
     PREFER = "prefer"
 
 
+# Marker term for the one-command global pause (Amendment 1.5). A PROHIBIT
+# directive carrying this term refuses EVERY act-capability action while
+# active. It never matches by keyword (leading underscores keep it out of
+# normalize_terms output), so only the explicit kill switch can set it.
+GLOBAL_PAUSE_TERM = "__all_autonomy__"
+
+
 class Level(str, Enum):
     """How deep a PROHIBIT boundary cuts.
 
