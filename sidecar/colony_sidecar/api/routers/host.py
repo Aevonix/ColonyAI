@@ -3853,6 +3853,94 @@ async def get_type_feedback() -> dict:
         return {"available": True, "error": str(exc), "types": []}
 
 
+# --- Directed action (option A) + read-only repo mirrors ---
+_directed_service = None
+_repo_mirrors = None
+
+
+def set_directed_service(svc) -> None:
+    global _directed_service
+    _directed_service = svc
+
+
+def set_repo_mirrors(mgr) -> None:
+    global _repo_mirrors
+    _repo_mirrors = mgr
+
+
+@router.post("/directed/tasks")
+async def directed_intake(body: dict) -> dict:
+    """Owner directive -> gated ScopedTask (boundary check first, then
+    approval tiering). Optionally dispatches when already approved.
+
+    body: {directive: str, dispatch?: bool}
+    """
+    if _directed_service is None:
+        return {"ok": False, "reason": "directed_not_wired"}
+    directive = (body or {}).get("directive", "").strip()
+    if not directive:
+        return {"ok": False, "reason": "directive_required"}
+    task = await _directed_service.intake(directive)
+    out = {"ok": True, "task": task.to_dict()}
+    if (body or {}).get("dispatch") and task.status == "approved":
+        out["dispatch"] = await _directed_service.dispatch(task.id)
+        out["task"] = (_directed_service.store.get(task.id) or task).to_dict()
+    return out
+
+
+@router.get("/directed/tasks")
+async def directed_list(status: str = "", limit: int = 30) -> dict:
+    if _directed_service is None:
+        return {"ok": False, "tasks": []}
+    tasks = _directed_service.store.list(status=status or None, limit=limit)
+    return {"ok": True, "count": len(tasks), "tasks": [t.to_dict() for t in tasks]}
+
+
+@router.post("/directed/tasks/{task_id}/approve")
+async def directed_approve(task_id: str, body: dict = Body(default={})) -> dict:
+    if _directed_service is None:
+        return {"ok": False, "reason": "directed_not_wired"}
+    task = _directed_service.approve(
+        task_id, approved_by=(body or {}).get("approved_by", "owner"),
+        standing=bool((body or {}).get("standing")))
+    return {"ok": task is not None, "task": task.to_dict() if task else None}
+
+
+@router.post("/directed/tasks/{task_id}/dispatch")
+async def directed_dispatch(task_id: str) -> dict:
+    if _directed_service is None:
+        return {"ok": False, "reason": "directed_not_wired"}
+    return await _directed_service.dispatch(task_id)
+
+
+@router.post("/directed/tasks/{task_id}/report")
+async def directed_report(task_id: str, body: dict = Body(default={})) -> dict:
+    """Delegate report-back: audited against the granted scope."""
+    if _directed_service is None:
+        return {"ok": False, "reason": "directed_not_wired"}
+    return await _directed_service.complete(task_id, body or {})
+
+
+@router.get("/repos")
+async def repos_status() -> dict:
+    if _repo_mirrors is None:
+        return {"available": False, "repos": {}}
+    cfg = _repo_mirrors.configured()
+    return {
+        "available": True,
+        "repos": {name: {"url": info.get("url", ""),
+                         "mirrored": _repo_mirrors.path_for(name) is not None}
+                  for name, info in cfg.items()},
+    }
+
+
+@router.post("/repos/refresh")
+async def repos_refresh() -> dict:
+    if _repo_mirrors is None:
+        return {"available": False}
+    return {"available": True, "results": _repo_mirrors.refresh_all()}
+
+
 @router.get("/proposals")
 async def list_proposals(status: str = "", limit: int = 30) -> dict:
     """List proposals Colony has generated (observability)."""

@@ -22,10 +22,22 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from colony_sidecar.directives.models import (
-    Directive, Polarity, normalize_terms,
+    Directive, Level, Polarity, normalize_terms,
 )
 
 logger = logging.getLogger(__name__)
+
+# Capability classes (tiered boundary semantics): boundaries bind ACTION, not
+# judgment or perception, unless explicitly about perception. READ kinds stay
+# open under an ACT-level boundary and are blocked only by an OBSERVE
+# blackout. Active autonomous work (research jobs, delegation, delivery,
+# execution) is an ACT capability -- "stop researching X" must stop research
+# about X, while awareness/reads of X survive "don't touch X".
+_READ_KINDS = frozenset({"repo_read", "read", "recall", "populate", "observe"})
+
+
+def action_capability(kind: str) -> str:
+    return "read" if (kind or "").lower() in _READ_KINDS else "act"
 
 
 @dataclass
@@ -152,6 +164,7 @@ class DirectiveGuard:
 
         action_terms = action.searchable_terms()
         action_term_set = set(action_terms)
+        capability = action_capability(action.kind)
         # Entity-scoped: resolve the action's target/terms to entity IDs so a
         # directive about an entity blocks actions naming it by ANY alias, not
         # just a keyword hit. Keyword matching (below) stays as the fallback.
@@ -159,6 +172,10 @@ class DirectiveGuard:
         action_entities |= self._resolve_entities(action_term_set)
         violations: List[Directive] = []
         for d in prohibitions:
+            # Tiered semantics: an ACT-level boundary binds actions only;
+            # reads/perception stay open. Only an OBSERVE blackout binds reads.
+            if capability == "read" and (d.level or Level.ACT) != Level.OBSERVE:
+                continue
             # scope by action kind if the directive restricts kinds
             if d.action_kinds and action.kind not in d.action_kinds:
                 continue
@@ -173,14 +190,24 @@ class DirectiveGuard:
             subjects = "; ".join(v.subject for v in violations)
             ids = ",".join(v.id for v in violations)
             action_summary = (action.text or action.target or action.tool_name)[:120]
-            logger.warning(
-                "DirectiveGuard BLOCKED %s action (%r): violates boundary(ies) "
-                "[%s]: %s",
-                action.kind, action_summary, ids, subjects,
-            )
+            if capability == "read":
+                # OBSERVE blackout on a read: logged so introspection about the
+                # blindspot's existence still works ("not looking, per directive").
+                logger.info(
+                    "DirectiveGuard: not looking, per directive [%s] -- %s read "
+                    "of %r withheld (%s)",
+                    ids, action.kind, action_summary, subjects,
+                )
+            else:
+                logger.warning(
+                    "DirectiveGuard BLOCKED %s action (%r): violates boundary(ies) "
+                    "[%s]: %s",
+                    action.kind, action_summary, ids, subjects,
+                )
             self._recent_blocks.append({
                 "ts": time.time(),
                 "action_kind": action.kind,
+                "capability": capability,
                 "action_summary": action_summary,
                 "directive_ids": [v.id for v in violations],
                 "subjects": [v.subject for v in violations],

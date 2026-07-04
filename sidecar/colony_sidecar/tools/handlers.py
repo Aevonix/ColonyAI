@@ -401,6 +401,86 @@ async def handle_recent_boundary_blocks(
         return json.dumps({"error": str(e), "status": "error"})
 
 
+async def handle_flag_boundary_concern(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Surface a CRITICAL finding about a boundaried subject (once, guarded).
+
+    Use ONLY when reflection over a subject the owner told you to leave alone
+    reveals something critical (security vulnerability, data loss, financial
+    risk). It is delivered at most once per boundary, clearly marked as
+    boundary-respecting.
+    """
+    subject = args.get("subject", "")
+    finding = args.get("finding", "")
+    try:
+        severity = float(args.get("severity", 0.9))
+    except (TypeError, ValueError):
+        severity = 0.9
+    try:
+        dm = registry.directives
+        if dm is None:
+            return json.dumps({"error": "Directives not wired", "status": "unavailable"})
+        if not subject or not finding:
+            return json.dumps({"error": "subject and finding required", "status": "error"})
+        out = await dm.flag_critical(subject, finding, severity=severity)
+        return json.dumps(out, default=str)
+    except Exception as e:
+        logger.error("colony_flag_boundary_concern failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_repo_list_files(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """List files in an owner-designated read-only repo mirror."""
+    try:
+        mirrors = registry.repo_mirrors
+        if mirrors is None:
+            return json.dumps({"error": "No repo mirrors configured", "status": "unavailable"})
+        return json.dumps(mirrors.list_files(
+            args.get("repo", ""), args.get("path", ""),
+            limit=_as_int(args.get("limit", 200), 200)), default=str)
+    except Exception as e:
+        logger.error("repo_list_files failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_repo_read_file(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Read a file from an owner-designated read-only repo mirror."""
+    try:
+        mirrors = registry.repo_mirrors
+        if mirrors is None:
+            return json.dumps({"error": "No repo mirrors configured", "status": "unavailable"})
+        return json.dumps(mirrors.read_file(
+            args.get("repo", ""), args.get("path", "")), default=str)
+    except Exception as e:
+        logger.error("repo_read_file failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_repo_search(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Search an owner-designated read-only repo mirror (git grep)."""
+    try:
+        mirrors = registry.repo_mirrors
+        if mirrors is None:
+            return json.dumps({"error": "No repo mirrors configured", "status": "unavailable"})
+        return json.dumps(mirrors.search(
+            args.get("repo", ""), args.get("query", ""),
+            glob=args.get("glob", "")), default=str)
+    except Exception as e:
+        logger.error("repo_search failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
 async def handle_task_complete(
     args: dict[str, Any],
     registry: SubsystemRegistry,
@@ -503,4 +583,8 @@ TOOL_HANDLERS: dict[str, callable] = {
     "colony_initiative_feedback": handle_initiative_feedback,
     "colony_list_boundaries": handle_list_boundaries,
     "colony_recent_boundary_blocks": handle_recent_boundary_blocks,
+    "repo_list_files": handle_repo_list_files,
+    "repo_read_file": handle_repo_read_file,
+    "repo_search": handle_repo_search,
+    "colony_flag_boundary_concern": handle_flag_boundary_concern,
 }

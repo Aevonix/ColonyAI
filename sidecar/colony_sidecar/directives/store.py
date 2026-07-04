@@ -53,7 +53,41 @@ class DirectiveStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_dir_status ON directives(status)"
             )
+            # v2 migration: tiered boundary level (act|observe). Existing rows
+            # get NULL -> Directive.__post_init__ derives conservatively from
+            # phrasing (perception-explicit wording -> observe, else act).
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(directives)")}
+            if "level" not in cols:
+                self._conn.execute("ALTER TABLE directives ADD COLUMN level TEXT")
+            # Once-only critical flags surfaced for a boundaried subject.
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS boundary_flags (
+                    directive_id TEXT PRIMARY KEY,
+                    finding TEXT, severity REAL, flagged_at REAL
+                )""")
             self._conn.commit()
+
+    # -- critical-flag dedup (at most ONE surfaced flag per directive) ----
+    def has_flag(self, directive_id: str) -> bool:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT 1 FROM boundary_flags WHERE directive_id=?",
+                (directive_id,)).fetchone()
+        return r is not None
+
+    def record_flag(self, directive_id: str, finding: str, severity: float) -> bool:
+        """Record a surfaced flag. Returns False if one already exists."""
+        import time as _t
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO boundary_flags (directive_id, finding, severity, flagged_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (directive_id, finding[:1000], float(severity), _t.time()))
+                self._conn.commit()
+                return True
+            except Exception:
+                return False
 
     # ------------------------------------------------------------------
     def add(self, directive: Directive) -> Directive:

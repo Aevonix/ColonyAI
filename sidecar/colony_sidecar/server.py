@@ -541,6 +541,71 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("TypeFeedbackStore init failed: %s", exc)
 
+    # --- Read-only repo mirrors + directed action (option A) ---
+    try:
+        from colony_sidecar.repos import RepoMirrorManager
+        from colony_sidecar.directed import (
+            DirectedActionService, ScopedTaskStore, directed_mode,
+        )
+        from colony_sidecar.api.routers.host import (
+            set_repo_mirrors, set_directed_service,
+            get_directive_manager as _get_dm2,
+        )
+        _mirrors_mgr = RepoMirrorManager(
+            mirror_dir=str(state_dir / "repo-mirrors"),
+            directive_manager=_get_dm2(),
+        )
+        set_repo_mirrors(_mirrors_mgr)
+        _n_repos = len(_mirrors_mgr.configured())
+        if _n_repos:
+            # Clone/pull in the background so boot is not blocked by network.
+            async def _sync_mirrors():
+                try:
+                    loop_ = asyncio.get_event_loop()
+                    results = await loop_.run_in_executor(None, _mirrors_mgr.refresh_all)
+                    logger.info(
+                        "Repo mirrors synced: %s",
+                        {k: v.get("action") or v.get("reason") for k, v in results.items()},
+                    )
+                    from colony_sidecar.api.routers.host import _world_store as _ws
+                    n = await _mirrors_mgr.register_entities(_ws)
+                    if n:
+                        logger.info("Registered %d repo(s) as Project entities", n)
+                except Exception:
+                    logger.debug("mirror sync failed", exc_info=True)
+            asyncio.create_task(_sync_mirrors())
+        logger.info("RepoMirrorManager initialized (%d repo(s) configured)", _n_repos)
+
+        async def _directed_deliver(payload: dict) -> bool:
+            # Late-bound: route through the autonomy loop's guarded delivery
+            # (boundary + sanitize + rate + shadow), same as every reach-out.
+            try:
+                from colony_sidecar.api.routers.host import _autonomy_loop, _delivery_bridge
+                if _autonomy_loop is not None and _delivery_bridge is not None:
+                    return await _autonomy_loop._route_reachout_delivery(
+                        payload, _delivery_bridge)
+            except Exception:
+                logger.debug("directed deliver failed", exc_info=True)
+            return False
+
+        from colony_sidecar.api.routers.host import _feedback_store as _fb_store
+        _directed_svc = DirectedActionService(
+            store=ScopedTaskStore(db_path=str(state_dir / "colony-directed.db")),
+            directive_manager=_get_dm2(),
+            mirrors=_mirrors_mgr,
+            feedback_store=_fb_store,
+            delivery_router=_directed_deliver,
+        )
+        set_directed_service(_directed_svc)
+        logger.info("DirectedActionService initialized (mode=%s)", directed_mode())
+
+        # The once-per-boundary critical flag rides the same guarded delivery.
+        _dm_for_flags = _get_dm2()
+        if _dm_for_flags is not None:
+            _dm_for_flags.set_delivery_router(_directed_deliver)
+    except Exception as exc:
+        logger.warning("Directed-action init failed: %s", exc)
+
     # --- Pattern Extraction + Surprise ---
     try:
         from colony_sidecar.patterns.store import PatternStore

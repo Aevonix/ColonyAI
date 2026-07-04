@@ -167,6 +167,79 @@ def test_guard_context_brief():
 
 
 # ---------------------------------------------------------------------------
+# Tiered boundary semantics (ACT vs OBSERVE)
+# ---------------------------------------------------------------------------
+
+def test_act_boundary_allows_read_blocks_actions():
+    """ACT: reads open; delegate/mutate/outbound blocked."""
+    m = DirectiveManager(DirectiveStore(db_path=None))
+    m.capture_from_message("leave the widget-api repo alone")
+    d = m.store.active()[0]
+    from colony_sidecar.directives.models import Level
+    assert d.level == Level.ACT                              # default level
+    # reads / perception stay OPEN
+    assert m.check(Action(kind="repo_read", text="widget-api README")).allowed is True
+    assert m.check(Action(kind="populate", text="widget-api entity")).allowed is True
+    # actions are BLOCKED
+    assert m.check(Action(kind="directed_action", text="refactor widget-api")).allowed is False
+    assert m.check(Action(kind="deliver", text="message about widget-api")).allowed is False
+    assert m.check(Action(kind="execute", text="run initiative on widget-api")).allowed is False
+
+
+def test_observe_boundary_blocks_reads_too():
+    """OBSERVE (perception-explicit): full blackout, reads blocked + recorded."""
+    m = DirectiveManager(DirectiveStore(db_path=None))
+    m.capture_from_message("don't look at the widget-api repo")
+    d = m.store.active()[0]
+    from colony_sidecar.directives.models import Level
+    assert d.level == Level.OBSERVE
+    v = m.check(Action(kind="repo_read", text="widget-api README"))
+    assert v.allowed is False
+    # the withheld read is recorded so introspection about the blindspot works
+    blocks = m.guard.recent_blocks()
+    assert blocks and blocks[0]["capability"] == "read"
+    # actions blocked as well
+    assert m.check(Action(kind="directed_action", text="refactor widget-api")).allowed is False
+
+
+def test_echo_states_interpretation():
+    m = DirectiveManager(DirectiveStore(db_path=None))
+    cap = m.capture_from_message("leave the widget-api repo alone")
+    assert "stop acting on" in cap.ack and "full blackout" in cap.ack  # ACT echo
+    m2 = DirectiveManager(DirectiveStore(db_path=None))
+    cap2 = m2.capture_from_message("don't look at the widget-api repo")
+    assert "blackout" in cap2.ack and "not act on it or look at it" in cap2.ack
+
+
+def test_critical_flag_fires_once_via_guarded_delivery():
+    import asyncio
+    m = DirectiveManager(DirectiveStore(db_path=None))
+    m.capture_from_message("leave the billing-svc repo alone")
+    delivered = []
+    async def router(payload):
+        delivered.append(payload); return True
+    m.set_delivery_router(router)
+    async def run():
+        out1 = await m.flag_critical(
+            "billing-svc repo", "an exposed credential is committed on main",
+            severity=0.95)
+        assert out1["flagged"] is True and out1["delivered"] is True
+        # exactly ONE guarded delivery, clearly boundary-respecting
+        assert len(delivered) == 1
+        assert delivered[0]["type"] == "proposal"
+        assert "you should know" in delivered[0]["description"].lower()
+        # a second flag for the same boundary does NOT fire again
+        out2 = await m.flag_critical(
+            "billing-svc repo", "another critical thing", severity=0.95)
+        assert out2["flagged"] is False and out2["reason"] == "already_flagged_once"
+        assert len(delivered) == 1
+        # below-threshold stays internal
+        out3 = await m.flag_critical("billing-svc repo", "minor nit", severity=0.3)
+        assert out3["flagged"] is False and out3["noted_internally"] is True
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
 # Manager end-to-end
 # ---------------------------------------------------------------------------
 
@@ -184,7 +257,7 @@ def test_manager_revocation_requires_confirmation():
     m = DirectiveManager(DirectiveStore(db_path=None))
     cap = m.capture_from_message("stop working on the acme-corp integration")
     assert m.store.count_active() == 1
-    assert cap.ack and "will not" in cap.ack  # confirmation echo (1a)
+    assert cap.ack and "stop acting on" in cap.ack  # confirmation echo (1a, tiered)
     # A revocation attempt does NOT lift immediately; it stages a confirmation.
     r = m.capture_from_message("actually you can work on acme-corp again")
     assert r.needs_confirmation is not None

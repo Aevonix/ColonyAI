@@ -321,6 +321,71 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    {
+        "name": "colony_flag_boundary_concern",
+        "description": (
+            "Surface a CRITICAL finding (security vulnerability, data loss, "
+            "financial risk) about a subject the owner told you to leave alone. "
+            "Delivered at most once per boundary and clearly marked as "
+            "boundary-respecting. Use sparingly; never for routine findings."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "The boundaried subject"},
+                "finding": {"type": "string", "description": "The critical fact"},
+                "severity": {"type": "number", "description": "0-1 (default 0.9)"},
+            },
+            "required": ["subject", "finding"],
+        },
+    },
+    {
+        "name": "repo_list_files",
+        "description": (
+            "List files in one of the owner's designated repositories "
+            "(read-only local mirror). Use to explore repo structure."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Configured repo name"},
+                "path": {"type": "string", "description": "Optional subdirectory"},
+                "limit": {"type": "integer", "default": 200},
+            },
+            "required": ["repo"],
+        },
+    },
+    {
+        "name": "repo_read_file",
+        "description": (
+            "Read a file from one of the owner's designated repositories "
+            "(read-only local mirror)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Configured repo name"},
+                "path": {"type": "string", "description": "File path within the repo"},
+            },
+            "required": ["repo", "path"],
+        },
+    },
+    {
+        "name": "repo_search",
+        "description": (
+            "Search (git grep) one of the owner's designated repositories "
+            "(read-only local mirror) for a string or regex."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Configured repo name"},
+                "query": {"type": "string", "description": "Search text/regex"},
+                "glob": {"type": "string", "description": "Optional pathspec filter, e.g. *.py"},
+            },
+            "required": ["repo", "query"],
+        },
+    },
 ]
 
 # Native server-side tools (calculate, web_search, file_ops)

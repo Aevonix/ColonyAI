@@ -29,6 +29,50 @@ class Polarity(str, Enum):
     PREFER = "prefer"
 
 
+class Level(str, Enum):
+    """How deep a PROHIBIT boundary cuts.
+
+    Boundaries bind ACTION, not judgment or perception, except when the
+    boundary is explicitly about perception (privacy). Ignorance-based safety
+    is brittle: perception and learning stay maximally broad while action is
+    gated.
+
+    ACT (default): blocks mutations, delegated tasks, and autonomous outbound
+        actions about the subject. Reads, awareness, reflection, and answering
+        the owner's direct questions remain OPEN.
+    OBSERVE: full blackout -- blocks reads/perception too. Chosen only when
+        the owner uses explicit perception language ("don't look at / don't
+        read / stay out of / don't monitor").
+    """
+    ACT = "act"
+    OBSERVE = "observe"
+
+
+def default_level() -> "Level":
+    """Config knob: what an unqualified prohibition means (default act)."""
+    import os
+    raw = os.environ.get("COLONY_BOUNDARY_DEFAULT_LEVEL", "act").strip().lower()
+    try:
+        return Level(raw)
+    except ValueError:
+        return Level.ACT
+
+
+# Explicit perception language -> OBSERVE (full blackout).
+PERCEPTION_RE = re.compile(
+    r"\b(?:look(?:ing)?\s+at|read(?:ing)?|watch(?:ing)?|monitor(?:ing)?|"
+    r"track(?:ing)?|stay\s+out\s+of|snoop|peek|observe|observing|"
+    r"even\s+look)\b", re.IGNORECASE,
+)
+
+
+def level_from_text(text: Optional[str]) -> "Level":
+    """Derive the boundary level from the owner's phrasing."""
+    if text and PERCEPTION_RE.search(str(text)):
+        return Level.OBSERVE
+    return default_level()
+
+
 class DirectiveStatus(str, Enum):
     ACTIVE = "active"
     REVOKED = "revoked"
@@ -73,6 +117,7 @@ class Directive:
     source: str = "owner_explicit"   # owner_explicit | inferred | config
     confidence: float = 0.9
     status: DirectiveStatus = DirectiveStatus.ACTIVE
+    level: Optional[Level] = None    # act | observe (PROHIBIT only; None -> derive)
     id: str = field(default_factory=lambda: f"dir-{uuid.uuid4().hex[:12]}")
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -83,6 +128,12 @@ class Directive:
             self.polarity = Polarity(self.polarity)
         if isinstance(self.status, str):
             self.status = DirectiveStatus(self.status)
+        if isinstance(self.level, str):
+            self.level = Level(self.level)
+        if self.level is None:
+            # Conservative migration/default: derive from phrasing; only
+            # perception-explicit wording escalates to a full blackout.
+            self.level = level_from_text(self.raw_text or self.subject)
         if not self.match_terms:
             self.match_terms = normalize_terms(self.subject)
 
@@ -105,6 +156,7 @@ class Directive:
             "source": self.source,
             "confidence": self.confidence,
             "status": self.status.value,
+            "level": self.level.value if self.level else "act",
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "expires_at": self.expires_at,
@@ -125,6 +177,7 @@ class Directive:
             source=row.get("source", "owner_explicit") or "owner_explicit",
             confidence=float(row.get("confidence", 0.9) or 0.9),
             status=DirectiveStatus(row.get("status", "active")),
+            level=(Level(row["level"]) if row.get("level") else None),
             created_at=float(row.get("created_at") or time.time()),
             updated_at=float(row.get("updated_at") or time.time()),
             expires_at=(float(row["expires_at"]) if row.get("expires_at") not in (None, "") else None),

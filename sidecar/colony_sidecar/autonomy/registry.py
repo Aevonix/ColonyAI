@@ -55,6 +55,16 @@ class SubsystemRegistry:
         return _feedback_store
 
     @property
+    def repo_mirrors(self) -> Any:
+        from colony_sidecar.api.routers.host import _repo_mirrors
+        return _repo_mirrors
+
+    @property
+    def directed_service(self) -> Any:
+        from colony_sidecar.api.routers.host import _directed_service
+        return _directed_service
+
+    @property
     def initiative(self) -> Any:
         from colony_sidecar.api.routers.host import _metalearner
         return _metalearner  # InitiativeEngine is part of cognition
