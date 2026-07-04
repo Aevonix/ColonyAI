@@ -2228,6 +2228,32 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         except Exception:
             logger.debug("owner directive capture failed", exc_info=True)
 
+    # World-model population (shadow-first): learn people/companies/projects/
+    # products from what is said. Best-effort, non-blocking, boundary-checked.
+    if _world_populator is not None and body.user_message is not None:
+        _wm_text = getattr(body.user_message, "content", "") or ""
+        if _wm_text:
+            async def _run_world_populate(txt: str, sid: str) -> None:
+                try:
+                    rep = await _world_populator.populate_from_text(txt, sid)
+                    if rep.total() or rep.skipped_boundary:
+                        logger.info(
+                            "world-populate[%s] %s: create=%d merge=%d propose=%d "
+                            "rel=%d boundary-skipped=%d",
+                            rep.mode, sid, len(rep.created), len(rep.merged),
+                            len(rep.proposed), len(rep.relationships),
+                            len(rep.skipped_boundary),
+                        )
+                        if rep.mode == "shadow" and rep.created:
+                            logger.info(
+                                "world-populate[shadow] WOULD add: %s",
+                                ", ".join(f"{c['type']}:{c['name']}" for c in rep.created[:12]),
+                            )
+                except Exception:
+                    logger.debug("world populate failed", exc_info=True)
+            _src = getattr(body.context, "turn_id", None) or getattr(body.context, "session_id", None) or "turn"
+            _spawn_task(_run_world_populate(_wm_text, _src))
+
     # ToM LLM extraction (best-effort, non-blocking)
     try:
         if _tom_extractor is not None and _affect_store is not None and _facts_store is not None:
@@ -3753,6 +3779,35 @@ def set_directive_manager(manager) -> None:
 
 def get_directive_manager():
     return _directive_manager
+
+
+# --- World-model population from conversation (shadow-first) ---
+_world_populator = None
+
+
+def set_world_populator(populator) -> None:
+    global _world_populator
+    _world_populator = populator
+
+
+def get_world_populator():
+    return _world_populator
+
+
+@router.get("/world/populate/status")
+async def world_populate_status() -> dict:
+    if _world_populator is None:
+        return {"available": False}
+    out = {"available": True, "mode": _world_populator.mode}
+    if _world_store is not None:
+        try:
+            stats = await _world_store.get_stats()
+            out["entities"] = stats.total_entities
+            out["entities_by_type"] = stats.entities_by_type
+            out["relationships"] = stats.total_relationships
+        except Exception as exc:
+            out["stats_error"] = str(exc)
+    return out
 
 
 @router.get("/directives")

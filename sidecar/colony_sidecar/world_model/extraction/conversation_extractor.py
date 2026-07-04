@@ -59,10 +59,12 @@ _NAME_STOPWORDS = frozenset({
     "Hi", "Hey", "Hello", "Okay", "Sure", "Yeah",
 })
 
-# Common org suffixes
+# Common org suffixes. The name is 1-4 consecutive Title-case tokens immediately
+# before the suffix -- NOT a greedy run across lowercase words (which used to
+# swallow whole sentences, e.g. "I met Alice at Acme Corp" -> one "company").
 _ORG_SUFFIX_RE = re.compile(
-    r"\b([A-Z][A-Za-z\s&,\.]{2,50}?)"
-    r"(?:\s+(?:Inc\.?|Corp\.?|LLC|Ltd\.?|Co\.?|Group|Foundation|Institute|University|"
+    r"\b((?:[A-Z][A-Za-z&.\-]*\s+){0,3}[A-Z][A-Za-z&.\-]*"
+    r"\s+(?:Inc\.?|Corp\.?|LLC|Ltd\.?|Co\.?|Group|Foundation|Institute|University|"
     r"School|Hospital|Agency|Association|Society|Department))\b"
 )
 

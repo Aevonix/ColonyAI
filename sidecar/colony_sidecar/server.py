@@ -622,6 +622,20 @@ async def lifespan(app: FastAPI):
         set_world_store(world_store)
         logger.info("WorldModelStore initialized and connected (backend=%s)", _wm_backend)
 
+        # World-model population from conversation (shadow-first). Boundary-checked
+        # via the directive manager. Mode from COLONY_WORLD_POPULATE_MODE
+        # (off|shadow|live, default shadow).
+        try:
+            from colony_sidecar.world_model.populator import WorldModelPopulator, populate_mode
+            from colony_sidecar.api.routers.host import (
+                get_directive_manager as _get_dm, set_world_populator,
+            )
+            _populator = WorldModelPopulator(world_store, directive_manager=_get_dm())
+            set_world_populator(_populator)
+            logger.info("WorldModelPopulator initialized (mode=%s)", populate_mode())
+        except Exception as pexc:
+            logger.warning("WorldModelPopulator init failed: %s", pexc)
+
         # Wire extraction pipeline
         try:
             from colony_sidecar.world_model.extraction.pipeline import ExtractionPipeline

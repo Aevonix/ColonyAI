@@ -43,6 +43,10 @@ _STOPWORDS = frozenset({
     "or", "please", "just", "really", "anymore", "again", "do", "not", "dont",
     "don", "ever", "stop", "avoid", "ignore", "never", "leave", "alone",
     "touch", "is", "are", "be", "when", "if", "should", "would", "can",
+    # generic filler verbs / quantifiers that carry no subject meaning
+    "track", "tracking", "anything", "everything", "something", "stuff",
+    "thing", "things", "worry", "worrying", "bother", "bothering", "mention",
+    "mentioning", "care", "dealing", "deal", "regarding", "worried",
 })
 
 _WORD = re.compile(r"[a-z0-9][a-z0-9_+.\-/]*")
