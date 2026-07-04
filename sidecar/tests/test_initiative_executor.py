@@ -221,6 +221,119 @@ async def test_execute_one_error():
     assert store._failed[0][2] is True  # retry=True
 
 
+class SequenceReasoningLoop:
+    """Returns a queued sequence of results, one per run_turn call."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls = []
+
+    async def run_turn(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._results.pop(0)
+
+
+class FakeToolExecutor:
+    def __init__(self):
+        self.batches = []
+
+    async def execute_batch(self, tool_calls, *, session_id=""):
+        self.batches.append(tool_calls)
+        return [
+            {"tool_call_id": tc.get("id", "x"), "content": "ok"}
+            for tc in tool_calls
+        ]
+
+
+@pytest.mark.asyncio
+async def test_execute_one_needs_tool_then_completes():
+    """needs_tool must drive the tool executor and continue to completion."""
+    store = FakeStore([FakeInitiative()])
+    reasoning = SequenceReasoningLoop([
+        FakeReasoningResult(
+            status="needs_tool",
+            message={"role": "assistant", "content": "looking up Alice"},
+            tool_calls=[{"id": "tc-1", "name": "get_relationship",
+                         "arguments": {"entity_id": "contact-alice"}}],
+        ),
+        FakeReasoningResult(
+            status="completed",
+            message={"role": "assistant", "content": "Sent the follow-up to Alice."},
+        ),
+    ])
+    tools = FakeToolExecutor()
+    svc = InitiativeExecutorService(
+        initiative_store=store,
+        reasoning_loop=reasoning,
+        tool_executor=tools,
+        allowed_types={"follow_up"},
+    )
+
+    await svc._execute_one(FakeInitiative())
+
+    # The pending tool call was executed via the injected executor.
+    assert len(tools.batches) == 1
+    assert tools.batches[0][0]["name"] == "get_relationship"
+    assert svc._stats["total_tool_calls"] == 1
+    # run_turn was re-entered after feeding the tool result back.
+    assert len(reasoning.calls) == 2
+    # Second call carried the assistant tool_calls turn + tool result turn.
+    second_msgs = reasoning.calls[1]["messages"]
+    roles = [m["role"] for m in second_msgs]
+    assert "tool" in roles
+    assert any(m["role"] == "assistant" and m.get("tool_calls") for m in second_msgs)
+    # And the initiative completed (was silently dropped before the fix).
+    assert store._completed == [("init-1", "Sent the follow-up to Alice.")]
+    assert svc._stats["initiatives_completed"] == 1
+    assert svc._stats["initiatives_failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_one_needs_tool_hits_cap():
+    """A model that never stops requesting tools must fail bounded + logged."""
+    store = FakeStore([FakeInitiative()])
+    reasoning = SequenceReasoningLoop([
+        FakeReasoningResult(
+            status="needs_tool",
+            message={"role": "assistant", "content": "still working"},
+            tool_calls=[{"id": f"tc-{n}", "name": "noop", "arguments": {}}],
+        )
+        for n in range(20)
+    ])
+    tools = FakeToolExecutor()
+    svc = InitiativeExecutorService(
+        initiative_store=store,
+        reasoning_loop=reasoning,
+        tool_executor=tools,
+        allowed_types={"follow_up"},
+        max_tool_iterations=3,
+    )
+
+    await svc._execute_one(FakeInitiative())
+
+    assert len(reasoning.calls) == 3  # bounded by the cap
+    assert svc._stats["initiatives_failed"] == 1
+    assert svc._stats["initiatives_completed"] == 0
+    assert "cap reached" in store._failed[0][1]
+
+
+@pytest.mark.asyncio
+async def test_execute_one_unexpected_status_logs_and_fails():
+    store = FakeStore([FakeInitiative()])
+    reasoning = FakeReasoningLoop(
+        result=FakeReasoningResult(status="banana")
+    )
+    svc = InitiativeExecutorService(
+        initiative_store=store,
+        reasoning_loop=reasoning,
+        allowed_types={"follow_up"},
+    )
+
+    await svc._execute_one(FakeInitiative())
+    assert svc._stats["initiatives_failed"] == 1
+    assert "unexpected status: banana" in store._failed[0][1]
+
+
 @pytest.mark.asyncio
 async def test_execute_one_exception():
     store = FakeStore([FakeInitiative()])

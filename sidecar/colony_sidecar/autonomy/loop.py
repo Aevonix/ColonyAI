@@ -1705,12 +1705,6 @@ class AutonomyLoop:
                 logger.info("Phase memory_archive: archived=%d", archived)
         await self._run_periodic_phase("memory_archive", "week", work)
 
-    async def _phase_memory_distillation(self) -> None:
-        async def work(graph):
-            if hasattr(graph, "distill_memories"):
-                await graph.distill_memories()
-        await self._run_periodic_phase("memory_distillation", "week", work)
-
     async def _phase_task_completion(self) -> None:
         """Emit follow-up events for goals that completed since the last check.
 

@@ -24,6 +24,9 @@ Environment / config:
   COLONY_EXECUTOR_TYPES             comma-separated initiative types to handle
                                     (default: all non-self types)
   COLONY_EXECUTOR_AGENT_ID          agent identity (default "colony-executor")
+  COLONY_EXECUTOR_MAX_TOOL_ITERS    max tool-continuation rounds per initiative
+                                    when the reasoning loop returns needs_tool
+                                    (default 8)
 """
 
 from __future__ import annotations
@@ -93,6 +96,36 @@ def _build_initiative_prompt(initiative: Any) -> str:
     return "\n".join(parts)
 
 
+def _assistant_tool_message(
+    content: str, tool_calls: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build an OpenAI-shaped assistant message carrying tool calls.
+
+    Mirrors ``ReasoningLoop._build_assistant_message`` so the continuation
+    messages we feed back into ``run_turn`` have the exact shape the model
+    provider expects (tool_call ids on the assistant turn must match the
+    following ``role: "tool"`` result turns).
+    """
+    msg: dict[str, Any] = {"role": "assistant", "content": content or None}
+    if tool_calls:
+        msg["tool_calls"] = [
+            {
+                "id": tc.get("id", ""),
+                "type": "function",
+                "function": {
+                    "name": tc.get("name", ""),
+                    "arguments": (
+                        tc["arguments"]
+                        if isinstance(tc.get("arguments"), str)
+                        else json.dumps(tc.get("arguments", {}))
+                    ),
+                },
+            }
+            for tc in tool_calls
+        ]
+    return msg
+
+
 class InitiativeExecutorService:
     """Async service that executes pending initiatives via the reasoning loop."""
 
@@ -106,6 +139,7 @@ class InitiativeExecutorService:
         model_tier: str = "small",
         allowed_types: Optional[set[str]] = None,
         agent_id: str = "colony-executor",
+        max_tool_iterations: int = 8,
     ):
         self._store = initiative_store
         self._reasoning = reasoning_loop
@@ -115,6 +149,10 @@ class InitiativeExecutorService:
         self._model_tier = model_tier
         self._allowed_types = allowed_types or _DEFAULT_TYPES
         self._agent_id = agent_id
+        # Upper bound on continuation rounds when the reasoning loop returns
+        # ``needs_tool`` (its internal per-call budget was exhausted mid-action).
+        # Each round executes the pending tool calls and re-enters run_turn.
+        self._max_tool_iterations = max(1, int(max_tool_iterations))
 
         self._running = False
         self._stop_event = asyncio.Event()
@@ -243,36 +281,139 @@ class InitiativeExecutorService:
 
         try:
             prompt = _build_initiative_prompt(initiative)
-            result = await self._reasoning.run_turn(
-                session_id=f"executor-{iid}",
-                messages=[{"role": "user", "content": prompt}],
-                system_prompt=_SYSTEM_PROMPT,
-                model_override=self._model_tier,
-            )
+            session_id = f"executor-{iid}"
 
-            elapsed = time.monotonic() - start
-            usage = result.usage or {}
-            self._stats["total_tokens"] += usage.get("total_tokens", 0)
+            # Conversation accumulated across continuation rounds. The reasoning
+            # loop runs its own internal tool loop, but returns ``needs_tool``
+            # when its per-call iteration budget is exhausted while an action is
+            # still pending. We then execute the pending tool calls ourselves and
+            # re-enter run_turn with the results appended, extending the budget.
+            working: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+            total_tokens = 0
+            iterations = 0
+            done = False
 
-            if result.status == "completed" and result.message:
-                response_text = result.message.get("content", "")
-                await self._complete_initiative(iid, response_text)
-                self._stats["initiatives_completed"] += 1
-                logger.info(
-                    "Initiative %s completed in %.1fs (%d tokens): %s",
-                    iid, elapsed,
-                    usage.get("total_tokens", 0),
-                    response_text[:120],
+            while iterations < self._max_tool_iterations:
+                iterations += 1
+                result = await self._reasoning.run_turn(
+                    session_id=session_id,
+                    messages=working,
+                    system_prompt=_SYSTEM_PROMPT,
+                    model_override=self._model_tier,
                 )
-            elif result.status == "error":
-                await self._fail_initiative(iid, result.error or "reasoning error", retry=True)
-                self._stats["initiatives_failed"] += 1
-                logger.warning("Initiative %s failed: %s", iid, result.error)
-            else:
+
+                usage = result.usage or {}
+                total_tokens += usage.get("total_tokens", 0)
+
+                if result.status == "completed":
+                    response_text = ""
+                    if result.message:
+                        response_text = result.message.get("content", "") or ""
+                    await self._complete_initiative(iid, response_text)
+                    self._stats["initiatives_completed"] += 1
+                    self._stats["total_tokens"] += total_tokens
+                    elapsed = time.monotonic() - start
+                    logger.info(
+                        "Initiative %s completed in %.1fs (%d tokens, %d round(s)): %s",
+                        iid, elapsed, total_tokens, iterations,
+                        response_text[:120],
+                    )
+                    done = True
+                    break
+
+                if result.status == "error":
+                    await self._fail_initiative(
+                        iid, result.error or "reasoning error", retry=True
+                    )
+                    self._stats["initiatives_failed"] += 1
+                    self._stats["total_tokens"] += total_tokens
+                    logger.warning("Initiative %s failed: %s", iid, result.error)
+                    done = True
+                    break
+
+                if result.status == "needs_tool":
+                    pending = list(result.tool_calls or [])
+                    if not pending:
+                        # needs_tool with nothing to run: no forward progress
+                        # possible, so stop rather than spin.
+                        await self._fail_initiative(
+                            iid,
+                            "needs_tool returned no tool calls",
+                            retry=True,
+                        )
+                        self._stats["initiatives_failed"] += 1
+                        self._stats["total_tokens"] += total_tokens
+                        logger.warning(
+                            "Initiative %s: needs_tool with empty tool_calls", iid
+                        )
+                        done = True
+                        break
+
+                    if self._tools is None:
+                        await self._fail_initiative(
+                            iid,
+                            "needs_tool but no tool executor is wired",
+                            retry=True,
+                        )
+                        self._stats["initiatives_failed"] += 1
+                        self._stats["total_tokens"] += total_tokens
+                        logger.warning(
+                            "Initiative %s needs a tool but no ToolExecutor is "
+                            "injected; cannot proceed", iid,
+                        )
+                        done = True
+                        break
+
+                    # Execute the pending tool calls through the SAME executor the
+                    # reasoning loop uses internally (identical gating/handlers),
+                    # then feed the results back for another round.
+                    tool_results = await self._tools.execute_batch(
+                        pending, session_id=session_id,
+                    )
+                    self._stats["total_tool_calls"] += len(pending)
+
+                    working.append(_assistant_tool_message(
+                        result.message.get("content", "") if result.message else "",
+                        pending,
+                    ))
+                    for tr in tool_results:
+                        working.append({
+                            "role": "tool",
+                            "tool_call_id": tr.get("tool_call_id", ""),
+                            "content": tr.get("content", ""),
+                        })
+                    logger.info(
+                        "Initiative %s round %d: executed %d tool call(s), continuing",
+                        iid, iterations, len(pending),
+                    )
+                    continue
+
+                # Any status outside the known domain must never be dropped
+                # silently again.
                 await self._fail_initiative(
                     iid, f"unexpected status: {result.status}", retry=True
                 )
                 self._stats["initiatives_failed"] += 1
+                self._stats["total_tokens"] += total_tokens
+                logger.warning(
+                    "Initiative %s: unexpected reasoning status %r", iid, result.status
+                )
+                done = True
+                break
+
+            if not done:
+                # Hit the continuation cap without completing.
+                await self._fail_initiative(
+                    iid,
+                    f"tool-loop cap reached after {self._max_tool_iterations} rounds",
+                    retry=True,
+                )
+                self._stats["initiatives_failed"] += 1
+                self._stats["total_tokens"] += total_tokens
+                logger.warning(
+                    "Initiative %s hit tool-loop cap (%d rounds) without completing",
+                    iid, self._max_tool_iterations,
+                )
 
         except Exception as exc:
             elapsed = time.monotonic() - start
@@ -366,4 +507,5 @@ def create_from_env(
         model_tier=os.environ.get("COLONY_EXECUTOR_MODEL_TIER", "small"),
         allowed_types=allowed_types,
         agent_id=os.environ.get("COLONY_EXECUTOR_AGENT_ID", "colony-executor"),
+        max_tool_iterations=int(os.environ.get("COLONY_EXECUTOR_MAX_TOOL_ITERS", "8")),
     )
