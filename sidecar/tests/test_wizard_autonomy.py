@@ -185,12 +185,12 @@ async def test_build_owner_contact_creates_inner_circle_owner(tmp_path):
     await store.connect()
     try:
         cid = await build_owner_contact(
-            store, "Marc",
-            [("whatsapp", "555123@lid"), ("email", "Marc@Aevonix.com")],
+            store, "Sam",
+            [("whatsapp", "555123@lid"), ("email", "Sam@Example.com")],
         )
         contact = await store.get(cid)
         assert contact is not None
-        assert contact.display_name == "Marc"
+        assert contact.display_name == "Sam"
         assert contact.trust_tier == "inner_circle"
         assert contact.interaction_allowed is True
         assert contact.import_source == "wizard"
@@ -199,12 +199,12 @@ async def test_build_owner_contact_creates_inner_circle_owner(tmp_path):
         # Email is normalized to lowercase by the store.
         assert {(h.gateway, h.address) for h in handles} == {
             ("whatsapp", "555123@lid"),
-            ("email", "marc@aevonix.com"),
+            ("email", "sam@example.com"),
         }
         primary = [h for h in handles if h.is_primary]
         assert len(primary) == 1 and primary[0].gateway == "whatsapp"
 
-        resolved = await store.resolve_handle("email", "marc@aevonix.com")
+        resolved = await store.resolve_handle("email", "sam@example.com")
         assert resolved is not None and resolved.contact_id == cid
     finally:
         await store.close()
@@ -248,11 +248,11 @@ def test_collect_owner_handles_loop_with_invalid_gateway():
     ask = make_ask([
         "whatsapp", "555123@lid",     # valid pair
         "carrier-pigeon",             # invalid gateway → re-prompt
-        "email", "marc@aevonix.com",  # valid pair
+        "email", "sam@example.com",  # valid pair
         "",                           # blank gateway → finish
     ])
     handles = collect_owner_handles(ask=ask)
-    assert handles == [("whatsapp", "555123@lid"), ("email", "marc@aevonix.com")]
+    assert handles == [("whatsapp", "555123@lid"), ("email", "sam@example.com")]
 
 
 def test_collect_owner_handles_skips_blank_address():

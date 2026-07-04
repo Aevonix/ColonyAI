@@ -154,8 +154,8 @@ def owner_resolver(monkeypatch):
                 "cid-owner-1",
                 display_name="Jane Doe",
                 person_node_id="uuid-owner",
-                given_name="Marc",
-                family_name="Seal",
+                given_name="Sam",
+                family_name="Rivera",
             ),
             _contact(
                 "cid-bob-2",
@@ -163,7 +163,7 @@ def owner_resolver(monkeypatch):
                 person_node_id="uuid-bob",
             ),
         ],
-        handles={"cid-owner-1": [("email", "marc@example.com")]},
+        handles={"cid-owner-1": [("email", "sam@example.com")]},
     )
     resolver = get_identity_resolver(contact_store=store)
     yield resolver
@@ -320,7 +320,7 @@ class TestIdentityResolver:
     @pytest.mark.asyncio
     async def test_resolves_all_formats_to_same_identity(self, owner_resolver):
         by_cid = await owner_resolver.resolve("cid-owner-1")
-        assert {"cid-owner-1", "Jane Doe", "uuid-owner", "marc@example.com"} <= by_cid
+        assert {"cid-owner-1", "Jane Doe", "uuid-owner", "sam@example.com"} <= by_cid
 
         by_node = await owner_resolver.resolve("uuid-owner")
         assert "cid-owner-1" in by_node
@@ -328,7 +328,7 @@ class TestIdentityResolver:
         by_name = await owner_resolver.resolve("Jane Doe")
         assert "cid-owner-1" in by_name
 
-        by_email = await owner_resolver.resolve("marc@example.com")
+        by_email = await owner_resolver.resolve("sam@example.com")
         assert "cid-owner-1" in by_email
 
     @pytest.mark.asyncio
@@ -337,7 +337,7 @@ class TestIdentityResolver:
         assert await owner_resolver.is_owner("uuid-owner")
         assert await owner_resolver.is_owner("Jane Doe")
         assert await owner_resolver.is_owner("jane doe")
-        assert await owner_resolver.is_owner("marc@example.com")
+        assert await owner_resolver.is_owner("sam@example.com")
         assert not await owner_resolver.is_owner("uuid-bob")
         assert not await owner_resolver.is_owner("Bob Jones")
         assert not await owner_resolver.is_owner(None)
@@ -438,11 +438,11 @@ class TestOwnerExclusion:
     @pytest.mark.asyncio
     async def test_owner_is_valid_subject_for_commitments(self, engine):
         # Owner exclusion is a relationship-domain policy, NOT a global
-        # gate: "follow up on what you promised Marc" must survive.
+        # gate: "follow up on what you promised the owner" must survive.
         engine.add_context("upcoming_commitments", [
             {
                 "commitment_id": "cmt-1",
-                "description": "Send Marc the report",
+                "description": "Send the owner the report",
                 "due_at": "2026-06-10T12:00:00+00:00",
                 "hours_until_due": 20.0,
                 "overdue": False,
