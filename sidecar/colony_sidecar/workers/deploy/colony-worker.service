@@ -1,0 +1,38 @@
+# systemd unit template for the Colony worker daemon (Phase B item 5).
+#
+# Install (Linux):
+#   1. Fill in the placeholders below (User, WorkingDirectory, the Environment
+#      lines) for your host. NEVER commit a filled-in copy to a public repo --
+#      keep real endpoints/keys in the deployment layer.
+#   2. cp this to /etc/systemd/system/colony-worker.service
+#   3. systemctl daemon-reload && systemctl enable --now colony-worker
+#
+# The worker is read/analyse-only; the sidecar's WorkerGovernor enforces
+# capability coverage + owner boundaries and audits every report server-side.
+
+[Unit]
+Description=Colony worker daemon (claims + executes typed queue jobs, read/analyse-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%WORKER_USER%
+WorkingDirectory=%WORKER_HOME%
+# Point at your sidecar and provide the worker's identity + capabilities.
+Environment=COLONY_URL=http://127.0.0.1:7777
+Environment=COLONY_API_KEY=%COLONY_API_KEY%
+Environment=COLONY_WORKER_NODE_ID=%WORKER_NODE_ID%
+Environment=COLONY_WORKER_CAPABILITIES=research,analyst,read
+Environment=COLONY_WORKER_JOB_TYPES=research
+Environment=COLONY_WORKER_POLL_SECS=30
+# OpenAI-compatible LLM endpoint the worker reasons with.
+Environment=COLONY_WORKER_LLM_BASE_URL=%LLM_BASE_URL%
+Environment=COLONY_WORKER_LLM_MODEL=%LLM_MODEL%
+Environment=COLONY_WORKER_LLM_API_KEY=%LLM_API_KEY%
+ExecStart=%VENV_BIN%/colony-worker
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

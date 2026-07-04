@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd template for the Colony worker daemon (Phase B item 5), macOS.
+
+  Install:
+    1. Fill in the placeholders (%VENV_BIN%, %COLONY_API_KEY%, the LLM_* and
+       WORKER_* values). Keep the filled-in copy in your deployment layer,
+       NEVER in a public repo.
+    2. cp to ~/Library/LaunchAgents/colony-worker.plist
+    3. launchctl load ~/Library/LaunchAgents/colony-worker.plist
+
+  Read/analyse-only worker; the sidecar WorkerGovernor enforces + audits.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>colony-worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>%VENV_BIN%/colony-worker</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>COLONY_URL</key>            <string>http://127.0.0.1:7777</string>
+    <key>COLONY_API_KEY</key>        <string>%COLONY_API_KEY%</string>
+    <key>COLONY_WORKER_NODE_ID</key> <string>%WORKER_NODE_ID%</string>
+    <key>COLONY_WORKER_CAPABILITIES</key> <string>research,analyst,read</string>
+    <key>COLONY_WORKER_JOB_TYPES</key>    <string>research</string>
+    <key>COLONY_WORKER_POLL_SECS</key>    <string>30</string>
+    <key>COLONY_WORKER_LLM_BASE_URL</key> <string>%LLM_BASE_URL%</string>
+    <key>COLONY_WORKER_LLM_MODEL</key>    <string>%LLM_MODEL%</string>
+    <key>COLONY_WORKER_LLM_API_KEY</key>  <string>%LLM_API_KEY%</string>
+  </dict>
+  <key>RunAtLoad</key>   <true/>
+  <key>KeepAlive</key>   <true/>
+</dict>
+</plist>

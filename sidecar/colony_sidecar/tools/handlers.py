@@ -729,6 +729,43 @@ async def handle_belief_conflicts(
         return json.dumps({"error": str(e), "status": "error"})
 
 
+async def handle_sandbox_run(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        sandbox = registry.sandbox
+        if sandbox is None:
+            return json.dumps({"error": "Sandbox not wired", "status": "unavailable"})
+        # Agent-invoked runs are NOT owner-directed: they are flagged for owner
+        # approval (the owner auto-runs via the authenticated API). The agent
+        # cannot self-grant owner authority here.
+        out = sandbox.run(
+            args.get("script", ""),
+            lang=args.get("lang", "python"),
+            purpose=args.get("purpose", ""),
+            owner_directed=False,
+        )
+        return json.dumps(out, default=str)
+    except Exception as e:
+        logger.error("sandbox_run failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_sandbox_status(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    try:
+        sandbox = registry.sandbox
+        if sandbox is None:
+            return json.dumps({"error": "Sandbox not wired", "status": "unavailable"})
+        return json.dumps(sandbox.status(), default=str)
+    except Exception as e:
+        logger.error("sandbox_status failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
 # Handler registry -- maps tool name to handler function
 TOOL_HANDLERS: dict[str, callable] = {
     "colony_memory_search": handle_memory_search,
@@ -757,4 +794,6 @@ TOOL_HANDLERS: dict[str, callable] = {
     "self_status": handle_self_status,
     "action_journal": handle_action_journal,
     "belief_conflicts": handle_belief_conflicts,
+    "sandbox_run": handle_sandbox_run,
+    "sandbox_status": handle_sandbox_status,
 }

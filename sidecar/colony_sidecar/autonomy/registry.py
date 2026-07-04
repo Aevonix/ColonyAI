@@ -267,3 +267,17 @@ class SubsystemRegistry:
         """LLM-assisted world-model extractor (batch, journaled)."""
         from colony_sidecar.api.routers.host import _world_llm_extractor
         return _world_llm_extractor
+
+    # === Cognition program Phase B (items 5/6) ===
+
+    @property
+    def worker_governor(self) -> Any:
+        """WorkerGovernor: server-side claim gate + completion audit (item 5)."""
+        from colony_sidecar.api.routers.host import _worker_governor
+        return _worker_governor
+
+    @property
+    def sandbox(self) -> Any:
+        """SandboxManager: gated, isolated code execution (item 6)."""
+        from colony_sidecar.api.routers.host import _sandbox
+        return _sandbox

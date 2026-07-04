@@ -748,7 +748,72 @@ llm_request middleware) should migrate off the registry when next touched.
   hardened gates, incident journaled). The graph client's run_query Cypher
   allowlist gained a registration seam (register_allowed_cypher) because it
   silently rejected the new belief/world read queries.
-- Phase B: NOT STARTED.
+- 2026-07-04 (successor session): coordinator pushed charter v1.1.0 (tip
+  8944715, narrator role + secondary-prompt pass) and flagged
+  tests/test_cognition_observability.py::test_consolidation_result_exposes_
+  pairs_merged_not_merged_count as a pre-existing Phase-A failure. INVESTIGATED
+  and found GREEN at both 487ab8c and 8944715: ConsolidationResult defines
+  pairs_merged with no merged_count anywhere, and the consumer at
+  server.py:1253 already reads pairs_merged (the "merged:0 every run" bug the
+  test guards was fixed in git history). The check is a deterministic
+  static-field assertion, cannot be order-dependent, and passes. No code
+  change was warranted; fabricating one would be dishonest. Full suite green
+  at 8944715 pre-Phase-B (1362 passed, 118 skipped).
+- Phase B: COMPLETE (2026-07-04, successor session). Landed:
+  - `task_queue/governor.py` (item 5, server-side enforcement): WorkerGovernor
+    re-decides every claim server-side (capability coverage recompute +
+    DirectiveGuard boundary re-check on the job subject; never trusts the
+    worker) and audits every completion report (a mutation/force-push reported
+    on a job not authorized to change state is a VIOLATION). Each worker job
+    type is its own trust domain "worker:<job_type>" feeding item 4: clean
+    real completions graduate it, a violation trips its circuit breaker;
+    feedback + action journal + skill distillation ride the same chokepoint.
+    Mode COLONY_WORKERS_MODE off|shadow|live (default shadow = CALIBRATION:
+    evaluates + journals but never blocks, so enabling it does not disturb
+    the already-live agent_action path; live enforces). `required_capability`
+    rides job.tags (no schema migration). Wired into api/routers/task_queue.py
+    claim (release/block on refusal) + complete (audit + record) + fail
+    (failure -> breaker); GET /queue/governor status. Registry accessor
+    worker_governor; set_worker_governor; boot section 22c.
+  - `workers/colony_worker.py` (item 5, installable worker daemon): stdlib-only
+    console script `colony-worker`; authenticates (COLONY_API_KEY), registers
+    capability-typed (COLONY_WORKER_CAPABILITIES/_JOB_TYPES), polls claim,
+    reasons over each job with an OpenAI-compatible LLM in a READ/ANALYSE
+    posture ONLY (never mutates, never reports a mutation -- sanitised
+    client-side too), posts the audited report contract. --dry-run/--once.
+    systemd + launchd unit templates under workers/deploy/ (generic
+    placeholders). Docstring documents the preferred Hermes-native path
+    (kanban worker / /v1/runs) per the integration survey.
+  - `sandbox/` (item 6, exploration sandbox): SandboxBackend ABC + DockerSandbox
+    (--network none, --read-only rootfs + single writable bind workdir,
+    --cap-drop ALL, no-new-privileges, --cpus/--memory/--pids-limit, inner
+    timeout, no env/creds mounted, artifact read-back size-capped) +
+    DisabledSandbox default when Docker absent. SandboxManager adds the mode
+    gate (COLONY_SANDBOX_MODE off|dry_run|live, default off), a DirectiveGuard
+    boundary check on purpose+script, approval tiering (owner-directed AUTO /
+    otherwise FLAGGED), server-side limits the caller cannot widen, and
+    journaling. Tools sandbox_run (agent-invoked = flagged; never self-grants
+    owner authority) + sandbox_status; API GET /sandbox/status + POST
+    /sandbox/run (owner surface). Registry accessor sandbox; set_sandbox; boot
+    section 22d.
+  - Lease guarantee: the existing abandon_silent_jobs -> requeue_retryable_jobs
+    path (a dead worker's claimed job is abandoned past the heartbeat lease and
+    requeued for another worker) now has a direct regression test.
+  - Tests: test_workers_governor (claim gate capability + boundary,
+    shadow-observes/live-enforces, never-trust audit, trust-domain feed +
+    breaker demotion, worker-daemon report sanitisation), test_sandbox
+    (containment command, mode gate, approval tiering, boundary block, size
+    cap, disabled backend, server-side limits), test_worker_integration lease
+    requeue. Full unit suite green (1394 passed, 118 skipped).
+  - Flags added: COLONY_WORKERS_MODE (shadow), COLONY_WORKER_CAPABILITIES/
+    _JOB_TYPES/_POLL_SECS/_LLM_BASE_URL/_LLM_MODEL/_LLM_API_KEY,
+    COLONY_SANDBOX_MODE (off), COLONY_SANDBOX_IMAGE/_CPUS/_MEMORY/_TIMEOUT/
+    _PIDS/_EGRESS/_MAX_ARTIFACT_BYTES.
+  - Private deployment layer (aeva repo + Mac): which hosts run
+    colony-worker, their LLM endpoints + capabilities per host, the filled-in
+    workers/deploy unit (COLONY_API_KEY provisioning), and -- if a sandbox host
+    is ever wanted -- Docker availability + image + egress policy on that host
+    (stays off/dry_run on the Mac unless the owner enables it).
 - Phase C: NOT STARTED (world-model LLM extraction pulled forward from the
   item 2 wiring as an Amendment-era deliverable; connectors proper remain).
 

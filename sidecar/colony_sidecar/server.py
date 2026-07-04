@@ -1365,6 +1365,56 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("ProjectEngine init failed: %s", exc)
 
+    # --- 22c. Worker governor (server-side queue enforcement, item 5) ---
+    try:
+        from colony_sidecar.task_queue.governor import WorkerGovernor, workers_mode
+        from colony_sidecar.api.routers.host import (
+            set_worker_governor,
+            get_directive_manager as _get_dm_w,
+            _feedback_store as _fb_for_workers,
+        )
+
+        async def _worker_deliver(payload: dict) -> bool:
+            try:
+                from colony_sidecar.api.routers.host import (
+                    _autonomy_loop, _delivery_bridge,
+                )
+                if _autonomy_loop is not None and _delivery_bridge is not None:
+                    return await _autonomy_loop._route_reachout_delivery(
+                        payload, _delivery_bridge)
+            except Exception:
+                logger.debug("worker deliver failed", exc_info=True)
+            return False
+
+        _worker_gov = WorkerGovernor(
+            directive_manager=_get_dm_w(),
+            feedback_store=_fb_for_workers,
+            self_model=_sm_for_directed,
+            delivery_router=_worker_deliver,
+            skill_store=_skills_mem_store,
+            llm_router=llm_router,
+        )
+        set_worker_governor(_worker_gov)
+        logger.info("WorkerGovernor initialized (mode=%s)", workers_mode())
+    except Exception as exc:
+        logger.warning("WorkerGovernor init failed: %s", exc)
+
+    # --- 22d. Exploration sandbox (gated isolated execution, item 6) ---
+    try:
+        from colony_sidecar.sandbox import SandboxManager, sandbox_mode
+        from colony_sidecar.api.routers.host import (
+            set_sandbox, get_directive_manager as _get_dm_sb,
+        )
+        _sandbox_mgr = SandboxManager(
+            directive_manager=_get_dm_sb(),
+            self_model=_sm_for_directed,
+        )
+        set_sandbox(_sandbox_mgr)
+        logger.info("SandboxManager initialized (mode=%s, backend=%s)",
+                    sandbox_mode(), _sandbox_mgr.backend_name())
+    except Exception as exc:
+        logger.warning("SandboxManager init failed: %s", exc)
+
     # --- 23. Initiative Executor service (autonomous initiative processing) ---
     try:
         from colony_sidecar.services.initiative_executor import (

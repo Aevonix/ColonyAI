@@ -3947,6 +3947,8 @@ _skill_store = None
 _project_engine = None
 _belief_engine = None
 _world_llm_extractor = None
+_worker_governor = None
+_sandbox = None
 
 
 def set_self_model(sm) -> None:
@@ -3972,6 +3974,16 @@ def set_belief_engine(engine) -> None:
 def set_world_llm_extractor(x) -> None:
     global _world_llm_extractor
     _world_llm_extractor = x
+
+
+def set_worker_governor(g) -> None:
+    global _worker_governor
+    _worker_governor = g
+
+
+def set_sandbox(s) -> None:
+    global _sandbox
+    _sandbox = s
 
 
 @router.get("/self")
@@ -4093,6 +4105,33 @@ async def get_belief_conflicts(status: str = "", limit: int = 50) -> dict:
         return {"available": True, "count": len(items), "conflicts": items}
     except Exception as exc:
         return {"available": True, "error": str(exc), "conflicts": []}
+
+
+@router.get("/sandbox/status")
+async def get_sandbox_status() -> dict:
+    """Exploration sandbox (item 6): mode, backend, containment limits."""
+    if _sandbox is None:
+        return {"available": False}
+    try:
+        return {"available": True, **_sandbox.status()}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+@router.post("/sandbox/run")
+async def run_sandbox(body: dict = Body(default={})) -> dict:
+    """Owner surface: run a script in the sandbox. Owner-directed runs auto-run
+    within default limits; still boundary-checked and journaled. The caller
+    cannot widen containment (limits are server-side)."""
+    if _sandbox is None:
+        return {"ran": False, "reason": "sandbox_not_wired"}
+    b = body or {}
+    return _sandbox.run(
+        b.get("script", ""),
+        lang=b.get("lang", "python"),
+        purpose=b.get("purpose", ""),
+        owner_directed=bool(b.get("owner_directed", True)),
+        approved=bool(b.get("approved", False)))
 
 
 @router.get("/world/llm-extract/status")

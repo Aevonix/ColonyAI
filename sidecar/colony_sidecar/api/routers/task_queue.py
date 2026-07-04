@@ -107,6 +107,15 @@ def _get_queue() -> TaskQueueManager:
         raise HTTPException(status_code=503, detail="Task queue not initialized")
 
 
+def _governor() -> Any:
+    """The server-side WorkerGovernor (item 5), or None if not wired."""
+    try:
+        from colony_sidecar.api.routers.host import _worker_governor
+        return _worker_governor
+    except Exception:
+        return None
+
+
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
@@ -247,6 +256,39 @@ async def claim_job(body: JobClaimRequest) -> Optional[Dict[str, Any]]:
     job = await queue.queue.claim_job(body.node_id, caps)
     if job is None:
         return None
+
+    # Server-side enforcement (item 5): re-decide the claim against the
+    # worker's real capabilities and the owner's boundaries. Shadow only
+    # observes; live blocks a boundaried job and releases a capability
+    # mismatch back to the queue for a worker that can cover it.
+    gov = _governor()
+    if gov is not None:
+        try:
+            verdict = gov.evaluate_claim(
+                job, caps.capabilities, worker_node_id=body.node_id)
+        except Exception:
+            logger.debug("worker governor claim eval failed", exc_info=True)
+            verdict = None
+        if verdict is not None and not verdict.get("allowed", True):
+            if not verdict.get("boundary_ok", True):
+                await queue.queue.update_job_status(
+                    job.job_id, JobStatus.BLOCKED,
+                    reason=f"governor_boundary: {verdict.get('reason', '')}",
+                    tags={"blocked_reason": "boundary_refused",
+                          "governor_reason": str(verdict.get("reason", ""))[:200]})
+            else:
+                await queue.queue.release_job(job.job_id)
+            logger.info("Governor refused claim of %s by %s: %s",
+                        job.job_id, body.node_id, verdict.get("reason"))
+            return None
+        if verdict is not None:
+            out = _job_to_dict(job)
+            out["governor"] = {
+                "mode": "shadow" if verdict.get("shadow") else "live",
+                "enforced": verdict.get("enforced", False),
+                "would_refuse": verdict.get("would_refuse", False),
+            }
+            return out
     return _job_to_dict(job)
 
 
@@ -270,13 +312,42 @@ async def complete_job(job_id: str, body: JobCompleteRequest) -> Dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     worker_id = job.claimed_by or "unknown"
+
+    # Server-side completion audit (item 5): the worker's report is verified
+    # against what the job was authorized to do BEFORE it is trusted. A
+    # mutation reported on a read-only job is a violation, flagged + recorded
+    # (which trips the job type's circuit breaker in the trust engine).
+    gov = _governor()
+    verdict = "unverified"
+    findings: List[str] = []
+    if gov is not None:
+        try:
+            audit = gov.audit_report(job, body.output)
+            verdict = audit.get("verdict", "unverified")
+            findings = audit.get("findings", [])
+        except Exception:
+            logger.debug("worker governor audit failed", exc_info=True)
+
     await queue.queue.complete_job(
         job_id=job_id,
         worker_id=worker_id,
         output=body.output,
         started_at=_parse_dt(body.started_at),
     )
-    return {"success": True, "job_id": job_id}
+
+    if gov is not None:
+        latency = None
+        started = _parse_dt(body.started_at)
+        if started is not None:
+            latency = (datetime.now(timezone.utc) - started).total_seconds()
+        try:
+            await gov.record_outcome(job, body.output, verdict, latency=latency,
+                                     attempts=job.retry_count)
+        except Exception:
+            logger.debug("worker governor record failed", exc_info=True)
+
+    return {"success": True, "job_id": job_id, "verdict": verdict,
+            "findings": findings}
 
 
 @router.post("/jobs/{job_id}/fail")
@@ -293,6 +364,17 @@ async def fail_job(job_id: str, body: JobFailRequest) -> Dict[str, Any]:
         error=body.error,
         started_at=_parse_dt(body.started_at),
     )
+
+    # Feed the failure to the trust engine so clustered failures trip the
+    # job type's circuit breaker (item 5 -> item 4).
+    gov = _governor()
+    if gov is not None:
+        try:
+            await gov.record_outcome(job, {"summary": body.error}, "clean",
+                                     outcome="failure", attempts=job.retry_count)
+        except Exception:
+            logger.debug("worker governor fail-record failed", exc_info=True)
+
     return {"success": True, "job_id": job_id}
 
 
@@ -487,6 +569,19 @@ async def list_completed_jobs(
 # ---------------------------------------------------------------------------
 # Stats
 # ---------------------------------------------------------------------------
+
+@router.get("/governor")
+async def governor_status() -> Dict[str, Any]:
+    """Worker-governor status (item 5): enforcement mode + per-job-type
+    earned-trust stages."""
+    gov = _governor()
+    if gov is None:
+        return {"available": False}
+    try:
+        return {"available": True, **gov.status()}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
 
 @router.get("/stats")
 async def queue_stats() -> Dict[str, Any]:

@@ -36,6 +36,7 @@ colony = "colony_sidecar.cli:main"
 colony-agent-bridge = "colony_sidecar.workers.agent_bridge:main"
 colony-queue-worker = "colony_sidecar.workers.queue_worker:main"
 colony-skills-sync = "colony_sidecar.workers.skills_sync:main"
+colony-worker = "colony_sidecar.workers.colony_worker:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

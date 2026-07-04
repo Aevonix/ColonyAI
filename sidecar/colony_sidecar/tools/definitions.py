@@ -503,6 +503,37 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    {
+        "name": "sandbox_run",
+        "description": (
+            "Run a short script in an isolated sandbox (no network, no "
+            "credentials, capped CPU/memory/time) to test an idea safely. "
+            "Autonomous runs are flagged for owner approval; the owner can "
+            "auto-run within default limits. You cannot widen the limits."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "script": {"type": "string",
+                           "description": "The script source to execute"},
+                "lang": {"type": "string",
+                         "enum": ["python", "bash", "node"],
+                         "default": "python"},
+                "purpose": {"type": "string",
+                            "description": "Why you want to run this (checked "
+                                           "against boundaries; be specific)"},
+            },
+            "required": ["script", "purpose"],
+        },
+    },
+    {
+        "name": "sandbox_status",
+        "description": (
+            "Sandbox status: enforcement mode, backend, and the containment "
+            "limits currently applied."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
 ]
 
 # Native server-side tools (calculate, web_search, file_ops)
