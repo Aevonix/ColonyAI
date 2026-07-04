@@ -217,7 +217,7 @@ class TestExportToHermes:
         target_dir.mkdir(parents=True)
         foreign = (
             "---\nname: fetch-weather-report-a1b2c3d4\n"
-            "description: hand-written by a human\nauthor: marc\n---\n\n# Mine\n"
+            "description: hand-written by a human\nauthor: sam\n---\n\n# Mine\n"
         )
         (target_dir / "SKILL.md").write_text(foreign, encoding="utf-8")
 

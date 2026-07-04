@@ -427,11 +427,11 @@ async def test_approve_always_grants_standing_and_unblocks_next_job(tmp_path):
         # 2. Owner approves with always=true
         resp = await tq_router.approve_job(
             job_id,
-            tq_router.JobApproveRequest(approved_by="marc", always=True),
+            tq_router.JobApproveRequest(approved_by="sam", always=True),
         )
         assert resp["success"] is True
         assert resp["standing_approval"]["action_name"] == "coding_merge_pr"
-        assert resp["standing_approval"]["approved_by"] == "marc"
+        assert resp["standing_approval"]["approved_by"] == "sam"
         assert standing_approvals.is_approved("coding_merge_pr") is True
         assert (await mgr.queue.get_job(job_id)).status == JobStatus.QUEUED
 
@@ -464,7 +464,7 @@ async def test_plain_approve_does_not_grant_standing(tmp_path):
         await _submit(stub, "coding_merge_pr")
         blocked = await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED)
         resp = await tq_router.approve_job(
-            blocked[0].job_id, tq_router.JobApproveRequest(approved_by="marc"),
+            blocked[0].job_id, tq_router.JobApproveRequest(approved_by="sam"),
         )
         assert resp["standing_approval"] is None
         assert standing_approvals.is_approved("coding_merge_pr") is False
@@ -476,19 +476,19 @@ def test_standing_approval_overrides_both_modes():
     for policy in ("strict", "graduated"):
         assert classify_agent_action(
             "coding_merge_pr", policy=policy)["requires_approval"] is True
-    standing_approvals.grant("coding_merge_pr", approved_by="marc")
+    standing_approvals.grant("coding_merge_pr", approved_by="sam")
     for policy in ("strict", "graduated"):
         verdict = classify_agent_action("coding_merge_pr", policy=policy)
         assert verdict["requires_approval"] is False, policy
         assert verdict["reason"] == "standing_approval"
     # Unregistered actions stay non-executable even with a grant
-    standing_approvals.grant("agent_rm_rf_slash", approved_by="marc")
+    standing_approvals.grant("agent_rm_rf_slash", approved_by="sam")
     assert classify_agent_action("agent_rm_rf_slash")["executable"] is False
 
 
 def test_standing_approvals_persist_across_reload(tmp_path):
-    standing_approvals.grant("coding_merge_pr", approved_by="marc")
-    standing_approvals.grant("calendar_send_reminder", approved_by="marc")
+    standing_approvals.grant("coding_merge_pr", approved_by="sam")
+    standing_approvals.grant("calendar_send_reminder", approved_by="sam")
 
     # On disk, under $COLONY_STATE_DIR
     path = Path(standing_approvals._path())
@@ -520,7 +520,7 @@ def test_corrupt_standing_approvals_file_fails_closed():
 
 @pytest.mark.asyncio
 async def test_standing_approval_endpoints():
-    standing_approvals.grant("coding_merge_pr", approved_by="marc")
+    standing_approvals.grant("coding_merge_pr", approved_by="sam")
 
     items = await tq_router.list_standing_approvals()
     assert [e["action_name"] for e in items] == ["coding_merge_pr"]

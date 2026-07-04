@@ -34,14 +34,14 @@ class TestEntitySerialization:
             name="User",
             entity_type="person",
             confidence=0.9,
-            email="marc@example.com",
+            email="sam@example.com",
             aliases=["marcus"],
         )
         props = _entity_to_props(person)
         assert props["id"] == "we-123-abc"
         assert props["name"] == "User"
         assert props["entity_type"] == "person"
-        assert props["email"] == "marc@example.com"
+        assert props["email"] == "sam@example.com"
         assert props["aliases"] == json.dumps(["marcus"])
 
     def test_props_to_person(self):
@@ -50,16 +50,16 @@ class TestEntitySerialization:
             "name": "User",
             "entity_type": "person",
             "confidence": 0.9,
-            "email": "marc@example.com",
+            "email": "sam@example.com",
             "aliases": json.dumps(["marcus"]),
-            "external_ids": json.dumps({"email": "marc@example.com"}),
+            "external_ids": json.dumps({"email": "sam@example.com"}),
             "properties": json.dumps({"key": "val"}),
         }
         entity = _props_to_entity(props)
         assert isinstance(entity, PersonEntity)
         assert entity.name == "User"
         assert entity.aliases == ["marcus"]
-        assert entity.external_ids == {"email": "marc@example.com"}
+        assert entity.external_ids == {"email": "sam@example.com"}
         assert entity.properties == {"key": "val"}
 
     def test_roundtrip_entity(self):

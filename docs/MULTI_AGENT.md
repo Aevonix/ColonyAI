@@ -114,7 +114,7 @@ POST /v1/host/agents/register
 {
   "name": "spark1-openclaw",
   "connection_mode": "local",
-  "gateway_url": "http://192.168.10.240:18789",
+  "gateway_url": "http://192.0.2.10:18789",
   "capabilities": ["messaging", "calendar"],
   "is_primary": true
 }
