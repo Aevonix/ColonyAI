@@ -24,7 +24,9 @@ class FakeRouter:
 def _payload(n=2):
     return json.dumps([
         {"title": f"Investigate stalled goal {i}", "type": "task",
-         "priority": 0.7, "rationale": "goal has been blocked 3 days"}
+         "priority": 0.7, "confidence": 0.7,
+         "rationale": "goal has been blocked 3 days",
+         "evidence": f"goals[{i}].status == blocked for 3 days"}
         for i in range(n)
     ])
 
@@ -44,10 +46,12 @@ async def test_think_produces_initiatives():
 async def test_priority_capped_and_types_validated():
     content = json.dumps([
         {"title": "Do something huge", "type": "task", "priority": 1.0,
-         "rationale": "r"},
+         "confidence": 0.8, "rationale": "r", "evidence": "report line 3"},
         {"title": "Forbidden direct action", "type": "agent_action",
-         "priority": 0.5, "rationale": "r"},
-        {"title": "", "type": "task", "priority": 0.5, "rationale": "r"},
+         "priority": 0.5, "confidence": 0.8, "rationale": "r",
+         "evidence": "report line 4"},
+        {"title": "", "type": "task", "priority": 0.5, "confidence": 0.8,
+         "rationale": "r", "evidence": "report line 5"},
     ])
     thinker = SelfDirectedThinker(FakeRouter(content))
     out = await thinker.think({})

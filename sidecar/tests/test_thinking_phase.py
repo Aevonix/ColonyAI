@@ -12,7 +12,9 @@ from colony_sidecar.autonomy.loop import AutonomyLoop
 def _payload():
     return json.dumps([{"title": "Research vector index compaction",
                         "type": "research", "priority": 0.7,
-                        "rationale": "memory growth observed"}])
+                        "confidence": 0.7,
+                        "rationale": "memory growth observed",
+                        "evidence": "memory stats show 3x growth this week"}])
 
 
 class FakeRouter:

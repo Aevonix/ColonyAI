@@ -104,6 +104,7 @@ class Step:
     attempts: int = 0
     result: str = ""
     boundary_subject: str = ""          # extra subject text for the guard
+    confidence: float = 0.6             # planner-stated (charter contract)
     id: str = field(default_factory=lambda: f"step-{uuid.uuid4().hex[:12]}")
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -115,6 +116,7 @@ class Step:
             "depends_on": json.dumps(self.depends_on), "status": self.status,
             "attempts": self.attempts, "result": self.result,
             "boundary_subject": self.boundary_subject,
+            "confidence": self.confidence,
             "created_at": self.created_at, "updated_at": self.updated_at,
         }
 
@@ -134,6 +136,7 @@ class Step:
             attempts=int(r.get("attempts") or 0),
             result=r.get("result", "") or "",
             boundary_subject=r.get("boundary_subject", "") or "",
+            confidence=float(r.get("confidence", 0.6) or 0.6),
             created_at=float(r.get("created_at") or time.time()),
             updated_at=float(r.get("updated_at") or time.time()),
         )

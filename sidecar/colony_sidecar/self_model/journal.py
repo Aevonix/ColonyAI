@@ -35,8 +35,19 @@ class ActionJournal:
                     reversibility TEXT,
                     decision TEXT,
                     outcome TEXT,
-                    ref TEXT
+                    ref TEXT,
+                    prompt_version TEXT
                 )""")
+            # Migration: prompt_version added after first ship (behavior
+            # shifts must be attributable to prompt versions).
+            try:
+                cols = {r[1] for r in self._conn.execute(
+                    "PRAGMA table_info(action_journal)").fetchall()}
+                if "prompt_version" not in cols:
+                    self._conn.execute(
+                        "ALTER TABLE action_journal ADD COLUMN prompt_version TEXT")
+            except Exception:
+                pass
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_journal_ts ON action_journal(ts)")
             self._conn.execute(
@@ -48,20 +59,29 @@ class ActionJournal:
                reasoning: str = "", confidence: Optional[float] = None,
                reversibility: str = "reversible", decision: str = "acted",
                outcome: str = "", ref: str = "") -> int:
-        """Append one journal entry; returns its row id. Never raises."""
+        """Append one journal entry; returns its row id. Never raises.
+
+        Each entry carries the active charter PROMPT_VERSION so behavior
+        shifts are attributable to prompt changes.
+        """
         try:
+            try:
+                from colony_sidecar.cognition.charter import PROMPT_VERSION
+            except Exception:
+                PROMPT_VERSION = ""
             with self._lock:
                 cur = self._conn.execute(
                     """INSERT INTO action_journal
                        (ts, domain, description, reasoning, confidence,
-                        reversibility, decision, outcome, ref)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        reversibility, decision, outcome, ref, prompt_version)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (time.time(), (domain or "unknown").lower(),
                      (description or "")[:500], (reasoning or "")[:800],
                      confidence,
                      reversibility if reversibility in REVERSIBILITY else "reversible",
                      decision if decision in DECISIONS else "acted",
-                     (outcome or "")[:500], (ref or "")[:120]))
+                     (outcome or "")[:500], (ref or "")[:120],
+                     PROMPT_VERSION))
                 self._conn.commit()
                 return int(cur.lastrowid)
         except Exception:

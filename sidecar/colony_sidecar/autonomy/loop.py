@@ -524,7 +524,17 @@ class AutonomyLoop:
             from colony_sidecar.intelligence.components.self_directed_thinker import (
                 SelfDirectedThinker,
             )
-            thinker = SelfDirectedThinker(router)
+
+            def _brief():
+                sm = getattr(self._registry, "self_model", None)
+                return sm.brief() if sm is not None else ""
+
+            def _bounds():
+                dm = getattr(self._registry, "directives", None)
+                return dm.context_brief() if dm is not None else ""
+
+            thinker = SelfDirectedThinker(router, self_brief_fn=_brief,
+                                          boundaries_fn=_bounds)
             self._thinker = thinker
         if not thinker.due():
             return

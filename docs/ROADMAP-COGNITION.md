@@ -461,6 +461,27 @@ Delivery: milestone/report/proposal outputs all reuse the existing guarded
 `_route_reachout_delivery` (now live) with the "proposal" type; keep them
 subject to the rate limiter + boundary + quiet hours.
 
+Prompt architecture (charter): every internal LLM role composes its system
+prompt via `cognition/charter.py` `build_system_prompt(role=...)`: shared
+<charter> doctrine + <role> block + budget-capped injection slots
+(<self_model> from the trust engine's brief, <boundaries> from
+DirectiveGuard.context_brief(), <skills> from skills_memory retrieval,
+<corrections> as avoid-lines from failure post-mortems, <context>) + a
+confidence-mandatory <output> contract. Rules: doctrine changes go ONLY in
+the charter (never per-role); PROMPT_VERSION is journaled with every action
+so behavior shifts are attributable; the golden-set eval harness
+(tests/test_prompt_evals.py: composition contracts + canned-output decision
+goldens) runs on any prompt change. Stated confidences in thinker/planner/
+executor outputs are trust-engine calibration inputs (stated-vs-realized
+recorded per event; CompetenceStore.calibration()). Migrated so far:
+executor, thinker (schema now requires confidence + evidence; ungrounded
+items dropped), project planner + project step runner. Remaining, adopted
+as each is touched in its phase: observer (cognition/prompt.py, keep its
+positive/negative examples via extra=), synthesis, worker (Phase B),
+directed_intake (when LLM-assisted intake lands), hermes-plugin
+memory-context injection (confidence-sorted facts, token budget,
+avoid-prefix; Phase C).
+
 Public/private split (principle): capability code + schemas + flags = this
 repo (generic, env-driven). Instance specifics (creds, hosts, plists, persona
 glue, connector endpoints, worker placement, sandbox host) = documented here
@@ -708,6 +729,13 @@ llm_request middleware) should migrate off the registry when next touched.
   - Tests: test_self_model, test_skills_memory, test_projects,
     test_beliefs, test_global_pause, test_directed_trust,
     test_world_llm_extract; full unit suite green.
+- 2026-07-04 (charter adoption, Phase A modules): executor, thinker,
+  project planner and project step runner now compose through the shared
+  cognition charter (see "Prompt architecture" above); thinker schema
+  requires confidence + grounding evidence; per-step planner confidence is
+  persisted and stated-vs-realized calibration is recorded in the
+  self-model; PROMPT_VERSION journaled per action; golden-set prompt eval
+  harness added (tests/test_prompt_evals.py).
 - Phase B: NOT STARTED.
 - Phase C: NOT STARTED (world-model LLM extraction pulled forward from the
   item 2 wiring as an Amendment-era deliverable; connectors proper remain).

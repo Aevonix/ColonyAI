@@ -17,11 +17,11 @@ from colony_sidecar.projects.models import ACTION_KINDS, Step, projects_max_step
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """\
-You are the planning component of an autonomous personal-intelligence system.
-Decompose the given objective into a short, concrete, dependency-ordered step
-plan the system can pursue over days.
-
+# The system prompt composes through the shared cognition charter
+# (cognition/charter.py, role "planner"): shared doctrine + planner rules +
+# injected self-model/boundaries/skills. This block only supplies the
+# action-kind vocabulary the role rules reference.
+_ACTION_KINDS_CONTEXT = """\
 Allowed action kinds (choose the weakest kind that does the job):
 - "analyze": reason over information the system already has (memory, world
   model, configured read-only repo mirrors).
@@ -30,18 +30,7 @@ Allowed action kinds (choose the weakest kind that does the job):
 - "directed": delegate scoped repo/code work to the directed-action pipeline
   (it has its own approval gates). Use ONLY for work on the owner's
   designated repositories.
-- "deliver": report a finding/milestone to the owner.
-
-Rules:
-- At most {max_steps} steps. Fewer is better; each step is one work session.
-- Steps must be concrete and self-contained (a fresh agent could execute one
-  from its description alone).
-- Use "depends_on" (list of step ordinals) only for real data dependencies.
-- The final step should normally be a "deliver" step summarizing the outcome.
-
-Respond with ONLY a JSON array (no prose, no markdown fences). Each element:
-{{"ordinal": int (1-based), "description": str, "action_kind": str,
-"depends_on": [int, ...]}}"""
+- "deliver": report a finding/milestone to the owner."""
 
 
 def _parse_array(content: str) -> List[dict]:
@@ -91,8 +80,13 @@ def validate_steps(raw: List[dict], project_id: str = "",
                 deps.append(int(dep))
             except (TypeError, ValueError):
                 continue
+        try:
+            confidence = max(0.0, min(1.0, float(d.get("confidence", 0.6))))
+        except (TypeError, ValueError):
+            confidence = 0.6
         cleaned.append({"ordinal": ordinal, "description": desc[:500],
-                        "action_kind": kind, "depends_on": deps})
+                        "action_kind": kind, "depends_on": deps,
+                        "confidence": confidence})
 
     if not cleaned:
         return []
@@ -143,6 +137,7 @@ def validate_steps(raw: List[dict], project_id: str = "",
             description=d["description"],
             action_kind=d["action_kind"],
             depends_on=sorted(remap[x] for x in d["depends_on"]),
+            confidence=d.get("confidence", 0.6),
         ))
     return steps
 
@@ -155,6 +150,7 @@ async def plan_project(
     context: str = "",
     skills_block: str = "",
     self_brief: str = "",
+    boundaries: str = "",
     max_steps: Optional[int] = None,
 ) -> List[Step]:
     """One LLM planning pass -> validated Steps. Empty list on any failure."""
@@ -164,13 +160,17 @@ async def plan_project(
     user_parts = [f"OBJECTIVE:\n{objective.strip()[:1500]}"]
     if context:
         user_parts.append(f"CONTEXT:\n{str(context)[:2000]}")
-    if skills_block:
-        user_parts.append(skills_block[:2000])
-    if self_brief:
-        user_parts.append(f"SELF-ASSESSMENT (route around known weaknesses):\n{self_brief[:800]}")
     try:
+        from colony_sidecar.cognition.charter import build_system_prompt
+        system = build_system_prompt(
+            "planner",
+            self_brief=(self_brief or None),
+            boundaries=(boundaries or None),
+            skills=(skills_block or None),
+            extra=_ACTION_KINDS_CONTEXT,
+            max_steps=cap)
         response = await router.complete(
-            [{"role": "system", "content": _SYSTEM_PROMPT.format(max_steps=cap)},
+            [{"role": "system", "content": system},
              {"role": "user", "content": "\n\n".join(user_parts)}],
             context={"task": "project_planning"})
         content = getattr(response, "content", "") or ""

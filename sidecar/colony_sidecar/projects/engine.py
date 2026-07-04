@@ -42,12 +42,13 @@ from colony_sidecar.projects.store import ProjectStore
 
 logger = logging.getLogger(__name__)
 
-_STEP_SYSTEM_PROMPT = """\
-You are executing one step of a long-running project for Colony, a personal
-intelligence system. Use the available tools to complete THIS STEP ONLY, then
-summarize the outcome in 2-4 sentences. Never fabricate information; if the
-step cannot be completed, say precisely what is missing.
-"""
+# Step execution composes through the shared cognition charter (role
+# "executor"); this block scopes the turn to ONE project step.
+_STEP_SCOPE_CONTEXT = """\
+You are executing ONE STEP of a long-running project. Complete THIS STEP
+ONLY, then summarize the outcome in 2-4 sentences; later steps are separate
+work sessions. If the step cannot be completed, say precisely what is
+missing."""
 
 _MAX_TOOL_ROUNDS = 4
 
@@ -267,7 +268,8 @@ class ProjectEngine:
             brief = self._self_brief()
             steps = await plan_project(
                 self._router, project.objective, project_id=project.id,
-                skills_block=skills_block, self_brief=brief)
+                skills_block=skills_block, self_brief=brief,
+                boundaries=self._boundaries_brief())
             if not steps:
                 project.replans += 1
                 if project.replans > projects_max_replans():
@@ -397,11 +399,12 @@ class ProjectEngine:
             step.status = "done"
             step.result = result[:2000]
             self.store.save_step(step)
-            self._record_outcome("success", latency)
+            self._record_outcome("success", latency,
+                                 stated_confidence=step.confidence)
         else:
             self._record_outcome(
                 "timeout" if "timeout" in (result or "").lower() else "failure",
-                latency)
+                latency, stated_confidence=step.confidence)
             if step.attempts >= 2:
                 step.status = "failed"
                 step.result = result[:1000]
@@ -456,21 +459,22 @@ class ProjectEngine:
                   f"Objective: {project.objective[:800]}\n\n"
                   + (f"## Completed so far\n{context}\n\n" if context else "")
                   + f"## Current step ({step.action_kind})\n{step.description}")
-        system = _STEP_SYSTEM_PROMPT
-        skills_block = self._skills_block(step.description)
-        if skills_block:
-            system = system + "\n" + skills_block
-        brief = self._self_brief()
-        if brief:
-            system = system + "\n## Self-assessment\n" + brief
-        if self._directives is not None:
-            try:
-                db = self._directives.context_brief()
-                if db:
-                    system += ("\n## Standing boundaries from the owner "
-                               "(obey without exception)\n" + db)
-            except Exception:
-                pass
+        try:
+            from colony_sidecar.cognition.charter import build_system_prompt
+            system = build_system_prompt(
+                "executor",
+                self_brief=self._self_brief() or None,
+                boundaries=self._boundaries_brief() or None,
+                skills=self._skills_block(step.description) or None,
+                extra=_STEP_SCOPE_CONTEXT)
+        except Exception:
+            logger.debug("charter compose failed; minimal fallback",
+                         exc_info=True)
+            system = _STEP_SCOPE_CONTEXT
+            db = self._boundaries_brief()
+            if db:
+                system += ("\n## Standing boundaries from the owner "
+                           "(obey without exception)\n" + db)
 
         working: List[Dict[str, Any]] = [{"role": "user", "content": prompt}]
         tier = os.environ.get("COLONY_PROJECTS_MODEL_TIER", "small")
@@ -627,7 +631,8 @@ class ProjectEngine:
             f"{project.objective}\n\nRe-plan ONLY the remaining work.",
             project_id=project.id, context=context,
             skills_block=self._skills_block(project.objective),
-            self_brief=self._self_brief())
+            self_brief=self._self_brief(),
+            boundaries=self._boundaries_brief())
         self.store.delete_steps(project.id, statuses=["pending", "failed", "active"])
         base = max((s.ordinal for s in done), default=0)
         for s in new_steps:
@@ -732,6 +737,14 @@ class ProjectEngine:
         except Exception:
             return ""
 
+    def _boundaries_brief(self) -> str:
+        if self._directives is None:
+            return ""
+        try:
+            return self._directives.context_brief() or ""
+        except Exception:
+            return ""
+
     def _self_brief(self) -> str:
         if self._self_model is None:
             return ""
@@ -742,12 +755,14 @@ class ProjectEngine:
 
     def _record_outcome(self, outcome: str,
                         latency: Optional[float] = None,
-                        shadow: bool = False) -> None:
+                        shadow: bool = False,
+                        stated_confidence: Optional[float] = None) -> None:
         if self._self_model is None:
             return
         try:
             self._self_model.record("project", outcome, latency_secs=latency,
-                                    shadow=shadow)
+                                    shadow=shadow,
+                                    stated_confidence=stated_confidence)
         except Exception:
             pass
 

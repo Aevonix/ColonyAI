@@ -29,8 +29,18 @@ class ProjectStore:
                     ordinal INTEGER, description TEXT, action_kind TEXT,
                     depends_on TEXT, status TEXT, attempts INTEGER DEFAULT 0,
                     result TEXT, boundary_subject TEXT,
+                    confidence REAL DEFAULT 0.6,
                     created_at REAL, updated_at REAL
                 )""")
+            # Migration: confidence added after first ship (charter contract).
+            try:
+                cols = {r[1] for r in self._conn.execute(
+                    "PRAGMA table_info(steps)").fetchall()}
+                if "confidence" not in cols:
+                    self._conn.execute(
+                        "ALTER TABLE steps ADD COLUMN confidence REAL DEFAULT 0.6")
+            except Exception:
+                pass
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_steps_project ON steps(project_id)")
             self._conn.execute(

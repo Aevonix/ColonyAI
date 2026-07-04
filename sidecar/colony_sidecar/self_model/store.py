@@ -64,8 +64,19 @@ class CompetenceStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     domain TEXT NOT NULL, outcome TEXT NOT NULL,
                     shadow INTEGER DEFAULT 0, violation INTEGER DEFAULT 0,
+                    stated_confidence REAL,
                     ts REAL NOT NULL
                 )""")
+            # Migration: stated_confidence added after first ship.
+            try:
+                cols = {r[1] for r in self._conn.execute(
+                    "PRAGMA table_info(competence_events)").fetchall()}
+                if "stated_confidence" not in cols:
+                    self._conn.execute(
+                        "ALTER TABLE competence_events "
+                        "ADD COLUMN stated_confidence REAL")
+            except Exception:
+                pass
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_cev_domain_ts "
                 "ON competence_events(domain, ts)")
@@ -73,8 +84,14 @@ class CompetenceStore:
 
     def record(self, domain: str, outcome: str,
                latency_secs: Optional[float] = None,
-               shadow: bool = False, violation: bool = False) -> None:
-        """Record one outcome for a domain. Never raises."""
+               shadow: bool = False, violation: bool = False,
+               stated_confidence: Optional[float] = None) -> None:
+        """Record one outcome for a domain. Never raises.
+
+        stated_confidence: the confidence the model STATED before doing the
+        work (charter contract); stored per event so calibration (stated vs
+        realized) is measurable and autonomy is earned against it.
+        """
         domain = (domain or "unknown").strip().lower()
         outcome = _norm_outcome(outcome)
         now = time.time()
@@ -97,9 +114,9 @@ class CompetenceStore:
                     (domain, ewma, outcome, now, ewma, outcome, now))
                 self._conn.execute(
                     "INSERT INTO competence_events (domain, outcome, shadow, "
-                    "violation, ts) VALUES (?, ?, ?, ?, ?)",
+                    "violation, stated_confidence, ts) VALUES (?, ?, ?, ?, ?, ?)",
                     (domain, outcome, 1 if shadow else 0,
-                     1 if violation else 0, now))
+                     1 if violation else 0, stated_confidence, now))
                 # keep the event log bounded (breaker windows are days, not months)
                 self._conn.execute(
                     "DELETE FROM competence_events WHERE ts < ?",
@@ -122,6 +139,22 @@ class CompetenceStore:
         with self._lock:
             rows = self._conn.execute(q, params).fetchall()
         return [dict(r) for r in rows]
+
+    def calibration(self, domain: str) -> Optional[Dict[str, Any]]:
+        """Stated-vs-realized calibration for a domain: mean absolute error
+        between the confidence the model stated and the realized outcome
+        (success=1, else 0), over non-shadow events that stated one."""
+        events = [e for e in self.events(domain, include_shadow=False)
+                  if e.get("stated_confidence") is not None]
+        if not events:
+            return None
+        errs = [abs(float(e["stated_confidence"])
+                    - (1.0 if e["outcome"] == "success" else 0.0))
+                for e in events]
+        return {"n": len(events),
+                "mean_abs_error": round(sum(errs) / len(errs), 3),
+                "mean_stated": round(sum(float(e["stated_confidence"])
+                                         for e in events) / len(events), 3)}
 
     def get(self, domain: str) -> Optional[Dict[str, Any]]:
         domain = (domain or "").strip().lower()
@@ -163,9 +196,11 @@ class SelfModel:
     # -- recording (thin passthrough; trust engine hooks demotion) -------
     def record(self, domain: str, outcome: str,
                latency_secs: Optional[float] = None,
-               shadow: bool = False, violation: bool = False) -> None:
+               shadow: bool = False, violation: bool = False,
+               stated_confidence: Optional[float] = None) -> None:
         self.store.record(domain, outcome, latency_secs=latency_secs,
-                          shadow=shadow, violation=violation)
+                          shadow=shadow, violation=violation,
+                          stated_confidence=stated_confidence)
         trust = getattr(self, "trust", None)
         if trust is not None:
             try:

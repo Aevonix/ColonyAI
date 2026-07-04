@@ -55,39 +55,28 @@ _ALLOWED_TYPES = {
 _MAX_PRIORITY = 0.85
 _RECENT_KEY_CAP = 200
 
-_SYSTEM_PROMPT = """\
-You are Colony, the always-on intelligence sidecar of an autonomous \
-agent. You are in your private thinking phase: nobody asked you a \
-question. Review the situation report and decide whether any genuinely \
-valuable work should exist that is not already underway.
-
-Rules:
-- Propose at most {max_items} initiatives. Quality over quantity — an \
-empty list is a good answer when nothing is genuinely worth doing.
-- Never re-propose anything resembling the CURRENT INITIATIVES list.
-- Never propose sending messages, spending money, signing up for \
-services, or modifying external systems directly. If such a thing seems \
-valuable, propose it as work to evaluate and let the owner decide.
-- Prefer work that compounds: filling knowledge gaps, repairing failing \
-capabilities, consolidating memory, advancing stalled goals.
-
-Respond with ONLY a JSON array (no prose, no markdown fences). Each \
-element: {{"title": str (imperative, <100 chars), "type": one of \
-{allowed}, "priority": float 0.0-1.0, "rationale": str (why this, why \
-now, grounded in the situation report)}}."""
-
 
 class SelfDirectedThinker:
-    """Generates novel initiatives from periodic LLM reflection."""
+    """Generates novel initiatives from periodic LLM reflection.
+
+    Prompted through the shared cognition charter (role "thinker"); the
+    output schema REQUIRES per-item confidence (trust-engine calibration
+    input) and grounding evidence (items without it are dropped).
+    """
 
     def __init__(self, router: Any,
                  interval_secs: Optional[int] = None,
-                 max_per_cycle: Optional[int] = None) -> None:
+                 max_per_cycle: Optional[int] = None,
+                 self_brief_fn: Any = None,
+                 boundaries_fn: Any = None) -> None:
         self._router = router
         self._interval = interval_secs if interval_secs is not None else int(
             os.environ.get("COLONY_THINKING_INTERVAL_SECS", "3600"))
         self._max = max_per_cycle if max_per_cycle is not None else int(
             os.environ.get("COLONY_THINKING_MAX_INITIATIVES", "3"))
+        # Optional zero-arg callables -> str, evaluated fresh each cycle.
+        self._self_brief_fn = self_brief_fn
+        self._boundaries_fn = boundaries_fn
         self._last_run: Optional[float] = None
         self._recent_keys: List[str] = []
 
@@ -146,7 +135,20 @@ class SelfDirectedThinker:
                 rendered = str(value)[:4000]
             sections.append(f"## {name}\n{rendered}")
         report = "\n\n".join(sections) or "(no situation data available)"
-        system = _SYSTEM_PROMPT.format(
+
+        def _call(fn) -> str:
+            if fn is None:
+                return ""
+            try:
+                return str(fn() or "")
+            except Exception:
+                return ""
+
+        from colony_sidecar.cognition.charter import build_system_prompt
+        system = build_system_prompt(
+            "thinker",
+            self_brief=_call(self._self_brief_fn) or None,
+            boundaries=_call(self._boundaries_fn) or None,
             max_items=self._max, allowed=sorted(_ALLOWED_TYPES))
         return [
             {"role": "system", "content": system},
@@ -177,13 +179,24 @@ class SelfDirectedThinker:
         title = str(item.get("title", "")).strip()
         type_key = str(item.get("type", "")).strip().lower()
         rationale = str(item.get("rationale", "")).strip()
+        evidence = str(item.get("evidence", "")).strip()
         if not title or type_key not in _ALLOWED_TYPES:
+            return None
+        # Charter contract: a proposal without grounding evidence does not
+        # ship (the schema demands the report lines that ground it).
+        if not evidence:
+            logger.debug("Thinking item dropped (no grounding evidence): %s",
+                         title[:60])
             return None
         try:
             priority = float(item.get("priority", 0.5))
         except (TypeError, ValueError):
             priority = 0.5
         priority = max(0.0, min(_MAX_PRIORITY, priority))
+        try:
+            confidence = max(0.0, min(1.0, float(item.get("confidence", 0.5))))
+        except (TypeError, ValueError):
+            confidence = 0.5
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
         return Initiative(
             id=f"init-think-{uuid.uuid4().hex[:12]}",
@@ -192,8 +205,12 @@ class SelfDirectedThinker:
             priority=priority,
             rationale=f"[self-directed thinking] {rationale}" if rationale
             else "[self-directed thinking]",
-            action_hint=None,  # never directly executable — see docstring
+            action_hint=None,  # never directly executable (see docstring)
             dedup_key=f"thinking:{slug}",
+            # Stated confidence + evidence ride along for trust-engine
+            # calibration (stated vs realized) and provenance.
+            trigger_data={"stated_confidence": confidence,
+                          "evidence": evidence[:400]},
         )
 
     def _remember(self, key: Optional[str]) -> None:

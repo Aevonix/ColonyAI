@@ -70,23 +70,8 @@ def _default_allowed_types() -> set[str]:
 
 _DEFAULT_TYPES = _default_allowed_types()
 
-_SYSTEM_PROMPT = """\
-You are an autonomous initiative executor for Colony, a personal \
-intelligence system. You have been given an initiative to process.
-
-Your job:
-1. Understand what the initiative is asking for.
-2. Use the available tools to gather context and take action.
-3. Report a clear, concise result describing what you did.
-
-Guidelines:
-- Be direct and efficient. Use the minimum tools needed.
-- If the initiative involves a person, look up their relationship first.
-- If the initiative requires sending a message, compose it carefully.
-- If you cannot complete the initiative (missing info, blocked), say so \
-clearly so it can be retried or escalated.
-- Never fabricate information. Use tools to verify facts.
-"""
+# System prompts compose through the shared cognition charter
+# (cognition/charter.py, role "executor"); see _build_system_prompt below.
 
 
 def _build_initiative_prompt(initiative: Any) -> str:
@@ -386,45 +371,11 @@ class InitiativeExecutorService:
             session_id = f"executor-{iid}"
             is_research = itype in ("research", "knowledge_acquisition")
 
-            # Make the reasoner aware of standing boundaries (soft layer atop the
-            # hard gate above and the per-tool gate below).
-            system_prompt = _SYSTEM_PROMPT
-            if self._directives is not None:
-                try:
-                    brief = self._directives.context_brief()
-                    if brief:
-                        system_prompt = (
-                            _SYSTEM_PROMPT
-                            + "\n\n## Standing boundaries from the owner "
-                            + "(obey without exception)\n" + brief
-                        )
-                except Exception:
-                    pass
-
-            # Relevant past procedures (item 3) + self-assessment (item 4):
-            # purely additive prompt context; informs, never acts.
-            if self._skills is not None:
-                try:
-                    from colony_sidecar.skills_memory import (
-                        format_block, relevant_skills, skills_enabled,
-                    )
-                    if skills_enabled():
-                        block = format_block(
-                            relevant_skills(self._skills,
-                                            f"{itype} {getattr(initiative, 'description', '')}",
-                                            k=3, domain=itype),
-                            strategy_note=self._skills.get_note(itype))
-                        if block:
-                            system_prompt += "\n\n" + block
-                except Exception:
-                    logger.debug("skills block failed", exc_info=True)
-            if self._self_model is not None:
-                try:
-                    sm_brief = self._self_model.brief()
-                    if sm_brief:
-                        system_prompt += "\n\n## Self-assessment\n" + sm_brief
-                except Exception:
-                    pass
+            # Charter-composed system prompt: shared doctrine + executor role
+            # + injected self-model brief, boundaries (soft layer atop the
+            # hard gate above and the per-tool gate below), retrieved
+            # procedure memory, and avoid-lines from past failures.
+            system_prompt = self._build_system_prompt(initiative, itype)
 
             # Conversation accumulated across continuation rounds. The reasoning
             # loop runs its own internal tool loop, but returns ``needs_tool``
@@ -461,7 +412,7 @@ class InitiativeExecutorService:
                         iid, elapsed, total_tokens, iterations,
                         response_text[:120],
                     )
-                    self._record_outcome(itype, "success", elapsed)
+                    self._record_outcome(itype, "success", elapsed, initiative=initiative)
                     await self._maybe_distill(initiative, itype, response_text)
                     done = True
                     break
@@ -476,7 +427,7 @@ class InitiativeExecutorService:
                     self._record_outcome(
                         itype,
                         "timeout" if _is_timeout_error(result.error) else "failure",
-                        time.monotonic() - start)
+                        time.monotonic() - start, initiative=initiative)
                     self._note_failure(initiative, itype, result.error or "")
                     done = True
                     break
@@ -579,7 +530,8 @@ class InitiativeExecutorService:
                 self._stats["initiatives_failed"] += 1
                 self._stats["total_tokens"] += total_tokens
                 self._record_outcome(itype, "failure",
-                                     time.monotonic() - start)
+                                     time.monotonic() - start,
+                                     initiative=initiative)
                 logger.warning(
                     "Initiative %s hit tool-loop cap (%d rounds) without completing",
                     iid, self._max_tool_iterations,
@@ -592,7 +544,7 @@ class InitiativeExecutorService:
             self._stats["initiatives_failed"] += 1
             self._record_outcome(
                 itype, "timeout" if _is_timeout_error(str(exc)) else "failure",
-                elapsed)
+                elapsed, initiative=initiative)
 
         self._stats["initiatives_processed"] += 1
 
@@ -600,12 +552,68 @@ class InitiativeExecutorService:
     # Self-model + skills-memory hooks (items 3 + 4)
     # ------------------------------------------------------------------
 
+    def _build_system_prompt(self, initiative: Any, itype: str) -> str:
+        """Compose the executor prompt through the shared charter."""
+        self_brief = boundaries = skills_block = None
+        corrections: list[str] = []
+        if self._directives is not None:
+            try:
+                boundaries = self._directives.context_brief() or None
+            except Exception:
+                pass
+        if self._self_model is not None:
+            try:
+                self_brief = self._self_model.brief() or None
+            except Exception:
+                pass
+        if self._skills is not None:
+            try:
+                from colony_sidecar.skills_memory import (
+                    format_block, relevant_skills, skills_enabled,
+                )
+                if skills_enabled():
+                    skills_block = format_block(relevant_skills(
+                        self._skills,
+                        f"{itype} {getattr(initiative, 'description', '')}",
+                        k=3, domain=itype)) or None
+                    # Failure post-mortems become avoid-lines.
+                    note = self._skills.get_note(itype)
+                    corrections = [ln.lstrip("- ").strip()
+                                   for ln in note.splitlines() if ln.strip()]
+            except Exception:
+                logger.debug("skills block failed", exc_info=True)
+        try:
+            from colony_sidecar.cognition.charter import build_system_prompt
+            return build_system_prompt(
+                "executor", self_brief=self_brief, boundaries=boundaries,
+                skills=skills_block, corrections=corrections or None)
+        except Exception:
+            logger.debug("charter compose failed; minimal fallback",
+                         exc_info=True)
+            return ("You execute one initiative for Colony using the "
+                    "available tools; report a truthful result."
+                    + (f"\n\nStanding boundaries (obey):\n{boundaries}"
+                       if boundaries else ""))
+
     def _record_outcome(self, itype: str, outcome: str,
-                        latency: Optional[float] = None) -> None:
+                        latency: Optional[float] = None,
+                        initiative: Any = None) -> None:
         if self._self_model is None:
             return
         try:
-            self._self_model.record(itype, outcome, latency_secs=latency)
+            # Stated-vs-realized calibration: a thinker/planner-stated
+            # confidence rides in the initiative context (charter contract).
+            stated = None
+            if initiative is not None:
+                ctx = getattr(initiative, "context", None) or {}
+                if isinstance(ctx, dict):
+                    stated = ctx.get("stated_confidence")
+                    try:
+                        stated = float(stated) if stated is not None else None
+                    except (TypeError, ValueError):
+                        stated = None
+            self._self_model.record(itype, outcome, latency_secs=latency,
+                                    stated_confidence=stated)
         except Exception:
             pass
 
