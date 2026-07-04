@@ -110,9 +110,48 @@ class TrustEngine:
                     demotions INTEGER DEFAULT 0,
                     graduated_at REAL, updated_at REAL
                 )""")
+            # Durable notice queue: a graduation/demotion notice must survive
+            # restarts until the owner actually receives it (Amendment 1.2).
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS trust_notices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    domain TEXT, stage TEXT, prior TEXT,
+                    demotion INTEGER DEFAULT 0, reason TEXT,
+                    ts REAL, delivered INTEGER DEFAULT 0
+                )""")
             self._conn.commit()
-        # Owner notifications queued by sync code, drained by an async phase.
+        # Back-compat in-process mirror (tests peek at it); the durable queue
+        # in trust_notices is authoritative.
         self.pending_notices: deque = deque(maxlen=50)
+
+    # -- durable notice queue ----------------------------------------------
+    def _queue_notice(self, notice: Dict[str, Any]) -> None:
+        self.pending_notices.append(notice)
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO trust_notices (domain, stage, prior, "
+                    "demotion, reason, ts) VALUES (?, ?, ?, ?, ?, ?)",
+                    (notice.get("domain"), notice.get("stage"),
+                     notice.get("prior"), 1 if notice.get("demotion") else 0,
+                     notice.get("reason"), notice.get("ts")))
+                self._conn.commit()
+        except Exception:
+            logger.debug("trust notice persist failed", exc_info=True)
+
+    def undelivered_notices(self, limit: int = 10) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM trust_notices WHERE delivered=0 "
+                "ORDER BY ts ASC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_notice_delivered(self, notice_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE trust_notices SET delivered=1 WHERE id=?",
+                (notice_id,))
+            self._conn.commit()
 
     # -- confidence -------------------------------------------------------
     def confidence(self, domain: str) -> float:
@@ -171,7 +210,7 @@ class TrustEngine:
                 reasoning=reason, confidence=self.confidence(domain),
                 decision="noted")
         if notify:
-            self.pending_notices.append({
+            self._queue_notice({
                 "domain": domain, "stage": stage, "prior": prior,
                 "demotion": demotion, "reason": reason, "ts": now,
             })

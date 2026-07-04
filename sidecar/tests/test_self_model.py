@@ -196,6 +196,19 @@ def test_autograduate_disable(monkeypatch):
     assert t.stage("held") == "shadow"
 
 
+def test_trust_notices_durable_across_instances(tmp_path):
+    db = str(tmp_path / "trust.db")
+    store = CompetenceStore()
+    t = TrustEngine(store, db_path=db, journal=ActionJournal())
+    t.set_stage("research", "ask_first", reason="calibrated")
+    # a fresh engine (post-restart) still sees the undelivered notice
+    t2 = TrustEngine(CompetenceStore(), db_path=db, journal=ActionJournal())
+    notices = t2.undelivered_notices()
+    assert len(notices) == 1 and notices[0]["domain"] == "research"
+    t2.mark_notice_delivered(notices[0]["id"])
+    assert t2.undelivered_notices() == []
+
+
 # ---------------------------------------------------------------------------
 # Adaptive delivery cap
 # ---------------------------------------------------------------------------

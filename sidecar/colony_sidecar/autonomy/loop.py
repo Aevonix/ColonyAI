@@ -1887,19 +1887,22 @@ class AutonomyLoop:
             logger.error("Phase projects error: %s", exc, exc_info=True)
 
     async def _phase_trust_notices(self) -> None:
-        """Drain trust-engine graduation/demotion notices to the owner
-        (Amendment 1.2: notifications, not permission requests)."""
+        """Deliver trust-engine graduation/demotion notices to the owner
+        (Amendment 1.2: notifications, not permission requests). The queue is
+        durable: a notice retries every tick until a real delivery succeeds,
+        surviving restarts and rate-limit windows."""
         sm = getattr(self._registry, "self_model", None)
         trust = getattr(sm, "trust", None) if sm is not None else None
-        if trust is None or not getattr(trust, "pending_notices", None):
+        if trust is None or not hasattr(trust, "undelivered_notices"):
             return
         delivery = self._registry.delivery
+        if delivery is None:
+            return
         try:
             from colony_sidecar.proposals import Proposal, proposal_to_payload
         except Exception:
             return
-        while trust.pending_notices:
-            n = trust.pending_notices.popleft()
+        for n in trust.undelivered_notices(limit=3):
             try:
                 if n.get("demotion"):
                     title = f"Autonomy pulled back: {n['domain']}"
@@ -1924,12 +1927,14 @@ class AutonomyLoop:
                                      "all autonomy.",
                     source="trust-engine", initiative_type="proposal",
                     confidence=0.85)
-                pstore = getattr(self._registry, "proposal_store", None)
-                if pstore is not None:
-                    pstore.add(prop)
-                if delivery is not None:
-                    await self._route_reachout_delivery(
-                        proposal_to_payload(prop), delivery)
+                delivered = await self._route_reachout_delivery(
+                    proposal_to_payload(prop), delivery)
+                if delivered:
+                    trust.mark_notice_delivered(n["id"])
+                    pstore = getattr(self._registry, "proposal_store", None)
+                    if pstore is not None:
+                        prop.status = "delivered"
+                        pstore.add(prop)
             except Exception:
                 logger.debug("trust notice delivery failed", exc_info=True)
 
