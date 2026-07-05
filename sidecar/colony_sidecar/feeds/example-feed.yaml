@@ -1,0 +1,77 @@
+# Example feed spec — everything a feed instance needs, in one file.
+# Create with:  colony feeds create example-feed.yaml
+# Only name/topic/destination/cadence + one source adapter are required.
+
+name: rust-embedded
+title: Rust Embedded Feed
+topic: >-
+  Rust on microcontrollers and embedded targets: new HAL crates, RTIC and
+  Embassy releases, async-on-bare-metal techniques, and real hardware
+  benchmarks. The goal is catching tools and techniques worth adopting.
+
+audience: personal            # personal | group (group adds community-input handling)
+
+destination:
+  kind: deliver               # deliver | command | file
+  deliver: origin             # harness delivery target: origin, platform:chat_id, ...
+  # kind: command             # pipe the brief to a shell command instead:
+  # send_command: "python3 ~/.hermes/scripts/my-group-send.py 42"
+  # read_back: 'read_chat chat="My Group" limit=100'   # group community input
+  # owner_deliver: origin     # where discovery proposals go (defaults to deliver)
+
+# llm:                        # optional but recommended: pin so global provider
+#   provider: my-provider     # changes can never drift-skip these jobs
+#   model: my/model
+
+cadence:
+  collect: "every 240m"
+  distill: "every 120m"
+  # digest: "0 8 * * *"       # optional daily rollup
+  # alerts: "every 60m"       # optional between-brief P0 pushes
+  # discovery: "every 480m"   # optional new-source research agent
+
+sources:
+  x_searches:
+    - '(embassy OR RTIC OR "embedded-hal") rust'
+  key_accounts: [rustembedded]
+  github_search: "embedded rust hal OR rtic OR embassy"
+  github_keywords: [embedded, hal, rtic, embassy, no_std]
+  hf_keywords: []             # empty = adapter disabled
+  forum_urls: []              # Discourse forums (fetched as <url>.json)
+  forum_title_keywords: []
+  arxiv:
+    categories: [cs.SE]
+    query_terms: [embedded, "real-time"]
+    keywords: [embedded, microcontroller]
+  rss:
+    - {name: rust-blog, url: "https://blog.rust-lang.org/feed.xml"}
+
+registry:                     # tiered source registry used by promotion rules
+  - name: rust-embedded-wg
+    handle: "@rustembedded"
+    category: working_group
+    weight: P0
+    reason: Official embedded WG — every announcement matters.
+    platforms: [x]
+
+scoring:
+  keyword_categories:         # generic keyword->points buckets
+    - {keywords: [rtic, embassy, embedded-hal, no_std], points: 15}
+    - {keywords: [benchmark, latency, interrupt], points: 10}
+  thresholds: {p0: 40, p1: 25, p2: 15}
+
+brief:
+  framing: "What changes for embedded Rust projects because of this?"
+  standard_cap: 5
+  # context_files:            # extra files the distill agent reads if present
+  #   - {path: ~/.hermes/data/my-extra-context.json, label: crate download stats}
+  # extra_instructions: ""    # freeform text appended to the distill prompt
+
+privacy:
+  forbidden:
+    - "private infrastructure details (hardware counts, cluster topology, hostnames, addresses)"
+    - "names of the operator, their contacts, or internal agent/system codenames"
+  # aliases: [DGX Spark]      # allowed public product names
+  # note: ""                  # extra privacy instruction
+
+learning_loop: true           # log unknown-source promotions for registry evolution

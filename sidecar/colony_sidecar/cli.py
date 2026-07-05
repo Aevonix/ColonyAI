@@ -188,6 +188,11 @@ def main() -> None:
 
     persona_sub.add_parser("uninstall", help="Stop services, remove overlays, deregister channels")
 
+    # --- feeds ---
+    feeds_p = sub.add_parser("feeds", help="Manage spec-driven intelligence feeds")
+    feeds_p.add_argument("feeds_args", nargs=argparse.REMAINDER,
+                         help="Feeds subcommand (create/validate/list/status/pause/resume/run/delete)")
+
     # --- agent ---
     agent_p = sub.add_parser("agent", help="Manage connected agents")
     agent_sub = agent_p.add_subparsers(dest="agent_command")
@@ -619,6 +624,10 @@ def main() -> None:
 
     elif args.command == "persona":
         _cmd_persona(args)
+
+    elif args.command == "feeds":
+        from colony_sidecar.feeds.cli import main as feeds_main
+        feeds_main(args.feeds_args)
 
     else:
         parser.print_help()

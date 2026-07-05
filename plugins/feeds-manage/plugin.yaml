@@ -1,0 +1,10 @@
+name: feeds-manage
+version: 0.1.0
+description: |
+  Lets the agent create and manage spec-driven intelligence feeds (Colony feeds
+  framework) conversationally: "keep me informed about X" becomes a validated
+  feed spec + scheduled collect/distill jobs. When the requester doesn't name a
+  destination, the feed delivers to the conversation the request came from.
+author: ColonyAI
+entry_point: __init__.py
+category: general
