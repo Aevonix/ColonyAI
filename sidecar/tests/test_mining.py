@@ -317,8 +317,9 @@ def test_consultation_via_tool_activity_file(store, tmp_path, monkeypatch):
     )
     monkeypatch.setenv("COLONY_TOOL_ACTIVITY_FILE", str(activity))
     m = EscalationMiner(store)
+    # tools NOT sent on sync: terminal-use must come from the activity stream
     rec = _observe(m, user="fix it", assistant="done, applied the fix",
-                   tools=["terminal"], session="sA")
+                   tools=[], session="sA")
     assert rec is not None and rec.kind == "consultation"
     # other session's activity does not leak into detection
     rec2 = _observe(m, user="unrelated", assistant="plain answer",

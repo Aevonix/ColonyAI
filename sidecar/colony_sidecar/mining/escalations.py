@@ -43,21 +43,22 @@ logger = logging.getLogger(__name__)
 _TERMINAL_TOOLS = {"terminal", "shell", "bash", "execute_code", "shell_exec"}
 
 
-def _session_tool_text(session_id: str, max_lines: int = 400) -> str:
-    """Recent host tool-activity summaries for a session (optional source).
+def _session_tool_activity(session_id: str, max_lines: int = 400):
+    """Recent host tool-activity for a session: (summaries_text, tool_names).
 
     Consultations often show only in the tool COMMANDS (e.g. `claude -p ...`
     run via the terminal tool), not in the reply text. When the host exposes
     its tool-activity stream (COLONY_TOOL_ACTIVITY_FILE, a JSONL of
     {ts, session, tool, summary}), include those summaries in the detection
-    text. Best-effort: any failure returns "".
+    text and use the tool names as a terminal-use fallback signal.
+    Best-effort: any failure returns ("", empty set).
     """
     import json as _json
     import os as _os
 
     path = _os.environ.get("COLONY_TOOL_ACTIVITY_FILE", "")
     if not path or not session_id:
-        return ""
+        return "", set()
     try:
         with open(_os.path.expanduser(path), "rb") as f:
             try:
@@ -66,16 +67,20 @@ def _session_tool_text(session_id: str, max_lines: int = 400) -> str:
                 f.seek(0)
             lines = f.read().decode("utf-8", "replace").splitlines()[-max_lines:]
         out = []
+        tools = set()
         for ln in lines:
             try:
                 r = _json.loads(ln)
             except Exception:
                 continue
-            if r.get("session") == session_id and r.get("summary"):
-                out.append(str(r["summary"]))
-        return "\n".join(out[-50:])
+            if r.get("session") == session_id:
+                if r.get("tool"):
+                    tools.add(str(r["tool"]))
+                if r.get("summary"):
+                    out.append(str(r["summary"]))
+        return "\n".join(out[-50:]), tools
     except Exception:
-        return ""
+        return "", set()
 
 
 class EscalationMiner:
@@ -155,12 +160,15 @@ class EscalationMiner:
         self, turn: MinedTurn, prior: Optional[MinedTurn]
     ) -> Optional[EscalationRecord]:
         text = f"{turn.user_text}\n{turn.assistant_text}\n{turn.summary}"
-        tool_text = _session_tool_text(turn.session_id)
+        tool_text, activity_tools = _session_tool_activity(turn.session_id)
         if tool_text:
             text = f"{text}\n{tool_text}"
 
-        # (a) build-agent consultation
-        ran_terminal = any(t in _TERMINAL_TOOLS for t in turn.tools_used)
+        # (a) build-agent consultation. Terminal-use comes from the synced
+        # tools_used when the host sends it, with the host tool-activity
+        # stream as the fallback source.
+        all_tools = set(turn.tools_used) | activity_tools
+        ran_terminal = any(t in _TERMINAL_TOOLS for t in all_tools)
         pattern = consult_regex()
         if ran_terminal and pattern:
             try:

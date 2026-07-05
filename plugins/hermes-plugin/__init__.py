@@ -1076,6 +1076,7 @@ def register(ctx):
         return cid
 
     _sender_by_session = {}   # session_id -> (platform, sender): survives concurrent sessions
+    _tools_by_session = {}    # session_id -> set(tool names) used this turn window
 
     def _pre_llm_call(**kwargs):
         # Capture session metadata (used by turn journaling) + resolve contact.
@@ -1136,6 +1137,7 @@ def register(ctx):
                     assistant_message=assistant_msg[:2000],
                     summary=summary[:1000],
                     model=str(kwargs.get("model", "") or ""),
+                    tools_used=sorted(_tools_by_session.pop(session_id, set()))[:20],
                 )
             except Exception as exc:
                 logger.debug("sync_turn (post_llm_call) failed: %s", exc)
@@ -1174,6 +1176,11 @@ def register(ctx):
         try:
             import time as _time
             tool = kwargs.get("tool_name", "") or ""
+            _sid = str(kwargs.get("session_id", "") or "")
+            if _sid and tool:
+                _tools_by_session.setdefault(_sid, set()).add(tool)
+                if len(_tools_by_session) > 256:
+                    _tools_by_session.pop(next(iter(_tools_by_session)))
             summary = _summarize_tool(tool, kwargs.get("args") or {})
             rec = {
                 "ts": round(_time.time(), 3),
