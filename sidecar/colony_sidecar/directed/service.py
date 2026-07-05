@@ -34,8 +34,9 @@ logger = logging.getLogger(__name__)
 
 
 def directed_mode() -> str:
-    m = os.environ.get("COLONY_DIRECTED_MODE", "dry_run").strip().lower()
-    return m if m in ("off", "dry_run", "live") else "dry_run"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_DIRECTED_MODE", ("off", "dry_run", "live"),
+                   "dry_run")
 
 
 def _dispatch_url() -> str:

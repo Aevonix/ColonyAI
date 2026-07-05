@@ -32,8 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 def populate_mode() -> str:
-    m = os.environ.get("COLONY_WORLD_POPULATE_MODE", "shadow").strip().lower()
-    return m if m in ("off", "shadow", "live") else "shadow"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_WORLD_POPULATE_MODE",
+                   ("off", "shadow", "live"), "shadow")
 
 
 @dataclass

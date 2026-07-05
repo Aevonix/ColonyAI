@@ -38,8 +38,8 @@ def connectors_enabled() -> bool:
 
 
 def connectors_mode() -> str:
-    m = os.environ.get("COLONY_CONNECTORS_MODE", "off").strip().lower()
-    return m if m in ("off", "shadow", "live") else "off"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_CONNECTORS_MODE", ("off", "shadow", "live"), "off")
 
 
 class ConnectorManager:

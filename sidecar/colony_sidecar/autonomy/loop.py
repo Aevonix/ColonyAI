@@ -512,11 +512,17 @@ class AutonomyLoop:
         Disabled unless COLONY_ENABLE_INTERNAL_THINKING=true.
         """
         # Mode: off | shadow | live (COLONY_THINKING_MODE). Back-compat:
-        # COLONY_ENABLE_INTERNAL_THINKING=true means "live".
+        # COLONY_ENABLE_INTERNAL_THINKING=true means "live". The autonomy
+        # preset fills the unset case (explicit env always wins).
         mode = os.environ.get("COLONY_THINKING_MODE", "").strip().lower()
         if mode not in ("off", "shadow", "live"):
-            mode = "live" if os.environ.get(
-                "COLONY_ENABLE_INTERNAL_THINKING", "false").lower() == "true" else "off"
+            if os.environ.get(
+                    "COLONY_ENABLE_INTERNAL_THINKING", "false").lower() == "true":
+                mode = "live"
+            else:
+                from colony_sidecar.util.autonomy_preset import resolve
+                mode = resolve("COLONY_THINKING_MODE",
+                               ("off", "shadow", "live"), "off")
         if mode == "off":
             return
         router = self._registry.llm_router

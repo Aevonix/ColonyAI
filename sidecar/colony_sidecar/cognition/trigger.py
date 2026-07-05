@@ -22,7 +22,8 @@ _last_trigger_session: Optional[str] = None
 
 
 def _cognition_enabled() -> bool:
-    return os.environ.get("COLONY_COGNITION_ENABLED", "false").lower() in ("true", "1", "yes")
+    from colony_sidecar.util.autonomy_preset import resolve_bool
+    return resolve_bool("COLONY_COGNITION_ENABLED", False)
 
 
 def _cognition_model() -> Optional[str]:

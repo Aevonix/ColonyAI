@@ -22,8 +22,9 @@ def skills_enabled() -> bool:
 
 
 def skills_distill_mode() -> str:
-    m = os.environ.get("COLONY_SKILLS_DISTILL", "shadow").strip().lower()
-    return m if m in ("off", "shadow", "live") else "shadow"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_SKILLS_DISTILL",
+                   ("off", "shadow", "live"), "shadow")
 
 
 def skills_max() -> int:

@@ -53,8 +53,8 @@ _MUTATING_RISK = frozenset({"low", "medium", "high", "outbound", "destructive"})
 
 
 def workers_mode() -> str:
-    m = os.environ.get("COLONY_WORKERS_MODE", "shadow").strip().lower()
-    return m if m in ("off", "shadow", "live") else "shadow"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_WORKERS_MODE", ("off", "shadow", "live"), "shadow")
 
 
 class WorkerGovernor:

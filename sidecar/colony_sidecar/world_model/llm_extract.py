@@ -58,8 +58,9 @@ Respond with ONLY a JSON object (no prose, no markdown fences):
 
 
 def llm_extract_mode() -> str:
-    m = os.environ.get("COLONY_WORLD_LLM_EXTRACT", "off").strip().lower()
-    return m if m in ("off", "shadow", "live") else "off"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_WORLD_LLM_EXTRACT",
+                   ("off", "shadow", "live"), "off")
 
 
 def _endpoint() -> Dict[str, str]:

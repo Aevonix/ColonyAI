@@ -9,8 +9,8 @@ from typing import Any, Dict, Optional
 
 
 def beliefs_mode() -> str:
-    m = os.environ.get("COLONY_BELIEFS_MODE", "shadow").strip().lower()
-    return m if m in ("off", "shadow", "live") else "shadow"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_BELIEFS_MODE", ("off", "shadow", "live"), "shadow")
 
 
 def stale_ttl_days() -> float:

@@ -21,8 +21,8 @@ STEP_STATUSES = ("pending", "active", "done", "failed", "skipped")
 
 
 def projects_mode() -> str:
-    m = os.environ.get("COLONY_PROJECTS_MODE", "shadow").strip().lower()
-    return m if m in ("off", "shadow", "live") else "shadow"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_PROJECTS_MODE", ("off", "shadow", "live"), "shadow")
 
 
 def projects_max_steps() -> int:

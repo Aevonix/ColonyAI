@@ -37,8 +37,9 @@ ESCALATION_KINDS = ("consultation", "provider_escalation")
 
 
 def mining_mode() -> str:
-    m = os.environ.get("COLONY_ESCALATION_MINING", "shadow").strip().lower()
-    return m if m in ("off", "shadow", "live") else "shadow"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_ESCALATION_MINING",
+                   ("off", "shadow", "live"), "shadow")
 
 
 def corpus_export_enabled() -> bool:

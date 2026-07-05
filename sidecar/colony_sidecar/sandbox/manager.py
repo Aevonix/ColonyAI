@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 def sandbox_mode() -> str:
-    m = os.environ.get("COLONY_SANDBOX_MODE", "off").strip().lower()
-    return m if m in ("off", "dry_run", "live") else "off"
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_SANDBOX_MODE", ("off", "dry_run", "live"), "off")
 
 
 def _fenv(name: str, default: float) -> float:

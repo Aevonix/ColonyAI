@@ -84,7 +84,8 @@ def _build_user_prompt(user_message: str, assistant_message: str,
 
 
 def introspect_enabled() -> bool:
-    return os.environ.get("COLONY_INTROSPECT_ENABLED", "false").lower() in ("true", "1", "yes")
+    from colony_sidecar.util.autonomy_preset import resolve_bool
+    return resolve_bool("COLONY_INTROSPECT_ENABLED", False)
 
 
 def _config() -> Dict[str, Any]:
