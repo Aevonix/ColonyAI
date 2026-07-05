@@ -141,12 +141,16 @@ def run_patch(path: str, apply: bool) -> dict:
         rc, out = 125, f"could not execute: {exc}"
 
     last = out.splitlines()[-1] if out else f"exit {rc}"
-    upper = out.upper()
     if rc == 0:
-        state = "applied" if "APPLIED" in upper else "ok"
+        # Contract: a fresh apply announces itself with an "APPLIED" prefix on
+        # the last output line. Prefix-match (not substring) so loose wordings
+        # like "already applied" from contract-adjacent scripts read as OK
+        # instead of triggering a false re-applied/restart-needed signal on
+        # every doctor run.
+        state = "applied" if last.upper().startswith("APPLIED") else "ok"
     elif rc == 1 and not apply:
         state = "missing"
-    elif rc == 2 or "FUNDAMENTAL_CHANGE" in upper:
+    elif rc == 2 or "FUNDAMENTAL_CHANGE" in out.upper():
         state = "fundamental-change"
     elif rc == 3:
         state = "rollback"
