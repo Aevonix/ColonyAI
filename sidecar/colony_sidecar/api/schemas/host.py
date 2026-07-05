@@ -434,6 +434,10 @@ class TurnSyncRequest(BaseModel):
     # the sidecar runs extraction from the raw messages.
     user_message: Optional[HostMessage] = None
     assistant_message: Optional[HostMessage] = None
+    # Model that produced the assistant side of this turn (optional, additive).
+    # Lets the mining layer detect provider escalations / cloud failovers from
+    # real per-turn metadata instead of guessing from text.
+    model: Optional[str] = None
 
 
 class TurnSyncResponse(BaseModel):

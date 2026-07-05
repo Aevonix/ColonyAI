@@ -191,6 +191,7 @@ class ColonyClient:
         topics: Optional[List[str]] = None,
         entities: Optional[List[str]] = None,
         summary: str = "",
+        model: str = "",
     ) -> bool:
         """POST turn summary to Colony's turns/sync endpoint.
 
@@ -211,6 +212,8 @@ class ColonyClient:
                 payload["assistant_message"] = {"role": "assistant", "content": assistant_message}
             if tools_used:
                 payload["tools_used"] = tools_used
+            if model:
+                payload["model"] = model
             if topics:
                 payload["topics"] = topics
             if entities:

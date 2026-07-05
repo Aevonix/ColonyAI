@@ -2341,6 +2341,26 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
             })
         except Exception:
             logger.debug("journal conversation.turn failed", exc_info=True)
+    # Mining: verbatim turn capture + escalation detection (best-effort; the
+    # miner mode gates everything internally, see colony_sidecar/mining/).
+    try:
+        from colony_sidecar.api.routers.mining import get_mining_engine as _get_miner
+        _miner = _get_miner()
+        if _miner is not None:
+            _miner.observe_turn(
+                session_id=body.context.session_id,
+                contact_id=body.context.contact_id,
+                channel_id=body.context.channel_id or "",
+                user_text=(getattr(body.user_message, "content", "") or "")
+                          if body.user_message else "",
+                assistant_text=(getattr(body.assistant_message, "content", "") or "")
+                               if body.assistant_message else "",
+                summary=body.summary or "",
+                tools_used=body.tools_used,
+                model=body.model or "",
+            )
+    except Exception:
+        logger.debug("mining observe_turn failed", exc_info=True)
     try:
         if _contacts_store is not None and body.context.contact_id:
             await _contacts_store.record_interaction(body.context.contact_id)

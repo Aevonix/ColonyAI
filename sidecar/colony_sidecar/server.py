@@ -589,6 +589,35 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("SkillStore init failed: %s", exc)
 
+    # --- Mining: escalation miner + verbatim turn capture (corpus source) ---
+    try:
+        from colony_sidecar.mining import EscalationMiner, MiningStore, mining_mode
+        from colony_sidecar.api.routers.mining import set_mining
+
+        if mining_mode() != "off":
+            _mining_store_obj = MiningStore(
+                db_path=str(state_dir / "colony-mining.db"))
+
+            def _mining_router_getter():
+                try:
+                    from colony_sidecar.api.routers.host import _reasoning_loop
+                    return getattr(_reasoning_loop, "_model", None)
+                except Exception:
+                    return None
+
+            _mining_engine_obj = EscalationMiner(
+                _mining_store_obj,
+                skill_store=_skills_mem_store,
+                router_getter=_mining_router_getter,
+            )
+            set_mining(_mining_store_obj, _mining_engine_obj, state_dir)
+            logger.info("EscalationMiner initialized (db=%s, mode=%s)",
+                        state_dir / "colony-mining.db", mining_mode())
+        else:
+            logger.info("Mining disabled (COLONY_ESCALATION_MINING=off)")
+    except Exception as exc:
+        logger.warning("Mining init failed: %s", exc)
+
     # --- Read-only repo mirrors + directed action (option A) ---
     try:
         from colony_sidecar.repos import RepoMirrorManager
@@ -1643,6 +1672,8 @@ def create_app() -> FastAPI:
     # Observations router (v0.16.0) — agent-as-sensor ingestion
     from colony_sidecar.api.routers import observations as observations_router
     app.include_router(observations_router.router)
+    from colony_sidecar.api.routers import mining as mining_router
+    app.include_router(mining_router.router)
 
     # MCP streamable HTTP endpoint
     try:

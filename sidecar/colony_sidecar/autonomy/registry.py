@@ -263,6 +263,12 @@ class SubsystemRegistry:
         return _belief_engine
 
     @property
+    def mining_engine(self) -> Any:
+        """EscalationMiner (escalation mining + corpus capture)."""
+        from colony_sidecar.api.routers.mining import _mining_engine
+        return _mining_engine
+
+    @property
     def world_llm_extractor(self) -> Any:
         """LLM-assisted world-model extractor (batch, journaled)."""
         from colony_sidecar.api.routers.host import _world_llm_extractor

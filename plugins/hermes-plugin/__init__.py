@@ -1135,6 +1135,7 @@ def register(ctx):
                     user_message=user_msg[:2000],
                     assistant_message=assistant_msg[:2000],
                     summary=summary[:1000],
+                    model=str(kwargs.get("model", "") or ""),
                 )
             except Exception as exc:
                 logger.debug("sync_turn (post_llm_call) failed: %s", exc)

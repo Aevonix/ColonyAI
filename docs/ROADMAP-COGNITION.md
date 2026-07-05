@@ -651,6 +651,40 @@ notification-routing hook exists at 0.18; re-check each release). Patches
 whose behavior 0.18 can express natively (sampling overrides via
 llm_request middleware) should migrate off the registry when next touched.
 
+## Backlog -> active: self-improvement mining (landed 2026-07-05)
+
+Two components moved from backlog to active as owner-approved, model-agnostic
+self-improvement infrastructure (concept provenance: inspired by external
+scaffolding work, drowzeys Keys-Setup: cloud/escalation corrections become
+local supervision, serving logs become training data. Concepts only; no code
+adopted, upstream is unlicensed and immature):
+
+- ESCALATION MINER (`sidecar/colony_sidecar/mining/`): detects escalation
+  events in the live turn stream: build-agent consultations (terminal-class
+  tool ran AND text matches COLONY_ESCALATION_CONSULT_REGEX) and heavy-model /
+  cloud-failover turns (new optional per-turn `model` field on turns/sync,
+  matched against COLONY_ESCALATION_HEAVY_RE). Records bank task context, the
+  prior local attempt in-session, the escalated answer, channel, model, ts,
+  and a lightweight next-turn outcome into `colony-mining.db`. Consumers:
+  (i) skills-memory distillation (live mode feeds records into
+  distill_from_completion, domain "escalation": the situation was hard enough
+  to escalate, exactly what deserves a skill); (ii) golden eval cases via
+  GET /v1/host/mining/escalations; (iii) the corpus exporter below.
+  COLONY_ESCALATION_MINING=off|shadow|live, default shadow.
+- TRAINING-CORPUS EXPORTER (`mining/corpus.py` + POST
+  /v1/host/mining/corpus/export): verbatim turn capture (the graph/journal/
+  comms sinks are salience-gated or rolling; none is a verbatim corpus) is
+  exported as fine-tune-ready JSONL ({"conversations":[{role,content}...]},
+  the DeepSpec/GeneralParser contract: first non-system message is user,
+  alternating). Filters: channels, date range, contact (owner-only default
+  via COLONY_OWNER_CONTACT_ID), quality gate (reachout_policy sanitize +
+  is_system_origin, machine-marker stripping, cron/self exclusion), dedup,
+  optional redact. PII stance: everything stays under COLONY_STATE_DIR;
+  exports write only to state_dir/exports/; nothing uploads. Runs are
+  journaled (mining.corpus_export). This is the mining half of the
+  continuous-draft-improvement loop; the training pipeline consumes the
+  exports from the state dir.
+
 ## Program State (update as phases land)
 
 - 2026-07-04: Plan committed. Build not started.
