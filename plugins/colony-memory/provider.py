@@ -571,6 +571,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
     def initialize(self, session_id: str, **kwargs) -> None:
         """Initialize for a session."""
         self._session_id = session_id
+        self._rw_touch_session(session_id)
         self._platform = kwargs.get("platform", "cli")
         self._hermes_home = kwargs.get("hermes_home", "")
         if not self._api_key:
@@ -711,8 +712,164 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         if self._cached_context:
             ctx = self._cached_context
             self._cached_context = ""  # one-shot per turn
+        else:
+            ctx = self._prefetch_sync(query, session_id=session_id)
+        return self._merge_context_block(ctx, self._reply_thread_window(query, session_id=session_id))
+
+
+    # -- Reply thread-window (precise in-context predicate, heuristic fallback) --
+    _RW_RECENT_HOURS = float(os.environ.get("COLONY_REPLY_WINDOW_RECENT_HOURS", "6"))
+    _RW_MSGS = int(os.environ.get("COLONY_REPLY_WINDOW_MSGS", "5"))
+    _RW_BUDGET = int(os.environ.get("COLONY_REPLY_WINDOW_BUDGET", "1200"))
+    _RW_LOOKBACK = os.environ.get("COLONY_REPLY_WINDOW_LOOKBACK", "14d")
+    _RW_STATE_MAX = 64
+
+    def _rw_touch_session(self, session_id: str) -> None:
+        """Record the start of a session's verbatim context window."""
+        if not session_id:
+            return
+        import time as _time
+        states = getattr(self, "_rw_state", None)
+        if states is None:
+            states = {}
+            self._rw_state = states
+        if session_id not in states:
+            states[session_id] = {"start": _time.time(), "compress": 0.0}
+            while len(states) > self._RW_STATE_MAX:
+                states.pop(next(iter(states)))
+
+    def _rw_mark_compressed(self, session_id: str) -> None:
+        """Older turns just left the verbatim window: bump the cutoff."""
+        import time as _time
+        st = getattr(self, "_rw_state", {}).get(session_id or self._session_id)
+        if st:
+            st["compress"] = _time.time()
+
+    def _reply_thread_window(self, query: str, session_id: str = "") -> str:
+        """When the inbound turn replies to a message (bridge [[rc ...]] marker),
+        fetch ~N timeline turns around the replied-to message and inject ONLY the
+        ones not already in the live session context.
+
+        IN-CONTEXT PREDICATE (per message): in-context iff it belongs to the
+        CURRENT session's channel AND its timestamp > max(session_start_ts,
+        last_compress_ts). Everything else (older than the window, pre-reset,
+        compressed away, or from ANOTHER channel of the thread) is missing and
+        gets injected, budget-capped, channel-labeled when cross-channel.
+
+        FALLBACK: when session state is cold (provider restarted mid-session) or
+        timestamps are unusable, degrade to the anchor-age heuristic (< 6h: skip;
+        older: inject the whole window). Any failure returns "" (no block beats a
+        broken turn)."""
+        import re as _re
+        import time as _time
+        from datetime import datetime as _dt
+
+        def _ets(e):
+            try:
+                at = str(e.get("at") or "")
+                return _dt.fromisoformat(at.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                return None
+
+        try:
+            q = query or ""
+            if "[[rc id=" not in q:
+                return ""
+            hm = _re.search(r'\[replying to [^:\]]+: "(.*?)"\]', q)
+            snippet = (hm.group(1) if hm else "").strip().rstrip("\u2026").strip()
+            if len(snippet) < 12:
+                return ""  # media/very short quotes: too weak to match reliably
+            channel = ""
+            try:
+                channel = self._resolve_channel_id()
+            except Exception:
+                pass
+            with httpx.Client(timeout=5) as client:
+                resp = client.get(
+                    f"{self.sidecar_url}/v1/host/timeline",
+                    headers=self._headers(),
+                    params={"since": self._RW_LOOKBACK,
+                            "types": "conversation.turn", "limit": 500},
+                )
+                resp.raise_for_status()
+                events = (resp.json() or {}).get("events") or []
+
+            def _norm(s):
+                return _re.sub(r"\s+", " ", str(s or "")).casefold()
+
+            needle = _norm(snippet)[:80]
+            idx = None
+            for i, e in enumerate(events):  # newest first
+                if needle and needle in _norm((e.get("data") or {}).get("summary")):
+                    idx = i
+                    break
+            if idx is None:
+                return ""
+            lo = max(0, idx - self._RW_MSGS)
+            hi = min(len(events), idx + self._RW_MSGS + 1)
+            window = list(reversed(events[lo:hi]))  # oldest first
+            anchor = events[idx]
+
+            st = getattr(self, "_rw_state", {}).get(session_id or self._session_id)
+            if st and channel:
+                # Precise predicate, per message.
+                cutoff = max(st.get("start", 0.0), st.get("compress", 0.0))
+                missing = []
+                for e in window:
+                    ts = _ets(e)
+                    e_ch = ((e.get("data") or {}).get("channel_id") or "")
+                    in_ctx = bool(ts and e_ch == channel and ts > cutoff)
+                    if not in_ctx:
+                        missing.append(e)
+                mode = "predicate"
+            else:
+                # Cold state: anchor-age heuristic on the matched event.
+                ts = _ets(anchor)
+                if ts and (_time.time() - ts) < self._RW_RECENT_HOURS * 3600:
+                    return ""  # recent anchor: assume it is in session context
+                missing = window
+                mode = "heuristic"
+            if not missing:
+                return ""
+            lines, total = [], 0
+            for e in missing:
+                d = e.get("data") or {}
+                s = _re.sub(r"\s+", " ", str(d.get("summary") or "")).strip()
+                if not s:
+                    continue
+                if len(s) > 220:
+                    s = s[:217] + "..."
+                stamp = str(e.get("at") or "")[:16].replace("T", " ")
+                e_ch = str(d.get("channel_id") or "")
+                via = ""
+                if e_ch and channel and e_ch != channel:
+                    via = f" (via {e_ch.split(':', 1)[0]})"
+                mark = "  <-- the replied-to message" if e is anchor else ""
+                line = f"- [{stamp}]{via} {s}{mark}"
+                if total + len(line) + 1 > self._RW_BUDGET:
+                    break
+                lines.append(line)
+                total += len(line) + 1
+            if not lines:
+                return ""
+            logger.info("reply thread-window injected (%d/%d turns, %s mode)",
+                        len(lines), len(window), mode)
+            return ("## Thread context around the replied-to message [priority 70]\n"
+                    "This inbound message replies to an earlier message; conversation "
+                    "turns NOT already in the live context:\n" + "\n".join(lines))
+        except Exception as exc:
+            logger.debug("reply thread-window skipped: %s", exc)
+            return ""
+
+    @staticmethod
+    def _merge_context_block(ctx: str, block: str) -> str:
+        if not block:
             return ctx
-        return self._prefetch_sync(query, session_id=session_id)
+        if not ctx:
+            return block
+        if "</memory-context>" in ctx:
+            return ctx.replace("</memory-context>", "\n\n" + block + "\n</memory-context>", 1)
+        return ctx + "\n\n" + block
 
     def _prefetch_sync(self, query: str, *, session_id: str = "") -> str:
         """Blocking /context/assemble call → formatted context string."""
@@ -1143,6 +1300,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             self._cached_context = ""
             self._prefetch_ready.set()
         self._session_id = new_session_id
+        self._rw_touch_session(new_session_id)
         logger.debug("Colony memory provider switched to session=%s (reset=%s)", new_session_id, reset)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
@@ -1177,6 +1335,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
 
     def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
         """Extract insights before context compression discards old messages."""
+        self._rw_mark_compressed(self._session_id)
         # Best-effort: fire a compressed turn sync so Colony sees the full history
         # before Hermes drops it. This ensures commitments/facts from early turns
         # are not lost.
