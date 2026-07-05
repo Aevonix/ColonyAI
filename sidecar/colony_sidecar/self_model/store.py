@@ -151,10 +151,13 @@ class CompetenceStore:
         errs = [abs(float(e["stated_confidence"])
                     - (1.0 if e["outcome"] == "success" else 0.0))
                 for e in events]
+        realized = sum(1.0 for e in events
+                       if e["outcome"] == "success") / len(events)
         return {"n": len(events),
                 "mean_abs_error": round(sum(errs) / len(errs), 3),
                 "mean_stated": round(sum(float(e["stated_confidence"])
-                                         for e in events) / len(events), 3)}
+                                         for e in events) / len(events), 3),
+                "mean_realized": round(realized, 3)}
 
     def get(self, domain: str) -> Optional[Dict[str, Any]]:
         domain = (domain or "").strip().lower()

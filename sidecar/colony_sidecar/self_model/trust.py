@@ -168,6 +168,18 @@ class TrustEngine:
             except Exception:
                 pass
         conf -= 0.15 * min(violations, 3)         # audit violations bite
+        # Calibration penalty: a domain whose STATED confidences run above
+        # its REALIZED outcomes is overconfident, and its earned trust is
+        # discounted accordingly (capped at -0.2, needs >=5 stated events).
+        # Underconfidence is never penalized.
+        try:
+            calib = self._store.calibration(domain)
+            if calib and calib.get("n", 0) >= 5:
+                over = max(0.0, float(calib.get("mean_stated", 0.0))
+                           - float(calib.get("mean_realized", 0.0)))
+                conf -= min(0.2, 0.5 * over)
+        except Exception:
+            pass
         return max(0.0, min(1.0, conf))
 
     # -- stage persistence --------------------------------------------------

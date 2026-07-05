@@ -59,6 +59,16 @@ class ResponseGate:
         self._l6 = secondary_reviewer or SecondaryReviewer(config)
         self._l7 = SendDelayGate(config, dispatch_store)
         self._audit = audit_log
+        # L6 fails OPEN when no review LLM is injected (a configured-but-
+        # erroring client fails closed). That asymmetry is easy to hit by
+        # misconfiguration, so make the unconfigured state loud at boot.
+        if (getattr(config, "enable_secondary_review", False)
+                and getattr(self._l6, "_llm_client", None) is None):
+            logger.warning(
+                "Gate L6 secondary review is ENABLED but no review LLM is "
+                "configured — every message passes L6 unreviewed (fails "
+                "open). Inject a reviewer client or disable "
+                "enable_secondary_review.")
 
     async def evaluate(self, payload: GatePayload) -> GateDecision:
         """Run all gate layers. Returns decision; does NOT dispatch."""

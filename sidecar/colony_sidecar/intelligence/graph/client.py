@@ -212,6 +212,11 @@ class ColonyGraph:
         """Register a VectorStore for ANN search (replaces Neo4j vector index)."""
         self._vector_store = store
 
+    def set_adaptive_params(self, params: Any) -> None:
+        """Register an AdaptiveParamStore consulted by *recall* for the
+        meta-learned relevance floor (recall.min_relevance)."""
+        self._adaptive_params = params
+
     async def _embed(self, text: str) -> List[float]:
         """Produce an embedding vector for *text* (document side).
 
@@ -675,6 +680,23 @@ class ColonyGraph:
                     # Strength filtering is applied post-hydration from Neo4j below.
                     filter=None,
                 )
+                # Adaptive relevance floor (meta-learning knob): vector hits
+                # scoring below recall.min_relevance are dropped before
+                # hydration. Default 0.0 = no filter; store caps at 0.5 so a
+                # self-adjustment can never starve retrieval.
+                min_relevance = 0.0
+                params = getattr(self, "_adaptive_params", None)
+                if params is not None:
+                    try:
+                        from colony_sidecar.self_model.params import (
+                            PARAM_RECALL_MIN_RELEVANCE,
+                        )
+                        min_relevance = float(params.get(
+                            PARAM_RECALL_MIN_RELEVANCE, default=0.0))
+                    except Exception:
+                        min_relevance = 0.0
+                if min_relevance > 0.0:
+                    results = [r for r in results if r.score >= min_relevance]
                 if results:
                     memory_ids = [r.id for r in results]
                     score_map = {r.id: r.score for r in results}
@@ -1091,10 +1113,8 @@ class ColonyGraph:
     # used as a Cypher injection sink while retaining the escape hatch for
     # known safe ad-hoc queries added here explicitly.
     _ALLOWED_CYPHER: frozenset = frozenset({
-        # StrategyAdjuster._adjust_threshold — persist similarity threshold
-        """MERGE (c:Config {key: "similarity_threshold"})
-                   SET c.value = $threshold, c.updated_at = datetime()
-                   RETURN c.value AS new_value""",
+        # (similarity_threshold Config write removed: adjustments now go
+        # through the AdaptiveParamStore, which consumers actually read.)
         # StrategyAdjuster._recalibrate_baselines — recalculate baseline signals
         """MATCH (p:Person)-[:EXHIBITED]->(s:Signal)
                    WHERE s.timestamp >= datetime() - duration({days: 30})

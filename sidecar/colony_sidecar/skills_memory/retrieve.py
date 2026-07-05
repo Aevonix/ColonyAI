@@ -24,6 +24,14 @@ def relevant_skills(store: Optional[SkillStore], situation: str,
         ov = signature_overlap(sig, s.situation_signature)
         if domain and s.domain == (domain or "").lower():
             ov += 0.05
+        # Track-record weighting: skills that historically informed winning
+        # runs rank up, losers rank down. Laplace prior keeps a fresh skill
+        # neutral (factor 1.0); the executor's outcome attribution feeds
+        # wins/losses, so use changes future retrieval.
+        wins = int(getattr(s, "wins", 0) or 0)
+        losses = int(getattr(s, "losses", 0) or 0)
+        win_rate = (wins + 1.0) / (wins + losses + 2.0)
+        ov *= 0.75 + 0.5 * win_rate
         if ov >= _MIN_OVERLAP:
             scored.append((ov, s))
     scored.sort(key=lambda t: t[0], reverse=True)

@@ -197,6 +197,10 @@ class InitiativeExecutorService:
 
         self._running = False
         self._stop_event = asyncio.Event()
+        # Skill attribution: which skills were retrieved into the prompt for
+        # each in-flight initiative, so their win/loss record reflects the
+        # outcome of the runs they informed (closes the item-3 feedback loop).
+        self._skills_used: dict[str, list[str]] = {}
         self._stats = {
             "cycles": 0,
             "initiatives_processed": 0,
@@ -572,10 +576,17 @@ class InitiativeExecutorService:
                     format_block, relevant_skills, skills_enabled,
                 )
                 if skills_enabled():
-                    skills_block = format_block(relevant_skills(
+                    retrieved = relevant_skills(
                         self._skills,
                         f"{itype} {getattr(initiative, 'description', '')}",
-                        k=3, domain=itype)) or None
+                        k=3, domain=itype)
+                    skills_block = format_block(retrieved) or None
+                    # Remember which skills informed this run so the outcome
+                    # can be attributed back to them (wins/losses).
+                    iid = getattr(initiative, "id", None)
+                    if iid and retrieved:
+                        self._skills_used[str(iid)] = [
+                            s.id for s in retrieved if getattr(s, "id", None)]
                     # Failure post-mortems become avoid-lines.
                     note = self._skills.get_note(itype)
                     corrections = [ln.lstrip("- ").strip()
@@ -598,6 +609,9 @@ class InitiativeExecutorService:
     def _record_outcome(self, itype: str, outcome: str,
                         latency: Optional[float] = None,
                         initiative: Any = None) -> None:
+        # Attribute the outcome to the skills that informed this run
+        # (item 3 feedback edge): success bumps wins, anything else losses.
+        self._record_skill_outcomes(initiative, outcome == "success")
         if self._self_model is None:
             return
         try:
@@ -616,6 +630,21 @@ class InitiativeExecutorService:
                                     stated_confidence=stated)
         except Exception:
             pass
+
+    def _record_skill_outcomes(self, initiative: Any, win: bool) -> None:
+        """Update wins/losses on every skill retrieved into this run's prompt."""
+        if self._skills is None or initiative is None:
+            return
+        iid = str(getattr(initiative, "id", "") or "")
+        skill_ids = self._skills_used.pop(iid, None)
+        if not skill_ids:
+            return
+        for sid in skill_ids:
+            try:
+                self._skills.record_outcome(sid, win)
+            except Exception:
+                logger.debug("skill outcome record failed for %s", sid,
+                             exc_info=True)
 
     def _note_failure(self, initiative: Any, itype: str, error: str) -> None:
         """Failure post-mortem: keep a short per-domain strategy note."""
@@ -794,10 +823,12 @@ def create_from_env(
     Returns None if COLONY_EXECUTOR_ENABLED is not "true" or required
     dependencies are missing.
     """
-    if os.environ.get("COLONY_EXECUTOR_ENABLED", "false").lower() != "true":
+    from colony_sidecar.util.autonomy_preset import resolve_bool
+    if not resolve_bool("COLONY_EXECUTOR_ENABLED", False):
         logger.info(
             "Initiative executor disabled (COLONY_EXECUTOR_ENABLED != true). "
-            "Set COLONY_EXECUTOR_ENABLED=true to enable autonomous initiative processing."
+            "Set COLONY_EXECUTOR_ENABLED=true or COLONY_AUTONOMY_PRESET="
+            "calibration|autonomous to enable autonomous initiative processing."
         )
         return None
 

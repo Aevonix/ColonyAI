@@ -105,6 +105,28 @@ async def lifespan(app: FastAPI):
     """Initialize subsystems on startup, tear down on shutdown."""
     state_dir = _state_dir()
 
+    # --- 0. Adaptive parameters (meta-learning read-back path) ---
+    # Created first so downstream consumers (consolidator, graph recall,
+    # cognition pipeline) can take a handle; the ActionJournal is attached
+    # in the self-model section once it exists.
+    _adaptive_params = None
+    try:
+        from colony_sidecar.self_model.params import (
+            AdaptiveParamStore, register_core_params,
+        )
+        _adaptive_params = AdaptiveParamStore(
+            db_path=str(state_dir / "colony-params.db"))
+        register_core_params(_adaptive_params)
+        try:
+            from colony_sidecar.api.routers.host import set_adaptive_params
+            set_adaptive_params(_adaptive_params)
+        except ImportError:
+            pass
+        logger.info("AdaptiveParamStore initialized (db=%s)",
+                    state_dir / "colony-params.db")
+    except Exception as exc:
+        logger.warning("AdaptiveParamStore init failed: %s", exc)
+
     # --- 1. LLM Router ---
     llm_router = None
     try:
@@ -188,14 +210,19 @@ async def lifespan(app: FastAPI):
         except Exception as self_exc:
             logger.warning("Colony self-representation setup skipped: %s", self_exc)
 
-        # Wire consolidator
+        # Wire consolidator (adaptive merge threshold when params wired)
         try:
             from colony_sidecar.intelligence.graph.consolidator import MemoryConsolidator
-            consolidator = MemoryConsolidator(graph)
+            consolidator = MemoryConsolidator(graph, params=_adaptive_params)
             set_consolidator(consolidator)
             logger.info("MemoryConsolidator initialized")
         except Exception as cexc:
             logger.warning("MemoryConsolidator init skipped: %s", cexc)
+        if _adaptive_params is not None:
+            try:
+                graph.set_adaptive_params(_adaptive_params)
+            except Exception:
+                logger.debug("graph adaptive-params wiring failed", exc_info=True)
     except Exception as exc:
         logger.warning("ColonyGraph init failed — memory endpoints will be degraded: %s", exc)
 
@@ -564,6 +591,8 @@ async def lifespan(app: FastAPI):
             _sm_for_directed = SelfModel(_competence, registry=_Reg(),
                                          trust=_trust, journal=_journal)
             set_self_model(_sm_for_directed)
+            if _adaptive_params is not None:
+                _adaptive_params.set_journal(_journal)
             logger.info(
                 "SelfModel/TrustEngine initialized (db=%s, journal=%s, "
                 "autograduate=%s)",
@@ -892,6 +921,7 @@ async def lifespan(app: FastAPI):
             cognition_pipeline = CognitionPipeline(
                 graph=graph,
                 event_bus=event_bus,
+                params=_adaptive_params,
             )
             set_metalearner(cognition_pipeline.meta_learner)
             logger.info("CognitionPipeline initialized with all components wired")

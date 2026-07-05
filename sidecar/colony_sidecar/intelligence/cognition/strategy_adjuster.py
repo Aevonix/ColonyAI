@@ -38,14 +38,19 @@ class StrategyAdjuster:
             "hypothesis": "Memory retrieval quality is low due to weak embeddings",
             "actions": [
                 {"type": "reindex_memories", "params": {}},
-                {"type": "increase_embedding_quality", "params": {"model": "larger"}},
+                # Tighten the consolidator so near-miss pairs stop merging
+                # (weak embeddings inflate similarity; merging makes recall
+                # quality worse). Bounded by the param store [0.85, 0.98].
+                {"type": "adjust_consolidation_threshold", "params": {"threshold": 0.95}},
             ],
             "expected_impact": 10.0,
         },
         "semantic_mismatch": {
             "hypothesis": "Queries not matching stored memories semantically",
             "actions": [
-                {"type": "adjust_similarity_threshold", "params": {"threshold": 0.7}},
+                # Raise the recall relevance floor so low-score noise stops
+                # outranking real matches. Bounded by the param store [0, 0.5].
+                {"type": "adjust_similarity_threshold", "params": {"threshold": 0.35}},
                 {"type": "expand_query_terms", "params": {}},
             ],
             "expected_impact": 8.0,
@@ -100,8 +105,12 @@ class StrategyAdjuster:
         },
     }
 
-    def __init__(self, graph: "ColonyGraph"):
+    def __init__(self, graph: "ColonyGraph", params: Any = None):
         self.graph = graph
+        # AdaptiveParamStore: the read-back path for tuning adjustments.
+        # Without it, threshold adjustments have nowhere consumers look and
+        # are refused rather than written into the void.
+        self._params = params
         self._applied_adjustments: list = []
 
     async def generate(self, gap: "Gap") -> Adjustment:
@@ -165,6 +174,8 @@ class StrategyAdjuster:
                 return {"success": True, "action": "reindex_memories", "note": "managed by LanceDB"}
             elif action_type == "adjust_similarity_threshold":
                 return await self._adjust_threshold(**params)
+            elif action_type == "adjust_consolidation_threshold":
+                return await self._adjust_consolidation_threshold(**params)
             elif action_type == "decay_old_signals":
                 return await self._decay_signals(**params)
             elif action_type == "recalibrate_baselines":
@@ -175,23 +186,41 @@ class StrategyAdjuster:
             return {"success": False, "action": action_type, "error": str(e)}
 
     async def _adjust_threshold(self, threshold: float) -> dict:
-        """Persist similarity threshold to graph config node."""
-        if not hasattr(self.graph, 'run_query'):
-            logger.warning("Graph client does not support run_query; threshold not persisted")
-            return {"success": False, "action": "adjust_threshold", "error": "run_query not available"}
+        """Raise/lower the recall relevance floor via the AdaptiveParamStore.
+
+        This replaces a legacy write to a graph Config node that no consumer
+        ever read back. ColonyGraph.recall reads recall.min_relevance at
+        query time, so the adjustment takes effect immediately; the store
+        clamps to [0, 0.5] and journals the change (domain meta_learning).
+        """
+        return self._set_param(
+            "recall.min_relevance", threshold, action="adjust_threshold",
+            reason="semantic_mismatch gap: raise recall relevance floor")
+
+    async def _adjust_consolidation_threshold(self, threshold: float) -> dict:
+        """Adjust the MemoryConsolidator merge threshold (read per run)."""
+        return self._set_param(
+            "consolidation.similarity_threshold", threshold,
+            action="adjust_consolidation_threshold",
+            reason="low_memory_quality gap: tune duplicate-merge threshold")
+
+    def _set_param(self, name: str, value: float, *, action: str,
+                   reason: str) -> dict:
+        if self._params is None:
+            logger.warning("No AdaptiveParamStore wired; %s not applied", action)
+            return {"success": False, "action": action,
+                    "error": "adaptive param store not wired"}
         try:
-            records = await self.graph.run_query(
-                """MERGE (c:Config {key: "similarity_threshold"})
-                   SET c.value = $threshold, c.updated_at = datetime()
-                   RETURN c.value AS new_value""",
-                {"threshold": threshold}
-            )
-            new_value = records[0].get("new_value", threshold) if records else threshold
-            logger.info("Similarity threshold updated to %s", new_value)
-            return {"success": True, "action": "adjust_threshold", "new_threshold": float(new_value)}
-        except (OSError, RuntimeError, TypeError) as e:
-            logger.error("Failed to adjust threshold: %s", e)
-            return {"success": False, "action": "adjust_threshold", "error": str(e)}
+            applied = self._params.set(name, float(value), reason=reason,
+                                       source="strategy_adjuster")
+            if applied is None:
+                return {"success": False, "action": action,
+                        "error": f"param {name} not registered"}
+            return {"success": True, "action": action, "param": name,
+                    "requested": float(value), "applied": applied}
+        except (OSError, RuntimeError, TypeError, ValueError) as e:
+            logger.error("Failed %s: %s", action, e)
+            return {"success": False, "action": action, "error": str(e)}
 
     async def _decay_signals(self, factor: float) -> dict:
         """Apply decay to old signals."""

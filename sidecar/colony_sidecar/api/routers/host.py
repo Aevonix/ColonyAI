@@ -3993,11 +3993,17 @@ _world_llm_extractor = None
 _worker_governor = None
 _sandbox = None
 _connector_manager = None
+_adaptive_params = None
 
 
 def set_self_model(sm) -> None:
     global _self_model
     _self_model = sm
+
+
+def set_adaptive_params(store) -> None:
+    global _adaptive_params
+    _adaptive_params = store
 
 
 def set_skill_store(store) -> None:
@@ -4047,6 +4053,31 @@ async def get_self_model() -> dict:
         return out
     except Exception as exc:
         return {"available": True, "error": str(exc)}
+
+
+@router.get("/self/params")
+async def get_adaptive_params() -> dict:
+    """Adaptive parameters: the meta-learning knobs consumers read back,
+    with their bounds, current values, and last adjustment attribution."""
+    if _adaptive_params is None:
+        return {"available": False}
+    try:
+        return {"available": True, "params": _adaptive_params.snapshot()}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+@router.get("/autonomy/posture")
+async def get_autonomy_posture() -> dict:
+    """Effective autonomy posture: the active COLONY_AUTONOMY_PRESET (if any)
+    and the resolved value of every preset-managed mode flag, as the RUNNING
+    process sees them. This is what `colony doctor` reads so plist/unit-pinned
+    env is never invisible to diagnostics."""
+    try:
+        from colony_sidecar.util.autonomy_preset import snapshot
+        return {"available": True, "posture": snapshot()}
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
 
 
 @router.get("/self/journal")

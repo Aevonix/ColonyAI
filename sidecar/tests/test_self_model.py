@@ -267,3 +267,42 @@ def test_status_includes_trust():
     sm = SelfModel(store, trust=t)
     st = sm.status()
     assert any(r["domain"] == "x" for r in st["trust"])
+
+
+# ---------------------------------------------------------------------------
+# Calibration feeds confidence (stated-vs-realized is consumed, not decorative)
+# ---------------------------------------------------------------------------
+
+def test_overconfidence_discounts_trust_confidence():
+    honest = CompetenceStore()
+    braggart = CompetenceStore()
+    # Identical realized track records (3 wins / 3 losses)...
+    for s in (honest, braggart):
+        for i in range(3):
+            s.record("d", "success", stated_confidence=0.5 if s is honest else 0.95)
+            s.record("d", "failure", stated_confidence=0.5 if s is honest else 0.95)
+    t_honest = TrustEngine(honest)
+    t_braggart = TrustEngine(braggart)
+    # ...but the domain that STATED 0.95 while realizing 0.5 is overconfident
+    # and earns less trust than the well-calibrated one.
+    assert t_braggart.confidence("d") < t_honest.confidence("d")
+
+
+def test_underconfidence_never_penalized():
+    humble = CompetenceStore()
+    plain = CompetenceStore()
+    for i in range(6):
+        humble.record("d", "success", stated_confidence=0.2)  # understates
+        plain.record("d", "success")
+    assert TrustEngine(humble).confidence("d") == TrustEngine(plain).confidence("d")
+
+
+def test_calibration_needs_five_events():
+    s = CompetenceStore()
+    for i in range(3):
+        s.record("d", "failure", stated_confidence=0.99)
+    base = CompetenceStore()
+    for i in range(3):
+        base.record("d", "failure")
+    # Below the n>=5 evidence bar the penalty must not engage.
+    assert TrustEngine(s).confidence("d") == TrustEngine(base).confidence("d")

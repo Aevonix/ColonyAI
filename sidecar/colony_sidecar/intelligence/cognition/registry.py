@@ -46,6 +46,7 @@ class CognitionPipeline:
         graph: Any,
         event_bus: Optional[Any] = None,
         config: Optional[MetaLearnerConfig] = None,
+        params: Optional[Any] = None,
     ) -> None:
         self.graph = graph
         self.event_bus = event_bus
@@ -54,7 +55,7 @@ class CognitionPipeline:
         self.metrics = MetricsCollector(graph)
         self.performance_index = PerformanceIndexComputer(graph)
         self.gap_detector = GapDetector()
-        self.strategy_adjuster = StrategyAdjuster(graph)
+        self.strategy_adjuster = StrategyAdjuster(graph, params=params)
         self.meta_learner = MetaLearner(graph, config=config or MetaLearnerConfig())
 
         # Wire sub-components into MetaLearner via dependency-injection setters

@@ -108,11 +108,17 @@ class MemoryConsolidator:
         similarity_threshold: float = 0.92,
         lookback_hours: int = 24,
         max_merge_ratio: float = 0.5,
+        params: Any = None,
     ) -> None:
         self.graph = graph_client
         self.similarity_threshold = similarity_threshold
         self.lookback_hours = lookback_hours
         self._max_merge_ratio = max_merge_ratio
+        # Optional AdaptiveParamStore: when wired, the merge threshold is
+        # re-resolved at the start of every run, so a meta-learning
+        # adjustment takes effect without a restart (bounds enforced by the
+        # store, hard floor 0.85).
+        self._params = params
 
     # ------------------------------------------------------------------
     # Public API
@@ -123,6 +129,18 @@ class MemoryConsolidator:
         import time
         start = time.monotonic()
         result = ConsolidationResult()
+
+        if self._params is not None:
+            try:
+                from colony_sidecar.self_model.params import (
+                    PARAM_CONSOLIDATION_THRESHOLD,
+                )
+                self.similarity_threshold = float(self._params.get(
+                    PARAM_CONSOLIDATION_THRESHOLD,
+                    default=self.similarity_threshold))
+            except Exception:
+                logger.debug("adaptive threshold resolve failed; keeping %s",
+                             self.similarity_threshold, exc_info=True)
 
         try:
             candidates = await self._fetch_recent_memories()
