@@ -72,6 +72,38 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "colony_resolve_commitment",
+        "description": (
+            "Resolve a commitment so reminders stop: mark it fulfilled (done), "
+            "dismiss it as stale/no-longer-relevant (with a reason), or snooze "
+            "it to a new due date. Use when the owner says something is done, "
+            "stale, or should be ignored. Get the id from colony_check_commitments."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "commitment_id": {
+                    "type": "string",
+                    "description": "The commitment id to resolve",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["fulfilled", "dismissed", "snoozed"],
+                    "description": "fulfilled=done; dismissed=stale/ignore (give reason); snoozed=defer (give new_due_at)",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why (required for dismissed; recorded in metadata)",
+                },
+                "new_due_at": {
+                    "type": "string",
+                    "description": "ISO-8601 UTC datetime (required for snoozed)",
+                },
+            },
+            "required": ["commitment_id", "action"],
+        },
+    },
+    {
         "name": "colony_get_affect",
         "description": (
             "Get the current affect state (valence/arousal) for a contact. "
@@ -981,6 +1013,45 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 resp.raise_for_status()
                 data = resp.json()
                 return json.dumps(data)
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _tool_colony_resolve_commitment(self, args: dict) -> str:
+        commitment_id = args.get("commitment_id", "")
+        action = args.get("action", "")
+        reason = args.get("reason", "")
+        if not commitment_id or action not in ("fulfilled", "dismissed", "snoozed"):
+            return json.dumps({"error": "commitment_id and a valid action are required"})
+        body: dict = {}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if action == "fulfilled":
+            body = {"status": "fulfilled", "fulfilled_at": now_iso,
+                    "metadata": {"resolved_by": "agent", "resolved_at": now_iso,
+                                 "note": reason or "marked done"}}
+        elif action == "dismissed":
+            if not reason:
+                return json.dumps({"error": "reason is required to dismiss"})
+            body = {"status": "fulfilled", "fulfilled_at": now_iso,
+                    "metadata": {"resolved_by": "agent", "resolved_at": now_iso,
+                                 "dismissed": True, "reason": reason}}
+        elif action == "snoozed":
+            new_due = args.get("new_due_at", "")
+            if not new_due:
+                return json.dumps({"error": "new_due_at is required to snooze"})
+            body = {"due_at": new_due,
+                    "metadata": {"snoozed_by": "agent", "snoozed_at": now_iso,
+                                 "note": reason or ""}}
+        try:
+            with httpx.Client(timeout=5) as client:
+                resp = client.patch(
+                    f"{self.sidecar_url}/v1/host/commitments/{commitment_id}",
+                    headers=self._headers(),
+                    json=body,
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                return json.dumps({"ok": True, "action": action,
+                                   "commitment": resp.json()})
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
