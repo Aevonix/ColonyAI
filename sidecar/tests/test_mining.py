@@ -303,3 +303,24 @@ class TestMiningApi:
         mining_router.set_mining(None, None, None)
         c = TestClient(app)
         assert c.get("/v1/host/mining/escalations").status_code == 501
+
+
+def test_consultation_via_tool_activity_file(store, tmp_path, monkeypatch):
+    """Commands often appear only in the host tool-activity stream."""
+    monkeypatch.setenv("COLONY_ESCALATION_MINING", "shadow")
+    activity = tmp_path / "tool_activity.jsonl"
+    activity.write_text(
+        json.dumps({"ts": 1, "session": "sA", "tool": "terminal",
+                    "summary": "claude -p 'fix the adapter' --model fable"}) + "\n"
+        + json.dumps({"ts": 2, "session": "sB", "tool": "terminal",
+                      "summary": "ls -la"}) + "\n"
+    )
+    monkeypatch.setenv("COLONY_TOOL_ACTIVITY_FILE", str(activity))
+    m = EscalationMiner(store)
+    rec = _observe(m, user="fix it", assistant="done, applied the fix",
+                   tools=["terminal"], session="sA")
+    assert rec is not None and rec.kind == "consultation"
+    # other session's activity does not leak into detection
+    rec2 = _observe(m, user="unrelated", assistant="plain answer",
+                    tools=["terminal"], session="sB")
+    assert rec2 is None
