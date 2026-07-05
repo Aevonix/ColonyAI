@@ -1,5 +1,5 @@
 name: colony-memory
-version: 0.4.1
+version: 0.5.0
 description: |
   Colony cognitive memory provider for Hermes. Injects commitments, affect, facts,
   patterns, and world model into Hermes conversations. Syncs turns back for extraction.

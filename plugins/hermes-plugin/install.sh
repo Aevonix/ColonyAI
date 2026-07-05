@@ -52,20 +52,16 @@ cp "$SCRIPT_DIR/plugin.yaml" "$PLUGIN_DIR/"
 
 echo "   Plugin files deployed."
 
-# Deploy memory provider
+# Deploy memory provider (canonical source: plugins/colony-memory — the real
+# __init__.py matters: it registers the pre_llm_call contact/time hook)
 if [[ "$INSTALL_MEMORY" -eq 1 ]]; then
   MEMORY_DIR="$HERMES_HOME/plugins/colony-memory"
+  MEMORY_SRC="$SCRIPT_DIR/../colony-memory"
   mkdir -p "$MEMORY_DIR"
-  cp "$SCRIPT_DIR/memory_provider/provider.py" "$MEMORY_DIR/"
-  cat > "$MEMORY_DIR/__init__.py" << 'EOF'
-from .provider import ColonyMemoryProvider
-__all__ = ["ColonyMemoryProvider"]
-EOF
-  cat > "$MEMORY_DIR/plugin.yaml" << 'EOF'
-name: colony-memory
-description: Colony memory provider for Hermes
-entrypoint: provider:ColonyMemoryProvider
-EOF
+  cp "$MEMORY_SRC/provider.py" "$MEMORY_DIR/"
+  cp "$MEMORY_SRC/__init__.py" "$MEMORY_DIR/"
+  cp "$MEMORY_SRC/plugin.yaml" "$MEMORY_DIR/"
+  [[ -f "$MEMORY_SRC/SKILL.md" ]] && cp "$MEMORY_SRC/SKILL.md" "$MEMORY_DIR/"
   echo "   Memory provider deployed to $MEMORY_DIR"
 fi
 

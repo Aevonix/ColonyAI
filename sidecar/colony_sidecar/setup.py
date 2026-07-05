@@ -959,9 +959,12 @@ def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool =
     hermes_home = Path.home() / ".hermes"
     hermes_config = hermes_home / "config.yaml"
 
-    # Find plugin source files relative to this module (in the repo)
+    # Find plugin source files relative to this module (in the repo).
+    # plugins/colony-memory is the SINGLE canonical memory provider (the
+    # former hermes-memory and hermes-plugin/memory_provider copies were
+    # consolidated into it).
     colony_repo = Path(__file__).resolve().parents[2]  # colony_sidecar/ -> sidecar/ -> repo-root/
-    mem_src = colony_repo / "plugins" / "hermes-memory"
+    mem_src = colony_repo / "plugins" / "colony-memory"
     ctx_src = colony_repo / "plugins" / "hermes-context"
     gen_src = colony_repo / "plugins" / "hermes-plugin"
 
@@ -974,8 +977,9 @@ def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool =
 
     print("  Installing Colony Hermes plugins...")
 
-    # Install memory provider
-    mem_dst = hermes_home / "plugins" / "memory" / "colony"
+    # Install memory provider (same target install.sh uses; this is the
+    # layout Hermes loads for memory.provider = "colony")
+    mem_dst = hermes_home / "plugins" / "colony-memory"
     mem_dst.mkdir(parents=True, exist_ok=True)
     for f in ["__init__.py", "provider.py", "cli.py", "plugin.yaml", "SKILL.md"]:
         src = mem_src / f
@@ -1036,7 +1040,7 @@ def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool =
     print("    hermes colony status")
     print()
     print("  Plugin docs:")
-    print("    https://github.com/Aevonix/ColonyAI/blob/main/plugins/hermes-memory/SKILL.md")
+    print("    https://github.com/Aevonix/ColonyAI/blob/main/plugins/colony-memory/SKILL.md")
     return True
 
 
@@ -3034,7 +3038,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print("  Colony is connected to Hermes.")
         print()
         print("  Hermes plugins installed:")
-        print(f"    ~/.hermes/plugins/memory/colony/")
+        print(f"    ~/.hermes/plugins/colony-memory/")
         print(f"    ~/.hermes/plugins/context_engine/colony/")
         print(f"    ~/.hermes/plugins/colony/")
         print()
