@@ -270,27 +270,28 @@ def test_collect_owner_handles_non_interactive_is_empty():
 def test_collect_autonomy_env_scripted_answers():
     ask = make_ask([
         "2",            # approval policy → graduated
-        "y",            # internal thinking → true
         "n",            # skill synthesis → false
+        "3",            # autonomy preset → autonomous
         "telegram",     # home channel platform
         "123456789",    # home channel id
     ])
     updates = collect_autonomy_env({}, ask=ask)
     assert updates == {
         "COLONY_APPROVAL_POLICY": "graduated",
-        "COLONY_ENABLE_INTERNAL_THINKING": "true",
         "COLONY_ENABLE_SKILL_SYNTHESIS": "false",
+        "COLONY_AUTONOMY_PRESET": "autonomous",
         "TELEGRAM_HOME_CHANNEL": "123456789",
     }
 
 
 def test_collect_autonomy_env_defaults_are_safe():
-    # All-blank answers: strict policy, gates off, no home channel.
+    # All-blank answers: strict policy, synthesis off, calibration preset
+    # (shadow everything — nothing acts live without an earned record).
     updates = collect_autonomy_env({}, ask=make_ask([]))
     assert updates == {
         "COLONY_APPROVAL_POLICY": "strict",
-        "COLONY_ENABLE_INTERNAL_THINKING": "false",
         "COLONY_ENABLE_SKILL_SYNTHESIS": "false",
+        "COLONY_AUTONOMY_PRESET": "calibration",
     }
     assert not any(k.endswith("_HOME_CHANNEL") for k in updates)
 
@@ -298,30 +299,31 @@ def test_collect_autonomy_env_defaults_are_safe():
 def test_collect_autonomy_env_rerun_preserves_existing_values():
     existing = {
         "COLONY_APPROVAL_POLICY": "graduated",
-        "COLONY_ENABLE_INTERNAL_THINKING": "true",
         "COLONY_ENABLE_SKILL_SYNTHESIS": "false",
+        "COLONY_AUTONOMY_PRESET": "autonomous",
         "WHATSAPP_HOME_CHANNEL": "999@g.us",
     }
     # Accept every default (blank answers).
     updates = collect_autonomy_env(existing, ask=make_ask([]))
     assert updates == {
         "COLONY_APPROVAL_POLICY": "graduated",
-        "COLONY_ENABLE_INTERNAL_THINKING": "true",
         "COLONY_ENABLE_SKILL_SYNTHESIS": "false",
+        "COLONY_AUTONOMY_PRESET": "autonomous",
         "WHATSAPP_HOME_CHANNEL": "999@g.us",
     }
 
 
 def test_collect_autonomy_env_none_drops_home_channel():
     existing = {"WHATSAPP_HOME_CHANNEL": "999@g.us"}
-    ask = make_ask(["1", "n", "n", "none"])
+    ask = make_ask(["1", "n", "1", "none"])
     updates = collect_autonomy_env(existing, ask=ask)
     assert "WHATSAPP_HOME_CHANNEL" not in updates
     assert updates["COLONY_APPROVAL_POLICY"] == "strict"
+    assert updates["COLONY_AUTONOMY_PRESET"] == "passive"
 
 
 def test_collect_autonomy_env_invalid_platform_reprompts():
-    ask = make_ask(["1", "n", "n", "fax", "discord", "chan-42"])
+    ask = make_ask(["1", "n", "2", "fax", "discord", "chan-42"])
     updates = collect_autonomy_env({}, ask=ask)
     assert updates["DISCORD_HOME_CHANNEL"] == "chan-42"
 
@@ -329,5 +331,5 @@ def test_collect_autonomy_env_invalid_platform_reprompts():
 def test_collect_autonomy_env_non_interactive_uses_defaults():
     updates = collect_autonomy_env({}, non_interactive=True)
     assert updates["COLONY_APPROVAL_POLICY"] == "strict"
-    assert updates["COLONY_ENABLE_INTERNAL_THINKING"] == "false"
     assert updates["COLONY_ENABLE_SKILL_SYNTHESIS"] == "false"
+    assert updates["COLONY_AUTONOMY_PRESET"] == "calibration"

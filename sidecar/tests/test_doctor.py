@@ -388,6 +388,33 @@ def _happy_responses(owner="cid-owner-1"):
             "observations": [{"entity_id": "s1", "observed_at": now}],
             "total": 1,
         }),
+        # Cognition / autonomy checks (v0.22.0)
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_EXECUTOR_ENABLED": "true",
+            "COLONY_PROJECTS_MODE": "shadow",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+        "/v1/host/self": (200, {"available": True, "domains": [
+            {"domain": "research", "n": 3}], "trust": []}),
+        "/v1/host/self/params": (200, {"available": True, "params": [
+            {"name": "recall.min_relevance", "value": None,
+             "default_value": 0.0, "effective": 0.0}]}),
+        "/v1/host/executor/status": (200, {"running": True, "wired": True,
+                                           "stats": {"cycles": 5}}),
+        "/v1/host/projects": (200, {"available": True, "mode": "shadow",
+                                    "projects": []}),
+        "/v1/host/beliefs": (200, {"available": True, "mode": "shadow",
+                                   "open_conflicts": 0,
+                                   "review_conflicts": 0}),
+        "/v1/host/queue/governor": (200, {"available": True, "mode": "shadow",
+                                          "worker_domains": []}),
+        "/v1/host/sandbox/status": (200, {"available": True, "mode": "off",
+                                          "backend_available": False}),
+        "/v1/host/connectors/status": (200, {"available": True, "mode": "off",
+                                             "connectors": []}),
+        "/v1/host/mining/escalations?limit=1": (200, {"count": 2,
+                                                      "escalations": [{}]}),
     }
 
 
@@ -720,3 +747,90 @@ def test_cmd_doctor_human_output_exit_zero(clean_env, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "PASS" in out and "WARN" in out
     assert "tweak" in out
+
+
+# ---------------------------------------------------------------------------
+# Cognition / autonomy checks (v0.22.0) — warn paths
+# ---------------------------------------------------------------------------
+
+def test_posture_all_off_warns(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "(none)", "COLONY_EXECUTOR_ENABLED": "false",
+            "COLONY_PROJECTS_MODE": "off", "COLONY_THINKING_MODE": "off",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == WARN
+    assert "COLONY_AUTONOMY_PRESET" in r.remedy
+
+
+def test_self_model_demotion_warns(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/self": (200, {"available": True, "domains": [],
+                                "trust": [{"domain": "directed:repo",
+                                           "stage": "ask_first",
+                                           "demotions": 2}]}),
+    }))
+    r = doctor.check_server_self_model(URL, "key", 5)
+    assert r.status == WARN
+    assert "directed:repo" in r.detail
+
+
+def test_sandbox_mode_without_backend_warns(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/sandbox/status": (200, {"available": True, "mode": "dry_run",
+                                          "backend_available": False}),
+    }))
+    r = doctor.check_server_sandbox(URL, "key", 5)
+    assert r.status == WARN
+
+
+def test_connectors_mode_without_connectors_warns(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/connectors/status": (200, {"available": True,
+                                             "mode": "shadow",
+                                             "connectors": []}),
+    }))
+    r = doctor.check_server_connectors(URL, "key", 5)
+    assert r.status == WARN
+    assert "COLONY_CONNECTOR_FS_PATH" in r.remedy
+
+
+def test_executor_unwired_warns(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/executor/status": (200, {"running": False, "wired": False}),
+    }))
+    r = doctor.check_server_executor(URL, "key", 5)
+    assert r.status == WARN
+    assert "COLONY_EXECUTOR_ENABLED" in r.remedy
+
+
+def test_projects_blocked_warns(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/projects": (200, {"available": True, "mode": "live",
+                                    "projects": [{"status": "blocked",
+                                                  "title": "map the codebase"}]}),
+    }))
+    r = doctor.check_server_projects(URL, "key", 5)
+    assert r.status == WARN
+
+
+def test_older_server_404s_skip(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (404, "not found"),
+        "/v1/host/self": (404, "not found"),
+        "/v1/host/mining/escalations?limit=1": (404, "not found"),
+    }))
+    assert doctor.check_server_autonomy_posture(URL, "key", 5).status == SKIP
+    assert doctor.check_server_self_model(URL, "key", 5).status == SKIP
+    assert doctor.check_server_mining(URL, "key", 5).status == SKIP
+
+
+def test_contacts_db_sibling_mismatch_warns(clean_env, monkeypatch, tmp_path):
+    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    # The service created contacts under another name than this shell resolves.
+    (tmp_path / "contacts.db").write_bytes(b"x" * 2048)
+    r = doctor.check_contacts_db()
+    assert r.status == WARN
+    assert "different path" in r.detail or "does exist" in r.detail

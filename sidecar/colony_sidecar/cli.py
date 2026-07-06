@@ -31,7 +31,7 @@ def main() -> None:
     init_p.add_argument("--non-interactive", "-n", action="store_true", help="Run without prompts (requires all required flags)")
     # Harness configuration (new approach)
     init_p.add_argument("--mcp-harnesses", help="Connect coding harnesses via MCP (comma-separated: claude-code,codex,crush,opencode)")
-    init_p.add_argument("--agent-harness", choices=["openclaw", "hermes"], help="Connect agent harness via plugin")
+    init_p.add_argument("--agent-harness", choices=["hermes"], help="Connect agent harness via plugin (OpenClaw support was removed in v0.21.14)")
     init_p.add_argument("--no-harness", action="store_true", help="Skip all harness setup (standalone mode)")
     # Backward compatibility
     init_p.add_argument("--host-framework", choices=["openclaw", "hermes", "claude-code", "codex", "crush", "standalone"], help="Host framework (deprecated: use --agent-harness or --mcp-harnesses)")
@@ -2121,54 +2121,42 @@ def _cmd_validate(args) -> None:
     found = [e for e in expected if e in section_ids]
     print(f"  ✅ Context assembly: {len(sections)} sections, {len(found)}/{len(expected)} cognitive sections present")
 
-    # Step 4: Check LLM is configured
+    # Step 4: Check LLM is configured (live-fire the sidecar's own router —
+    # this is the pipeline Colony actually reasons with, harness-independent)
     print("\n[4/5] Checking LLM configuration...")
-    has_openclaw = bool(shutil.which("openclaw"))
     llm_ok = False
-
-    if has_openclaw:
-        try:
-            result = subprocess.run(
-                ["openclaw", "config", "get", "llm.apiKey"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip() and result.stdout.strip() != "undefined":
-                llm_ok = True
-                print(f"  ✅ LLM API key configured in OpenClaw")
-            else:
-                print(f"  ⚠️ No LLM API key in OpenClaw — cannot test full LLM pipeline")
-                print(f"  Configure with: openclaw config set llm.apiKey <key>")
-        except Exception:
-            print(f"  ⚠️ Could not check OpenClaw LLM config")
-    else:
-        # Check MCP harnesses
-        has_mcp = bool(shutil.which("claude") or shutil.which("codex") or shutil.which("crush"))
-        if has_mcp:
-            print(f"  \u26a0\ufe0f CLI harness detected but LLM test requires OpenClaw")
-            print(f"  MCP tools validated via context assembly — LLM pipeline needs manual verification")
+    llm_latency = None
+    try:
+        r = httpx.get(f"{url}/v1/host/health/llm", headers=headers, timeout=30)
+        if r.status_code == 200 and (r.json() or {}).get("ok"):
+            body = r.json()
+            llm_ok = True
+            llm_latency = body.get("latency_ms")
+            print(f"  ✅ LLM router answered (tier={body.get('tier', '?')}, "
+                  f"latency={llm_latency}ms)")
         else:
-            print(f"  \u26a0\ufe0f No OpenClaw or MCP harness — LLM pipeline needs manual verification")
+            detail = ""
+            try:
+                detail = (r.json() or {}).get("error") or ""
+            except Exception:
+                pass
+            print(f"  ⚠️ LLM router check failed (HTTP {r.status_code}) {detail}")
+            print("  Configure models via POST /v1/host/configure or re-run "
+                  "'colony init' (llm-config step)")
+    except Exception as exc:
+        print(f"  ⚠️ Could not reach the LLM health endpoint: {exc}")
 
-    # Step 5: Test full LLM pipeline if possible
-    print("\n[5/5] Testing full pipeline...")
-    if llm_ok and has_openclaw:
-        print("  Sending test message through OpenClaw...")
-        try:
-            result = subprocess.run(
-                ["openclaw", "agent", "--once", "What is 2+2? Reply with just the number."],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode == 0 and "4" in result.stdout:
-                print(f"  ✅ Full pipeline working — LLM responded through Colony")
-            else:
-                print(f"  ⚠️ LLM responded but couldn't verify Colony was in the chain")
-                print(f"  Agent output: {result.stdout[:100]}")
-        except subprocess.TimeoutExpired:
-            print(f"  ⚠️ LLM test timed out (model may be slow)")
-        except Exception as e:
-            print(f"  ⚠️ LLM test failed: {e}")
+    # Step 5: Full pipeline — context assembly reached the cognitive sections
+    # (step 3) and the router answers (step 4); that IS the full sidecar
+    # pipeline. A connected harness exercises it end-to-end on its next turn.
+    print("\n[5/5] Pipeline verdict...")
+    if llm_ok and len(found) >= 2:
+        print("  ✅ Full sidecar pipeline working — context assembly + LLM router live")
+    elif llm_ok:
+        print("  ⚠️ LLM live but cognitive context sections are thin — seed data "
+              "or run a few turns, then re-validate")
     else:
-        print("  ⚪ Full LLM pipeline test skipped (no LLM configured or OpenClaw not available)")
+        print("  ⚪ LLM not verified — context pipeline validated, reasoning not")
 
     # Cleanup: delete test commitment
     if cid:
@@ -2180,7 +2168,7 @@ def _cmd_validate(args) -> None:
         "validated_at": datetime.now(timezone.utc).isoformat(),
         "context_sections": len(sections),
         "cognitive_sections": len(found),
-        "llm_tested": llm_ok and has_openclaw,
+        "llm_tested": llm_ok,
     }
     stamp_path.write_text(json.dumps(stamp_data, indent=2))
 

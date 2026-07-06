@@ -62,6 +62,16 @@ SERVER_CHECK_NAMES = (
     "server-blocked-approvals",
     "server-worker-liveness",
     "server-skills-observations",
+    "server-autonomy-posture",
+    "server-self-model",
+    "server-adaptive-params",
+    "server-executor",
+    "server-projects",
+    "server-beliefs",
+    "server-workers-governor",
+    "server-sandbox",
+    "server-connectors",
+    "server-mining",
 )
 
 #: A QUEUED agent_action job older than this means no queue worker is
@@ -305,6 +315,21 @@ def check_contacts_db() -> CheckResult:
             remedy=f"mkdir -p {path.parent} (or fix COLONY_CONTACTS_DB / COLONY_STATE_DIR)",
         )
     if not path.exists():
+        # A sibling contacts DB under another name is the signature of an
+        # env mismatch: the doctor shell resolves a different path than the
+        # running service (whose COLONY_CONTACTS_DB/COLONY_STATE_DIR live in
+        # its unit/plist, not this shell).
+        siblings = [p for p in path.parent.glob("*contacts*.db")
+                    if p.exists()] if path.parent.exists() else []
+        if siblings:
+            return CheckResult(
+                "contacts-db", WARN,
+                detail=f"{path} does not exist, but {siblings[0]} does — this "
+                       "doctor shell likely resolves a different path than the "
+                       "running service",
+                remedy="run doctor with the service's env (COLONY_CONTACTS_DB / "
+                       "COLONY_STATE_DIR), or align the two",
+            )
         return CheckResult(
             "contacts-db", PASS,
             detail=f"{path} not created yet — the sidecar creates it on first start",
@@ -432,14 +457,30 @@ def check_feature_gates() -> CheckResult:
             "internal thinking is enabled — it requires a working LLM router "
             "(see the llm-config and server-llm-router checks)"
         )
+    preset = os.environ.get("COLONY_AUTONOMY_PRESET", "").strip().lower()
+    if preset:
+        try:
+            from colony_sidecar.util.autonomy_preset import PRESETS
+            if preset in PRESETS:
+                notes.append(f"COLONY_AUTONOMY_PRESET={preset}")
+            else:
+                problems.append(
+                    f"COLONY_AUTONOMY_PRESET={preset!r} is not a known preset "
+                    f"({'/'.join(sorted(PRESETS))}) — it is silently ignored")
+        except ImportError:
+            pass
     if problems:
         return CheckResult(
             "feature-gates", WARN,
             detail="; ".join(problems),
-            remedy="set the variable to exactly 'true' or 'false'",
+            remedy="set the variable to exactly 'true' or 'false' (presets: "
+                   "passive/calibration/autonomous)",
         )
     return CheckResult(
-        "feature-gates", PASS, detail="; ".join(notes) or "gates unset (features off)",
+        "feature-gates", PASS,
+        detail="; ".join(notes)
+               or "gates unset (features off; set COLONY_AUTONOMY_PRESET or "
+                  "individual flags in this shell/service env)",
     )
 
 
@@ -763,6 +804,252 @@ def check_server_skills_observations(base_url: str, api_key: str, timeout: float
     )
 
 
+# ---------------------------------------------------------------------------
+# Cognition / autonomy checks (v0.22.0) — the seven-capability program gets
+# doctor visibility. All of these read the RUNNING server, not the local env,
+# so mode flags pinned in a service unit/plist are never invisible here.
+# ---------------------------------------------------------------------------
+
+def check_server_autonomy_posture(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """18. The effective autonomy posture as the running process resolves it."""
+    status, body = _http_get(f"{base_url}/v1/host/autonomy/posture", api_key, timeout)
+    if status == 404:
+        return CheckResult(
+            "server-autonomy-posture", SKIP,
+            detail="server predates the posture endpoint (upgrade to >=0.22)")
+    if status != 200 or not isinstance(body, dict) or not body.get("available"):
+        return CheckResult(
+            "server-autonomy-posture", WARN, detail=f"HTTP {status}: {body}")
+    posture = body.get("posture") or {}
+    preset = posture.get("preset", "(none)")
+    live = sorted(k.replace("COLONY_", "").replace("_MODE", "").lower()
+                  for k, v in posture.items() if v == "live")
+    shadow = sorted(k.replace("COLONY_", "").replace("_MODE", "").lower()
+                    for k, v in posture.items() if v in ("shadow", "dry_run"))
+    on = sorted(k.replace("COLONY_", "").replace("_ENABLED", "").lower()
+                for k, v in posture.items() if v == "true")
+    parts = [f"preset={preset}"]
+    if on:
+        parts.append("on: " + ",".join(on))
+    if live:
+        parts.append("live: " + ",".join(live))
+    if shadow:
+        parts.append("calibrating: " + ",".join(shadow))
+    if not (on or live or shadow):
+        return CheckResult(
+            "server-autonomy-posture", WARN,
+            detail="everything is off — this Colony observes but never thinks or acts",
+            remedy="set COLONY_AUTONOMY_PRESET=calibration (shadow everything, earn "
+                   "autonomy via the trust engine) or flip individual COLONY_*_MODE flags")
+    return CheckResult("server-autonomy-posture", PASS, detail="; ".join(parts))
+
+
+def check_server_self_model(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """19. Self-model/trust engine: wired, and no tripped circuit breakers."""
+    status, body = _http_get(f"{base_url}/v1/host/self", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-self-model", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-self-model", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult(
+            "server-self-model", WARN,
+            detail="self-model not wired — no earned-autonomy gating, no action journal",
+            remedy="unset COLONY_SELF_MODEL_ENABLED=false (it defaults on) and restart")
+    domains = body.get("domains") or []
+    trust = body.get("trust") or []
+    demoted = [t["domain"] for t in trust if t.get("demotions", 0) > 0
+               and t.get("stage") != "act_first"]
+    if demoted:
+        return CheckResult(
+            "server-self-model", WARN,
+            detail=f"{len(domains)} competence domain(s); circuit breaker has demoted: "
+                   + ", ".join(demoted),
+            remedy="review the action journal (GET /v1/host/self/journal) for the "
+                   "failures that tripped the breaker; the class re-graduates on a "
+                   "clean track record")
+    return CheckResult(
+        "server-self-model", PASS,
+        detail=f"{len(domains)} competence domain(s), {len(trust)} trust stage(s)")
+
+
+def check_server_adaptive_params(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """20. Meta-learning knobs: present, within bounds, attribution visible."""
+    status, body = _http_get(f"{base_url}/v1/host/self/params", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-adaptive-params", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict) or not body.get("available"):
+        return CheckResult(
+            "server-adaptive-params", WARN,
+            detail=f"adaptive param store not wired (HTTP {status})",
+            remedy="check boot logs for 'AdaptiveParamStore init failed'")
+    params = body.get("params") or []
+    tuned = [p for p in params if p.get("value") is not None]
+    detail = f"{len(params)} knob(s) registered"
+    if tuned:
+        detail += "; tuned: " + ", ".join(
+            f"{p['name']}={p['effective']}" for p in tuned)
+    return CheckResult("server-adaptive-params", PASS, detail=detail)
+
+
+def check_server_executor(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """21. Initiative executor: the acting brain is wired and cycling."""
+    status, body = _http_get(f"{base_url}/v1/host/executor/status", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-executor", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-executor", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("wired"):
+        return CheckResult(
+            "server-executor", WARN,
+            detail="initiative executor not wired — initiatives are generated but "
+                   "nothing acts on them with tools",
+            remedy="set COLONY_EXECUTOR_ENABLED=true (or COLONY_AUTONOMY_PRESET="
+                   "calibration) and restart")
+    if not body.get("running"):
+        return CheckResult(
+            "server-executor", WARN,
+            detail="executor wired but not running",
+            remedy="check the sidecar log for executor startup errors")
+    stats = body.get("stats") or {}
+    return CheckResult(
+        "server-executor", PASS,
+        detail=f"running (cycles={stats.get('cycles', 0)}, "
+               f"completed={stats.get('initiatives_completed', 0)}, "
+               f"failed={stats.get('initiatives_failed', 0)})")
+
+
+def check_server_projects(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """22. Goal persistence: project engine mode + blocked projects."""
+    status, body = _http_get(f"{base_url}/v1/host/projects", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-projects", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-projects", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult("server-projects", SKIP, detail="project engine not wired")
+    mode = body.get("mode", "?")
+    projects = body.get("projects") or []
+    blocked = [p for p in projects if p.get("status") == "blocked"]
+    if blocked:
+        return CheckResult(
+            "server-projects", WARN,
+            detail=f"mode={mode}, {len(projects)} project(s); "
+                   f"{len(blocked)} BLOCKED: "
+                   + ", ".join(p.get("title", "?")[:40] for p in blocked[:3]),
+            remedy="a blocked project hit an owner boundary or repeated failure — "
+                   "review with the project_status tool or GET /v1/host/projects")
+    return CheckResult(
+        "server-projects", PASS, detail=f"mode={mode}, {len(projects)} project(s)")
+
+
+def check_server_beliefs(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """23. Belief maintenance: mode + unresolved contradictions."""
+    status, body = _http_get(f"{base_url}/v1/host/beliefs", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-beliefs", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-beliefs", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult("server-beliefs", SKIP, detail="belief engine not wired")
+    mode = body.get("mode", "?")
+    open_conflicts = int(body.get("open_conflicts") or 0)
+    review = int(body.get("review_conflicts") or 0)
+    if review > 0:
+        return CheckResult(
+            "server-beliefs", WARN,
+            detail=f"mode={mode}; {review} contradiction(s) await owner review",
+            remedy="use the belief_conflicts tool (or GET /v1/host/beliefs) and "
+                   "resolve or dismiss them")
+    return CheckResult(
+        "server-beliefs", PASS,
+        detail=f"mode={mode}, {open_conflicts} open conflict(s)")
+
+
+def check_server_workers_governor(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """24. Worker governor: server-side enforcement posture."""
+    status, body = _http_get(f"{base_url}/v1/host/queue/governor", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-workers-governor", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-workers-governor", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult("server-workers-governor", SKIP, detail="governor not wired")
+    mode = body.get("mode", "?")
+    domains = body.get("worker_domains") or []
+    if mode == "off" and domains:
+        return CheckResult(
+            "server-workers-governor", WARN,
+            detail=f"workers have a track record ({len(domains)} domain(s)) but the "
+                   "governor is OFF — worker claims/completions are not re-checked "
+                   "server-side",
+            remedy="set COLONY_WORKERS_MODE=shadow (observe) or live (enforce)")
+    return CheckResult(
+        "server-workers-governor", PASS,
+        detail=f"mode={mode}, {len(domains)} worker trust domain(s)")
+
+
+def check_server_sandbox(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """25. Sandbox: mode/backends consistent."""
+    status, body = _http_get(f"{base_url}/v1/host/sandbox/status", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-sandbox", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-sandbox", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult("server-sandbox", SKIP, detail="sandbox not wired")
+    mode = body.get("mode", "off")
+    backend_ok = bool(body.get("backend_available"))
+    if mode != "off" and not backend_ok:
+        return CheckResult(
+            "server-sandbox", WARN,
+            detail=f"mode={mode} but the container backend is unavailable — "
+                   "sandbox_run will refuse every request",
+            remedy="install/start Docker on the sidecar host, or set "
+                   "COLONY_SANDBOX_MODE=off")
+    return CheckResult(
+        "server-sandbox", PASS,
+        detail=f"mode={mode}, backend {'available' if backend_ok else 'absent'}")
+
+
+def check_server_connectors(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """26. Senses: connector framework mode vs registered connectors."""
+    status, body = _http_get(f"{base_url}/v1/host/connectors/status", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-connectors", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-connectors", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult("server-connectors", SKIP, detail="connector manager not wired")
+    mode = body.get("mode", "off")
+    connectors = body.get("connectors") or []
+    if mode != "off" and not connectors:
+        return CheckResult(
+            "server-connectors", WARN,
+            detail=f"mode={mode} but no connector is registered — the agent has no "
+                   "senses configured",
+            remedy="enable at least one: COLONY_CONNECTOR_FS_PATH (folder watch), "
+                   "COLONY_CONNECTOR_IMAP_* (email), COLONY_CONNECTOR_CALENDAR_ICS_URL, "
+                   "or COLONY_CONNECTOR_WEBHOOK_URL; each also needs "
+                   "COLONY_CONNECTOR_<NAME>_ENABLED=true")
+    names = ",".join(str(c.get("name", "?")) for c in connectors) or "none"
+    return CheckResult(
+        "server-connectors", PASS, detail=f"mode={mode}, connectors: {names}")
+
+
+def check_server_mining(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """27. Self-improvement mining: escalation miner reachable."""
+    status, body = _http_get(
+        f"{base_url}/v1/host/mining/escalations?limit=1", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-mining", SKIP, detail="mining not wired (or mode off)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-mining", WARN, detail=f"HTTP {status}: {body}")
+    count = body.get("count", len(body.get("escalations") or []))
+    return CheckResult(
+        "server-mining", PASS, detail=f"escalation miner reachable ({count} recorded)")
+
+
 def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> List[CheckResult]:
     """Run all HTTP checks, skipping the rest when the sidecar is down."""
     base_url = base_url.rstrip("/")
@@ -816,6 +1103,27 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-worker-liveness", check_server_worker_liveness,
                     base_url, api_key, timeout)
     results += _run("server-skills-observations", check_server_skills_observations,
+                    base_url, api_key, timeout)
+    # Cognition / autonomy visibility (v0.22.0)
+    results += _run("server-autonomy-posture", check_server_autonomy_posture,
+                    base_url, api_key, timeout)
+    results += _run("server-self-model", check_server_self_model,
+                    base_url, api_key, timeout)
+    results += _run("server-adaptive-params", check_server_adaptive_params,
+                    base_url, api_key, timeout)
+    results += _run("server-executor", check_server_executor,
+                    base_url, api_key, timeout)
+    results += _run("server-projects", check_server_projects,
+                    base_url, api_key, timeout)
+    results += _run("server-beliefs", check_server_beliefs,
+                    base_url, api_key, timeout)
+    results += _run("server-workers-governor", check_server_workers_governor,
+                    base_url, api_key, timeout)
+    results += _run("server-sandbox", check_server_sandbox,
+                    base_url, api_key, timeout)
+    results += _run("server-connectors", check_server_connectors,
+                    base_url, api_key, timeout)
+    results += _run("server-mining", check_server_mining,
                     base_url, api_key, timeout)
     return results
 
