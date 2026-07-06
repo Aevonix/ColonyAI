@@ -44,7 +44,14 @@ class ContactsConfig:
         """
         path = os.environ.get("COLONY_CONTACTS_DB")
         if not path:
-            state_dir = os.environ.get("COLONY_STATE_DIR", ".")
+            # Anchor to the real state dir, never the process CWD: a
+            # cwd-relative default silently forks the contact store per
+            # working directory (the same failure class as the world-model
+            # store incident of 2026-07-04).
+            state_dir = os.environ.get("COLONY_STATE_DIR", "")
+            if not state_dir:
+                state_dir = os.path.join(os.path.expanduser("~"),
+                                         ".colony", "data")
             path = os.path.join(state_dir, "colony-contacts.db")
         auto_promote = os.environ.get("COLONY_AUTO_PROMOTE_GROUP_TO_1ON1", "").strip().lower() in (
             "1", "true", "yes", "on")

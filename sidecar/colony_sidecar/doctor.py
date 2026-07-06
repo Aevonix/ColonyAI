@@ -344,6 +344,20 @@ def check_contacts_db() -> CheckResult:
             "contacts-db", PASS,
             detail=f"{path} present ({size} bytes, wal {wal_size} bytes)",
         )
+    # An (almost) empty resolved DB next to a substantive sibling contacts DB
+    # is the env-mismatch signature again: the running service points at the
+    # sibling (via its unit/plist env) while this shell resolves a stale stub.
+    big_siblings = [p for p in path.parent.glob("*contacts*.db")
+                    if p != path and p.stat().st_size >= 1024]
+    if big_siblings:
+        return CheckResult(
+            "contacts-db", WARN,
+            detail=f"{path} is empty ({size} bytes) but {big_siblings[0]} holds "
+                   "real data — this doctor shell likely resolves a different "
+                   "path than the running service",
+            remedy="run doctor with the service's env (COLONY_CONTACTS_DB / "
+                   "COLONY_STATE_DIR), or delete the stale empty stub",
+        )
     try:
         conn = sqlite3.connect(str(path))
         try:

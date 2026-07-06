@@ -835,3 +835,23 @@ def test_contacts_db_sibling_mismatch_warns(clean_env, monkeypatch, tmp_path):
     r = doctor.check_contacts_db()
     assert r.status == WARN
     assert "different path" in r.detail or "does exist" in r.detail
+
+
+def test_contacts_db_empty_stub_with_real_sibling_warns(clean_env, monkeypatch, tmp_path):
+    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    (tmp_path / "colony-contacts.db").write_bytes(b"")        # stale stub
+    (tmp_path / "contacts.db").write_bytes(b"x" * 4096)       # the real store
+    r = doctor.check_contacts_db()
+    assert r.status == WARN
+    assert "real data" in r.detail
+
+
+def test_contacts_db_state_dir_default_not_cwd(clean_env, monkeypatch, tmp_path):
+    # No COLONY_STATE_DIR: the default must anchor to ~/.colony/data, never
+    # the process CWD (the world-model incident class).
+    monkeypatch.delenv("COLONY_STATE_DIR", raising=False)
+    monkeypatch.delenv("COLONY_CONTACTS_DB", raising=False)
+    from colony_sidecar.contacts.config import ContactsConfig
+    p = ContactsConfig.from_env().sqlite_path
+    assert not p.startswith("./")
+    assert ".colony" in p
