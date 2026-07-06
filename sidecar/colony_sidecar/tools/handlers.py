@@ -729,6 +729,98 @@ async def handle_belief_conflicts(
         return json.dumps({"error": str(e), "status": "error"})
 
 
+async def _resolve_one_contact(store, who: str):
+    """Resolve who -> a single contact_id, or return (None, error_json)."""
+    who = (who or "").strip()
+    if who.startswith("cid-"):
+        return who, None
+    matches = await store.find_by_name(who, threshold=0.6)
+    if not matches:
+        return None, json.dumps({"error": f"no contact matching {who!r}",
+                                 "status": "not_found"})
+    if len(matches) > 1:
+        return None, json.dumps({
+            "status": "ambiguous",
+            "candidates": [{"contact_id": m.contact_id,
+                            "display_name": m.display_name}
+                           for m in matches[:5]]})
+    return matches[0].contact_id, None
+
+
+async def handle_link_contact(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Attach a channel handle to a person (owner curation)."""
+    try:
+        from colony_sidecar.api.routers.host import _contacts_store
+        if _contacts_store is None:
+            return json.dumps({"error": "contact store not wired",
+                               "status": "unavailable"})
+        cid, err = await _resolve_one_contact(_contacts_store, args.get("who", ""))
+        if err:
+            return err
+        gw = str(args.get("gateway", "")).strip().lower()
+        addr = str(args.get("address", "")).strip()
+        if not gw or not addr:
+            return json.dumps({"error": "gateway and address required",
+                               "status": "error"})
+        await _contacts_store.add_handle(cid, gw, addr, verified=True,
+                                         source="owner")
+        return json.dumps({"linked": True, "contact_id": cid,
+                           "gateway": gw, "address": addr})
+    except ValueError as e:
+        return json.dumps({"error": str(e), "status": "conflict"})
+    except Exception as e:
+        logger.error("link_contact failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_merge_contacts(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Merge two contacts that are the same person (owner curation)."""
+    try:
+        from colony_sidecar.api.routers.host import _contacts_store
+        if _contacts_store is None:
+            return json.dumps({"error": "contact store not wired",
+                               "status": "unavailable"})
+        keep, err = await _resolve_one_contact(_contacts_store, args.get("keep", ""))
+        if err:
+            return err
+        merge, err = await _resolve_one_contact(_contacts_store, args.get("merge", ""))
+        if err:
+            return err
+        kept = await _contacts_store.merge_contacts(keep, merge, performed_by="owner")
+        return json.dumps({"merged": True, "kept_contact_id": keep,
+                           "merged_contact_id": merge,
+                           "interaction_count": getattr(kept, "interaction_count", None)},
+                          default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e), "status": "error"})
+    except Exception as e:
+        logger.error("merge_contacts failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
+async def handle_pending_contact_proposals(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """List handle-link proposals awaiting owner review."""
+    try:
+        from colony_sidecar.api.routers.host import _contacts_store
+        if _contacts_store is None:
+            return json.dumps({"error": "contact store not wired",
+                               "status": "unavailable"})
+        props = await _contacts_store.list_handle_proposals(limit=50)
+        return json.dumps({"count": len(props), "proposals": props}, default=str)
+    except Exception as e:
+        logger.error("pending_contact_proposals failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
 async def handle_relationship_brief(
     args: dict[str, Any],
     registry: SubsystemRegistry,
@@ -838,6 +930,9 @@ TOOL_HANDLERS: dict[str, callable] = {
     "self_status": handle_self_status,
     "action_journal": handle_action_journal,
     "belief_conflicts": handle_belief_conflicts,
+    "link_contact": handle_link_contact,
+    "merge_contacts": handle_merge_contacts,
+    "pending_contact_proposals": handle_pending_contact_proposals,
     "relationship_brief": handle_relationship_brief,
     "sandbox_run": handle_sandbox_run,
     "sandbox_status": handle_sandbox_status,

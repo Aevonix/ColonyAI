@@ -109,12 +109,15 @@ handle kinds; deployments supply the recognizers.
 
 ### 6. Owner curation tools
 
-- `colony_link_contact(name_or_id, gateway, address)` — attach a handle
-  ("that WhatsApp is David's").
-- `colony_merge_contacts(keep, merge)` — existing merge machinery, exposed
-  as a tool; audit-logged, reversible via contact_audit.
-- Merge PROPOSALS from rung 4 surface through the existing
-  initiative/review path.
+- `link_contact(who, gateway, address)` — attach a handle ("that WhatsApp
+  is David's"). Tool + `POST /contacts/{id}/handles`. SHIPPED.
+- `merge_contacts(keep, merge)` — fold one contact into another (reassign
+  handles, sum interaction history, soft-delete the loser; audited +
+  reversible). Tool + `POST /contacts/merge` + store `merge_contacts`.
+  SHIPPED.
+- `pending_contact_proposals` — the rung-4 handle proposals awaiting owner
+  review. Tool + `GET /contacts/proposals` + store `list_handle_proposals`.
+  SHIPPED.
 
 ### 7. RelationshipProfiler (`relationships/profiler.py`)
 

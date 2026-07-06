@@ -189,6 +189,18 @@ class ContactStore(ABC):
         """Find contacts whose display_name is similar to name."""
 
     @abstractmethod
+    async def merge_contacts(
+        self, keep_id: str, merge_id: str, performed_by: str = "owner",
+    ) -> Optional[Contact]:
+        """Merge one contact into another: reassign handles, fold interaction
+        history, soft-delete the merged record. Audited and reversible."""
+
+    @abstractmethod
+    async def list_handle_proposals(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Pending handle-link proposals (from scoped-name attribution) for
+        owner review: {contact_id, display_name, gateway, address, at}."""
+
+    @abstractmethod
     async def update(self, contact_id: str, **fields) -> Optional[Contact]:
         """Update arbitrary fields on a contact."""
 
@@ -820,6 +832,79 @@ class SQLiteContactStore(ContactStore):
         )
         await db.execute("DELETE FROM contacts WHERE contact_id = ?", (contact_id,))
         await db.commit()
+
+    async def merge_contacts(
+        self, keep_id: str, merge_id: str, performed_by: str = "owner",
+    ) -> Optional[Contact]:
+        """Fold ``merge_id`` into ``keep_id``: move its handles, add its
+        interaction count, then soft-delete it. Audited on both records so
+        the merge is traceable and the loser is recoverable."""
+        db = self._require_db()
+        if keep_id == merge_id:
+            return await self.get(keep_id)
+        keep = await self.get(keep_id)
+        loser = await self.get(merge_id)
+        if keep is None or loser is None:
+            raise ValueError("both contacts must exist to merge")
+        now = _now_iso()
+        moved = 0
+        for h in await self.get_handles(merge_id):
+            # Skip a handle the keeper already has (avoid a unique clash);
+            # otherwise reassign it to the keeper.
+            try:
+                await db.execute(
+                    "UPDATE contact_handles SET contact_id = ? "
+                    "WHERE handle_id = ?", (keep_id, h.handle_id))
+                moved += 1
+            except Exception:
+                # duplicate (gateway,address) already on keep -> drop the dup
+                await db.execute(
+                    "DELETE FROM contact_handles WHERE handle_id = ?",
+                    (h.handle_id,))
+        # Fold interaction history + keep the earlier last-seen.
+        new_count = int(getattr(keep, "interaction_count", 0) or 0) + \
+            int(getattr(loser, "interaction_count", 0) or 0)
+        await db.execute(
+            "UPDATE contacts SET interaction_count = ?, updated_at = ? "
+            "WHERE contact_id = ?", (new_count, now, keep_id))
+        await db.commit()
+        await self.record_audit(
+            keep_id, "merged_in",
+            {"merged_contact_id": merge_id,
+             "merged_display_name": loser.display_name,
+             "handles_moved": moved},
+            performed_by=performed_by)
+        await self.soft_delete(
+            merge_id, reason=f"merged into {keep_id}", performed_by=performed_by)
+        await self.record_audit(
+            merge_id, "merged_into", {"kept_contact_id": keep_id},
+            performed_by=performed_by)
+        return await self.get(keep_id)
+
+    async def list_handle_proposals(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Handle-link proposals from scoped-name attribution awaiting owner
+        review. Sourced from the audit trail (action='handle_proposed');
+        excludes proposals whose contact was later deleted."""
+        db = self._require_db()
+        rows = []
+        async with db.execute(
+            "SELECT a.contact_id, a.detail, a.created_at, c.display_name "
+            "FROM contact_audit a JOIN contacts c ON c.contact_id = a.contact_id "
+            "WHERE a.action = 'handle_proposed' AND c.deleted_at IS NULL "
+            "ORDER BY a.created_at DESC LIMIT ?", (limit,)) as cur:
+            async for r in cur:
+                try:
+                    d = json.loads(r["detail"] or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    d = {}
+                rows.append({
+                    "contact_id": r["contact_id"],
+                    "display_name": r["display_name"],
+                    "gateway": d.get("gateway", ""),
+                    "address": d.get("address", ""),
+                    "at": r["created_at"],
+                })
+        return rows
 
     async def update(self, contact_id: str, **fields) -> Optional[Contact]:
         db = self._require_db()

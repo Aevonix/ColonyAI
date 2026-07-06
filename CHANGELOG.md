@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.23.2 — owner contact curation (link / merge / review proposals)
+
+Completes the relationship program's promised curation surface (it was
+designed in docs/RELATIONSHIPS.md but never shipped): when the resolver
+files a handle proposal, or you want to say "that WhatsApp is David's", or a
+shadow contact turns out to be someone you know, there is now a way to act.
+
+- `link_contact(who, gateway, address)` tool + `POST /contacts/{id}/handles`:
+  attach a channel handle to a person, unifying their identity across
+  channels.
+- `merge_contacts(keep, merge)` tool + `POST /contacts/merge` + store method:
+  fold one contact into another — reassigns handles, sums interaction
+  history, soft-deletes the loser; audited on both records and reversible.
+- `pending_contact_proposals` tool + `GET /contacts/proposals` + store
+  `list_handle_proposals`: review the auto-proposed handle links from
+  scoped-name attribution (rung 4 never links silently).
+
+Tests: link/merge/proposal round-trips in test_relationships (incl. the
+resolver filing a proposal that the store surfaces). Full suite 1707 passed.
+
+
 ## v0.23.1 — gap-sweep fixes: safety on the send path, whole comms ledger, honest surfaces
 
 Fixes from a full-codebase gap audit. No new subsystems; closing holes.

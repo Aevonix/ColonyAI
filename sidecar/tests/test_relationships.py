@@ -276,3 +276,60 @@ class TestResearchReviewGate:
                        content="Competitor pricing rose 12% year over year.")
         res = await p._run_review_gate(art, _Run())
         assert res.passed is True and res.gate_notes == "clean"
+
+
+# ---------------------------------------------------------------------------
+# Owner curation: link handle, merge contacts, review proposals
+# ---------------------------------------------------------------------------
+
+class TestContactCuration:
+    async def test_link_handle_via_store(self, store):
+        c = await store.create(display_name="David", trust_tier="regular")
+        await store.add_handle(c.contact_id, "sms", "+18185551234",
+                               verified=True, source="owner")
+        got = await store.resolve_messaging_handle("whatsapp", "+1 818 555 1234")
+        assert got is not None and got.contact_id == c.contact_id
+
+    async def test_merge_moves_handles_and_history(self, store):
+        keep = await store.create(display_name="David Miller", trust_tier="regular")
+        await store.add_handle(keep.contact_id, "sms", "+18180000001")
+        for _ in range(3):
+            await store.record_interaction(keep.contact_id)
+        shadow = await store.create(display_name="David", trust_tier="unknown")
+        await store.add_handle(shadow.contact_id, "whatsapp", "999@lid")
+        for _ in range(2):
+            await store.record_interaction(shadow.contact_id)
+
+        merged = await store.merge_contacts(keep.contact_id, shadow.contact_id,
+                                            performed_by="owner")
+        assert merged.interaction_count == 5
+        # the shadow's whatsapp handle now resolves to the kept contact
+        got = await store.resolve_messaging_handle("whatsapp", "999@lid")
+        assert got is not None and got.contact_id == keep.contact_id
+        # the merged contact is soft-deleted
+        assert await store.get(shadow.contact_id) is None
+
+    async def test_merge_requires_both_contacts(self, store):
+        keep = await store.create(display_name="Real")
+        with pytest.raises(ValueError):
+            await store.merge_contacts(keep.contact_id, "cid-nope-000")
+
+    async def test_merge_self_is_noop(self, store):
+        c = await store.create(display_name="Solo")
+        r = await store.merge_contacts(c.contact_id, c.contact_id)
+        assert r.contact_id == c.contact_id
+
+    async def test_handle_proposals_surface_from_resolver(self, store):
+        # A scoped-name attribution files a proposal; the store lists it.
+        keep = await store.create(display_name="Ingrid", trust_tier="regular")
+        # simulate a group scope with Ingrid as a member
+        scope = await store.create_scope(
+            scope_type="group", platform="whatsapp", external_id="grp-1",
+            label="Fam", granted_tier="group_guest")
+        await store.add_scope_member(scope.scope_id, keep.contact_id, "member")
+        r = await ParticipantResolver(store).resolve(
+            platform="whatsapp", user_id="555ingrid@lid",
+            display_name="Ingrid", group_id="grp-1")
+        assert r.method == "scoped_name" and r.contact_id == keep.contact_id
+        props = await store.list_handle_proposals()
+        assert any(p["address"] == "555ingrid@lid" for p in props)

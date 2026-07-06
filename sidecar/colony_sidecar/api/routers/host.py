@@ -2857,6 +2857,65 @@ async def create_contact(body: ContactCreateRequest) -> ContactResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/contacts/proposals")
+async def list_contact_proposals(limit: int = 50) -> dict:
+    """Pending handle-link proposals from scoped-name attribution, for owner
+    review (docs/RELATIONSHIPS.md: rung 4 never links silently)."""
+    if _contacts_store is None:
+        return {"available": False, "proposals": []}
+    try:
+        return {"available": True,
+                "proposals": await _contacts_store.list_handle_proposals(limit)}
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "proposals": []}
+
+
+@router.post("/contacts/{contact_id}/handles", status_code=201)
+async def add_contact_handle(contact_id: str, body: dict) -> dict:
+    """Attach a channel handle to a contact ('that WhatsApp is David's').
+    Owner curation surface behind colony_link_contact."""
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    gateway = str(body.get("gateway", "")).strip().lower()
+    address = str(body.get("address", "")).strip()
+    if not gateway or not address:
+        raise HTTPException(status_code=400, detail="gateway and address required")
+    try:
+        h = await _contacts_store.add_handle(
+            contact_id, gateway, address,
+            is_primary=bool(body.get("is_primary", False)),
+            verified=True, source="owner")
+        return {"linked": True, "contact_id": contact_id,
+                "gateway": gateway, "address": address,
+                "handle_id": getattr(h, "handle_id", "")}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        logger.warning("add_contact_handle failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/contacts/merge")
+async def merge_contacts_endpoint(body: dict) -> dict:
+    """Merge one contact into another (keep, merge). Audited + reversible."""
+    if _contacts_store is None:
+        raise HTTPException(status_code=501, detail="Contact store not initialized")
+    keep = str(body.get("keep", "")).strip()
+    merge = str(body.get("merge", "")).strip()
+    if not keep or not merge:
+        raise HTTPException(status_code=400, detail="keep and merge contact ids required")
+    try:
+        kept = await _contacts_store.merge_contacts(keep, merge, performed_by="owner")
+        return {"merged": True, "kept_contact_id": keep,
+                "merged_contact_id": merge,
+                "interaction_count": getattr(kept, "interaction_count", None)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("merge_contacts failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.post("/contacts/intro", response_model=ContactIntroResponse, status_code=201)
 async def capture_introduction(body: ContactIntroRequest) -> ContactIntroResponse:
     """Capture an organic introduction (social-graph autonomy, generic).

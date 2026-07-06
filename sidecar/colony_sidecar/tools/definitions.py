@@ -504,6 +504,58 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "link_contact",
+        "description": (
+            "Attach a channel handle to a person ('that WhatsApp number is "
+            "David's', 'this email is Sam's'). Unifies their identity across "
+            "channels so their history and profile stay on one contact."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "who": {"type": "string",
+                        "description": "contact id (cid-...) or display name"},
+                "gateway": {"type": "string",
+                            "description": "channel: whatsapp|sms|rcs|email|"
+                                           "signal|voice|telegram"},
+                "address": {"type": "string",
+                            "description": "the handle (phone/email/id) to link"},
+            },
+            "required": ["who", "gateway", "address"],
+        },
+    },
+    {
+        "name": "merge_contacts",
+        "description": (
+            "Merge two contact records that are the same person into one "
+            "(e.g. a shadow contact created from a stranger turned out to be "
+            "someone you already know). Moves handles and history onto the "
+            "kept contact; reversible/audited. Use pending_contact_proposals "
+            "to review auto-proposed links first."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "keep": {"type": "string",
+                         "description": "contact id to KEEP (the canonical one)"},
+                "merge": {"type": "string",
+                          "description": "contact id to merge in and retire"},
+            },
+            "required": ["keep", "merge"],
+        },
+    },
+    {
+        "name": "pending_contact_proposals",
+        "description": (
+            "List auto-proposed handle links awaiting your confirmation "
+            "(created when a group member's name matched a known contact but "
+            "the handle could not be matched deterministically). Review, then "
+            "keep them (they are already attached at low confidence) or "
+            "correct with link_contact / merge_contacts."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "relationship_brief",
         "description": (
             "Standing + psyche + approach brief for a person: interaction "
