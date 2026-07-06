@@ -334,6 +334,9 @@ class AutonomyLoop:
         # Phase 17b: selfhood benchmark (weekly, Mind M0a)
         await self._phase_selfhood_benchmark()
 
+        # Phase 17c: experiment decisions (daily, Mind M0b)
+        await self._phase_experiments()
+
         # Phase 18: skill eviction
         await self._phase_skill_evict()
 
@@ -2041,6 +2044,50 @@ class AutonomyLoop:
                 proposal_to_payload(prop), delivery)
         except Exception:
             logger.debug("benchmark report delivery failed", exc_info=True)
+
+    async def _phase_experiments(self) -> None:
+        """Daily (Mind M0b): decide running self-experiments whose window
+        ended (adopt within guard, auto-revert on regression, abort when
+        superseded). Notifies the owner of every decision."""
+        engine = getattr(self._registry, "experiments", None)
+        if engine is None:
+            return
+        key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._periodic_last.get("experiments") == key:
+            return
+        try:
+            decided = engine.evaluate()
+            self._periodic_last["experiments"] = key
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase experiments error: %s", exc, exc_info=True)
+            return
+        if not decided:
+            return
+        delivery = self._registry.delivery
+        if delivery is None:
+            return
+        try:
+            from colony_sidecar.proposals import Proposal, proposal_to_payload
+        except Exception:
+            return
+        for exp in decided:
+            try:
+                prop = Proposal(
+                    title=f"Experiment {exp.get('status')}: "
+                          f"{exp.get('ref')}"[:100],
+                    finding=(f"{exp.get('hypothesis', '')[:200]}. Decision: "
+                             f"{exp.get('decision_reason', '')[:400]}"),
+                    why_it_helps="self-changes stay measured and reversible",
+                    suggested_action="No action needed; abort any running "
+                                     "experiment via the experiments API.",
+                    source="experiment-framework",
+                    initiative_type="proposal", confidence=0.85)
+                await self._route_reachout_delivery(
+                    proposal_to_payload(prop), delivery)
+            except Exception:
+                logger.debug("experiment notice delivery failed",
+                             exc_info=True)
 
     async def _phase_belief_maintenance(self) -> None:
         """Phase 11c (daily): belief maintenance (cognition item 7)."""

@@ -4264,6 +4264,63 @@ async def post_benchmark_samples(body: BenchmarkSamplesRequest) -> dict:
             "rejected": len(body.samples[:500]) - accepted}
 
 
+_experiments = None
+
+
+def set_experiments(e) -> None:
+    global _experiments
+    _experiments = e
+
+
+@router.get("/self/experiments")
+async def list_experiments(limit: int = 30) -> dict:
+    """Self-experiments: running and recently decided controlled changes."""
+    if _experiments is None:
+        return {"available": False}
+    try:
+        return {"available": True,
+                **_experiments.snapshot(limit=max(1, min(200, limit)))}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+class ExperimentRequest(BaseModel):
+    hypothesis: str
+    ref: str
+    variant: float
+    metric: str
+    max_regression: float = 0.05
+    window_days: int = 7
+    source: str = "api"
+
+
+@router.post("/self/experiments")
+async def start_experiment(body: ExperimentRequest) -> dict:
+    """Propose and start a bounded self-experiment (adaptive-param variant,
+    judged against a benchmark metric with auto-revert on regression)."""
+    if _experiments is None:
+        return {"available": False}
+    try:
+        exp = _experiments.propose_and_start(
+            hypothesis=body.hypothesis, ref=body.ref, variant=body.variant,
+            metric=body.metric, max_regression=body.max_regression,
+            window_days=body.window_days, source=body.source)
+        return {"available": True, "experiment": exp}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/self/experiments/{exp_id}/abort")
+async def abort_experiment(exp_id: str, reason: str = "manual abort") -> dict:
+    if _experiments is None:
+        return {"available": False}
+    ok = _experiments.abort(exp_id, reason=reason)
+    if not ok:
+        raise HTTPException(status_code=404,
+                            detail="no running experiment with that id")
+    return {"available": True, "aborted": exp_id}
+
+
 @router.post("/self/benchmark/compute")
 async def compute_benchmark(week: str = "") -> dict:
     """Compute (or recompute) a week's rollups on demand. Default: the

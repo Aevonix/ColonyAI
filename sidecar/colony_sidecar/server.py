@@ -630,6 +630,23 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Benchmark init failed: %s", exc)
 
+    # --- Experiment framework (Mind M0b): bounded, guarded self-changes ---
+    try:
+        from colony_sidecar.self_model.experiments import (
+            ExperimentEngine, ExperimentStore, experiments_enabled,
+        )
+        from colony_sidecar.api.routers.host import set_experiments
+        if experiments_enabled():
+            set_experiments(ExperimentEngine(ExperimentStore(
+                db_path=str(state_dir / "colony-experiments.db"))))
+            logger.info("Experiment framework ready (db=%s)",
+                        state_dir / "colony-experiments.db")
+        else:
+            logger.info("Experiment framework disabled "
+                        "(COLONY_EXPERIMENTS_ENABLED=false)")
+    except Exception as exc:
+        logger.warning("Experiment framework init failed: %s", exc)
+
     # --- Skills memory (procedure memory, item 3) ---
     _skills_mem_store = None
     try:

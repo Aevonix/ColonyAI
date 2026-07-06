@@ -193,6 +193,12 @@ class SubsystemRegistry:
         return _benchmark
 
     @property
+    def experiments(self) -> Any:
+        """Get the ExperimentEngine (Mind M0b)."""
+        from colony_sidecar.api.routers.host import _experiments
+        return _experiments
+
+    @property
     def affect_store(self) -> Any:
         """Get the AffectStore."""
         from colony_sidecar.api.routers.host import _affect_store
