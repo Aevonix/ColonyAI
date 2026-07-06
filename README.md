@@ -158,6 +158,11 @@ guide.
 
 ## Architecture
 
+<img src="https://raw.githubusercontent.com/Aevonix/ColonyAI/main/docs/architecture.svg" alt="Architecture: the host harness talks to the Colony sidecar's HTTP/WebSocket API, which fronts Neo4j (graph), LanceDB (vectors) and SQLite (records) and calls out to an OpenAI-compatible LLM/embeddings endpoint" width="100%">
+
+<details>
+<summary>Diagram source (mermaid)</summary>
+
 ```mermaid
 flowchart LR
     agent["Host harness - the agent"]
@@ -177,6 +182,12 @@ flowchart LR
     api -.->|assembled context| agent
     api -->|extract and embed| models
 ```
+
+Regenerate the SVG after editing:
+`python -c "import base64,json,zlib;print('https://mermaid.ink/svg/pako:'+base64.urlsafe_b64encode(zlib.compress(json.dumps({'code':open('/dev/stdin').read(),'mermaid':{'theme':'default'}}).encode(),9)).decode())"`
+then save the URL's output to `docs/architecture.svg`.
+
+</details>
 
 | Component | Role |
 | --- | --- |
