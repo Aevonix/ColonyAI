@@ -31,7 +31,7 @@ Environment variables:
 - `COLONY_API_KEY` — API key (default: `dev-mode-no-key`)
 - `COLONY_HERMES_WEBHOOK_URL` — webhook URL (default: `http://127.0.0.1:8644/webhooks/colony-initiatives`)
 - `COLONY_LOG_CHANNEL` — log channel for alerts (optional)
-- `COLONY_PLATFORM` — platform identifier (default: `whatsapp`)
+- `COLONY_PLATFORM` — platform identifier for delivery routing (default: empty; set to your messaging platform, e.g. `whatsapp`, `telegram`)
 
 ## Features
 

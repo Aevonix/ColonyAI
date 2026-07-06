@@ -58,7 +58,7 @@ Override the plugins dir for testing: `COLONY_DOCTOR_PLUGINS_DIR=/path ./colony-
 The general plugin's `pre_tool_call` hook records a friendly one-line summary of
 *what each tool call is doing* (the shell command, the file path, the search
 query, the colony verb+args) to `~/.hermes/.tool_activity.jsonl` — generic, any
-agent. `aeva-activity-monitor.py` (a reference consumer) enriches each home-channel
+agent. `colony-activity-monitor.py` (a reference consumer) enriches each home-channel
 line with it, so a muted ops channel still reads as meaningful actions:
 
 ```

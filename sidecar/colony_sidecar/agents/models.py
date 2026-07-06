@@ -111,13 +111,13 @@ class AgentMetadata:
 
 @dataclass
 class Agent:
-    """A connected agent (OpenClaw instance, Claude Code, etc.).
+    """A connected agent (Hermes host, Claude Code, worker daemon, etc.).
 
     Attributes:
         agent_id: Unique identifier (UUID)
         node_id: Device node ID
         colony_id: Parent Colony ID
-        name: Human-readable name (e.g., "spark1", "macmini")
+        name: Human-readable name (e.g., "node-a", "workstation")
         connection_mode: "local" (HTTP) or "remote" (WebSocket)
         gateway_url: For local mode, URL to push initiatives
         websocket_connected: For remote mode, is WebSocket active?

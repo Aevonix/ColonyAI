@@ -174,11 +174,11 @@ class TestDomainGenerators:
 
     @pytest.mark.asyncio
     async def test_system_unhealthy_only(self, engine, obs_store):
-        obs_store.record("system", "spark1", {"status": "degraded", "error_rate": 0.3})
-        obs_store.record("system", "spark2", {"status": "healthy", "error_rate": 0.0})
+        obs_store.record("system", "node-a", {"status": "degraded", "error_rate": 0.3})
+        obs_store.record("system", "node-b", {"status": "healthy", "error_rate": 0.0})
         engine._load_observation_domains()
         initiatives = await engine._generate_system_initiatives()
-        assert [i.entity_id for i in initiatives] == ["spark1"]
+        assert [i.entity_id for i in initiatives] == ["node-a"]
         assert initiatives[0].priority == 0.9
 
     @pytest.mark.asyncio

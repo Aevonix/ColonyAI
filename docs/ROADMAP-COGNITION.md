@@ -8,8 +8,9 @@ section as phases land.
 All capability code is GENERIC and public-repo-safe: env-driven, no identities,
 no deployment endpoints. Anything instance-specific (credentials, hosts, plists,
 connector endpoints, worker placement, LLM endpoints) is listed in the
-"Private deployment layer" section per item and written to the live Mac
-locations for the aeva private-repo sync, never committed here.
+"Private deployment layer" section per item and written to the reference
+deployment's live locations for the private deployment-layer repo sync,
+never committed here.
 
 Every new action path is gated the same way the existing stack is:
 DirectiveGuard boundary check (capability-aware: ACT vs OBSERVE), then approval
@@ -52,7 +53,7 @@ delivery path or the held directed-action dry_run.
 - Phase B (riskiest, server-side enforced): items 5 + 6.
 - Phase C (external inputs): item 2, then wire populator + belief maintenance to it.
 
-Within each phase: build -> unit tests green -> deploy to live Mac -> shadow/
+Within each phase: build -> unit tests green -> deploy to the reference deployment -> shadow/
 gated verify -> per-commit leak self-scan -> push -> live git parity -> update
 Program State here. Refresh bundles at each push.
 
@@ -352,9 +353,9 @@ completion (a worker claiming a boundaried job is refused server-side), lease
 requeue on missed heartbeat, audit of worker report, never-trust (worker
 reporting a mutation on a read-only job -> violation).
 
-Private deployment layer (aeva repo + Mac): which hosts run workers, their LLM
-endpoints, capabilities per host, launchd plists, COLONY_API_KEY provisioning.
-Document in the handoff list.
+Private deployment layer (private repo + live host): which hosts run workers,
+their LLM endpoints, capabilities per host, launchd plists, COLONY_API_KEY
+provisioning. Document in the handoff list.
 
 ## Item 6 - EXPLORATION SANDBOX [Phase B, riskiest]
 
@@ -379,7 +380,7 @@ Config: `COLONY_SANDBOX_MODE` off|dry_run|live (dry_run: validate + log the
 would-run command, execute nothing), `COLONY_SANDBOX_IMAGE`,
 `COLONY_SANDBOX_CPUS`/`_MEMORY`/`_TIMEOUT`/`_EGRESS` (none|allowlist),
 `COLONY_SANDBOX_MAX_ARTIFACT_BYTES`. Default off (Docker may be absent on the
-Mac; enable per deployment).
+deployment host; enable per deployment).
 
 Rollout gate: dry_run until a sample script validates + logs; live only where
 Docker is present and limits verified (no network, no creds, limits enforced).
@@ -388,9 +389,9 @@ Tests (mock backend): limit passthrough, no-egress flag set, approval tiering
 (auto vs flagged), boundary block on purpose, artifact size cap, dry_run
 executes nothing.
 
-Private deployment layer: Docker availability + image on the Mac, egress
-allowlist, resource ceilings. Document; likely stays `off`/`dry_run` on the
-Mac unless the owner wants a sandbox host.
+Private deployment layer: Docker availability + image on the live host, egress
+allowlist, resource ceilings. Document; likely stays `off`/`dry_run` there
+unless the owner wants a sandbox host.
 
 ---
 
@@ -439,11 +440,11 @@ Tests: base normalize contract, each connector against a canned fixture
 (no live creds in tests), boundary suppression, populator/observation wiring,
 poll cadence.
 
-Private deployment layer (aeva repo + Mac): actual endpoints, mailboxes,
-calendar accounts + OAuth refresh tokens, metric URLs + auth, folder paths,
-poll cadences, launchd if a connector runs out-of-process. Document + write the
-env to the Mac plist; list for aeva-repo sync. Also document the one-time
-calendar OAuth consent step for the owner.
+Private deployment layer (private repo + live host): actual endpoints,
+mailboxes, calendar accounts + OAuth refresh tokens, metric URLs + auth, folder
+paths, poll cadences, launchd if a connector runs out-of-process. Document +
+write the env to the live service unit; list for the private-repo sync. Also
+document the one-time calendar OAuth consent step for the owner.
 
 ---
 
@@ -485,7 +486,8 @@ avoid-prefix; Phase C).
 Public/private split (principle): capability code + schemas + flags = this
 repo (generic, env-driven). Instance specifics (creds, hosts, plists, persona
 glue, connector endpoints, worker placement, sandbox host) = documented here
-per item and written to the Mac live locations for aeva-repo sync.
+per item and written to the live deployment locations for the private-repo
+sync.
 
 Safety invariants (amended, do not regress): DirectiveGuard checked before
 every act; the immutable floor (Amendment 1.6) is never self-decidable;
@@ -843,11 +845,11 @@ adopted, upstream is unlicensed and immature):
     _JOB_TYPES/_POLL_SECS/_LLM_BASE_URL/_LLM_MODEL/_LLM_API_KEY,
     COLONY_SANDBOX_MODE (off), COLONY_SANDBOX_IMAGE/_CPUS/_MEMORY/_TIMEOUT/
     _PIDS/_EGRESS/_MAX_ARTIFACT_BYTES.
-  - Private deployment layer (aeva repo + Mac): which hosts run
+  - Private deployment layer (private repo + live host): which hosts run
     colony-worker, their LLM endpoints + capabilities per host, the filled-in
     workers/deploy unit (COLONY_API_KEY provisioning), and -- if a sandbox host
     is ever wanted -- Docker availability + image + egress policy on that host
-    (stays off/dry_run on the Mac unless the owner enables it).
+    (stays off/dry_run on the live host unless the owner enables it).
 - Phase C: COMPLETE (2026-07-04, successor session). Landed:
   - `connectors/` (item 2, senses / connector framework): base Connector ABC +
     Observation (domain, external_id, ts, payload, EntityHint[], text render) +
@@ -883,12 +885,12 @@ adopted, upstream is unlicensed and immature):
     POLL_SECS), COLONY_CONNECTOR_CALENDAR_* (ICS_URL/USER/PASSWORD/MAX),
     COLONY_CONNECTOR_FS_* (PATH/EXTENSIONS/MAX), COLONY_CONNECTOR_WEBHOOK_*
     (URL/AUTH_HEADER/AUTH_VALUE/FIELD_MAP/ID_FIELD/ENTITY_NAME/ENTITY_KIND).
-  - Private deployment layer (aeva repo + Mac): actual mailbox host/user/
-    app-password, the calendar ICS feed URL (+ the one-time Google/CalDAV
+  - Private deployment layer (private repo + live host): actual mailbox host/
+    user/app-password, the calendar ICS feed URL (+ the one-time Google/CalDAV
     OAuth consent step if a token path is used instead), the watched folder
     path(s), and the metrics endpoint URL + auth header. Enable per connector
     (shadow first, inspect the normalized output, then live). Write the env to
-    the Mac and list for the private-repo sync; no connector runs out of
+    the live host and list for the private-repo sync; no connector runs out of
     process (all in the sidecar phase), so no extra launchd unit is needed.
 - PROGRAM STATUS: PROGRAM CLOSED (2026-07-04). All seven capabilities
   delivered: Phase A (items 1/3/4/7 + Amendment 1), Phase B (items 5/6),
@@ -899,8 +901,8 @@ adopted, upstream is unlicensed and immature):
   identity already present on 85+ published baseline commits (range
   discloses nothing new; no history rewrite of published commits); fixed
   forward -- both checkouts now commit as Claude <noreply@anthropic.com>.
-  Close-out executed: stale refs deleted on both checkouts (build box:
-  backup-pre-scrub + refs/original/refs/heads/main; Mac:
+  Close-out executed: stale refs deleted on both checkouts (dev checkout:
+  backup-pre-scrub + refs/original/refs/heads/main; live host:
   live-overlay-20260704), only main remains locally and on origin; the
   three Phase B/C mode envs pinned explicitly in the live sidecar unit
   (COLONY_WORKERS_MODE=shadow, COLONY_SANDBOX_MODE=off,
@@ -918,7 +920,8 @@ close-out review; none are blockers, all are content-clean today:
   docs/MULTI_AGENT.md, agents/models.py, and two test files; checkout-path
   literals in initiatives/action_registry.py and
   intelligence/components/initiative_engine.py; deployment-prose trim in
-  this file's Program State history.
+  this file's Program State history. DONE (2026-07-05): generic node names,
+  COLONY_WORK_REPO env-driven checkout path, prose trimmed.
 - Directed-action delegate shim replacement: the deployment's interim
   dispatch shim (bridging the ScopedTask contract to the local agent
   gateway) is DESIGNATED to be replaced by the Phase B worker daemon path
@@ -938,8 +941,9 @@ close-out review; none are blockers, all are content-clean today:
 
 Read this doc top to bottom. The codebase sections under "What already exists"
 are real and pushed. Start Phase A item 1 (Projects) unless Program State says
-otherwise. Follow the per-phase loop (build -> tests -> deploy Mac -> gated
-verify -> leak scan -> push -> parity -> update this doc). Keep everything
-generic + env-driven; write deployment specifics to the Mac and list them for
-the aeva private repo. Never edit ~/.hermes/hermes-agent (read-only); use local
-config only. Do not disturb the live delivery path or the held directed dry_run.
+otherwise. Follow the per-phase loop (build -> tests -> deploy to the reference
+deployment -> gated verify -> leak scan -> push -> parity -> update this doc).
+Keep everything generic + env-driven; write deployment specifics to the live
+deployment and list them for the private deployment-layer repo. Never edit the
+host framework checkout (read-only); use local config only. Do not disturb the
+live delivery path or the held directed dry_run.

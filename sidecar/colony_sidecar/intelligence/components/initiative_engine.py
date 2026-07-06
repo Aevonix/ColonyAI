@@ -2532,16 +2532,20 @@ class InitiativeEngine:
             pass  # Still within cooldown
         else:
             self._last_self_initiative_at["repo_status"] = now
+            # The working checkout is deployment-specific: COLONY_WORK_REPO
+            # names the repo the hygiene check inspects (see action_registry).
+            work_repo = os.environ.get("COLONY_WORK_REPO", "").strip()
+            repo_label = os.path.basename(work_repo.rstrip("/")) or "work-repo"
             initiatives.append(
                 Initiative(
                     id=f"repo-check-{_uuid_module.uuid4().hex[:8]}",
                     type=InitiativeType.AGENT_ACTION,
-                    description="Check colony-work repo for uncommitted changes",
+                    description="Check the working repo for uncommitted changes",
                     priority=0.4,
                     rationale="Periodic hygiene check to prevent stale work",
                     action_hint="agent_check_repo_status",
-                    entity_id="colony-work",
-                    dedup_key="agent_action:agent_check_repo_status:colony-work",
+                    entity_id=repo_label,
+                    dedup_key=f"agent_action:agent_check_repo_status:{repo_label}",
                     expires_at=now + timedelta(hours=4),
                 )
             )

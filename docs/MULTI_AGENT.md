@@ -1,6 +1,6 @@
-# Colony Multi-Agent Architecture (v0.7.0)
+# Colony Multi-Agent Architecture
 
-Colony v0.7.0 introduces multi-agent support, enabling multiple OpenClaw instances, coding agents, and other AI systems to connect to a central Colony instance and share unified context.
+Colony's multi-agent support (introduced in v0.7.0) enables multiple agent hosts, coding agents, and other AI systems to connect to a central Colony instance and share unified context.
 
 ## Overview
 
@@ -21,9 +21,9 @@ Colony v0.7.0 introduces multi-agent support, enabling multiple OpenClaw instanc
 │              ┌───────────────┼───────────────┐                  │
 │              │               │               │                   │
 │         ┌────┴────┐    ┌────┴────┐    ┌────┴────┐              │
-│         │ Spark 1 │    │ Spark 2 │    │ Laptop  │              │
-│         │ OpenClaw│    │ Crush   │    │ Hermes  │              │
-│         │ (Local) │    │ (Remote)│    │(Remote) │              │
+│         │ node-a  │    │ node-b  │    │ laptop  │              │
+│         │ Hermes  │    │ Worker  │    │  MCP    │              │
+│         │ (Local) │    │(Remote) │    │(Remote) │              │
 │         └─────────┘    └─────────┘    └─────────┘              │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -91,15 +91,23 @@ WebSocket URL: wss://colony.example.com/v1/host/agents/agent-abc123/stream
 Config saved to: ~/.colony/agent.json
 ```
 
-### 3. Start the Remote Agent
+### 3. Run an Agent
 
-For OpenClaw with Colony plugin:
+Colony supports several agent paths out of the box:
 
-```bash
-openclaw gateway start
-```
-
-The plugin automatically detects `~/.colony/agent.json` and connects via WebSocket.
+- **Hermes plugin** (`plugins/hermes-plugin/`) — mounts Colony into a Hermes
+  agent host. Install with `plugins/hermes-plugin/install.sh`; the poller and
+  queue-worker scripts (or the unified `colony-agent-bridge` daemon) forward
+  initiatives and `agent_action` jobs to the agent's webhook.
+- **MCP** (`colony mcp setup`) — configures a coding harness (Claude Code,
+  Codex, Crush, OpenCode) to use Colony over the Model Context Protocol
+  (stdio transport).
+- **colony-worker daemon** (`colony_sidecar/workers/colony_worker.py`,
+  console script `colony-worker`) — an installable, capability-typed worker
+  that claims queued jobs and executes them with an LLM in a read/analyse
+  posture. Stdlib-only, so it runs on hosts without the full sidecar stack.
+- **Python Agent SDK** (`colony_sidecar.agent.AgentClient`) — for custom
+  agents; reads `~/.colony/agent.json` and connects via WebSocket (see below).
 
 ## Architecture Details
 
@@ -112,7 +120,7 @@ Local agents register via HTTP POST:
 ```bash
 POST /v1/host/agents/register
 {
-  "name": "spark1-openclaw",
+  "name": "node-a-hermes",
   "connection_mode": "local",
   "gateway_url": "http://192.0.2.10:18789",
   "capabilities": ["messaging", "calendar"],
@@ -246,6 +254,8 @@ Agent sends heartbeat every 30 seconds:
 
 ## API Reference
 
+All endpoints are under the `/v1/host` prefix.
+
 ### Agent Endpoints
 
 | Endpoint | Method | Description |
@@ -271,8 +281,10 @@ Agent sends heartbeat every 30 seconds:
 | `/initiatives/{id}/claim` | POST | Claim initiative |
 | `/initiatives/{id}/complete` | POST | Mark as completed |
 | `/initiatives/{id}/fail` | POST | Mark as failed |
-| `/initiatives/{id}/cancel` | POST | Cancel initiative |
+| `/initiatives/{id}` | DELETE | Cancel initiative |
 | `/initiatives/{id}/delegate` | POST | Delegate to another agent |
+| `/initiatives/{id}/retry` | POST | Retry a failed initiative |
+| `/initiatives/{id}/priority` | PATCH | Adjust priority |
 
 ## CLI Reference
 
@@ -316,7 +328,7 @@ colony initiative cancel <id> [--reason "reason"]
 ### Python
 
 ```python
-from colony.agent import AgentClient
+from colony_sidecar.agent import AgentClient
 
 # Load config from ~/.colony/agent.json
 client = AgentClient()
@@ -325,13 +337,13 @@ client = AgentClient()
 @client.on_initiative
 async def handle_initiative(initiative):
     print(f"Received: {initiative['description']}")
-    
+
     # Acknowledge receipt
     await client.acknowledge(initiative["id"])
-    
+
     # Do work
     result = await process(initiative)
-    
+
     # Report completion
     await client.complete(initiative["id"], result=result)
 
@@ -339,14 +351,16 @@ async def handle_initiative(initiative):
 await client.start()
 ```
 
-### TypeScript (Plugin)
+The client handles authentication, the heartbeat loop, initiative delivery,
+and reconnection with exponential backoff.
 
-The Colony plugin for OpenClaw automatically handles remote agent connections:
+### Hermes plugin and workers
 
-1. Detects `~/.colony/agent.json` at startup
-2. Establishes WebSocket connection
-3. Enqueues initiatives as system events
-4. Handles reconnection with exponential backoff
+For Hermes hosts, the plugin plus the `colony-agent-bridge` daemon (or the
+individual poller/queue-worker cron scripts) cover the same circuit without
+custom code: initiatives are forwarded to the agent's webhook, `agent_action`
+jobs are claimed from the task queue, and the skill index is synced back to
+Colony. See `plugins/hermes-plugin/poller/README.md`.
 
 ## Security Model
 
@@ -390,7 +404,7 @@ The Colony plugin for OpenClaw automatically handles remote agent connections:
   "node_id": "node-xyz789",
   "colony_id": "colony-1",
   "websocket_url": "wss://colony.example.com/v1/host/agents/agent-abc123/stream",
-  "name": "laptop-openclaw",
+  "name": "laptop",
   "capabilities": ["messaging", "calendar"],
   "is_primary": false,
   "connection_mode": "remote",
@@ -425,14 +439,6 @@ The Colony plugin for OpenClaw automatically handles remote agent connections:
 2. Verify heartbeat is running (30s interval)
 3. Check logs for error messages
 4. Agent auto-reconnects with exponential backoff
-
-## Migration from v0.6.x
-
-No migration needed. Existing setups work unchanged:
-
-- Existing plugin connections remain HTTP-based
-- Remote agent support is opt-in via `colony agent connect`
-- Multi-agent features require explicit setup
 
 ## Future Enhancements
 

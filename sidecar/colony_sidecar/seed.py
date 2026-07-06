@@ -10,6 +10,7 @@ of itself — like a human having memories of their own identity and capabilitie
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -703,7 +704,7 @@ WORLD_MODEL_ENTITIES = [
     {"name": "Hermes", "type": "framework", "attributes": {"type": "agent framework", "status": "deprecated", "superseded_by": "Colony"}},
     
     # Projects
-    {"name": "Colony", "type": "project", "attributes": {"description": "Intelligence infrastructure for AI agents", "repo": "Aevonix/colony"}},
+    {"name": "Colony", "type": "project", "attributes": {"description": "Intelligence infrastructure for AI agents", "repo": "github.com/Aevonix/ColonyAI"}},
     {"name": "colony", "type": "project", "attributes": {"description": "Colony monorepo (plugin + sidecar)", "status": "active"}},
     {"name": "colony-ai", "type": "project", "attributes": {"description": "Original Hermes fork monolith", "status": "deprecated", "superseded_by": "colony"}},
     
@@ -744,13 +745,23 @@ WORLD_MODEL_ENTITIES = [
     {"name": "Tavily", "type": "technology", "attributes": {"description": "AI-optimized search API", "use": "research"}},
     {"name": "SerpAPI", "type": "technology", "attributes": {"description": "Google search API wrapper", "use": "research"}},
     
-    # Organizations
-    {"name": "Aevonix", "type": "organization", "attributes": {"description": "Colony development organization", "github": "Aevonix"}},
-    
     # People (generic references)
     {"name": "user", "type": "person", "attributes": {"description": "The human interacting with Colony"}},
     {"name": "agent", "type": "person", "attributes": {"description": "The AI agent (Colony instance)"}},
 ]
+
+# Organizations are deployment-specific and opt-in: the public seed must not
+# plant a vendor organization into every user's graph. Set COLONY_ORG_NAME to
+# seed your own organization entity; when unset, no organization is seeded.
+_COLONY_ORG_NAME = os.environ.get("COLONY_ORG_NAME", "").strip()
+if _COLONY_ORG_NAME:
+    WORLD_MODEL_ENTITIES.append(
+        {
+            "name": _COLONY_ORG_NAME,
+            "type": "organization",
+            "attributes": {"description": "Organization operating this Colony deployment"},
+        }
+    )
 
 
 # =============================================================================
@@ -1092,6 +1103,8 @@ async def seed_self_knowledge(
 
 def seed_self_knowledge_summary() -> str:
     """Return a human-readable summary of what will be seeded."""
+    org_names = [e["name"] for e in WORLD_MODEL_ENTITIES if e["type"] == "organization"]
+    org_line = ", ".join(org_names) if org_names else "(none; set COLONY_ORG_NAME to seed one)"
     return f"""
 Colony Self-Knowledge Seeding
 =============================
@@ -1131,7 +1144,7 @@ World Model Entities ({len(WORLD_MODEL_ENTITIES)}):
   - Integrations: Claude Code, Codex, Crush, OpenCode
   - Search: DuckDuckGo, Brave, Tavily, SerpAPI
   - Concepts: memory, context, safety, reasoning, autonomy, MCP, initiative, etc.
-  - Organizations: Aevonix
+  - Organizations: {org_line}
 
 Skills ({len(COLONY_NATIVE_SKILLS)}):
   - colony_memory_search

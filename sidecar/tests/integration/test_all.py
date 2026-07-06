@@ -9,7 +9,7 @@ Usage:
     pytest tests/integration/ -v
 
     # Against a specific host
-    COLONY_URL=http://spark1:7777 COLONY_API_KEY=xxx pytest tests/integration/ -v
+    COLONY_URL=http://node-a:7777 COLONY_API_KEY=xxx pytest tests/integration/ -v
 
     # Quick smoke test (subset)
     pytest tests/integration/ -v -m smoke

@@ -30,7 +30,7 @@ Environment:
   COLONY_BRIDGE_POLL_SECS      main loop interval    (default 60)
   COLONY_BRIDGE_SKILLS_HOURS   skills sync interval  (default 24)
   COLONY_BRIDGE_LOG_CHANNEL    alert routing channel (optional)
-  COLONY_BRIDGE_PLATFORM       platform for alerts   (default whatsapp)
+  COLONY_BRIDGE_PLATFORM       platform for alerts   (default unset; set to your messaging platform)
   HERMES_SKILLS_DIR            skills directory      (default ~/.hermes/skills)
   COLONY_BRIDGE_STATE_DIR      state file directory  (default ~/.colony/bridge)
 """
@@ -82,7 +82,7 @@ def _cfg() -> Dict[str, Any]:
         "poll_secs": int(os.environ.get("COLONY_BRIDGE_POLL_SECS", "60")),
         "skills_hours": float(os.environ.get("COLONY_BRIDGE_SKILLS_HOURS", "24")),
         "log_channel": os.environ.get("COLONY_BRIDGE_LOG_CHANNEL", ""),
-        "platform": os.environ.get("COLONY_BRIDGE_PLATFORM", "whatsapp"),
+        "platform": os.environ.get("COLONY_BRIDGE_PLATFORM", ""),
         "state_dir": state_dir,
     }
 
@@ -277,7 +277,7 @@ class InitiativePoller:
                 "seq": 0,
                 "delivery_context": {
                     "log_channel": cfg.get("log_channel", ""),
-                    "platform": cfg.get("platform", "whatsapp"),
+                    "platform": cfg.get("platform", ""),
                 },
             }
             try:
@@ -437,7 +437,7 @@ def deliver_alerts(cfg: Dict[str, Any], alerts: list) -> None:
             "occurred_at": alert.get("at", datetime.now(timezone.utc).isoformat()),
             "delivery_context": {
                 "log_channel": cfg.get("log_channel", ""),
-                "platform": cfg.get("platform", "whatsapp"),
+                "platform": cfg.get("platform", ""),
             },
         }
         try:

@@ -30,7 +30,8 @@ WAKE_UP_FLAG = os.path.expanduser("~/.hermes/.colony_wake_up_flag")
 
 # Alert routing: logs only, never DM
 LOG_CHANNEL = os.environ.get("COLONY_LOG_CHANNEL", "")
-PLATFORM = os.environ.get("COLONY_PLATFORM", "whatsapp")
+# Set COLONY_PLATFORM to your messaging platform (e.g. "whatsapp", "telegram").
+PLATFORM = os.environ.get("COLONY_PLATFORM", "")
 
 
 def load_seen() -> set:

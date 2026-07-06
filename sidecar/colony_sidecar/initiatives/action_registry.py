@@ -150,7 +150,9 @@ _SPECS: List[ActionSpec] = [
     ActionSpec(
         name="agent_check_repo_status",
         tool="terminal",
-        command="git -C ~/colony-work status --short",
+        # The working checkout is deployment-specific: COLONY_WORK_REPO names
+        # the repo the hygiene check inspects (default: the worker's own cwd).
+        command=f"git -C {os.environ.get('COLONY_WORK_REPO', '.')} status --short",
         risk=RiskTier.READ_ONLY,
         description="Check working repos for uncommitted changes",
         initiative_type="agent_action",
