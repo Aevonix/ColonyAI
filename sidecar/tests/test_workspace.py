@@ -168,6 +168,44 @@ def test_thinker_parse():
     assert bad["progress"] is False and bad["action"] == {"kind": "none"}
 
 
+# --- ingest (guards against registry property/method drift) ----------------
+
+class _FakeCommitments:
+    def get_overdue(self):
+        return [{"id": "cm1", "description": "send Marc the audit"}]
+
+class _Anom:
+    def __init__(self, i, d, s): self.id, self.description, self.severity = i, d, s
+
+class _FakeAnomalies:
+    def get_recent(self, limit=20):
+        return [_Anom("an1", "gateway latency spike", 0.7)]
+
+class _FakeBench:
+    def snapshot(self, weeks=2):
+        return {"trends": {"recall.fact_coverage": -0.2,
+                           "latency.jobs_p50_secs": -0.9}}
+
+class _FakeRegistry:
+    def __init__(self):
+        self.commitment_store = _FakeCommitments()
+        self.anomalies = _FakeAnomalies()
+        self.benchmark = _FakeBench()
+
+def test_ingest_from_all_sources(tmp_path):
+    from colony_sidecar.autonomy.loop import AutonomyLoop
+    ws, store = make(tmp_path)
+    fake_self = type("S", (), {"_registry": _FakeRegistry()})()
+    AutonomyLoop._workspace_ingest(fake_self, ws)
+    summaries = [c.summary for c in store.active()]
+    # one per source; latency regression is excluded (lower is better there)
+    assert any("overdue commitment" in s for s in summaries)
+    assert any("gateway latency spike" in s for s in summaries)
+    assert any("recall.fact_coverage regressed" in s for s in summaries)
+    assert not any("latency.jobs_p50_secs" in s for s in summaries)
+    assert len(store.active()) == 3
+
+
 # --- API -------------------------------------------------------------------
 
 @asynccontextmanager

@@ -2144,20 +2144,21 @@ class AutonomyLoop:
                             sources=[f"commitment:{cid}"])
             except Exception:
                 pass
-        # recent anomalies -> concerns
-        detector = getattr(self._registry, "anomaly_detector", None)
-        recent = getattr(detector, "recent", None) if detector else None
-        if callable(recent):
+        # recent anomalies -> concerns (registry property is `anomalies`;
+        # the detector exposes get_recent() -> List[Anomaly dataclass])
+        detector = getattr(self._registry, "anomalies", None)
+        get_recent = getattr(detector, "get_recent", None) if detector else None
+        if callable(get_recent):
             try:
-                for a in (recent() or [])[:10]:
-                    summary = (a.get("summary") or a.get("description") or
-                               "anomaly") if isinstance(a, dict) else str(a)
-                    key = (a.get("id") or summary) if isinstance(a, dict) else summary
+                for a in (get_recent(limit=10) or [])[:10]:
+                    summary = getattr(a, "description", None) or str(a)
+                    key = getattr(a, "id", None) or summary
                     ws.bump(kind="anomaly", summary=str(summary)[:200],
-                            dedup_key=f"anomaly:{key}", salience=0.6,
+                            dedup_key=f"anomaly:{key}",
+                            salience=min(0.9, 0.4 + float(getattr(a, "severity", 0.4))),
                             sources=[f"anomaly:{key}"])
             except Exception:
-                pass
+                logger.debug("workspace anomaly ingest failed", exc_info=True)
         # benchmark regressions -> a concern to look into
         bench = getattr(self._registry, "benchmark", None)
         if bench is not None:
