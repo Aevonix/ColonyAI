@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 import colony_sidecar.api.routers.host as host_mod
 from colony_sidecar.self_model.expectations import (
-    ExpectationEngine, ExpectationStore,
+    ExpectationEngine, ExpectationStore, Prediction,
 )
 
 
@@ -28,6 +28,41 @@ def test_create_dedups(tmp_path):
                  source="t", dedup_key="commitment:c1")
     assert a is not None and b is None
     assert len(s.pending()) == 1
+
+
+def test_resolved_prediction_not_recreated(tmp_path):
+    """A scored prediction must never come back for the same subject+horizon,
+    or every checker pass re-scores the same miss forever (calibration n
+    inflates, one failure reads as dozens)."""
+    s = store(tmp_path)
+    h = time.time() + 10
+    a = s.create(subject="commitment:c1", domain="commitment",
+                 expectation="done", confidence=0.7, horizon=h,
+                 source="t", dedup_key="commitment:c1")
+    s.resolve(a.prediction_id, "miss")
+    again = s.create(subject="commitment:c1", domain="commitment",
+                     expectation="done", confidence=0.7, horizon=h,
+                     source="t", dedup_key="commitment:c1")
+    assert again is None
+    # a moved due date IS a new prediction
+    moved = s.create(subject="commitment:c1", domain="commitment",
+                     expectation="done", confidence=0.7, horizon=h + 3600,
+                     source="t", dedup_key="commitment:c1")
+    assert moved is not None
+
+
+def test_repeat_surprises_merge_into_one_concern(tmp_path):
+    """Misses about the same subject strengthen ONE anomaly concern (keyed by
+    subject), never one concern per scoring pass."""
+    ws = FakeWS()
+    e = engine(tmp_path, ws=ws)
+    for i in range(3):
+        e._surprise(Prediction(
+            prediction_id=f"p-{i}", subject="commitment:c1",
+            domain="commitment", expectation="done", confidence=0.7,
+            horizon=time.time(), source="t"))
+    keys = {b["dedup_key"] for b in ws.bumps}
+    assert len(ws.bumps) == 3 and keys == {"surprise:commitment:c1"}
 
 
 def test_due_and_resolve(tmp_path):
@@ -142,6 +177,25 @@ def test_generate_from_commitments(tmp_path):
     assert p.subject == "commitment:c1"
     # confidence reflects the 8/(8+2) track record, smoothed
     assert 0.7 < p.confidence < 0.85
+
+
+class PastDueCommitments(GenCommitments):
+    def list(self, status=None, limit=50, **kw):
+        if status == ["pending"]:
+            due = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+            return {"commitments": [
+                {"id": "c1", "due_at": due, "description": "already late"}],
+                "total": 1}
+        return super().list(status=status, limit=limit, **kw)
+
+
+def test_generate_skips_past_due_commitments(tmp_path):
+    """A commitment whose due date already passed yields NO prediction: there
+    is nothing left to predict, and an instantly-due prediction would be
+    scored the moment it exists (the re-miss churn loop)."""
+    e = engine(tmp_path, commitments=PastDueCommitments())
+    assert e.generate_from_commitments() == 0
+    assert e.store.pending() == []
 
 
 # --- calibration -----------------------------------------------------------

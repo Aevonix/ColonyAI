@@ -105,9 +105,16 @@ class ExpectationStore:
                dedup_key: str, detail: Optional[Dict[str, Any]] = None
                ) -> Optional[Prediction]:
         with self._lock:
+            # Dedup against a live prediction, AND against an already-resolved
+            # one for the same horizon: a scored prediction must never be
+            # re-created for the same subject and due date, or every checker
+            # pass re-scores the same miss (calibration n inflates and the
+            # same surprise fires forever). A changed horizon (e.g. a
+            # commitment's due date moved) is a genuinely new prediction.
             exists = self._conn.execute(
                 "SELECT 1 FROM predictions WHERE dedup_key=? AND "
-                "outcome='pending'", (dedup_key,)).fetchone()
+                "(outcome='pending' OR horizon=?)",
+                (dedup_key, horizon)).fetchone()
             if exists:
                 return None
             pid = f"p-{uuid.uuid4().hex[:12]}"
@@ -212,6 +219,11 @@ class ExpectationEngine:
                     str(due).replace("Z", "+00:00")).timestamp()
             except ValueError:
                 continue
+            if horizon <= _now():
+                # the due date already passed: there is nothing left to
+                # predict, and an instantly-due prediction would just be
+                # scored the moment it is created
+                continue
             desc = (c.get("description") or "commitment")[:120]
             p = self.store.create(
                 subject=f"commitment:{cid}", domain="commitment",
@@ -291,10 +303,13 @@ class ExpectationEngine:
         if ws is None:
             return
         try:
+            # keyed by SUBJECT, not prediction id: repeated misses about the
+            # same thing merge into one strengthening concern instead of
+            # spawning a fresh anomaly per scoring pass
             ws.bump(kind="anomaly",
                     summary=f"surprise: expected {p.expectation} (conf "
                             f"{p.confidence:.2f}) but it did not hold",
-                    dedup_key=f"surprise:{p.prediction_id}",
+                    dedup_key=f"surprise:{p.subject}",
                     salience=min(0.9, 0.5 + p.confidence),
                     sources=[p.subject])
         except Exception:
