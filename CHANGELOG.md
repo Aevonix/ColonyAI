@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.22.1 — directive capture safety, contacts path anchor, worker observability
+
+Hardening release from live testing of v0.22.0 on the reference deployment.
+
+- **Directive self-poisoning fixed.** Live testing surfaced a directive store
+  where ~70 of 90 "boundaries" were machine-origin garbage (test canaries,
+  the executor's own refusal text, anaphora fragments), and the worker
+  governor enforced them against every routine job. Capture now rejects
+  machine-origin text and degenerate fragment subjects, and never piles up
+  duplicates (both the deterministic and LLM-assisted paths); the keyword
+  matcher raises the single-term "distinctive" bar and never treats the
+  product/agent name (or `COLONY_MATCH_COMMON_TERMS`) as a lone match signal.
+  New `server-directives` doctor check flags fragments and duplicate piles.
+- **Contacts DB default anchored to the state dir** (was CWD-relative, the
+  same failure class as the world-model store incident); doctor detects the
+  empty-stub-next-to-real-store env-mismatch signature.
+- **colony-worker daemon output is line-buffered** (under launchd/systemd the
+  log file stayed empty for hours); the launchd deploy template ships
+  StandardOutPath/StandardErrorPath.
+- README architecture flowchart rewritten in GitHub-compatible mermaid.
+
+
 ## v0.22.0 — the cognition program: earned autonomy, one-knob posture, closed learning loops
 
 The seven-capability cognition program lands in full, alongside the autonomy preset, the
