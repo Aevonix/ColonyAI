@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.27.0 — expectation engine: predictions, surprise, calibration (Mind M3a)
+
+The agent forms explicit predictions and checks them against reality. A
+prediction carries a subject, a confidence, and a horizon; a checker
+resolves each at its horizon through a pluggable resolver (one built-in for
+commitments — "this gets fulfilled by its due date"). A miss becomes a
+surprise that raises cognitive-workspace salience, the attention signal
+worth thinking about; the hit/miss record produces a per-domain Brier
+calibration score. That score finally sources the benchmark's calibration
+metric (`calibration.<domain>`, expressed as accuracy = 1 - Brier so higher
+is better), so "does she predict well, and is it improving" becomes a real
+trend line. Predictions are generated from pending commitments, with
+confidence set by the agent's own historical fulfillment rate.
+
+New `colony_sidecar/self_model/expectations.py` (prediction store + engine
+with a resolver registry). `GET /v1/host/self/expectations`, an autonomy
+phase that generates hourly and checks every couple of ticks (linking the
+workspace so surprises land), a `server-expectations` doctor check, and an
+Expectations panel on the Operator Deck. Gated by `COLONY_EXPECTATIONS`
+(off | shadow | live, default off).
+
+
 ## v0.26.0 — cognitive workspace: continuity of thought (Mind M2)
 
 The agent now carries something on its mind between interactions instead of
