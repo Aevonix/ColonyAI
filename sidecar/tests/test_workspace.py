@@ -234,6 +234,19 @@ async def test_api_snapshot(tmp_path, monkeypatch):
         assert body["concerns"][0]["summary"] == "on my mind"
 
 
+async def test_api_resolve(tmp_path):
+    ws, store = make(tmp_path)
+    c1 = ws.bump(kind="question", summary="settle me", dedup_key="k",
+                 salience=0.8)
+    async with _client(ws) as c:
+        r = await c.post(f"/v1/host/self/workspace/{c1.concern_id}/resolve")
+        assert r.status_code == 200
+        assert store.get(c1.concern_id).status == "resolved"
+        # resolving again 404s (no longer active)
+        r = await c.post(f"/v1/host/self/workspace/{c1.concern_id}/resolve")
+        assert r.status_code == 404
+
+
 async def test_api_unavailable():
     async with _client(None) as c:
         assert (await c.get("/v1/host/self/workspace")).json() == {"available": False}

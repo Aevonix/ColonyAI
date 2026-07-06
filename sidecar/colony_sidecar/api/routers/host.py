@@ -4336,6 +4336,19 @@ async def get_workspace(limit: int = 24) -> dict:
         return {"available": True, "error": str(exc)}
 
 
+@router.post("/self/workspace/{concern_id}/resolve")
+async def resolve_concern(concern_id: str, note: str = "resolved by owner") -> dict:
+    """Owner control (command center): settle a concern so it leaves her mind."""
+    if _workspace is None:
+        return {"available": False}
+    c = _workspace.store.get(concern_id)
+    if c is None or c.status != "active":
+        raise HTTPException(status_code=404, detail="no active concern with that id")
+    _workspace.store.record_thought(concern_id, note[:300], resolved=True,
+                                    salience=0.0)
+    return {"available": True, "resolved": concern_id}
+
+
 @router.get("/self/tools")
 async def list_tools(status: str = "") -> dict:
     """Self-built tools: the toolsmith registry (draft/verified/shadow/live/
