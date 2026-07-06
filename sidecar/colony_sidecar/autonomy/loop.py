@@ -2139,15 +2139,10 @@ class AutonomyLoop:
         # link the workspace so a miss raises salience there
         if getattr(eng, "_workspace", None) is None:
             eng._workspace = getattr(self._registry, "workspace", None)
-        key = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
-        if self._periodic_last.get("expectations_gen") == key:
-            # still check due predictions every tick (cheap), skip regen
-            try:
-                eng.check()
-            except Exception:
-                logger.debug("expectation check failed", exc_info=True)
-            return
-        self._periodic_last["expectations_gen"] = key
+        # generate + check every run: generate_from_commitments dedups on a
+        # stable key (create() refuses an existing pending prediction), so a
+        # newly due-dated commitment gets a prediction promptly instead of
+        # waiting for an hour boundary.
         try:
             eng.generate_from_commitments()
             eng.check()
