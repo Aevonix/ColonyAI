@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.24.0 — selfhood benchmark + experiment framework (Mind M0)
+
+Measurement before mechanism: the first phase of the cognition program.
+
+**Selfhood benchmark.** A weekly scorecard derived entirely from existing
+journals and stores; nothing is self-reported, and a metric whose source is
+unavailable is skipped rather than zero-filled. Metrics: commitment
+fulfillment, initiative acceptance (owner responded within 24h of a
+delivery), delivery and per-domain action success, journal decision mix,
+recall fact coverage (probe: high-confidence shared facts re-queried
+against graph recall), queue job latency percentiles, and generic rollups
+of host-submitted samples (`POST /v1/host/self/benchmark/samples`, e.g. a
+voice gateway reporting TTFB). Surfaces: `GET /v1/host/self/benchmark`
+(ISO-week rollups + week-over-week trends), `POST .../compute`,
+`colony benchmark` CLI, a weekly autonomy phase that computes the previous
+week and delivers the scorecard to the owner, and a `server-benchmark`
+doctor check that WARNs on regressing non-latency trends.
+
+**Experiment framework.** Self-modification as controlled experiments: one
+bounded change per experiment (an adaptive-parameter variant), a captured
+metric baseline, a decision window, and adopt-within-guard or auto-revert
+on regression. Honest rules: no metric baseline, no experiment; a decision
+requires a new completed rollup week; a knob moved outside the experiment
+aborts as superseded and is never re-applied; one open experiment per
+parameter plus a global running cap. `GET/POST /v1/host/self/experiments`,
+`POST .../{id}/abort`, a daily decision phase with owner notices, every
+transition journaled.
+
+New env (all default-on, see .env.example): `COLONY_BENCHMARK_ENABLED`,
+`COLONY_BENCHMARK_REPORT`, `COLONY_BENCHMARK_PROBES`,
+`COLONY_EXPERIMENTS_ENABLED`, `COLONY_EXPERIMENTS_MAX_RUNNING`.
+
+
 ## v0.23.2 — owner contact curation (link / merge / review proposals)
 
 Completes the relationship program's promised curation surface (it was
