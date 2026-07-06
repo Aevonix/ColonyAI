@@ -611,8 +611,14 @@ def check_server_owner_contact(base_url: str, api_key: str, timeout: float) -> C
 
 
 def check_server_llm(base_url: str, api_key: str, timeout: float) -> CheckResult:
-    """13. Live-fire the LLM router with one tiny completion."""
-    status, body = _http_get(f"{base_url}/v1/host/health/llm", api_key, timeout)
+    """13. Live-fire the LLM router with one tiny completion.
+
+    A live completion inherently takes longer than the metadata checks: on a
+    busy local model the answer can exceed the standard timeout while the
+    router is perfectly healthy, so this check gets a higher floor rather
+    than failing on load."""
+    status, body = _http_get(f"{base_url}/v1/host/health/llm", api_key,
+                             max(timeout, 45.0))
     if status == 404:
         return CheckResult(
             "server-llm-router", SKIP,
