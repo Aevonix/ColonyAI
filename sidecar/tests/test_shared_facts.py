@@ -183,3 +183,56 @@ class TestSharedFactsPurge:
     def test_purge_no_expired(self, store):
         store.create_fact(contact_id="owner", fact="valid", source="explicit")
         assert store.purge_expired() == 0
+
+
+class TestFactGraphMirror:
+    """A shared fact must be mirrored into the memory graph as a `fact`
+    memory, or semantic recall can never find it (recall.fact_coverage)."""
+
+    @pytest.mark.asyncio
+    async def test_mirror_stores_fact_memory(self, monkeypatch):
+        import colony_sidecar.api.routers.host as host_mod
+
+        calls = []
+
+        class FakeGraph:
+            async def store_memory(self, **kw):
+                calls.append(kw)
+                return "mem-1"
+
+        monkeypatch.setattr(host_mod, "_graph", FakeGraph())
+        await host_mod._mirror_fact_to_graph(
+            "Marc prefers plain prose", "cid-1", "inferred", 0.9)
+        assert len(calls) == 1
+        kw = calls[0]
+        assert kw["memory_type"] == "fact"
+        assert kw["content"] == "Marc prefers plain prose"
+        assert kw["person_id"] == "cid-1"
+        assert kw["importance"] == 0.9
+        assert kw["content_hash"]          # dedup key present -> idempotent
+
+    @pytest.mark.asyncio
+    async def test_mirror_noops_without_graph_or_text(self, monkeypatch):
+        import colony_sidecar.api.routers.host as host_mod
+        monkeypatch.setattr(host_mod, "_graph", None)
+        await host_mod._mirror_fact_to_graph("x", "c", "s", 0.5)   # no crash
+        calls = []
+
+        class FakeGraph:
+            async def store_memory(self, **kw):
+                calls.append(kw)
+
+        monkeypatch.setattr(host_mod, "_graph", FakeGraph())
+        await host_mod._mirror_fact_to_graph("   ", "c", "s", 0.5)
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_mirror_swallows_graph_errors(self, monkeypatch):
+        import colony_sidecar.api.routers.host as host_mod
+
+        class BrokenGraph:
+            async def store_memory(self, **kw):
+                raise RuntimeError("neo4j down")
+
+        monkeypatch.setattr(host_mod, "_graph", BrokenGraph())
+        await host_mod._mirror_fact_to_graph("f", "c", "s", 0.5)   # must not raise

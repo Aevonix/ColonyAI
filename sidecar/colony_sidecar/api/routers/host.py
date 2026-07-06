@@ -6175,6 +6175,34 @@ async def delete_affect_event(event_id: str):
 # Theory of Mind — Shared Facts
 # ---------------------------------------------------------------------------
 
+async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
+                                source: str, confidence: float) -> None:
+    """Mirror a shared fact into the memory graph as a `fact` memory.
+
+    Shared facts live in their own store; semantic recall searches the memory
+    graph. Without this mirror a stored fact is structurally unrecallable
+    (recall.fact_coverage measured exactly that). Content-hash dedup in
+    store_memory makes the mirror idempotent: re-extraction reinforces the
+    existing node instead of duplicating it."""
+    if _graph is None or not (fact or "").strip():
+        return
+    try:
+        import hashlib
+        await _graph.store_memory(
+            content=fact,
+            memory_type="fact",
+            entities=[],
+            metadata={"shared_fact": True, "fact_source": source or ""},
+            importance=max(0.1, min(1.0, confidence if confidence is not None else 0.7)),
+            person_id=contact_id,
+            source_type="inference",
+            source_uri="tom:shared_fact",
+            content_hash=hashlib.sha256(fact.encode("utf-8")).hexdigest(),
+        )
+    except Exception:
+        logger.debug("shared fact -> graph mirror failed", exc_info=True)
+
+
 @router.post("/mind/facts", response_model=SharedFactResponse, status_code=status.HTTP_201_CREATED)
 async def create_shared_fact(body: SharedFactCreateRequest) -> SharedFactResponse:
     """Add a shared fact about what a contact knows."""
@@ -6192,6 +6220,7 @@ async def create_shared_fact(body: SharedFactCreateRequest) -> SharedFactRespons
         )
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
+    await _mirror_fact_to_graph(body.fact, body.contact_id, body.source, body.confidence)
 
     try:
         from colony_sidecar.events.broadcaster import emit as _emit
@@ -6571,6 +6600,8 @@ async def _run_tom_extraction(
                     source=f["source"],
                     confidence=f["confidence"],
                 )
+                await _mirror_fact_to_graph(f["fact"], f["contact_id"],
+                                            f["source"], f["confidence"])
             try:
                 from colony_sidecar.events.broadcaster import emit as _emit
                 _emit("mind.fact_created", {"contact_id": contact_id, "source": f["source"]})
@@ -6638,6 +6669,8 @@ async def extract_tom(body: TomExtractRequest) -> TomExtractResponse:
                     source=f["source"],
                     confidence=f["confidence"],
                 )
+                await _mirror_fact_to_graph(f["fact"], f["contact_id"],
+                                            f["source"], f["confidence"])
 
     throttled = not _tom_extractor._can_extract(body.contact_id)
     return TomExtractResponse(
