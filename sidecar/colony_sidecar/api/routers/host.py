@@ -4212,6 +4212,71 @@ def set_connector_manager(m) -> None:
     _connector_manager = m
 
 
+_benchmark = None
+
+
+def set_benchmark(b) -> None:
+    global _benchmark
+    _benchmark = b
+
+
+@router.get("/self/benchmark")
+async def get_benchmark(weeks: int = 8) -> dict:
+    """Selfhood benchmark: weekly rollups of derived self-improvement
+    metrics plus latest-vs-previous trends. Metrics whose sources were
+    unavailable in a week are absent for that week, never zero-filled."""
+    if _benchmark is None:
+        return {"available": False}
+    try:
+        out = {"available": True}
+        out.update(_benchmark.snapshot(weeks=max(1, min(52, weeks))))
+        return out
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+class BenchmarkSample(BaseModel):
+    metric: str
+    value: float
+    ts: Optional[float] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
+class BenchmarkSamplesRequest(BaseModel):
+    samples: List[BenchmarkSample]
+    source: str = "host"
+
+
+@router.post("/self/benchmark/samples")
+async def post_benchmark_samples(body: BenchmarkSamplesRequest) -> dict:
+    """Ingest measured samples from deployment surfaces (e.g. voice TTFB as
+    latency.voice_ttfb_ms). Metric ids must be dotted lowercase; invalid
+    samples are rejected individually."""
+    if _benchmark is None:
+        return {"available": False, "accepted": 0}
+    accepted = 0
+    for s in body.samples[:500]:
+        if _benchmark.store.add_sample(
+                s.metric, s.value, source=body.source or "host",
+                ts=s.ts, meta=s.meta):
+            accepted += 1
+    return {"available": True, "accepted": accepted,
+            "rejected": len(body.samples[:500]) - accepted}
+
+
+@router.post("/self/benchmark/compute")
+async def compute_benchmark(week: str = "") -> dict:
+    """Compute (or recompute) a week's rollups on demand. Default: the
+    previous completed ISO week."""
+    if _benchmark is None:
+        return {"available": False}
+    try:
+        return {"available": True,
+                **await _benchmark.compute_week(week or None)}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
 @router.get("/self")
 async def get_self_model() -> dict:
     """Self-model: per-domain competence, live load, trust stages."""

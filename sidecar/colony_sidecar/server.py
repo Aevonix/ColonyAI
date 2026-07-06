@@ -612,6 +612,24 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("SelfModel init failed: %s", exc)
 
+    # --- Selfhood benchmark (Mind M0a): falsifiable weekly metrics ---
+    try:
+        from colony_sidecar.self_model.benchmark import (
+            BenchmarkStore, SelfhoodBenchmark, benchmark_enabled,
+        )
+        from colony_sidecar.api.routers.host import set_benchmark
+        if benchmark_enabled():
+            _bench = SelfhoodBenchmark(BenchmarkStore(
+                db_path=str(state_dir / "colony-benchmark.db")))
+            set_benchmark(_bench)
+            logger.info("Selfhood benchmark ready (db=%s)",
+                        state_dir / "colony-benchmark.db")
+        else:
+            logger.info(
+                "Selfhood benchmark disabled (COLONY_BENCHMARK_ENABLED=false)")
+    except Exception as exc:
+        logger.warning("Benchmark init failed: %s", exc)
+
     # --- Skills memory (procedure memory, item 3) ---
     _skills_mem_store = None
     try:

@@ -73,6 +73,7 @@ SERVER_CHECK_NAMES = (
     "server-connectors",
     "server-mining",
     "server-directives",
+    "server-benchmark",
 )
 
 #: A QUEUED agent_action job older than this means no queue worker is
@@ -941,6 +942,38 @@ def check_server_self_model(base_url: str, api_key: str, timeout: float) -> Chec
         detail=f"{len(domains)} competence domain(s), {len(trust)} trust stage(s)")
 
 
+def check_server_benchmark(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """Selfhood benchmark: wired and producing weekly rollups."""
+    status, body = _http_get(f"{base_url}/v1/host/self/benchmark", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-benchmark", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-benchmark", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult(
+            "server-benchmark", WARN,
+            detail="benchmark not wired — self-improvement has no falsifiable trend line",
+            remedy="unset COLONY_BENCHMARK_ENABLED=false (it defaults on) and restart")
+    weeks = body.get("weeks") or []
+    if not weeks:
+        return CheckResult(
+            "server-benchmark", PASS,
+            detail="wired; no rollups yet (first weekly compute pending)")
+    trends = body.get("trends") or {}
+    falling = [m for m, d in trends.items()
+               if isinstance(d, (int, float)) and d < -0.15
+               and not m.startswith("latency.")]
+    if falling:
+        return CheckResult(
+            "server-benchmark", WARN,
+            detail=f"{len(weeks)} week(s) of rollups; regressing week-over-week: "
+                   + ", ".join(sorted(falling)),
+            remedy="run `colony benchmark` and review the regressing metrics' detail")
+    return CheckResult(
+        "server-benchmark", PASS,
+        detail=f"{len(weeks)} week(s) of rollups, latest {body.get('latest')}")
+
+
 def check_server_adaptive_params(base_url: str, api_key: str, timeout: float) -> CheckResult:
     """20. Meta-learning knobs: present, within bounds, attribution visible."""
     status, body = _http_get(f"{base_url}/v1/host/self/params", api_key, timeout)
@@ -1244,6 +1277,8 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-mining", check_server_mining,
                     base_url, api_key, timeout)
     results += _run("server-directives", check_server_directives,
+                    base_url, api_key, timeout)
+    results += _run("server-benchmark", check_server_benchmark,
                     base_url, api_key, timeout)
     return results
 

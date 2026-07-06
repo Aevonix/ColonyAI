@@ -331,6 +331,9 @@ class AutonomyLoop:
         # Phase 17: self-reflection (weekly)
         await self._phase_self_reflection()
 
+        # Phase 17b: selfhood benchmark (weekly, Mind M0a)
+        await self._phase_selfhood_benchmark()
+
         # Phase 18: skill eviction
         await self._phase_skill_evict()
 
@@ -1983,6 +1986,61 @@ class AutonomyLoop:
                         pstore.add(prop)
             except Exception:
                 logger.debug("trust notice delivery failed", exc_info=True)
+
+    async def _phase_selfhood_benchmark(self) -> None:
+        """Weekly (Mind M0a): compute the previous week's selfhood-benchmark
+        rollups and deliver the scorecard to the owner. Own weekly dedup
+        (not _run_periodic_phase) because the benchmark must run even when
+        graph memory is absent; the dedup key is only advanced on success."""
+        bench = getattr(self._registry, "benchmark", None)
+        if bench is None:
+            return
+        key = datetime.now(timezone.utc).strftime("%Y-W%W")
+        if self._periodic_last.get("selfhood_benchmark") == key:
+            return
+        try:
+            result = await bench.compute_week()
+            self._periodic_last["selfhood_benchmark"] = key
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase selfhood_benchmark error: %s", exc,
+                         exc_info=True)
+            return
+        if os.environ.get("COLONY_BENCHMARK_REPORT",
+                          "true").strip().lower() == "false":
+            return
+        metrics = result.get("metrics") or {}
+        delivery = self._registry.delivery
+        if not metrics or delivery is None:
+            return
+        try:
+            from colony_sidecar.proposals import Proposal, proposal_to_payload
+        except Exception:
+            return
+        try:
+            trends = bench.snapshot(weeks=2).get("trends", {})
+            lines = []
+            for m, r in sorted(metrics.items()):
+                v = r.get("value")
+                if v is None:
+                    continue
+                d = trends.get(m)
+                wow = "" if d is None else f" ({'+' if d >= 0 else ''}{d:.2f} wow)"
+                lines.append(f"{m} {v:.2f}{wow}")
+            prop = Proposal(
+                title=f"Weekly selfhood report {result.get('week')}"[:100],
+                finding="; ".join(lines)[:900],
+                why_it_helps="a falsifiable trend line on whether I am "
+                             "actually getting better, straight from my "
+                             "journals",
+                suggested_action="Reply if any line looks wrong; every "
+                                 "number is derived from recorded outcomes.",
+                source="selfhood-benchmark", initiative_type="proposal",
+                confidence=0.9)
+            await self._route_reachout_delivery(
+                proposal_to_payload(prop), delivery)
+        except Exception:
+            logger.debug("benchmark report delivery failed", exc_info=True)
 
     async def _phase_belief_maintenance(self) -> None:
         """Phase 11c (daily): belief maintenance (cognition item 7)."""

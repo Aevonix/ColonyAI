@@ -239,6 +239,15 @@ def main() -> None:
     init_cancel.add_argument("initiative_id", help="Initiative ID")
     init_cancel.add_argument("--reason", default=None, help="Reason for cancellation")
 
+    bench_p = sub.add_parser(
+        "benchmark", help="Selfhood benchmark: weekly self-improvement metrics")
+    bench_p.add_argument("--weeks", type=int, default=8,
+                         help="Weeks of rollups to show (default: 8)")
+    bench_p.add_argument("--compute", action="store_true",
+                         help="Compute rollups now (default: previous week)")
+    bench_p.add_argument("--week", default="",
+                         help="ISO week to compute (e.g. 2026-W27)")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -622,6 +631,9 @@ def main() -> None:
     elif args.command == "initiative":
         _cmd_initiative(args)
 
+    elif args.command == "benchmark":
+        _cmd_benchmark(args)
+
     elif args.command == "persona":
         _cmd_persona(args)
 
@@ -878,6 +890,64 @@ def _cmd_agent(args) -> None:
 
     else:
         print("Usage: colony agent [invite|connect|list|show|revoke|disconnect]")
+
+
+def _cmd_benchmark(args) -> None:
+    """Show (and optionally compute) the selfhood-benchmark scorecard."""
+    _load_dotenv()
+    import httpx
+    host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
+    port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
+    api_key = os.environ.get("COLONY_API_KEY", "")
+    base_url = f"http://{host}:{port}/v1/host/self/benchmark"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    if args.compute:
+        resp = httpx.post(f"{base_url}/compute",
+                          params={"week": args.week} if args.week else None,
+                          headers=headers, timeout=120)
+        if resp.status_code != 200:
+            print(f"Error: {resp.text}")
+            raise SystemExit(1)
+        data = resp.json()
+        if not data.get("available"):
+            print("Benchmark unavailable (COLONY_BENCHMARK_ENABLED=false?)")
+            raise SystemExit(1)
+        if data.get("error"):
+            print(f"Error: {data['error']}")
+            raise SystemExit(1)
+        print(f"Computed {data.get('week')}: "
+              f"{len(data.get('metrics') or {})} metrics")
+
+    resp = httpx.get(base_url, params={"weeks": args.weeks},
+                     headers=headers, timeout=15)
+    if resp.status_code != 200:
+        print(f"Error: {resp.text}")
+        raise SystemExit(1)
+    data = resp.json()
+    if not data.get("available"):
+        print("Benchmark unavailable (COLONY_BENCHMARK_ENABLED=false?)")
+        raise SystemExit(1)
+    weeks = data.get("weeks") or []
+    if not weeks:
+        print("No rollups yet (first weekly compute pending). "
+              "Run: colony benchmark --compute")
+        return
+    rollups = data.get("rollups", {})
+    trends = data.get("trends", {})
+    metrics = sorted({m for wk in weeks for m in rollups.get(wk, {})})
+    hdr = f"{'metric':<28}" + "".join(f"{wk:>12}" for wk in weeks)
+    print(hdr)
+    print("-" * len(hdr))
+    for m in metrics:
+        row = f"{m:<28}"
+        for wk in weeks:
+            v = (rollups.get(wk, {}).get(m) or {}).get("value")
+            row += f"{v:>12.2f}" if v is not None else f"{'-':>12}"
+        d = trends.get(m)
+        if d is not None:
+            row += f"   {'+' if d >= 0 else ''}{d:.2f} wow"
+        print(row)
 
 
 def _cmd_initiative(args) -> None:

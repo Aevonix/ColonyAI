@@ -187,6 +187,12 @@ class SubsystemRegistry:
         return _commitment_store
 
     @property
+    def benchmark(self) -> Any:
+        """Get the SelfhoodBenchmark (Mind M0a)."""
+        from colony_sidecar.api.routers.host import _benchmark
+        return _benchmark
+
+    @property
     def affect_store(self) -> Any:
         """Get the AffectStore."""
         from colony_sidecar.api.routers.host import _affect_store

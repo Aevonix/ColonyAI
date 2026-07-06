@@ -87,6 +87,15 @@ class CommsLog:
             " ORDER BY ts DESC LIMIT 1", (contact_id,)).fetchone()
         return dict(r) if r else None
 
+    def inbound_since(self, contact_id: str, since_iso: str) -> List[str]:
+        """Timestamps of inbound rows from a contact since an ISO instant
+        (selfhood benchmark: did the owner respond after a delivery)."""
+        rows = self._conn.execute(
+            "SELECT ts FROM communications WHERE contact_id=? AND"
+            " direction='in' AND ts >= ? ORDER BY ts ASC LIMIT 5000",
+            (contact_id, since_iso)).fetchall()
+        return [r["ts"] for r in rows]
+
     def counts(self, contact_id: str) -> Dict[str, Any]:
         r = self._conn.execute(
             "SELECT SUM(direction='in') AS inbound, SUM(direction='out') AS outbound,"
