@@ -675,6 +675,33 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Toolsmith init failed: %s", exc)
 
+    # --- Expectation engine (Mind M3a): predictions + surprise + calibration ---
+    try:
+        from colony_sidecar.self_model.expectations import (
+            ExpectationEngine, ExpectationStore, expectations_enabled,
+        )
+        from colony_sidecar.api.routers.host import set_expectations
+        if expectations_enabled():
+            _exp_store = ExpectationStore(
+                db_path=str(state_dir / "colony-expectations.db"))
+            _exp_journal = None
+            try:
+                from colony_sidecar.api.routers.host import _self_model as _sm_e
+                _exp_journal = getattr(_sm_e, "journal", None)
+            except Exception:
+                _exp_journal = None
+            # workspace wired later; set_expectations stores the engine and the
+            # autonomy phase links the workspace ref at runtime.
+            _expectations = ExpectationEngine(_exp_store, journal=_exp_journal)
+            set_expectations(_expectations)
+            logger.info("Expectation engine ready (mode=%s, db=%s)",
+                        os.environ.get("COLONY_EXPECTATIONS", "off"),
+                        state_dir / "colony-expectations.db")
+        else:
+            logger.info("Expectation engine disabled (COLONY_EXPECTATIONS=off)")
+    except Exception as exc:
+        logger.warning("Expectation engine init failed: %s", exc)
+
     # --- Cognitive workspace (Mind M2): continuity of thought ---
     try:
         from colony_sidecar.self_model.workspace import (

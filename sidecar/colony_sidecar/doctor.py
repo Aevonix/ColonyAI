@@ -76,6 +76,7 @@ SERVER_CHECK_NAMES = (
     "server-benchmark",
     "server-toolsmith",
     "server-workspace",
+    "server-expectations",
 )
 
 #: A QUEUED agent_action job older than this means no queue worker is
@@ -976,6 +977,31 @@ def check_server_benchmark(base_url: str, api_key: str, timeout: float) -> Check
         detail=f"{len(weeks)} week(s) of rollups, latest {body.get('latest')}")
 
 
+def check_server_expectations(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """Expectation engine (Mind M3a): wired; calibration present once resolved."""
+    status, body = _http_get(f"{base_url}/v1/host/self/expectations", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-expectations", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-expectations", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult(
+            "server-expectations", SKIP,
+            detail="expectations off (COLONY_EXPECTATIONS=off) — no calibration signal")
+    pending = body.get("pending") or []
+    cal = body.get("calibration") or {}
+    if not cal:
+        return CheckResult(
+            "server-expectations", PASS,
+            detail=f"mode={body.get('mode')}, {len(pending)} open prediction(s), "
+                   "no resolved calibration yet")
+    worst = max(cal.values(), key=lambda r: r.get("brier", 0)) if cal else {}
+    return CheckResult(
+        "server-expectations", PASS,
+        detail=f"mode={body.get('mode')}, {len(pending)} open, "
+               f"{len(cal)} calibrated domain(s), worst brier {worst.get('brier')}")
+
+
 def check_server_workspace(base_url: str, api_key: str, timeout: float) -> CheckResult:
     """Cognitive workspace (Mind M2): wired; concern count within capacity."""
     status, body = _http_get(f"{base_url}/v1/host/self/workspace", api_key, timeout)
@@ -1337,6 +1363,8 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-toolsmith", check_server_toolsmith,
                     base_url, api_key, timeout)
     results += _run("server-workspace", check_server_workspace,
+                    base_url, api_key, timeout)
+    results += _run("server-expectations", check_server_expectations,
                     base_url, api_key, timeout)
     return results
 

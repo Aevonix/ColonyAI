@@ -407,6 +407,8 @@ def _happy_responses(owner="cid-owner-1"):
             "trust_stage": "shadow", "tools": []}),
         "/v1/host/self/workspace": (200, {"available": True, "mode": "shadow",
             "capacity": 24, "sleeping": False, "concerns": []}),
+        "/v1/host/self/expectations": (200, {"available": True,
+            "mode": "shadow", "pending": [], "calibration": {}}),
         "/v1/host/executor/status": (200, {"running": True, "wired": True,
                                            "stats": {"cycles": 5}}),
         "/v1/host/projects": (200, {"available": True, "mode": "shadow",

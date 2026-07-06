@@ -277,6 +277,10 @@ class SelfhoodBenchmark:
                     out[name] = res
             except Exception as exc:
                 logger.warning("benchmark %s failed: %s", name, exc)
+        try:
+            out.update(self._m_calibration(since))
+        except Exception as exc:
+            logger.warning("benchmark calibration failed: %s", exc)
         out.update(self._m_submitted(since, until, skip=set(out)))
 
         for metric, r in out.items():
@@ -460,6 +464,29 @@ class SelfhoodBenchmark:
                 "numerator": None, "denominator": None,
                 "detail": {"p50": _percentile(durs, 50),
                            "p95": _percentile(durs, 95), "n": len(durs)}}
+
+    def _m_calibration(self, since: float) -> Dict[str, Any]:
+        """Per-domain prediction calibration from the expectation engine
+        (Mind M3a), expressed as accuracy = 1 - Brier so higher is better and
+        it fits the benchmark's higher-is-better convention."""
+        eng = self._host_attr("_expectations")
+        if eng is None:
+            return {}
+        out: Dict[str, Any] = {}
+        try:
+            cal = eng.calibration(since=since)
+        except Exception:
+            return {}
+        for domain, r in (cal or {}).items():
+            brier = r.get("brier")
+            if brier is None:
+                continue
+            out[f"calibration.{domain}"] = {
+                "value": max(0.0, 1.0 - float(brier)),
+                "numerator": None, "denominator": None,
+                "detail": {"brier": brier, "n": r.get("n"),
+                           "hit_rate": r.get("hit_rate")}}
+        return out
 
     def _m_submitted(self, since: float, until: float,
                      skip: Optional[set] = None) -> Dict[str, Any]:

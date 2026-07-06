@@ -4288,6 +4288,29 @@ def set_workspace(w) -> None:
     _workspace = w
 
 
+_expectations = None
+
+
+def set_expectations(e) -> None:
+    global _expectations
+    _expectations = e
+
+
+@router.get("/self/expectations")
+async def get_expectations(limit: int = 50) -> dict:
+    """Expectation engine: pending predictions with their horizons and
+    per-domain calibration (Mind M3a). A prediction that missed became a
+    surprise on her mind."""
+    if _expectations is None:
+        return {"available": False}
+    try:
+        out = {"available": True}
+        out.update(_expectations.snapshot(limit=max(1, min(200, limit))))
+        return out
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
 @router.get("/self/workspace")
 async def get_workspace(limit: int = 24) -> dict:
     """Cognitive workspace: the concerns currently on her mind, most salient

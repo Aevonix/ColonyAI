@@ -211,6 +211,12 @@ class SubsystemRegistry:
         return _workspace
 
     @property
+    def expectations(self) -> Any:
+        """Get the ExpectationEngine (Mind M3a)."""
+        from colony_sidecar.api.routers.host import _expectations
+        return _expectations
+
+    @property
     def affect_store(self) -> Any:
         """Get the AffectStore."""
         from colony_sidecar.api.routers.host import _affect_store

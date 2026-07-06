@@ -369,6 +369,10 @@ class AutonomyLoop:
         if self.stats.ticks % 3 == 0:
             await self._phase_workspace()
 
+        # Phase 22c: expectations — predict + check (every 2 ticks, Mind M3a)
+        if self.stats.ticks % 2 == 0:
+            await self._phase_expectations()
+
         # Phase 23: database backup (every 100 ticks)
         if self.stats.ticks % 100 == 0:
             await self._phase_database_backup()
@@ -2125,6 +2129,31 @@ class AutonomyLoop:
                     source="workspace")
             except (ValueError, TypeError):
                 pass  # invalid experiment spec is simply not started
+
+    async def _phase_expectations(self) -> None:
+        """Hourly (Mind M3a): form predictions from live signals and resolve
+        the ones whose horizon passed. Misses become surprises on her mind."""
+        eng = getattr(self._registry, "expectations", None)
+        if eng is None:
+            return
+        # link the workspace so a miss raises salience there
+        if getattr(eng, "_workspace", None) is None:
+            eng._workspace = getattr(self._registry, "workspace", None)
+        key = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
+        if self._periodic_last.get("expectations_gen") == key:
+            # still check due predictions every tick (cheap), skip regen
+            try:
+                eng.check()
+            except Exception:
+                logger.debug("expectation check failed", exc_info=True)
+            return
+        self._periodic_last["expectations_gen"] = key
+        try:
+            eng.generate_from_commitments()
+            eng.check()
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase expectations error: %s", exc, exc_info=True)
 
     def _workspace_ingest(self, ws) -> None:
         """Turn live signals into concerns. Each source dedups on a stable
