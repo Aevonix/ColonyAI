@@ -1041,13 +1041,17 @@ def check_server_mining(base_url: str, api_key: str, timeout: float) -> CheckRes
     """27. Self-improvement mining: escalation miner reachable."""
     status, body = _http_get(
         f"{base_url}/v1/host/mining/escalations?limit=1", api_key, timeout)
-    if status == 404:
+    if status in (404, 501):
         return CheckResult("server-mining", SKIP, detail="mining not wired (or mode off)")
     if status != 200 or not isinstance(body, dict):
         return CheckResult("server-mining", WARN, detail=f"HTTP {status}: {body}")
-    count = body.get("count", len(body.get("escalations") or []))
+    mode = body.get("mode", "?")
+    recent = len(body.get("escalations") or [])
+    stats = body.get("stats") or {}
+    total = stats.get("total", stats.get("recorded", recent))
     return CheckResult(
-        "server-mining", PASS, detail=f"escalation miner reachable ({count} recorded)")
+        "server-mining", PASS,
+        detail=f"mode={mode}, escalation miner reachable ({total} recorded)")
 
 
 def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> List[CheckResult]:

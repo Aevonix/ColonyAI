@@ -413,7 +413,8 @@ def _happy_responses(owner="cid-owner-1"):
                                           "backend_available": False}),
         "/v1/host/connectors/status": (200, {"available": True, "mode": "off",
                                              "connectors": []}),
-        "/v1/host/mining/escalations?limit=1": (200, {"count": 2,
+        "/v1/host/mining/escalations?limit=1": (200, {"mode": "shadow",
+                                                      "stats": {"total": 2},
                                                       "escalations": [{}]}),
     }
 
