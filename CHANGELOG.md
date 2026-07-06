@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.25.0 — toolsmith: the agent builds its own tools (Mind M1)
+
+Compounding capability. The agent now extends itself: a daily autonomy
+phase mines the action journal for recurring procedures, the LLM drafts a
+pure standard-library tool (source, input schema, and a self-contained
+test), and the test runs inside the egress-none Docker sandbox as
+verification. A tool that passes enters shadow, where re-running its test
+accumulates clean runs; once it has enough and the toolsmith trust domain
+allows, it graduates to live (owner-approved, or automatic once the domain
+reaches act_first). Live tools are advertised to the reasoning loop through
+a new dynamic-tool provider on the tool executor and run in the sandbox
+when the model calls them. Tools that go unused or start failing retire
+themselves.
+
+New subsystem `colony_sidecar/toolsmith/` (persisted registry + journal
+miner + engine), deliberately independent of the runtime `skills/`
+executor registry. Composes the shipped Docker sandbox, trust engine,
+action journal, and LLM router. Surfaces: `GET /v1/host/self/tools`,
+`GET .../tools/{id}`, `POST .../tools/{id}/graduate`, `.../retire`; a
+`server-toolsmith` doctor check. Gated by `COLONY_TOOLSMITH` (off | shadow
+| live, default off) and requires the live Docker sandbox to verify and run
+tools. Related env: `COLONY_TOOLSMITH_MIN_OCCURRENCES`,
+`COLONY_TOOLSMITH_SHADOW_MIN`, `COLONY_TOOLSMITH_EXCLUDE_DOMAINS`.
+
+Also fixed: `complete_job` now records a real duration (from claim time
+when the caller omits started_at), so job-latency metrics measure actual
+work; and the tool executor gained the dynamic-provider hook dynamic tools
+need.
+
+
 ## v0.24.0 — selfhood benchmark + experiment framework (Mind M0)
 
 Measurement before mechanism: the first phase of the cognition program.
