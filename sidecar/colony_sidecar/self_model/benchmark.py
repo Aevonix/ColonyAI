@@ -446,13 +446,25 @@ class SelfhoodBenchmark:
         queue = self._dep("queue")
         if queue is None:
             return None
+        # host wires the TaskQueueManager wrapper; the raw QueueManager
+        # (which owns get_completed_jobs_since) sits at .queue
+        if not hasattr(queue, "get_completed_jobs_since"):
+            queue = getattr(queue, "queue", None)
+            if queue is None or not hasattr(queue, "get_completed_jobs_since"):
+                return None
         jobs = await queue.get_completed_jobs_since(start, limit=500)
+        end_iso = end.isoformat()
+        start_iso = start.isoformat()
         durs: List[float] = []
         for j in jobs or []:
-            done = str(j.get("completed_at") or "")
-            if done and done >= end.isoformat():
+            result = j.get("result") or {}
+            done = str(result.get("completed_at")
+                       or j.get("completed_at") or "")
+            # stored timestamps may be naive UTC; compare lexically on the
+            # shared ISO prefix and drop anything outside the window
+            if not done or not (start_iso[:19] <= done[:19] < end_iso[:19]):
                 continue
-            d = j.get("duration_seconds")
+            d = result.get("duration_seconds", j.get("duration_seconds"))
             if d is not None and float(d) >= 0:
                 durs.append(float(d))
         if not durs:
