@@ -197,7 +197,19 @@ class AutonomyLoop:
 
         try:
             while not self._stop_event.is_set():
-                await self._tick()
+                # Bound the whole tick so no single slow/hung phase (a wedged
+                # LLM, graph, or Docker call) can freeze the loop forever. The
+                # phases are re-run each tick, so a cancelled tick is safe; the
+                # loop advances and retries next cycle.
+                try:
+                    await asyncio.wait_for(
+                        self._tick(), timeout=self._tick_budget_secs())
+                except asyncio.TimeoutError:
+                    self.stats.errors += 1
+                    logger.error(
+                        "Tick #%d exceeded budget (%.0fs) and was cancelled; "
+                        "loop continues", self.stats.ticks,
+                        self._tick_budget_secs())
                 await self._sleep_until_next_tick()
         finally:
             if self._wake_sub is not None:
@@ -2225,6 +2237,17 @@ class AutonomyLoop:
             return float(os.environ.get("COLONY_PHASE_BUDGET_SECS", "150"))
         except ValueError:
             return 150.0
+
+    def _tick_budget_secs(self) -> float:
+        """Whole-tick wall-clock ceiling; kept under the tick interval so the
+        loop always reaches the next cycle."""
+        try:
+            v = float(os.environ.get("COLONY_TICK_BUDGET_SECS", "0") or 0)
+        except ValueError:
+            v = 0.0
+        if v > 0:
+            return v
+        return max(60.0, self.config.tick_interval_secs * 0.8)
 
     async def _toolsmith_body(self) -> None:
         ts = getattr(self._registry, "toolsmith", None)
