@@ -4280,6 +4280,29 @@ def set_toolsmith(t) -> None:
     _toolsmith = t
 
 
+_workspace = None
+
+
+def set_workspace(w) -> None:
+    global _workspace
+    _workspace = w
+
+
+@router.get("/self/workspace")
+async def get_workspace(limit: int = 24) -> dict:
+    """Cognitive workspace: the concerns currently on her mind, most salient
+    first, with each concern's last thought and how much thinking it has had.
+    Real concerns only (Mind M2)."""
+    if _workspace is None:
+        return {"available": False}
+    try:
+        out = {"available": True}
+        out.update(_workspace.snapshot(limit=max(1, min(200, limit))))
+        return out
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
 @router.get("/self/tools")
 async def list_tools(status: str = "") -> dict:
     """Self-built tools: the toolsmith registry (draft/verified/shadow/live/

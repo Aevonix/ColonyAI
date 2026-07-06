@@ -365,6 +365,10 @@ class AutonomyLoop:
         if self.stats.ticks % 10 == 0:
             await self._phase_ghost_cleanup()
 
+        # Phase 22b: cognitive workspace (every 3 ticks, Mind M2)
+        if self.stats.ticks % 3 == 0:
+            await self._phase_workspace()
+
         # Phase 23: database backup (every 100 ticks)
         if self.stats.ticks % 100 == 0:
             await self._phase_database_backup()
@@ -2047,6 +2051,129 @@ class AutonomyLoop:
                 proposal_to_payload(prop), delivery)
         except Exception:
             logger.debug("benchmark report delivery failed", exc_info=True)
+
+    async def _phase_workspace(self) -> None:
+        """Every few ticks (Mind M2): feed concerns from live signals, decay
+        the salience field, and run bounded thinking jobs. More thinking runs
+        during the sleep window when the cluster is idle."""
+        ws = getattr(self._registry, "workspace", None)
+        if ws is None:
+            return
+        try:
+            from colony_sidecar.self_model.workspace import (
+                in_sleep_window, workspace_mode,
+            )
+        except Exception:
+            return
+        # feed concerns from existing signals (deduped by key so they merge)
+        try:
+            self._workspace_ingest(ws)
+        except Exception:
+            logger.debug("workspace ingest failed", exc_info=True)
+        # decay + evict
+        try:
+            ws.decay()
+        except Exception:
+            logger.debug("workspace decay failed", exc_info=True)
+        # think: 1 per pass normally, a few during the sleep window
+        rounds = 4 if in_sleep_window() else 1
+        live = workspace_mode() == "live"
+        for _ in range(rounds):
+            outcome = await ws.think_once()
+            if outcome is None:
+                break
+            if live and outcome.get("action"):
+                try:
+                    await self._workspace_act(outcome["action"])
+                except Exception:
+                    logger.debug("workspace act failed", exc_info=True)
+
+    async def _workspace_act(self, action: dict) -> None:
+        """Live-mode: turn a thought's action into a real, gated effect. An
+        initiative surfaces to the owner (through the same reachout gates);
+        an experiment is proposed to the experiment framework."""
+        kind = (action or {}).get("kind")
+        if kind == "initiative":
+            delivery = self._registry.delivery
+            if delivery is None:
+                return
+            try:
+                from colony_sidecar.proposals import Proposal, proposal_to_payload
+                prop = Proposal(
+                    title=str(action.get("title", "A thought"))[:100],
+                    finding=str(action.get("detail", ""))[:600],
+                    why_it_helps="something on my mind that seemed worth "
+                                 "raising with you",
+                    suggested_action="No action needed unless you want to "
+                                     "weigh in.",
+                    source="workspace", initiative_type="proposal",
+                    confidence=0.7)
+                await self._route_reachout_delivery(
+                    proposal_to_payload(prop), delivery)
+            except Exception:
+                logger.debug("workspace initiative failed", exc_info=True)
+        elif kind == "experiment":
+            engine = getattr(self._registry, "experiments", None)
+            if engine is None:
+                return
+            try:
+                engine.propose_and_start(
+                    hypothesis=str(action.get("hypothesis", ""))[:300],
+                    ref=str(action.get("ref", "")),
+                    variant=float(action.get("variant", 0.0)),
+                    metric=str(action.get("metric", "")),
+                    source="workspace")
+            except (ValueError, TypeError):
+                pass  # invalid experiment spec is simply not started
+
+    def _workspace_ingest(self, ws) -> None:
+        """Turn live signals into concerns. Each source dedups on a stable
+        key so repeated ticks raise salience rather than pile up."""
+        # overdue commitments -> concerns
+        cstore = getattr(self._registry, "commitment_store", None)
+        if cstore is not None:
+            try:
+                for c in cstore.get_overdue()[:10]:
+                    desc = (c.get("description") if isinstance(c, dict)
+                            else getattr(c, "description", "")) or "commitment"
+                    cid = (c.get("id") if isinstance(c, dict)
+                           else getattr(c, "id", "")) or desc
+                    ws.bump(kind="goal",
+                            summary=f"overdue commitment: {desc}",
+                            dedup_key=f"commitment:{cid}", salience=0.7,
+                            sources=[f"commitment:{cid}"])
+            except Exception:
+                pass
+        # recent anomalies -> concerns
+        detector = getattr(self._registry, "anomaly_detector", None)
+        recent = getattr(detector, "recent", None) if detector else None
+        if callable(recent):
+            try:
+                for a in (recent() or [])[:10]:
+                    summary = (a.get("summary") or a.get("description") or
+                               "anomaly") if isinstance(a, dict) else str(a)
+                    key = (a.get("id") or summary) if isinstance(a, dict) else summary
+                    ws.bump(kind="anomaly", summary=str(summary)[:200],
+                            dedup_key=f"anomaly:{key}", salience=0.6,
+                            sources=[f"anomaly:{key}"])
+            except Exception:
+                pass
+        # benchmark regressions -> a concern to look into
+        bench = getattr(self._registry, "benchmark", None)
+        if bench is not None:
+            try:
+                trends = bench.snapshot(weeks=2).get("trends", {})
+                for metric, d in trends.items():
+                    if isinstance(d, (int, float)) and d < -0.15 \
+                            and not str(metric).startswith("latency."):
+                        ws.bump(kind="question",
+                                summary=f"my {metric} regressed "
+                                        f"{d:.2f} week-over-week; why, and "
+                                        "can I improve it",
+                                dedup_key=f"benchmark:{metric}",
+                                salience=0.65, sources=[f"benchmark:{metric}"])
+            except Exception:
+                pass
 
     async def _phase_toolsmith(self) -> None:
         """Daily (Mind M1): mine the journal for repeated procedures, draft +

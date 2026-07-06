@@ -675,6 +675,34 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Toolsmith init failed: %s", exc)
 
+    # --- Cognitive workspace (Mind M2): continuity of thought ---
+    try:
+        from colony_sidecar.self_model.workspace import (
+            ConcernStore, WorkspaceEngine, workspace_enabled, workspace_mode,
+        )
+        from colony_sidecar.self_model.thinker import build_thinker
+        from colony_sidecar.api.routers.host import set_workspace
+        if workspace_enabled():
+            _concern_store = ConcernStore(
+                db_path=str(state_dir / "colony-workspace.db"))
+            _thinker = (build_thinker(llm_router, graph=graph)
+                        if llm_router is not None else None)
+            _ws_journal = None
+            try:
+                from colony_sidecar.api.routers.host import _self_model as _sm_ws
+                _ws_journal = getattr(_sm_ws, "journal", None)
+            except Exception:
+                _ws_journal = None
+            _workspace = WorkspaceEngine(
+                _concern_store, thinker=_thinker, journal=_ws_journal)
+            set_workspace(_workspace)
+            logger.info("Cognitive workspace ready (mode=%s, db=%s)",
+                        workspace_mode(), state_dir / "colony-workspace.db")
+        else:
+            logger.info("Cognitive workspace disabled (COLONY_WORKSPACE=off)")
+    except Exception as exc:
+        logger.warning("Workspace init failed: %s", exc)
+
     # --- Skills memory (procedure memory, item 3) ---
     _skills_mem_store = None
     try:
