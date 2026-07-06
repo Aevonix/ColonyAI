@@ -1249,8 +1249,10 @@ colony_client.register_channel({
 ### Fresh Install (no prior state)
 
 ```bash
-# 1. Install host framework
-pip install hermes-agent        # or whichever host
+# 1. Install host framework — Hermes is not on PyPI; install from GitHub
+#    (or whichever host you use)
+git clone https://github.com/NousResearch/hermes-agent ~/hermes-agent
+pip install -e ~/hermes-agent
 hermes init
 
 # 2. Install Colony
@@ -1276,7 +1278,8 @@ colony persona services start
 
 ```bash
 # 1. Install host framework + Colony (same as above)
-pip install hermes-agent && hermes init
+git clone https://github.com/NousResearch/hermes-agent ~/hermes-agent
+pip install -e ~/hermes-agent && hermes init
 pip install colonyai && colony init
 
 # 2. Deploy persona with setup

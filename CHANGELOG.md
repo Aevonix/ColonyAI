@@ -1,8 +1,106 @@
 # Changelog
 
+## v0.22.0 — the cognition program: earned autonomy, one-knob posture, closed learning loops
+
+The seven-capability cognition program lands in full, alongside the autonomy preset, the
+plugin consolidation, and a public-docs refresh. Colony is now a sidecar that can *earn*
+agency rather than be granted it.
+
+- **Self-model / trust engine:** graduated, earned autonomy per action class —
+  `shadow → ask_first → act_first` — with confidence computed from real journaled outcomes,
+  auto-graduation with owner notification, circuit breakers that demote on failures or any
+  audit violation, and an immutable floor (money movement, irreversible deletion, credential
+  changes, bulk third-party messaging) that is never self-decidable. Every gate decision is
+  journaled in the unified ActionJournal (`colony-action-journal.db`), and the daily
+  proactive-delivery cap adapts to the delivery domain's track record.
+- **`COLONY_AUTONOMY_PRESET=passive|calibration|autonomous`:** one knob supplying defaults
+  for all fourteen autonomy flags at once. Explicit env always wins; `calibration` (the
+  wizard default) shadows everything and lets the trust engine graduate capability classes
+  from their real track record; the sandbox never goes live from a preset.
+  `GET /v1/host/autonomy/posture` returns the resolved posture of the running process.
+- **Projects (`projects/`):** goal persistence and sustained multi-tick pursuit — a planner
+  decomposes goals and the ProjectEngine advances them across autonomy cycles
+  (`COLONY_PROJECTS_MODE`).
+- **Skills memory (`skills_memory/`):** compounding procedure learning — distill on
+  retry-success and novel diagnosis, retrieve into future prompts (`COLONY_SKILLS_DISTILL`).
+- **Beliefs (`beliefs/`):** contradiction detection, resolution, and stale-belief decay
+  (`COLONY_BELIEFS_MODE`).
+- **Workers:** `task_queue/governor.py` WorkerGovernor enforces server-side — capability
+  coverage, boundary compliance, and report audits are re-decided by the sidecar, never
+  taken on the worker's word — and `workers/colony_worker.py` ships as the installable
+  `colony-worker` daemon with systemd/launchd templates under `workers/deploy/`
+  (`COLONY_WORKERS_MODE`).
+- **Sandbox (`sandbox/`):** gated Docker exploration sandbox — no network, no credentials,
+  capped resources, read-only rootfs (`COLONY_SANDBOX_MODE=off|dry_run|live`; live is
+  explicit-only).
+- **Connectors (`connectors/`):** read-only senses framework — `imap_email`,
+  `caldav_calendar`, `fs_documents`, `webhook_pull` — feeding observations into the same
+  cognition path (`COLONY_CONNECTORS_MODE` + per-connector `COLONY_CONNECTOR_<NAME>_*`).
+- **Charter prompt architecture:** every LLM role shares one versioned agency doctrine
+  (`cognition/charter.py`); the `PROMPT_VERSION` is journaled with every action.
+- **Closed learning loops:** the new AdaptiveParamStore (`self_model/params.py`) holds
+  bounded, journaled runtime knobs that consumers actually read back
+  (`consolidation.similarity_threshold` [0.85–0.98], `recall.min_relevance` [0–0.5];
+  `GET /v1/host/self/params`). The meta-learning StrategyAdjuster now writes THROUGH this
+  store — previously it wrote a graph Config node nothing read, so the flagship
+  self-improvement adjustment had zero effect. The initiative executor records wins/losses
+  on the skills that informed each run and retrieval ranks by that record; trust confidence
+  now consumes stated-vs-realized calibration, so overconfident domains earn less trust.
+- **Mining (`mining/`):** escalation miner spots correction/consultation turns
+  (`COLONY_ESCALATION_MINING`) and the training-corpus exporter
+  (`POST /v1/host/mining/corpus/export`) writes fine-tune JSONL under the state dir only.
+- **Feeds (`feeds/`):** spec-driven intelligence feed framework with the `colony feeds`
+  CLI, `docs/FEEDS.md`, and the `plugins/feeds-manage` Hermes plugin.
+- **Channels, persona, backup:** generic channel registration with auto-derived channel ids
+  (`channels/`, `docs/CHANNEL_FRAMEWORK.md`), the persona deployment layer (`persona/`,
+  `colony persona` CLI), and full-state backup/restore (`colony backup` / `colony restore`).
+- **Doctor:** ten new cognition checks that read the RUNNING server — autonomy posture,
+  self-model + breakers, adaptive params, executor, projects, beliefs, worker governor,
+  sandbox, connectors, mining — plus env-mismatch detection on contacts-db; 30 check
+  results in a full run.
+- **Wizard:** preset-driven autonomy step; OpenClaw fully removed (menu, flags, validate
+  path — support was removed in v0.21.14 but the wizard still offered it and silently
+  no-opped); `colony validate` now live-fires the sidecar's own LLM router.
+- **Plugin consolidation:** `plugins/colony-memory/` is the SINGLE canonical Hermes memory
+  provider (merged: reply thread-window, `colony_resolve_commitment`, the battle-tested
+  sync architecture, and the `pre_llm_call` contact/time hook). `plugins/hermes-memory/`
+  and `plugins/hermes-plugin/memory_provider/` are deleted; `install.sh` and the wizard
+  both deploy from it to `~/.hermes/plugins/colony-memory/`.
+- **Docs refresh + genericity:** README, CONTRIBUTING, harness guide, and `.env.example`
+  rewritten to match the codebase; the Hermes install URL corrected everywhere to
+  `https://github.com/NousResearch/hermes-agent`; remaining deployment-identity strings
+  scrubbed from fixtures and docs.
+
+## v0.21.33 — InitiativeExecutorService: autonomous initiative processing
+
+A generic initiative executor closes the autonomy circuit without an external agent: it
+uses Colony's own ReasoningLoop (LLM + tools) to claim pending initiatives, reason about
+them, execute actions, and report results back to the store.
+
+- **Opt-in** via `COLONY_EXECUTOR_ENABLED=true`, with configurable LLM tier, initiative
+  types, cycle interval, and concurrency. Stats via `/v1/host/health` notes and
+  `/v1/host/executor/status`.
+- **CI:** auth-coverage test walks the nested route tree and is compatible with
+  FastAPI 0.138+.
+
+## v0.21.32 — the autonomy circuit runs itself (agent bridge)
+
+Two steps toward zero-setup autonomy delivery (the first shipped untagged as v0.21.31):
+
+- **`colony-agent-bridge` console script:** one long-running daemon replaces the three
+  separate cron scripts (initiative-poller, queue-worker, skills-sync) and adds circuit
+  health monitoring that catches silent failures — sidecar unreachable, autonomy loop
+  stuck, initiatives never executed, jobs stuck in queue. `--once` for cron, `--dry-run`
+  for validation; stdlib-only.
+- **Built-in AgentBridgeService:** an internal async service that closes the same circuit
+  with no platform-specific setup at all (no cron, no LaunchAgent, no systemd). Auto-starts
+  at sidecar boot when `COLONY_BRIDGE_WEBHOOK_URL` is set, accessing the initiative store
+  and task queue directly. Stats via `/v1/host/health` notes and `/v1/host/bridge/status`.
+
 ## v0.21.30 — official Hermes plugin moves into the repo (generic adapter)
 
-The Hermes "colony" plugin now lives in this repo at `integrations/hermes/colony/` as the
+The Hermes "colony" plugin now lives in this repo at `plugins/hermes-plugin/` [corrected:
+this entry originally said `integrations/hermes/colony/`, which never existed] as the
 official, deployment-agnostic adapter, co-located with the API it calls so their contract
 can't silently drift.
 

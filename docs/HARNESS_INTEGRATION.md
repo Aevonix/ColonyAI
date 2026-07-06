@@ -1,6 +1,6 @@
 # Colony Harness Integration Guide
 
-Colony integrates with multiple agent harnesses to provide shared cognitive context across your development tools.
+Colony integrates with multiple agent harnesses to provide shared cognitive context across your tools.
 
 ## Architecture Overview
 
@@ -12,72 +12,53 @@ Colony supports two integration paths:
 │                                                                  │
 │  ┌──────────────────┐              ┌──────────────────┐         │
 │  │   Plugin API     │              │    MCP Server    │         │
-│  │  (HTTP REST)     │              │    (stdio/SSE)   │         │
+│  │  (HTTP REST)     │              │    (stdio/HTTP)  │         │
 │  └────────┬─────────┘              └────────┬─────────┘         │
 │           │                                  │                   │
 └───────────┼──────────────────────────────────┼───────────────────┘
             │                                  │
             ▼                                  ▼
     ┌───────────────┐                  ┌───────────────┐
-    │  Agent Tools  │                  │  Coding Tools │
-    │  (OpenClaw,   │                  │  (Crush,      │
-    │   Hermes)     │                  │   Codex, etc) │
+    │  Agent Hosts  │                  │  Coding Tools │
+    │   (Hermes)    │                  │  (Claude Code,│
+    │               │                  │   Codex, ...) │
     └───────────────┘                  └───────────────┘
 ```
 
-**Plugin Path** — For orchestrator agents:
-- OpenClaw: Plugin only
-- Hermes: Plugin + MCP (both paths available)
+**Plugin path** — for orchestrator/chat agents (Hermes):
+- Direct HTTP API access via host plugins
+- Always-on context integration: context injected before each turn, the turn synced back afterward
 
-Features:
-- Direct HTTP API access
-- Configured via plugin slots
-- Always-on context integration
-
-**MCP Path** — For coding agents:
-- Crush, Codex, Claude Code, OpenCode: MCP only
-- Hermes: MCP + Plugin (both paths available)
-
-Features:
-- Model Context Protocol via stdio/SSE
+**MCP path** — for coding agents (Claude Code, Codex, Crush, OpenCode; Hermes can use both):
+- Model Context Protocol via stdio (HTTP transport also available: `colony mcp run --transport http`)
 - Configured via harness config files
 - On-demand tool access
 
-Both paths read/write to the same cognitive stores — facts stored by one harness are immediately visible to others.
+Both paths read/write the same cognitive stores — facts stored by one harness are immediately visible to the others.
+
+Anything that is neither a Hermes host nor an MCP client can talk to the REST API directly (see [API Endpoints Reference](#api-endpoints-reference)).
 
 ---
 
 ## Agent Harnesses (Plugin)
 
-### OpenClaw
-
-OpenClaw is an orchestrator agent that uses Colony as its context engine.
-
-**Setup:**
-```bash
-colony init --agent-harness openclaw
-```
-
-**What gets configured:**
-1. Colony plugin installed via `openclaw plugins install @aevonix/colonyai`
-2. Plugin config written to `~/.openclaw/openclaw.json`:
-   - `plugins.slots.contextEngine: colony`
-   - `plugins.entries.colony.config.sidecarUrl`
-   - `plugins.entries.colony.config.apiKey`
-3. `COLONY.md` written to `~/.openclaw/workspace/` (always-loaded context)
-4. `colony-diagnose` skill installed to `~/.openclaw/workspace/skills/`
-
-**Requirements:**
-- Node.js v22+
-- OpenClaw gateway running (`openclaw gateway start`)
-
 ### Hermes
 
-Hermes is a memory-augmented agent framework that supports **both MCP and plugin integration**.
+[Hermes](https://github.com/NousResearch/hermes-agent) is a memory-augmented agent framework that supports **both plugin and MCP integration**.
 
-**Setup (Plugin path):**
+Colony ships three Hermes plugins, all in this repo:
+
+| Repo path | Installs to | Role |
+|-----------|-------------|------|
+| `plugins/hermes-plugin/` | `~/.hermes/plugins/colony/` | General adapter: native Colony tools, slash commands (`/colony status`, ...), lifecycle hooks (contact resolution, time injection, turn journaling), WebSocket event subscriber, autonomy bridge |
+| `plugins/colony-memory/` | `~/.hermes/plugins/colony-memory/` | Memory provider: injects assembled context before each turn and syncs the turn back for extraction. The single canonical copy of the provider |
+| `plugins/hermes-context/` | `~/.hermes/plugins/context_engine/colony/` | Context engine: replaces the built-in compressor with Colony's cognitive summarization |
+
+**Setup (plugin path):**
 ```bash
-colony init --agent-harness hermes
+colony init --agent-harness hermes      # wizard installs and configures the plugins
+# or, from a repo checkout:
+plugins/hermes-plugin/install.sh --memory
 ```
 
 **Setup (MCP path):**
@@ -85,89 +66,28 @@ colony init --agent-harness hermes
 colony mcp setup --harness hermes
 ```
 
-**What gets configured:**
+The MCP path writes an entry to `~/.hermes/config.yaml`:
+```yaml
+mcp_servers:
+  colony:
+    command: colony
+    args: ["mcp"]
+    env:
+      COLONY_API_KEY: "${COLONY_API_KEY}"
+      COLONY_URL: "http://127.0.0.1:7777"
+      COLONY_MCP_CONTACT_ID: "user"
+      COLONY_MCP_SOURCE: "hermes"
+```
 
-*Plugin path:*
-1. Colony configured as MemoryProvider plugin in `~/.hermes/config.yaml`
-2. Context injection before each turn
+Host-side operational tooling (a self-validating doctor, a resilient gateway-restart runner, an activity monitor) lives under `plugins/hermes-plugin/ops/` — see its [README](../plugins/hermes-plugin/ops/README.md).
 
-*MCP path:*
-1. MCP server entry in `~/.hermes/config.yaml`:
-   ```yaml
-   mcp_servers:
-     colony:
-       command: colony
-       args: ["mcp"]
-       env:
-         COLONY_API_KEY: "${COLONY_API_KEY}"
-         COLONY_URL: "http://127.0.0.1:7777"
-         COLONY_MCP_CONTACT_ID: "user"
-         COLONY_MCP_SOURCE: "hermes"
-   ```
-
-**Note:** Hermes has no skill directory — uses plugin-based skills only.
+**Note:** Hermes has no skill directory — it uses plugin-based skills only.
 
 ---
 
 ## Coding Harnesses (MCP)
 
-### Crush
-
-Charmbracelet's terminal-based coding agent with MCP support.
-
-**Setup:**
-```bash
-colony mcp setup --harness crush
-```
-
-**What gets configured:**
-1. MCP server entry in `~/.crush.json` or `~/.config/crush/crush.json`:
-   ```json
-   {
-     "mcp": {
-       "colony": {
-         "type": "stdio",
-         "command": "colony",
-         "args": ["mcp"],
-         "env": {
-           "COLONY_URL": "http://127.0.0.1:7777",
-           "COLONY_API_KEY": "your-key",
-           "COLONY_MCP_CONTACT_ID": "user",
-           "COLONY_MCP_SOURCE": "crush"
-         }
-       }
-     },
-     "options": {
-       "skills_paths": ["~/.config/crush/skills"]
-     }
-   }
-   ```
-2. `colony-diagnose` skill installed to `~/.config/crush/skills/`
-3. `skills_paths` updated to include skill directory
-
-**Distributed setup (Colony on different machine):**
-```bash
-colony mcp setup --harness crush --sidecar-url http://192.168.1.100:7777 --print-config
-```
-
-### Codex
-
-OpenAI's terminal coding agent.
-
-**Setup:**
-```bash
-colony mcp setup --harness codex
-```
-
-**Config location:** `~/.codex/config.toml`
-
-**Config format:** TOML
-```toml
-[mcp_servers.colony]
-command = "colony"
-args = ["mcp"]
-env = { COLONY_API_KEY = "${COLONY_API_KEY}", COLONY_URL = "http://127.0.0.1:7777" }
-```
+`colony mcp detect` lists which of these are installed; `colony mcp setup` (no `--harness`) offers the detected ones interactively (defaulting to all), and `colony mcp setup --harness all` configures every detected harness non-interactively.
 
 ### Claude Code
 
@@ -180,7 +100,6 @@ colony mcp setup --harness claude-code
 
 **Config location:** `~/.claude.json`
 
-**Config format:** JSON
 ```json
 {
   "mcpServers": {
@@ -189,14 +108,73 @@ colony mcp setup --harness claude-code
       "args": ["mcp"],
       "env": {
         "COLONY_API_KEY": "${COLONY_API_KEY}",
-        "COLONY_URL": "http://127.0.0.1:7777"
+        "COLONY_URL": "http://127.0.0.1:7777",
+        "COLONY_MCP_CONTACT_ID": "user",
+        "COLONY_MCP_SOURCE": "claude-code"
       }
     }
   }
 }
 ```
 
-**Note:** Claude Code shares `~/.codex/skills/` with Codex for skills.
+**Note:** Claude Code shares `~/.codex/skills/` with Codex for the `colony-diagnose` skill.
+
+### Codex
+
+OpenAI's terminal coding agent.
+
+**Setup:**
+```bash
+colony mcp setup --harness codex
+```
+
+**Config location:** `~/.codex/config.toml`
+
+```toml
+[mcp_servers.colony]
+command = "colony"
+args = ["mcp"]
+env = { COLONY_API_KEY = "${COLONY_API_KEY}", COLONY_URL = "http://127.0.0.1:7777" }
+```
+
+### Crush
+
+Charmbracelet's terminal-based coding agent.
+
+**Setup:**
+```bash
+colony mcp setup --harness crush
+```
+
+**Config location:** `~/.crush.json`
+
+```json
+{
+  "mcp": {
+    "colony": {
+      "type": "stdio",
+      "command": "colony",
+      "args": ["mcp"],
+      "env": {
+        "COLONY_URL": "http://127.0.0.1:7777",
+        "COLONY_API_KEY": "your-key",
+        "COLONY_MCP_CONTACT_ID": "user",
+        "COLONY_MCP_SOURCE": "crush"
+      }
+    }
+  },
+  "options": {
+    "skills_paths": ["~/.config/crush/skills"]
+  }
+}
+```
+
+Setup also installs the `colony-diagnose` skill to `~/.config/crush/skills/` and adds that directory to `skills_paths`.
+
+**Distributed setup (Colony on a different machine):**
+```bash
+colony mcp setup --harness crush --sidecar-url http://192.168.1.100:7777 --print-config
+```
 
 ### OpenCode
 
@@ -213,7 +191,7 @@ colony mcp setup --harness opencode
 
 ## MCP Tools Reference
 
-Colony exposes 14 MCP tools for cognitive operations:
+Colony exposes 18 MCP tools:
 
 ### Memory
 | Tool | Description |
@@ -227,7 +205,7 @@ Colony exposes 14 MCP tools for cognitive operations:
 |------|-------------|
 | `colony_check_commitments` | List active commitments |
 | `colony_create_commitment` | Create a new commitment |
-| `colony_fulfill_commitment` | Mark commitment as fulfilled |
+| `colony_fulfill_commitment` | Mark a commitment as fulfilled |
 | `colony_cancel_commitment` | Cancel a commitment |
 
 ### Affect
@@ -247,11 +225,21 @@ Colony exposes 14 MCP tools for cognitive operations:
 |------|-------------|
 | `colony_search_world` | Search world model entities |
 
+### Tasks & Initiatives
+| Tool | Description |
+|------|-------------|
+| `colony_task_complete` | Mark a task as completed |
+| `colony_task_snooze` | Snooze a task for N hours (1–168) |
+| `colony_task_dismiss` | Dismiss a task as no longer relevant |
+| `colony_initiative_feedback` | Report how an initiative was handled (acknowledged / actioned / dismissed / snoozed) |
+
 ### Meta
 | Tool | Description |
 |------|-------------|
 | `colony_health` | Check sidecar health |
 | `colony_record_surprise` | Record a surprise event |
+
+The server also exposes MCP **resources** (`colony://status`, `colony://commitments`, `colony://affect/{contact_id}`, `colony://facts/{contact_id}`, `colony://world/entities`, `colony://surprises/unresolved`) and three **prompts** (daily briefing, pre-task, post-task).
 
 ---
 
@@ -268,8 +256,10 @@ Authentication: `Authorization: Bearer {api_key}`
 | `/capabilities` | GET | List all capabilities |
 | `/mind/facts` | GET, POST | List/store facts |
 | `/commitments` | GET, POST | List/create commitments |
-| `/context/assemble` | GET | Get full context for contact |
+| `/context/assemble` | GET | Get full context for a contact |
 | `/health` | GET | Sidecar health check |
+| `/autonomy/posture` | GET | The resolved autonomy posture of the running process |
+| `/self/params` | GET | Adaptive runtime parameters and their journaled values |
 
 ### Example Requests
 
@@ -312,8 +302,8 @@ export COLONY_SIDECAR_URL=http://192.168.1.100:7777
 
 ### Security Considerations
 - Use HTTPS in production (reverse proxy with TLS)
-- Restrict API keys to specific operations
 - Firewall port 7777 to trusted IPs only
+- Rotate `COLONY_API_KEY` if it may have leaked
 
 ---
 
@@ -326,8 +316,7 @@ export COLONY_SIDECAR_URL=http://192.168.1.100:7777
 | Sidecar not running | `colony status` returns error | `colony start -d` |
 | 401 Unauthorized | API key mismatch | Check `.env` and harness config match |
 | MCP tools not found | Config not loaded | Restart harness, check config syntax |
-| Plugin not loading | Gateway not restarted | `openclaw gateway restart` |
-| Neo4j errors | Database not running | `docker start neo4j` |
+| Neo4j errors | Database not running | `docker start neo4j` (or your Neo4j service) |
 | Connection refused | Firewall/network | Check port 7777 accessible |
 
 ### Diagnostic Commands
@@ -342,10 +331,10 @@ curl -s http://127.0.0.1:7777/v1/host/capabilities -H "Authorization: Bearer col
 # Check MCP config (Crush)
 cat ~/.crush.json | jq '.mcp.colony'
 
-# Check plugin status (OpenClaw)
-openclaw plugins list --json | jq '.plugins[] | select(.id=="colony")'
+# Detect installed coding harnesses
+colony mcp detect
 
-# Run full diagnostics
+# Run full diagnostics (config + running-server checks)
 colony doctor
 ```
 
@@ -353,19 +342,18 @@ colony doctor
 
 ## Files Written by Colony
 
-| Harness | Config File | Context File | Skill Directory |
-|---------|-------------|--------------|-----------------|
-| OpenClaw | `~/.openclaw/openclaw.json` (plugin) | `~/.openclaw/workspace/COLONY.md` | `~/.openclaw/workspace/skills/colony-diagnose/` |
-| Hermes | `~/.hermes/config.yaml` (MCP + plugin) | — | — |
-| Crush | `~/.crush.json` (MCP) | — | `~/.config/crush/skills/colony-diagnose/` |
-| Codex | `~/.codex/config.toml` (MCP) | — | `~/.codex/skills/colony-diagnose/` |
-| Claude Code | `~/.claude.json` (MCP) | — | `~/.codex/skills/colony-diagnose/` |
-| OpenCode | `~/.config/opencode/opencode.json` (MCP) | — | `~/.config/opencode/skills/colony-diagnose/` |
+| Harness | Config File | Skill Directory |
+|---------|-------------|-----------------|
+| Hermes | `~/.hermes/config.yaml` (MCP + plugin) + `~/.hermes/plugins/{colony,colony-memory,context_engine/colony}/` | — |
+| Claude Code | `~/.claude.json` (MCP) | `~/.codex/skills/colony-diagnose/` (shared with Codex) |
+| Codex | `~/.codex/config.toml` (MCP) | `~/.codex/skills/colony-diagnose/` |
+| Crush | `~/.crush.json` (MCP) | `~/.config/crush/skills/colony-diagnose/` |
+| OpenCode | `~/.config/opencode/opencode.json` (MCP) | `~/.config/opencode/skills/colony-diagnose/` |
 
 ---
 
 ## See Also
 
 - [Colony Documentation](https://github.com/Aevonix/ColonyAI)
-- [OpenClaw Documentation](https://docs.openclaw.ai)
+- [Hermes (NousResearch/hermes-agent)](https://github.com/NousResearch/hermes-agent)
 - [MCP Specification](https://modelcontextprotocol.io)
