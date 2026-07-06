@@ -212,8 +212,9 @@ class SelfhoodBenchmark:
         if name == "competence":
             sm = self._host_attr("_self_model")
             if sm is not None:
-                return (getattr(sm, "competence", None)
-                        or getattr(sm, "_competence", None))
+                # SelfModel keeps its CompetenceStore as `.store`
+                return (getattr(sm, "store", None)
+                        or getattr(sm, "competence", None))
             return None
         if name == "journal":
             sm = self._host_attr("_self_model")
