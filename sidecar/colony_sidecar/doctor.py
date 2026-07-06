@@ -171,6 +171,33 @@ def _http_get(url: str, api_key: str = "", timeout: float = 10.0) -> Tuple[int, 
 # Local checks (filesystem/env — no server needed)
 # ---------------------------------------------------------------------------
 
+def check_fd_limit() -> CheckResult:
+    """Open-file (fd) soft limit high enough for the vector store. LanceDB
+    opens many files under load; on macOS the default soft limit (256) is far
+    too low and recall silently degrades to the slow keyword fallback with
+    'LanceError(IO): Too many open files'. Warn well before that."""
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except Exception as exc:
+        return CheckResult("fd-limit", SKIP, detail=f"cannot read rlimit: {exc}")
+    floor = 1024
+    if soft != resource.RLIM_INFINITY and soft < floor:
+        remedy = (
+            "raise the sidecar's open-file limit. launchd (macOS): add "
+            "SoftResourceLimits/HardResourceLimits {NumberOfFiles: 16384} to "
+            "the plist and bootout/bootstrap it. systemd: LimitNOFILE=16384. "
+            "shell: ulimit -n 16384 before starting.")
+        return CheckResult(
+            "fd-limit", WARN,
+            detail=f"open-file soft limit is {soft} (< {floor}); LanceDB vector "
+                   "recall will fail under load and fall back to slow keyword search",
+            remedy=remedy)
+    shown = "unlimited" if soft == resource.RLIM_INFINITY else str(soft)
+    return CheckResult("fd-limit", PASS,
+                       detail=f"open-file soft limit {shown}")
+
+
 def check_state_dir() -> CheckResult:
     """1. COLONY_STATE_DIR exists and is writable."""
     path = _state_dir()
@@ -590,6 +617,7 @@ def check_relationship_attribution() -> CheckResult:
 def run_local_checks() -> List[CheckResult]:
     results: List[CheckResult] = []
     results += _run("state-dir", check_state_dir)
+    results += _run("fd-limit", check_fd_limit)
     results += _run("llm-config", check_llm_config)
     results += _run("contacts-db", check_contacts_db)
     results += _run("owner-contact-id", check_owner_contact_id)
