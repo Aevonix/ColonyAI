@@ -383,6 +383,19 @@ class QueueManager:
         """Transition RUNNING → COMPLETED and unblock dependents."""
         assert self._db is not None
         now = datetime.now(timezone.utc)
+        if started_at is None:
+            # Callers rarely pass started_at; fall back to the claim time so
+            # completed jobs carry a real duration (selfhood benchmark).
+            cursor = await self._db.execute(
+                "SELECT claimed_at FROM jobs WHERE job_id = ?", (job_id,))
+            row = await cursor.fetchone()
+            if row and row["claimed_at"]:
+                try:
+                    started_at = datetime.fromisoformat(row["claimed_at"])
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    started_at = None
         result = JobResult(
             job_id=job_id,
             worker_node_id=worker_id,
