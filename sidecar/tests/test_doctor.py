@@ -403,6 +403,8 @@ def _happy_responses(owner="cid-owner-1"):
         "/v1/host/self/benchmark": (200, {"available": True,
             "weeks": ["2026-W26"], "trends": {},
             "latest": "2026-W26", "rollups": {"2026-W26": {}}}),
+        "/v1/host/self/tools": (200, {"available": True, "mode": "shadow",
+            "trust_stage": "shadow", "tools": []}),
         "/v1/host/executor/status": (200, {"running": True, "wired": True,
                                            "stats": {"cycles": 5}}),
         "/v1/host/projects": (200, {"available": True, "mode": "shadow",

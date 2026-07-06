@@ -199,6 +199,12 @@ class SubsystemRegistry:
         return _experiments
 
     @property
+    def toolsmith(self) -> Any:
+        """Get the Toolsmith engine (Mind M1)."""
+        from colony_sidecar.api.routers.host import _toolsmith
+        return _toolsmith
+
+    @property
     def affect_store(self) -> Any:
         """Get the AffectStore."""
         from colony_sidecar.api.routers.host import _affect_store

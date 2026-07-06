@@ -4272,6 +4272,64 @@ def set_experiments(e) -> None:
     _experiments = e
 
 
+_toolsmith = None
+
+
+def set_toolsmith(t) -> None:
+    global _toolsmith
+    _toolsmith = t
+
+
+@router.get("/self/tools")
+async def list_tools(status: str = "") -> dict:
+    """Self-built tools: the toolsmith registry (draft/verified/shadow/live/
+    retired/rejected), each with usage and verification detail."""
+    if _toolsmith is None:
+        return {"available": False}
+    try:
+        tools = _toolsmith.registry.list(status=status or None)
+        return {"available": True, "mode": os.environ.get("COLONY_TOOLSMITH", "off"),
+                "trust_stage": _toolsmith.trust_stage(),
+                "tools": [t.public() for t in tools]}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+@router.get("/self/tools/{tool_id}")
+async def get_tool(tool_id: str) -> dict:
+    if _toolsmith is None:
+        return {"available": False}
+    tool = _toolsmith.registry.get(tool_id)
+    if tool is None:
+        raise HTTPException(status_code=404, detail="tool not found")
+    d = tool.public()
+    d["source_code"] = tool.source_code
+    d["test_source"] = tool.test_source
+    return {"available": True, "tool": d}
+
+
+@router.post("/self/tools/{tool_id}/graduate")
+async def graduate_tool(tool_id: str) -> dict:
+    """Promote a shadow tool to live (owner approval)."""
+    if _toolsmith is None:
+        return {"available": False}
+    ok = _toolsmith.graduate(tool_id)
+    if not ok:
+        raise HTTPException(status_code=400,
+                            detail="tool not in shadow state")
+    return {"available": True, "graduated": tool_id}
+
+
+@router.post("/self/tools/{tool_id}/retire")
+async def retire_tool(tool_id: str, reason: str = "owner retired") -> dict:
+    if _toolsmith is None:
+        return {"available": False}
+    ok = _toolsmith.retire(tool_id, reason=reason)
+    if not ok:
+        raise HTTPException(status_code=404, detail="tool not found")
+    return {"available": True, "retired": tool_id}
+
+
 @router.get("/self/experiments")
 async def list_experiments(limit: int = 30) -> dict:
     """Self-experiments: running and recently decided controlled changes."""

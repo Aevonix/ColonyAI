@@ -337,6 +337,9 @@ class AutonomyLoop:
         # Phase 17c: experiment decisions (daily, Mind M0b)
         await self._phase_experiments()
 
+        # Phase 17d: toolsmith (daily, Mind M1)
+        await self._phase_toolsmith()
+
         # Phase 18: skill eviction
         await self._phase_skill_evict()
 
@@ -2044,6 +2047,83 @@ class AutonomyLoop:
                 proposal_to_payload(prop), delivery)
         except Exception:
             logger.debug("benchmark report delivery failed", exc_info=True)
+
+    async def _phase_toolsmith(self) -> None:
+        """Daily (Mind M1): mine the journal for repeated procedures, draft +
+        sandbox-verify a tool, exercise verified tools in shadow, and propose
+        graduation once a tool has enough clean shadow runs. Bounded per run:
+        at most one new draft, to keep LLM+sandbox cost predictable."""
+        ts = getattr(self._registry, "toolsmith", None)
+        if ts is None:
+            return
+        key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._periodic_last.get("toolsmith") == key:
+            return
+        self._periodic_last["toolsmith"] = key
+        try:
+            from colony_sidecar.toolsmith.registry import ToolStatus
+            # 1. mine + draft one candidate that has no tool yet
+            candidates = ts.miner.mine(limit=1000)
+            drafted = None
+            for cand in candidates[:3]:
+                tool = await ts.draft(cand)
+                if tool is not None:
+                    drafted = tool
+                    break
+            # 2. verify any draft
+            for tool in ts.registry.list(status=ToolStatus.DRAFT):
+                await ts.verify(tool)
+            # 3. exercise shadow tools (re-run their own test as a clean run)
+            for tool in ts.registry.list(status=ToolStatus.SHADOW):
+                passed, _ = await ts.verify_shadow_run(tool)
+            # 4. auto-retire failing tools
+            for tool in ts.retirement_candidates():
+                ts.retire(tool.tool_id, reason="failing/unused")
+            # 5. propose graduation for eligible shadow tools
+            await self._toolsmith_propose_graduations(ts)
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase toolsmith error: %s", exc, exc_info=True)
+
+    async def _toolsmith_propose_graduations(self, ts) -> None:
+        delivery = self._registry.delivery
+        cands = ts.graduation_candidates()
+        if not cands:
+            return
+        stage = ts.trust_stage()
+        for tool in cands:
+            if stage == "act_first":
+                ts.graduate(tool.tool_id)
+                title = f"New tool live: {tool.name}"
+                finding = (f"I built and graduated a tool, {tool.name}: "
+                           f"{tool.description}. It passed sandbox "
+                           f"verification and {tool.shadow_runs} clean shadow "
+                           "runs, and my toolsmith track record is trusted.")
+            else:
+                title = f"New tool ready: {tool.name}"
+                finding = (f"I built a tool, {tool.name}: {tool.description}. "
+                           f"It passed sandbox verification and "
+                           f"{tool.shadow_runs} clean shadow runs. Approve it "
+                           "to let me use it for real.")
+            if delivery is None:
+                continue
+            try:
+                from colony_sidecar.proposals import Proposal, proposal_to_payload
+                prop = Proposal(
+                    title=title[:100], finding=finding[:600],
+                    why_it_helps="I get more capable at things I do often, "
+                                 "and you see every new capability first",
+                    suggested_action=(
+                        "It is already live."
+                        if stage == "act_first" else
+                        f"Approve via the tools API to graduate {tool.name}."),
+                    source="toolsmith", initiative_type="proposal",
+                    confidence=0.85)
+                await self._route_reachout_delivery(
+                    proposal_to_payload(prop), delivery)
+            except Exception:
+                logger.debug("toolsmith graduation notice failed",
+                             exc_info=True)
 
     async def _phase_experiments(self) -> None:
         """Daily (Mind M0b): decide running self-experiments whose window

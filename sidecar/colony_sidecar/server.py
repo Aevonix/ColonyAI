@@ -647,6 +647,34 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Experiment framework init failed: %s", exc)
 
+    # --- Toolsmith (Mind M1): self-built, sandbox-verified tools ---
+    try:
+        from colony_sidecar.toolsmith import (
+            Toolsmith, ToolRegistry, toolsmith_enabled,
+        )
+        from colony_sidecar.api.routers.host import set_toolsmith
+        if toolsmith_enabled():
+            _tool_registry = ToolRegistry(
+                db_path=str(state_dir / "colony-toolsmith.db"),
+                library_root=str(state_dir / "toolsmith_library"))
+            _toolsmith = Toolsmith(_tool_registry)
+            set_toolsmith(_toolsmith)
+            # advertise graduated tools to the reasoning loop
+            try:
+                from colony_sidecar.api.routers.host import _tool_executor
+                if _tool_executor is not None:
+                    _tool_executor.set_dynamic_provider(
+                        _toolsmith.build_dynamic_provider())
+            except Exception as texc:
+                logger.warning("toolsmith dynamic provider wiring: %s", texc)
+            logger.info("Toolsmith ready (mode=%s, db=%s)",
+                        os.environ.get("COLONY_TOOLSMITH", "off"),
+                        state_dir / "colony-toolsmith.db")
+        else:
+            logger.info("Toolsmith disabled (COLONY_TOOLSMITH=off)")
+    except Exception as exc:
+        logger.warning("Toolsmith init failed: %s", exc)
+
     # --- Skills memory (procedure memory, item 3) ---
     _skills_mem_store = None
     try:

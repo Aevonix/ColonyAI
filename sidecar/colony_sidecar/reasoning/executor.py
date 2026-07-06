@@ -53,6 +53,10 @@ class ToolExecutor:
         self._handlers: dict[str, ToolHandler] = handlers or {}
         self._registry = registry
         self._graph = graph_client
+        # Dynamic tools (e.g. toolsmith-built): a provider returning
+        # {name: (openai_definition, async_handler)} consulted at call time
+        # so newly-graduated tools appear without re-instantiation.
+        self._dynamic_provider = None
 
         # Auto-register Colony-native tool handlers if registry is provided
         if registry is not None:
@@ -102,6 +106,21 @@ class ToolExecutor:
         """Remove a tool handler."""
         self._handlers.pop(name, None)
 
+    def set_dynamic_provider(self, provider) -> None:
+        """Register a provider callable returning a dict
+        {name: (openai_definition, async_handler)} of runtime tools
+        (e.g. toolsmith-graduated tools). Consulted on every turn."""
+        self._dynamic_provider = provider
+
+    def _dynamic_tools(self) -> dict[str, Any]:
+        if self._dynamic_provider is None:
+            return {}
+        try:
+            return self._dynamic_provider() or {}
+        except Exception as exc:
+            logger.debug("dynamic tool provider failed: %s", exc)
+            return {}
+
     def get_definitions(self, available_tools: list[str] | None = None) -> list[dict[str, Any]]:
         """Build OpenAI-format tool definitions for the LLM call.
 
@@ -118,9 +137,16 @@ class ToolExecutor:
         -------
         List of OpenAI-format tool definitions.
         """
-        if available_tools is None:
-            available_tools = list(self._handlers.keys())
-        return get_tool_definitions(tool_names=available_tools)
+        dynamic = self._dynamic_tools()
+        explicit_filter = available_tools is not None
+        names = available_tools if explicit_filter else list(self._handlers.keys())
+        defs = get_tool_definitions(tool_names=names)
+        for name, (definition, _handler) in dynamic.items():
+            # a filter must name a dynamic tool to include it; unfiltered
+            # turns see all graduated tools
+            if definition and (not explicit_filter or name in names):
+                defs.append(definition)
+        return defs
 
     async def execute_batch(
         self,
@@ -145,13 +171,18 @@ class ToolExecutor:
 
             handler = self._handlers.get(name)
             if handler is None:
+                dyn = self._dynamic_tools().get(name)
+                if dyn is not None:
+                    handler = dyn[1]
+            if handler is None:
                 logger.debug("ToolExecutor: no handler for '%s' — returning error", name)
                 results.append({
                     "tool_call_id": tc_id,
                     "content": json.dumps({
                         "error": True,
                         "message": f"Tool '{name}' is not available. Try a different approach.",
-                        "available_tools": list(self._handlers.keys()),
+                        "available_tools": list(self._handlers.keys())
+                        + list(self._dynamic_tools().keys()),
                     }),
                 })
                 continue

@@ -74,6 +74,7 @@ SERVER_CHECK_NAMES = (
     "server-mining",
     "server-directives",
     "server-benchmark",
+    "server-toolsmith",
 )
 
 #: A QUEUED agent_action job older than this means no queue worker is
@@ -974,6 +975,35 @@ def check_server_benchmark(base_url: str, api_key: str, timeout: float) -> Check
         detail=f"{len(weeks)} week(s) of rollups, latest {body.get('latest')}")
 
 
+def check_server_toolsmith(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """Toolsmith (Mind M1): wired, and no tool is stuck failing."""
+    status, body = _http_get(f"{base_url}/v1/host/self/tools", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-toolsmith", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-toolsmith", FAIL, detail=f"HTTP {status}: {body}")
+    if not body.get("available"):
+        return CheckResult(
+            "server-toolsmith", SKIP,
+            detail="toolsmith off (COLONY_TOOLSMITH=off) — no self-built tools")
+    tools = body.get("tools") or []
+    live = [t for t in tools if t.get("status") == "live"]
+    shadow = [t for t in tools if t.get("status") == "shadow"]
+    failing = [t.get("name") for t in tools
+               if t.get("status") in ("shadow", "live")
+               and (t.get("failures") or 0) >= 3]
+    if failing:
+        return CheckResult(
+            "server-toolsmith", WARN,
+            detail=f"{len(live)} live, {len(shadow)} shadow; failing: "
+                   + ", ".join(str(f) for f in failing),
+            remedy="retire the failing tool(s) via POST /v1/host/self/tools/{id}/retire")
+    return CheckResult(
+        "server-toolsmith", PASS,
+        detail=f"mode={body.get('mode')}, trust={body.get('trust_stage')}, "
+               f"{len(live)} live / {len(shadow)} shadow tool(s)")
+
+
 def check_server_adaptive_params(base_url: str, api_key: str, timeout: float) -> CheckResult:
     """20. Meta-learning knobs: present, within bounds, attribution visible."""
     status, body = _http_get(f"{base_url}/v1/host/self/params", api_key, timeout)
@@ -1279,6 +1309,8 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-directives", check_server_directives,
                     base_url, api_key, timeout)
     results += _run("server-benchmark", check_server_benchmark,
+                    base_url, api_key, timeout)
+    results += _run("server-toolsmith", check_server_toolsmith,
                     base_url, api_key, timeout)
     return results
 
