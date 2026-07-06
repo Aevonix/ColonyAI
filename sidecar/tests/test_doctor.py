@@ -416,6 +416,8 @@ def _happy_responses(owner="cid-owner-1"):
         "/v1/host/mining/escalations?limit=1": (200, {"mode": "shadow",
                                                       "stats": {"total": 2},
                                                       "escalations": [{}]}),
+        "/v1/host/directives": (200, {"available": True, "directives": [
+            {"id": "d1", "subject": "touching the payments repo"}]}),
     }
 
 
@@ -855,3 +857,17 @@ def test_contacts_db_state_dir_default_not_cwd(clean_env, monkeypatch, tmp_path)
     p = ContactsConfig.from_env().sqlite_path
     assert not p.startswith("./")
     assert ".colony" in p
+
+
+def test_directive_fragments_and_piles_warn(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/directives": (200, {"available": True, "directives": [
+            {"id": "a", "subject": "that and wipe it from colony"},
+            {"id": "b", "subject": "do Y and I hate it"},
+            {"id": "c", "subject": "do Y and I hate it"},
+            {"id": "d", "subject": "do Y and I hate it"},
+        ]}),
+    }))
+    r = doctor.check_server_directives(URL, "key", 5)
+    assert r.status == WARN
+    assert "fragment" in r.detail and "duplicated" in r.detail

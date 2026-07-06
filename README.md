@@ -160,35 +160,22 @@ guide.
 
 ```mermaid
 flowchart LR
-    agent(["Host harness<br/>(the agent)"])
-    models(["LLM + embeddings<br/>(OpenAI-compatible)"])
+    agent["Host harness - the agent"]
+    models["LLM and embeddings - OpenAI-compatible"]
 
-    subgraph colony["Colony sidecar · FastAPI · 127.0.0.1:7777"]
-        direction LR
-        api["HTTP / WebSocket<br/>API"]
-        subgraph stores["stores"]
-            direction TB
-            neo[("Neo4j · graph")]
-            lance[("LanceDB · vectors")]
-            sqlite[("SQLite · records")]
-        end
+    subgraph colony["Colony sidecar - FastAPI on 127.0.0.1:7777"]
+        api["HTTP / WebSocket API"]
+        neo["Neo4j graph"]
+        lance["LanceDB vectors"]
+        sqlite["SQLite records"]
         api --> neo
         api --> lance
         api --> sqlite
     end
 
-    agent -->|"request, turn sync"| api
-    api -.->|"assembled context"| agent
-    api -->|"extract, embed"| models
-
-    style colony fill:#f6f8fa,stroke:#d0d7de,color:#24292f
-    style stores fill:#ffffff,stroke:#d8dee4,color:#57606a
-    classDef store fill:#ddf4ff,stroke:#54aeff,color:#0a3069
-    classDef ext fill:#eaeef2,stroke:#9aa5b1,color:#24292f
-    classDef apinode fill:#dafbe1,stroke:#4ac26b,color:#0a3622
-    class neo,lance,sqlite store
-    class agent,models ext
-    class api apinode
+    agent -->|request and turn sync| api
+    api -.->|assembled context| agent
+    api -->|extract and embed| models
 ```
 
 | Component | Role |

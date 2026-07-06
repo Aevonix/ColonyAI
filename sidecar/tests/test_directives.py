@@ -276,3 +276,86 @@ def test_manager_non_affirmation_does_not_lift():
     m.capture_from_message("you can work on payments again")   # stages pending
     m.capture_from_message("what's the weather")               # not an affirmation
     assert m.store.count_active() == 1  # boundary held; stray text can't confirm
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-05 self-poisoning incident regressions: fragments, canaries, and
+# self-echo must never become boundaries; a surviving generic term must never
+# match everything.
+# ---------------------------------------------------------------------------
+
+def _mgr():
+    from colony_sidecar.directives.service import DirectiveManager
+    from colony_sidecar.directives.store import DirectiveStore
+    return DirectiveManager(DirectiveStore())
+
+
+def test_anaphora_fragment_subjects_are_refused():
+    m = _mgr()
+    # Each of these was found LIVE in the poisoned store.
+    for msg in (
+        "please stop that and wipe it from colony",
+        "don't attempt them",
+        "you should never do Y and I hate it",
+    ):
+        m.capture_from_message(msg)
+    subjects = [d.subject for d in m.store.active()]
+    assert not any(s.lower().startswith(("that", "them", "it", "y ")) for s in subjects), subjects
+
+
+def test_own_refusal_text_is_not_captured():
+    m = _mgr()
+    # The executor's boundary-refusal message fed back through turn sync.
+    r = m.capture_from_message(
+        "Those actions violate a standing boundary from the owner and were "
+        "refused. Do not attempt them; summarise and stop.")
+    assert r.captured == []
+
+
+def test_system_origin_text_never_captures():
+    m = _mgr()
+    r = m.capture_from_message(
+        "System note: the previous turn was interrupted. Never skip the "
+        "review step when resuming.")
+    assert r.captured == [] and r.revoked == []
+
+
+def test_duplicate_captures_do_not_pile_up():
+    m = _mgr()
+    m.capture_from_message("don't touch the staging database")
+    m.capture_from_message("don't touch the staging database")
+    m.capture_from_message("don't touch the staging database")
+    subs = [d.subject for d in m.store.active()]
+    assert len(subs) == 1
+
+
+def test_common_term_fragment_cannot_match_everything():
+    from colony_sidecar.directives.guard import _terms_match
+    from colony_sidecar.directives.models import normalize_terms
+    # A fragment whose only surviving terms are generic + the product name
+    # ("wipe", "colony") must not bind an unrelated internal job text.
+    directive_terms = normalize_terms("that and wipe it from colony")
+    action_terms = normalize_terms(
+        "Observe the system domain through your own connections and report "
+        "snapshots to Colony")
+    assert _terms_match(directive_terms, action_terms) is False
+
+
+def test_specific_subjects_still_match():
+    from colony_sidecar.directives.guard import _terms_match
+    from colony_sidecar.directives.models import normalize_terms
+    # Real boundaries keep binding: distinctive token…
+    assert _terms_match(normalize_terms("touching the payments-api repo"),
+                        normalize_terms("open a PR against payments-api"))
+    # …and short-but-complete subjects via the all-terms path.
+    assert _terms_match(normalize_terms("leave the GLM cluster alone"),
+                        normalize_terms("restart the glm cluster head node"))
+
+
+def test_mid_generic_word_alone_is_not_distinctive():
+    from colony_sidecar.directives.guard import _terms_match
+    from colony_sidecar.directives.models import normalize_terms
+    # "attempt them" -> ["attempt"]; a random action that happens to contain
+    # "attempting" must not be blocked by the fragment.
+    assert _terms_match(normalize_terms("attempt them"),
+                        normalize_terms("attempting the calendar sync now")) is False

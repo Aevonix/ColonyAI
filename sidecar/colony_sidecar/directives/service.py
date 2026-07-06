@@ -31,6 +31,17 @@ _AFFIRM = re.compile(
 # How long a pending confirmation stays valid (owner must confirm promptly).
 _PENDING_TTL_SECS = 900.0
 
+# Subjects that start with an unresolved anaphor or a dangling conjunction are
+# sentence FRAGMENTS ("that and wipe it from colony", "or manage this job",
+# "attempt them"): the real referent was lost at extraction, so storing them
+# creates boundaries that fuzzy-match everything and nothing the owner meant.
+# Found live 2026-07-05: a store poisoned with these plus test canaries blocked
+# every routine job once the worker governor went live.
+_ANAPHORA_LEAD = re.compile(
+    r"^(?:that|this|it|them|those|these|him|her|or|and|but|so|then|there|"
+    r"y|x)\b", re.IGNORECASE,
+)
+
 
 @dataclass
 class CaptureResult:
@@ -62,6 +73,18 @@ class DirectiveManager:
         """
         result = CaptureResult()
         text = (message or "").strip()
+
+        # 0) Machine-origin text never sets or lifts a boundary: skill/system/
+        # interrupted-turn residue that reaches this path with the owner's
+        # contact id (cron review prompts, tool echoes) must not become
+        # standing directives. (Live incident 2026-07-05: the executor's own
+        # refusal text "Do not attempt them" was re-captured as a boundary.)
+        try:
+            from colony_sidecar.delivery.reachout_policy import is_system_origin
+            if is_system_origin(text):
+                return result
+        except ImportError:
+            pass
 
         # 1) If a lift is pending, ONLY an explicit affirmation on the immediate
         #    next message confirms it; anything else clears it (fail-safe: a
@@ -100,8 +123,17 @@ class DirectiveManager:
                 )
             return result
 
-        # 3) New prohibitions / requirements are stored immediately.
+        # 3) New prohibitions / requirements are stored immediately -- after
+        # the quality gates: fragments are refused and duplicates never pile up.
         for d in found:
+            if not self._subject_acceptable(d):
+                logger.info("Directive capture refused (degenerate subject): %r",
+                            (d.subject or "")[:80])
+                continue
+            if self._duplicate_active(d):
+                logger.debug("Directive capture skipped (duplicate of an active "
+                             "directive): %r", (d.subject or "")[:80])
+                continue
             self.store.add(d)
             result.captured.append(d)
         if result.captured:
@@ -130,6 +162,46 @@ class DirectiveManager:
             self._last_ack = result.ack
         return result
 
+    # -- capture quality gates ------------------------------------------
+    _PRONOUNS = frozenset({"it", "that", "this", "them", "those", "these",
+                           "him", "her", "they", "he", "she"})
+
+    def _subject_acceptable(self, d: Directive) -> bool:
+        """A storable subject names something concrete: no unresolved
+        anaphora fragments, and at least one substantive term survives
+        normalization."""
+        subj = (d.subject or "").strip()
+        if not subj:
+            return False
+        if _ANAPHORA_LEAD.match(subj):
+            return False
+        raw_tokens = re.findall(r"[a-z]+", subj.lower())
+        terms = d.match_terms or normalize_terms(subj)
+        substantive = [t for t in terms
+                       if len(t) >= 4 and t not in self._PRONOUNS]
+        if not substantive:
+            return False
+        # A bare pronoun object with a thin subject ("attempt them",
+        # "resend it") is an unresolved reference: the thing the owner meant
+        # never made it into the subject.
+        if any(t in self._PRONOUNS for t in raw_tokens) and len(substantive) < 2:
+            return False
+        return True
+
+    def _duplicate_active(self, d: Directive) -> bool:
+        """An active directive with the same polarity and identical
+        normalized terms already covers this capture."""
+        key = set(d.match_terms or normalize_terms(d.subject))
+        if not key:
+            return False
+        try:
+            for e in self.store.active(polarity=d.polarity):
+                if set(e.match_terms or []) == key:
+                    return True
+        except Exception:
+            pass
+        return False
+
     async def capture_llm(self, message: str) -> List[Directive]:
         """LLM-assisted capture (1b), run only when the deterministic pass found
         nothing. Inferred directives are lower-confidence and surfaced for the
@@ -138,6 +210,10 @@ class DirectiveManager:
         found = await llm_extract_directives(message)
         stored: List[Directive] = []
         for d in found:
+            # Same quality gates as the deterministic path: inferred capture
+            # must never store fragments or pile up duplicates.
+            if not self._subject_acceptable(d) or self._duplicate_active(d):
+                continue
             self.store.add(d)
             stored.append(d)
             verb = "will not" if d.polarity == Polarity.PROHIBIT else "will make sure to"

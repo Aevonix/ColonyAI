@@ -16,6 +16,7 @@ model can neither forget nor talk its way past a standing boundary.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -81,10 +82,38 @@ class Verdict:
         }
 
 
+def _common_terms() -> frozenset:
+    """Terms that appear in virtually every internal action text and must
+    never count as a match signal on their own: the product name, the agent's
+    own name, plus any deployment-supplied extras (COLONY_MATCH_COMMON_TERMS,
+    csv). Live incident 2026-07-05: a fragment boundary whose only surviving
+    term was "colony" matched every job that said "report to Colony"."""
+    import os
+    terms = {"colony"}
+    agent = os.environ.get("COLONY_AGENT_NAME", "")
+    for tok in re.findall(r"[a-z0-9]+", agent.lower()):
+        if len(tok) > 1:
+            terms.add(tok)
+    extra = os.environ.get("COLONY_MATCH_COMMON_TERMS", "")
+    for tok in extra.lower().split(","):
+        tok = tok.strip()
+        if tok:
+            terms.add(tok)
+    return frozenset(terms)
+
+
 def _is_distinctive(term: str) -> bool:
-    """A term specific enough that a single match is a real signal."""
+    """A term specific enough that a single match is a real signal.
+
+    The bar is deliberately high (>=8 chars, or a separator/digit shape like
+    repo/path/version tokens): mid-length generic words ("attempt",
+    "respond", "message") matching alone caused mass false blocks. Shorter
+    real subjects still match through the all-terms path below.
+    """
+    if term in _common_terms():
+        return False
     return (
-        len(term) >= 5
+        len(term) >= 8
         or any(c in term for c in "-_/.")
         or any(c.isdigit() for c in term)
     )
@@ -113,9 +142,14 @@ def _terms_match(directive_terms: List[str], action_terms: List[str]) -> bool:
     if not hits:
         return False
     # A distinctive subject term (repo/business/proper-noun-like) matching alone
-    # is a real signal. Generic short terms require the whole subject to match.
+    # is a real signal. Generic short terms require the whole subject to match,
+    # and an all-terms match must include at least one substantive (len>=4,
+    # non-common) term so pronoun-grade fragments can never bind.
     if any(_is_distinctive(t) for t in hits):
         return True
+    common = _common_terms()
+    if not any(len(t) >= 4 and t not in common for t in hits):
+        return False
     return len(hits) == len(directive_terms)
 
 

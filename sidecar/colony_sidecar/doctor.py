@@ -72,6 +72,7 @@ SERVER_CHECK_NAMES = (
     "server-sandbox",
     "server-connectors",
     "server-mining",
+    "server-directives",
 )
 
 #: A QUEUED agent_action job older than this means no queue worker is
@@ -1068,6 +1069,52 @@ def check_server_mining(base_url: str, api_key: str, timeout: float) -> CheckRes
         detail=f"mode={mode}, escalation miner reachable ({total} recorded)")
 
 
+def check_server_directives(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """28. Directive-store hygiene: no fragment boundaries, no duplicate piles.
+
+    Guards against the 2026-07-05 self-poisoning class: anaphora fragments
+    ("attempt them", "that and wipe it from colony") and repeated captures
+    that, once the worker governor enforces, block routine work wholesale.
+    """
+    status, body = _http_get(f"{base_url}/v1/host/directives", api_key, timeout)
+    if status == 404:
+        return CheckResult("server-directives", SKIP, detail="endpoint absent (older server)")
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-directives", WARN, detail=f"HTTP {status}: {body}")
+    if not body.get("available", True):
+        return CheckResult("server-directives", SKIP, detail="directives not wired")
+    directives = body.get("directives") or []
+    import re as _re
+    frag_lead = _re.compile(
+        r"^(?:that|this|it|them|those|these|him|her|or|and|but|so|then|there|y|x)\b",
+        _re.IGNORECASE)
+    fragments = [d for d in directives
+                 if frag_lead.match((d.get("subject") or "").strip())]
+    counts: dict = {}
+    for d in directives:
+        s = (d.get("subject") or "").strip().lower()
+        counts[s] = counts.get(s, 0) + 1
+    piles = {s: n for s, n in counts.items() if n >= 3}
+    problems = []
+    if fragments:
+        problems.append(f"{len(fragments)} fragment subject(s) e.g. "
+                        + repr((fragments[0].get("subject") or "")[:40]))
+    if piles:
+        worst = max(piles.items(), key=lambda kv: kv[1])
+        problems.append(f"{len(piles)} subject(s) duplicated (worst: "
+                        f"{worst[1]}x {worst[0][:40]!r})")
+    if problems:
+        return CheckResult(
+            "server-directives", WARN,
+            detail=f"{len(directives)} directive(s); " + "; ".join(problems),
+            remedy="review GET /v1/host/directives and revoke the poisoned "
+                   "entries (POST /directives/{id}/revoke); capture-quality "
+                   "gates prevent new ones")
+    return CheckResult(
+        "server-directives", PASS,
+        detail=f"{len(directives)} directive(s), no fragments or piles")
+
+
 def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> List[CheckResult]:
     """Run all HTTP checks, skipping the rest when the sidecar is down."""
     base_url = base_url.rstrip("/")
@@ -1142,6 +1189,8 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-connectors", check_server_connectors,
                     base_url, api_key, timeout)
     results += _run("server-mining", check_server_mining,
+                    base_url, api_key, timeout)
+    results += _run("server-directives", check_server_directives,
                     base_url, api_key, timeout)
     return results
 
