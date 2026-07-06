@@ -2025,8 +2025,14 @@ class AutonomyLoop:
         if self._periodic_last.get("selfhood_benchmark") == key:
             return
         try:
-            result = await bench.compute_week()
+            # compute_week runs recall probes against the graph; bound it so a
+            # wedged graph connection can't stall the tick.
+            result = await asyncio.wait_for(
+                bench.compute_week(), timeout=self._phase_budget_secs())
             self._periodic_last["selfhood_benchmark"] = key
+        except asyncio.TimeoutError:
+            logger.warning("selfhood_benchmark exceeded budget; skipping")
+            return
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase selfhood_benchmark error: %s", exc,

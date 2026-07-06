@@ -24,6 +24,7 @@ Weeks are ISO (%G-W%V), windows are Monday 00:00 UTC half-open.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -414,9 +415,12 @@ class SelfhoodBenchmark:
             if not fact.strip():
                 continue
             try:
-                results = await graph.recall(fact, limit=5,
-                                             min_confidence=0.1)
-            except Exception:
+                # bound each probe so a wedged graph connection can't hang the
+                # benchmark (and, through it, the autonomy tick)
+                results = await asyncio.wait_for(
+                    graph.recall(fact, limit=5, min_confidence=0.1),
+                    timeout=8.0)
+            except (Exception, asyncio.TimeoutError):
                 continue
             hit = 1.0 if self._covered(fact, results) else 0.0
             hits += int(hit)
