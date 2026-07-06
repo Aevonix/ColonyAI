@@ -128,14 +128,20 @@ def _terms_match(directive_terms: List[str], action_terms: List[str]) -> bool:
     def _hit(t: str) -> bool:
         if t in action:
             return True
-        # loose stem/prefix containment for morphological variants
-        # (research/researching, cert/certs, deploy/deployment)
+        # Stem/prefix containment for morphological variants only
+        # (research/researching, cert/certs, deploy/deployment). The shorter
+        # side must be a real stem: >=5 chars, or within 2 chars of the
+        # longer word. Without that floor, "what" counted as a variant of
+        # "whatsapp" and a WhatsApp boundary matched any sentence containing
+        # the word "what" (live false-block, 2026-07-05).
         if len(t) >= 4:
             for a in action:
                 if a == t:
                     return True
                 if len(a) >= 4 and (a.startswith(t) or t.startswith(a)):
-                    return True
+                    shorter, longer = (a, t) if len(a) <= len(t) else (t, a)
+                    if len(shorter) >= 5 or len(longer) - len(shorter) <= 2:
+                        return True
         return False
 
     hits = [t for t in directive_terms if _hit(t)]

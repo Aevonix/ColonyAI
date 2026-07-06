@@ -359,3 +359,19 @@ def test_mid_generic_word_alone_is_not_distinctive():
     # "attempting" must not be blocked by the fragment.
     assert _terms_match(normalize_terms("attempt them"),
                         normalize_terms("attempting the calendar sync now")) is False
+
+
+def test_short_word_is_not_a_stem_of_a_long_term():
+    from colony_sidecar.directives.guard import _terms_match
+    from colony_sidecar.directives.models import normalize_terms
+    # "what" must not count as a morphological variant of "whatsapp": a
+    # WhatsApp boundary cannot bind every sentence containing "what".
+    assert _terms_match(
+        normalize_terms("writing or implementing the WhatsApp bridge spec yourself"),
+        normalize_terms("what must a server-side worker governor enforce at claim time"),
+    ) is False
+    # Real morphological variants still bind.
+    assert _terms_match(normalize_terms("stop deploying the payments service"),
+                        normalize_terms("deploy payments service to prod"))
+    assert _terms_match(normalize_terms("leave the tls certs alone"),
+                        normalize_terms("update the tls cert bundle"))
