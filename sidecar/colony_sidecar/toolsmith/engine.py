@@ -10,6 +10,7 @@ Each stage composes shipped infrastructure:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -176,9 +177,10 @@ class Toolsmith:
         try:
             # owner-directed: this is an owner-sanctioned autonomy process
             # running a pure test in an egress-none container.
-            res = sandbox.run(script, "python",
-                              purpose=f"toolsmith verify {tool.name}",
-                              owner_directed=True)
+            res = await asyncio.to_thread(
+                sandbox.run, script, "python",
+                purpose=f"toolsmith verify {tool.name}",
+                owner_directed=True)
         except Exception as exc:
             return False, {"reason": f"sandbox_error: {exc}"}
         if not res.get("ran"):
@@ -236,9 +238,10 @@ class Toolsmith:
             return False, {"reason": "sandbox_unavailable"}
         script = self._verify_script(tool)
         try:
-            res = sandbox.run(script, "python",
-                              purpose=f"toolsmith shadow {tool.name}",
-                              owner_directed=True)
+            res = await asyncio.to_thread(
+                sandbox.run, script, "python",
+                purpose=f"toolsmith shadow {tool.name}",
+                owner_directed=True)
         except Exception as exc:
             self.record_shadow(tool.tool_id, success=False)
             return False, {"reason": f"sandbox_error: {exc}"}
@@ -320,9 +323,10 @@ class Toolsmith:
             return {"error": "sandbox unavailable"}
         script = self._call_script(tool, kwargs)
         try:
-            res = sandbox.run(script, "python",
-                              purpose=f"toolsmith invoke {tool.name}",
-                              owner_directed=True)
+            res = await asyncio.to_thread(
+                sandbox.run, script, "python",
+                purpose=f"toolsmith invoke {tool.name}",
+                owner_directed=True)
         except Exception as exc:
             self.record_live(tool_id, success=False)
             return {"error": f"sandbox_error: {exc}"}

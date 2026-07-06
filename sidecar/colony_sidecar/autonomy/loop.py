@@ -2079,11 +2079,17 @@ class AutonomyLoop:
             ws.decay()
         except Exception:
             logger.debug("workspace decay failed", exc_info=True)
-        # think: 1 per pass normally, a few during the sleep window
+        # think: 1 per pass normally, a few during the sleep window. Each
+        # thought calls the LLM; bound it so a slow model can't stall the tick.
         rounds = 4 if in_sleep_window() else 1
         live = workspace_mode() == "live"
         for _ in range(rounds):
-            outcome = await ws.think_once()
+            try:
+                outcome = await asyncio.wait_for(
+                    ws.think_once(), timeout=self._phase_budget_secs())
+            except asyncio.TimeoutError:
+                logger.warning("workspace thought exceeded budget; stopping")
+                break
             if outcome is None:
                 break
             if live and outcome.get("action"):
@@ -2204,7 +2210,23 @@ class AutonomyLoop:
         """Daily (Mind M1): mine the journal for repeated procedures, draft +
         sandbox-verify a tool, exercise verified tools in shadow, and propose
         graduation once a tool has enough clean shadow runs. Bounded per run:
-        at most one new draft, to keep LLM+sandbox cost predictable."""
+        at most one new draft, to keep LLM+sandbox cost predictable. Wrapped in
+        a hard timeout so a slow LLM draft or a wedged Docker run can never
+        freeze the autonomy loop (the draft/verify calls are off-loop, but the
+        tick still awaits the phase)."""
+        try:
+            await asyncio.wait_for(self._toolsmith_body(),
+                                   timeout=self._phase_budget_secs())
+        except asyncio.TimeoutError:
+            logger.warning("toolsmith phase exceeded budget; skipping this tick")
+
+    def _phase_budget_secs(self) -> float:
+        try:
+            return float(os.environ.get("COLONY_PHASE_BUDGET_SECS", "150"))
+        except ValueError:
+            return 150.0
+
+    async def _toolsmith_body(self) -> None:
         ts = getattr(self._registry, "toolsmith", None)
         if ts is None:
             return
