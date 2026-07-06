@@ -729,6 +729,50 @@ async def handle_belief_conflicts(
         return json.dumps({"error": str(e), "status": "error"})
 
 
+async def handle_relationship_brief(
+    args: dict[str, Any],
+    registry: SubsystemRegistry,
+) -> str:
+    """Standing + psyche + approach brief for a person (docs/RELATIONSHIPS.md)."""
+    try:
+        from colony_sidecar.api.routers.host import (
+            _contacts_store, _relationship_profiler,
+        )
+        if _relationship_profiler is None:
+            return json.dumps({"error": "relationship profiler not wired",
+                               "status": "unavailable"})
+        who = str(args.get("who", "")).strip()
+        if not who:
+            return json.dumps({"error": "who is required", "status": "error"})
+        contact_id = who
+        if not who.startswith("cid-") and _contacts_store is not None:
+            matches = await _contacts_store.find_by_name(who, threshold=0.6)
+            if not matches:
+                return json.dumps({"error": f"no contact matching {who!r}",
+                                   "status": "not_found"})
+            if len(matches) > 1:
+                return json.dumps({
+                    "status": "ambiguous",
+                    "candidates": [
+                        {"contact_id": m.contact_id,
+                         "display_name": m.display_name}
+                        for m in matches[:5]],
+                })
+            contact_id = matches[0].contact_id
+        brief = (None if args.get("refresh")
+                 else _relationship_profiler.cached(contact_id))
+        if brief is None:
+            brief = await _relationship_profiler.profile(contact_id)
+        if brief is None:
+            return json.dumps({"error": f"no profile for {contact_id!r}",
+                               "status": "not_found"})
+        return json.dumps({"brief": brief.to_dict(),
+                           "rendered": brief.render()}, default=str)
+    except Exception as e:
+        logger.error("relationship_brief failed: %s", e)
+        return json.dumps({"error": str(e), "status": "error"})
+
+
 async def handle_sandbox_run(
     args: dict[str, Any],
     registry: SubsystemRegistry,
@@ -794,6 +838,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "self_status": handle_self_status,
     "action_journal": handle_action_journal,
     "belief_conflicts": handle_belief_conflicts,
+    "relationship_brief": handle_relationship_brief,
     "sandbox_run": handle_sandbox_run,
     "sandbox_status": handle_sandbox_status,
 }

@@ -17,6 +17,7 @@ import asyncio
 import functools
 import logging
 import os
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -305,6 +306,9 @@ class AutonomyLoop:
 
         # Phase 11e: connector ingest (read-only pull senses, cognition item 2)
         await self._phase_connectors()
+
+        # Phase 11f: relationship profiling (standing/psyche/approach briefs)
+        await self._phase_relationship_profiling()
 
         # Phase 13: memory distillation (weekly)
         await self._phase_memory_distillation()
@@ -1961,6 +1965,37 @@ class AutonomyLoop:
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase belief_maintenance error: %s", exc,
+                         exc_info=True)
+
+    async def _phase_relationship_profiling(self) -> None:
+        """Phase 11f (periodic): refresh RelationshipBriefs for contacts that
+        accrued enough new interactions (docs/RELATIONSHIPS.md #7)."""
+        try:
+            from colony_sidecar.api.routers.host import _relationship_profiler
+        except ImportError:
+            return
+        if _relationship_profiler is None:
+            return
+        refresh_secs = 21600.0
+        try:
+            refresh_secs = float(os.environ.get(
+                "COLONY_RELATIONSHIP_PROFILE_REFRESH_SECS", "21600"))
+        except ValueError:
+            pass
+        now = time.time()
+        last = self._periodic_last.get("relationship_profiling", 0.0)
+        if isinstance(last, str):
+            last = 0.0
+        if now - float(last or 0.0) < refresh_secs:
+            return
+        try:
+            report = await _relationship_profiler.refresh_due()
+            self._periodic_last["relationship_profiling"] = now
+            if report.get("profiled"):
+                logger.info("relationship profiling: %s", report)
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase relationship_profiling error: %s", exc,
                          exc_info=True)
 
     async def _phase_world_llm_extract(self) -> None:

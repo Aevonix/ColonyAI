@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.23.0 — relationship intelligence: one person, every channel
+
+The relationship stack existed but attribution failed it: a live audit found
+62% of communications filed under a `default` pseudo-contact, third parties
+with zero history despite active group participation, and a psyche profile
+faithfully built for a non-person. This release makes attribution the
+foundation and turns the accumulated signals into actionable briefs. Full
+spec: `docs/RELATIONSHIPS.md`.
+
+- **Per-message sender attribution.** `turns/sync` accepts a `sender`
+  (platform, user_id, display_name, group_id); the new ParticipantResolver
+  resolves it server-side: exact/cross-gateway handle match (phones unify
+  across sms/rcs/whatsapp/signal/imessage), scoped display-name (files a
+  merge proposal, never links silently), or a shadow contact so strangers
+  accrue history from first contact. The resolved contact drives everything
+  downstream: interactions, comms ledger, affect, facts, engagement,
+  introspection.
+- **Machines are not people.** Senderless turns on machine channels
+  (`COLONY_IDENTITY_MACHINE_CHANNELS`) or with system-origin text attribute
+  to the reserved `system` sentinel: no interactions, no ToM writes, no
+  psyche. The ToM APIs now validate contact ids against the store, so test
+  strings can never mint affect/fact state again.
+- **Comms provenance.** The ledger records the conversation's real
+  channel_id (group vs DM vs voice) instead of the contact's primary-handle
+  gateway.
+- **RelationshipProfiler.** Composes standing (interactions, channels,
+  cadence), psyche (the engagement extractor's OCEAN/style profile),
+  affect trend, rapport topics, and derived approach guidance (preferred
+  channel, best local hours, style notes, cautions) into a cached
+  per-person brief: injected into context assembly for non-owner
+  conversations, exposed as the `relationship_brief` tool and
+  `GET /v1/host/relationships[/{id}]`, refreshed by a new autonomy phase.
+- **Hermes provider** passes the per-turn sender through, making the
+  sidecar authoritative even when client-side resolution misses.
+- **Doctor**: new `relationship-attribution` check warns when recent
+  communications pile onto placeholder contacts.
+
+
 ## v0.22.1 — directive capture safety, contacts path anchor, worker observability
 
 Hardening release from live testing of v0.22.0 on the reference deployment.

@@ -537,6 +537,52 @@ def check_hermes_skills_dir() -> CheckResult:
     )
 
 
+def check_relationship_attribution() -> CheckResult:
+    """10. Attribution health: recent communications must land on real
+    contacts, not the default/system placeholders (docs/RELATIONSHIPS.md).
+
+    A live audit found 62% of all traffic filed under 'default', which
+    starves every relationship surface. Warn when the recent placeholder
+    fraction is high; skip when there is no comms ledger yet."""
+    comms = _state_dir() / "colony-comms.db"
+    if not comms.exists():
+        return CheckResult("relationship-attribution", SKIP,
+                           detail="no comms ledger yet")
+    try:
+        conn = sqlite3.connect(f"file:{comms}?mode=ro", uri=True)
+        try:
+            total, placeholder = conn.execute(
+                "SELECT COUNT(*), "
+                "SUM(contact_id IN ('default','system') OR contact_id='') "
+                "FROM communications WHERE ts >= datetime('now','-7 day')"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return CheckResult("relationship-attribution", WARN,
+                           detail=f"comms ledger unreadable: {exc}")
+    total = int(total or 0)
+    placeholder = int(placeholder or 0)
+    if total == 0:
+        return CheckResult("relationship-attribution", PASS,
+                           detail="no communications in the last 7 days")
+    frac = placeholder / total
+    # 'system' rows are expected for machine turns; only an outsized share
+    # (or any legacy 'default' writes) signals an attribution regression.
+    if frac > 0.5:
+        return CheckResult(
+            "relationship-attribution", WARN,
+            detail=f"{placeholder}/{total} recent communications attribute to "
+                   "placeholder contacts — senders are not resolving",
+            remedy="ensure the host passes `sender` on turns/sync (the Hermes "
+                   "provider does) and that senders' handles exist; unknown "
+                   "senders should be creating shadow contacts")
+    return CheckResult(
+        "relationship-attribution", PASS,
+        detail=f"{total - placeholder}/{total} recent communications attribute "
+               "to real contacts")
+
+
 def run_local_checks() -> List[CheckResult]:
     results: List[CheckResult] = []
     results += _run("state-dir", check_state_dir)
@@ -548,6 +594,7 @@ def run_local_checks() -> List[CheckResult]:
     results += _run("feature-gates", check_feature_gates)
     results += _run("home-channel", check_home_channel)
     results += _run("hermes-skills-dir", check_hermes_skills_dir)
+    results += _run("relationship-attribution", check_relationship_attribution)
     return results
 
 

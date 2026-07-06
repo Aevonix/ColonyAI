@@ -504,6 +504,26 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "relationship_brief",
+        "description": (
+            "Standing + psyche + approach brief for a person: interaction "
+            "history across channels, current mood trend, rapport topics, "
+            "engagement-style guidance, best channel and time to reach them. "
+            "Use before reaching out to someone or when reasoning about how "
+            "to approach them. Accepts a contact id or a name."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "who": {"type": "string",
+                        "description": "contact id (cid-...) or display name"},
+                "refresh": {"type": "boolean", "default": False,
+                            "description": "recompute from live stores"},
+            },
+            "required": ["who"],
+        },
+    },
+    {
         "name": "sandbox_run",
         "description": (
             "Run a short script in an isolated sandbox (no network, no "

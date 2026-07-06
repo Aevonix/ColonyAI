@@ -1800,6 +1800,26 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.debug("context_assemble relationship failed: %s", exc)
 
+    # --- Approach brief (profiled standing/psyche/approach guidance) ---
+    # Cached-only on the hot path (profiling runs in the autonomy phase);
+    # the owner's own brief is skipped — approach guidance is for OTHERS.
+    if _relationship_profiler is not None and contact_id:
+        try:
+            from colony_sidecar.identity import get_owner_contact_id
+            if contact_id != (get_owner_contact_id() or ""):
+                _brief = _relationship_profiler.cached(contact_id)
+                if _brief is not None:
+                    _rendered = _brief.render()
+                    if _rendered:
+                        sections.append(ContextSection(
+                            id="colony-approach",
+                            title="Who you are talking to",
+                            body=_rendered,
+                            priority=84,
+                        ))
+        except Exception as exc:
+            logger.debug("context_assemble approach brief failed: %s", exc)
+
     # --- Owner's stated preferences (explicit directives the owner gave me) ---
     if _preference_learner is not None and contact_id:
         try:
@@ -2106,6 +2126,45 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # auto-registers, every turn refreshes last_seen_at (channel health).
     _observe_channel(body.context.channel_id)
 
+    # ── Attribution chokepoint (docs/RELATIONSHIPS.md) ──────────────────
+    # Resolve WHO said this server-side. A supplied sender overrides the
+    # client's contact_id (which goes stale in group sessions); a senderless
+    # machine turn (cron/api channel or system-origin text) attributes to
+    # the reserved "system" sentinel so it can never pollute a person's
+    # affect/facts/psyche/interactions. Rewriting context.contact_id here
+    # means every downstream consumer in this handler sees the truth.
+    _resolved_human_sender = False
+    try:
+        from colony_sidecar.identity.participants import (
+            SYSTEM_CONTACT_ID, ParticipantResolver, is_machine_turn,
+        )
+        if body.sender is not None and _contacts_store is not None:
+            _res = await ParticipantResolver(_contacts_store).resolve(
+                platform=body.sender.platform,
+                user_id=body.sender.user_id,
+                display_name=body.sender.display_name,
+                group_id=body.sender.group_id,
+                channel_id=body.context.channel_id or "",
+            )
+            if _res.contact_id:
+                if _res.contact_id != body.context.contact_id:
+                    logger.info(
+                        "turn attribution: %s -> %s (%s%s)",
+                        body.context.contact_id, _res.contact_id, _res.method,
+                        ", shadow-created" if _res.created else "")
+                body.context.contact_id = _res.contact_id
+                _resolved_human_sender = True
+        if not _resolved_human_sender and is_machine_turn(
+                body.context.channel_id or "",
+                (getattr(body.user_message, "content", "") or "")
+                if body.user_message else "",
+                has_sender=body.sender is not None):
+            body.context.contact_id = SYSTEM_CONTACT_ID
+    except Exception:
+        logger.debug("participant attribution failed; keeping client contact",
+                     exc_info=True)
+    _is_system_turn = body.context.contact_id == "system"
+
     # If structured fields are empty but raw messages are present,
     # extract topics/entities/summary from the raw messages.
     if not body.topics and not body.entities and not body.summary:
@@ -2187,7 +2246,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # the path that works when no host plugin consumes the cognition.requested event.
     try:
         from colony_sidecar.cognition.introspection import introspect_enabled, run_turn_introspection
-        if introspect_enabled() and _commitment_store is not None and (
+        if introspect_enabled() and _commitment_store is not None and not _is_system_turn and (
                 body.user_message is not None or body.assistant_message is not None):
             _existing = []
             try:
@@ -2309,9 +2368,11 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
             _src = getattr(body.context, "turn_id", None) or getattr(body.context, "session_id", None) or "turn"
             _spawn_task(_run_world_populate(_wm_text, _src))
 
-    # ToM LLM extraction (best-effort, non-blocking)
+    # ToM LLM extraction (best-effort, non-blocking). Machines are not
+    # people: a system-attributed turn must never mint affect/facts/psyche.
     try:
-        if _tom_extractor is not None and _affect_store is not None and _facts_store is not None:
+        if (_tom_extractor is not None and _affect_store is not None
+                and _facts_store is not None and not _is_system_turn):
             _spawn_task(_run_tom_extraction(
                 conversation_text=body.summary or "",
                 contact_id=body.context.contact_id,
@@ -2362,7 +2423,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     except Exception:
         logger.debug("mining observe_turn failed", exc_info=True)
     try:
-        if _contacts_store is not None and body.context.contact_id:
+        if _contacts_store is not None and body.context.contact_id and not _is_system_turn:
             await _contacts_store.record_interaction(body.context.contact_id)
             # Recompute the contact's relationship closeness from interaction
             # history + affect (self-sufficient; independent of the behavioral
@@ -2382,23 +2443,20 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                         body.context.contact_id, _score)
             except Exception:
                 logger.debug("relationship score update failed", exc_info=True)
-            # Cross-channel communication ledger: record this inbound exchange.
-            try:
-                if _comms_log is not None:
-                    _channel = (body.context.channel_id or "direct")
-                    try:
-                        _hs = await _contacts_store.get_handles(body.context.contact_id)
-                        _prim = next((h for h in _hs if getattr(h, "is_primary", False)),
-                                     _hs[0] if _hs else None)
-                        if _prim is not None:
-                            _channel = getattr(_prim, "gateway", _channel)
-                    except Exception:
-                        pass
-                    _comms_log.log(body.context.contact_id, channel=_channel, direction="in",
-                                   summary=(body.summary or "")[:300],
-                                   session_id=body.context.session_id or "")
-            except Exception:
-                logger.debug("comms ledger inbound log failed", exc_info=True)
+        # Cross-channel communication ledger: record this exchange under the
+        # CONVERSATION's channel (group vs DM vs voice provenance), never the
+        # contact's primary-handle gateway (which collapsed everything to one
+        # channel). System turns are recorded too, for ops visibility; they
+        # are excluded from every relationship surface.
+        try:
+            if _comms_log is not None and body.context.contact_id:
+                _comms_log.log(body.context.contact_id,
+                               channel=(body.context.channel_id or "direct"),
+                               direction="in",
+                               summary=(body.summary or "")[:300],
+                               session_id=body.context.session_id or "")
+        except Exception:
+            logger.debug("comms ledger inbound log failed", exc_info=True)
     except Exception:
         logger.debug("record_interaction failed", exc_info=True)
 
@@ -3833,6 +3891,48 @@ _comms_log = None
 def set_comms_log(store):
     global _comms_log
     _comms_log = store
+
+
+_relationship_profiler = None
+
+
+def set_relationship_profiler(profiler):
+    global _relationship_profiler
+    _relationship_profiler = profiler
+
+
+@router.get("/relationships")
+async def list_relationship_briefs() -> dict:
+    """Profiled relationships: who Colony has real standing knowledge of."""
+    if _relationship_profiler is None:
+        return {"available": False}
+    try:
+        return {"available": True,
+                "profiled": _relationship_profiler.snapshot()}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
+@router.get("/relationships/{contact_id}")
+async def get_relationship_brief(contact_id: str,
+                                 refresh: bool = False) -> dict:
+    """One contact's RelationshipBrief (standing, psyche, approach guidance).
+    ``refresh=true`` recomputes from the live stores."""
+    if _relationship_profiler is None:
+        return {"available": False}
+    try:
+        brief = None if refresh else _relationship_profiler.cached(contact_id)
+        if brief is None:
+            brief = await _relationship_profiler.profile(contact_id)
+        if brief is None:
+            raise HTTPException(status_code=404,
+                                detail=f"no profile for {contact_id!r}")
+        return {"available": True, "brief": brief.to_dict(),
+                "rendered": brief.render()}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
 
 
 _preference_learner = None
@@ -5651,11 +5751,37 @@ async def cognition_trigger(body: CognitionTriggerRequest) -> CognitionTriggerRe
 # Theory of Mind — Affect
 # ---------------------------------------------------------------------------
 
+async def _require_person_contact(contact_id: str) -> None:
+    """ToM stores accept only REAL contacts (docs/RELATIONSHIPS.md #5).
+
+    Free-text names, test strings, and the machine sentinel are refused so
+    psyche/affect/fact state can never be minted for a non-person. When the
+    contact store is unavailable the check degrades open (single-store
+    test deployments keep working)."""
+    cid = (contact_id or "").strip()
+    if not cid or cid in ("system", "default"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"contact_id {cid!r} is not a person contact")
+    if _contacts_store is None:
+        return
+    try:
+        exists = await _contacts_store.get(cid) is not None
+    except Exception:
+        return
+    if not exists:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown contact_id {cid!r} — create the contact first "
+                   "(POST /v1/host/contacts) or resolve the sender handle")
+
+
 @router.post("/affect/events", response_model=AffectEventResponse, status_code=status.HTTP_201_CREATED)
 async def create_affect_event(body: AffectEventCreateRequest) -> AffectEventResponse:
     """Record an affect event for a contact."""
     if _affect_store is None:
         raise HTTPException(status_code=501, detail="Affect tracking not initialized")
+    await _require_person_contact(body.contact_id)
     try:
         result = _affect_store.create_event(
             contact_id=body.contact_id,
@@ -5734,6 +5860,7 @@ async def create_shared_fact(body: SharedFactCreateRequest) -> SharedFactRespons
     """Add a shared fact about what a contact knows."""
     if _facts_store is None:
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    await _require_person_contact(body.contact_id)
     try:
         result = _facts_store.create_fact(
             contact_id=body.contact_id,

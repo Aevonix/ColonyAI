@@ -793,6 +793,27 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("WorldModelContactBridge skipped — contacts_store or graph unavailable")
 
+    # --- 8d. Relationship profiler (standing + psyche + approach briefs) ---
+    if contacts_store is not None:
+        try:
+            from colony_sidecar.intelligence.relationships.profiler import (
+                RelationshipProfiler,
+            )
+            import colony_sidecar.api.routers.host as _host_mod
+            _rel_profiler = RelationshipProfiler(
+                contacts_store=contacts_store,
+                comms_log=_host_mod._comms_log,
+                affect_store=_host_mod._affect_store,
+                facts_store=_host_mod._facts_store,
+                engagement_store=_host_mod._engagement_store,
+                db_path=str(state_dir / "colony-relationships.db"),
+            )
+            _host_mod.set_relationship_profiler(_rel_profiler)
+            logger.info("RelationshipProfiler initialized (db=%s)",
+                        state_dir / "colony-relationships.db")
+        except Exception as exc:
+            logger.warning("RelationshipProfiler init failed: %s", exc)
+
     # --- 9. Briefings ---
     try:
         from colony_sidecar.briefings.engine import BriefingEngine

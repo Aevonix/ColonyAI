@@ -113,6 +113,13 @@ guide.
 - **Contacts and theory of mind.** A contact per person with channel handles,
   trust tier, relationship score, affect tracking, shared facts, and an
   evolving engagement profile.
+- **Relationship intelligence.** Per-message sender attribution unifies one
+  person across channels (WhatsApp, SMS/RCS, email, voice, in person);
+  unknown senders become shadow contacts; machine turns can never pollute a
+  person's profile. A profiler composes standing + psyche + approach briefs
+  (preferred channel, best time to reach, engagement style) injected into
+  context and exposed as the `relationship_brief` tool. See
+  [docs/RELATIONSHIPS.md](docs/RELATIONSHIPS.md).
 - **Temporal awareness.** Authoritative current time, per-contact timezones,
   and a unified journal of every turn and action, so the agent knows when
   things happened and what is overdue.

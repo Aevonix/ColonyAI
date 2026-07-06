@@ -1080,6 +1080,24 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         else:
             logger.debug("Colony sync_turn skipped: no participant + no conversation context (system/self turn)")
             return
+        # Raw sender identity rides along so the sidecar's ParticipantResolver
+        # is AUTHORITATIVE (docs/RELATIONSHIPS.md): group speakers attribute to
+        # the real person server-side (shadow contacts for strangers) even
+        # when the client-side handle resolve above missed.
+        sender = None
+        try:
+            from gateway.session_context import get_session_env
+            _s_platform = (get_session_env("HERMES_SESSION_PLATFORM", "") or "").strip()
+            _s_uid = (get_session_env("HERMES_SESSION_USER_ID", "") or "").strip()
+            _s_name = (get_session_env("HERMES_SESSION_USER_NAME", "") or "").strip()
+            _s_chat = (get_session_env("HERMES_SESSION_CHAT_ID", "") or "").strip()
+            if _s_uid:
+                sender = {"platform": _s_platform or "unknown",
+                          "user_id": _s_uid,
+                          "display_name": _s_name,
+                          "group_id": _s_chat if _s_chat and _s_chat != _s_uid else ""}
+        except Exception:
+            sender = None
         url = self.sidecar_url
         headers = self._headers()
         self._last_sync_attempt = datetime.now(timezone.utc).isoformat()
@@ -1102,6 +1120,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                                     "contact_id": contact_id,
                                     "channel_id": channel_id,
                                 },
+                                **({"sender": sender} if sender else {}),
                                 "user_message": {"role": "user", "content": user_content},
                                 "assistant_message": {"role": "assistant", "content": assistant_content},
                             },

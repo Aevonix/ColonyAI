@@ -421,9 +421,23 @@ class SignalIngestResponse(BaseModel):
 
 # --- Turns ------------------------------------------------------------------
 
+class HostSender(BaseModel):
+    """WHO produced the user side of this turn (docs/RELATIONSHIPS.md).
+
+    Per-message sender identity so the sidecar attributes group traffic to
+    the real speaker server-side, independent of any client-side contact
+    caching. Optional and additive: hosts that cannot supply it keep the
+    legacy context.contact_id behavior."""
+    platform: str = Field(..., max_length=64)
+    user_id: str = Field(..., max_length=256)
+    display_name: str = Field(default="", max_length=256)
+    group_id: str = Field(default="", max_length=256)
+
+
 class TurnSyncRequest(BaseModel):
     identity: HostIdentity
     context: HostTurnContext
+    sender: Optional[HostSender] = None
     topics: List[str] = Field(default_factory=list)
     entities: List[str] = Field(default_factory=list)
     pending_tasks: List[str] = Field(default_factory=list)

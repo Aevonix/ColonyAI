@@ -95,6 +95,25 @@ class CommsLog:
         return {"inbound": r["inbound"] or 0, "outbound": r["outbound"] or 0,
                 "channels": r["channels"] or 0}
 
+    def stats(self, contact_id: str, *, since_days: int = 90) -> Dict[str, Any]:
+        """Channel-usage counts and interaction-hour histogram (UTC hours;
+        the consumer shifts into the contact's timezone). Feeds the
+        relationship profiler's approach guidance (preferred channel,
+        best time to reach)."""
+        rows = self._conn.execute(
+            "SELECT channel, ts FROM communications"
+            " WHERE contact_id=? AND ts >= datetime('now', ?)",
+            (contact_id, f"-{int(since_days)} day")).fetchall()
+        channels: Dict[str, int] = {}
+        hours = [0] * 24
+        for r in rows:
+            channels[r["channel"]] = channels.get(r["channel"], 0) + 1
+            try:
+                hours[int(str(r["ts"])[11:13])] += 1
+            except (ValueError, IndexError):
+                pass
+        return {"total": len(rows), "channels": channels, "hours_utc": hours}
+
 
 # ---------------------------------------------------------------------------
 # Outreach governance
