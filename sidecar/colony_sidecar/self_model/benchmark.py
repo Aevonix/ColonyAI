@@ -447,26 +447,13 @@ class SelfhoodBenchmark:
         if queue is None:
             return None
         # host wires the TaskQueueManager wrapper; the raw QueueManager
-        # (which owns get_completed_jobs_since) sits at .queue
-        if not hasattr(queue, "get_completed_jobs_since"):
+        # (which owns completed_durations) sits at .queue
+        if not hasattr(queue, "completed_durations"):
             queue = getattr(queue, "queue", None)
-            if queue is None or not hasattr(queue, "get_completed_jobs_since"):
+            if queue is None or not hasattr(queue, "completed_durations"):
                 return None
-        jobs = await queue.get_completed_jobs_since(start, limit=500)
-        end_iso = end.isoformat()
-        start_iso = start.isoformat()
-        durs: List[float] = []
-        for j in jobs or []:
-            result = j.get("result") or {}
-            done = str(result.get("completed_at")
-                       or j.get("completed_at") or "")
-            # stored timestamps may be naive UTC; compare lexically on the
-            # shared ISO prefix and drop anything outside the window
-            if not done or not (start_iso[:19] <= done[:19] < end_iso[:19]):
-                continue
-            d = result.get("duration_seconds", j.get("duration_seconds"))
-            if d is not None and float(d) >= 0:
-                durs.append(float(d))
+        durs = [d for d in await queue.completed_durations(
+            start.isoformat(), end.isoformat()) if d >= 0]
         if not durs:
             return None
         return {"value": _percentile(durs, 50),

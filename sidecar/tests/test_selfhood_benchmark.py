@@ -86,10 +86,9 @@ class FakeGraph:
 
 
 class FakeQueue:
-    async def get_completed_jobs_since(self, since, limit=20, job_type=None):
-        done = (START + timedelta(hours=5)).isoformat()
-        return [{"completed_at": done, "duration_seconds": d}
-                for d in (1.0, 2.0, 3.0, 100.0)]
+    async def completed_durations(self, since_iso, until_iso, limit=1000):
+        assert since_iso[:19] <= until_iso[:19]
+        return [1.0, 2.0, 3.0, 100.0]
 
 
 def make_bench(tmp_path, **overrides):

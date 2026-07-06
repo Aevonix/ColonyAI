@@ -420,6 +420,35 @@ class QueueManager:
             except Exception:
                 pass
 
+    async def completed_durations(
+        self, since_iso: str, until_iso: str, limit: int = 1000,
+    ) -> List[float]:
+        """Durations (seconds) of ALL jobs completed inside the window,
+        claimed or not (selfhood benchmark; get_completed_jobs_since
+        deliberately excludes claimed jobs). Result-payload timestamps may
+        be naive UTC, so the window compares the shared ISO prefix."""
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "SELECT result FROM jobs WHERE status = ?"
+            " ORDER BY rowid DESC LIMIT ?",
+            (JobStatus.COMPLETED.value, limit))
+        rows = await cursor.fetchall()
+        out: List[float] = []
+        for row in rows:
+            try:
+                r = json.loads(row["result"]) if row["result"] else {}
+            except (json.JSONDecodeError, TypeError):
+                continue
+            done = str(r.get("completed_at") or "")
+            dur = r.get("duration_seconds")
+            if (done and dur is not None
+                    and since_iso[:19] <= done[:19] < until_iso[:19]):
+                try:
+                    out.append(float(dur))
+                except (TypeError, ValueError):
+                    continue
+        return out
+
     async def get_completed_jobs_since(
         self,
         since: datetime,
