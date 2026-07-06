@@ -33,5 +33,7 @@
   </dict>
   <key>RunAtLoad</key>   <true/>
   <key>KeepAlive</key>   <true/>
+  <key>StandardOutPath</key>  <string>/tmp/colony-worker.log</string>
+  <key>StandardErrorPath</key> <string>/tmp/colony-worker.err</string>
 </dict>
 </plist>

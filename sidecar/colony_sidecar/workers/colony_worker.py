@@ -253,6 +253,15 @@ def run_forever(cfg: Dict[str, Any]) -> None:
 
 
 def main(argv: Optional[list] = None) -> int:
+    # Under launchd/systemd stdout is a pipe (block-buffered): without line
+    # buffering every print sits invisible in the buffer and the daemon's
+    # log file stays empty for hours. Flush per line.
+    import sys
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(
         prog="colony-worker",
         description="Claim typed Colony jobs and execute them read/analyse-only.")
