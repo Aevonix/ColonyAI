@@ -46,7 +46,7 @@ third parties accumulated zero history).
 "sender": {
   "platform": "whatsapp",           // channel kind
   "user_id": "1234567@lid",         // per-platform sender identifier
-  "display_name": "David Miller",   // best-effort, for shadow naming + fuzzy proposals
+  "display_name": "Sam Rivera",   // best-effort, for shadow naming + fuzzy proposals
   "group_id": "5551212-16999@g.us"  // set when the turn came from a group
 }
 ```
@@ -63,7 +63,7 @@ Resolution ladder, first hit wins:
 1. **Exact handle**: `contact_handles(gateway=platform, address=user_id)`
    (phones via the existing `phone_key` cross-format matcher).
 2. **Cross-gateway phone**: `user_id` parses as a phone → `phone_key`
-   match against ANY gateway's handles (the David case: an `sms` handle
+   match against ANY gateway's handles (the cross-gateway case: an `sms` handle
    matching an `rcs` sender).
 3. **Normalized email**: lowercase match for email-shaped ids.
 4. **Scoped display-name (PROPOSAL only)**: `display_name` uniquely
@@ -110,7 +110,7 @@ handle kinds; deployments supply the recognizers.
 ### 6. Owner curation tools
 
 - `link_contact(who, gateway, address)` — attach a handle ("that WhatsApp
-  is David's"). Tool + `POST /contacts/{id}/handles`. SHIPPED.
+  is Sam's"). Tool + `POST /contacts/{id}/handles`. SHIPPED.
 - `merge_contacts(keep, merge)` — fold one contact into another (reassign
   handles, sum interaction history, soft-delete the loser; audited +
   reversible). Tool + `POST /contacts/merge` + store `merge_contacts`.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html as _html
 import logging
+import os
 import re
 from typing import List
 
@@ -58,13 +59,15 @@ class DuckDuckGoProvider(SearchProvider):
     async def search(self, query: str, max_results: int = 5) -> List[SearchResult]:
         params = {"q": query}
         try:
+            # UA is deployment-overridable (COLONY_SEARCH_USER_AGENT); the
+            # default is a neutral project identifier with no deployment URL.
+            _ua = os.environ.get(
+                "COLONY_SEARCH_USER_AGENT",
+                "Mozilla/5.0 (compatible; ColonyAI research crawler)")
             async with httpx.AsyncClient(
                 timeout=self._timeout,
                 headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (compatible; ColonyAI/0.1; "
-                        "+https://aevonix.com/colony)"
-                    ),
+                    "User-Agent": _ua,
                     "Accept": "text/html,application/xhtml+xml",
                 },
                 follow_redirects=True,

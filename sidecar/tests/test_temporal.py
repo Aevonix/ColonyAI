@@ -136,7 +136,7 @@ def test_parse_relative_since():
 
 def test_describe_now_includes_both_zones():
     T.set_agent_timezone("America/New_York")
-    out = T.describe_now(contact_tz="Asia/Tokyo", contact_label="Ingrid")
+    out = T.describe_now(contact_tz="Asia/Tokyo", contact_label="Robin")
     assert "your local time" in out
     assert "Asia/Tokyo" in out
     # same tz → no second line

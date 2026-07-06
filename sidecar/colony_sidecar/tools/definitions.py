@@ -507,7 +507,7 @@ COLONY_EXTENDED_TOOLS: list[dict[str, Any]] = [
         "name": "link_contact",
         "description": (
             "Attach a channel handle to a person ('that WhatsApp number is "
-            "David's', 'this email is Sam's'). Unifies their identity across "
+            "Sam's', 'this email is Robin's'). Unifies their identity across "
             "channels so their history and profile stay on one contact."
         ),
         "parameters": {

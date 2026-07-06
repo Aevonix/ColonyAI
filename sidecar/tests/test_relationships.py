@@ -42,8 +42,8 @@ class TestResolverLadder:
 
     async def test_cross_gateway_phone_match(self, store):
         # An SMS handle must catch the same phone arriving over RCS
-        # (the David case).
-        c = await store.create(display_name="David")
+        # (the cross-gateway case).
+        c = await store.create(display_name="Sam")
         await store.add_handle(c.contact_id, "sms", "+18185550001")
         r = await ParticipantResolver(store).resolve(
             platform="rcs", user_id="+1 (818) 555-0001")
@@ -284,18 +284,18 @@ class TestResearchReviewGate:
 
 class TestContactCuration:
     async def test_link_handle_via_store(self, store):
-        c = await store.create(display_name="David", trust_tier="regular")
+        c = await store.create(display_name="Sam", trust_tier="regular")
         await store.add_handle(c.contact_id, "sms", "+18185551234",
                                verified=True, source="owner")
         got = await store.resolve_messaging_handle("whatsapp", "+1 818 555 1234")
         assert got is not None and got.contact_id == c.contact_id
 
     async def test_merge_moves_handles_and_history(self, store):
-        keep = await store.create(display_name="David Miller", trust_tier="regular")
+        keep = await store.create(display_name="Sam Rivera", trust_tier="regular")
         await store.add_handle(keep.contact_id, "sms", "+18180000001")
         for _ in range(3):
             await store.record_interaction(keep.contact_id)
-        shadow = await store.create(display_name="David", trust_tier="unknown")
+        shadow = await store.create(display_name="Sam", trust_tier="unknown")
         await store.add_handle(shadow.contact_id, "whatsapp", "999@lid")
         for _ in range(2):
             await store.record_interaction(shadow.contact_id)
@@ -321,15 +321,15 @@ class TestContactCuration:
 
     async def test_handle_proposals_surface_from_resolver(self, store):
         # A scoped-name attribution files a proposal; the store lists it.
-        keep = await store.create(display_name="Ingrid", trust_tier="regular")
-        # simulate a group scope with Ingrid as a member
+        keep = await store.create(display_name="Robin", trust_tier="regular")
+        # simulate a group scope with Robin as a member
         scope = await store.create_scope(
             scope_type="group", platform="whatsapp", external_id="grp-1",
             label="Fam", granted_tier="group_guest")
         await store.add_scope_member(scope.scope_id, keep.contact_id, "member")
         r = await ParticipantResolver(store).resolve(
-            platform="whatsapp", user_id="555ingrid@lid",
-            display_name="Ingrid", group_id="grp-1")
+            platform="whatsapp", user_id="555abc@lid",
+            display_name="Robin", group_id="grp-1")
         assert r.method == "scoped_name" and r.contact_id == keep.contact_id
         props = await store.list_handle_proposals()
-        assert any(p["address"] == "555ingrid@lid" for p in props)
+        assert any(p["address"] == "555abc@lid" for p in props)

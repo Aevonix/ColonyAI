@@ -4,7 +4,7 @@
 
 Completes the relationship program's promised curation surface (it was
 designed in docs/RELATIONSHIPS.md but never shipped): when the resolver
-files a handle proposal, or you want to say "that WhatsApp is David's", or a
+files a handle proposal, or you want to say "that WhatsApp is Sam's", or a
 shadow contact turns out to be someone you know, there is now a way to act.
 
 - `link_contact(who, gateway, address)` tool + `POST /contacts/{id}/handles`:
@@ -778,7 +778,7 @@ Agent work queue v0.13.0 — distributed job scheduling for autonomous agent exe
   - Job post, claim, start, complete, fail, release, heartbeat
   - Pending/completed listing, queue stats, digest generation
 - **SQLite-backed persistent queue** with WAL mode, atomic claims, retry logic, job audit trail
-- **the agent cron worker** (`scripts/aeva_worker.py`) — claims and executes `AGENT_ACTION` jobs every 5 min
+- **the agent cron worker** (`scripts/agent_worker.py`) — claims and executes `AGENT_ACTION` jobs every 5 min
   - Safety: skips destructive actions when owner is in active session
   - Handles `agent_check_repo_status`, `agent_investigate_subsystem`, `agent_cleanup_orphans`
   - Graceful shutdown with SIGTERM/SIGINT deregistration

@@ -351,10 +351,10 @@ class TestSessionContextModel:
             session_id="s-2",
             user_id="owner",
             topics=["peptides", "health"],
-            entities=["person-jeff"],
+            entities=["person-alex"],
         )
         assert len(ctx.topics) == 2
-        assert "person-jeff" in ctx.entities
+        assert "person-alex" in ctx.entities
 
 
 class TestSessionContinuity:
@@ -396,11 +396,11 @@ class TestSessionContinuity:
         sc = SessionContinuity(mock_graph, mock_event_bus)
         ctx = await sc.start_session("owner")
 
-        await sc.update_context(ctx.session_id, entities=["person-jeff"])
-        await sc.update_context(ctx.session_id, entities=["person-jeff", "person-ingrid"])
+        await sc.update_context(ctx.session_id, entities=["person-alex"])
+        await sc.update_context(ctx.session_id, entities=["person-alex", "person-robin"])
 
-        assert ctx.entities.count("person-jeff") == 1
-        assert "person-ingrid" in ctx.entities
+        assert ctx.entities.count("person-alex") == 1
+        assert "person-robin" in ctx.entities
 
     @pytest.mark.asyncio
     async def test_update_unknown_session_is_safe(self, mock_graph, mock_event_bus):
@@ -625,7 +625,7 @@ class TestAnomalyModel:
             type=AnomalyType.COMMUNICATION,
             description="No messages in 3 days",
             severity=0.9,
-            entity_id="person-ingrid",
+            entity_id="person-robin",
             baseline_value=5.0,
             observed_value=0.0,
         )
@@ -691,7 +691,7 @@ class TestInitiativeModel:
         i = Initiative(
             id="init-1",
             type=InitiativeType.FOLLOW_UP,
-            description="Follow up with Jeff on lab",
+            description="Follow up with Alex on lab",
             priority=0.8,
             rationale="No contact in 5 days",
         )

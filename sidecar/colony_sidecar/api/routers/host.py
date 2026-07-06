@@ -2872,7 +2872,7 @@ async def list_contact_proposals(limit: int = 50) -> dict:
 
 @router.post("/contacts/{contact_id}/handles", status_code=201)
 async def add_contact_handle(contact_id: str, body: dict) -> dict:
-    """Attach a channel handle to a contact ('that WhatsApp is David's').
+    """Attach a channel handle to a contact ('that WhatsApp is Sam's').
     Owner curation surface behind colony_link_contact."""
     if _contacts_store is None:
         raise HTTPException(status_code=501, detail="Contact store not initialized")

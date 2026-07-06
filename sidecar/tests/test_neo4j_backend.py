@@ -81,14 +81,14 @@ class TestEntitySerialization:
     def test_company_to_props(self):
         company = CompanyEntity(
             id="we-789-ghi",
-            name="Aevonix",
+            name="Acme Robotics",
             entity_type="company",
             confidence=0.95,
-            domain="aevonix.com",
+            domain="acme.example",
             industry="AI",
         )
         props = _entity_to_props(company)
-        assert props["domain"] == "aevonix.com"
+        assert props["domain"] == "acme.example"
         assert props["industry"] == "AI"
 
     def test_project_to_props(self):

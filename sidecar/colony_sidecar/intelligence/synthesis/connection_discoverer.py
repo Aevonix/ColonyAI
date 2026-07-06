@@ -258,7 +258,7 @@ class ConnectionDiscoverer:
         """Find entity co-occurrence across domains.
 
         Detects when the same person, company, or concept appears in
-        multiple domain contexts (e.g., "Jeff" in both health and work).
+        multiple domain contexts (e.g., "Alex" in both health and work).
         Requires an entity to appear in at least 2 distinct domains.
         """
         cypher = textwrap.dedent("""

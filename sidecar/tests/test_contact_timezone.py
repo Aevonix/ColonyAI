@@ -11,7 +11,7 @@ async def test_contact_timezone_roundtrip():
     store = SQLiteContactStore(config=ContactsConfig(sqlite_path=":memory:"))
     await store.connect()
     try:
-        c = await store.create(display_name="Ingrid", trust_tier="trusted")
+        c = await store.create(display_name="Robin", trust_tier="trusted")
         assert c.timezone is None  # column exists, defaults NULL
 
         await store.set_timezone(c.contact_id, "Asia/Tokyo")
