@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.27.1 — autonomy-loop hardening + operator controls
+
+Fixes from live operation and the command-center build:
+- The autonomy loop can no longer be frozen by a slow or hung phase: the
+  whole tick is bounded (`COLONY_TICK_BUDGET_SECS`, default 80% of the tick
+  interval), the toolsmith/workspace phases carry per-phase budgets, the
+  toolsmith's Docker sandbox calls moved off the event loop
+  (`asyncio.to_thread`), and the benchmark's recall probes are individually
+  bounded. A cancelled tick is safe (phases re-run next cycle).
+- New `fd-limit` doctor check reads the SIDECAR's own open-file limit from
+  `/health` — a low limit (macOS default 256) silently breaks LanceDB vector
+  recall with "Too many open files" and degrades recall to the slow keyword
+  path; the check warns with the launchd/systemd/ulimit remedy.
+- The workspace anomaly ingest read the wrong registry property and silently
+  never fired; fixed with a regression test over all ingest sources.
+- Expectations generate on every phase pass (create() dedups), so a newly
+  due-dated commitment gets its prediction within a tick.
+- `POST /v1/host/self/workspace/{id}/resolve`: owner control to settle a
+  concern (the command center's concern action).
+
+
 ## v0.27.0 — expectation engine: predictions, surprise, calibration (Mind M3a)
 
 The agent forms explicit predictions and checks them against reality. A
