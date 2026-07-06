@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.26.0 — cognitive workspace: continuity of thought (Mind M2)
+
+The agent now carries something on its mind between interactions instead of
+only reacting. A bounded workspace holds active concerns
+(question/goal/thread/anomaly/maintenance), each with a salience score that
+live signals raise (overdue commitments, anomalies, benchmark regressions)
+and time decays. A scheduler runs every few ticks: it decays the salience
+field, evicts the floor and anything over capacity, and runs one bounded
+thinking job on the most salient concern that still has budget. During a
+configured nightly sleep window it thinks several times per pass, when the
+cluster is idle. A thought either makes progress (salience sustained), gets
+stuck (salience decays harder, so rumination fades on its own), or resolves
+(the concern leaves the mind). In live mode a thought can surface an
+initiative to the owner or propose a self-experiment, both through the
+existing gates; in shadow it only thinks and journals.
+
+New `colony_sidecar/self_model/workspace.py` (concern store + engine) and
+`thinker.py` (the model-agnostic LLM reflection, injected so the engine is
+testable). `GET /v1/host/self/workspace` exposes what is on her mind and
+drives the Operator Deck's on-her-mind panel. Doctor check
+`server-workspace`. Gated by `COLONY_WORKSPACE` (off | shadow | live,
+default off), `COLONY_SLEEP_WINDOW`, and capacity/half-life/budget env.
+
+
 ## v0.25.0 — toolsmith: the agent builds its own tools (Mind M1)
 
 Compounding capability. The agent now extends itself: a daily autonomy
