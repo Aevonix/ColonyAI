@@ -538,6 +538,16 @@ async def health() -> HostHealthResponse:
     stored_models: list[str] = []
     model_mismatch = False
 
+    # the sidecar's own open-file limit (doctor reads this; a low limit makes
+    # LanceDB vector recall fail under load — see check_server_fd_limit)
+    try:
+        import resource
+        _fd_soft, _fd_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        notes["fd_limit"] = (
+            "unlimited" if _fd_soft == resource.RLIM_INFINITY else str(_fd_soft))
+    except Exception:
+        pass
+
     if _graph is not None:
         notes["memory"] = "ColonyGraph wired"
     else:

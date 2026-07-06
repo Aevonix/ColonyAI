@@ -375,7 +375,7 @@ URL = "http://127.0.0.1:7777"
 def _happy_responses(owner="cid-owner-1"):
     now = datetime.now(timezone.utc).isoformat()
     return {
-        "/v1/host/health": (200, {"status": "ok", "capabilities": ["memory", "goals"]}),
+        "/v1/host/health": (200, {"status": "ok", "capabilities": ["memory", "goals"], "notes": {"fd_limit": "16384"}}),
         "/v1/host/queue/stats": (200, {"by_status": {}}),
         f"/v1/host/contacts/{owner}": (200, {"contact_id": owner}),
         "/v1/host/health/llm": (200, {"ok": True, "tier": "small",

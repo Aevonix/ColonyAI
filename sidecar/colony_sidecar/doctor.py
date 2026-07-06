@@ -59,6 +59,7 @@ SERVER_CHECK_NAMES = (
     "server-owner-contact",
     "server-llm-router",
     "server-embedder",
+    "server-fd-limit",
     "server-blocked-approvals",
     "server-worker-liveness",
     "server-skills-observations",
@@ -170,33 +171,6 @@ def _http_get(url: str, api_key: str = "", timeout: float = 10.0) -> Tuple[int, 
 # ---------------------------------------------------------------------------
 # Local checks (filesystem/env — no server needed)
 # ---------------------------------------------------------------------------
-
-def check_fd_limit() -> CheckResult:
-    """Open-file (fd) soft limit high enough for the vector store. LanceDB
-    opens many files under load; on macOS the default soft limit (256) is far
-    too low and recall silently degrades to the slow keyword fallback with
-    'LanceError(IO): Too many open files'. Warn well before that."""
-    try:
-        import resource
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    except Exception as exc:
-        return CheckResult("fd-limit", SKIP, detail=f"cannot read rlimit: {exc}")
-    floor = 1024
-    if soft != resource.RLIM_INFINITY and soft < floor:
-        remedy = (
-            "raise the sidecar's open-file limit. launchd (macOS): add "
-            "SoftResourceLimits/HardResourceLimits {NumberOfFiles: 16384} to "
-            "the plist and bootout/bootstrap it. systemd: LimitNOFILE=16384. "
-            "shell: ulimit -n 16384 before starting.")
-        return CheckResult(
-            "fd-limit", WARN,
-            detail=f"open-file soft limit is {soft} (< {floor}); LanceDB vector "
-                   "recall will fail under load and fall back to slow keyword search",
-            remedy=remedy)
-    shown = "unlimited" if soft == resource.RLIM_INFINITY else str(soft)
-    return CheckResult("fd-limit", PASS,
-                       detail=f"open-file soft limit {shown}")
-
 
 def check_state_dir() -> CheckResult:
     """1. COLONY_STATE_DIR exists and is writable."""
@@ -617,7 +591,6 @@ def check_relationship_attribution() -> CheckResult:
 def run_local_checks() -> List[CheckResult]:
     results: List[CheckResult] = []
     results += _run("state-dir", check_state_dir)
-    results += _run("fd-limit", check_fd_limit)
     results += _run("llm-config", check_llm_config)
     results += _run("contacts-db", check_contacts_db)
     results += _run("owner-contact-id", check_owner_contact_id)
@@ -971,6 +944,37 @@ def check_server_self_model(base_url: str, api_key: str, timeout: float) -> Chec
     return CheckResult(
         "server-self-model", PASS,
         detail=f"{len(domains)} competence domain(s), {len(trust)} trust stage(s)")
+
+
+def check_server_fd_limit(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """The SIDECAR's own open-file soft limit (from /health notes). LanceDB
+    opens many files under load; a low limit (macOS default 256) makes vector
+    recall fail with 'LanceError(IO): Too many open files' and fall back to the
+    slow keyword path. Reads the sidecar process's real limit, not the shell's."""
+    status, body = _http_get(f"{base_url}/v1/host/health", api_key, timeout)
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult("server-fd-limit", SKIP, detail=f"HTTP {status}")
+    notes = body.get("notes") or {}
+    raw = notes.get("fd_limit")
+    if raw is None:
+        return CheckResult("server-fd-limit", SKIP, detail="not reported (older server)")
+    if raw == "unlimited":
+        return CheckResult("server-fd-limit", PASS, detail="open-file limit unlimited")
+    try:
+        soft = int(raw)
+    except (TypeError, ValueError):
+        return CheckResult("server-fd-limit", SKIP, detail=f"unparseable: {raw}")
+    if soft < 1024:
+        return CheckResult(
+            "server-fd-limit", WARN,
+            detail=f"sidecar open-file limit is {soft} (< 1024); LanceDB vector "
+                   "recall will fail under load and fall back to slow keyword search",
+            remedy="raise the sidecar's limit. launchd (macOS): add "
+                   "SoftResourceLimits/HardResourceLimits {NumberOfFiles: 16384} "
+                   "to the plist and bootout/bootstrap. systemd: LimitNOFILE=16384. "
+                   "shell: ulimit -n 16384 before starting.")
+    return CheckResult("server-fd-limit", PASS,
+                       detail=f"sidecar open-file limit {soft}")
 
 
 def check_server_benchmark(base_url: str, api_key: str, timeout: float) -> CheckResult:
@@ -1357,6 +1361,7 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-owner-contact", check_server_owner_contact, base_url, api_key, timeout)
     results += _run("server-llm-router", check_server_llm, base_url, api_key, timeout)
     results += _run("server-embedder", check_server_embedder, base_url, api_key, timeout)
+    results += _run("server-fd-limit", check_server_fd_limit, base_url, api_key, timeout)
     results += _run("server-blocked-approvals", check_server_blocked_approvals,
                     base_url, api_key, timeout)
     results += _run("server-worker-liveness", check_server_worker_liveness,
