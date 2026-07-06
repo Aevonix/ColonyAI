@@ -1598,6 +1598,21 @@ def collect_autonomy_env(
         print("     notifies you on every graduation.")
     print()
 
+    # ── Relationship intelligence (who the agent talks to) ──
+    print("  Relationship intelligence: the agent unifies each person across")
+    print("  channels and profiles who it talks to. Unknown senders become")
+    print("  shadow contacts so history accrues from first contact.")
+    existing_shadow = (existing.get("COLONY_IDENTITY_SHADOW_CONTACTS", "")
+                       or "").strip().lower()
+    default_shadow = "N" if existing_shadow == "false" else "Y"
+    hint = "[Y/n]" if default_shadow == "Y" else "[y/N]"
+    ans = _prompt(f"  Auto-create shadow contacts for unknown senders? {hint}",
+                  default_shadow, non_interactive, ask=ask)
+    on = ans.strip().lower() in ("y", "yes", "true", "")
+    updates["COLONY_IDENTITY_SHADOW_CONTACTS"] = "true" if on else "false"
+    print(f"  {'✅ Enabled' if on else '⚪ Disabled'}")
+    print()
+
     # ── Home channel ──
     print("  Which platform reaches you for proactive updates?")
     print(f"  Options: {', '.join(HOME_CHANNEL_PLATFORMS)}, none")

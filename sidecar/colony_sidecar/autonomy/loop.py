@@ -1013,6 +1013,39 @@ class AutonomyLoop:
                          person_id, reason, gate_urgency)
             return False
 
+        # Content safety on the actual outbound text (secret leak / disclosure
+        # tier / injection / provenance). The ResponseGuard runs here on the
+        # real send path so it is not merely an opt-in endpoint: in shadow it
+        # logs, in enforce (COLONY_GUARD_MODE=enforce) it blocks a leaking
+        # proactive message before it leaves. Owner-directed delivery is
+        # authorized; third-party delivery already passed the standing-approval
+        # gate above.
+        try:
+            from colony_sidecar.api.routers.host import _response_guard
+            if _response_guard is not None:
+                _msg = (payload.get("description") or payload.get("title") or "")
+                _tgt = (preview or {}).get("target", {})
+                _chat = _tgt.get("user_chat") or _tgt.get("home_chat") or ""
+                _plat, _, _cid = _chat.partition(":")
+                _guard = await _response_guard.evaluate(
+                    response_text=_msg,
+                    target_contact_id=person_id,
+                    target_gateway=_plat,
+                    session_id=str(iid),
+                    turn_id=str(iid),
+                    authorized=await self._recipient_is_owner(person_id, payload),
+                )
+                if _guard.blocked:
+                    logger.warning(
+                        "Reach-out %s BLOCKED by ResponseGuard (%s): %s",
+                        iid, _guard.decision,
+                        "; ".join(str(getattr(f, "name", f))
+                                  for f in (_guard.findings or [])[:4]))
+                    return False
+        except Exception:
+            logger.debug("delivery ResponseGuard check failed (allowing)",
+                         exc_info=True)
+
         if not getattr(self.config, "proactive_delivery_enabled", False):
             logger.debug("Proactive delivery disabled — initiative stored for agent polling")
             return False

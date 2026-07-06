@@ -16,12 +16,17 @@ class GateConfig:
     # Layer 3
     cross_context_lookback_hours: int = 4
 
-    # Layer 6
-    enable_secondary_review: bool = False   # off by default (requires LLM)
+    # Layer 6 — secondary LLM appropriateness review. Off by default because
+    # it needs an injected reviewer client; enabling it WITHOUT one fails
+    # open (the pipeline warns loudly at construction). Wire a reviewer when
+    # enabling.
+    enable_secondary_review: bool = False
     secondary_review_model: str = "claude-haiku-4-5-20251001"
 
-    # Layer 7
-    send_delay_seconds: float = 0.0   # default 0 for tests; production uses 2.0
+    # Layer 7 — send-delay cancel window. 0 = no hold (the default; L7 is a
+    # pass-through). Set >0 (server env COLONY_GATE_SEND_DELAY_SECS) for a
+    # real cancellation window on the request-path gate.
+    send_delay_seconds: float = 0.0
 
     # Rejection feedback loop
     max_retries: int = 3

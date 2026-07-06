@@ -272,6 +272,7 @@ def test_collect_autonomy_env_scripted_answers():
         "2",            # approval policy → graduated
         "n",            # skill synthesis → false
         "3",            # autonomy preset → autonomous
+        "y",            # shadow contacts → true
         "telegram",     # home channel platform
         "123456789",    # home channel id
     ])
@@ -280,6 +281,7 @@ def test_collect_autonomy_env_scripted_answers():
         "COLONY_APPROVAL_POLICY": "graduated",
         "COLONY_ENABLE_SKILL_SYNTHESIS": "false",
         "COLONY_AUTONOMY_PRESET": "autonomous",
+        "COLONY_IDENTITY_SHADOW_CONTACTS": "true",
         "TELEGRAM_HOME_CHANNEL": "123456789",
     }
 
@@ -292,6 +294,7 @@ def test_collect_autonomy_env_defaults_are_safe():
         "COLONY_APPROVAL_POLICY": "strict",
         "COLONY_ENABLE_SKILL_SYNTHESIS": "false",
         "COLONY_AUTONOMY_PRESET": "calibration",
+        "COLONY_IDENTITY_SHADOW_CONTACTS": "true",
     }
     assert not any(k.endswith("_HOME_CHANNEL") for k in updates)
 
@@ -301,6 +304,7 @@ def test_collect_autonomy_env_rerun_preserves_existing_values():
         "COLONY_APPROVAL_POLICY": "graduated",
         "COLONY_ENABLE_SKILL_SYNTHESIS": "false",
         "COLONY_AUTONOMY_PRESET": "autonomous",
+        "COLONY_IDENTITY_SHADOW_CONTACTS": "false",
         "WHATSAPP_HOME_CHANNEL": "999@g.us",
     }
     # Accept every default (blank answers).
@@ -309,13 +313,14 @@ def test_collect_autonomy_env_rerun_preserves_existing_values():
         "COLONY_APPROVAL_POLICY": "graduated",
         "COLONY_ENABLE_SKILL_SYNTHESIS": "false",
         "COLONY_AUTONOMY_PRESET": "autonomous",
+        "COLONY_IDENTITY_SHADOW_CONTACTS": "false",
         "WHATSAPP_HOME_CHANNEL": "999@g.us",
     }
 
 
 def test_collect_autonomy_env_none_drops_home_channel():
     existing = {"WHATSAPP_HOME_CHANNEL": "999@g.us"}
-    ask = make_ask(["1", "n", "1", "none"])
+    ask = make_ask(["1", "n", "1", "y", "none"])  # +shadow answer
     updates = collect_autonomy_env(existing, ask=ask)
     assert "WHATSAPP_HOME_CHANNEL" not in updates
     assert updates["COLONY_APPROVAL_POLICY"] == "strict"
@@ -323,7 +328,7 @@ def test_collect_autonomy_env_none_drops_home_channel():
 
 
 def test_collect_autonomy_env_invalid_platform_reprompts():
-    ask = make_ask(["1", "n", "2", "fax", "discord", "chan-42"])
+    ask = make_ask(["1", "n", "2", "y", "fax", "discord", "chan-42"])  # +shadow answer
     updates = collect_autonomy_env({}, ask=ask)
     assert updates["DISCORD_HOME_CHANNEL"] == "chan-42"
 

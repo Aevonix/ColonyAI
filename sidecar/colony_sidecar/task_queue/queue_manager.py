@@ -424,23 +424,24 @@ class QueueManager:
         self,
         since: datetime,
         limit: int = 20,
+        job_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return jobs completed after *since* with their result payloads.
 
         Used by the autonomy loop to discover recently finished tasks
-        and generate follow-up initiatives (Gap C).
+        and generate follow-up initiatives (Gap C). ``job_type`` filters to
+        one type (the API exposed the param but it was silently dropped).
         """
         assert self._db is not None
-        cursor = await self._db.execute(
-            """
-            SELECT job_id, payload, result, priority
-            FROM jobs
-            WHERE status = ? AND claimed_at IS NULL
-            ORDER BY rowid DESC
-            LIMIT ?
-            """,
-            (JobStatus.COMPLETED.value, limit),
-        )
+        sql = ("SELECT job_id, job_type, payload, result, priority FROM jobs "
+               "WHERE status = ? AND claimed_at IS NULL")
+        params: list = [JobStatus.COMPLETED.value]
+        if job_type:
+            sql += " AND job_type = ?"
+            params.append(job_type)
+        sql += " ORDER BY rowid DESC LIMIT ?"
+        params.append(limit)
+        cursor = await self._db.execute(sql, tuple(params))
         rows = await cursor.fetchall()
         completed: List[Dict[str, Any]] = []
         for row in rows:
@@ -458,6 +459,7 @@ class QueueManager:
                         pass
                 completed.append({
                     "job_id": row["job_id"],
+                    "job_type": row["job_type"],
                     "payload": payload,
                     "result": result_data,
                     "description": payload.get("description", ""),

@@ -1,6 +1,18 @@
 # Colony Multi-Agent Architecture
 
-Colony's multi-agent support (introduced in v0.7.0) enables multiple agent hosts, coding agents, and other AI systems to connect to a central Colony instance and share unified context.
+> **Status.** Two tiers, different maturity:
+> - **Supported:** local agent hosts and MCP coding tools connecting to one
+>   Colony over its HTTP/WebSocket API and sharing unified context; the
+>   installable `colony-worker` daemon claiming typed jobs under the
+>   server-side WorkerGovernor; and the local identity anchor (colony_id,
+>   node keypair, signed node certificate).
+> - **Experimental — not production-ready:** the *remote* agent-connect
+>   handshake, cert-chain verification, and the blockchain/consensus layer
+>   (`chain/`). No consensus loop is started at boot; the remote handshake is
+>   not verified end-to-end. Use the worker daemon or MCP for real
+>   multi-agent work today.
+
+Colony's multi-agent support enables multiple agent hosts, coding agents, and other AI systems to connect to a central Colony instance and share unified context.
 
 ## Overview
 

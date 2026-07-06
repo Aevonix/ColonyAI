@@ -404,9 +404,10 @@ async def release_job(job_id: str) -> Dict[str, Any]:
 
 @router.get("/jobs/blocked")
 async def list_blocked_jobs(
+    task_type: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
 ) -> List[Dict[str, Any]]:
-    """List BLOCKED jobs awaiting owner approval (v0.17.0).
+    """List BLOCKED jobs awaiting owner approval (v0.17.0), optionally by type.
 
     Dependency-blocked jobs are excluded — they resolve automatically
     when their dependencies complete.
@@ -417,6 +418,8 @@ async def list_blocked_jobs(
     for job in jobs:
         blocked_reason = job.tags.get("blocked_reason", "")
         if blocked_reason != "awaiting_owner_approval":
+            continue
+        if task_type and job.job_type.value != task_type:
             continue
         items.append({
             "id": job.job_id,
@@ -557,12 +560,14 @@ async def list_pending_jobs(
 @router.get("/jobs/completed")
 async def list_completed_jobs(
     since: Optional[str] = None,
+    task_type: Optional[str] = None,
     limit: int = Query(20, ge=1, le=200),
 ) -> List[Dict[str, Any]]:
-    """List completed jobs since a timestamp."""
+    """List completed jobs since a timestamp, optionally filtered by type."""
     queue = _get_queue()
     since_dt = _parse_dt(since) or datetime.min.replace(tzinfo=timezone.utc)
-    completed = await queue.queue.get_completed_jobs_since(since_dt, limit=limit)
+    completed = await queue.queue.get_completed_jobs_since(
+        since_dt, limit=limit, job_type=task_type)
     return completed
 
 

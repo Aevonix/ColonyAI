@@ -2450,13 +2450,25 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         # are excluded from every relationship surface.
         try:
             if _comms_log is not None and body.context.contact_id:
-                _comms_log.log(body.context.contact_id,
-                               channel=(body.context.channel_id or "direct"),
+                _ch = body.context.channel_id or "direct"
+                _sess = body.context.session_id or ""
+                _comms_log.log(body.context.contact_id, channel=_ch,
                                direction="in",
                                summary=(body.summary or "")[:300],
-                               session_id=body.context.session_id or "")
+                               session_id=_sess)
+                # Record the assistant's reply as an OUTBOUND exchange on the
+                # SAME resolved contact + conversation channel. Without this
+                # the ledger sees only half of every conversation, so
+                # reciprocity and "when did we last talk each way" (which the
+                # reachout recommendation depends on) read as never-replying.
+                _asst = (getattr(body.assistant_message, "content", "") or ""
+                         ) if body.assistant_message else ""
+                if _asst.strip():
+                    _comms_log.log(body.context.contact_id, channel=_ch,
+                                   direction="out",
+                                   summary=_asst[:300], session_id=_sess)
         except Exception:
-            logger.debug("comms ledger inbound log failed", exc_info=True)
+            logger.debug("comms ledger log failed", exc_info=True)
     except Exception:
         logger.debug("record_interaction failed", exc_info=True)
 
@@ -6281,6 +6293,10 @@ async def extract_tom(body: TomExtractRequest) -> TomExtractResponse:
     """Manually trigger ToM extraction for a conversation snippet."""
     if _tom_extractor is None:
         raise HTTPException(status_code=501, detail="ToM extraction not available (no LLM router)")
+    # A manual ToM write must target a real person, same as the affect/facts
+    # POST paths: a stale group contact_id here would pollute the wrong
+    # person's psyche (docs/RELATIONSHIPS.md #5).
+    await _require_person_contact(body.contact_id)
 
     affect_result = None
     facts_result = []
@@ -6781,13 +6797,39 @@ async def connect_remote_agent(body: AgentConnectRequest) -> AgentConnectRespons
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Create node certificate (simplified for now - TODO: proper signing)
+    # Create node certificate. When the chain key manager is available the
+    # cert is signed by the Colony's Ed25519 key over the canonical payload
+    # (the node public key the verifier checks lives in the metadata field
+    # `node_public_key_ed25519`); without a key manager the cert is
+    # explicitly UNSIGNED and the remote-agent handshake will not verify.
+    # NOTE: remote multi-agent connect + chain consensus are EXPERIMENTAL
+    # (no consensus loop runs; see docs/MULTI_AGENT.md).
     issued_at = datetime.now(timezone.utc)
+    _sig = ""
+    _km = getattr(_chain_manager, "_key_manager", None) if _chain_manager is not None else None
+    _cert_body = {
+        "colony_id": colony_id,
+        "node_id": node_id,
+        "node_public_key_ed25519": body.node_public_key,
+        "issued_at": issued_at.isoformat(),
+    }
+    if _km is not None:
+        try:
+            import json as _json
+            _payload = _json.dumps(_cert_body, sort_keys=True,
+                                   separators=(",", ":")).encode("utf-8")
+            _sig = _km.sign(_payload)
+        except Exception:
+            logger.warning("chain cert signing failed; issuing unsigned cert",
+                           exc_info=True)
+    else:
+        logger.warning("No chain key manager — remote-agent cert is UNSIGNED "
+                       "and will not verify (chain surface is experimental)")
     node_cert = AgentNodeCert(
         colony_id=colony_id,
         node_id=node_id,
         public_key=body.node_public_key,
-        signature=f"sig-{uuid.uuid4()}",  # TODO: actual signature
+        signature=_sig,
         issued_at=issued_at.isoformat(),
     )
 
@@ -7563,8 +7605,12 @@ async def record_outreach(body: RecordOutreachRequest) -> RecordOutreachResponse
     except Exception:
         logger.debug("journal outreach.sent failed", exc_info=True)
     try:
-        if _comms_log is not None and getattr(body, "contact_id", None):
-            _comms_log.log(body.contact_id, channel=body.channel or "unknown",
+        # Proactive outreach carries an already-resolved target contact; log
+        # it outbound so reciprocity accounting stays whole. Skip entirely
+        # without a contact (never attribute an outbound to a placeholder).
+        _oc = getattr(body, "contact_id", None)
+        if _comms_log is not None and _oc and _oc not in ("system", "default"):
+            _comms_log.log(_oc, channel=body.channel or "direct",
                            direction="out", summary=(body.reason or "")[:300])
     except Exception:
         logger.debug("comms ledger outbound log failed", exc_info=True)

@@ -233,7 +233,14 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.gate import ResponseGate, GateConfig
         from colony_sidecar.gate.audit import InMemoryAuditLog
-        gate_config = GateConfig(send_delay_seconds=0.0)
+        # L7 send-delay (the cancel window) is env-tunable; default 0 = no
+        # hold. Set COLONY_GATE_SEND_DELAY_SECS>0 to enable a real cancel
+        # window on the request-path gate.
+        try:
+            _gate_delay = float(os.environ.get("COLONY_GATE_SEND_DELAY_SECS", "0"))
+        except ValueError:
+            _gate_delay = 0.0
+        gate_config = GateConfig(send_delay_seconds=_gate_delay)
         gate_audit = InMemoryAuditLog()
         gate = ResponseGate(gate_config, session_store=None, audit_log=gate_audit)
         set_response_gate(gate)
@@ -241,7 +248,8 @@ async def lifespan(app: FastAPI):
         _gate_ref = gate
         _gate_config = gate_config
         _gate_audit = gate_audit
-        logger.info("ResponseGate initialized")
+        logger.info("ResponseGate initialized (send_delay=%.1fs, secondary_review=%s)",
+                    _gate_delay, getattr(gate_config, "enable_secondary_review", False))
 
         # Re-wire ResponseGate with session store once available
     except Exception as exc:
@@ -1177,6 +1185,13 @@ async def lifespan(app: FastAPI):
         except Exception as nexc:
             logger.warning("Node identity init skipped: %s", nexc)
 
+        # The LOCAL identity anchor (colony_id, node keypair, signed node
+        # cert) is supported. The REMOTE multi-agent surface (agent connect,
+        # cert-chain verification, block/consensus) is EXPERIMENTAL: no
+        # consensus loop runs and the remote handshake is not production
+        # verified. See docs/MULTI_AGENT.md.
+        logger.info("Chain: local identity anchor ready; remote multi-agent "
+                    "+ consensus are EXPERIMENTAL (no consensus loop started)")
     except Exception as exc:
         logger.warning("ChainManager init failed: %s", exc)
 

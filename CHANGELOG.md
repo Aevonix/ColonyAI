@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.23.1 — gap-sweep fixes: safety on the send path, whole comms ledger, honest surfaces
+
+Fixes from a full-codebase gap audit. No new subsystems; closing holes.
+
+- **Safety gate reaches the send path.** ResponseGuard now runs on the
+  proactive delivery path (secret-leak / disclosure-tier / injection /
+  provenance) before a message leaves — shadow logs, enforce
+  (COLONY_GUARD_MODE=enforce) blocks. The request-path gate's L7 send-delay
+  is env-tunable (COLONY_GATE_SEND_DELAY_SECS; 0 = pass-through, now
+  explicit) and boot logs the secondary-review posture; L6 fail-open is
+  documented at the config.
+- **The comms ledger sees the whole conversation.** turns/sync now records
+  the assistant's reply as an outbound exchange on the resolved contact +
+  conversation channel (it logged inbound only), so reciprocity and
+  last-contact-each-way — which the reachout recommendation depends on — are
+  no longer starved. record-outreach skips placeholder contacts.
+- **Research review gate actually runs.** The stage constructed ResponseGate
+  with the wrong signature, threw every call, and silently degraded to a
+  4-string scan; it now runs the real PII + injection layers on the
+  artifact.
+- **/jobs/completed and /jobs/blocked honor task_type** (the param was
+  declared on completed but silently dropped; the query now filters and
+  returns job_type).
+- **Attribution hardening.** /tom/extract validates the contact like the
+  affect/facts POSTs; the ParticipantResolver recognizes a canonical
+  contact id passed as user_id (the voice channel) instead of minting a
+  duplicate shadow; the wizard surfaces COLONY_IDENTITY_SHADOW_CONTACTS.
+- **Chain/remote-agent surface flagged experimental.** No consensus loop
+  runs and the remote handshake is not verified end to end; the connect
+  cert is now really signed when a key manager is present (the
+  sig-<uuid> placeholder is gone) and uses the field the verifier reads.
+  docs/MULTI_AGENT.md and the boot log say what is supported vs
+  experimental.
+
+
 ## v0.23.0 — relationship intelligence: one person, every channel
 
 The relationship stack existed but attribution failed it: a live audit found

@@ -81,6 +81,16 @@ class ParticipantResolver:
         if not user_id:
             return Resolution(None, "none")
 
+        # 0. Already-canonical contact id (e.g. the voice channel, where the
+        # speaker was resolved to a contact upstream and passed as user_id).
+        # Confirm it exists rather than minting a shadow for it.
+        if user_id.startswith("cid-"):
+            try:
+                if await self._store.get(user_id) is not None:
+                    return Resolution(user_id, "contact_id")
+            except Exception:
+                pass
+
         # 1. Handle match (exact + cross-gateway phone + email normalization).
         try:
             c = await self._store.resolve_messaging_handle(platform, user_id)
