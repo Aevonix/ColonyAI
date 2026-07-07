@@ -181,3 +181,14 @@ def test_manager_expands_accounts(monkeypatch):
     assert "imap_aevonix" in names          # listed -> enabled by default
     assert "imap_marcseal20" not in names   # explicit off wins
     assert "imap" not in names              # base instance replaced by accounts
+
+
+def test_env_backend_get_reads_file(tmp_path, monkeypatch):
+    """set() writes the .env file; get() from a FRESH process (no dotenv load)
+    must read it back — it used to consult os.environ only and return None."""
+    from colony_sidecar.secrets.backends.env import EnvBackend
+    b = EnvBackend(env_path=str(tmp_path / ".env"))
+    b.set("connector/imap/password", "s3cr3t")
+    monkeypatch.delenv("connector/imap/password", raising=False)
+    assert b.get("connector/imap/password") == "s3cr3t"
+    assert b.get("connector/missing") is None

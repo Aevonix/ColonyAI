@@ -34,7 +34,21 @@ class EnvBackend(SecretsBackend):
         return True  # Always available
 
     def get(self, key: str, default: str | None = None) -> str | None:
-        return os.environ.get(key, default)
+        v = os.environ.get(key)
+        if v is not None:
+            return v
+        # Fall back to the .env file itself: set() writes there, and a fresh
+        # process (CLI, migration) has NOT loaded it into os.environ — without
+        # this read-back, get() returns None for every secret set() stored.
+        env_path = Path(self._env_path)
+        if env_path.exists():
+            try:
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    if line.startswith(f"{key}="):
+                        return line.split("=", 1)[1]
+            except OSError:
+                pass
+        return default
 
     def set(self, key: str, value: str, *, secret_type: SecretType | None = None) -> None:
         """Write to .env file with 0o600 permissions (SEC-007 pattern)."""
