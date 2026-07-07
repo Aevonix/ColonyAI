@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.31.0 — multi-account senses
+
+One connector, many accounts: set `connector/<name>/accounts` (secret or
+env) to a comma-separated list and each account becomes its own instance
+with its own `connector/<name>_<account>/*` credential namespace. Built for
+several mailboxes/calendars feeding cognition side by side; listed accounts
+default on, each can be disabled individually, and email observations are
+attributed to the receiving account.
+
 ## v0.30.2 — `colony secrets` is a real command
 
 The secrets CLI handlers existed but were never registered with the main
