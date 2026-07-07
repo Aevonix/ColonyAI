@@ -208,6 +208,7 @@ class InferenceHandler(JobHandler):
         self._wm_connected = False
         self._gate = response_gate
         self._gate_sessions = gate_session_store
+        self._background_tasks: set = set()  # strong refs to fire-and-forget tasks
 
     async def _ensure_wm_connected(self) -> None:
         """Connect the world model store on first use.
@@ -343,11 +344,15 @@ class InferenceHandler(JobHandler):
             logger.debug("RouterSelfLearner record_outcome failed", exc_info=True)
 
         # ── Fire-and-forget world model update ─────────────────────────────
+        # Retained until done: the loop only weak-refs a bare task, so an
+        # unreferenced one can be GC-cancelled and the update silently lost.
         job_id_str = str(getattr(job, "job_id", None) or getattr(job, "id", _uuid_mod.uuid4()))
         if self._wm and user_text:
-            asyncio.ensure_future(
+            _t = asyncio.ensure_future(
                 _update_world_model_async(self._wm, user_text, response.content, job_id_str)
             )
+            self._background_tasks.add(_t)
+            _t.add_done_callback(self._background_tasks.discard)
 
         # ── Response Gate evaluation ────────────────────────────────────────
         if self._gate is not None and self._gate_sessions is not None:

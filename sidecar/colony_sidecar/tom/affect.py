@@ -136,6 +136,26 @@ class AffectStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def count_events(
+        self,
+        *,
+        contact_id: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> int:
+        """Total matching events, so paginated views can report a real total."""
+        clauses: List[str] = []
+        params: List[Any] = []
+        if contact_id is not None:
+            clauses.append("contact_id = ?")
+            params.append(contact_id)
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(source)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        return int(self._conn.execute(
+            f"SELECT COUNT(*) FROM affect_events{where}", params
+        ).fetchone()[0])
+
     def delete_event(self, event_id: str) -> bool:
         """Delete an affect event and recompute state. Returns True if deleted."""
         event = self.get_event(event_id)

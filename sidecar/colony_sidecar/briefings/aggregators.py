@@ -390,6 +390,80 @@ class RelationshipAggregator:
             return [dict(r) async for r in result]
 
 
+class GoalEngineAggregator:
+    """Real implementation backed by the GoalEngine (goals are owner-scoped;
+    no person filter). Overdue/blocked/completing-soon read live goal state;
+    weekly stats come from created/completed timestamps in the window."""
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    def _goals(self, status: Optional[str] = None, limit: int = 200) -> List[Any]:
+        try:
+            return self._engine.list_goals(status=status, limit=limit) or []
+        except Exception:
+            logger.exception("GoalEngineAggregator list failed")
+            return []
+
+    @staticmethod
+    def _aware(dt: Optional[datetime]) -> Optional[datetime]:
+        if dt is not None and dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    @staticmethod
+    def _summary(g: Any, status: str) -> GoalSummary:
+        return GoalSummary(goal_id=getattr(g, "goal_id", ""),
+                           title=getattr(g, "title", ""),
+                           status=status,
+                           due_at=getattr(g, "deadline", None))
+
+    def get_overdue_goals(self) -> List[GoalSummary]:
+        out = []
+        for g in self._goals(status="active"):
+            try:
+                if getattr(g, "deadline", None) is not None and g.is_overdue():
+                    out.append(self._summary(g, "overdue"))
+            except Exception:
+                continue
+        return out
+
+    def get_blocked_goals(self) -> List[GoalSummary]:
+        return [self._summary(g, "blocked") for g in self._goals(status="blocked")]
+
+    def get_completing_soon(self, hours: float = 4.0) -> List[GoalSummary]:
+        now = datetime.now(timezone.utc)
+        out = []
+        for g in self._goals(status="active"):
+            dl = self._aware(getattr(g, "deadline", None))
+            if dl is None:
+                continue
+            delta = (dl - now).total_seconds()
+            if 0 <= delta <= hours * 3600:
+                out.append(self._summary(g, "completing_soon"))
+        return out
+
+    def get_week_completion_stats(
+        self, period_start: datetime, period_end: datetime
+    ) -> GoalCompletionStats:
+        period_start = self._aware(period_start)
+        period_end = self._aware(period_end)
+        initiated = completed = 0
+        for g in self._goals(status=None, limit=500):
+            ca = self._aware(getattr(g, "created_at", None))
+            if ca is not None and period_start <= ca <= period_end:
+                initiated += 1
+            done = self._aware(getattr(g, "completed_at", None))
+            if done is not None and period_start <= done <= period_end:
+                completed += 1
+        # A goal completed in-window but created before it can push the raw
+        # ratio past 1.0; the field's contract is 0.0-1.0, so clamp.
+        rate = min(1.0, completed / initiated) if initiated else 0.0
+        return GoalCompletionStats(total_initiated=initiated,
+                                   total_completed=completed,
+                                   completion_rate=rate)
+
+
 class CalendarAggregator:
     """Real implementation: wraps CalendarIntegration for the briefing pipeline.
 

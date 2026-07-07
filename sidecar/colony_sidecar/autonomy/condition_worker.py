@@ -1,12 +1,17 @@
 """ConditionWorker — poll external conditions on behalf of blocked goals.
 
-Registered as a task queue worker handler. When a goal blocks on an
-external condition (email reply, deployment health, etc.), the goal engine
-schedules a check_condition job. This module handles it.
+Two consumption paths:
+- The system-level checkers (commitment overdue flip, affect decline,
+  surprise accumulation) run hourly from the autonomy loop's
+  _phase_condition_checks — that is the LIVE path.
+- handle_check_condition remains available as a task-queue handler for
+  per-goal external conditions (email reply, deployment health, ...), but no
+  producer schedules those jobs yet (see docs/KNOWN-GAPS.md); a goal blocked
+  on such a condition is only unblocked when something enqueues the check.
 
-When the condition is met, the worker calls goal_engine.unblock_goal().
-When not yet met, it returns condition_met=False and the caller may
-reschedule.
+When a per-goal condition is met, the handler calls
+goal_engine.unblock_goal(); when not yet met it returns condition_met=False
+and the caller may reschedule.
 """
 
 from __future__ import annotations

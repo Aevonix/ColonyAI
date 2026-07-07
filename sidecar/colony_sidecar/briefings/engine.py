@@ -31,13 +31,27 @@ class BriefingEngine:
         delivery: Optional[BriefingDeliveryEngine] = None,
         enhancer: Optional[BriefingLMEnhancer] = None,
         delivery_bridge: Optional[Any] = None,  # ProactiveDeliveryBridge
+        relationship_aggregator: Optional[Any] = None,
+        calendar_aggregator: Optional[Any] = None,
+        goal_aggregator: Optional[Any] = None,
+        anomaly_aggregator: Optional[Any] = None,
+        mind_model_aggregator: Optional[Any] = None,
+        synthesis_aggregator: Optional[Any] = None,
     ) -> None:
         self._config = config or BriefingConfig()
         self._store = store or BriefingStore(db_path=":memory:")
         self._delivery = delivery or BriefingDeliveryEngine(gateways=[], default_gateway="api")
         self._enhancer = enhancer or BriefingLMEnhancer(enabled=False)
         self._delivery_bridge = delivery_bridge
+        # Aggregators default to stubs inside the composer; the real ones must
+        # be passed through or every briefing data section is permanently empty.
         self._composer = BriefingComposer(
+            relationship_aggregator=relationship_aggregator,
+            calendar_aggregator=calendar_aggregator,
+            goal_aggregator=goal_aggregator,
+            anomaly_aggregator=anomaly_aggregator,
+            mind_model_aggregator=mind_model_aggregator,
+            synthesis_aggregator=synthesis_aggregator,
             suppressed_sections=self._config.suppressed_sections,
         )
         self._engagement = SectionEngagementTracker(store=self._store)

@@ -736,7 +736,7 @@ class ColonyGraph:
                     for mem in memories:
                         mid = mem.get("id")
                         if mid:
-                            asyncio.create_task(self._touch_memory_safe(mid))
+                            self._retain_task(asyncio.create_task(self._touch_memory_safe(mid)))
                     return memories
             except Exception as exc:
                 logger.warning("Vector recall failed, falling back to graph-only: %s", exc)
@@ -772,8 +772,18 @@ class ColonyGraph:
         for mem in memories:
             mid = mem.get("id")
             if mid:
-                asyncio.create_task(self._touch_memory_safe(mid))
+                self._retain_task(asyncio.create_task(self._touch_memory_safe(mid)))
         return memories
+
+    def _retain_task(self, task) -> None:
+        """Keep a strong ref to a fire-and-forget task until it finishes; the
+        loop only weak-refs it, so an unreferenced recall-touch task can be
+        GC-cancelled mid neo4j session ("Task was destroyed but it is
+        pending" + an abandoned session)."""
+        if not hasattr(self, "_bg_tasks"):
+            self._bg_tasks = set()
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     async def _touch_memory_safe(self, memory_id: str) -> None:
         """Touch a memory, logging but not raising on failure."""

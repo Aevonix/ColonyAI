@@ -147,15 +147,21 @@ class CrossDomainAnalyzer:
         created_at = mem.get("created_at")
         if created_at is None:
             return None
+        def _aware(dt):
+            # Mixed naive/aware datetimes make the later subtraction raise
+            # TypeError (swallowed upstream -> insights silently vanish).
+            if isinstance(dt, datetime) and dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
         if isinstance(created_at, datetime):
-            return created_at
+            return _aware(created_at)
         # Neo4j DateTime object
         if hasattr(created_at, 'to_native'):
-            return created_at.to_native()
+            return _aware(created_at.to_native())
         # ISO string
         try:
             if isinstance(created_at, str):
-                return datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                return _aware(datetime.fromisoformat(created_at.replace("Z", "+00:00")))
         except (ValueError, AttributeError) as exc:
             logger.debug("_extract_date: unparseable created_at %r: %s", created_at, exc)
         return None

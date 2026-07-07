@@ -2095,14 +2095,15 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
         except Exception as exc:
             logger.warning("signals_ingest collect(outgoing) failed: %s", exc)
 
-    # Raw signals from external sources
+    # Raw signals from external sources. Count per item, so a mid-batch
+    # failure still reports the signals that WERE persisted.
     if body.signals:
-        try:
-            for sig in body.signals:
+        for sig in body.signals:
+            try:
                 await _signal_collector.ingest_raw(sig)
-            recorded += len(body.signals)
-        except Exception as exc:
-            logger.warning("signals_ingest raw signals failed: %s", exc)
+                recorded += 1
+            except Exception as exc:
+                logger.warning("signals_ingest raw signal failed: %s", exc)
 
     # Fire cognition trigger for high-priority signals (best-effort)
     if recorded > 0:
@@ -3322,10 +3323,11 @@ async def get_timeline(
 
     since_iso = _t.parse_relative_since(since)
     type_list = [t.strip() for t in types.split(",") if t.strip()] if types else None
-    # Read the whole (retention-bounded) window, then keep the most RECENT N.
-    # replay_events caps at `limit` chronologically (oldest first), so a small
-    # limit there would return the START of the window, not recent activity.
-    raw = replay_events(since_iso, limit=500, types=type_list)
+    # Walk the journal newest-first so the cap drops the OLD end of a large
+    # window — an oldest-first walk here showed stale activity while the
+    # endpoint claimed "newest first" whenever the window exceeded the cap.
+    raw = replay_events(since_iso, limit=max(500, limit), types=type_list,
+                        newest_first=True)
 
     all_events: list[TimelineEvent] = []
     for e in raw.get("events", []):
@@ -5160,7 +5162,15 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     if _goals_store is not None and features.get("goals", True):
         async def _goals():
             try:
-                g = _goals_store.list_goals(person_id=contact_id, status="active")
+                # GoalEngine.list_goals takes (status, limit, offset) — no person_id —
+                # and returns Goal objects; the section renderer expects dicts.
+                items = _goals_store.list_goals(status="active", limit=10)
+                g = [{
+                    "title": getattr(x, "title", "?"),
+                    "status": getattr(getattr(x, "status", None), "value",
+                                      str(getattr(x, "status", "?"))),
+                    "progress": float(getattr(x, "progress_pct", 0.0) or 0.0),
+                } for x in (items or [])]
                 return ("goals", g)
             except Exception:
                 return ("goals", [])
@@ -6273,7 +6283,10 @@ async def list_affect_history(
     if _affect_store is None:
         raise HTTPException(status_code=501, detail="Affect tracking not initialized")
     events = _affect_store.list_events(contact_id=contact_id, source=source, limit=limit, offset=offset)
-    total = len(events)  # approximate for paginated view
+    try:
+        total = _affect_store.count_events(contact_id=contact_id, source=source)
+    except Exception:
+        total = offset + len(events)
     return AffectEventListResponse(events=[AffectEventResponse(**e) for e in events], total=total, limit=limit, offset=offset)
 
 
@@ -8119,7 +8132,9 @@ async def contact_landscape(contact_id: str) -> dict:
     followups = []
     if _commitment_store is not None:
         try:
-            for c in _commitment_store.list(person_id=contact_id, status=["pending"], limit=10):
+            _cl = _commitment_store.list(person_id=contact_id,
+                                         status=["pending", "overdue"], limit=10)
+            for c in _cl.get("commitments", []) if isinstance(_cl, dict) else (_cl or []):
                 if c.get("description"):
                     followups.append(c["description"])
         except Exception:

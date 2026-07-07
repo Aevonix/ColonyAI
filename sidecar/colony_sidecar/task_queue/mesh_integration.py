@@ -16,6 +16,20 @@ from colony_sidecar.task_queue.scheduler import Scheduler
 logger = logging.getLogger(__name__)
 
 
+_BACKGROUND_TASKS: set = set()
+
+
+def _retain(task) -> None:
+    """Keep a strong reference to a fire-and-forget task until it finishes.
+
+    The event loop holds only a weak reference; an unreferenced task can be
+    garbage-collected (cancelled) mid-flight — for the Sovereign scheduler
+    loop that means job scheduling silently halts with no error.
+    """
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
 class QueueMeshEventHandler:
     """Handles mesh-layer events that affect the task queue.
 
@@ -66,7 +80,7 @@ class QueueMeshEventHandler:
                 "starting scheduler", self._own_node_id,
             )
             import asyncio
-            asyncio.create_task(self._scheduler.run())
+            _retain(asyncio.create_task(self._scheduler.run()))
 
     def handle_mesh_event(self, event: Any) -> None:
         """Synchronous event bus callback. Dispatches to async handlers."""
@@ -75,13 +89,13 @@ class QueueMeshEventHandler:
         event_type = getattr(event, "event_type", "")
 
         if event_type == "node_dead" or event_type == "NODE_DEAD":
-            asyncio.create_task(self.on_node_dead(node_id))
+            _retain(asyncio.create_task(self.on_node_dead(node_id)))
         elif event_type in {"role_changed", "ROLE_CHANGE"}:
             new_role = ""
             new_role_attr = getattr(event, "new_role", None)
             if new_role_attr is not None:
                 new_role = str(new_role_attr.value if hasattr(new_role_attr, "value") else new_role_attr)
-            asyncio.create_task(self.on_role_change(new_role, node_id))
+            _retain(asyncio.create_task(self.on_role_change(new_role, node_id)))
 
     def subscribe_to_event_bus(self) -> None:
         """Register this handler on the Colony event bus if one is configured."""

@@ -188,6 +188,11 @@ def main() -> None:
 
     persona_sub.add_parser("uninstall", help="Stop services, remove overlays, deregister channels")
 
+    # --- autonomy ---
+    autonomy_p = sub.add_parser("autonomy", help="Inspect or wake the autonomy loop in the running sidecar")
+    autonomy_p.add_argument("autonomy_args", nargs=argparse.REMAINDER,
+                            help="Autonomy subcommand (status/cycle)")
+
     # --- feeds ---
     feeds_p = sub.add_parser("feeds", help="Manage spec-driven intelligence feeds")
     feeds_p.add_argument("feeds_args", nargs=argparse.REMAINDER,
@@ -636,6 +641,11 @@ def main() -> None:
 
     elif args.command == "persona":
         _cmd_persona(args)
+
+    elif args.command == "autonomy":
+        _load_dotenv()
+        from colony_sidecar.autonomy.cli import run_autonomy_command
+        sys.exit(run_autonomy_command(args.autonomy_args))
 
     elif args.command == "feeds":
         from colony_sidecar.feeds.cli import main as feeds_main

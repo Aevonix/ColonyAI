@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from colony_sidecar.world_model.store import WorldModelStore
     from colony_sidecar.contacts.store import ContactStore
     from colony_sidecar.task_queue.handlers.inference import _InferenceGateSessionStore
-    from colony_sidecar.desktop.config import DesktopConfig
-    from colony_sidecar.browser.config import BrowserConfig
+    # desktop/browser worker packages do not exist yet (docs/KNOWN-GAPS.md);
+    # their config params stay Any so type checkers don't chase ghost modules.
 
 
 def build_default_handlers(
@@ -25,8 +25,8 @@ def build_default_handlers(
     contact_store: Optional["ContactStore"] = None,
     response_gate: Optional[Any] = None,
     gate_session_store: Optional["_InferenceGateSessionStore"] = None,
-    desktop_config: Optional["DesktopConfig"] = None,
-    browser_config: Optional["BrowserConfig"] = None,
+    desktop_config: Optional[Any] = None,
+    browser_config: Optional[Any] = None,
     node_id: str = "",
 ) -> Dict[JobType, JobHandler]:
     """Assemble the default set of job handlers.

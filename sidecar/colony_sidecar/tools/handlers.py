@@ -126,18 +126,22 @@ async def handle_list_goals(
         if goals is None:
             return json.dumps({"error": "Goals store not wired", "status": "unavailable"})
 
-        goal_list = await goals.list(person_id=person_id, status=status)
+        # GoalEngine is sync and exposes list_goals(status, limit, offset)
+        # returning Goal objects — there is no `list` method and no person_id
+        # filter (the old call raised AttributeError on every invocation).
+        goal_list = goals.list_goals(status=status, limit=50)
 
         return json.dumps({
-            "count": len(goal_list),
+            "count": len(goal_list or []),
             "goals": [
                 {
-                    "id": g.get("id"),
-                    "title": g.get("title"),
-                    "status": g.get("status"),
-                    "progress": g.get("progress", 0),
+                    "id": getattr(g, "goal_id", None),
+                    "title": getattr(g, "title", ""),
+                    "status": getattr(getattr(g, "status", None), "value",
+                                      str(getattr(g, "status", ""))),
+                    "progress": float(getattr(g, "progress_pct", 0.0) or 0.0),
                 }
-                for g in goal_list
+                for g in (goal_list or [])
             ],
         })
     except Exception as e:

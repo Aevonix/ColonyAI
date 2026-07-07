@@ -93,6 +93,12 @@ def hermes_base_dir(base_dir: Optional[Path] = None) -> Path:
     env = os.environ.get(BASE_DIR_ENV, "").strip()
     if env:
         return Path(env).expanduser()
+    # Track the sync/poller root (HERMES_SKILLS_DIR) so a deployment that
+    # relocates the skills root doesn't silently split the export dir away
+    # from where skills_sync/agent_bridge read (they'd never see exports).
+    sync_root = os.environ.get("HERMES_SKILLS_DIR", "").strip()
+    if sync_root:
+        return (Path(sync_root) / "colony").expanduser()
     return _DEFAULT_BASE.expanduser()
 
 

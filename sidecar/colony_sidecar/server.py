@@ -456,6 +456,7 @@ async def lifespan(app: FastAPI):
         logger.info("No reranker configured for this tier")
 
     # --- 7. Goals engine ---
+    goals_engine = None
     try:
         from colony_sidecar.goals.engine import GoalEngine
         from colony_sidecar.goals.store import GoalStore
@@ -1190,7 +1191,26 @@ async def lifespan(app: FastAPI):
             )
             _b_state_dir = os.environ.get("COLONY_STATE_DIR", ".")
             b_store = BriefingStore(db_path=str(_P(_b_state_dir) / "briefings.db"))
-            briefings = BriefingEngine(config=b_cfg, store=b_store, delivery_bridge=delivery)
+            # Real aggregators where the backing subsystem exists — without
+            # them the composer silently falls back to stubs and every data
+            # section of every briefing is empty. Calendar/anomaly/mind/
+            # synthesis still lack concrete aggregators (see docs/KNOWN-GAPS.md).
+            _aggs = {}
+            try:
+                if graph is not None:
+                    from colony_sidecar.briefings.aggregators import RelationshipAggregator
+                    _aggs["relationship_aggregator"] = RelationshipAggregator(
+                        scorer=None, graph=graph)
+            except Exception:
+                logger.debug("relationship aggregator wiring failed", exc_info=True)
+            try:
+                if goals_engine is not None:
+                    from colony_sidecar.briefings.aggregators import GoalEngineAggregator
+                    _aggs["goal_aggregator"] = GoalEngineAggregator(goals_engine)
+            except Exception:
+                logger.debug("goal aggregator wiring failed", exc_info=True)
+            briefings = BriefingEngine(config=b_cfg, store=b_store,
+                                       delivery_bridge=delivery, **_aggs)
             set_briefings_engine(briefings)
             if os.environ.get("COLONY_BRIEFINGS_SCHEDULE", "1") not in ("0", "false", "no"):
                 b_sched = BriefingScheduler(config=b_cfg, engine=briefings, store=b_store)
@@ -1464,10 +1484,27 @@ async def lifespan(app: FastAPI):
         )
         set_autonomy_loop(autonomy_loop)
 
-        # Register default periodic tasks
-        scheduler.register("health_check", lambda: {"status": "ok"}, interval_seconds=300, metadata={"description": "Subsystem health check"})
-        scheduler.register("signal_ingest", lambda: {"status": "ok"}, interval_seconds=600, metadata={"description": "Process queued behavioral signals"})
-        scheduler.register("briefing_generate", lambda: {"status": "ok"}, interval_seconds=1800, metadata={"description": "Generate proactive briefings"})
+        # Register default periodic tasks. Every registered task does REAL
+        # work or reports skipped — a no-op lambda returning {"status":"ok"}
+        # makes the loop count a subsystem as running when it never does
+        # (signal ingest happens inline at the API; briefings are fired by
+        # the BriefingScheduler wired in section 13b — neither needs a task
+        # here, so neither gets a fake one).
+        def _run_health_check():
+            wired = 0
+            try:
+                import colony_sidecar.api.routers.host as _h
+                for _n in ("_commitment_store", "_goals_store", "_affect_store",
+                           "_contacts_store", "_delivery_bridge", "_workspace",
+                           "_metalearner"):
+                    if getattr(_h, _n, None) is not None:
+                        wired += 1
+            except Exception:
+                pass
+            return {"status": "ok", "subsystems_wired": wired,
+                    "autonomy_running": bool(getattr(autonomy_loop, "_running", False))}
+
+        scheduler.register("health_check", _run_health_check, interval_seconds=300, metadata={"description": "Subsystem health check (reports wired count)"})
 
         async def _run_memory_consolidate():
             from colony_sidecar.api.routers.host import _consolidator as c
@@ -1479,8 +1516,18 @@ async def lifespan(app: FastAPI):
             return {"status": "ok", "merged": getattr(result, "pairs_merged", 0)}
 
         scheduler.register("memory_consolidate", _run_memory_consolidate, interval_seconds=3600, metadata={"description": "Deduplicate and merge near-duplicate memories"})
-        scheduler.register("cpi_track", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Calculate Cognitive Performance Index"})
-        scheduler.register("world_model_prune", lambda: {"status": "ok"}, interval_seconds=86400, metadata={"description": "Remove stale world model entities"})
+
+        async def _run_cpi_track():
+            from colony_sidecar.api.routers.host import _metalearner as ml
+            if ml is None:
+                return {"status": "skipped", "reason": "metalearner_not_wired"}
+            cpi = await ml.evaluate()
+            return {"status": "ok", "overall": round(float(getattr(cpi, "overall", 0.0)), 4)}
+
+        scheduler.register("cpi_track", _run_cpi_track, interval_seconds=86400, metadata={"description": "Calculate Cognitive Performance Index"})
+        # world_model_prune intentionally NOT registered: no prune primitive
+        # exists in the world model store yet (docs/KNOWN-GAPS.md) — a fake
+        # daily "ok" here claimed stale entities were being removed.
 
         async def _run_digest_flush():
             from colony_sidecar.api.routers.host import _delivery_bridge as bridge

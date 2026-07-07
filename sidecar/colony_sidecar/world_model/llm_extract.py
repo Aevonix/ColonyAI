@@ -157,8 +157,12 @@ class WorldLLMExtractor:
         if ep["key"]:
             headers["Authorization"] = f"Bearer {ep['key']}"
         try:
+            # Keep the per-request timeout WELL under the autonomy tick
+            # budget: when the tick's wait_for cancels mid-request, aiohttp's
+            # session unwind gets interrupted and leaks ("Unclosed client
+            # session" spam). A clean inner timeout aborts and closes.
             timeout = aiohttp.ClientTimeout(total=float(
-                os.environ.get("COLONY_WORLD_LLM_TIMEOUT", "60")))
+                os.environ.get("COLONY_WORLD_LLM_TIMEOUT", "40")))
             async with aiohttp.ClientSession() as s:
                 async with s.post(ep["base"] + "/chat/completions",
                                   json=payload, headers=headers,

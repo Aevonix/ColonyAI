@@ -306,14 +306,19 @@ class WhatsAppBriefingGateway(BriefingGateway):
             source="briefing",
         )
         try:
-            loop = asyncio.get_running_loop()
-            # Already inside an async context — dispatch to the loop from this thread.
-            import concurrent.futures
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            return future.result(timeout=10.0)
+            asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop — safe to call asyncio.run() directly.
+            # No running loop (the scheduler's worker thread — the normal
+            # path) — safe to call asyncio.run() directly.
             return asyncio.run(coro)
+        # We ARE on the event-loop thread. The old run_coroutine_threadsafe +
+        # blocking result() here scheduled onto THIS loop and then blocked it:
+        # guaranteed deadlock until the 10s timeout, then a failed delivery.
+        # Run the coroutine on its own loop in a worker thread instead —
+        # still a synchronous wait (this method's contract), but it completes.
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro).result(timeout=15.0)
 
 
 # ---------------------------------------------------------------------------

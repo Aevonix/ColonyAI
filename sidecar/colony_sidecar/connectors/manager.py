@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import asyncio
 import time
 from typing import Any, Dict, List, Optional
 
@@ -87,7 +88,12 @@ class ConnectorManager:
                 kind="observe", text=subject or obs.domain,
                 target=subject)).allowed
         except Exception:
-            return True
+            # Fail CLOSED: a broken boundary check must not convert into
+            # permission to ingest — the observation is only delayed until
+            # the directive engine answers again.
+            logger.warning("connector boundary check failed; withholding "
+                           "observation this cycle", exc_info=True)
+            return False
 
     # -- the ingest phase -------------------------------------------------
     async def poll_due(self, now: Optional[float] = None) -> Dict[str, Any]:
@@ -103,7 +109,10 @@ class ConnectorManager:
             if not c.enabled or not c.due(now):
                 continue
             try:
-                observations = c.poll()
+                # poll() implementations do blocking I/O (urllib/IMAP/CalDAV
+                # with timeouts up to 30s) — off the event loop, or one hung
+                # endpoint freezes the whole autonomy tick.
+                observations = await asyncio.to_thread(c.poll)
             except Exception:
                 logger.debug("connector %s poll failed", c.name, exc_info=True)
                 observations = []

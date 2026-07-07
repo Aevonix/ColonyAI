@@ -260,6 +260,10 @@ class AutonomyLoop:
         # Phase 2: check goals needing attention
         await self._phase_goals()
 
+        # Phase 2b: system-condition sweep (hourly) — commitment overdue flip,
+        # affect decline, surprise accumulation
+        await self._phase_condition_checks()
+
         # Phase 3: check anomalies
         await self._phase_anomalies()
 
@@ -322,10 +326,8 @@ class AutonomyLoop:
         # Phase 11f: relationship profiling (standing/psyche/approach briefs)
         await self._phase_relationship_profiling()
 
-        # Phase 13: memory distillation (weekly)
-        await self._phase_memory_distillation()
-
         # Phase 12: task completion follow-ups
+        # (memory distillation already ran as Phase 11b — it was called twice)
         await self._phase_task_completion()
 
         # Phase 13: frustration back-off
@@ -1590,8 +1592,10 @@ class AutonomyLoop:
             return
 
         try:
-            # CommitmentStore.list() returns {"commitments": [...], "total": N}
-            result = commitments.list(status=["pending"], limit=20) if hasattr(commitments, "list") else {"commitments": []}
+            # CommitmentStore.list() returns {"commitments": [...], "total": N}.
+            # Include 'overdue': a flipped item is MORE deserving of an
+            # initiative, not invisible to it.
+            result = commitments.list(status=["pending", "overdue"], limit=20) if hasattr(commitments, "list") else {"commitments": []}
             active = result.get("commitments", [])
 
             now = datetime.now(timezone.utc)
@@ -2481,6 +2485,30 @@ class AutonomyLoop:
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase %s error: %s", name, exc, exc_info=True)
+
+    async def _phase_condition_checks(self) -> None:
+        """Hourly system-condition sweep: the pending→overdue commitment flip
+        (fires commitment.overdue exactly once per item), sustained affect
+        decline, and surprise accumulation. These checkers were written for a
+        queue-scheduled path that nothing enqueues — the loop is the reliable
+        place to actually run them (no graph dependency, own hourly dedup)."""
+        now = datetime.now(timezone.utc)
+        key = now.strftime("%Y-%m-%dT%H")
+        if self._periodic_last.get("condition_checks") == key:
+            return
+        self._periodic_last["condition_checks"] = key
+        from colony_sidecar.autonomy.condition_worker import (
+            _check_affect_decline,
+            _check_commitment_overdue,
+            _check_surprise_accumulation,
+        )
+        for checker in (_check_commitment_overdue, _check_affect_decline,
+                        _check_surprise_accumulation):
+            try:
+                await checker({})
+            except Exception:
+                logger.debug("condition check %s failed",
+                             getattr(checker, "__name__", "?"), exc_info=True)
 
     async def _phase_memory_consolidation(self) -> None:
         async def work(graph):

@@ -165,7 +165,15 @@ class GraphGatherer:
             from colony_sidecar.intelligence.graph.client import ColonyGraph
 
             graph = ColonyGraph()
-            memories = await graph.recall(query, limit=20)
+            try:
+                memories = await graph.recall(query, limit=20)
+            finally:
+                # Every gather() builds a fresh neo4j AsyncDriver; without a
+                # close it leaks a driver + connection pool per research run.
+                try:
+                    await graph.close()
+                except Exception:
+                    pass
             for mem in memories:
                 content = mem.get("content", mem.get("text", ""))
                 if not content:

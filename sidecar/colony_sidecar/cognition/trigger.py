@@ -125,10 +125,14 @@ def _emit_cognition_event(
     model: str,
     priority: str,
 ) -> None:
-    """Emit a cognition.requested event for the plugin to pick up and spawn.
+    """Emit a cognition.requested event carrying a full spawn spec.
 
-    The plugin listens for this event and calls sessions_spawn with the
-    cognition prompt, model override, and restricted tool allowlist.
+    This is an OPTIONAL integration point: no shipped consumer spawns a
+    dedicated cognition session from it today (the hermes plugin only caches
+    events as context blurbs). The working per-turn judgment path is the
+    inline introspection in cognition/introspection.py; a deployment that
+    wants a real tool-restricted cognition session can subscribe to this
+    event and honor system_prompt/model/tools_allow. See docs/KNOWN-GAPS.md.
     """
     try:
         from colony_sidecar.events.broadcaster import emit
@@ -138,10 +142,12 @@ def _emit_cognition_event(
             "user_prompt": prompt,
             "model": model,
             "priority": priority,
+            # Names match the registered agent tools so a consumer can pass
+            # this straight through as an allowlist.
             "tools_allow": [
-                "commitment_create",
-                "commitment_list",
-                "commitment_update",
+                "colony_create_commitment",
+                "colony_list_commitments",
+                "colony_resolve_commitment",
             ],
         })
     except Exception:

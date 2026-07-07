@@ -157,6 +157,7 @@ def replay_events(
     since: str,
     limit: int = 500,
     types: Optional[List[str]] = None,
+    newest_first: bool = False,
 ) -> Dict[str, Any]:
     """Replay journal events recorded after ``since`` (ISO 8601 timestamp).
 
@@ -164,9 +165,14 @@ def replay_events(
         since: ISO 8601 timestamp — return events recorded after this time.
         limit: Maximum number of events to return.
         types: Optional list of event type strings to filter by.
+        newest_first: When True, walk the journal from the NEWEST file backwards
+            so the cap drops the OLD end of a large window instead of the new
+            end (a recency view that truncates oldest-first silently shows
+            stale activity while claiming to be recent).
 
     Returns:
-        Dict with "events" list, "lastSeq", and "hasMore".
+        Dict with "events" list, "lastSeq", and "hasMore". Events are in walk
+        order (oldest-first normally, newest-first when ``newest_first``).
     """
     journal_dir = _journal_dir()
 
@@ -180,11 +186,15 @@ def replay_events(
     except OSError:
         return {"events": [], "lastSeq": 0, "hasMore": False}
 
-    for f in files:
+    ordered = list(reversed(files)) if newest_first else files
+    for f in ordered:
         if len(events) >= limit:
-            # Check if there are more files after this
-            remaining = files[files.index(f):]
-            has_more = any(_file_is_after(fn, since) for fn in remaining[1:])
+            # More matching files beyond the cap? The boundary file `f` was
+            # NOT processed (we break before reading it), so it must be
+            # included — remaining[1:] here dropped exactly one event and
+            # under-reported hasMore at the boundary.
+            remaining = ordered[ordered.index(f):]
+            has_more = any(_file_is_after(fn, since, types) for fn in remaining)
             return {
                 "events": events,
                 "lastSeq": events[-1]["seq"] if events else 0,
@@ -223,10 +233,15 @@ def replay_events(
     }
 
 
-def _file_is_after(filepath: Path, since: str) -> bool:
-    """Quick check if a journal file contains an event after ``since``."""
+def _file_is_after(filepath: Path, since: str,
+                   types: Optional[List[str]] = None) -> bool:
+    """Quick check if a journal file contains a MATCHING event after ``since``
+    (matching = also passes the caller's type filter, or hasMore lies when a
+    types filter is active)."""
     try:
         raw = json.loads(filepath.read_text(encoding="utf-8"))
-        return raw.get("recordedAt", "") > since
+        if raw.get("recordedAt", "") <= since:
+            return False
+        return not types or raw.get("type", "unknown") in types
     except Exception:
         return False
