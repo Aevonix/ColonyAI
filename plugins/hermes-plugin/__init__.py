@@ -534,39 +534,31 @@ class _ToolDispatcher:
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
+    # Colony's work items are "initiatives"; the old tasks routes were removed
+    # (404). These map task_id -> the live /initiatives/{id}/respond action
+    # contract (actioned->completed, snoozed->pending, dismissed->cancelled), the
+    # same proven path colony_initiative_feedback uses.
     def _handle_colony_task_complete(self, args: dict) -> str:
-        try:
-            resp = self._client.post(
-                f"/v1/host/tasks/{args['task_id']}/complete",
-                json={},
-                timeout=5,
-            )
-            resp.raise_for_status()
-            return json.dumps({"success": True})
-        except Exception as exc:
-            return json.dumps({"error": str(exc)})
+        return self._respond_initiative(args["task_id"], "actioned")
 
     def _handle_colony_task_snooze(self, args: dict) -> str:
-        try:
-            resp = self._client.post(
-                f"/v1/host/tasks/{args['task_id']}/snooze",
-                json={"hours": args.get("hours", 24), "reason": args.get("reason", "")},
-                timeout=5,
-            )
-            resp.raise_for_status()
-            return json.dumps({"success": True})
-        except Exception as exc:
-            return json.dumps({"error": str(exc)})
+        return self._respond_initiative(
+            args["task_id"], "snoozed",
+            {"hours": args.get("hours", 24), "reason": args.get("reason", "")})
 
     def _handle_colony_task_dismiss(self, args: dict) -> str:
+        return self._respond_initiative(
+            args["task_id"], "dismissed", {"reason": args.get("reason", "stale")})
+
+    def _respond_initiative(self, iid: str, action: str, details: dict = None) -> str:
         try:
             resp = self._client.post(
-                f"/v1/host/tasks/{args['task_id']}/dismiss",
-                json={"reason": args.get("reason", "stale")},
+                f"/v1/host/initiatives/{iid}/respond",
+                json={"initiative_id": iid, "action": action, "details": details or {}},
                 timeout=5,
             )
             resp.raise_for_status()
-            return json.dumps({"success": True})
+            return json.dumps({"success": True, "action": action})
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
@@ -652,37 +644,44 @@ _session_state: dict = {}
 _AUTONOMY_JOB_NAME = "Colony Autonomy Bridge"
 _AUTONOMY_JOB_ID: Optional[str] = None  # cached after lookup
 
-# Owner name is deployment config, never hardcoded in the generic build.
-# A deployment sets COLONY_OWNER_NAME (and typically overrides this whole prompt
-# via its own file); the generic default stays owner-neutral.
-_OWNER = os.environ.get("COLONY_OWNER_NAME") or "the owner"
-_OWNER_POSS = _OWNER + ("'" if _OWNER.endswith("s") else "'s")
+# Generic, deployment-agnostic default. A deployment injects its own persona /
+# owner-voice prompt via plugins.colony.autonomy_prompt (an inline string or a
+# file path) — see register(). The native-tools discipline below is generic and
+# applies to any deployment, so it stays in the default.
+_DEFAULT_AUTONOMY_PROMPT = """\
+You are the Colony Autonomy Bridge — the owner's autonomous agent. You act ON THE
+OWNER'S BEHALF, not as a reminder service. You consume initiatives from the Colony
+sidecar and execute them directly.
 
-_AUTONOMY_PROMPT = f"""\
-You are the Colony Autonomy Bridge — {_OWNER_POSS} autonomous agent. You act ON
-THEIR BEHALF, not as a reminder service. You consume initiatives from the Colony
-sidecar (http://127.0.0.1:7777) and execute them directly.
+HOW TO TALK TO COLONY (read this first):
+Use the native colony_* tools for EVERYTHING about Colony — colony_list_initiatives,
+colony_get_initiative, colony_queue_stats, colony_get_briefing, colony_task_complete,
+colony_initiative_feedback, etc. They are structured, reliable, and always hit the right
+endpoint. Do NOT use the terminal for Colony: never run colony_api.py, curl, or python
+against the sidecar / /v1/host/... — those shell calls get mangled and fail. The terminal
+is ONLY for the actual work an initiative requires (e.g. running a build, a script).
 
 YOUR JOB EACH CYCLE:
-1. Query Colony for pending initiatives using colony_list_initiatives.
+1. Query Colony for pending initiatives using colony_list_initiatives (and colony_queue_stats
+   if you need the work-queue state). Native tools only — no terminal/curl/colony_api.py.
 2. For each initiative, classify its type and EXECUTE (don't suggest):
 
    RELATIONSHIP:
-   - {_OWNER} hasn't contacted someone in a while.
+   - The owner hasn't contacted someone in a while.
    - Fetch their briefing via colony_get_briefing to get context.
-   - Draft a warm, context-aware outreach message IN {_OWNER_POSS.upper()} VOICE.
-   - SEND IT DIRECTLY TO THE CONTACT via send_message. Do NOT send it to {_OWNER}.
+   - Draft a warm, context-aware outreach message IN THE OWNER'S VOICE.
+   - SEND IT DIRECTLY TO THE CONTACT via send_message. Do NOT send it to the owner.
    - Only skip sending if: (a) contact channel is unknown, (b) content feels
-     wrong — in which case, note it for {_OWNER_POSS} review.
+     wrong — in which case, note it for the owner's review.
 
    FOLLOW_UP / TASK:
    - A goal needs action. Use available tools to complete it.
    - If you can finish it, do so and mark it complete.
-   - If blocked, note the blocker for {_OWNER_POSS} review.
+   - If blocked, note the blocker for the owner's review.
 
    SCHEDULING:
    - A commitment is due soon. If you can schedule it (calendar, meeting),
-     do so. Otherwise, draft the request and note it for {_OWNER}.
+     do so. Otherwise, draft the request and note it for the owner.
 
 3. After handling all initiatives, report ONLY:
    - Actions taken autonomously (messages sent, tasks completed, etc.)
@@ -690,17 +689,24 @@ YOUR JOB EACH CYCLE:
    - Any errors encountered
 
 RULES:
-- You ARE {_OWNER_POSS} agent. Act with their voice and judgment. Do not ask
-  permission for obvious, low-risk actions (e.g., a "how are you" to a friend).
+- COLONY ACCESS IS NATIVE-TOOLS-ONLY. Never shell out to colony_api.py, curl, or python
+  to reach Colony's API — use the colony_* tools. Reaching /v1/host/... via the terminal is
+  a bug, not a fallback.
+- You ARE the owner's agent. Act with their voice and judgment. Do not ask permission
+  for obvious, low-risk actions (e.g., sending a "how are you" to a friend).
 - Stay silent (start your response with [SILENT]) if there are no initiatives
   and nothing to report.
 - Do not hallucinate contact details. Always use Colony's data.
-- NEVER send reminders TO {_OWNER}. They do not want to be pinged with "you
-  should text someone." Either send the message FOR them, or report that you
-  couldn't.
+- NEVER send reminders TO the owner. They do not want to be pinged with "you should
+  text so-and-so." Either send the message FOR them, or report that you couldn't.
 - If sending a message, confirm the recipient channel and send it. Do not
-  paraphrase the message back to {_OWNER} unless they ask.
+  paraphrase the message back to the owner unless asked.
 """
+
+# Deployment-overridable at register() time from plugins.colony.autonomy_prompt /
+# plugins.colony.autonomy_deliver. Defaults are generic.
+_AUTONOMY_PROMPT = _DEFAULT_AUTONOMY_PROMPT
+_AUTONOMY_DELIVER = "dm"
 
 
 def _find_autonomy_job() -> Optional[dict]:
@@ -744,7 +750,7 @@ def _create_or_update_autonomy_job(interval: str = "every 15m", client: Optional
                 prompt=_AUTONOMY_PROMPT,
                 schedule=interval,
                 name=_AUTONOMY_JOB_NAME,
-                deliver="whatsapp",  # home/ops channel, not the owner DM
+                deliver=_AUTONOMY_DELIVER,  # deployment channel (plugins.colony.autonomy_deliver)
                 enabled_toolsets=["web", "terminal", "file", "send_message", "colony"],
             )
             if client:
@@ -813,7 +819,7 @@ def _create_or_update_autonomy_job(interval: str = "every 15m", client: Optional
                 "last_status": None,
                 "last_error": None,
                 "last_delivery_error": None,
-                "deliver": "whatsapp",  # home/ops channel, not the owner DM
+                "deliver": _AUTONOMY_DELIVER,  # deployment channel (plugins.colony.autonomy_deliver)
                 "origin": None,
                 "enabled_toolsets": ["web", "terminal", "file", "send_message", "colony"],
                 "workdir": None,
@@ -1119,6 +1125,23 @@ def register(ctx):
 
     # 0. Configure Colony LLM (auto-detect local models or use explicit config)
     _configure_colony_llm(_colony_client, config)
+
+    # Deployment override seam: persona/owner-voice prompt + autonomy delivery
+    # channel come from plugins.colony.* so the core stays generic. autonomy_prompt
+    # may be an inline string or a file path; autonomy_deliver names the channel the
+    # bridge reports to (default 'dm').
+    global _AUTONOMY_PROMPT, _AUTONOMY_DELIVER
+    _ap = config.get("autonomy_prompt")
+    if isinstance(_ap, str) and _ap.strip():
+        if "\n" not in _ap and os.path.isfile(os.path.expanduser(_ap)):
+            try:
+                _ap = open(os.path.expanduser(_ap), encoding="utf-8").read()
+            except Exception as _e:
+                logger.warning("colony: autonomy_prompt file unreadable (%s); using default", _e)
+                _ap = None
+        if _ap:
+            _AUTONOMY_PROMPT = _ap
+    _AUTONOMY_DELIVER = config.get("autonomy_deliver", _AUTONOMY_DELIVER)
 
     # 1. Register native Colony tools
     for schema in _TOOL_SCHEMAS:
