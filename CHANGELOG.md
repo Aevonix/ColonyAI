@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.30.2 — `colony secrets` is a real command
+
+The secrets CLI handlers existed but were never registered with the main
+parser; `colony secrets set KEY VALUE` (as documented for setup-once
+connector credentials) now works: list / get / set / delete / backend /
+status.
+
 ## v0.30.1 — set a connector credential once
 
 `ConnectorConfig` now resolves env-first, then the Colony encrypted secrets
