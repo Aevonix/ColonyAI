@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.28.0 — resolution that sticks: settlement, learning loop, agent tools
+
+The headline bug: resolving an overdue-commitment concern from the command
+center only settled the workspace concern; the commitment stayed open, the
+next ingest tick re-raised it, and the owner's resolve was silently undone
+minutes later. Resolution is now a first-class, cascading, learnable act:
+
+- **Source settlement** (`self_model/settlement.py`): a concern raised from a
+  durable source (`sources=["commitment:<id>", ...]`) settles that source when
+  the concern is resolved. Registry-based — deployments wire settlers for the
+  stores they run; a commitment settler ships wired.
+- **Resolve with WHY**: outcome `done | invalid | duplicate | wont_do |
+  obsolete` on the concern-resolve endpoint, `PATCH /commitments/{id}`, MCP
+  fulfill/cancel, and the new Hermes tools. The resolution {outcome, note, by,
+  at} is recorded on the commitment and emitted as an event.
+- **Re-raise suppression**: a resolved concern's dedup_key is not re-raised
+  while the resolution is fresh (`COLONY_WORKSPACE_RESOLVED_TTL_HOURS`,
+  default 24), so a resolve sticks even against a still-open source.
+- **Reverse cascade**: settling a commitment directly (agent tool, MCP, API)
+  resolves any workspace concern raised from it.
+- **Open-status model unified**: `get_overdue()` and per-person open-item
+  queries include `overdue` rows; the pending→overdue flip no longer hides
+  items from dedup lists, prompt sections, or workspace ingest (and the flip
+  only fires once per item).
+- **Extraction learning loop**: the per-turn introspection extractor now
+  enforces dedup in code against open items AND recently rejected ones
+  (cancelled as invalid/duplicate), and its prompt carries both lists.
+  `GET /commitments/stats/resolution` exposes per-source outcome stats as the
+  calibration signal. `POST /commitments` accepts `dedupe` to return an
+  existing open twin instead of creating one.
+- **Agent surface**: Hermes plugin tools `colony_list_commitments`,
+  `colony_create_commitment` (dedupes), `colony_resolve_commitment` (with
+  outcome + reason) — any Colony agent can generate AND resolve items and
+  learns from what the owner rejects.
+- Hermes plugin repo/live drift healed: initiatives-based task handlers and
+  the `plugins.colony.autonomy_prompt` / `autonomy_deliver` deployment seam
+  are now in-repo alongside the sender-attribution redesign.
+
 ## v0.27.1 — autonomy-loop hardening + operator controls
 
 Fixes from live operation and the command-center build:
