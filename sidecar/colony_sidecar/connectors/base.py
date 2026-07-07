@@ -57,6 +57,12 @@ def _iso(ts: float):
         return datetime.now(timezone.utc).isoformat()
 
 
+def _slug(value: str) -> str:
+    """Lowercase [a-z0-9_] account slug — it becomes part of env var names
+    and secrets paths, so anything else is dropped."""
+    return "".join(c for c in (value or "").lower() if c.isalnum() or c == "_")
+
+
 class ConnectorConfig:
     """Config for one connector, resolved env-first then secrets-store.
 
@@ -104,14 +110,24 @@ class Connector(ABC):
     domain: str = "generic"
     default_poll_secs: int = 900
 
-    def __init__(self) -> None:
+    def __init__(self, account: str = "") -> None:
+        # An account-scoped instance ("imap" + account "aevonix") reads its
+        # own namespace: secrets connector/imap_aevonix/* and env
+        # COLONY_CONNECTOR_IMAP_AEVONIX_*. Several instances of one connector
+        # class run side by side, one per account.
+        self.account = _slug(account)
+        if self.account:
+            self.name = f"{self.name}_{self.account}"
         self.config = ConnectorConfig(self.name)
         self._last_poll: float = 0.0
 
-    # -- lifecycle knobs (env-driven) ------------------------------------
+    # -- lifecycle knobs (env/secrets-driven) -----------------------------
     @property
     def enabled(self) -> bool:
-        return self.config.get_bool("ENABLED", False)
+        # An account listed in the connector's ACCOUNTS key is intended ON;
+        # it can still be turned off explicitly with its own enabled=false.
+        return self.config.get_bool(
+            "ENABLED", getattr(self, "_default_enabled", False))
 
     @property
     def poll_secs(self) -> int:

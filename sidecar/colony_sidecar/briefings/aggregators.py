@@ -623,28 +623,45 @@ class ConnectorCalendarAggregator:
     _PREP_ATTENDEE_THRESHOLD = 2
 
     def __init__(self, connector: Optional[Any] = None) -> None:
-        self._connector = connector
+        # accepts one connector, a list of connectors, or None (resolve all
+        # enabled calendar instances — base + per-account — at call time)
+        if connector is None:
+            self._connectors = None
+        elif isinstance(connector, (list, tuple)):
+            self._connectors = list(connector)
+        else:
+            self._connectors = [connector]
 
-    def _get_connector(self):
-        if self._connector is not None:
-            return self._connector
+    def _get_connectors(self):
+        if self._connectors is not None:
+            return [c for c in self._connectors if getattr(c, "enabled", True)]
         try:
+            from colony_sidecar.connectors.base import ConnectorConfig
             from colony_sidecar.connectors.caldav_calendar import CalendarConnector
+            accounts = [a.strip() for a in
+                        ConnectorConfig("calendar").get("ACCOUNTS", "")
+                        .replace(";", ",").split(",") if a.strip()]
+            if accounts:
+                out = []
+                for a in accounts:
+                    c = CalendarConnector(account=a)
+                    c._default_enabled = True
+                    out.append(c)
+                return [c for c in out if c.enabled]
             c = CalendarConnector()
-            return c if c.enabled else None
+            return [c] if c.enabled else []
         except Exception:
-            return None
+            return []
 
     def _events_between(self, start_utc: datetime,
                         end_utc: datetime, tz: str) -> List[CalendarEvent]:
-        conn = self._get_connector()
-        if conn is None:
-            return []
-        try:
-            observations = conn.poll() or []
-        except Exception:
-            logger.exception("ConnectorCalendarAggregator poll failed")
-            return []
+        observations = []
+        for conn in self._get_connectors():
+            try:
+                observations.extend(conn.poll() or [])
+            except Exception:
+                logger.exception("ConnectorCalendarAggregator poll failed (%s)",
+                                 getattr(conn, "name", "?"))
         try:
             zone = zoneinfo.ZoneInfo(tz)
         except Exception:

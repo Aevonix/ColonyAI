@@ -146,3 +146,38 @@ def test_connector_config_no_secrets_manager(monkeypatch):
     monkeypatch.setattr(host_mod, "_secrets_manager", None)
     monkeypatch.delenv("COLONY_CONNECTOR_IMAP_HOST", raising=False)
     assert ConnectorConfig("imap").get("HOST", "") == ""
+
+
+# --- multi-account connectors -------------------------------------------------
+
+def test_connector_account_namespacing(monkeypatch):
+    from colony_sidecar.connectors.imap_email import IMAPEmailConnector
+
+    monkeypatch.setattr(host_mod, "_secrets_manager", None)
+    c = IMAPEmailConnector(account="Aevonix!")     # slugged to [a-z0-9_]
+    assert c.name == "imap_aevonix"
+    monkeypatch.setenv("COLONY_CONNECTOR_IMAP_AEVONIX_HOST", "imap.example.com")
+    assert c.config.get("HOST") == "imap.example.com"
+
+    # secrets namespace follows the instance name
+    mgr = _FakeSecretsManager({"connector/imap_aevonix/user": "me@example.com"})
+    monkeypatch.setattr(host_mod, "_secrets_manager", mgr)
+    assert c.config.get("USER") == "me@example.com"
+
+
+def test_manager_expands_accounts(monkeypatch):
+    from colony_sidecar.connectors.manager import ConnectorManager
+
+    monkeypatch.setattr(host_mod, "_secrets_manager", None)
+    for var in list(__import__("os").environ):
+        if var.startswith("COLONY_CONNECTOR_"):
+            monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("COLONY_CONNECTOR_IMAP_ACCOUNTS", "aevonix, marcseal20")
+    monkeypatch.setenv("COLONY_CONNECTOR_IMAP_MARCSEAL20_ENABLED", "false")
+
+    m = ConnectorManager()
+    m.register_default_connectors()
+    names = [c.name for c in m._connectors]
+    assert "imap_aevonix" in names          # listed -> enabled by default
+    assert "imap_marcseal20" not in names   # explicit off wins
+    assert "imap" not in names              # base instance replaced by accounts

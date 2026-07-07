@@ -78,7 +78,8 @@ class IMAPEmailConnector(Connector):
                 ts=ts,
                 payload={"from": from_addr, "from_name": from_name,
                          "to": m.get("to", ""), "subject": subject,
-                         "snippet": snippet},
+                         "snippet": snippet,
+                         "account": self.config.get("USER", self.account)},
                 entities=entities, text=text))
         return out
 

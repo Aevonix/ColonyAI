@@ -58,7 +58,15 @@ class ConnectorManager:
         self._connectors.append(connector)
 
     def register_default_connectors(self) -> int:
-        """Register every reference connector whose env-enable flag is set."""
+        """Register every reference connector that is enabled.
+
+        Multi-account: a connector's ACCOUNTS key (env
+        COLONY_CONNECTOR_<NAME>_ACCOUNTS or secret connector/<name>/accounts,
+        comma-separated) expands into one instance per account, each reading
+        its own connector/<name>_<account>/* namespace. A listed account is
+        enabled by default; without ACCOUNTS the single classic instance is
+        used."""
+        from colony_sidecar.connectors.base import ConnectorConfig
         from colony_sidecar.connectors.imap_email import IMAPEmailConnector
         from colony_sidecar.connectors.caldav_calendar import CalendarConnector
         from colony_sidecar.connectors.fs_documents import FSDocumentsConnector
@@ -66,9 +74,20 @@ class ConnectorManager:
         for cls in (IMAPEmailConnector, CalendarConnector,
                     FSDocumentsConnector, WebhookPullConnector):
             try:
-                c = cls()
-                if c.enabled:
-                    self.register(c)
+                accounts = [a.strip() for a in
+                            ConnectorConfig(cls.name).get("ACCOUNTS", "")
+                            .replace(";", ",").split(",") if a.strip()]
+                if accounts:
+                    instances = []
+                    for a in accounts:
+                        c = cls(account=a)
+                        c._default_enabled = True
+                        instances.append(c)
+                else:
+                    instances = [cls()]
+                for c in instances:
+                    if c.enabled:
+                        self.register(c)
             except Exception:
                 logger.debug("connector %s init failed", cls.__name__,
                              exc_info=True)

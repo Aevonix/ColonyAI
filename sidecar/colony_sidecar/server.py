@@ -1220,11 +1220,10 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logger.debug("anomaly/synthesis aggregator wiring failed", exc_info=True)
             try:
+                # resolves the enabled calendar connector instance(s) — base
+                # or per-account — at call time; harmless when none enabled
                 from colony_sidecar.briefings.aggregators import ConnectorCalendarAggregator
-                from colony_sidecar.connectors.caldav_calendar import CalendarConnector
-                _cal_conn = CalendarConnector()
-                if _cal_conn.enabled:
-                    _aggs["calendar_aggregator"] = ConnectorCalendarAggregator(_cal_conn)
+                _aggs["calendar_aggregator"] = ConnectorCalendarAggregator()
             except Exception:
                 logger.debug("calendar aggregator wiring failed", exc_info=True)
             briefings = BriefingEngine(config=b_cfg, store=b_store,
