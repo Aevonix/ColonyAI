@@ -102,3 +102,47 @@ async def test_context_assemble_self_knowledge_section(monkeypatch):
                                  "content": "remind me to water the plants"},
         })
         assert "colony-self-knowledge" not in [s["id"] for s in r2.json()["sections"]]
+
+
+# --- connector config: env-first, secrets-store fallback ---------------------
+
+class _FakeSecretsManager:
+    def __init__(self, data):
+        self._data = data
+        self.reads = []
+
+    def get(self, key, default=None):
+        self.reads.append(key)
+        return self._data.get(key, default)
+
+
+def test_connector_config_secrets_fallback(monkeypatch):
+    from colony_sidecar.connectors.base import ConnectorConfig
+
+    mgr = _FakeSecretsManager({
+        "connector/calendar/ics_url": "https://cal.example/secret.ics",
+        "connector/calendar/enabled": "true",
+        "connector/calendar/max": "10",
+    })
+    monkeypatch.setattr(host_mod, "_secrets_manager", mgr)
+    monkeypatch.delenv("COLONY_CONNECTOR_CALENDAR_ICS_URL", raising=False)
+
+    cfg = ConnectorConfig("calendar")
+    assert cfg.get("ICS_URL") == "https://cal.example/secret.ics"
+    assert cfg.get_bool("ENABLED") is True
+    assert cfg.get_int("MAX", 50) == 10
+    assert "connector/calendar/ics_url" in mgr.reads
+
+    # env always wins over the secret
+    monkeypatch.setenv("COLONY_CONNECTOR_CALENDAR_ICS_URL", "https://env.example/a.ics")
+    assert cfg.get("ICS_URL") == "https://env.example/a.ics"
+
+    # unknown key falls through to the default
+    assert cfg.get("NOPE", "dflt") == "dflt"
+
+
+def test_connector_config_no_secrets_manager(monkeypatch):
+    from colony_sidecar.connectors.base import ConnectorConfig
+    monkeypatch.setattr(host_mod, "_secrets_manager", None)
+    monkeypatch.delenv("COLONY_CONNECTOR_IMAP_HOST", raising=False)
+    assert ConnectorConfig("imap").get("HOST", "") == ""

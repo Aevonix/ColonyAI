@@ -58,13 +58,33 @@ def _iso(ts: float):
 
 
 class ConnectorConfig:
-    """Reads COLONY_CONNECTOR_<NAME>_<KEY> env for one connector."""
+    """Config for one connector, resolved env-first then secrets-store.
+
+    Precedence: COLONY_CONNECTOR_<NAME>_<KEY> env (an explicit deployment
+    override always wins) → the Colony secrets store at
+    ``connector/<name>/<key>`` → default. The secrets fallback means a
+    credential (IMAP password, ICS URL) is entered ONCE via the secrets
+    API/CLI, lives encrypted in the store, and survives service redeploys
+    without ever touching a plist or unit file."""
 
     def __init__(self, name: str) -> None:
+        self._name = name.lower()
         self._prefix = f"COLONY_CONNECTOR_{name.upper()}_"
 
     def get(self, key: str, default: str = "") -> str:
-        return os.environ.get(self._prefix + key.upper(), default)
+        env = os.environ.get(self._prefix + key.upper())
+        if env:
+            return env
+        try:
+            from colony_sidecar.api.routers import host as _h
+            mgr = getattr(_h, "_secrets_manager", None)
+            if mgr is not None:
+                v = mgr.get(f"connector/{self._name}/{key.lower()}")
+                if v is not None:
+                    return v
+        except Exception:
+            pass
+        return default
 
     def get_int(self, key: str, default: int) -> int:
         try:

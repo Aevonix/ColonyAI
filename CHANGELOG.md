@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.30.1 — set a connector credential once
+
+`ConnectorConfig` now resolves env-first, then the Colony encrypted secrets
+store (`connector/<name>/<key>`), then the default. A credential like an IMAP
+password or a private ICS URL is entered ONCE — `colony secrets set
+connector/calendar/ics_url <url>` or `POST /v1/host/secrets/set` — lives
+encrypted, survives service redeploys, and never has to be copied into a
+plist or unit file. An explicit env var still always wins, and enable flags
+work through the same path (restart to register a newly-enabled connector).
+
 ## v0.30.0 — gap closure: production-ready wiring
 
 Every entry in docs/KNOWN-GAPS.md was prioritized and either fixed, wired
