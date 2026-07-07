@@ -399,16 +399,12 @@ class AutonomyLoop:
     # ------------------------------------------------------------------
 
     async def _phase_events(self) -> None:
-        """Drain recent events and feed relevant ones to initiative engine."""
+        """Count recent events into stats. Per-event routing was a dead loop
+        that only ever `pass`ed — deliberately not implemented here: message
+        traffic is Hermes' domain and reaches Colony through turn_sync /
+        signal ingest, so the tick only tracks volume."""
         try:
-            recent = self.events.get_history(limit=50)
-            new_count = len(recent)
-            if new_count:
-                for event in recent:
-                    event_type = getattr(event, "event_type", None)
-                    if event_type in ("message_received", "message_sent", "gateway_signal"):
-                        pass  # event counted in stats; per-event routing not yet used
-            self.stats.events_processed += new_count
+            self.stats.events_processed += len(self.events.get_history(limit=50))
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase events error: %s", exc, exc_info=True)
@@ -2487,28 +2483,89 @@ class AutonomyLoop:
             logger.error("Phase %s error: %s", name, exc, exc_info=True)
 
     async def _phase_condition_checks(self) -> None:
-        """Hourly system-condition sweep: the pending→overdue commitment flip
-        (fires commitment.overdue exactly once per item), sustained affect
-        decline, and surprise accumulation. These checkers were written for a
-        queue-scheduled path that nothing enqueues — the loop is the reliable
-        place to actually run them (no graph dependency, own hourly dedup)."""
+        """System-condition sweep (hourly) + blocked-goal condition polling
+        (every tick, per-condition cadence).
+
+        System checks: the pending→overdue commitment flip (fires
+        commitment.overdue exactly once per item), sustained affect decline,
+        and surprise accumulation — written for a queue-scheduled path that
+        nothing enqueues; the loop is the reliable place to run them.
+
+        Blocked goals: a goal blocked with context.condition_type is polled
+        via handle_check_condition at get_check_interval() cadence and
+        auto-unblocks when the condition is met. This is the missing PRODUCER
+        for the per-goal condition path."""
         now = datetime.now(timezone.utc)
         key = now.strftime("%Y-%m-%dT%H")
-        if self._periodic_last.get("condition_checks") == key:
+        if self._periodic_last.get("condition_checks") != key:
+            self._periodic_last["condition_checks"] = key
+            from colony_sidecar.autonomy.condition_worker import (
+                _check_affect_decline,
+                _check_commitment_overdue,
+                _check_surprise_accumulation,
+            )
+            for checker in (_check_commitment_overdue, _check_affect_decline,
+                            _check_surprise_accumulation):
+                try:
+                    await checker({})
+                except Exception:
+                    logger.debug("condition check %s failed",
+                                 getattr(checker, "__name__", "?"), exc_info=True)
+        await self._poll_blocked_goal_conditions()
+
+    async def _poll_blocked_goal_conditions(self) -> None:
+        """Poll every BLOCKED goal that carries an external condition.
+
+        Cadence is the condition type's interval, floored by the tick
+        interval (a 30s deployment_health check can only fire once per tick).
+        Every step is per-goal fault-isolated; one malformed goal can never
+        take down the loop."""
+        goals = getattr(self._registry, "goals", None)
+        if goals is None:
             return
-        self._periodic_last["condition_checks"] = key
         from colony_sidecar.autonomy.condition_worker import (
-            _check_affect_decline,
-            _check_commitment_overdue,
-            _check_surprise_accumulation,
-        )
-        for checker in (_check_commitment_overdue, _check_affect_decline,
-                        _check_surprise_accumulation):
+            get_check_interval, handle_check_condition)
+        from colony_sidecar.goals.models import GoalStatus
+        try:
+            blocked = goals.list_goals(status="blocked", limit=100) or []
+        except Exception:
+            logger.debug("blocked-goal listing failed", exc_info=True)
+            return
+        now = time.time()
+        for goal in blocked:
             try:
-                await checker({})
+                ctx = getattr(goal, "context", None) or {}
+                ctype = ctx.get("condition_type")
+                if not ctype:
+                    continue      # blocked on a human/approval, not a condition
+                interval = get_check_interval(ctype, getattr(goal, "deadline", None))
+                try:
+                    last = float(ctx.get("condition_last_check") or 0.0)
+                except (TypeError, ValueError):
+                    last = 0.0
+                if now - last < interval:
+                    continue
+                await handle_check_condition(
+                    {"goal_id": goal.goal_id, "condition_type": ctype,
+                     "condition_params": ctx.get("condition_params") or {}},
+                    goal_engine=goals,
+                )
+                # RE-LOAD before persisting the poll time: the check may have
+                # awaited a slow network call, and writing the pre-await
+                # object back would clobber any concurrent update (lost
+                # update). GoalEngine exposes no public save; _store is the
+                # sanctioned persistence path here. If the goal is still
+                # BLOCKED — condition not met, OR met but unblock failed —
+                # stamp the fresh object so the cadence holds either way (a
+                # failed unblock must not busy-repoll every tick).
+                fresh = goals._store.get_goal(goal.goal_id)
+                if fresh is not None and fresh.status == GoalStatus.BLOCKED \
+                        and fresh.context.get("condition_type"):
+                    fresh.context["condition_last_check"] = now
+                    goals._store.save_goal(fresh)
             except Exception:
-                logger.debug("condition check %s failed",
-                             getattr(checker, "__name__", "?"), exc_info=True)
+                logger.debug("condition poll failed for goal %s",
+                             getattr(goal, "goal_id", "?"), exc_info=True)
 
     async def _phase_memory_consolidation(self) -> None:
         async def work(graph):

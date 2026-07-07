@@ -338,7 +338,7 @@ Design:
   posts a structured report to the job complete endpoint. Ships with an install
   script + a launchd/systemd unit template (generic placeholders).
 
-Config flags: `COLONY_WORKER_ENABLED`, `COLONY_WORKER_CAPABILITIES`,
+Config flags: `COLONY_WORKERS_MODE`, `COLONY_WORKER_NODE_ID`, `COLONY_WORKER_MAX_JOBS`, `COLONY_WORKER_CAPABILITIES`,
 `COLONY_WORKER_LLM_BASE_URL`/`_MODEL`/`_API_KEY`, `COLONY_WORKER_POLL_SECS`,
 server-side `COLONY_WORKERS_MODE` off|shadow|live (shadow: accept registration
 + claims but execute in dry-run reporting only). Default shadow.

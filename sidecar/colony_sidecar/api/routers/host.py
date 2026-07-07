@@ -1638,6 +1638,24 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             priority=100,
         ))
 
+    # --- Self-knowledge: when the message asks about Colony ITSELF
+    # (capabilities, architecture, subsystems), ground the answer in the
+    # identity-bootstrap corpus instead of leaving the model to guess. ---
+    try:
+        from colony_sidecar.identity_bootstrap.self_query import (
+            build_self_context_from_corpus, query_is_self_referential)
+        if query_text and query_is_self_referential(query_text):
+            self_ctx = build_self_context_from_corpus()
+            if self_ctx:
+                sections.append(ContextSection(
+                    id="colony-self-knowledge",
+                    title="What I Am",
+                    body=self_ctx,
+                    priority=100,
+                ))
+    except Exception as exc:
+        logger.debug("context_assemble self-knowledge section failed: %s", exc)
+
     # --- Memory ---
     if _graph is not None and query_text:
         try:
@@ -2747,7 +2765,10 @@ async def update_goal(goal_id: str, body: GoalUpdateRequest) -> GoalResponse:
             if status_lower in ("completed", "done"):
                 goal = _goals_store.accept_goal(goal_id)  # must be accepted first if not already
             elif status_lower == "blocked":
-                goal = _goals_store.block_goal(goal_id, reason=body.notes or "Blocked via API")
+                goal = _goals_store.block_goal(
+                    goal_id, reason=body.notes or "Blocked via API",
+                    condition_type=body.condition_type,
+                    condition_params=body.condition_params)
             elif status_lower == "unblocked":
                 goal = _goals_store.unblock_goal(goal_id)
             elif status_lower == "abandoned":

@@ -184,8 +184,21 @@ class GoalEngine:
 
         return goal
 
-    def block_goal(self, goal_id: str, reason: str) -> Goal:
-        """Transition an ACTIVE goal to BLOCKED."""
+    def block_goal(
+        self,
+        goal_id: str,
+        reason: str,
+        condition_type: Optional[str] = None,
+        condition_params: Optional[Dict[str, Any]] = None,
+    ) -> Goal:
+        """Transition an ACTIVE goal to BLOCKED.
+
+        With a ``condition_type`` (email_reply | deployment_health |
+        delivery_status | api_response | custom), the goal blocks on an
+        EXTERNAL condition: the autonomy loop's condition sweep polls it at
+        the type's cadence and unblocks the goal automatically when it's met.
+        Without one, the goal stays blocked until something explicitly
+        unblocks it."""
         self._require_quorum("goal_block")
         goal = self._store.get_goal(goal_id)
         if goal.status != GoalStatus.ACTIVE:
@@ -195,10 +208,17 @@ class GoalEngine:
         old_status = goal.status
         goal.status = GoalStatus.BLOCKED
         goal.context["block_reason"] = reason
+        if condition_type:
+            goal.context["condition_type"] = condition_type
+            goal.context["condition_params"] = condition_params or {}
+            goal.context.pop("condition_last_check", None)
         self._store.save_goal(goal)
         self._store.log_transition(goal_id, old_status, GoalStatus.BLOCKED, "blocked",
-                                   metadata={"reason": reason})
-        logger.warning("Goal %s blocked: %s", goal_id, reason)
+                                   metadata={"reason": reason,
+                                             **({"condition_type": condition_type}
+                                                if condition_type else {})})
+        logger.warning("Goal %s blocked: %s%s", goal_id, reason,
+                       f" (awaiting {condition_type})" if condition_type else "")
         return goal
 
     def unblock_goal(self, goal_id: str) -> Goal:
@@ -212,6 +232,9 @@ class GoalEngine:
         old_status = goal.status
         goal.status = GoalStatus.ACTIVE
         goal.context.pop("block_reason", None)
+        goal.context.pop("condition_type", None)
+        goal.context.pop("condition_params", None)
+        goal.context.pop("condition_last_check", None)
         self._store.save_goal(goal)
         self._store.log_transition(goal_id, old_status, GoalStatus.ACTIVE, "unblocked")
 

@@ -123,6 +123,22 @@ guide.
 - **Temporal awareness.** Authoritative current time, per-contact timezones,
   and a unified journal of every turn and action, so the agent knows when
   things happened and what is overdue.
+- **Commitments that resolve durably.** Promises and owed follow-ups are
+  tracked with real resolution semantics: settling one records WHY
+  (`done | invalid | duplicate | wont_do | obsolete`), cascades between the
+  cognitive workspace and the source item so a resolve can never be silently
+  undone, deduplicates re-extraction against open AND recently-rejected
+  items, and exposes per-source outcome stats
+  (`GET /v1/host/commitments/stats/resolution`) so whatever generates items
+  learns from what the owner rejects.
+- **Self-model (the Mind track).** A selfhood benchmark derives weekly
+  scorecards from journals (never self-reported); bounded self-experiments
+  adjust one parameter at a time with auto-revert on regression; a cognitive
+  workspace holds salience-decayed concerns between interactions
+  (`COLONY_WORKSPACE`); an expectation engine turns due-dated commitments
+  into predictions and scores its own calibration
+  (`COLONY_EXPECTATIONS`); a toolsmith mines the action journal for repeated
+  procedures and drafts sandbox-verified tools (`COLONY_TOOLSMITH`).
 - **Initiatives and executor.** A background loop generates proactive
   initiatives (follow-ups, research, check-ins, owed deliverables); an
   optional in-process executor (`COLONY_EXECUTOR_ENABLED`) reasons about them
@@ -130,6 +146,14 @@ guide.
 - **Projects.** Multi-step goal persistence (`COLONY_PROJECTS_MODE`): a
   planner decomposes a goal and the project engine pursues it across autonomy
   ticks instead of one-shot actions.
+- **Goals that unblock themselves.** A goal blocked on an external condition
+  (an email reply, a deployment's health, an API's response) declares it
+  (`condition_type` / `condition_params`); the autonomy loop polls at the
+  condition's cadence and reactivates the goal the moment it's met.
+- **Briefings with real content.** Daily/weekly briefings compose from live
+  aggregators — relationship changes (graph), goal state (engine), active
+  anomalies (detector), cross-domain insights (synthesis), and calendar
+  (the ICS connector, when enabled) — never from placeholder data.
 - **Skills memory.** Compounding procedure learning
   (`COLONY_SKILLS_DISTILL`): retry-successes and novel diagnoses are distilled
   into reusable procedures, retrieved into future prompts, and ranked by
@@ -252,6 +276,11 @@ python -m pytest tests/ colony_sidecar/ -q
 
 The Python sidecar lives under `sidecar/`; the host integration plugins under
 `plugins/`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Status honesty:** anything that exists in code but is not fully wired is
+inventoried in [docs/KNOWN-GAPS.md](docs/KNOWN-GAPS.md) — Colony never
+reports a subsystem as running when it isn't, and that document is the
+authoritative list of what's scaffolding versus live.
 
 ## License
 

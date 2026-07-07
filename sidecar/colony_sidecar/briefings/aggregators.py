@@ -390,6 +390,152 @@ class RelationshipAggregator:
             return [dict(r) async for r in result]
 
 
+class AnomalyDetectorAggregator:
+    """Real implementation over the AnomalyDetector the autonomy registry
+    holds (its observation state is in-memory on that ONE instance, so the
+    detector is resolved lazily at call time — never constructed fresh here,
+    which would always be empty)."""
+
+    # Severity labels over the detector's 0-1 float scale.
+    _SEVERITY_FLOOR = {"critical": 0.85, "warning": 0.6, "info": 0.3}
+
+    def __init__(self, detector_provider: Optional[Any] = None) -> None:
+        self._provider = detector_provider or self._registry_detector
+
+    @staticmethod
+    def _registry_detector():
+        try:
+            from colony_sidecar.api.routers import host as _h
+            loop = getattr(_h, "_autonomy_loop", None)
+            registry = getattr(loop, "_registry", None)
+            return getattr(registry, "anomalies", None)
+        except Exception:
+            return None
+
+    @classmethod
+    def _label(cls, severity: float) -> str:
+        if severity >= cls._SEVERITY_FLOOR["critical"]:
+            return "critical"
+        if severity >= cls._SEVERITY_FLOOR["warning"]:
+            return "warning"
+        return "info"
+
+    @staticmethod
+    def _aware(dt: Optional[datetime]) -> datetime:
+        # the detector stamps naive LOCAL datetimes
+        if dt is None:
+            return datetime.now(timezone.utc)
+        if dt.tzinfo is None:
+            return dt.astimezone()
+        return dt
+
+    def _summaries(self, min_severity: str) -> List[AnomalySummary]:
+        detector = self._provider() if callable(self._provider) else self._provider
+        if detector is None:
+            return []
+        floor = self._SEVERITY_FLOOR.get(min_severity, 0.6)
+        try:
+            recent = detector.get_recent(min_severity=floor, limit=20) or []
+        except Exception:
+            logger.exception("AnomalyDetectorAggregator get_recent failed")
+            return []
+        out = []
+        for a in recent:
+            out.append(AnomalySummary(
+                anomaly_id=getattr(a, "id", ""),
+                severity=self._label(float(getattr(a, "severity", 0.0))),
+                description=getattr(a, "description", ""),
+                detected_at=self._aware(getattr(a, "detected_at", None)),
+                source=getattr(getattr(a, "type", None), "value",
+                               str(getattr(a, "type", "anomaly"))),
+            ))
+        return out
+
+    def get_active_anomalies(self, min_severity: str = "warning") -> List[AnomalySummary]:
+        return self._summaries(min_severity)
+
+    def get_new_since(self, since: datetime,
+                      min_severity: str = "warning") -> List[AnomalySummary]:
+        if since is not None and since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        return [a for a in self._summaries(min_severity)
+                if since is None or a.detected_at >= since]
+
+
+class DiscovererSynthesisAggregator:
+    """Real implementation over the ConnectionDiscoverer + InsightStore.
+
+    Connections are recomputed on demand (the discoverer persists nothing);
+    dismissed insight ids are filtered out. Connections carry no reliable
+    timestamps, so `since` cannot be honored and is ignored — the confidence
+    floor and dismissal filter are the honest selectors."""
+
+    def __init__(self, discoverer_provider: Optional[Any] = None,
+                 insight_store_provider: Optional[Any] = None) -> None:
+        self._discoverer = discoverer_provider or self._host_discoverer
+        self._insights = insight_store_provider or self._host_insight_store
+
+    @staticmethod
+    def _host_discoverer():
+        try:
+            from colony_sidecar.api.routers import host as _h
+            return getattr(_h, "_connection_discoverer", None)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _host_insight_store():
+        try:
+            from colony_sidecar.api.routers import host as _h
+            return getattr(_h, "_insight_store", None)
+        except Exception:
+            return None
+
+    def _connections(self, min_confidence: float) -> List[Any]:
+        disc = self._discoverer() if callable(self._discoverer) else self._discoverer
+        if disc is None:
+            return []
+        try:
+            conns = _run_async(disc.discover_connections(
+                min_confidence=min_confidence)) or []
+        except Exception:
+            logger.exception("DiscovererSynthesisAggregator discovery failed")
+            return []
+        store = self._insights() if callable(self._insights) else self._insights
+        if store is not None:
+            try:
+                dismissed = store.list_dismissed()
+                conns = [c for c in conns
+                         if getattr(c, "id", None) not in dismissed]
+            except Exception:
+                logger.debug("dismissed-insight filter failed", exc_info=True)
+        return conns
+
+    def get_high_confidence_insights(
+        self,
+        min_confidence: float = 0.80,
+        since: Optional[datetime] = None,
+        limit: int = 3,
+    ) -> List[CrossDomainInsight]:
+        out = []
+        for c in self._connections(min_confidence)[:limit]:
+            out.append(CrossDomainInsight(
+                insight_id=getattr(c, "id", ""),
+                description=getattr(c, "description", ""),
+                confidence=float(getattr(c, "confidence", 0.0)),
+                domains=[d for d in (getattr(c, "source_domain", None),
+                                     getattr(c, "target_domain", None)) if d],
+            ))
+        return out
+
+    def get_weekly_patterns(self, period_start: datetime,
+                            period_end: datetime) -> List[str]:
+        # Recurring connections (seen more than once) read as patterns.
+        return [getattr(c, "description", "")
+                for c in self._connections(min_confidence=0.6)
+                if getattr(c, "observation_count", 1) > 1][:5]
+
+
 class GoalEngineAggregator:
     """Real implementation backed by the GoalEngine (goals are owner-scoped;
     no person filter). Overdue/blocked/completing-soon read live goal state;
@@ -462,6 +608,102 @@ class GoalEngineAggregator:
         return GoalCompletionStats(total_initiated=initiated,
                                    total_completed=completed,
                                    completion_rate=rate)
+
+
+class ConnectorCalendarAggregator:
+    """Real calendar sections from the ICS calendar CONNECTOR (the only
+    calendar source that exists in-repo). Fetches the configured feed on
+    demand — briefings run once or twice a day, so a fresh fetch per compose
+    is fine and never serves stale events. Gated on the connector's own
+    COLONY_CONNECTOR_CALENDAR_ENABLED so it can't surprise-fetch.
+
+    Prep-needed heuristic: two or more attendees (the ICS payload carries no
+    video-link field)."""
+
+    _PREP_ATTENDEE_THRESHOLD = 2
+
+    def __init__(self, connector: Optional[Any] = None) -> None:
+        self._connector = connector
+
+    def _get_connector(self):
+        if self._connector is not None:
+            return self._connector
+        try:
+            from colony_sidecar.connectors.caldav_calendar import CalendarConnector
+            c = CalendarConnector()
+            return c if c.enabled else None
+        except Exception:
+            return None
+
+    def _events_between(self, start_utc: datetime,
+                        end_utc: datetime, tz: str) -> List[CalendarEvent]:
+        conn = self._get_connector()
+        if conn is None:
+            return []
+        try:
+            observations = conn.poll() or []
+        except Exception:
+            logger.exception("ConnectorCalendarAggregator poll failed")
+            return []
+        try:
+            zone = zoneinfo.ZoneInfo(tz)
+        except Exception:
+            zone = timezone.utc
+        from colony_sidecar.connectors.caldav_calendar import _ics_ts
+        dated: List[Any] = []
+        for obs in observations:
+            when = datetime.fromtimestamp(obs.ts, tz=timezone.utc)
+            if not (start_utc <= when < end_utc):
+                continue
+            payload = obs.payload or {}
+            attendees = list(payload.get("attendees") or [])
+            end_raw = payload.get("end") or ""
+            duration = 30
+            if end_raw:
+                dur = (_ics_ts(end_raw) - obs.ts) / 60.0
+                if 0 < dur <= 24 * 60:
+                    duration = int(dur)
+            dated.append((when, CalendarEvent(
+                time=when.astimezone(zone).strftime("%H:%M"),
+                title=payload.get("summary") or "(untitled)",
+                participants=attendees,
+                prep_needed=len(attendees) >= self._PREP_ATTENDEE_THRESHOLD,
+                location=payload.get("location") or None,
+                duration_minutes=duration,
+            )))
+        # sort by the REAL datetime — an HH:MM string sort scrambles any
+        # window longer than one day (Tue 08:00 before Mon 09:00)
+        dated.sort(key=lambda pair: pair[0])
+        return [e for _, e in dated]
+
+    @staticmethod
+    def _day_bounds(date: str, tz: str, days: int = 1):
+        try:
+            zone = zoneinfo.ZoneInfo(tz)
+        except Exception:
+            zone = timezone.utc
+        day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=zone)
+        start = day.astimezone(timezone.utc)
+        return start, start + _timedelta(days=days)
+
+    def get_today_events(self, date: str, timezone: str) -> List[CalendarEvent]:
+        try:
+            start, end = self._day_bounds(date, timezone)
+            return self._events_between(start, end, timezone)
+        except Exception:
+            logger.exception("ConnectorCalendarAggregator.get_today_events failed")
+            return []
+
+    def get_prep_needed(self, events: List[CalendarEvent]) -> List[CalendarEvent]:
+        return [e for e in events if e.prep_needed]
+
+    def get_upcoming_week(self, start_date: str, timezone: str) -> List[CalendarEvent]:
+        try:
+            start, end = self._day_bounds(start_date, timezone, days=7)
+            return self._events_between(start, end, timezone)
+        except Exception:
+            logger.exception("ConnectorCalendarAggregator.get_upcoming_week failed")
+            return []
 
 
 class CalendarAggregator:

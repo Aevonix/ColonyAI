@@ -1,67 +1,62 @@
 # Known gaps — features that exist in code but are not (fully) wired
 
 Honest inventory, verified by cross-referencing call sites (last full audit:
-v0.28.x cycle). Everything here compiles and imports; what it does NOT do is
+v0.30.0 cycle). Everything here compiles and imports; what it does NOT do is
 run in a live deployment. When one of these gets wired, delete its entry.
+
+Closed in v0.30.0 (kept briefly for the record): per-goal external-condition
+polling (goals now self-unblock), anomaly/synthesis/goal/relationship/calendar
+briefing aggregators, world-model pruning, self-referential-query grounding.
 
 ## Partially wired (works, with a missing half)
 
-- **Briefing aggregators** — the composer now receives real relationship and
-  goal aggregators (wired at startup when the graph / goal engine exist).
-  Calendar, anomaly, mind-model, and synthesis sections still use stubs:
-  `CalendarAggregator` wraps a `CalendarIntegration` class that does not
-  exist in-repo, and no concrete anomaly/mind-model/synthesis aggregators
-  have been written. Those sections render empty.
-- **ConditionWorker** — the system-level checks (commitment overdue flip,
-  affect decline, surprise accumulation) run hourly from the autonomy loop.
-  The per-goal external-condition path (`handle_check_condition` for
-  email_reply / deployment_health / api_response) has no producer: nothing
-  enqueues `check_condition` jobs, so goals blocked on external conditions
-  are not auto-unblocked.
-- **`cognition.requested` event** — emitted with a full spawn spec
-  (system_prompt, model, tools_allow) but no shipped consumer spawns a
-  session from it; the hermes plugin only caches events as context blurbs.
-  The working per-turn path is the inline introspection
-  (`cognition/introspection.py`).
+- **Mind-model briefing section** — `HealthSnapshot` (sleep/readiness) and
+  predicted-load remain a protocol + stub with NO backing data source in the
+  system. Deliberately not wired: fabricating health numbers would violate
+  the measurement doctrine. Wire only when a real health/wearable source
+  feeds the mind model.
 - **Gate Layer 6 secondary review** — fails open (always passes) unless a
   review LLM client is injected; the pipeline logs a loud boot warning when
   enabled without one. Known configuration state, not hidden.
 
+## Deliberate no-builds (division of responsibility with the host agent)
+
+Colony is the cognitive substrate; the host agent framework (e.g. Hermes)
+owns sessions, tool execution, message transport, and cron. These stay
+unbuilt HERE by design:
+
+- **`cognition.requested` consumer** — the event carries a full spawn spec
+  (system_prompt, model, tools_allow with real tool names), but spawning a
+  restricted agent session is the host framework's job. A deployment that
+  wants it should implement a thin host-plugin subscriber; the sidecar's
+  working per-turn path is the inline introspection
+  (`cognition/introspection.py`).
+- **Email/desktop/browser job handlers** — outbound messaging goes through
+  the host gateway (delivery bridge); Colony never sends email itself. The
+  desktop/browser packages were scaffolding for host-side capabilities and
+  the dead EmailHandler was removed in v0.30.0. `JobType.DESKTOP`/`BROWSER`
+  remain enum values with no handler.
+- **ScheduleAdapter** — removed in v0.30.0. Its contracts were
+  unimplementable (the real MetaLearner has no pattern API; the
+  AutonomyScheduler is interval-based, not a cron store) and mutating host
+  cron jobs would cross into the host framework's domain.
+
 ## Unwired (feature code with zero callers)
 
 - `gate/rejection.py` — `RejectionFeedbackLoop` (retry-with-escalation when
-  the gate blocks) is never constructed.
-- `autonomy/schedule_adapter.py` — `ScheduleAdapter` (MetaLearner patterns →
-  cron adjustments) is never constructed.
-- `chain/consensus.py` — Raft-lite consensus (`RaftNode` et al.) advertised
-  by `chain/__init__` is never imported.
-- `identity_bootstrap/self_query.py` — self-referential-query corpus
-  grounding has no callers.
-- `world_model/extraction/structured_importer.py` — `StructuredImporter`
-  (calendar/contact structured import) has no callers.
-- `task_queue/handlers/email_handler.py` — `job_type="send_email"` exists in
-  no JobType enum and is registered nowhere; the send_email decomposition
-  template routes via `custom` instead.
-- Desktop/browser job handlers — `build_default_handlers` accepts
-  desktop/browser configs, but the backing `colony_sidecar.desktop` /
-  `colony_sidecar.browser` packages do not exist; `JobType.DESKTOP` /
-  `JobType.BROWSER` jobs have no handler.
+  the gate blocks) is never constructed. Pairs with the gate rebuild track;
+  wire it when the gate itself runs enforcing (it is shadow-first today).
+- `chain/consensus.py` — Raft-lite consensus scaffolding for multi-colony
+  federation; single-colony deployments don't need it. The chain package
+  docstring now labels it scaffolding.
+- `world_model/extraction/structured_importer.py` — superseded in practice
+  by the connector → populator ingest path, which already imports structured
+  observations into the world model.
 - `chain/keys_cli.py`, `chain/sentinel_cli.py`, `chain/admin_cli.py` — no
-  `__main__`, no console-script entry, referenced nowhere.
+  entry points; federation-era scaffolding.
 - `skills/versioning.py`, `skills/marketplace.py`,
   `contacts/importers/email_contacts.py`, `gate/pending_dispatch.py` —
   no consumers.
-
-## Missing primitives (a scheduled task or doc references work that has no implementation)
-
-- **World-model pruning** — there is no prune/stale-removal primitive in the
-  world model store. The former daily `world_model_prune` scheduler task was
-  a no-op lambda reporting success and has been removed rather than left
-  lying; add the primitive first, then re-register the task.
-- **`COLONY_WORKER_ENABLED`** — mentioned in ROADMAP docs; no code reads it
-  (workers gate on `COLONY_WORKERS_MODE`).
-- **Autonomy `_phase_events` per-event routing** — matching message events
-  are counted but not routed; only aggregate counts are used.
 
 ## Known mechanisms (documented so the log noise is interpretable)
 
@@ -69,7 +64,7 @@ run in a live deployment. When one of these gets wired, delete its entry.
   when a tick exceeds `COLONY_TICK_BUDGET_SECS` the whole-tick `wait_for`
   cancels whatever await is in flight; a cancellation landing inside an
   aiohttp request can interrupt the session unwind and the GC later logs the
-  unclosed session. Mitigated (v0.28.x): the world-LLM extraction timeout is
+  unclosed session. Mitigated (v0.29.0): the world-LLM extraction timeout is
   capped under the budget, per-recall touch tasks are strongly referenced,
   and the research gatherer closes its per-call graph driver. Residual noise
   right after a budget-exceeded tick is expected and harmless.

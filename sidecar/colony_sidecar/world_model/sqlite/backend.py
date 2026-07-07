@@ -343,6 +343,21 @@ class SQLiteBackend:
         await self._db.execute("DELETE FROM wm_entities WHERE id = ?", (entity_id,))
         await self._db.commit()
 
+    async def prune_entities(self, last_seen_before: str,
+                             max_confidence: float) -> int:
+        """Delete entities not seen since ``last_seen_before`` (ISO, the
+        schema's Z-suffixed format) whose confidence is below
+        ``max_confidence``. Relationships and observations cascade
+        (foreign_keys=ON); the FTS mirror follows via triggers. Returns the
+        number of entities removed."""
+        cur = await self._db.execute(
+            "DELETE FROM wm_entities WHERE last_seen < ? AND confidence < ?",
+            (last_seen_before, max_confidence),
+        )
+        count = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+        await self._db.commit()
+        return count
+
     # ── Relationship CRUD ─────────────────────────────────────────────────────
 
     async def get_relationship(self, rel_id: str) -> Optional[WorldRelationship]:

@@ -6,6 +6,7 @@ and never access the backend directly.
 
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 from collections import deque
@@ -394,6 +395,33 @@ class WorldModelStore:
         return await self._backend.add_observation(
             entity_id, relationship_id, observation, source
         )
+
+    # ── Maintenance ───────────────────────────────────────────────────────────
+
+    async def prune(self, ttl_days: Optional[int] = None,
+                    max_confidence: Optional[float] = None) -> Dict[str, Any]:
+        """Remove low-confidence entities that haven't been seen within the
+        TTL (config: low_confidence_entity_ttl_days / min_confidence_for_query
+        by default). High-confidence entities are never pruned regardless of
+        age. Returns {"status", "pruned", "cutoff", "max_confidence"};
+        backends without a prune primitive report skipped instead of lying."""
+        backend_prune = getattr(self._backend, "prune_entities", None)
+        if backend_prune is None:
+            return {"status": "skipped",
+                    "reason": f"{type(self._backend).__name__} has no prune"}
+        ttl = int(ttl_days if ttl_days is not None
+                  else self._config.low_confidence_entity_ttl_days)
+        ceiling = float(max_confidence if max_confidence is not None
+                        else self._config.min_confidence_for_query)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=ttl)
+                  ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        pruned = await backend_prune(cutoff, ceiling)
+        if pruned:
+            logger.info("world model pruned %d stale low-confidence entities "
+                        "(last_seen < %s, confidence < %.2f)",
+                        pruned, cutoff, ceiling)
+        return {"status": "ok", "pruned": pruned, "cutoff": cutoff,
+                "max_confidence": ceiling}
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 

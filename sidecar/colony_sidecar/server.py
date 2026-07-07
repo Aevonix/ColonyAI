@@ -1209,6 +1209,24 @@ async def lifespan(app: FastAPI):
                     _aggs["goal_aggregator"] = GoalEngineAggregator(goals_engine)
             except Exception:
                 logger.debug("goal aggregator wiring failed", exc_info=True)
+            try:
+                # Both resolve their subsystems lazily off host globals at
+                # call time (the anomaly detector doesn't even exist until
+                # the autonomy registry builds it, well after this point).
+                from colony_sidecar.briefings.aggregators import (
+                    AnomalyDetectorAggregator, DiscovererSynthesisAggregator)
+                _aggs["anomaly_aggregator"] = AnomalyDetectorAggregator()
+                _aggs["synthesis_aggregator"] = DiscovererSynthesisAggregator()
+            except Exception:
+                logger.debug("anomaly/synthesis aggregator wiring failed", exc_info=True)
+            try:
+                from colony_sidecar.briefings.aggregators import ConnectorCalendarAggregator
+                from colony_sidecar.connectors.caldav_calendar import CalendarConnector
+                _cal_conn = CalendarConnector()
+                if _cal_conn.enabled:
+                    _aggs["calendar_aggregator"] = ConnectorCalendarAggregator(_cal_conn)
+            except Exception:
+                logger.debug("calendar aggregator wiring failed", exc_info=True)
             briefings = BriefingEngine(config=b_cfg, store=b_store,
                                        delivery_bridge=delivery, **_aggs)
             set_briefings_engine(briefings)
@@ -1525,9 +1543,14 @@ async def lifespan(app: FastAPI):
             return {"status": "ok", "overall": round(float(getattr(cpi, "overall", 0.0)), 4)}
 
         scheduler.register("cpi_track", _run_cpi_track, interval_seconds=86400, metadata={"description": "Calculate Cognitive Performance Index"})
-        # world_model_prune intentionally NOT registered: no prune primitive
-        # exists in the world model store yet (docs/KNOWN-GAPS.md) — a fake
-        # daily "ok" here claimed stale entities were being removed.
+
+        async def _run_world_model_prune():
+            from colony_sidecar.api.routers.host import _world_store as ws
+            if ws is None:
+                return {"status": "skipped", "reason": "world_model_not_wired"}
+            return await ws.prune()
+
+        scheduler.register("world_model_prune", _run_world_model_prune, interval_seconds=86400, metadata={"description": "Remove stale low-confidence world model entities (config TTL)"})
 
         async def _run_digest_flush():
             from colony_sidecar.api.routers.host import _delivery_bridge as bridge

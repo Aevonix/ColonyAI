@@ -347,11 +347,6 @@ class MultimodalSearchResponse(BaseModel):
     model: str = ""
 
 
-class ContextAssembleResponse(BaseModel):
-    sections: List[ContextSection] = []
-    notices: Optional[List[str]] = None
-
-
 # --- Reasoning --------------------------------------------------------------
 
 class ReasoningTurnRequest(BaseModel):
@@ -507,6 +502,11 @@ class GoalUpdateRequest(BaseModel):
     status: Optional[str] = None
     progress: Optional[float] = None
     notes: Optional[str] = None
+    # When blocking: an external condition the autonomy loop polls; the goal
+    # auto-unblocks when it's met (email_reply | deployment_health |
+    # delivery_status | api_response | custom).
+    condition_type: Optional[str] = None
+    condition_params: Optional[Dict[str, Any]] = None
 
 
 class GoalResponse(BaseModel):
