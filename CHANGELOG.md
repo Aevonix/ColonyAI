@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.31.1 — env secrets backend reads its own file
+
+`EnvBackend.get()` only consulted `os.environ`, so a fresh process (the
+secrets CLI, a migration) saw None for every secret `set()` had written to
+`.env`. It now reads the file back. Found during a live migration to the
+keyring backend.
+
 ## v0.31.0 — multi-account senses
 
 One connector, many accounts: set `connector/<name>/accounts` (secret or
