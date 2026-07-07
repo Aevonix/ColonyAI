@@ -17,7 +17,9 @@ Algorithm:
 from __future__ import annotations
 
 import logging
+import asyncio
 import math
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -60,10 +62,27 @@ class ConsolidationResult:
 # Helpers
 # ---------------------------------------------------------------------------
 
+try:
+    import numpy as _np
+except Exception:                     # numpy is present in practice; the pure
+    _np = None                        # python path remains as a fallback
+
+
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    """Cosine similarity between two equal-length vectors. Returns 0 on error."""
+    """Cosine similarity between two equal-length vectors. Returns 0 on error.
+
+    Uses numpy when available: at embedding dimensions in the thousands the
+    pure-python path is ~100x slower and, run pairwise on the event loop, was
+    observed starving the whole API (accept-queue exhaustion)."""
     if not a or not b or len(a) != len(b):
         return 0.0
+    if _np is not None:
+        va = _np.asarray(a, dtype=_np.float32)
+        vb = _np.asarray(b, dtype=_np.float32)
+        na = float(_np.linalg.norm(va)); nb = float(_np.linalg.norm(vb))
+        if na == 0.0 or nb == 0.0:
+            return 0.0
+        return float(va.dot(vb) / (na * nb))
     dot = sum(x * y for x, y in zip(a, b))
     mag_a = math.sqrt(sum(x * x for x in a))
     mag_b = math.sqrt(sum(y * y for y in b))
@@ -158,6 +177,8 @@ class MemoryConsolidator:
             for j in range(i + 1, n):
                 a, b = candidates[i], candidates[j]
                 result.pairs_examined += 1
+                if result.pairs_examined % 512 == 0:
+                    await asyncio.sleep(0)     # breathe: never starve the event loop
                 sim = self._similarity(a, b)
                 if sim >= self.similarity_threshold:
                     if result.pairs_merged >= max_merges:
@@ -217,9 +238,17 @@ class MemoryConsolidator:
             "RETURN m.id AS id, m.content AS content, m.embedding AS embedding, "
             "m.strength AS strength, m.effective_confidence AS effective_confidence, "
             "m.type AS type, m.sources AS sources, m.epistemic_state AS epistemic_state "
-            "ORDER BY m.effective_confidence DESC, m.strength DESC"
+            "ORDER BY m.effective_confidence DESC, m.strength DESC "
+            "LIMIT $cap"
         )
-        rows = await self._execute(query, hours=self.lookback_hours)
+        # O(n^2) pass: the candidate set MUST be bounded. A bulk import once
+        # produced thousands of same-day memories and the unbounded pass spun
+        # for hours at 100% CPU (COLONY_CONSOLIDATION_BATCH to tune).
+        try:
+            cap = max(50, int(os.environ.get("COLONY_CONSOLIDATION_BATCH", "400")))
+        except ValueError:
+            cap = 400
+        rows = await self._execute(query, hours=self.lookback_hours, cap=cap)
         return rows if rows else []
 
     def _similarity(self, a: Dict[str, Any], b: Dict[str, Any]) -> float:
