@@ -188,6 +188,20 @@ def main() -> None:
 
     persona_sub.add_parser("uninstall", help="Stop services, remove overlays, deregister channels")
 
+    # --- secrets ---
+    secrets_p = sub.add_parser("secrets", help="Manage the encrypted secrets store (connector credentials, API keys)")
+    secrets_sub = secrets_p.add_subparsers(dest="secrets_cmd", required=True)
+    secrets_sub.add_parser("list", help="Show configured secrets grouped by category")
+    sget = secrets_sub.add_parser("get", help="Retrieve a secret value")
+    sget.add_argument("key")
+    sset = secrets_sub.add_parser("set", help="Store a secret (e.g. connector/imap/password)")
+    sset.add_argument("key")
+    sset.add_argument("value")
+    sdel = secrets_sub.add_parser("delete", help="Remove a secret")
+    sdel.add_argument("key")
+    secrets_sub.add_parser("backend", help="Show the active secrets backend")
+    secrets_sub.add_parser("status", help="Check backend availability")
+
     # --- autonomy ---
     autonomy_p = sub.add_parser("autonomy", help="Inspect or wake the autonomy loop in the running sidecar")
     autonomy_p.add_argument("autonomy_args", nargs=argparse.REMAINDER,
@@ -641,6 +655,12 @@ def main() -> None:
 
     elif args.command == "persona":
         _cmd_persona(args)
+
+    elif args.command == "secrets":
+        _load_dotenv()
+        from colony_sidecar.secrets import cli as _secrets_cli
+        _handler = getattr(_secrets_cli, f"cmd_secrets_{args.secrets_cmd}")
+        _handler(args)
 
     elif args.command == "autonomy":
         _load_dotenv()
