@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.30.0 — gap closure: production-ready wiring
+
+Every entry in docs/KNOWN-GAPS.md was prioritized and either fixed, wired
+real, or retired with its reason recorded. Boundary rule applied throughout:
+Colony is the cognitive substrate; sessions, tool execution, transport, and
+cron belong to the host agent framework.
+
+- **Goals unblock themselves**: `block_goal` accepts an external condition
+  (`condition_type`/`condition_params`, also via `PATCH /goals/{id}`); the
+  autonomy loop polls it at the condition's cadence and reactivates the goal
+  when met. Concurrent-update safe, per-goal fault-isolated.
+- **Briefings carry real content end-to-end**: anomaly, synthesis, and
+  calendar aggregators join relationship + goals — detector-backed anomalies
+  with honest severity labels, discoverer-backed cross-domain insights with
+  dismissal filtering, and ICS-connector-backed calendar sections
+  (chronologically correct across a week). Mind-model stays a stub on
+  purpose: no real health source exists, and fabricated readiness numbers
+  are worse than none.
+- **World-model hygiene**: a real prune primitive (stale low-confidence
+  entities; FK cascade + FTS-consistent; exact counts) on the config TTL
+  knobs, and the daily task is back — doing the work it reports.
+- **Self-knowledge grounding**: questions about Colony itself get the
+  identity-bootstrap corpus injected into assembled context.
+- **Retired**: ScheduleAdapter (contracts unimplementable on both ends;
+  host-cron mutation crosses the framework boundary) and the orphaned
+  EmailHandler (delivery is the host gateway's job). The
+  `cognition.requested` spawn spec remains a host-plugin integration point
+  by design.
+- README refreshed (Mind track, resolution semantics, self-unblocking goals,
+  briefing reality) and points to KNOWN-GAPS as the authoritative
+  scaffolding-vs-live inventory.
+
 ## v0.29.0 — the honesty release: dead features wired real, fabricated statuses removed
 
 A three-round audit (stub/marker sweep, correctness hunt, dead-wiring hunt,
