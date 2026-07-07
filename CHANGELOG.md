@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.29.0 — the honesty release: dead features wired real, fabricated statuses removed
+
+A three-round audit (stub/marker sweep, correctness hunt, dead-wiring hunt,
+then an adversarial re-review of the fixes themselves) across the sidecar and
+plugins. Headline items:
+
+- **Silently-dead features fixed**: active goals never reached assembled
+  context (invalid kwarg swallowed by a broad except); the goals tool always
+  errored (nonexistent method); open follow-ups never reached outreach
+  evaluation (dict iterated as list); briefings composed every data section
+  from stubs — permanently empty (relationship + goal aggregators now wired,
+  new `GoalEngineAggregator`); the condition worker's system checks never ran
+  (now an hourly loop phase — the pending→overdue flip actually fires).
+- **Fabricated status removed**: five scheduler tasks were no-op lambdas
+  reporting `ok` on their intervals forever. health_check and cpi_track now
+  do real work; the rest are gone until their primitives exist
+  (docs/KNOWN-GAPS.md).
+- **/timeline actually shows recent activity**: the journal walk gained
+  `newest_first`, and the cap's `hasMore` off-by-one and types-blindness are
+  fixed.
+- **Leaks plugged**: strong references for fire-and-forget tasks (mesh
+  scheduler, world-model updates, recall touches), per-run neo4j driver
+  closed in the research gatherer, world-LLM timeout capped under the tick
+  budget (the "Unclosed client session" spam source), connector polls moved
+  off the event loop, briefing push deadlock removed.
+- **Boundary controls fail closed**: connector directive-blackout check no
+  longer converts an internal error into permission.
+- **`colony autonomy status|cycle`** now really talks to the running sidecar.
+- **docs/KNOWN-GAPS.md**: an honest inventory of scaffolding that exists but
+  is not wired, so status claims match reality.
+
 ## v0.28.0 — resolution that sticks: settlement, learning loop, agent tools
 
 The headline bug: resolving an overdue-commitment concern from the command
