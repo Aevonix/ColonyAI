@@ -242,8 +242,12 @@ async def test_api_resolve(tmp_path):
         r = await c.post(f"/v1/host/self/workspace/{c1.concern_id}/resolve")
         assert r.status_code == 200
         assert store.get(c1.concern_id).status == "resolved"
-        # resolving again 404s (no longer active)
+        # resolving again is idempotent (double-click / cascade race safe)
         r = await c.post(f"/v1/host/self/workspace/{c1.concern_id}/resolve")
+        assert r.status_code == 200
+        assert r.json()["already_resolved"] is True
+        # a bogus id still 404s
+        r = await c.post("/v1/host/self/workspace/c-doesnotexist00/resolve")
         assert r.status_code == 404
 
 

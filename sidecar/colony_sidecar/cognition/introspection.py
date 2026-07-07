@@ -69,7 +69,8 @@ _SYSTEM_PROMPT = (
 
 
 def _build_user_prompt(user_message: str, assistant_message: str,
-                       conversation_text: str, existing: list) -> str:
+                       conversation_text: str, existing: list,
+                       rejections: Optional[list] = None) -> str:
     parts = []
     if conversation_text:
         parts.append(f"Recent conversation:\n{conversation_text}\n")
@@ -77,9 +78,16 @@ def _build_user_prompt(user_message: str, assistant_message: str,
                  f"  They said: {user_message}\n"
                  f"  Assistant replied: {assistant_message}\n")
     if existing:
-        parts.append("\nAlready-recorded pending items for this person (do not duplicate):")
+        parts.append("\nAlready-recorded OPEN items for this person (do not duplicate; "
+                     "mentioning an open item again is NOT a new item):")
         for c in existing[:6]:
             parts.append(f"\n- {(c.get('description') or '?')[:80]}")
+    if rejections:
+        parts.append("\n\nRecently REJECTED items (judged invalid or duplicate — do NOT "
+                     "record these or anything similar again):")
+        for r in rejections[:6]:
+            parts.append(f"\n- {(r.get('description') or '?')[:80]} "
+                         f"[{r.get('outcome') or 'rejected'}]")
     return "".join(parts)
 
 
@@ -120,11 +128,17 @@ async def run_turn_introspection(
     person_id: str,
     existing_commitments: Optional[List[Dict[str, Any]]],
     commitment_store: Any,
+    recent_rejections: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Judge one completed turn and record any owed follow-ups as commitments.
 
     Best-effort and exception-safe: a failure here never affects the turn. Returns a small
     dict describing what it did, mostly for tests/logging.
+
+    Dedup is enforced in code, not just in the prompt: a candidate matching an
+    existing OPEN item, or a recently REJECTED one, is skipped. Without this,
+    every conversational mention of an overdue item re-records it and resolving
+    one copy leaves another — the "resolve does nothing" loop.
     """
     cfg = _config()
     if not cfg["model"] or commitment_store is None:
@@ -134,7 +148,7 @@ async def run_turn_introspection(
 
     user_prompt = _build_user_prompt(
         user_message or "", assistant_message or "", conversation_text or "",
-        existing_commitments or [])
+        existing_commitments or [], recent_rejections or [])
 
     try:
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
@@ -156,9 +170,20 @@ async def run_turn_introspection(
 
     items = _parse_json_array(content)
     created: List[str] = []
+    skipped_duplicates = 0
+    from colony_sidecar.commitments.store import _normalize_desc, _similar_desc
+    _known = [_normalize_desc(c.get("description") or "")
+              for c in (existing_commitments or [])]
+    _known += [_normalize_desc(r.get("description") or "")
+               for r in (recent_rejections or [])]
+    _known = [k for k in _known if k]
     for it in items:
         desc = str(it.get("description") or "").strip()
         if not desc:
+            continue
+        norm = _normalize_desc(desc)
+        if any(_similar_desc(norm, k) for k in _known):
+            skipped_duplicates += 1
             continue
         try:
             row = commitment_store.create(
@@ -171,10 +196,15 @@ async def run_turn_introspection(
                 metadata=(it.get("metadata") if isinstance(it.get("metadata"), dict) else None),
             )
             created.append(row.get("id"))
+            _known.append(norm)   # a later candidate in the same batch can also dupe this one
         except Exception as exc:
             # e.g. a non-future due_at is rejected by the store — skip that one, keep going.
             logger.debug("introspection commitment skipped: %s", exc)
 
     if created:
         logger.info("introspection recorded %d commitment(s) for %s", len(created), person_id)
-    return {"ok": True, "created": created, "candidates": len(items)}
+    if skipped_duplicates:
+        logger.info("introspection skipped %d duplicate candidate(s) for %s",
+                    skipped_duplicates, person_id)
+    return {"ok": True, "created": created, "candidates": len(items),
+            "skipped_duplicates": skipped_duplicates}

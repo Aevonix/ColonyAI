@@ -68,6 +68,20 @@ def _thought_budget() -> int:
         return 8
 
 
+def _resolved_ttl_hours() -> float:
+    """How long a resolved concern suppresses re-raising the same dedup_key.
+
+    A concern is often raised FROM a still-open source by a periodic ingest;
+    once someone resolves the concern, recreating it on the very next tick
+    makes the resolve cosmetic. Within this window the resolved row answers
+    the upsert instead. If the source is genuinely still open after the
+    window, the concern legitimately returns."""
+    try:
+        return float(os.environ.get("COLONY_WORKSPACE_RESOLVED_TTL_HOURS", "24"))
+    except ValueError:
+        return 24.0
+
+
 def in_sleep_window(now: Optional[datetime] = None) -> bool:
     """COLONY_SLEEP_WINDOW = 'HH:MM-HH:MM' in the deployment's local time
     (uses the process tz). Empty disables. Wrap-around (22:00-06:00) ok."""
@@ -174,6 +188,16 @@ class ConcernStore:
                 return self._row(self._conn.execute(
                     "SELECT * FROM concerns WHERE concern_id=?",
                     (r["concern_id"],)).fetchone())
+            # Recently-resolved same key: return the resolved row untouched
+            # instead of minting a fresh concern, so a resolve sticks even
+            # while the underlying source is still open (see _resolved_ttl).
+            r2 = self._conn.execute(
+                "SELECT * FROM concerns WHERE dedup_key=? AND "
+                "status='resolved' ORDER BY last_touched DESC LIMIT 1",
+                (dedup_key,)).fetchone()
+            if r2 is not None and (now - (r2["last_touched"] or 0)) < \
+                    _resolved_ttl_hours() * 3600.0:
+                return self._row(r2)
             cid = f"c-{uuid.uuid4().hex[:12]}"
             self._conn.execute(
                 "INSERT INTO concerns (concern_id,kind,summary,salience,"
@@ -218,6 +242,23 @@ class ConcernStore:
                 (note[:500], now, now, max(0.0, min(1.0, salience)),
                  "resolved" if resolved else "active", concern_id))
             self._conn.commit()
+
+    def resolve_by_dedup(self, dedup_key: str, note: str) -> int:
+        """Resolve every ACTIVE concern carrying this dedup_key (reverse
+        cascade: when the source itself gets settled directly, the concern
+        raised from it must leave her mind too). Returns count resolved."""
+        now = time.time()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT concern_id FROM concerns WHERE dedup_key=? "
+                "AND status='active'", (dedup_key,)).fetchall()
+            for r in rows:
+                self._conn.execute(
+                    "UPDATE concerns SET status='resolved', salience=0.0,"
+                    " last_note=?, last_touched=? WHERE concern_id=?",
+                    (note[:500], now, r["concern_id"]))
+            self._conn.commit()
+            return len(rows)
 
     def evict_below(self, floor: float, keep: int) -> int:
         """Evict active concerns under the floor, and any beyond the capacity

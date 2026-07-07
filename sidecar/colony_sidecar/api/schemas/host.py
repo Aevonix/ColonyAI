@@ -1033,6 +1033,10 @@ class CommitmentCreateRequest(BaseModel):
     # undelivered deliverable into an agent_action so the host actually sends it.
     source_type: Literal["manual", "autonomy", "cognition", "introspection"] = "manual"
     source_context: Optional[str] = None
+    # When true, an open commitment for the same person that already says the
+    # same thing (normalized match) is returned instead of creating a twin.
+    # Agent/tool callers should set this; the raw API default stays off.
+    dedupe: bool = False
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -1043,6 +1047,13 @@ class CommitmentUpdateRequest(BaseModel):
     due_at: Optional[str] = None
     priority: Optional[int] = Field(None, ge=0, le=100)
     metadata: Optional[Dict[str, Any]] = None
+    # Resolution semantics: WHY the item is being settled, so the system can
+    # learn from it. When `outcome` is set, `status` may be omitted — it is
+    # derived (done -> fulfilled, everything else -> cancelled) and the
+    # resolution {outcome, note, by, at} is recorded in metadata.
+    outcome: Optional[Literal["done", "invalid", "duplicate", "wont_do", "obsolete"]] = None
+    reason: Optional[str] = Field(None, max_length=300)
+    resolved_by: Optional[str] = Field(None, max_length=60)
 
 
 class CommitmentResponse(BaseModel):
@@ -1057,6 +1068,8 @@ class CommitmentResponse(BaseModel):
     source_context: Optional[str] = None
     priority: int
     metadata: Optional[Dict[str, Any]] = None
+    # True when a dedupe-create returned an existing open item.
+    deduped: bool = False
 
 
 class CommitmentListResponse(BaseModel):
@@ -1064,6 +1077,18 @@ class CommitmentListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class ConcernResolveRequest(BaseModel):
+    """Owner/agent resolution of a workspace concern. `outcome` says why:
+    done means handled, the rest are flavors of "stop tracking this".
+    With cascade on (default), sources the concern was raised from (e.g. an
+    overdue commitment) are settled too — otherwise the ingest loop re-raises
+    the concern from the still-open source and the resolve is cosmetic."""
+    note: str = Field("resolved by owner", max_length=300)
+    outcome: Literal["done", "invalid", "duplicate", "wont_do", "obsolete"] = "done"
+    cascade: bool = True
+    resolved_by: str = Field("owner", max_length=60)
 
 
 # ---------------------------------------------------------------------------

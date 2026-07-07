@@ -152,6 +152,7 @@ from colony_sidecar.api.schemas.host import (
     CommitmentListResponse,
     CommitmentResponse,
     CommitmentUpdateRequest,
+    ConcernResolveRequest,
     CognitionTriggerRequest,
     CognitionTriggerResponse,
     AffectEventCreateRequest,
@@ -1748,12 +1749,16 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     if _commitment_store is not None:
         try:
             commitments = _commitment_store.list(
-                person_id=contact_id, status=["pending"], limit=5,
+                person_id=contact_id, status=["pending", "overdue"], limit=5,
             )
             overdue = _commitment_store.get_overdue()
             if contact_id:
                 overdue = [c for c in overdue if c.get("person_id") == contact_id]
-            all_comms = (commitments if isinstance(commitments, list) else commitments.get("commitments", [])) + overdue[:5]
+            _listed = (commitments if isinstance(commitments, list)
+                       else commitments.get("commitments", []))
+            _seen_ids = {c.get("id") for c in _listed}
+            all_comms = _listed + [c for c in overdue[:5]
+                                   if c.get("id") not in _seen_ids]
             if all_comms:
                 lines = []
                 for c in all_comms:
@@ -1906,9 +1911,10 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
                     _bits.append(f"I last reached out via {_lo['channel']} on {str(_lo['ts'])[:10]}.")
                 if _commitment_store is not None:
                     try:
-                        _cm = _commitment_store.list(person_id=contact_id, status=["pending"], limit=5)
-                        if _cm:
-                            _descs = [c.get("description", "") for c in _cm if c.get("description")]
+                        _cm = _commitment_store.list(person_id=contact_id, status=["pending", "overdue"], limit=5)
+                        _cm_items = _cm.get("commitments", []) if isinstance(_cm, dict) else (_cm or [])
+                        if _cm_items:
+                            _descs = [c.get("description", "") for c in _cm_items if c.get("description")]
                             if _descs:
                                 _bits.append("Open follow-ups: " + "; ".join(_descs[:3]) + ".")
                     except Exception:
@@ -2259,8 +2265,15 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         if introspect_enabled() and _commitment_store is not None and not _is_system_turn and (
                 body.user_message is not None or body.assistant_message is not None):
             _existing = []
+            _rejections = []
             try:
                 _existing = _commitment_store.get_pending_for_person(body.context.contact_id) or []
+            except Exception:
+                pass
+            try:
+                # Negative examples: items the owner/agent recently judged
+                # invalid or duplicate — the extractor must not re-record them.
+                _rejections = _commitment_store.recent_rejections(limit=6) or []
             except Exception:
                 pass
             _spawn_task(run_turn_introspection(
@@ -2271,6 +2284,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                 person_id=body.context.contact_id,
                 existing_commitments=_existing,
                 commitment_store=_commitment_store,
+                recent_rejections=_rejections,
             ))
     except Exception:
         logger.debug("inline introspection from turn_sync failed", exc_info=True)
@@ -4337,16 +4351,51 @@ async def get_workspace(limit: int = 24) -> dict:
 
 
 @router.post("/self/workspace/{concern_id}/resolve")
-async def resolve_concern(concern_id: str, note: str = "resolved by owner") -> dict:
-    """Owner control (command center): settle a concern so it leaves her mind."""
+async def resolve_concern(
+    concern_id: str,
+    body: Optional[ConcernResolveRequest] = None,
+    note: str = "resolved by owner",
+) -> dict:
+    """Settle a concern so it leaves her mind — and, with cascade (default),
+    settle the sources it was raised from. Without the cascade, an ingest
+    loop re-raises the concern from the still-open source on the next tick
+    and the resolve is silently undone. Accepts a JSON body (note, outcome,
+    cascade, resolved_by); the bare `note` query param remains for old
+    callers. Idempotent on already-resolved concerns."""
     if _workspace is None:
         return {"available": False}
+    req = body or ConcernResolveRequest(note=note)
     c = _workspace.store.get(concern_id)
-    if c is None or c.status != "active":
+    if c is None:
+        raise HTTPException(status_code=404, detail="no concern with that id")
+    already_resolved = c.status == "resolved"
+    if c.status not in ("active", "resolved"):
         raise HTTPException(status_code=404, detail="no active concern with that id")
-    _workspace.store.record_thought(concern_id, note[:300], resolved=True,
-                                    salience=0.0)
-    return {"available": True, "resolved": concern_id}
+    if not already_resolved:
+        _workspace.store.record_thought(concern_id, req.note[:300],
+                                        resolved=True, salience=0.0)
+    settled: list = []
+    if req.cascade and c.sources:
+        try:
+            from colony_sidecar.self_model.settlement import settle_sources
+            settled = settle_sources(c.sources, outcome=req.outcome,
+                                     note=req.note, resolved_by=req.resolved_by)
+        except Exception as exc:
+            logger.warning("concern source settlement failed: %s", exc)
+    journal = getattr(_workspace, "_journal", None)
+    if journal is not None and not already_resolved:
+        try:
+            journal.record(
+                "workspace",
+                f"concern resolved by {req.resolved_by} ({req.outcome}): "
+                f"{c.summary[:80]}",
+                reasoning=req.note[:300], decision="resolved",
+                outcome=req.outcome)
+        except Exception:
+            logger.debug("concern resolve journal write failed", exc_info=True)
+    return {"available": True, "resolved": concern_id,
+            "outcome": req.outcome, "already_resolved": already_resolved,
+            "settled_sources": settled}
 
 
 @router.get("/self/tools")
@@ -5891,9 +5940,20 @@ class SeedResponse(BaseModel):
 
 @router.post("/commitments", status_code=status.HTTP_201_CREATED)
 async def create_commitment(body: CommitmentCreateRequest) -> CommitmentResponse:
-    """Create a new commitment."""
+    """Create a new commitment. With `dedupe` set, an open commitment for the
+    same person that already says the same thing is returned instead of
+    creating a twin (response carries deduped=true)."""
     if _commitment_store is None:
         raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
+
+    if body.dedupe:
+        try:
+            existing = _commitment_store.find_open_duplicate(
+                body.person_id, body.description)
+        except Exception:
+            existing = None
+        if existing is not None:
+            return CommitmentResponse(**existing, deduped=True)
 
     try:
         result = _commitment_store.create(
@@ -5982,11 +6042,47 @@ async def get_commitment(commitment_id: str) -> CommitmentResponse:
     return CommitmentResponse(**result)
 
 
+def _resolve_linked_concerns(commitment_id: str, note: str) -> None:
+    """Reverse cascade: a commitment settled directly (agent tool, MCP, API)
+    must also leave the workspace, or the deck keeps showing a concern for an
+    item that no longer exists as open work."""
+    if _workspace is None:
+        return
+    try:
+        n = _workspace.store.resolve_by_dedup(
+            f"commitment:{commitment_id}", note)
+        if n:
+            logger.info("resolved %d workspace concern(s) linked to commitment %s",
+                        n, commitment_id)
+    except Exception:
+        logger.debug("linked-concern resolve failed", exc_info=True)
+
+
 @router.patch("/commitments/{commitment_id}", response_model=CommitmentResponse)
 async def update_commitment(commitment_id: str, body: CommitmentUpdateRequest) -> CommitmentResponse:
-    """Update a commitment."""
+    """Update a commitment. With `outcome` set this is a resolution: status
+    is derived, the reason is recorded in metadata for the learning loop, and
+    any workspace concern raised from this commitment is resolved too."""
     if _commitment_store is None:
         raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
+
+    if body.outcome is not None:
+        # Resolution path: store.resolve() maps outcome -> status, records
+        # {outcome, note, by, at} in metadata and emits the event itself.
+        try:
+            result = _commitment_store.resolve(
+                commitment_id,
+                outcome=body.outcome,
+                note=body.reason,
+                resolved_by=body.resolved_by or "owner",
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        if result is None:
+            raise HTTPException(status_code=404, detail="Commitment not found")
+        _resolve_linked_concerns(
+            commitment_id, f"commitment settled ({body.outcome})")
+        return CommitmentResponse(**result)
 
     try:
         result = _commitment_store.update(
@@ -6024,7 +6120,26 @@ async def update_commitment(commitment_id: str, body: CommitmentUpdateRequest) -
         except Exception:
             pass
 
+    if body.status in ("fulfilled", "cancelled"):
+        _resolve_linked_concerns(commitment_id, f"commitment {body.status}")
+
     return CommitmentResponse(**result)
+
+
+@router.get("/commitments/stats/resolution")
+async def commitment_resolution_stats(days: int = Query(30, ge=1, le=365)) -> dict:
+    """How commitments created in the window got resolved, per source_type —
+    the calibration signal for whatever generates items (introspection,
+    cognition, agents): a source whose items keep getting cancelled as
+    invalid should get more conservative."""
+    if _commitment_store is None:
+        raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
+    try:
+        stats = _commitment_store.resolution_stats(days=days)
+        stats["recent_rejections"] = _commitment_store.recent_rejections(limit=10)
+        return stats
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.delete("/commitments/{commitment_id}", status_code=status.HTTP_204_NO_CONTENT)

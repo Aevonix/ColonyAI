@@ -475,6 +475,19 @@ async def lifespan(app: FastAPI):
         commitment_store = CommitmentStore(db_path=commitments_db)
         set_commitment_store(commitment_store)
         logger.info("CommitmentStore initialized (db=%s)", commitments_db)
+
+        # Resolving a workspace concern raised from a commitment settles the
+        # commitment itself — without this, the ingest loop re-raises the
+        # concern from the still-open commitment and the resolve is cosmetic.
+        from colony_sidecar.self_model.settlement import register_settler
+
+        def _settle_commitment(source_id, *, outcome="done", note="",
+                               resolved_by="owner", _cs=commitment_store):
+            row = _cs.resolve(source_id, outcome=outcome, note=note,
+                              resolved_by=resolved_by)
+            return {"kind": "commitment", "status": row["status"]} if row else None
+
+        register_settler("commitment", _settle_commitment)
     except Exception as exc:
         logger.warning("CommitmentStore init failed: %s", exc)
 

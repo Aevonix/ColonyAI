@@ -268,6 +268,70 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "required": ["topic"],
         },
     },
+    {
+        "name": "colony_list_commitments",
+        "description": (
+            "List my tracked commitments/follow-up items (things I owe people or "
+            "was asked to do). Use before promising something, when asked what's "
+            "outstanding, or to find an item's id so it can be resolved."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "person_id": {"type": "string", "description": "Filter to one person (default: everyone)."},
+                "status": {
+                    "type": "string",
+                    "description": "Comma-separated statuses (default: pending,overdue — i.e. still open).",
+                    "default": "pending,overdue",
+                },
+                "limit": {"type": "integer", "description": "Max results (default: 20)", "default": 20},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "colony_create_commitment",
+        "description": (
+            "Record a commitment/follow-up item I owe someone: a promise made, a "
+            "reminder requested, a task with a due date. Deduplicates against "
+            "open items automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "What is owed, phrased as the action to take."},
+                "due_at": {"type": "string", "description": "ISO-8601 UTC due time (optional)."},
+                "person_id": {"type": "string", "description": "Who it's owed to (default: the configured owner contact)."},
+                "priority": {"type": "integer", "description": "0-100 (default: 60)", "default": 60},
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "colony_resolve_commitment",
+        "description": (
+            "Resolve a tracked commitment with WHY: outcome 'done' (I did it / it's "
+            "handled), 'invalid' (should never have been recorded), 'duplicate' "
+            "(already tracked elsewhere), 'wont_do' (deliberately dropped), or "
+            "'obsolete' (overtaken by events). Use when the owner says an item is "
+            "handled or no longer wanted, or when I complete it myself. The reason "
+            "feeds my learning loop so I stop recording items that get rejected."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "commitment_id": {"type": "string", "description": "The commitment id (from colony_list_commitments)."},
+                "outcome": {
+                    "type": "string",
+                    "enum": ["done", "invalid", "duplicate", "wont_do", "obsolete"],
+                    "description": "Why it's being resolved (default: done).",
+                    "default": "done",
+                },
+                "reason": {"type": "string", "description": "One line of context for the learning loop (optional)."},
+            },
+            "required": ["commitment_id"],
+        },
+    },
 ]
 
 
@@ -396,6 +460,77 @@ class _ToolDispatcher:
             resp = self._client.get("/v1/host/queue/stats", timeout=5)
             resp.raise_for_status()
             return json.dumps(resp.json())
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _handle_colony_list_commitments(self, args: dict) -> str:
+        try:
+            params = {"limit": int(args.get("limit", 20) or 20)}
+            status = (args.get("status") or "pending,overdue").strip()
+            if status and status != "all":
+                params["status"] = status
+            if args.get("person_id"):
+                params["person_id"] = args["person_id"]
+            resp = self._client.get("/v1/host/commitments", params=params, timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            # Trim to what the model needs: id to act on, the item, its state.
+            items = [{
+                "id": c.get("id"),
+                "person_id": c.get("person_id"),
+                "description": c.get("description"),
+                "status": c.get("status"),
+                "due_at": c.get("due_at"),
+                "priority": c.get("priority"),
+            } for c in data.get("commitments", [])]
+            return json.dumps({"commitments": items, "total": data.get("total", len(items))})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _handle_colony_create_commitment(self, args: dict) -> str:
+        try:
+            payload = {
+                "person_id": args.get("person_id") or _contact_id or "default",
+                "description": args["description"],
+                "priority": int(args.get("priority", 60) or 60),
+                "source_type": "cognition",
+                "source_context": "hermes agent tool",
+                "dedupe": True,
+            }
+            if args.get("due_at"):
+                payload["due_at"] = args["due_at"]
+            resp = self._client.post("/v1/host/commitments", json=payload, timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            return json.dumps({
+                "id": data.get("id"),
+                "description": data.get("description"),
+                "status": data.get("status"),
+                "due_at": data.get("due_at"),
+                "deduped": bool(data.get("deduped")),
+            })
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    def _handle_colony_resolve_commitment(self, args: dict) -> str:
+        try:
+            payload = {
+                "outcome": args.get("outcome") or "done",
+                "resolved_by": "agent",
+            }
+            if args.get("reason"):
+                payload["reason"] = str(args["reason"])[:300]
+            resp = self._client.patch(
+                f"/v1/host/commitments/{args['commitment_id']}", json=payload,
+                timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            return json.dumps({
+                "id": data.get("id"),
+                "status": data.get("status"),
+                "outcome": payload["outcome"],
+                "resolved": data.get("status") in ("fulfilled", "cancelled"),
+            })
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 

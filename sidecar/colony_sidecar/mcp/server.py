@@ -254,19 +254,26 @@ def create_server() -> FastMCP:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     async def colony_fulfill_commitment(
         commitment_id: str,
+        note: str | None = None,
     ) -> dict:
         """Mark a commitment as fulfilled. Call when a task is completed or a promise is kept."""
-        return await _patch(f"/v1/host/commitments/{commitment_id}", {"status": "fulfilled"})
+        data: dict[str, Any] = {"outcome": "done", "resolved_by": "agent"}
+        if note:
+            data["reason"] = note
+        return await _patch(f"/v1/host/commitments/{commitment_id}", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     async def colony_cancel_commitment(
         commitment_id: str,
         reason: str | None = None,
+        outcome: str = "wont_do",
     ) -> dict:
-        """Cancel a commitment that's no longer relevant. Not the same as fulfilled — cancelled means it won't be done."""
-        data: dict[str, Any] = {"status": "cancelled"}
+        """Cancel a commitment that's no longer relevant, with WHY: outcome is one of invalid (should never have been recorded), duplicate (already tracked), wont_do (deliberately dropped), obsolete (overtaken by events). The reason feeds the learning loop that calibrates what gets recorded."""
+        if outcome not in ("invalid", "duplicate", "wont_do", "obsolete"):
+            outcome = "wont_do"
+        data: dict[str, Any] = {"outcome": outcome, "resolved_by": "agent"}
         if reason:
-            data.setdefault("metadata", {})["cancellation_reason"] = reason
+            data["reason"] = reason
         return await _patch(f"/v1/host/commitments/{commitment_id}", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})

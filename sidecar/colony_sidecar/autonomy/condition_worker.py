@@ -355,8 +355,11 @@ async def _check_commitment_overdue(params: dict) -> dict:
     if not overdue:
         return {"condition_met": False, "overdue_count": 0}
 
-    # Mark pending → overdue
+    # Mark pending → overdue. get_overdue() also returns items already
+    # flipped, so guard on status or the overdue event re-fires every check.
     for c in overdue:
+        if c.get("status") != "pending":
+            continue
         try:
             _commitment_store.update(c["id"], status="overdue")
             emit("commitment.overdue", {

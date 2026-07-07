@@ -13,6 +13,45 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Statuses that mean "still awaiting action". 'overdue' is a pending item
+# whose due date passed (the condition worker flips it so the overdue event
+# fires exactly once) — every open-work query must include BOTH, or a flipped
+# item silently vanishes from dedup lists, prompt sections, and workspace
+# ingest while still being owed.
+OPEN_STATUSES = ("pending", "overdue")
+
+# How a resolution outcome maps onto the terminal status. 'done' is the only
+# outcome that counts as kept; everything else is a cancellation whose reason
+# the system learns from (see resolution_stats / recent_rejections).
+OUTCOME_TO_STATUS = {
+    "done": "fulfilled",
+    "invalid": "cancelled",
+    "duplicate": "cancelled",
+    "wont_do": "cancelled",
+    "obsolete": "cancelled",
+}
+
+
+def _normalize_desc(text: str) -> str:
+    """Lowercased, punctuation-collapsed form used for duplicate detection."""
+    out = []
+    for ch in (text or "").lower():
+        out.append(ch if ch.isalnum() else " ")
+    return " ".join("".join(out).split())
+
+
+def _similar_desc(a: str, b: str) -> bool:
+    """True when two normalized descriptions describe the same item: exact,
+    containment, or high token overlap (Jaccard >= 0.6)."""
+    if not a or not b:
+        return False
+    if a == b or a in b or b in a:
+        return True
+    ta, tb = set(a.split()), set(b.split())
+    if not ta or not tb:
+        return False
+    return len(ta & tb) / len(ta | tb) >= 0.6
+
 
 class CommitmentStore:
     """Persistent store for commitment tracking.
@@ -305,14 +344,18 @@ class CommitmentStore:
     # ------------------------------------------------------------------
 
     def get_overdue(self) -> List[Dict[str, Any]]:
-        """Get commitments that are past their due_at and still pending."""
+        """Get open commitments (pending OR already flipped to overdue) whose
+        due_at has passed. Including 'overdue' matters: the condition worker
+        flips pending→overdue, and a pending-only query would make flipped
+        items invisible to everything that surfaces owed work."""
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
             conn = self._connect()
             try:
                 rows = conn.execute(
                     """SELECT * FROM commitments
-                       WHERE status = 'pending' AND due_at IS NOT NULL AND due_at < ?
+                       WHERE status IN ('pending', 'overdue')
+                         AND due_at IS NOT NULL AND due_at < ?
                        ORDER BY due_at ASC""",
                     (now,),
                 ).fetchall()
@@ -321,16 +364,151 @@ class CommitmentStore:
                 conn.close()
 
     def get_pending_for_person(self, person_id: str) -> List[Dict[str, Any]]:
-        """Get pending commitments for a specific person."""
+        """Get OPEN commitments (pending + overdue) for a specific person.
+        Callers use this as "what is still owed" — an item that went overdue
+        is owed more, not less, so it must stay in this list (it is also the
+        dedup list the introspection extractor sees)."""
         with self._lock:
             conn = self._connect()
             try:
                 rows = conn.execute(
                     """SELECT * FROM commitments
-                       WHERE person_id = ? AND status = 'pending'
+                       WHERE person_id = ? AND status IN ('pending', 'overdue')
                        ORDER BY priority DESC, due_at ASC""",
                     (person_id,),
                 ).fetchall()
                 return [self._row_to_dict(r) for r in rows]
             finally:
                 conn.close()
+
+    def find_open_duplicate(
+        self, person_id: str, description: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return an open commitment for this person that already says the
+        same thing (normalized/containment/token-overlap match), or None."""
+        norm = _normalize_desc(description)
+        if not norm:
+            return None
+        for c in self.get_pending_for_person(person_id):
+            if _similar_desc(norm, _normalize_desc(c.get("description") or "")):
+                return c
+        return None
+
+    # ------------------------------------------------------------------
+    # Resolution: settle an item with a reason the system can learn from
+    # ------------------------------------------------------------------
+
+    def resolve(
+        self,
+        commitment_id: str,
+        outcome: str = "done",
+        note: Optional[str] = None,
+        resolved_by: str = "owner",
+    ) -> Optional[Dict[str, Any]]:
+        """Settle a commitment with an outcome (done | invalid | duplicate |
+        wont_do | obsolete). Idempotent: an already-terminal commitment is
+        returned unchanged instead of raising, so a double-click or a cascade
+        arriving after a direct resolve never errors. Emits the matching
+        commitment.* event on an actual transition."""
+        status = OUTCOME_TO_STATUS.get(outcome)
+        if status is None:
+            raise ValueError(
+                f"unknown outcome '{outcome}' (expected one of "
+                f"{sorted(OUTCOME_TO_STATUS)})")
+        current = self.get(commitment_id)
+        if current is None:
+            return None
+        if current["status"] in ("fulfilled", "cancelled"):
+            return current
+        meta = dict(current.get("metadata") or {})
+        meta["resolution"] = {
+            "outcome": outcome,
+            "note": (note or "")[:300],
+            "by": resolved_by,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        row = self.update(commitment_id, status=status, metadata=meta)
+        if row is not None:
+            try:
+                from colony_sidecar.events.broadcaster import emit
+                emit(f"commitment.{status}", {
+                    "commitment_id": row["id"],
+                    "person_id": row["person_id"],
+                    "outcome": outcome,
+                    "resolved_by": resolved_by,
+                })
+            except Exception:
+                pass
+        return row
+
+    def resolution_stats(self, days: int = 30) -> Dict[str, Any]:
+        """Per-source_type counts of how items created in the window ended up:
+        fulfilled, cancelled (with outcome breakdown), still open. This is the
+        calibration signal for whatever generates items — a source whose items
+        keep getting cancelled as invalid should get more conservative."""
+        cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute("SELECT * FROM commitments").fetchall()
+            finally:
+                conn.close()
+        by_source: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            d = self._row_to_dict(r)
+            try:
+                made = datetime.fromisoformat(d["made_at"]).timestamp()
+            except (ValueError, TypeError):
+                continue
+            if made < cutoff:
+                continue
+            src = d.get("source_type") or "manual"
+            s = by_source.setdefault(src, {
+                "created": 0, "fulfilled": 0, "cancelled": 0,
+                "open": 0, "outcomes": {},
+            })
+            s["created"] += 1
+            status = d.get("status")
+            if status in OPEN_STATUSES:
+                s["open"] += 1
+            elif status in ("fulfilled", "cancelled"):
+                s[status] += 1
+                res = (d.get("metadata") or {}).get("resolution") or {}
+                oc = res.get("outcome") or (
+                    "done" if status == "fulfilled" else "unspecified")
+                s["outcomes"][oc] = s["outcomes"].get(oc, 0) + 1
+        return {"days": days, "by_source": by_source}
+
+    def recent_rejections(
+        self, limit: int = 6,
+        source_types: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Most recently cancelled items judged invalid or duplicate — the
+        negative examples the extraction side injects into its prompt so the
+        same bad item is not recorded again."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    """SELECT * FROM commitments WHERE status = 'cancelled'
+                       ORDER BY made_at DESC LIMIT 200""",
+                ).fetchall()
+            finally:
+                conn.close()
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            d = self._row_to_dict(r)
+            if source_types and (d.get("source_type") or "manual") not in source_types:
+                continue
+            res = (d.get("metadata") or {}).get("resolution") or {}
+            if res.get("outcome") not in ("invalid", "duplicate"):
+                continue
+            out.append({
+                "description": d.get("description") or "",
+                "outcome": res.get("outcome"),
+                "note": res.get("note") or "",
+                "at": res.get("at") or "",
+            })
+            if len(out) >= limit:
+                break
+        return out

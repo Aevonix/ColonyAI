@@ -39,6 +39,10 @@ class ColonyClient:
         with httpx.Client(timeout=kwargs.pop("timeout", 5)) as client:
             return client.post(f"{self.url}{path}", headers=self._headers(), **kwargs)
 
+    def patch(self, path: str, **kwargs) -> httpx.Response:
+        with httpx.Client(timeout=kwargs.pop("timeout", 5)) as client:
+            return client.patch(f"{self.url}{path}", headers=self._headers(), **kwargs)
+
     async def aget(self, path: str, **kwargs) -> httpx.Response:
         client = self._get_async_client()
         return await client.get(f"{self.url}{path}", headers=self._headers(), **kwargs)
