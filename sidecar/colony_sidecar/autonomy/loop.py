@@ -2581,9 +2581,28 @@ class AutonomyLoop:
         await self._run_periodic_phase("memory_decay", "day", work)
 
     async def _phase_memory_pruning(self) -> None:
+        """Weekly: prune memories whose strength decayed below threshold.
+
+        COLONY_MEMORY_PRUNE_MODE gates the phase: ``off`` disables it,
+        ``shadow`` (default) counts what WOULD be pruned without deleting
+        anything, ``live`` deletes for real (capped per pass, graph node +
+        vector together). The default preserves shipped behavior — nothing
+        is ever deleted until a deployment flips the flag deliberately.
+        """
+        mode = os.environ.get(
+            "COLONY_MEMORY_PRUNE_MODE", "shadow").strip().lower()
+        if mode == "off":
+            return
+        if mode not in ("shadow", "live"):
+            mode = "shadow"  # unknown values fail safe to counting only
+
         async def work(graph):
-            if hasattr(graph, "prune_memories"):
-                await graph.prune_memories()
+            if not hasattr(graph, "prune_weak_memories"):
+                return
+            result = await graph.prune_weak_memories(dry_run=(mode != "live"))
+            logger.info(
+                "Phase memory_pruning (%s): matched=%s deleted=%s",
+                mode, result.get("matched"), result.get("deleted"))
         await self._run_periodic_phase("memory_pruning", "week", work)
 
     async def _phase_memory_distillation(self) -> None:

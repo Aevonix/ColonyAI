@@ -880,7 +880,10 @@ class ColonyGraph:
     async def prune_weak_memories(
         self,
         threshold: float = 0.05,
-    ) -> int:
+        *,
+        dry_run: bool = False,
+        max_delete: int = 500,
+    ) -> Dict[str, Any]:
         """Delete memories whose strength has decayed below *threshold*.
 
         Only targets memories in ``inferred``, ``observed``, or ``stale``
@@ -888,8 +891,18 @@ class ColonyGraph:
         ``verified``, and fully terminal states (``superseded``,
         ``deprecated``, ``archived``).
 
+        A deleted memory's vector-store entry is removed too (same coupling
+        as :meth:`archive_memories`), so pruning does not accumulate orphan
+        vectors that keep matching in ANN search. Deletion is capped at
+        *max_delete* per call (weakest first); ``dry_run=True`` only counts.
+
+        Fails closed on Neo4j errors: exceptions propagate to the caller
+        and nothing further is deleted; a vector is only removed after its
+        graph node is gone.
+
         Returns:
-            The number of pruned Memory nodes.
+            Dict with ``matched`` (total below threshold), ``deleted``,
+            ``dry_run``, and the capped candidate ``ids``.
         """
         async with self.driver.session(database=self.database) as session:
             result = await session.run(
@@ -898,13 +911,45 @@ class ColonyGraph:
                 WHERE m.strength < $threshold
                   AND coalesce(m.protected, false) = false
                   AND m.epistemic_state IN ["inferred", "observed", "stale"]
-                DETACH DELETE m
-                RETURN count(m) AS pruned
+                WITH m ORDER BY m.strength ASC
+                RETURN collect(m.id)[0..$max_delete] AS ids,
+                       count(m) AS matched
                 """,
                 threshold=threshold,
+                max_delete=max_delete,
             )
             record = await result.single()
-            return record["pruned"] if record else 0
+            ids = list(record["ids"]) if record else []
+            matched = int(record["matched"]) if record else 0
+
+        if dry_run:
+            return {"matched": matched, "deleted": 0, "dry_run": True,
+                    "ids": ids}
+
+        deleted = 0
+        for memory_id in ids:
+            async with self.driver.session(database=self.database) as session:
+                await session.run(
+                    "MATCH (m:Memory {id: $memory_id}) DETACH DELETE m",
+                    memory_id=memory_id,
+                )
+            deleted += 1
+            # Vector removal only after the graph node is gone; a failure
+            # here leaves an orphan vector (swept later), never a memory
+            # that recalls without a backing node.
+            if self._vector_store is not None:
+                try:
+                    from colony_sidecar.vector.collections import Collection
+                    await self._vector_store.delete(
+                        collection=Collection.MEMORIES,
+                        id=memory_id,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to remove pruned memory %s from vector "
+                        "store: %s", memory_id, exc)
+        return {"matched": matched, "deleted": deleted, "dry_run": False,
+                "ids": ids}
 
     async def touch_memory(self, memory_id: str) -> None:
         """Record a memory recall, incrementing its recall counter and updating accessed_at.
