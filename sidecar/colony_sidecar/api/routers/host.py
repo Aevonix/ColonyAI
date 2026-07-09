@@ -4627,7 +4627,21 @@ async def get_autonomy_posture() -> dict:
     env is never invisible to diagnostics."""
     try:
         from colony_sidecar.util.autonomy_preset import snapshot
-        return {"available": True, "posture": snapshot()}
+        posture = snapshot()
+        # The loop mode decides whether preset-enabled subsystems ever get a
+        # tick at all; report it so the doctor can flag an incoherent posture
+        # (e.g. calibration preset with a reactive loop = nothing calibrates).
+        # Prefer the RUNNING loop's resolved mode over the raw env default.
+        try:
+            if _autonomy_loop is not None:
+                posture["COLONY_AUTONOMY_MODE"] = _autonomy_loop.config.mode.value
+            else:
+                posture["COLONY_AUTONOMY_MODE"] = (
+                    os.environ.get("COLONY_AUTONOMY_MODE", "reactive")
+                    .strip().lower() or "reactive")
+        except Exception:
+            pass
+        return {"available": True, "posture": posture}
     except Exception as exc:
         return {"available": False, "error": str(exc)}
 

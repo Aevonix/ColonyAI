@@ -895,6 +895,25 @@ def check_server_autonomy_posture(base_url: str, api_key: str, timeout: float) -
             "server-autonomy-posture", WARN, detail=f"HTTP {status}: {body}")
     posture = body.get("posture") or {}
     preset = posture.get("preset", "(none)")
+
+    # Posture coherence: the presets exist to make subsystems run on loop
+    # ticks; a reactive loop never ticks, so a calibration/autonomous preset
+    # with a reactive loop is a Colony that never thinks, calibrates, or
+    # earns trust — the worst kind of misconfiguration because everything
+    # LOOKS enabled. Deliberately diagnostic-only: the preset never flips
+    # the loop mode itself (owner decision). Older servers that do not
+    # report the loop mode are not failed on a missing key.
+    autonomy_mode = str(posture.get("COLONY_AUTONOMY_MODE", "") or "").lower()
+    if preset in ("calibration", "autonomous") and autonomy_mode == "reactive":
+        return CheckResult(
+            "server-autonomy-posture", FAIL,
+            detail=f"preset={preset} but the autonomy loop is REACTIVE — "
+                   "preset-enabled subsystems only run on loop ticks, so "
+                   "nothing thinks, calibrates, or earns trust on its own",
+            remedy="set COLONY_AUTONOMY_MODE=proactive and restart (the "
+                   "preset deliberately never flips the loop mode for you; "
+                   "this is an owner decision)")
+
     live = sorted(k.replace("COLONY_", "").replace("_MODE", "").lower()
                   for k, v in posture.items() if v == "live")
     shadow = sorted(k.replace("COLONY_", "").replace("_MODE", "").lower()
@@ -907,14 +926,50 @@ def check_server_autonomy_posture(base_url: str, api_key: str, timeout: float) -
     if live:
         parts.append("live: " + ",".join(live))
     if shadow:
-        parts.append("calibrating: " + ",".join(shadow))
+        # Under the calibration preset, shadow IS the design: subsystems are
+        # trust-gated and graduate via the trust engine. Label it expected
+        # so an owner reading the doctor does not "fix" a healthy posture.
+        label = ("calibrating (expected: trust-gated shadow under the "
+                 "calibration preset): "
+                 if preset == "calibration" else "calibrating: ")
+        parts.append(label + ",".join(shadow))
     if not (on or live or shadow):
         return CheckResult(
             "server-autonomy-posture", WARN,
             detail="everything is off — this Colony observes but never thinks or acts",
             remedy="set COLONY_AUTONOMY_PRESET=calibration (shadow everything, earn "
                    "autonomy via the trust engine) or flip individual COLONY_*_MODE flags")
+
+    # Flags explicitly overridden BELOW the preset's default (env always
+    # wins over the preset, so this only happens by explicit override).
+    downgraded = _preset_downgrades(preset, posture)
+    if downgraded:
+        return CheckResult(
+            "server-autonomy-posture", WARN,
+            detail="; ".join(parts) + " — below preset default (explicit env "
+                   "override): " + ",".join(downgraded),
+            remedy="unset the overriding COLONY_* env var(s) to inherit the "
+                   "preset default, or leave them if the downgrade is "
+                   "deliberate")
     return CheckResult("server-autonomy-posture", PASS, detail="; ".join(parts))
+
+
+def _preset_downgrades(preset: str, posture: dict) -> List[str]:
+    """Flags whose effective value sits below the active preset's default."""
+    try:
+        from colony_sidecar.util.autonomy_preset import PRESETS
+    except Exception:
+        return []
+    rank = {"off": 0, "false": 0, "shadow": 1, "dry_run": 1,
+            "true": 2, "live": 2}
+    out = []
+    for flag, want in PRESETS.get(preset, {}).items():
+        have = str(posture.get(flag, "") or "").lower()
+        if have and rank.get(have, 99) < rank.get(want, 0):
+            out.append(
+                flag.replace("COLONY_", "").replace("_MODE", "").lower()
+                + f"={have}")
+    return sorted(out)
 
 
 def check_server_self_model(base_url: str, api_key: str, timeout: float) -> CheckResult:

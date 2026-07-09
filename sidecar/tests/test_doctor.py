@@ -765,6 +765,71 @@ def test_cmd_doctor_human_output_exit_zero(clean_env, monkeypatch, capsys):
 # Cognition / autonomy checks (v0.22.0) — warn paths
 # ---------------------------------------------------------------------------
 
+def test_posture_preset_with_reactive_loop_fails(clean_env, monkeypatch):
+    """calibration/autonomous preset + reactive loop = nothing ever ticks."""
+    for preset in ("calibration", "autonomous"):
+        monkeypatch.setattr(doctor, "_http_get", _fake_http({
+            "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+                "preset": preset,
+                "COLONY_AUTONOMY_MODE": "reactive",
+                "COLONY_EXECUTOR_ENABLED": "true",
+                "COLONY_THINKING_MODE": "shadow",
+            }}),
+        }))
+        r = doctor.check_server_autonomy_posture(URL, "key", 5)
+        assert r.status == FAIL
+        assert "REACTIVE" in r.detail
+        # the remedy is advisory only — the preset never flips the mode
+        assert "COLONY_AUTONOMY_MODE=proactive" in r.remedy
+        assert "owner decision" in r.remedy
+
+
+def test_posture_calibration_proactive_passes_labeled_expected(
+        clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_AUTONOMY_MODE": "proactive",
+            "COLONY_EXECUTOR_ENABLED": "true",
+            "COLONY_THINKING_MODE": "shadow",
+            "COLONY_PROJECTS_MODE": "shadow",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == PASS
+    # trust-gated shadow is the design under calibration, not a misconfig
+    assert "expected" in r.detail and "trust-gated" in r.detail
+
+
+def test_posture_without_mode_key_unchanged(clean_env, monkeypatch):
+    """Older servers that do not report the loop mode are not failed."""
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_EXECUTOR_ENABLED": "true",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+    }))
+    assert doctor.check_server_autonomy_posture(URL, "key", 5).status == PASS
+
+
+def test_posture_downgraded_below_preset_warns(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "autonomous",
+            "COLONY_AUTONOMY_MODE": "proactive",
+            "COLONY_EXECUTOR_ENABLED": "true",
+            "COLONY_THINKING_MODE": "off",       # below preset's "live"
+            "COLONY_PROJECTS_MODE": "live",
+            "COLONY_SANDBOX_MODE": "dry_run",    # = preset default, expected
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == WARN
+    assert "thinking=off" in r.detail
+    assert "sandbox" not in r.detail.split("below preset default")[1]
+
+
 def test_posture_all_off_warns(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
