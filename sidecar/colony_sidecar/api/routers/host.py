@@ -6399,16 +6399,20 @@ async def delete_affect_event(event_id: str):
 # ---------------------------------------------------------------------------
 
 async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
-                                source: str, confidence: float) -> None:
+                                source: str, confidence: float) -> bool:
     """Mirror a shared fact into the memory graph as a `fact` memory.
 
     Shared facts live in their own store; semantic recall searches the memory
     graph. Without this mirror a stored fact is structurally unrecallable
     (recall.fact_coverage measured exactly that). Content-hash dedup in
     store_memory makes the mirror idempotent: re-extraction reinforces the
-    existing node instead of duplicating it."""
+    existing node instead of duplicating it.
+
+    Returns True when the fact reached the graph (created or reinforced),
+    False otherwise — callers on the hot path ignore this; the backfill
+    endpoint uses it to count per-fact outcomes."""
     if _graph is None or not (fact or "").strip():
-        return
+        return False
     try:
         import hashlib
         await _graph.store_memory(
@@ -6422,8 +6426,10 @@ async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
             source_uri="tom:shared_fact",
             content_hash=hashlib.sha256(fact.encode("utf-8")).hexdigest(),
         )
+        return True
     except Exception:
         logger.debug("shared fact -> graph mirror failed", exc_info=True)
+        return False
 
 
 @router.post("/mind/facts", response_model=SharedFactResponse, status_code=status.HTTP_201_CREATED)
@@ -6456,6 +6462,114 @@ async def create_shared_fact(body: SharedFactCreateRequest) -> SharedFactRespons
         pass
 
     return SharedFactResponse(**result)
+
+
+# Single-flight state for the shared-facts -> graph backfill. Facts created
+# before the create-time mirror existed never reached the memory graph, so
+# semantic recall can't see them. The backfill replays them through the same
+# mirror; content-hash dedup makes re-runs mostly idempotent (a re-run
+# reinforces the existing node: +0.05 strength / +1 corroboration — documented
+# behavior, not a bug).
+_facts_backfill_state: Dict[str, Any] = {"running": False}
+
+
+class FactsBackfillRequest(BaseModel):
+    dry_run: bool = True
+    limit: int = 0              # 0 = no cap
+    min_confidence: float = 0.0
+    sleep_ms: int = 150         # serial pacing between embeds (shared embedder)
+
+
+@router.post("/mind/facts/backfill")
+async def backfill_shared_facts(body: FactsBackfillRequest) -> dict:
+    """Mirror existing shared facts into the memory graph (explicit admin op).
+
+    Runs as a background task, mirroring facts serially with ``sleep_ms``
+    spacing so a large backlog cannot saturate a shared embedder. Per-fact
+    failures (e.g. embedder outage — store_memory fails closed) are counted
+    and skipped, never fatal to the run. Single-flight: a second invocation
+    while one is running returns 409. Progress is journaled every 100 facts.
+    """
+    if _facts_store is None:
+        raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    if _graph is None:
+        raise HTTPException(status_code=501, detail="Memory graph not initialized")
+    if _facts_backfill_state.get("running"):
+        raise HTTPException(status_code=409, detail="facts backfill already running")
+
+    # Collect candidates up-front (paged reads from SQLite; no awaits, so the
+    # single-flight check above cannot interleave with another request).
+    facts: list = []
+    offset = 0
+    cap = body.limit if body.limit and body.limit > 0 else None
+    while True:
+        page = _facts_store.list_facts(
+            min_confidence=body.min_confidence, limit=200, offset=offset)
+        rows = page.get("facts") or []
+        if not rows:
+            break
+        facts.extend(rows)
+        offset += len(rows)
+        if cap is not None and len(facts) >= cap:
+            facts = facts[:cap]
+            break
+
+    if body.dry_run:
+        return {"dry_run": True, "started": False, "total": len(facts)}
+
+    sleep_secs = max(0, body.sleep_ms) / 1000.0
+    _facts_backfill_state.update({
+        "running": True, "dry_run": False, "total": len(facts),
+        "processed": 0, "mirrored": 0, "failed": 0,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": None,
+    })
+
+    def _journal_progress(final: bool = False) -> None:
+        try:
+            from colony_sidecar.events.journal import append_event
+            append_event("memory.facts_backfill", {
+                "processed": _facts_backfill_state["processed"],
+                "mirrored": _facts_backfill_state["mirrored"],
+                "failed": _facts_backfill_state["failed"],
+                "total": _facts_backfill_state["total"],
+                "final": final,
+            })
+        except Exception:
+            logger.debug("facts backfill journal failed", exc_info=True)
+
+    async def _run() -> None:
+        try:
+            for fact_row in facts:
+                ok = await _mirror_fact_to_graph(
+                    fact_row.get("fact") or "",
+                    fact_row.get("contact_id"),
+                    fact_row.get("source") or "",
+                    fact_row.get("confidence"),
+                )
+                _facts_backfill_state["processed"] += 1
+                if ok:
+                    _facts_backfill_state["mirrored"] += 1
+                else:
+                    _facts_backfill_state["failed"] += 1
+                if _facts_backfill_state["processed"] % 100 == 0:
+                    _journal_progress()
+                if sleep_secs:
+                    await asyncio.sleep(sleep_secs)
+        finally:
+            _facts_backfill_state["running"] = False
+            _facts_backfill_state["finished_at"] = (
+                datetime.now(timezone.utc).isoformat())
+            _journal_progress(final=True)
+
+    _spawn_task(_run())
+    return {"dry_run": False, "started": True, "total": len(facts)}
+
+
+@router.get("/mind/facts/backfill")
+async def backfill_shared_facts_status() -> dict:
+    """Progress/status of the current (or last) shared-facts backfill."""
+    return dict(_facts_backfill_state)
 
 
 @router.get("/mind/facts", response_model=SharedFactListResponse)
