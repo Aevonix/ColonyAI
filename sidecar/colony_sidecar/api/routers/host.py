@@ -1769,7 +1769,7 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     # --- World Model Entities ---
     if _world_store is not None and query_text:
         try:
-            entities = await _world_store.find_entities(query=query_text, limit=5)
+            entities = await _world_context_entities(query_text, limit=5)
             if entities:
                 body_text = "\n".join(
                     f"- [{e.entity_type}] {e.name}" if hasattr(e, 'entity_type') else f"- {e}"
@@ -4090,6 +4090,59 @@ def _get_conversation_extractor():
     return _conversation_extractor or None
 
 
+async def _world_context_entities(query_text: str, limit: int = 5) -> list:
+    """World-model entities relevant to a context query.
+
+    COLONY_WORLD_CONTEXT_QUERY governs how the query hits the store:
+      * ``message`` (default): the legacy whole-message FTS call, unchanged.
+      * ``entities``: extract proper-noun candidates from the message with the
+        shared rule-based extractor and OR their find_entities lookups (<=5
+        candidates, limit 2 each, deduped, capped at ``limit``) — precise
+        entity matching instead of FTS noise over a whole sentence.
+    Empty extraction (or extractor failure) falls back to the whole-message
+    call, so entities mode can never return LESS than a degraded message run.
+    """
+    mode = os.environ.get("COLONY_WORLD_CONTEXT_QUERY", "message").strip().lower()
+    if mode == "entities":
+        extractor = _get_conversation_extractor()
+        if extractor is not None:
+            try:
+                res = await extractor.extract(query_text, "context-query")
+                names: list = []
+                seen = set()
+                for c in getattr(res, "entities", []):
+                    name = (getattr(c, "text", None) or getattr(c, "name", "") or "").strip()
+                    key = name.lower()
+                    if name and key not in seen:
+                        seen.add(key)
+                        names.append(name)
+                    if len(names) >= 5:
+                        break
+                if names:
+                    out: list = []
+                    seen_ids = set()
+                    for name in names:
+                        try:
+                            hits = await _world_store.find_entities(query=name, limit=2)
+                        except Exception:
+                            logger.debug("world context lookup failed for %r",
+                                         name, exc_info=True)
+                            continue
+                        for e in hits or []:
+                            eid = getattr(e, "id", None) or getattr(e, "name", str(e))
+                            if eid in seen_ids:
+                                continue
+                            seen_ids.add(eid)
+                            out.append(e)
+                            if len(out) >= limit:
+                                return out
+                    return out
+            except Exception:
+                logger.debug("world context entity extraction failed; falling "
+                             "back to whole-message query", exc_info=True)
+    return await _world_store.find_entities(query=query_text, limit=limit)
+
+
 _response_guard = None
 
 
@@ -5373,7 +5426,7 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     if _world_store is not None and features.get("worldModel", True):
         async def _world():
             try:
-                e = await _world_store.find_entities(query=msg, limit=5)
+                e = await _world_context_entities(msg, limit=5)
                 return ("world", e)
             except Exception:
                 return ("world", [])
