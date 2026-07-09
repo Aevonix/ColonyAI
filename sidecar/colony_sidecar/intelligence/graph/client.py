@@ -684,6 +684,7 @@ class ColonyGraph:
         limit: int = 10,
         min_strength: Optional[float] = None,
         min_confidence: float = 0.1,
+        person_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Retrieve memories by semantic similarity with strength decay.
 
@@ -696,6 +697,12 @@ class ColonyGraph:
         COLONY_RECALL_MIN_STRENGTH (default 0.1, the historical floor).
         The floor stays hard — decayed junk is excluded, not demoted — and
         is only lowered stepwise as live pruning cleans the graph.
+
+        ``person_id`` scopes recall to a conversation partner as a BOOST,
+        never a filter: memories ABOUT that person get their relevance
+        multiplied by (1 + COLONY_RECALL_PERSON_BOOST); cross-person and
+        unattributed memories stay fully reachable. Default boost 0.0 makes
+        this a no-op (legacy path, byte-identical).
 
         Returns:
             A list of memory dicts, each annotated with ``entities`` and
@@ -714,6 +721,15 @@ class ColonyGraph:
         strength_ranking = os.environ.get(
             "COLONY_RECALL_STRENGTH_RANKING", "off").strip().lower() in (
             "on", "1", "true", "yes")
+        # Person-scoped boost (COLONY_RECALL_PERSON_BOOST, default 0.0 = off).
+        # Only engaged when a person_id is supplied AND the boost is positive;
+        # otherwise every query below is the exact legacy text.
+        try:
+            person_boost = float(os.environ.get(
+                "COLONY_RECALL_PERSON_BOOST", "0.0"))
+        except (TypeError, ValueError):
+            person_boost = 0.0
+        person_scope = person_id if (person_id and person_boost > 0.0) else None
         # Vector search path: embed query (with instruction) → LanceDB ANN → Neo4j hydration
         if self._vector_store is not None and self._embed_fn is not None:
             try:
@@ -764,15 +780,29 @@ class ColonyGraph:
 
                     # Hydrate from Neo4j
                     async with self.driver.session(database=self.database) as session:
-                        result = await session.run(
-                            """
-                            MATCH (m:Memory) WHERE m.id IN $ids
-                            OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
-                            WITH m, collect(e.name) AS entity_names
-                            RETURN m {.*, entities: entity_names} AS memory
-                            """,
-                            ids=memory_ids,
-                        )
+                        if person_scope:
+                            result = await session.run(
+                                """
+                                MATCH (m:Memory) WHERE m.id IN $ids
+                                OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                                WITH m, collect(e.name) AS entity_names
+                                OPTIONAL MATCH (m)-[:ABOUT]->(p:Person {id: $person_id})
+                                RETURN m {.*, entities: entity_names} AS memory,
+                                       p IS NOT NULL AS about_person
+                                """,
+                                ids=memory_ids,
+                                person_id=person_scope,
+                            )
+                        else:
+                            result = await session.run(
+                                """
+                                MATCH (m:Memory) WHERE m.id IN $ids
+                                OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                                WITH m, collect(e.name) AS entity_names
+                                RETURN m {.*, entities: entity_names} AS memory
+                                """,
+                                ids=memory_ids,
+                            )
                         memories = []
                         async for record in result:
                             mem = record["memory"]
@@ -794,6 +824,8 @@ class ColonyGraph:
                                                     * (0.5 + 0.5 * strength))
                             else:
                                 mem["relevance"] = vector_score * effective_confidence
+                            if person_scope and record.get("about_person"):
+                                mem["relevance"] *= (1.0 + person_boost)
                             memories.append(mem)
 
                     memories = await self._maybe_rerank(
@@ -812,23 +844,45 @@ class ColonyGraph:
 
         # Fallback: graph-only keyword/entity recall
         async with self.driver.session(database=self.database) as session:
-            result = await session.run(
-                """
-                MATCH (m:Memory)
-                WHERE m.strength >= $min_strength
-                  AND toLower(m.content) CONTAINS toLower($search_text)
-                  AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
-                OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
-                WITH m, collect(e.name) AS entity_names
-                RETURN m {.*, entities: entity_names} AS memory,
-                       m.effective_confidence AS relevance
-                ORDER BY relevance DESC
-                LIMIT $limit
-                """,
-                search_text=query,
-                limit=limit,
-                min_strength=min_strength,
-            )
+            if person_scope:
+                result = await session.run(
+                    """
+                    MATCH (m:Memory)
+                    WHERE m.strength >= $min_strength
+                      AND toLower(m.content) CONTAINS toLower($search_text)
+                      AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
+                    OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                    WITH m, collect(e.name) AS entity_names
+                    OPTIONAL MATCH (m)-[:ABOUT]->(p:Person {id: $person_id})
+                    RETURN m {.*, entities: entity_names} AS memory,
+                           m.effective_confidence AS relevance,
+                           p IS NOT NULL AS about_person
+                    ORDER BY relevance DESC
+                    LIMIT $limit
+                    """,
+                    search_text=query,
+                    limit=limit,
+                    min_strength=min_strength,
+                    person_id=person_scope,
+                )
+            else:
+                result = await session.run(
+                    """
+                    MATCH (m:Memory)
+                    WHERE m.strength >= $min_strength
+                      AND toLower(m.content) CONTAINS toLower($search_text)
+                      AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
+                    OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                    WITH m, collect(e.name) AS entity_names
+                    RETURN m {.*, entities: entity_names} AS memory,
+                           m.effective_confidence AS relevance
+                    ORDER BY relevance DESC
+                    LIMIT $limit
+                    """,
+                    search_text=query,
+                    limit=limit,
+                    min_strength=min_strength,
+                )
             memories = []
             async for record in result:
                 mem = record["memory"]
@@ -836,7 +890,12 @@ class ColonyGraph:
                 effective_confidence = float(mem.get("effective_confidence", mem.get("strength", 1.0)))
                 if effective_confidence < min_confidence:
                     continue
+                if person_scope and record.get("about_person"):
+                    mem["relevance"] = float(mem["relevance"] or 0.0) * (1.0 + person_boost)
                 memories.append(mem)
+            if person_scope:
+                # Boost can reorder within the fetched window; keep descending.
+                memories.sort(key=lambda m: m.get("relevance", 0) or 0, reverse=True)
         # Fire-and-forget touch_memory for each recalled result
         for mem in memories:
             mid = mem.get("id")

@@ -1695,6 +1695,10 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             results = await _graph.recall(
                 query=query_text,
                 limit=5,
+                # Person-scoped BOOST (COLONY_RECALL_PERSON_BOOST, default 0.0
+                # = no-op): memories about this conversation partner rank
+                # higher; cross-person memories stay reachable (never a filter).
+                person_id=(body.context.contact_id if body.context else None),
             )
             if results:
                 body_text = "\n".join(
