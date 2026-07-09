@@ -61,6 +61,8 @@ class DirectedActionService:
         self._feedback = feedback_store
         self._deliver = delivery_router
         self._self_model = self_model
+        # Observability: boundary checks that raised (see intake gate 1).
+        self.boundary_check_errors = 0
 
     # -- trust helpers (Amendment 1.7) -----------------------------------
     @staticmethod
@@ -120,6 +122,21 @@ class DirectedActionService:
                     logger.warning("Directed intake REFUSED by boundary: %s", verdict.reason)
                     return task
             except Exception:
+                # An owner boundary we cannot evaluate must not be assumed
+                # permissive: fail CLOSED by default and refuse the intake
+                # (the owner can simply re-issue the directive).
+                self.boundary_check_errors += 1
+                from colony_sidecar.directives.guard import boundary_fail_closed
+                if boundary_fail_closed():
+                    task.status = "refused"
+                    task.refusal_reason = "boundary_check_error"
+                    self.store.save(task)
+                    logger.warning(
+                        "Directed intake REFUSED: boundary_check_error "
+                        "(boundary check raised; failing closed)",
+                        exc_info=True,
+                    )
+                    return task
                 logger.debug("directed boundary check failed (allowing)", exc_info=True)
 
         # Gate 2: approval tiering, now trust-graduated (Amendment 1.7).

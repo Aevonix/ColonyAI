@@ -69,6 +69,7 @@ class LoopStats:
     task_follow_ups: int = 0
     scheduled_runs: int = 0
     phases_skipped: int = 0
+    boundary_check_errors: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -89,6 +90,7 @@ class LoopStats:
             "task_follow_ups": self.task_follow_ups,
             "scheduled_runs": self.scheduled_runs,
             "phases_skipped": self.phases_skipped,
+            "boundary_check_errors": self.boundary_check_errors,
         }
 
 
@@ -1001,6 +1003,18 @@ class AutonomyLoop:
                     )
                     return False
             except Exception:
+                # An owner boundary we cannot evaluate must not be assumed
+                # permissive: fail CLOSED by default (a missed delivery is
+                # recoverable; messaging about a forbidden subject is not).
+                self.stats.boundary_check_errors += 1
+                from colony_sidecar.directives.guard import boundary_fail_closed
+                if boundary_fail_closed():
+                    logger.warning(
+                        "Reach-out %s (%s) REFUSED: boundary_check_error "
+                        "(boundary check raised; failing closed)",
+                        iid, type_value, exc_info=True,
+                    )
+                    return False
                 logger.debug("delivery boundary check failed (allowing)", exc_info=True)
 
         # Staleness guard: a long-overdue reach-out is noise, not a timely ping.

@@ -12,10 +12,13 @@ from colony_sidecar.directives.models import (
     Directive, Polarity, DirectiveStatus, normalize_terms,
 )
 from colony_sidecar.directives.store import DirectiveStore
-from colony_sidecar.directives.guard import DirectiveGuard, Action, Verdict
+from colony_sidecar.directives.guard import (
+    DirectiveGuard, Action, Verdict, boundary_fail_closed,
+)
 from colony_sidecar.directives.service import DirectiveManager
 
 __all__ = [
     "Directive", "Polarity", "DirectiveStatus", "normalize_terms",
     "DirectiveStore", "DirectiveGuard", "Action", "Verdict", "DirectiveManager",
+    "boundary_fail_closed",
 ]

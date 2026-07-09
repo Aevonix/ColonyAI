@@ -41,6 +41,19 @@ def action_capability(kind: str) -> str:
     return "read" if (kind or "").lower() in _READ_KINDS else "act"
 
 
+def boundary_fail_closed() -> bool:
+    """Whether an ERROR inside a boundary check refuses the action.
+
+    Default TRUE: a boundary is an owner-set prohibition, so an exception
+    while evaluating it must refuse (fail closed) rather than silently
+    allow the very action the owner may have forbidden. Set
+    COLONY_BOUNDARY_FAIL_CLOSED=false to restore the legacy allow-on-error
+    behavior.
+    """
+    from colony_sidecar.util.autonomy_preset import resolve_bool
+    return resolve_bool("COLONY_BOUNDARY_FAIL_CLOSED", True)
+
+
 @dataclass
 class Action:
     """A proposed autonomous action to be checked against boundaries."""
