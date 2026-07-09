@@ -653,7 +653,7 @@ class ColonyGraph:
         self,
         query: str,
         limit: int = 10,
-        min_strength: float = 0.1,
+        min_strength: Optional[float] = None,
         min_confidence: float = 0.1,
     ) -> List[Dict[str, Any]]:
         """Retrieve memories by semantic similarity with strength decay.
@@ -662,10 +662,29 @@ class ColonyGraph:
         Neo4j with entity mentions.  Falls back to graph-only keyword
         recall if no vector store or embedding function is configured.
 
+        ``min_strength`` is the hard exclusion floor for decayed memories.
+        An explicit caller value always wins; when omitted it comes from
+        COLONY_RECALL_MIN_STRENGTH (default 0.1, the historical floor).
+        The floor stays hard — decayed junk is excluded, not demoted — and
+        is only lowered stepwise as live pruning cleans the graph.
+
         Returns:
             A list of memory dicts, each annotated with ``entities`` and
             sorted by relevance descending.
         """
+        if min_strength is None:
+            try:
+                min_strength = float(os.environ.get(
+                    "COLONY_RECALL_MIN_STRENGTH", "0.1"))
+            except (TypeError, ValueError):
+                min_strength = 0.1
+        # Strength-blended ranking (COLONY_RECALL_STRENGTH_RANKING, default
+        # off = legacy vector_score * effective_confidence). When on, decayed
+        # memories are demoted smoothly ABOVE the hard floor:
+        # relevance = vector_score * effective_confidence * (0.5 + 0.5*strength)
+        strength_ranking = os.environ.get(
+            "COLONY_RECALL_STRENGTH_RANKING", "off").strip().lower() in (
+            "on", "1", "true", "yes")
         # Vector search path: embed query (with instruction) → LanceDB ANN → Neo4j hydration
         if self._vector_store is not None and self._embed_fn is not None:
             try:
@@ -740,7 +759,12 @@ class ColonyGraph:
                             effective_confidence = float(mem.get("effective_confidence", mem.get("strength", 1.0)))
                             if effective_confidence < min_confidence:
                                 continue
-                            mem["relevance"] = vector_score * effective_confidence
+                            if strength_ranking:
+                                mem["relevance"] = (vector_score
+                                                    * effective_confidence
+                                                    * (0.5 + 0.5 * strength))
+                            else:
+                                mem["relevance"] = vector_score * effective_confidence
                             memories.append(mem)
 
                     memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)

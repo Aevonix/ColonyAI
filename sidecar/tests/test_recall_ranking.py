@@ -216,3 +216,79 @@ async def test_oversample_invalid_value_falls_back_to_legacy(monkeypatch):
     fx = RecallFixture(hits=[], node_props=[])
     await fx.recall("q", limit=9)
     assert fx.vector.search_calls[0]["limit"] == 9
+
+
+# --- strength-blended ranking + graduated floor (U9) ---------------------------
+
+@pytest.mark.asyncio
+async def test_strength_ranking_on_blends_strength(monkeypatch):
+    monkeypatch.setenv("COLONY_RECALL_STRENGTH_RANKING", "on")
+    fx = RecallFixture(
+        hits=[_Hit("fresh", 0.8), _Hit("faded", 0.8)],
+        node_props=[
+            _node("fresh", strength=1.0, confidence=0.9),
+            _node("faded", strength=0.2, confidence=0.9),
+        ],
+    )
+    out = await fx.recall("q", limit=10)
+    by_id = {m["id"]: m for m in out}
+    assert by_id["fresh"]["relevance"] == pytest.approx(0.8 * 0.9 * 1.0)
+    assert by_id["faded"]["relevance"] == pytest.approx(0.8 * 0.9 * 0.6)
+    assert [m["id"] for m in out] == ["fresh", "faded"]
+
+
+@pytest.mark.asyncio
+async def test_strength_ranking_keeps_hard_floor(monkeypatch):
+    """Blending demotes ABOVE the floor; below it stays excluded (never
+    'demote instead of exclude' — junk-only matches would inject junk)."""
+    monkeypatch.setenv("COLONY_RECALL_STRENGTH_RANKING", "on")
+    monkeypatch.delenv("COLONY_RECALL_MIN_STRENGTH", raising=False)
+    fx = RecallFixture(
+        hits=[_Hit("junk", 0.99), _Hit("ok", 0.5)],
+        node_props=[
+            _node("junk", strength=0.05, confidence=0.9),
+            _node("ok", strength=0.9, confidence=0.9),
+        ],
+    )
+    out = await fx.recall("q", limit=10)
+    assert [m["id"] for m in out] == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_min_strength_env_governs_default_floor(monkeypatch):
+    monkeypatch.setenv("COLONY_RECALL_MIN_STRENGTH", "0.5")
+    fx = RecallFixture(
+        hits=[_Hit("mid", 0.9), _Hit("strong", 0.9)],
+        node_props=[
+            _node("mid", strength=0.3, confidence=0.9),
+            _node("strong", strength=0.9, confidence=0.9),
+        ],
+    )
+    out = await fx.recall("q", limit=10)
+    assert [m["id"] for m in out] == ["strong"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_caller_min_strength_beats_env(monkeypatch):
+    monkeypatch.setenv("COLONY_RECALL_MIN_STRENGTH", "0.5")
+    fx = RecallFixture(
+        hits=[_Hit("mid", 0.9)],
+        node_props=[_node("mid", strength=0.3, confidence=0.9)],
+    )
+    out = await fx.recall("q", limit=10, min_strength=0.1)
+    assert [m["id"] for m in out] == ["mid"]
+
+
+@pytest.mark.asyncio
+async def test_min_strength_default_unchanged(monkeypatch):
+    """Regression lock: env unset -> floor is the historical 0.1."""
+    monkeypatch.delenv("COLONY_RECALL_MIN_STRENGTH", raising=False)
+    fx = RecallFixture(
+        hits=[_Hit("under", 0.9), _Hit("at", 0.9)],
+        node_props=[
+            _node("under", strength=0.09, confidence=0.9),
+            _node("at", strength=0.1, confidence=0.9),
+        ],
+    )
+    out = await fx.recall("q", limit=10)
+    assert [m["id"] for m in out] == ["at"]
