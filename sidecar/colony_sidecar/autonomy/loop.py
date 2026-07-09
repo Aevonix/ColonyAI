@@ -68,6 +68,7 @@ class LoopStats:
     memories_promoted: int = 0
     task_follow_ups: int = 0
     scheduled_runs: int = 0
+    phases_skipped: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -87,6 +88,7 @@ class LoopStats:
             "memories_promoted": self.memories_promoted,
             "task_follow_ups": self.task_follow_ups,
             "scheduled_runs": self.scheduled_runs,
+            "phases_skipped": self.phases_skipped,
         }
 
 
@@ -107,7 +109,8 @@ class AutonomyLoop:
       4. Run initiative engine — Colony decides whether to act
       5. Execute approved actions
       6. Run cognition pipeline tick
-      7. Memory consolidation (hourly)
+      7. (memory consolidation runs via the memory_consolidate scheduler
+         task, not a tick phase)
       8. Memory decay (daily)
       9. Memory pruning (weekly)
      10. Task completion follow-ups
@@ -145,6 +148,8 @@ class AutonomyLoop:
         self._last_bootstrap_check: Optional[datetime] = None
         self._last_self_reflection: Optional[datetime] = None
         self._last_task_completion_check: Optional[datetime] = None
+        # Phases already warned about skipping (warn once, count always).
+        self._phase_skip_warned: set = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -172,6 +177,12 @@ class AutonomyLoop:
             )
         except Exception as exc:
             logger.warning("Owner identity startup check failed: %s", exc)
+
+        # Boot self-check: a periodic phase that dispatches on a graph
+        # capability which does not exist would otherwise no-op silently
+        # forever (exactly how the old consolidation and pruning phases went
+        # dead for months). Surface any such mismatch once, loudly, at start.
+        self._check_phase_capabilities()
 
         # Reactive mode: just mark as running, no timer
         if self.config.mode == AutonomyMode.REACTIVE:
@@ -296,8 +307,10 @@ class AutonomyLoop:
         # Phase 7: cognition pipeline tick
         await self._phase_cognition()
 
-        # Phase 8: memory consolidation (hourly)
-        await self._phase_memory_consolidation()
+        # (memory consolidation is NOT a tick phase: the consolidator runs
+        # hourly via the memory_consolidate scheduler task. The old phase
+        # here dispatched on graph.consolidate_memories, which never
+        # existed — deleted rather than repointed to avoid a double-run.)
 
         # Phase 9: memory decay (daily)
         await self._phase_memory_decay()
@@ -2567,17 +2580,46 @@ class AutonomyLoop:
                 logger.debug("condition poll failed for goal %s",
                              getattr(goal, "goal_id", "?"), exc_info=True)
 
-    async def _phase_memory_consolidation(self) -> None:
-        async def work(graph):
-            if hasattr(graph, "consolidate_memories"):
-                promoted = await graph.consolidate_memories()
-                self.stats.memories_promoted += len(promoted) if promoted else 0
-        await self._run_periodic_phase("memory_consolidation", "hour", work)
+    # Graph capabilities the periodic memory phases dispatch on. A missing
+    # method means the phase silently does nothing every cycle — checked
+    # once at loop start and counted (stats.phases_skipped) at skip time.
+    _GRAPH_PHASE_CAPABILITIES = {
+        "memory_decay": "decay_memories",
+        "memory_pruning": "prune_weak_memories",
+        "memory_archive": "archive_memories",
+    }
+
+    def _check_phase_capabilities(self) -> None:
+        """Boot self-check: warn once per phase whose graph capability is
+        missing, so a renamed/removed backend method can never turn a
+        maintenance phase into a silent no-op again."""
+        try:
+            graph = self._registry.graph
+        except Exception:
+            graph = None
+        if graph is None:
+            return
+        for phase, attr in self._GRAPH_PHASE_CAPABILITIES.items():
+            if not hasattr(graph, attr):
+                self._note_phase_skipped(
+                    phase, f"graph backend lacks {attr}()", count=False)
+
+    def _note_phase_skipped(self, name: str, reason: str,
+                            count: bool = True) -> None:
+        """Record a phase skip: count every occurrence, warn only once."""
+        if count:
+            self.stats.phases_skipped += 1
+        if name not in self._phase_skip_warned:
+            self._phase_skip_warned.add(name)
+            logger.warning("Phase %s skipped: %s", name, reason)
 
     async def _phase_memory_decay(self) -> None:
         async def work(graph):
             if hasattr(graph, "decay_memories"):
                 await graph.decay_memories()
+            else:
+                self._note_phase_skipped(
+                    "memory_decay", "graph backend lacks decay_memories()")
         await self._run_periodic_phase("memory_decay", "day", work)
 
     async def _phase_memory_pruning(self) -> None:
@@ -2598,6 +2640,9 @@ class AutonomyLoop:
 
         async def work(graph):
             if not hasattr(graph, "prune_weak_memories"):
+                self._note_phase_skipped(
+                    "memory_pruning",
+                    "graph backend lacks prune_weak_memories()")
                 return
             result = await graph.prune_weak_memories(dry_run=(mode != "live"))
             logger.info(
@@ -2637,6 +2682,10 @@ class AutonomyLoop:
             if hasattr(graph, "archive_memories"):
                 archived = await graph.archive_memories(max_age_days=30)
                 logger.info("Phase memory_archive: archived=%d", archived)
+            else:
+                self._note_phase_skipped(
+                    "memory_archive",
+                    "graph backend lacks archive_memories()")
         await self._run_periodic_phase("memory_archive", "week", work)
 
     async def _phase_task_completion(self) -> None:
