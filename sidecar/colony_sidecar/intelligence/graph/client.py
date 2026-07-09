@@ -135,6 +135,7 @@ class ColonyGraph:
             Callable[[str], Coroutine[Any, Any, List[float]]]
         ] = None
         self._vector_store: Optional["VectorStore"] = None
+        self._rerank_fn: Optional[Callable[..., Coroutine[Any, Any, Any]]] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -211,6 +212,21 @@ class ColonyGraph:
     def set_vector_store(self, store: "VectorStore") -> None:
         """Register a VectorStore for ANN search (replaces Neo4j vector index)."""
         self._vector_store = store
+
+    def set_rerank_fn(
+        self,
+        fn: Callable[..., Coroutine[Any, Any, Any]],
+    ) -> None:
+        """Register an async rerank function used by *recall* (mirrors
+        :meth:`set_embed_fn`).
+
+        Args:
+            fn: async callable ``fn(query, documents, top_k=N)`` returning a
+                list of objects with ``index`` and ``score`` attributes (the
+                RerankerProvider.rerank contract). Only consulted when
+                COLONY_RECALL_RERANK is ``shadow`` or ``on``.
+        """
+        self._rerank_fn = fn
 
     def set_adaptive_params(self, params: Any) -> None:
         """Register an AdaptiveParamStore consulted by *recall* for the
@@ -767,6 +783,9 @@ class ColonyGraph:
                                 mem["relevance"] = vector_score * effective_confidence
                             memories.append(mem)
 
+                    memories = await self._maybe_rerank(
+                        query, memories, limit,
+                        strength_ranking=strength_ranking)
                     memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)
                     memories = memories[:limit]
                     # Fire-and-forget touch_memory for each recalled result
@@ -828,6 +847,101 @@ class ColonyGraph:
             await self.touch_memory(memory_id)
         except Exception as exc:
             logger.debug("touch_memory failed for %s: %s", memory_id, exc)
+
+    async def _maybe_rerank(
+        self,
+        query: str,
+        memories: List[Dict[str, Any]],
+        limit: int,
+        *,
+        strength_ranking: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Cross-encoder rerank of filtered recall candidates, bounded and
+        fail-open.
+
+        COLONY_RECALL_RERANK gates it: ``off`` (default) never calls the
+        reranker; ``shadow`` scores and logs the rank delta but returns ANN
+        order untouched (measure p95 before flipping); ``on`` replaces the
+        vector score in the relevance blend with the rerank score. The call
+        is inline but hard-capped by COLONY_RECALL_RERANK_TIMEOUT_MS
+        (default 1200) — on timeout or any error, recall falls open to ANN
+        order (warn once per ~5 min, debug otherwise). Skipped entirely when
+        the candidate set already fits the limit: there is nothing for a
+        rerank to save then, only latency to add.
+        """
+        mode = os.environ.get("COLONY_RECALL_RERANK", "off").strip().lower()
+        if mode not in ("shadow", "on"):
+            return memories
+        rerank_fn = getattr(self, "_rerank_fn", None)
+        if rerank_fn is None or len(memories) <= limit:
+            return memories
+        try:
+            timeout_ms = float(os.environ.get(
+                "COLONY_RECALL_RERANK_TIMEOUT_MS", "1200"))
+        except (TypeError, ValueError):
+            timeout_ms = 1200.0
+
+        docs = [str(m.get("content", "")) for m in memories]
+        try:
+            results = await asyncio.wait_for(
+                rerank_fn(query, docs, top_k=len(docs)),
+                timeout=max(timeout_ms, 1.0) / 1000.0,
+            )
+        except Exception as exc:
+            self._warn_rerank_failure(exc)
+            return memories
+
+        scores: Dict[int, float] = {}
+        for r in results or []:
+            idx = r.get("index") if isinstance(r, dict) else getattr(r, "index", None)
+            score = r.get("score") if isinstance(r, dict) else getattr(r, "score", None)
+            if idx is not None and score is not None:
+                scores[int(idx)] = float(score)
+        if not scores:
+            self._warn_rerank_failure(RuntimeError("reranker returned no scores"))
+            return memories
+
+        if mode == "shadow":
+            ann_top = [m.get("id") for m in sorted(
+                memories, key=lambda m: m.get("relevance", 0),
+                reverse=True)][:limit]
+            rr_idx = sorted(range(len(memories)),
+                            key=lambda i: scores.get(i, float("-inf")),
+                            reverse=True)
+            rr_top = [memories[i].get("id") for i in rr_idx[:limit]]
+            moved = sum(1 for a, b in zip(ann_top, rr_top) if a != b)
+            logger.info(
+                "recall rerank shadow: candidates=%d limit=%d "
+                "top_overlap=%d/%d positions_changed=%d",
+                len(memories), limit, len(set(ann_top) & set(rr_top)),
+                limit, moved)
+            return memories
+
+        # mode == "on": rerank score replaces the vector score in the blend;
+        # a document the reranker didn't score keeps its ANN relevance.
+        for i, mem in enumerate(memories):
+            if i not in scores:
+                continue
+            effective_confidence = float(
+                mem.get("effective_confidence", mem.get("strength", 1.0)))
+            relevance = scores[i] * effective_confidence
+            if strength_ranking:
+                relevance *= 0.5 + 0.5 * float(mem.get("strength", 1.0))
+            mem["relevance"] = relevance
+        return memories
+
+    def _warn_rerank_failure(self, exc: BaseException) -> None:
+        """Warn on rerank failure at most once per ~5 minutes (fail-open is
+        by design; a dead reranker must not turn every recall into a WARNING
+        stream)."""
+        now = time.monotonic()
+        if now - getattr(self, "_rerank_warn_at", 0.0) >= 300:
+            self._rerank_warn_at = now
+            logger.warning(
+                "recall rerank failed (fail-open to ANN order): %s", exc)
+        else:
+            logger.debug(
+                "recall rerank failed (fail-open to ANN order): %s", exc)
 
     # ------------------------------------------------------------------
     # Decay & pruning

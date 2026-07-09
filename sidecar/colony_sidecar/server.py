@@ -450,6 +450,14 @@ async def lifespan(app: FastAPI):
                 "Reranker initialized (provider=%s model=%s)",
                 reranker_provider_name or "local", reranker_model,
             )
+            # Wire the reranker into ColonyGraph recall (mirrors the
+            # set_embed_fn wiring above). Registration alone changes
+            # nothing: use is gated by COLONY_RECALL_RERANK (default off).
+            if graph is not None and hasattr(graph, "set_rerank_fn"):
+                graph.set_rerank_fn(reranker_provider.rerank)
+                logger.info(
+                    "ColonyGraph wired to reranker for recall "
+                    "(gated by COLONY_RECALL_RERANK)")
         except Exception as exc:
             logger.warning("Reranker init failed: %s", exc)
     else:
