@@ -116,6 +116,10 @@ class Concern:
     created_at: float = 0.0
     last_touched: float = 0.0
     last_thought_at: Optional[float] = None
+    # memory ids the thinker actually consulted while reasoning about this
+    # concern (a measured provenance link, most-recent first) -- NOT a
+    # render-time similarity guess. Empty until it has been thought about.
+    memory_refs: List[str] = field(default_factory=list)
 
     def public(self) -> Dict[str, Any]:
         return {
@@ -126,6 +130,7 @@ class Concern:
             "last_note": self.last_note, "created_at": self.created_at,
             "last_touched": self.last_touched,
             "last_thought_at": self.last_thought_at,
+            "memory_refs": self.memory_refs,
         }
 
 
@@ -157,16 +162,25 @@ class ConcernStore:
             CREATE INDEX IF NOT EXISTS idx_concern_dedup ON concerns(dedup_key);
             """
         )
+        # migration: memory_refs was added after first ship; add it to older
+        # DBs. ADD COLUMN is backward-compatible (existing rows read NULL).
+        try:
+            self._conn.execute("ALTER TABLE concerns ADD COLUMN memory_refs TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already present
         self._conn.commit()
 
     def _row(self, r: sqlite3.Row) -> Concern:
+        keys = r.keys()
+        mrefs = json.loads(r["memory_refs"] or "[]") if "memory_refs" in keys else []
         return Concern(
             concern_id=r["concern_id"], kind=r["kind"], summary=r["summary"],
             salience=r["salience"], sources=json.loads(r["sources"] or "[]"),
             thoughts_spent=r["thoughts_spent"] or 0,
             max_thoughts=r["max_thoughts"] or 8, status=r["status"],
             last_note=r["last_note"] or "", created_at=r["created_at"],
-            last_touched=r["last_touched"], last_thought_at=r["last_thought_at"])
+            last_touched=r["last_touched"], last_thought_at=r["last_thought_at"],
+            memory_refs=mrefs)
 
     def upsert(self, *, kind: str, summary: str, salience: float,
                dedup_key: str, sources: List[str],
@@ -241,6 +255,29 @@ class ConcernStore:
                 " salience=?, status=? WHERE concern_id=?",
                 (note[:500], now, now, max(0.0, min(1.0, salience)),
                  "resolved" if resolved else "active", concern_id))
+            self._conn.commit()
+
+    def set_memory_refs(self, concern_id: str, ids: List[str], cap: int = 12) -> None:
+        """Record which memories the thinker consulted about this concern, most
+        recent first, deduped and capped. A real, measured provenance link."""
+        clean = [str(i) for i in (ids or []) if i]
+        if not clean:
+            return
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT memory_refs FROM concerns WHERE concern_id=?",
+                (concern_id,)).fetchone()
+            if r is None:
+                return
+            prior = []
+            try:
+                prior = json.loads((r["memory_refs"] if "memory_refs" in r.keys() else None) or "[]")
+            except Exception:
+                prior = []
+            merged = list(dict.fromkeys(clean + prior))[:cap]
+            self._conn.execute(
+                "UPDATE concerns SET memory_refs=? WHERE concern_id=?",
+                (json.dumps(merged), concern_id))
             self._conn.commit()
 
     def resolve_by_dedup(self, dedup_key: str, note: str) -> int:
@@ -347,6 +384,15 @@ class WorkspaceEngine:
         new_sal = concern.salience * (0.9 if progressed else 0.6)
         self.store.record_thought(concern.concern_id, note,
                                   resolved=resolved, salience=new_sal)
+        # persist the memory ids the thinker actually recalled about this
+        # concern (provenance for the memory-field beams; render draws a beam
+        # only when a ref id is also a point on the sampled field).
+        refs = outcome.get("memory_refs")
+        if refs:
+            try:
+                self.store.set_memory_refs(concern.concern_id, refs)
+            except Exception:
+                logger.debug("set_memory_refs failed", exc_info=True)
         self._log(f"thought on {concern.kind}: {concern.summary[:60]} "
                   f"-> {'resolved' if resolved else 'progress' if progressed else 'no progress'}",
                   note)

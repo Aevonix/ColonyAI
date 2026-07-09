@@ -44,6 +44,7 @@ def build_thinker(router: Any, *, graph: Any = None
 
     async def thinker(concern) -> Dict[str, Any]:
         context = ""
+        mem_ids: list = []
         if graph is not None:
             try:
                 hits = await graph.recall(concern.summary, limit=4,
@@ -51,6 +52,9 @@ def build_thinker(router: Any, *, graph: Any = None
                 if hits:
                     context = "\n".join(
                         f"- {str(h.get('content',''))[:160]}" for h in hits[:4])
+                    # keep the ids of the memories we actually consulted, so the
+                    # caller can record a real concern->memory provenance link
+                    mem_ids = [h.get("id") for h in hits[:4] if h.get("id")]
             except Exception:
                 context = ""
         user = (
@@ -64,11 +68,14 @@ def build_thinker(router: Any, *, graph: Any = None
                 [{"role": "system", "content": _SYSTEM},
                  {"role": "user", "content": user}],
                 context={"task": "workspace_thinking"})
-            return _parse(getattr(resp, "content", "") or "")
+            out = _parse(getattr(resp, "content", "") or "")
+            out["memory_refs"] = mem_ids
+            return out
         except Exception as exc:
             logger.warning("thinker LLM call failed: %s", exc)
             return {"progress": False, "resolve": False,
-                    "note": "", "action": {"kind": "none"}}
+                    "note": "", "action": {"kind": "none"},
+                    "memory_refs": mem_ids}
 
     return thinker
 
