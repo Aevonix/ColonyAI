@@ -399,15 +399,47 @@ class SelfhoodBenchmark:
     async def _m_recall(self, since, until):
         """Probe: re-query high-confidence shared facts against graph recall
         and grade by token coverage. Records each probe as a sample."""
+        rows = self._probe_rows()
+        if rows is None or not rows:
+            return None
+        picks = random.sample(rows, min(self.probe_count, len(rows)))
+        return await self._run_probes(picks, source="benchmark")
+
+    async def run_recall_probe(self, probes: int = 50,
+                               seed: Optional[int] = None
+                               ) -> Optional[Dict[str, Any]]:
+        """On-demand recall probe: the same derivation as the weekly
+        recall.fact_coverage metric, but with a seeded, deterministic fact
+        pick so before/after comparisons measure the recall path rather than
+        sampling noise. Read-only against the graph. Samples are recorded
+        with source="manual-probe"; rollups never read recall.probe samples,
+        so manual probing cannot distort the weekly scorecard."""
+        rows = self._probe_rows()
+        if rows is None or not rows:
+            return None
+        n = max(1, min(int(probes), 100))
+        picks = random.Random(seed).sample(rows, min(n, len(rows)))
+        out = await self._run_probes(picks, source="manual-probe")
+        if out is not None:
+            out["detail"]["seed"] = seed
+            out["detail"]["source"] = "manual-probe"
+        return out
+
+    def _probe_rows(self) -> Optional[List[Dict[str, Any]]]:
+        """High-confidence shared facts to probe, or None when a source
+        (graph or facts store) is unavailable — honest-skip, never zero."""
         graph = self._dep("graph")
         facts = self._dep("facts")
         if graph is None or facts is None:
             return None
-        rows = facts.list_facts(min_confidence=0.75, limit=200).get(
+        return facts.list_facts(min_confidence=0.75, limit=200).get(
             "facts", [])
-        if not rows:
-            return None
-        picks = random.sample(rows, min(self.probe_count, len(rows)))
+
+    async def _run_probes(self, picks: List[Any],
+                          source: str) -> Optional[Dict[str, Any]]:
+        """Grade each picked fact against graph recall (token coverage),
+        recording one recall.probe sample per fact under `source`."""
+        graph = self._dep("graph")
         hits = 0
         for f in picks:
             fact = (f.get("fact") if isinstance(f, dict)
@@ -425,7 +457,7 @@ class SelfhoodBenchmark:
             hit = 1.0 if self._covered(fact, results) else 0.0
             hits += int(hit)
             self.store.add_sample(
-                "recall.probe", hit, source="benchmark",
+                "recall.probe", hit, source=source,
                 meta={"fact_id": (f.get("id") if isinstance(f, dict)
                                   else getattr(f, "id", None))})
         n = len(picks)

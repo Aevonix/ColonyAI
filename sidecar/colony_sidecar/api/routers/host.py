@@ -4345,6 +4345,32 @@ async def post_benchmark_samples(body: BenchmarkSamplesRequest) -> dict:
             "rejected": len(body.samples[:500]) - accepted}
 
 
+class RecallProbeRequest(BaseModel):
+    probes: int = 50
+    seed: Optional[int] = None
+
+
+@router.post("/self/benchmark/recall-probe")
+async def post_benchmark_recall_probe(body: RecallProbeRequest) -> dict:
+    """On-demand, deterministic recall probe (the graduation gate for recall
+    changes): re-queries a seeded sample of high-confidence shared facts
+    against graph recall and grades token coverage. Read-only against the
+    graph; probe samples are recorded as source="manual-probe" and are never
+    read back into weekly rollups, so probing cannot distort the scorecard."""
+    if _benchmark is None:
+        return {"available": False}
+    try:
+        result = await _benchmark.run_recall_probe(
+            probes=body.probes, seed=body.seed)
+        if result is None:
+            return {"available": True, "ran": False,
+                    "reason": "graph/facts unavailable or no "
+                              "high-confidence facts to probe"}
+        return {"available": True, "ran": True, **result}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
 _experiments = None
 
 
