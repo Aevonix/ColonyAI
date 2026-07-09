@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.33.0 — comms ledger reads + concern-to-memory provenance
+
+Two additive, backward-compatible reads that let an operations surface show
+what the graph already knows.
+
+**Cross-channel comms ledger** (`contacts.comms`): the ledger that
+`/turns/sync` already writes was only readable per contact. Added
+`CommsLog.recent()` and `CommsLog.rollup()` plus `GET /v1/host/comms/recent`,
+so a caller can pull the newest exchanges across ALL contacts along with
+in/out counts per channel over a window. Read-only, contact ids resolved to
+display names.
+
+- `GET /v1/host/comms/recent` — `limit` + `window_days`; returns recent
+  cross-channel exchanges and a per-channel in/out rollup.
+
+**Concern to memory provenance** (`self_model.workspace`): the thinker
+already recalls memories per thought; it now keeps the hit ids and records
+them on the concern as `memory_refs` (deduped, capped, most-recent first)
+via a backward-compatible `ADD COLUMN` migration, exposed in
+`Concern.public()` and thus on `GET /v1/host/self/workspace`. This gives a
+real concern to memory link (for a provenance/beam view) rather than a
+render-time similarity guess: the field is empty until a concern is actually
+thought about, never fabricated.
+
 ## v0.32.1 — configure response accepts object-spec tiers
 
 v0.32.0 added per-tier object specs to `POST /v1/host/configure`, but

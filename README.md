@@ -118,7 +118,10 @@ guide.
   unknown senders become shadow contacts; machine turns can never pollute a
   person's profile. A profiler composes standing + psyche + approach briefs
   (preferred channel, best time to reach, engagement style) injected into
-  context and exposed as the `relationship_brief` tool. See
+  context and exposed as the `relationship_brief` tool. A cross-channel
+  comms ledger records every exchange and is readable both per contact and
+  across everyone (`GET /v1/host/comms/recent` returns the newest exchanges
+  plus per-channel in/out counts over a window). See
   [docs/RELATIONSHIPS.md](docs/RELATIONSHIPS.md).
 - **Temporal awareness.** Authoritative current time, per-contact timezones,
   and a unified journal of every turn and action, so the agent knows when
