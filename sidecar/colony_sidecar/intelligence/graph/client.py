@@ -634,9 +634,22 @@ class ColonyGraph:
         content = summary
         _distill = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
         if _distill:
-            _lines = [ln.split(":", 1)[1].strip() if ":" in ln else ln
-                      for ln in summary.splitlines()]
-            content = " — ".join(x for x in _lines if x) or summary
+            # Strip the agent-side wrapper but PRESERVE the user speaker label:
+            # "User: my X is Y" carries attribution that a bare "my X is Y"
+            # loses (whose preference is it?). Joined with "; " — this text is
+            # injected into prompts, so it must never introduce an em dash.
+            _lines = []
+            for ln in summary.splitlines():
+                if ":" in ln:
+                    _speaker, _rest = ln.split(":", 1)
+                    _rest = _rest.strip()
+                    if _speaker.strip().lower() == "user" and _rest:
+                        _lines.append(f"User: {_rest}")
+                    else:
+                        _lines.append(_rest)
+                else:
+                    _lines.append(ln)
+            content = "; ".join(x for x in _lines if x) or summary
         else:
             logger.debug("distill(shadow): would store salient content for session %s (imp=%.2f)",
                          session_id, importance)

@@ -13,6 +13,7 @@ Algorithm:
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -38,30 +39,55 @@ class MemoryDistiller:
     Args:
         graph_client: ColonyGraph instance (or compatible mock with execute())
         metrics: Optional ColonyMetricsCollector for instrumentation
-        min_recalls: Minimum recall count for a memory to be a distillation candidate
+        min_recalls: Minimum recall count for a memory to be a distillation
+            candidate (None = COLONY_DISTILL_MIN_RECALLS, default 3)
         min_strength: Minimum strength for a candidate
-        min_age_days: Minimum age in days (only distill established memories)
+            (None = COLONY_DISTILL_MIN_STRENGTH, default 0.5)
+        min_age_days: Minimum age in days, only distill established memories
+            (None = COLONY_DISTILL_MIN_AGE_DAYS, default 7)
         min_cluster_size: Minimum cluster size to trigger distillation
         candidate_limit: Max candidates per run
+
+    The env knobs exist because the defaults assume memories survive long
+    enough to accumulate 3 recalls over 7 days — on a fast-decay graph that
+    can mean nothing ever qualifies. An explicit constructor argument always
+    wins over the environment.
     """
 
     def __init__(
         self,
         graph_client: Any,
         metrics: Optional[Any] = None,
-        min_recalls: int = 3,
-        min_strength: float = 0.5,
-        min_age_days: int = 7,
+        min_recalls: Optional[int] = None,
+        min_strength: Optional[float] = None,
+        min_age_days: Optional[int] = None,
         min_cluster_size: int = 3,
         candidate_limit: int = 200,
     ) -> None:
         self.graph = graph_client
         self._metrics = metrics
-        self._min_recalls = min_recalls
-        self._min_strength = min_strength
-        self._min_age_days = min_age_days
+        self._min_recalls = (self._env_int("COLONY_DISTILL_MIN_RECALLS", 3)
+                             if min_recalls is None else min_recalls)
+        self._min_strength = (self._env_float("COLONY_DISTILL_MIN_STRENGTH", 0.5)
+                              if min_strength is None else min_strength)
+        self._min_age_days = (self._env_int("COLONY_DISTILL_MIN_AGE_DAYS", 7)
+                              if min_age_days is None else min_age_days)
         self._min_cluster_size = min_cluster_size
         self._candidate_limit = candidate_limit
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        try:
+            return int(os.environ.get(name, str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        try:
+            return float(os.environ.get(name, str(default)))
+        except (TypeError, ValueError):
+            return default
 
     async def run(self) -> DistillationResult:
         """Execute one distillation pass. Never raises — errors are captured."""
