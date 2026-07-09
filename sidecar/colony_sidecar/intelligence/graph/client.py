@@ -671,10 +671,23 @@ class ColonyGraph:
             try:
                 embedding = await self._embed_query(query)
                 from colony_sidecar.vector.collections import Collection
+                # Oversample the ANN fetch (COLONY_RECALL_OVERSAMPLE, default 1
+                # = legacy exact-limit fetch) so the post-hydration filters
+                # (strength floor, terminal epistemic states, low confidence)
+                # can't silently shrink the result set below the requested
+                # limit. Oversampled fetches are capped at 100 candidates and
+                # trimmed back to `limit` after filtering.
+                try:
+                    oversample = int(os.environ.get(
+                        "COLONY_RECALL_OVERSAMPLE", "1"))
+                except (TypeError, ValueError):
+                    oversample = 1
+                fetch_limit = (limit if oversample <= 1
+                               else min(limit * oversample, max(100, limit)))
                 results = await self._vector_store.search(
                     collection=Collection.MEMORIES,
                     query_vector=embedding,
-                    limit=limit,
+                    limit=fetch_limit,
                     # metadata is stored as a JSON string (pa.utf8()); LanceDB's
                     # filter dialect does not support json_extract on utf8 columns.
                     # Strength filtering is applied post-hydration from Neo4j below.
@@ -720,7 +733,6 @@ class ColonyGraph:
                             strength = float(mem.get("strength", 1.0))
                             if strength < min_strength:
                                 continue
-                            mem["relevance"] = vector_score * strength
                             # Filter terminal epistemic states and low confidence
                             epistemic_state = mem.get("epistemic_state", "inferred")
                             if epistemic_state in ("stale", "superseded", "deprecated", "archived"):
@@ -732,6 +744,7 @@ class ColonyGraph:
                             memories.append(mem)
 
                     memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)
+                    memories = memories[:limit]
                     # Fire-and-forget touch_memory for each recalled result
                     for mem in memories:
                         mid = mem.get("id")
