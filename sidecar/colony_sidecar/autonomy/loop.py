@@ -3219,18 +3219,12 @@ class AutonomyLoop:
         except (ValueError, AttributeError):
             return False
 
-        start_minutes = start_h * 60 + start_m
-        end_minutes = end_h * 60 + end_m
-        current_minutes = now.hour * 60 + now.minute
-
-        # Disabled if both are 00:00
-        if start_minutes == 0 and end_minutes == 0:
-            return False
-
-        # Handle overnight quiet hours (e.g., 22:00 - 07:00)
-        if start_minutes > end_minutes:
-            return current_minutes >= start_minutes or current_minutes < end_minutes
-        return start_minutes <= current_minutes < end_minutes
+        from colony_sidecar.util.quiet_hours import in_quiet_window
+        return in_quiet_window(
+            now.hour * 60 + now.minute,
+            start_h * 60 + start_m,
+            end_h * 60 + end_m,
+        )
 
     def _reset_hour_bucket(self) -> None:
         current_hour = datetime.now(timezone.utc).hour

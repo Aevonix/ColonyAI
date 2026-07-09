@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from colony_sidecar.util.quiet_hours import in_quiet_window
+
 logger = logging.getLogger(__name__)
 
 _MAX_PER_DAY = 3
@@ -203,11 +205,11 @@ class DeliveryRateLimiter:
     def _in_quiet_hours(self) -> bool:
         """Return True if current time is within quiet hours (owner-local tz)."""
         now = datetime.now(self._tz)
-        h = now.hour
-        if self._quiet_start > self._quiet_end:
-            # Spans midnight (22:00–08:00)
-            return h >= self._quiet_start or h < self._quiet_end
-        return self._quiet_start <= h < self._quiet_end
+        return in_quiet_window(
+            now.hour * 60 + now.minute,
+            self._quiet_start * 60,
+            self._quiet_end * 60,
+        )
 
     # ------------------------------------------------------------------
     # Persistence
@@ -238,9 +240,13 @@ class DeliveryRateLimiter:
     def _reload_from_db(self) -> None:
         """Reload today's counts and the most-recent delivery per person."""
         assert self._db_path is not None
+        # "Today" is the OWNER-LOCAL date (matching _reset_if_new_day), so
+        # its start is local midnight converted to UTC — the log stores UTC
+        # timestamps. Combining the local date with UTC midnight shifted the
+        # reload window by the UTC offset, over- or under-counting restarts.
         today_start = datetime.combine(
-            self._today, datetime.min.time(), tzinfo=timezone.utc
-        ).isoformat()
+            self._today, datetime.min.time(), tzinfo=self._tz
+        ).astimezone(timezone.utc).isoformat()
         with sqlite3.connect(self._db_path) as conn:
             # Today's deliveries → daily count
             cur = conn.execute(
