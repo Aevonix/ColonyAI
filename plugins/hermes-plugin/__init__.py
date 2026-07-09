@@ -1349,12 +1349,18 @@ def register(ctx):
                 logger.debug("sync_turn (post_llm_call) failed: %s", exc)
             # Per-turn behavioral signal feed: hand the contact's message to the
             # sidecar's signal collector so form/timing signals flow (baselines,
-            # engagement style) instead of only firing on compression.
+            # engagement style) instead of only firing on compression. The raw
+            # sender identity rides along (same shape as turns/sync) so the
+            # sidecar's ParticipantResolver is authoritative for WHO the
+            # signals belong to, not the client-side contact cache.
             if user_msg:
+                _sender = ({"platform": _plat or "unknown", "user_id": _snd}
+                           if _snd else None)
                 try:
                     _colony_client.post("/v1/host/signals/ingest", json={
                         "identity": {"host_id": "hermes"},
                         "context": {"session_id": session_id, "contact_id": contact_id},
+                        **({"sender": _sender} if _sender else {}),
                         "incoming_message": {"role": "user", "content": user_msg[:2000]},
                     }, timeout=4)
                 except Exception as exc:

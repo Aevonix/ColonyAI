@@ -2105,10 +2105,76 @@ class _LooseMessage:
         self.has_media = False
 
 
+#: contact_ids already warned about as unknown on /signals/ingest (warn-once,
+#: bounded so a churn of junk ids can't grow it without limit).
+_signals_unknown_warned: set = set()
+
+
+async def _attribute_signal_contact(body: SignalIngestRequest) -> None:
+    """Attribution for /signals/ingest (COLONY_SIGNALS_ATTRIBUTION=legacy/strict).
+
+    Mirrors the turns/sync chokepoint: a supplied ``sender`` resolves server-side
+    via ParticipantResolver and OVERWRITES context.contact_id (client contact ids
+    go stale in group sessions). Without a resolvable sender:
+      * legacy (default): keep the client's contact_id exactly as today, but
+        warn once per unknown id so poisoned attribution is at least visible;
+      * strict: attribute to the reserved system sentinel — an unattributable
+        signal must never poison a person's baselines/engagement profile.
+    Never raises; any failure keeps the client contact (legacy behavior).
+    """
+    mode = os.environ.get("COLONY_SIGNALS_ATTRIBUTION", "legacy").strip().lower()
+    try:
+        from colony_sidecar.identity.participants import (
+            SYSTEM_CONTACT_ID, ParticipantResolver,
+        )
+        if body.sender is not None and _contacts_store is not None:
+            res = await ParticipantResolver(_contacts_store).resolve(
+                platform=body.sender.platform,
+                user_id=body.sender.user_id,
+                display_name=body.sender.display_name,
+                group_id=body.sender.group_id,
+                channel_id=body.context.channel_id or "",
+            )
+            if res.contact_id:
+                if res.contact_id != body.context.contact_id:
+                    logger.info(
+                        "signal attribution: %s -> %s (%s%s)",
+                        body.context.contact_id, res.contact_id, res.method,
+                        ", shadow-created" if res.created else "")
+                body.context.contact_id = res.contact_id
+                return
+        # No sender, or the sender was unresolvable: is the claimed contact real?
+        if _contacts_store is None or not body.context.contact_id:
+            return
+        known = None
+        try:
+            known = await _contacts_store.get(body.context.contact_id)
+        except Exception:
+            known = None
+        if known is not None:
+            return
+        if mode == "strict":
+            logger.info("signal attribution (strict): unknown contact %r -> %s",
+                        body.context.contact_id, SYSTEM_CONTACT_ID)
+            body.context.contact_id = SYSTEM_CONTACT_ID
+        elif body.context.contact_id not in _signals_unknown_warned:
+            if len(_signals_unknown_warned) < 512:
+                _signals_unknown_warned.add(body.context.contact_id)
+            logger.warning(
+                "signals_ingest: unknown contact_id %r — signals will accrue to "
+                "an unverified identity (set COLONY_SIGNALS_ATTRIBUTION=strict "
+                "to divert these to the system sentinel)",
+                body.context.contact_id)
+    except Exception:
+        logger.debug("signal attribution failed; keeping client contact",
+                     exc_info=True)
+
+
 @router.post("/signals/ingest", response_model=SignalIngestResponse)
 async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
     if _signal_collector is None:
         return SignalIngestResponse(accepted=True, signals_recorded=0)
+    await _attribute_signal_contact(body)
 
     recorded = 0
     now = datetime.now(tz=timezone.utc)

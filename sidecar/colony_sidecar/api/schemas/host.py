@@ -397,24 +397,7 @@ class SkillExecuteResponse(BaseModel):
     duration_ms: Optional[int] = None
 
 
-# --- Signals ----------------------------------------------------------------
-
-class SignalIngestRequest(BaseModel):
-    identity: HostIdentity
-    context: HostTurnContext
-    incoming_message: Optional[HostMessage] = None
-    outgoing_message: Optional[HostMessage] = None
-    tool_calls: List[ReasoningToolCall] = Field(default_factory=list)
-    correction: Optional[str] = None
-    signals: List[Dict[str, Any]] = Field(default_factory=list)
-
-
-class SignalIngestResponse(BaseModel):
-    accepted: bool
-    signals_recorded: int
-
-
-# --- Turns ------------------------------------------------------------------
+# --- Sender identity ---------------------------------------------------------
 
 class HostSender(BaseModel):
     """WHO produced the user side of this turn (docs/RELATIONSHIPS.md).
@@ -428,6 +411,26 @@ class HostSender(BaseModel):
     display_name: str = Field(default="", max_length=256)
     group_id: str = Field(default="", max_length=256)
 
+
+# --- Signals ----------------------------------------------------------------
+
+class SignalIngestRequest(BaseModel):
+    identity: HostIdentity
+    context: HostTurnContext
+    sender: Optional[HostSender] = None
+    incoming_message: Optional[HostMessage] = None
+    outgoing_message: Optional[HostMessage] = None
+    tool_calls: List[ReasoningToolCall] = Field(default_factory=list)
+    correction: Optional[str] = None
+    signals: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class SignalIngestResponse(BaseModel):
+    accepted: bool
+    signals_recorded: int
+
+
+# --- Turns ------------------------------------------------------------------
 
 class TurnSyncRequest(BaseModel):
     identity: HostIdentity
