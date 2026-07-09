@@ -1371,6 +1371,35 @@ def register(ctx):
             threading.Thread(target=_do_sync, daemon=True).start()
         except Exception:
             _do_sync()
+
+        # Chat hot-path ResponseGuard shadow (COLONY_GUARD_CHAT_SHADOW=1):
+        # mirror the outbound reply to the sidecar guard for OBSERVATION only
+        # (mode=shadow), so leak/injection findings accumulate in the guard
+        # audit on real chat traffic. Fire-and-forget on a daemon thread with
+        # a short timeout: it can never block, delay, or modify the reply,
+        # and every error is swallowed (fail open by construction).
+        if assistant_msg and os.environ.get(
+                "COLONY_GUARD_CHAT_SHADOW", "0").strip().lower() in ("1", "true", "yes"):
+            _guard_gateway = str(kwargs.get("platform", "") or _plat)
+
+            def _do_guard_shadow():
+                try:
+                    _colony_client.post("/v1/host/response-guard/check", json={
+                        "response_text": assistant_msg[:8000],
+                        "incoming_message_text": user_msg[:2000],
+                        "target_contact_id": contact_id,
+                        "target_gateway": _guard_gateway,
+                        "session_id": session_id,
+                        "mode": "shadow",
+                    }, timeout=3)
+                except Exception as exc:
+                    logger.debug("response-guard shadow check failed: %s", exc)
+
+            try:
+                import threading
+                threading.Thread(target=_do_guard_shadow, daemon=True).start()
+            except Exception:
+                pass
         return None
 
     def _on_session_end(**kwargs):
