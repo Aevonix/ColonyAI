@@ -1551,6 +1551,27 @@ async def lifespan(app: FastAPI):
 
         scheduler.register("world_model_prune", _run_world_model_prune, interval_seconds=86400, metadata={"description": "Remove stale low-confidence world model entities (config TTL)"})
 
+        async def _run_mining_prune():
+            from colony_sidecar.api.routers.mining import get_mining_store
+            store = get_mining_store()
+            if store is None:
+                return {"status": "skipped", "reason": "mining_not_wired"}
+            try:
+                retention_days = int(os.environ.get(
+                    "COLONY_MINING_RETENTION_DAYS", "0"))
+                max_turns = int(os.environ.get(
+                    "COLONY_MINING_MAX_TURNS", "0"))
+            except ValueError:
+                retention_days = max_turns = 0
+            if retention_days <= 0 and max_turns <= 0:
+                # Default posture: the verbatim turn bank is unbounded
+                # unless a deployment opts into retention.
+                return {"status": "skipped", "reason": "retention_unbounded"}
+            return {"status": "ok", **store.prune_turns(
+                retention_days=retention_days, max_turns=max_turns)}
+
+        scheduler.register("mining_prune", _run_mining_prune, interval_seconds=86400, metadata={"description": "Prune banked mining turns per COLONY_MINING_RETENTION_DAYS / COLONY_MINING_MAX_TURNS (0 = keep everything)"})
+
         async def _run_digest_flush():
             from colony_sidecar.api.routers.host import _delivery_bridge as bridge
             if bridge is None:
