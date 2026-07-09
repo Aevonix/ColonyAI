@@ -83,8 +83,10 @@ class SubsystemRegistry:
 
     @property
     def queue(self) -> Any:
-        from colony_sidecar.api.routers.host import _consolidator
-        return _consolidator
+        """Task-queue manager (was a copy-paste bug returning the memory
+        consolidator; ``task_queue`` below is the canonical accessor)."""
+        from colony_sidecar.api.routers.host import _task_queue
+        return _task_queue
 
     @property
     def briefings(self) -> Any:

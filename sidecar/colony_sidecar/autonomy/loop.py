@@ -150,6 +150,8 @@ class AutonomyLoop:
         self._last_task_completion_check: Optional[datetime] = None
         # Phases already warned about skipping (warn once, count always).
         self._phase_skip_warned: set = set()
+        # High-water mark for _phase_events so each event is counted once.
+        self._last_event_seen_id: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -415,9 +417,24 @@ class AutonomyLoop:
         """Count recent events into stats. Per-event routing was a dead loop
         that only ever `pass`ed — deliberately not implemented here: message
         traffic is Hermes' domain and reaches Colony through turn_sync /
-        signal ingest, so the tick only tracks volume."""
+        signal ingest, so the tick only tracks volume.
+
+        Only events NEW since the last tick are counted: the previous
+        implementation re-counted the whole trailing history window every
+        tick, inflating events_processed by up to 50 per tick on an idle
+        colony."""
         try:
-            self.stats.events_processed += len(self.events.get_history(limit=50))
+            recent = list(self.events.get_history(limit=50))
+            if self._last_event_seen_id is not None:
+                for i in range(len(recent) - 1, -1, -1):
+                    if getattr(recent[i], "id", None) == self._last_event_seen_id:
+                        recent = recent[i + 1:]
+                        break
+                # marker not found (aged out of the window): count the whole
+                # window, same bounded over-count the old code always had
+            if recent:
+                self._last_event_seen_id = getattr(recent[-1], "id", None)
+            self.stats.events_processed += len(recent)
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase events error: %s", exc, exc_info=True)
