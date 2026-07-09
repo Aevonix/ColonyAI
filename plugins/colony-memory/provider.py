@@ -503,6 +503,14 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
         self._session_id = ""
         self._cached_context: str = ""
+        # Prefetch-cache bookkeeping (COLONY_PREFETCH_QUERY_CHECK=1): remember
+        # WHICH turn the background prefetch was for, so a cached context is
+        # only consumed by the turn that queued it. Guarded by a Lock because
+        # queue_prefetch's worker thread and prefetch() race on these fields.
+        self._cache_lock = threading.Lock()
+        self._cached_query: str = ""
+        self._cached_session: str = ""
+        self._stale_cache_misses = 0
         self._temporal_cache = (0.0, "")  # (monotonic ts, block)
         self._last_turn_started_at = 0.0
         self._prev_turn_gap_secs = None
@@ -536,6 +544,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             "last_sync_error": self._last_sync_error,
             "circuit_open": self._is_circuit_open(),
             "connection_failures": self._connection_failures,
+            "stale_cache_misses": self._stale_cache_misses,
         }
 
     def _is_circuit_open(self) -> bool:
@@ -750,7 +759,26 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         t = self._prefetch_thread
         if t is not None and t.is_alive():
             t.join(timeout=9.0)
-        if self._cached_context:
+        if self._prefetch_query_check_enabled():
+            # Consume the cached context only when it was fetched for THIS
+            # query+session; a leftover cache from an abandoned or concurrent
+            # turn is stale and would inject the wrong turn's context.
+            with self._cache_lock:
+                cached = self._cached_context
+                match = (cached
+                         and self._cached_query == (query or "")
+                         and self._cached_session == (session_id or ""))
+                if cached:
+                    self._cached_context = ""  # one-shot per turn
+                    self._cached_query = ""
+                    self._cached_session = ""
+                if cached and not match:
+                    self._stale_cache_misses += 1
+            if match:
+                ctx = cached
+            else:
+                ctx = self._prefetch_sync(query, session_id=session_id)
+        elif self._cached_context:
             ctx = self._cached_context
             self._cached_context = ""  # one-shot per turn
         else:
@@ -1003,16 +1031,30 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         sections = data.get("sections", [])
         return self._format_sections(sections) if sections else ""
 
+    @staticmethod
+    def _prefetch_query_check_enabled() -> bool:
+        """COLONY_PREFETCH_QUERY_CHECK=1 -> consume the prefetch cache only when
+        it matches the current query+session (default 0 = legacy consume-any)."""
+        return os.environ.get(
+            "COLONY_PREFETCH_QUERY_CHECK", "0") not in ("0", "false", "no", "")
+
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         """Kick off a background (thread) prefetch for the upcoming turn so the
         synchronous prefetch() can return instantly with the cached result."""
-        self._cached_context = ""
+        with self._cache_lock:
+            self._cached_context = ""
+            self._cached_query = ""
+            self._cached_session = ""
 
         def _bg():
             try:
-                self._cached_context = self._prefetch_sync(query, session_id=session_id)
+                ctx = self._prefetch_sync(query, session_id=session_id)
             except Exception:
-                self._cached_context = ""
+                ctx = ""
+            with self._cache_lock:
+                self._cached_context = ctx
+                self._cached_query = query or ""
+                self._cached_session = session_id or ""
 
         t = threading.Thread(target=_bg, daemon=True)
         self._prefetch_thread = t
