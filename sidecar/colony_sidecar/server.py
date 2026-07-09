@@ -1941,6 +1941,10 @@ def create_app() -> FastAPI:
     from colony_sidecar.api.routers import mining as mining_router
     app.include_router(mining_router.router)
 
+    # Context gate (v0.32.0) — budget-aware context preparation
+    from colony_sidecar.api.routers import context_gate as context_gate_router
+    app.include_router(context_gate_router.router)
+
     # MCP streamable HTTP endpoint
     try:
         from colony_sidecar.mcp.server import create_server

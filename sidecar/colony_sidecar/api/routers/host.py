@@ -319,6 +319,11 @@ def set_llm_router(router) -> None:
     _llm_router = router
 
 
+def get_llm_router():
+    """Current LLMRouter instance (None until the host configures one)."""
+    return _llm_router
+
+
 _telemetry = None
 
 

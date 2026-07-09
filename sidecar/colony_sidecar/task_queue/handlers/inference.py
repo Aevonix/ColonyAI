@@ -237,6 +237,92 @@ class InferenceHandler(JobHandler):
             logger.warning("Could not connect world model store", exc_info=True)
             self._wm = None
 
+    async def _gate_context(
+        self,
+        messages: list[dict],
+        user_text: str,
+        force_tier: Optional[Any],
+        payload: Dict[str, Any],
+    ) -> list[dict]:
+        """Shrink oversized message content to the target tier's useful window.
+
+        Uses the context gate (:mod:`colony_sidecar.contextgate`): when the
+        assembled messages exceed the tier's ``useful_context_tokens`` the
+        largest message content is chunked and retrieved/sampled down to
+        budget. No-op when the gate is off, the budget is unknown, or the
+        input already fits. Jobs may opt out via ``payload["context_gate"]
+        = "off"`` and may pass an explicit ``payload["query"]`` to focus
+        retrieval.
+        """
+        if payload.get("context_gate") == "off":
+            return messages
+        try:
+            from colony_sidecar.contextgate import (
+                GateConfig,
+                estimate_tokens,
+                prepare_context,
+            )
+
+            gcfg = GateConfig.from_env()
+            if gcfg.mode == "off":
+                return messages
+
+            # Budget from the tier the call will actually use
+            tier = force_tier
+            if tier is None:
+                try:
+                    tier = self._router.route(user_text, {})[0]
+                except Exception:
+                    return messages
+            tier_cfg = getattr(self._router, "tier_config", lambda _t: None)(tier)
+            budget = getattr(tier_cfg, "useful_context_tokens", 0) or gcfg.default_budget_tokens
+            if budget <= 0:
+                return messages
+
+            est_total = sum(
+                estimate_tokens(str(m.get("content") or "")) for m in messages
+            )
+            if est_total <= budget * gcfg.headroom:
+                return messages
+
+            # Gate the single largest content block (usually the document)
+            idx = max(
+                range(len(messages)),
+                key=lambda i: len(str(messages[i].get("content") or "")),
+            )
+            big = str(messages[idx].get("content") or "")
+            # Query focus: explicit payload query wins; if the oversized
+            # message is itself the user turn, its tail usually carries the
+            # actual question, otherwise the whole user text is the query.
+            query = payload.get("query") or (
+                user_text[-1000:] if big == user_text else user_text[:2000]
+            )
+            overhead = est_total - estimate_tokens(big)
+            prepared = await prepare_context(
+                content=big,
+                query=query,
+                budget_tokens=max(1, budget - overhead),
+                task_kind=payload.get("task_kind"),
+                config=gcfg,
+            )
+            from colony_sidecar.contextgate import GateDecision
+
+            if prepared.decision != GateDecision.PASS_THROUGH:
+                gated = list(messages)
+                gated[idx] = {**messages[idx], "content": prepared.text}
+                logger.info(
+                    "Inference context gated: %s, %d -> %d est tokens (tier=%s)",
+                    prepared.decision.value,
+                    prepared.est_tokens_in,
+                    prepared.est_tokens_out,
+                    getattr(tier, "value", tier),
+                )
+                return gated
+            return messages
+        except Exception:
+            logger.warning("Context gate failed — sending messages ungated", exc_info=True)
+            return messages
+
     async def execute(self, job: Job) -> Dict[str, Any]:
         payload = job.payload
         model_tier = payload.get("model_tier")
@@ -314,6 +400,9 @@ class InferenceHandler(JobHandler):
                 {"role": "system", "content": enriched_system},
                 {"role": "user", "content": user_text},
             ]
+
+        # ── Context gate: fit input to the tier's useful window ───────────
+        messages = await self._gate_context(messages, user_text, force_tier, payload)
 
         # ── LLM call ──────────────────────────────────────────────────────
         response = await self._router.complete(messages, force_tier=force_tier)

@@ -997,6 +997,54 @@ def _configure_colony_llm(client: ColonyClient, plugin_config: dict) -> None:
         if cfg_key in plugin_config:
             models[tier] = plugin_config[cfg_key]
 
+        # Per-tier endpoint overrides (Colony >= 0.32): different tiers may
+        # live on different servers. When any override is present the tier's
+        # entry becomes an object spec instead of a bare model string.
+        #   plugin config:  llm_<tier>_base_url / _api_key / _extra_body /
+        #                   _useful_ctx / _max_tokens
+        #   env:            COLONY_LLM_<TIER>_BASE_URL / _API_KEY /
+        #                   _EXTRA_BODY (JSON) / _USEFUL_CTX / _MAX_TOKENS
+        overrides: dict = {}
+        for suffix, spec_key, cast in (
+            ("base_url", "baseUrl", str),
+            ("api_key", "apiKey", str),
+            ("extra_body", "extraBody", None),
+            ("useful_ctx", "usefulContextTokens", int),
+            ("max_tokens", "maxTokens", int),
+        ):
+            raw = plugin_config.get(
+                f"llm_{tier}_{suffix}",
+                os.environ.get(f"COLONY_LLM_{tier.upper()}_{suffix.upper()}", ""),
+            )
+            if raw in ("", None):
+                continue
+            if suffix == "extra_body":
+                if isinstance(raw, str):
+                    try:
+                        raw = json.loads(raw)
+                    except json.JSONDecodeError:
+                        logger.warning("Invalid llm_%s_extra_body JSON, ignoring", tier)
+                        continue
+                if not isinstance(raw, dict):
+                    logger.warning("llm_%s_extra_body must be an object, ignoring", tier)
+                    continue
+                overrides[spec_key] = raw
+            else:
+                try:
+                    overrides[spec_key] = cast(raw)
+                except (TypeError, ValueError):
+                    logger.warning("Invalid llm_%s_%s value %r, ignoring", tier, suffix, raw)
+        if overrides:
+            base_model = models.get(tier, "")
+            if isinstance(base_model, dict):
+                base_model = base_model.get("model", "")
+            if not base_model:
+                logger.warning(
+                    "Per-tier overrides for %r given without a model — skipping", tier
+                )
+            else:
+                models[tier] = {"model": base_model, **overrides}
+
     # Auto-detect Ollama if no explicit config
     if not provider and not models:
         detected = _detect_ollama_models()

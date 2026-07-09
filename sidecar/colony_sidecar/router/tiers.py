@@ -35,6 +35,21 @@ class TierConfig:
     cost_per_1k_input: float   # USD
     cost_per_1k_output: float
     latency_p50_ms: int        # approximate
+    # Per-tier endpoint overrides (empty = inherit the provider-wide
+    # endpoint configured via OPENAI_API_BASE / provider defaults).
+    # These let different tiers live on different servers — e.g. a fast
+    # small model on one endpoint and a large reasoning model on another.
+    base_url: str = ""
+    api_key: str = ""
+    # Extra request-body fields forwarded verbatim on every call to this
+    # tier (e.g. vLLM's per-request ``priority`` for --scheduling-policy
+    # priority, or provider-specific sampling knobs).
+    extra_body: dict[str, Any] | None = None
+    # The model's *useful* context window in tokens — the point up to
+    # which exact retrieval stays reliable, which is often well below the
+    # advertised maximum. 0 = unknown/unlimited. Consumed by the context
+    # gate to decide when to chunk/retrieve instead of passing whole.
+    useful_context_tokens: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +414,29 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
             }
         }
 
+    Each ``models`` value may also be an object instead of a bare model
+    string, enabling *per-tier endpoints* — different tiers served by
+    different servers — plus per-tier request extras::
+
+        {
+            "provider": "vllm",
+            "baseUrl": "http://fast-host:8000/v1",   # default for all tiers
+            "models": {
+                "small": "fast-model",
+                "large": {
+                    "model": "big-model",
+                    "baseUrl": "http://big-host:8000/v1",
+                    "apiKey": "…",                    # optional
+                    "extraBody": {"priority": 10},    # optional, sent verbatim
+                    "usefulContextTokens": 65536,     # optional, context gate hint
+                    "maxTokens": 32768                # optional, completion cap
+                }
+            }
+        }
+
+    Snake_case keys (``base_url``, ``api_key``, ``extra_body``,
+    ``useful_context_tokens``, ``max_tokens``) are accepted as aliases.
+
     For OpenAI-compatible providers (zai, local, custom, lmstudio, vllm),
     the function sets ``OPENAI_API_KEY`` and ``OPENAI_API_BASE`` so
     LiteLLM routes ``openai/*`` model IDs correctly. For Ollama, it
@@ -408,6 +446,49 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
     api_key = config.get("apiKey", "")
     base_url = config.get("baseUrl", "")
     models_override = config.get("models", {})
+
+    def _spec_field(spec: dict, *names: str, default: Any = None) -> Any:
+        """First present key among camelCase/snake_case aliases."""
+        for name in names:
+            if name in spec:
+                return spec[name]
+        return default
+
+    def _parse_model_spec(value: Any) -> tuple[str, dict[str, Any]]:
+        """Normalize a ``models`` entry (string or object) to (model_id, overrides).
+
+        Overrides may contain: base_url, api_key, extra_body,
+        useful_context_tokens, max_tokens.
+        """
+        if isinstance(value, str):
+            return value, {}
+        if isinstance(value, dict):
+            model_id = str(_spec_field(value, "model", "model_id", default="") or "")
+            overrides: dict[str, Any] = {}
+            v = _spec_field(value, "baseUrl", "base_url")
+            if v:
+                overrides["base_url"] = str(v)
+            v = _spec_field(value, "apiKey", "api_key")
+            if v:
+                overrides["api_key"] = str(v)
+            v = _spec_field(value, "extraBody", "extra_body")
+            if isinstance(v, dict) and v:
+                overrides["extra_body"] = dict(v)
+            v = _spec_field(value, "usefulContextTokens", "useful_context_tokens")
+            if v:
+                try:
+                    overrides["useful_context_tokens"] = int(v)
+                except (TypeError, ValueError):
+                    logger.warning("Invalid usefulContextTokens %r — ignoring", v)
+            v = _spec_field(value, "maxTokens", "max_tokens")
+            if v:
+                try:
+                    overrides["max_tokens"] = int(v)
+                except (TypeError, ValueError):
+                    logger.warning("Invalid maxTokens %r — ignoring", v)
+            return model_id, overrides
+        logger.warning("Unsupported model spec %r — expected string or object", value)
+        return "", {}
 
     # Determine whether the provider is OpenAI-compatible or Ollama-native
     openai_compat_providers = {"zai", "local", "custom", "lmstudio", "vllm", "openai"}
@@ -427,8 +508,9 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
             )
             tiers = {}
             for tier in (ModelTier.SMALL, ModelTier.MEDIUM, ModelTier.LARGE):
-                model_id = models_override.get(tier.value)
-                if model_id is None:
+                raw_spec = models_override.get(tier.value)
+                model_id = _parse_model_spec(raw_spec)[0] if raw_spec is not None else None
+                if not model_id:
                     # Fallback for missing tier — use a generic placeholder
                     # that will be overridden below if the host provides it.
                     model_id = "openai/gpt-4o-mini"
@@ -456,7 +538,7 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
     # Apply model overrides from host
     # ------------------------------------------------------------------
     if models_override:
-        for tier_name, model_id in models_override.items():
+        for tier_name, raw_spec in models_override.items():
             try:
                 tier = ModelTier(tier_name)
             except ValueError:
@@ -465,6 +547,12 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
             if tier == ModelTier.HEURISTIC:
                 # HEURISTIC is a rule-based non-LLM tier — ignore model overrides for it
                 continue
+
+            model_id, tier_overrides = _parse_model_spec(raw_spec)
+            if not model_id:
+                logger.warning("No model in spec for tier %r — skipping", tier_name)
+                continue
+
             if tier not in tiers:
                 # Host sent a model for a tier we don't have yet (generic build case)
                 tiers[tier] = TierConfig(
@@ -488,8 +576,13 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
                 # (LiteLLM accepts "claude-sonnet-4-6" without a prefix when
                 # ANTHROPIC_API_KEY is set).
 
-            tiers[tier] = replace(tiers[tier], model_id=model_id)
-            logger.info("Host override: %s tier -> %s", tier.value, model_id)
+            tiers[tier] = replace(tiers[tier], model_id=model_id, **tier_overrides)
+            logger.info(
+                "Host override: %s tier -> %s%s",
+                tier.value,
+                model_id,
+                f" @ {tier_overrides['base_url']}" if tier_overrides.get("base_url") else "",
+            )
 
     # ------------------------------------------------------------------
     # Auto-discovery when no overrides are provided for local providers

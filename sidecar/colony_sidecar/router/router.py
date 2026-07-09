@@ -148,6 +148,15 @@ class LLMRouter:
         model_id = config.model_id if config else ""
         return tier, model_id
 
+    def tier_config(self, tier: ModelTier) -> TierConfig | None:
+        """Return the TierConfig for *tier* (None if unconfigured).
+
+        Used by callers that need tier metadata without making a call —
+        e.g. the context gate reads ``useful_context_tokens`` to decide
+        whether an input needs chunking/retrieval before dispatch.
+        """
+        return self._tiers.get(tier)
+
     def record_outcome(
         self,
         request_id: str,
@@ -253,6 +262,15 @@ class LLMRouter:
             kwargs["tools"] = tools
         if stream:
             kwargs["stream"] = True
+        # Per-tier endpoint overrides — different tiers may live on
+        # different servers (see TierConfig). When unset, LiteLLM falls
+        # back to the provider-wide env config (OPENAI_API_BASE etc.).
+        if config.base_url:
+            kwargs["api_base"] = config.base_url
+        if config.api_key:
+            kwargs["api_key"] = config.api_key
+        if config.extra_body:
+            kwargs["extra_body"] = dict(config.extra_body)
 
         t0 = time.monotonic()
         # LiteLLM's async completion

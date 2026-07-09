@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.32.0 — context gate + multi-endpoint model tiers
+
+Two related capabilities for running big models well:
+
+**Context gate** (`colony_sidecar.contextgate`): a model's *useful* context
+window — the range over which exact retrieval stays reliable — is often far
+below its advertised maximum, and stuffing a huge document in silently
+degrades recall. The gate decides per call whether content fits whole, and
+when it doesn't, chunks it structure-aware (code fences atomic, then
+headings, then paragraphs, with overlap) and either retrieves the chunks
+most relevant to the query (embeddings when injected, dependency-free
+lexical TF-IDF otherwise) or — for holistic tasks like "summarize the whole
+thing" — map-reduces via a caller-provided LLM callable, degrading to
+evenly-spaced coverage sampling. Query-focused vs holistic intent comes from
+an explicit `task_kind` or a heuristic classifier.
+
+- `POST /v1/context/prepare` — any agent can gate content over the API
+  (`content`/`documents` + `query` + `budget_tokens` or `model_tier`)
+- Inference jobs gate automatically against the target tier's budget
+  (opt out per job with `payload.context_gate = "off"`)
+- Config: `COLONY_CONTEXT_GATE` (auto/on/off), `…_HEADROOM`, `…_BUDGET`,
+  `COLONY_CONTEXT_CHUNK_TOKENS`, `…_OVERLAP_TOKENS`, `…_CHARS_PER_TOKEN`
+
+**Multi-endpoint model tiers**: `POST /v1/host/configure` `models` values
+may now be objects, not just model strings — per tier: `baseUrl`, `apiKey`,
+`extraBody` (request fields forwarded verbatim, e.g. vLLM's per-request
+`priority`), `usefulContextTokens` (feeds the context gate), and
+`maxTokens`. Different tiers can live on different servers: a fast small
+model on one endpoint, a large reasoning model on another. String specs
+keep working unchanged. The Hermes plugin exposes the same per tier via
+`llm_<tier>_base_url` / `_api_key` / `_extra_body` / `_useful_ctx` /
+`_max_tokens` (and `COLONY_LLM_<TIER>_*` env vars).
+
 ## v0.31.1 — env secrets backend reads its own file
 
 `EnvBackend.get()` only consulted `os.environ`, so a fresh process (the
