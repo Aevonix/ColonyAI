@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.32.1 — configure response accepts object-spec tiers
+
+v0.32.0 added per-tier object specs to `POST /v1/host/configure`, but
+`HostConfigureResponse.models` was still typed `dict[str, str]`, so a
+multi-endpoint configure returned HTTP 500 on response serialization —
+the router was rebuilt correctly and the config persisted (both happen
+before the response is built), but the caller saw a failure. Widened the
+response echo (and the unused `LLMModelsConfig` helper) to accept bare
+strings or object specs. Found configuring a live GLM cutover.
+
 ## v0.32.0 — context gate + multi-endpoint model tiers
 
 Two related capabilities for running big models well:

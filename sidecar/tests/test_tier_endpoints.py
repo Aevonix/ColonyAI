@@ -139,3 +139,43 @@ def test_litellm_call_carries_per_tier_kwargs(monkeypatch, tier, expect_base, ex
     assert captured.get("api_base") == expect_base
     assert captured.get("api_key") == expect_key
     assert captured.get("extra_body") == expect_extra
+
+
+def test_configure_response_accepts_object_specs():
+    """Regression: HostConfigureResponse.models must not 500 on object specs.
+
+    v0.32.0 shipped object-spec tiers but typed the response `models` as
+    dict[str,str], so a multi-endpoint configure round-tripped to a 500
+    even though the router was rebuilt correctly.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from colony_sidecar.api.routers.host import router as host_router
+
+    app = FastAPI()
+    app.include_router(host_router)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/v1/host/configure",
+        json={
+            "identity": {"host_id": "test"},
+            "llm": {
+                "provider": "vllm",
+                "baseUrl": "http://x:8000/v1",
+                "apiKey": "no-key-required",
+                "models": {
+                    "small": {"model": "big-model", "extraBody": {"priority": 10},
+                              "usefulContextTokens": 65536},
+                    "medium": {"model": "big-model", "extraBody": {"priority": 10}},
+                    "large": "big-model",
+                },
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["configured"] is True
+    assert body["models"]["small"]["extraBody"]["priority"] == 10
+    assert body["models"]["large"] == "big-model"

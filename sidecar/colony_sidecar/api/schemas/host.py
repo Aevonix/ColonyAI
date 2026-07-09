@@ -7,7 +7,7 @@ The sidecar is the source of truth for these schemas.
 from __future__ import annotations
 
 import os as _os
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -983,9 +983,11 @@ class AutonomyStatusResponse(BaseModel):
 # --- Configure (Host LLM Config) -------------------------------------------
 
 class LLMModelsConfig(BaseModel):
-    small: Optional[str] = None
-    medium: Optional[str] = None
-    large: Optional[str] = None
+    # Each tier is either a bare model string or an object spec (per-tier
+    # endpoint/priority/useful-context overrides — see build_tiers_from_host).
+    small: Optional[Union[str, Dict[str, Any]]] = None
+    medium: Optional[Union[str, Dict[str, Any]]] = None
+    large: Optional[Union[str, Dict[str, Any]]] = None
 
 
 class HostConfigureRequest(BaseModel):
@@ -996,7 +998,9 @@ class HostConfigureRequest(BaseModel):
 class HostConfigureResponse(BaseModel):
     configured: bool = True
     provider: Optional[str] = None
-    models: Optional[Dict[str, str]] = None
+    # Values may be bare model strings or per-tier object specs, so the echo
+    # must accept both (a str-only type 500s on multi-endpoint configs).
+    models: Optional[Dict[str, Any]] = None
 
 
 # --- Models (local LLM discovery) -------------------------------------------
