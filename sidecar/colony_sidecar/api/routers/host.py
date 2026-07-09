@@ -2316,6 +2316,41 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                 words = user_text.split()
                 body.topics = [w.lower().strip(".,!?;:") for w in words if len(w) > 4][:10]
 
+    # Rule-based NER on the incoming message, run ONCE and shared by the
+    # memory write (flag-gated) and context provenance (always) below. Fails
+    # open to body.entities: an extractor error must never drop host entities.
+    _extracted_ents: List[str] = []
+    _turn_ner = os.environ.get(
+        "COLONY_TURN_NER_ENTITIES", "0") not in ("0", "false", "no", "")
+    _user_text = getattr(body.user_message, "content", "") if body.user_message else ""
+    if _user_text and (_turn_ner or _context_provenance is not None):
+        _extractor = _get_conversation_extractor()
+        if _extractor is not None:
+            try:
+                _src = body.context.turn_id or body.context.session_id or "turn"
+                _res = await _extractor.extract(_user_text, _src)
+                _extracted_ents = [getattr(c, "text", None) or getattr(c, "name", "")
+                                   for c in getattr(_res, "entities", [])]
+            except Exception:
+                logger.debug("turn entity extraction failed", exc_info=True)
+
+    # COLONY_TURN_NER_ENTITIES=1: the stored turn memory carries the message's
+    # named entities even when the host sent none, so salience scoring and
+    # :MENTIONS edges reflect what the turn was actually about. Default 0 =
+    # legacy: record_turn sees exactly body.entities.
+    _turn_entities = body.entities
+    if _turn_ner and _extracted_ents:
+        _merged: List[str] = []
+        _seen = set()
+        for _name in list(body.entities or []) + _extracted_ents:
+            _name = (_name or "").strip()
+            if _name and _name.lower() not in _seen:
+                _seen.add(_name.lower())
+                _merged.append(_name)
+            if len(_merged) >= 12:
+                break
+        _turn_entities = _merged
+
     # Best-effort: store turn metadata in the graph if available
     graph_ok = False
     if _graph is not None:
@@ -2324,7 +2359,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                 session_id=body.context.session_id,
                 contact_id=body.context.contact_id,
                 topics=body.topics,
-                entities=body.entities,
+                entities=_turn_entities,
                 tools_used=body.tools_used,
                 summary=body.summary,
             )
@@ -2335,20 +2370,10 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # Context provenance: record this turn's entities under its conversation context, so a
     # later reply in a DIFFERENT context that surfaces an entity known only from here can be
     # flagged as a cross-context leak. Entities come from the host plus rule-based NER on the
-    # incoming message (what the other party brought up = what belongs to this conversation).
+    # incoming message (what the other party brought up = what belongs to this conversation),
+    # reusing the single extraction above.
     if _context_provenance is not None:
-        ents = list(body.entities or [])
-        _user_text = getattr(body.user_message, "content", "") if body.user_message else ""
-        if _user_text:
-            _extractor = _get_conversation_extractor()
-            if _extractor is not None:
-                try:   # extraction is additive; a failure here must not drop host entities
-                    _src = body.context.turn_id or body.context.session_id or "turn"
-                    _res = await _extractor.extract(_user_text, _src)
-                    ents += [getattr(c, "text", None) or getattr(c, "name", "")
-                             for c in getattr(_res, "entities", [])]
-                except Exception:
-                    logger.debug("provenance entity extraction failed", exc_info=True)
+        ents = list(body.entities or []) + _extracted_ents
         if ents:
             try:
                 _context_provenance.record(
