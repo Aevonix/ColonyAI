@@ -161,6 +161,7 @@ class SQLiteBackend:
         ("wm-003", "Create observations table"),
         ("wm-004", "Create merge proposals and audit log"),
         ("wm-005", "Create schema migrations table"),
+        ("wm-006", "Add mention_count reinforcement column to wm_entities"),
     ]
 
     def __init__(self, db_path: str = ":memory:") -> None:
@@ -185,6 +186,17 @@ class SQLiteBackend:
         sql = schema_path.read_text()
         await self._db.executescript(sql)
         await self._db.commit()
+        # wm-006: additive column for repeat-mention reinforcement. Guarded so
+        # pre-existing databases migrate in place ("duplicate column name" on
+        # every later connect is the expected no-op). DEFAULT 1: every stored
+        # entity has, by definition, been mentioned at least once.
+        try:
+            await self._db.execute(
+                "ALTER TABLE wm_entities ADD COLUMN "
+                "mention_count INTEGER NOT NULL DEFAULT 1")
+            await self._db.commit()
+        except Exception:
+            pass  # column already exists
         await self._record_migrations()
 
     async def _record_migrations(self) -> None:
@@ -338,6 +350,29 @@ class SQLiteBackend:
                 (json.dumps(entity.aliases), _now_iso(), entity_id),
             )
             await self._db.commit()
+
+    async def reinforce_entity(self, entity_id: str) -> None:
+        """Repeat mention of an existing entity: touch last_seen, bump
+        mention_count, and nudge confidence (+0.02, capped at 0.95).
+
+        Strictly anti-data-loss: last_seen moves FORWARD and confidence never
+        goes DOWN (an entity already above the cap keeps its confidence), so a
+        repeat-mention can never make an entity more prunable than a single
+        mention would have.
+        """
+        now = _now_iso()
+        await self._db.execute(
+            """
+            UPDATE wm_entities
+            SET last_seen     = ?,
+                updated_at    = ?,
+                mention_count = COALESCE(mention_count, 1) + 1,
+                confidence    = MAX(confidence, MIN(0.95, confidence + 0.02))
+            WHERE id = ?
+            """,
+            (now, now, entity_id),
+        )
+        await self._db.commit()
 
     async def delete_entity(self, entity_id: str) -> None:
         await self._db.execute("DELETE FROM wm_entities WHERE id = ?", (entity_id,))

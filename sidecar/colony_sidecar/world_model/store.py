@@ -343,6 +343,18 @@ class WorldModelStore:
                 logger.debug("property audit hook failed", exc_info=True)
         self._emit_change("entity_property_update", entity_id=entity_id, property_key=property_key)
 
+    async def reinforce_entity(self, entity_id: str) -> None:
+        """Record a repeat mention of an existing entity (merge / exact-match
+        resolve): last_seen=now, mention_count+1, confidence +0.02 capped 0.95.
+        Anti-data-loss only — never lowers confidence or moves last_seen back.
+        No-op on backends without reinforcement support."""
+        fn = getattr(self._backend, "reinforce_entity", None)
+        if fn is None:
+            logger.debug("reinforce_entity unsupported by %s backend",
+                         type(self._backend).__name__)
+            return
+        await fn(entity_id)
+
     async def add_entity_alias(self, entity_id: str, alias: str) -> None:
         """Add an alias to an entity's alias list if not already present."""
         await self._backend.add_entity_alias(entity_id, alias)

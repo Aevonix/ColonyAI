@@ -243,6 +243,15 @@ class WorldModelPopulator:
                     await self._store.add_entity_alias(matched, c.text)
                 except Exception:
                     pass
+                # Repeat mention (covers exact-match, external-id and alias
+                # resolves — they all arrive here as MERGE): the entity was
+                # just seen again, so touch last_seen / mention_count /
+                # confidence. Reinforcement only — a repeat-mention must never
+                # make an entity MORE prunable than a single mention.
+                try:
+                    await self._store.reinforce_entity(matched)
+                except Exception as exc:
+                    logger.debug("reinforce_entity failed for %r: %s", matched, exc)
             return
         if action == "propose":
             rec["near"] = matched
