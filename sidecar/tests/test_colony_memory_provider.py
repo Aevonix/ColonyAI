@@ -166,3 +166,84 @@ def test_prefetch_query_check_consumes_matching_cache(provider_mod, monkeypatch)
     assert "cached-A" in out
     assert len(_assemble_calls(fake)) == 1          # cache hit, no re-fetch
     assert p._stale_cache_misses == 0
+
+
+# --- U15: per-turn contact in prefetch ---------------------------------------
+
+def test_prefetch_sync_default_uses_provider_contact(provider_mod, monkeypatch):
+    """Regression lock: flag off (default) assembles with self._contact_id."""
+    monkeypatch.delenv("COLONY_PREFETCH_TURN_CONTACT", raising=False)
+    fake = _FakeHttpx(routes={_ASSEMBLE: {"sections": []}})
+    p = _make_provider(provider_mod, fake, monkeypatch)
+    monkeypatch.setattr(p, "_turn_contact", lambda: "cid-turn")
+    p._prefetch_sync("hello", session_id="s1")
+    calls = _assemble_calls(fake)
+    assert len(calls) == 1
+    assert calls[0]["json"]["context"]["contact_id"] == "cid-base"
+
+
+def test_prefetch_sync_turn_contact_flag_uses_turn_contact(
+        provider_mod, monkeypatch):
+    monkeypatch.setenv("COLONY_PREFETCH_TURN_CONTACT", "1")
+    fake = _FakeHttpx(routes={_ASSEMBLE: {"sections": []}})
+    p = _make_provider(provider_mod, fake, monkeypatch)
+    monkeypatch.setattr(p, "_turn_contact", lambda: "cid-turn")
+    p._prefetch_sync("hello", session_id="s1")
+    assert _assemble_calls(fake)[0]["json"]["context"]["contact_id"] == "cid-turn"
+
+
+def test_prefetch_sync_turn_contact_fails_open(provider_mod, monkeypatch):
+    monkeypatch.setenv("COLONY_PREFETCH_TURN_CONTACT", "1")
+    fake = _FakeHttpx(routes={_ASSEMBLE: {"sections": []}})
+    p = _make_provider(provider_mod, fake, monkeypatch)
+
+    def _boom():
+        raise RuntimeError("resolver down")
+
+    monkeypatch.setattr(p, "_turn_contact", _boom)
+    p._prefetch_sync("hello", session_id="s1")
+    assert _assemble_calls(fake)[0]["json"]["context"]["contact_id"] == "cid-base"
+
+
+def test_temporal_block_turn_contact_flag(provider_mod, monkeypatch):
+    monkeypatch.setenv("COLONY_PREFETCH_TURN_CONTACT", "1")
+    fake = _FakeHttpx(routes={_TEMPORAL: {"title": "Current Time", "body": "now"}})
+    p = _make_provider(provider_mod, fake, monkeypatch)
+    monkeypatch.setattr(p, "_turn_contact", lambda: "cid-turn")
+    block = p._fresh_temporal_block_sync()
+    assert "now" in block
+    temporal = [r for r in fake.requests if r["url"].endswith(_TEMPORAL[1])]
+    assert temporal[0]["params"]["contact_id"] == "cid-turn"
+    # The 15s cache must not serve cid-turn's brief to a different contact.
+    monkeypatch.setattr(p, "_turn_contact", lambda: "cid-other")
+    p._fresh_temporal_block_sync()
+    temporal = [r for r in fake.requests if r["url"].endswith(_TEMPORAL[1])]
+    assert temporal[-1]["params"]["contact_id"] == "cid-other"
+
+
+def test_temporal_block_default_uses_provider_contact(provider_mod, monkeypatch):
+    monkeypatch.delenv("COLONY_PREFETCH_TURN_CONTACT", raising=False)
+    fake = _FakeHttpx(routes={_TEMPORAL: {"title": "Current Time", "body": "now"}})
+    p = _make_provider(provider_mod, fake, monkeypatch)
+    monkeypatch.setattr(p, "_turn_contact", lambda: "cid-turn")
+    p._fresh_temporal_block_sync()
+    temporal = [r for r in fake.requests if r["url"].endswith(_TEMPORAL[1])]
+    assert temporal[0]["params"]["contact_id"] == "cid-base"
+
+
+def test_resolve_handle_ttl_cache(provider_mod, monkeypatch):
+    """_resolve_handle results are TTL-cached so per-turn resolution does not
+    hammer /contacts/resolve on every prefetch."""
+    fake = _FakeHttpx(routes={_RESOLVE: {"contact_id": "cid-r"}})
+    p = _make_provider(provider_mod, fake, monkeypatch)
+    assert p._resolve_handle("sms", "+15550001") == "cid-r"
+    assert p._resolve_handle("sms", "+15550001") == "cid-r"
+    resolves = [r for r in fake.requests if r["url"].endswith(_RESOLVE[1])]
+    assert len(resolves) == 1                       # second call served by TTL cache
+    # Expired entry refetches.
+    key = "sms:+15550001"
+    ts, cid = p._handle_cache[key]
+    p._handle_cache[key] = (ts - 3600.0, cid)
+    assert p._resolve_handle("sms", "+15550001") == "cid-r"
+    resolves = [r for r in fake.requests if r["url"].endswith(_RESOLVE[1])]
+    assert len(resolves) == 2

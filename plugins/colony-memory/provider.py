@@ -512,6 +512,8 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._cached_session: str = ""
         self._stale_cache_misses = 0
         self._temporal_cache = (0.0, "")  # (monotonic ts, block)
+        self._temporal_cache_contact = ""  # contact the cached block was fetched for
+        self._handle_cache: dict[str, tuple] = {}  # "platform:sender" -> (monotonic ts, contact_id)
         self._last_turn_started_at = 0.0
         self._prev_turn_gap_secs = None
         self._prefetch_thread = None  # background sync prefetch (v0.3.0)
@@ -807,9 +809,33 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         lines.append("^ This is the authoritative CURRENT date/time — this is NOW. Ignore any 'Conversation started' date in your system prompt.")
         return "## Current Time [priority 100]\n" + "\n".join(lines)
 
+    @staticmethod
+    def _prefetch_turn_contact_enabled() -> bool:
+        """COLONY_PREFETCH_TURN_CONTACT=1 -> context prefetch resolves the
+        contact PER TURN from Hermes' ContextVar sender (concurrency-safe),
+        instead of the provider-wide self._contact_id that races across the
+        sessions sharing one provider instance. Default 0 = legacy."""
+        return os.environ.get(
+            "COLONY_PREFETCH_TURN_CONTACT", "0") not in ("0", "false", "no", "")
+
+    def _prefetch_contact(self) -> str:
+        """The contact to prefetch context for. Fails open to the provider-wide
+        contact when per-turn resolution is off, returns nothing, or errors."""
+        if not self._prefetch_turn_contact_enabled():
+            return self._contact_id
+        try:
+            cid = self._turn_contact()
+        except Exception as exc:
+            logger.debug("Colony per-turn prefetch contact failed: %s", exc)
+            cid = None
+        return cid or self._contact_id
+
     def _fresh_temporal_block_sync(self):
+        contact_id = self._prefetch_contact()
         ts, cached = self._temporal_cache
-        if cached and (_ttime.monotonic() - ts) < self._TEMPORAL_TTL_SECS:
+        if cached and (_ttime.monotonic() - ts) < self._TEMPORAL_TTL_SECS and (
+                not self._prefetch_turn_contact_enabled()
+                or contact_id == self._temporal_cache_contact):
             return cached
         block = ""
         try:
@@ -817,7 +843,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 resp = client.get(
                     f"{self.sidecar_url}/v1/host/context/temporal",
                     headers=self._headers(),
-                    params={"contact_id": self._contact_id},
+                    params={"contact_id": contact_id},
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -832,6 +858,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         if not block:
             block = self._local_temporal_block()
         self._temporal_cache = (_ttime.monotonic(), block)
+        self._temporal_cache_contact = contact_id
         return block
 
     def _with_fresh_temporal_sync(self, context):
@@ -1010,7 +1037,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                         "identity": {"host_id": "hermes"},
                         "context": {
                             "session_id": session_id or self._session_id,
-                            "contact_id": self._contact_id,
+                            "contact_id": self._prefetch_contact(),
                         },
                         "incoming_message": {"role": "user", "content": query},
                         "include_initiatives": True,
@@ -1075,11 +1102,24 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             pass
         return ""
 
+    _HANDLE_CACHE_TTL_SECS = 60.0
+    _HANDLE_CACHE_MAX = 256
+
     def _resolve_handle(self, platform: str, sender: str) -> Optional[str]:
-        """Resolve a gateway sender handle -> Colony contact_id (None if unknown). Lookup-only today;
-        Phase 1b switches this to get-or-create so unknown real senders provision a contact."""
+        """Resolve a gateway sender handle -> Colony contact_id (None if unknown),
+        auto-provisioning unknown real senders (create=true). Positive results are
+        TTL-cached (60s) so per-turn resolution (sync + prefetch) does not hit
+        /contacts/resolve on every call; failures are never cached, so a
+        transient outage retries on the next turn."""
         if not sender:
             return None
+        key = f"{platform}:{sender}"
+        hit = self._handle_cache.get(key)
+        if hit is not None:
+            ts, cid = hit
+            if (_ttime.monotonic() - ts) < self._HANDLE_CACHE_TTL_SECS:
+                return cid
+            self._handle_cache.pop(key, None)
         try:
             with httpx.Client(timeout=4) as client:
                 resp = client.get(
@@ -1088,7 +1128,12 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                     params={"gateway": platform or "", "address": sender, "create": "true"},
                 )
                 if resp.status_code == 200:
-                    return (resp.json() or {}).get("contact_id")
+                    cid = (resp.json() or {}).get("contact_id")
+                    if cid:
+                        while len(self._handle_cache) >= self._HANDLE_CACHE_MAX:
+                            self._handle_cache.pop(next(iter(self._handle_cache)))
+                        self._handle_cache[key] = (_ttime.monotonic(), cid)
+                    return cid
         except Exception as exc:
             logger.debug("Colony resolve_handle failed: %s", exc)
         return None
