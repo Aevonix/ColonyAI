@@ -123,6 +123,30 @@ class CommsLog:
                 pass
         return {"total": len(rows), "channels": channels, "hours_utc": hours}
 
+    def recent(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """The newest exchanges across ALL contacts and channels, most recent
+        first. The per-contact reads above answer 'how do I stand with X';
+        this answers 'what has been flowing lately' for an ops ledger view."""
+        limit = max(1, min(500, int(limit)))
+        rows = self._conn.execute(
+            "SELECT contact_id, channel, direction, summary, ts FROM communications"
+            " ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def rollup(self, *, since_days: int = 30) -> Dict[str, Dict[str, int]]:
+        """Inbound/outbound counts per channel over a window: the ledger's
+        flow summary. ``{channel: {"in": n, "out": n}}``."""
+        rows = self._conn.execute(
+            "SELECT channel, direction, COUNT(*) AS n FROM communications"
+            " WHERE ts >= datetime('now', ?) GROUP BY channel, direction",
+            (f"-{int(since_days)} day",)).fetchall()
+        out: Dict[str, Dict[str, int]] = {}
+        for r in rows:
+            ch = out.setdefault(r["channel"], {"in": 0, "out": 0})
+            if r["direction"] in ("in", "out"):
+                ch[r["direction"]] = r["n"]
+        return out
+
 
 # ---------------------------------------------------------------------------
 # Outreach governance

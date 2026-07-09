@@ -4024,6 +4024,35 @@ def set_relationship_profiler(profiler):
     _relationship_profiler = profiler
 
 
+@router.get("/comms/recent")
+async def comms_recent(limit: int = 50, window_days: int = 30) -> dict:
+    """Cross-channel communication ledger: the newest exchanges across every
+    contact and channel, plus an inbound/outbound rollup per channel over the
+    window. Read-only view over the same ledger that ``/turns/sync`` writes;
+    contact ids are resolved to display names for the ops view. System turns
+    are recorded in the ledger and returned tagged, not hidden."""
+    if _comms_log is None:
+        return {"available": False}
+    try:
+        entries = _comms_log.recent(limit=limit)
+        names: dict = {}
+        if _contacts_store is not None:
+            for cid in {e.get("contact_id") for e in entries if e.get("contact_id")}:
+                try:
+                    c = await _contacts_store.get(cid)
+                    if c is not None:
+                        names[cid] = getattr(c, "display_name", None)
+                except Exception:
+                    pass
+        for e in entries:
+            e["display_name"] = names.get(e.get("contact_id"))
+        return {"available": True, "window_days": int(window_days),
+                "entries": entries,
+                "by_channel": _comms_log.rollup(since_days=window_days)}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
+
+
 @router.get("/relationships")
 async def list_relationship_briefs() -> dict:
     """Profiled relationships: who Colony has real standing knowledge of."""
