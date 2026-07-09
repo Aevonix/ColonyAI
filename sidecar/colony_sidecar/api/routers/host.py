@@ -8323,6 +8323,28 @@ async def respond_to_initiative(
     if new_status:
         _initiative_store.update(initiative_id, status=new_status)
 
+    # Close the loop into TypeFeedbackStore: the owner's response to an
+    # initiative is exactly the outcome signal the per-type priority
+    # multiplier learns from. Best-effort — feedback recording must never
+    # fail the respond itself.
+    _FEEDBACK_OUTCOME_MAP = {
+        "approved": "actioned",
+        "actioned": "actioned",
+        "dismissed": "dismissed",
+        "snoozed": "snoozed",
+        "acknowledged": "acknowledged",
+    }
+    try:
+        outcome = _FEEDBACK_OUTCOME_MAP.get(action)
+        itype = getattr(initiative, "type", None)
+        if _feedback_store is not None and outcome is not None and itype:
+            _feedback_store.record(itype, outcome)
+    except Exception as exc:
+        logger.warning(
+            "Failed to record type feedback for initiative %s (action=%s): %s",
+            initiative_id, action, exc,
+        )
+
     # If acknowledged, also clear from delivery bridge
     if action == "acknowledged" and _delivery_bridge is not None:
         if hasattr(_delivery_bridge, "acknowledge_delivery"):
