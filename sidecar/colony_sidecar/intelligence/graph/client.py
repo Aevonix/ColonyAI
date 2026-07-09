@@ -840,20 +840,26 @@ class ColonyGraph:
         recalls: int,
         half_life_days: float,
         memory_type: str = "episodic",
+        semantic_half_life_days: Optional[float] = None,
     ) -> float:
         """Compute Ebbinghaus decay for a memory.
 
         Formula: strength = importance * e^(-lambda * days) * (1 + recalls * 0.2)
 
         Where lambda = ln(2) / half_life_days.  Identity memories never decay;
-        procedural memories decay at half the normal rate.  Result is capped at 1.0.
+        procedural memories decay at half the normal rate; fact/semantic
+        memories use their own half-life when one is given (defaults to the
+        episodic value, i.e. no behavior change).  Result is capped at 1.0.
 
         Args:
             importance: Initial importance value (0-1)
             days_elapsed: Days since last access
             recalls: Number of times the memory has been recalled
             half_life_days: Days for strength to halve (default 7)
-            memory_type: One of "identity", "procedural", "episodic", "semantic"
+            memory_type: One of "identity", "procedural", "episodic",
+                "semantic", "fact"
+            semantic_half_life_days: Half-life for fact/semantic memories
+                (None = same as half_life_days)
 
         Returns:
             New strength value in [0, 1].
@@ -862,13 +868,25 @@ class ColonyGraph:
             return float(importance)
 
         lambda_base = math.log(2) / max(half_life_days, 0.001)
-        # Procedural memories decay at half the normal rate
-        lambda_val = lambda_base / 2 if memory_type == "procedural" else lambda_base
+        if memory_type == "procedural":
+            # Procedural memories decay at half the normal rate
+            lambda_val = lambda_base / 2
+        elif memory_type in ("fact", "semantic"):
+            sem_half_life = (semantic_half_life_days
+                             if semantic_half_life_days is not None
+                             else half_life_days)
+            lambda_val = math.log(2) / max(sem_half_life, 0.001)
+        else:
+            lambda_val = lambda_base
 
         strength = importance * math.exp(-lambda_val * max(days_elapsed, 0)) * (1.0 + recalls * 0.2)
         return min(1.0, max(0.0, strength))
 
-    async def decay_memories(self, half_life_days: float = 7.0) -> None:
+    async def decay_memories(
+        self,
+        half_life_days: Optional[float] = None,
+        semantic_half_life_days: Optional[float] = None,
+    ) -> None:
         """Apply Ebbinghaus forgetting curve to all non-identity, non-protected memories.
 
         Formula: strength = importance * e^(-lambda * days) * (1 + recalls * 0.2)
@@ -877,13 +895,39 @@ class ColonyGraph:
         - Identity memories are skipped (never decay).
         - Protected memories are skipped.
         - Procedural memories use lambda / 2 (half rate).
+        - Fact/semantic memories use their own half-life (defaults to the
+          episodic value — distilled knowledge can be made to outlive the
+          episodes it came from by raising COLONY_DECAY_HALF_LIFE_SEMANTIC_DAYS).
         - Result is capped at 1.0.
 
-        Args:
-            half_life_days: Number of days for strength to halve (default 7).
+        Half-lives resolve, in order: explicit argument, environment
+        (COLONY_DECAY_HALF_LIFE_DAYS / COLONY_DECAY_HALF_LIFE_SEMANTIC_DAYS),
+        then the historical default of 7 days. Strength is RECOMPUTED from
+        importance on every pass (not compounded), so raising a half-life
+        retroactively resurrects previously-decayed strength — which is why
+        half-life tuning must land before pruning goes live, never after.
+
+        This pass is the single writer for memory decay; nothing else may
+        call it as a side effect (see StrategyAdjuster._decay_signals,
+        retired for exactly that reason).
         """
+        if half_life_days is None:
+            try:
+                half_life_days = float(os.environ.get(
+                    "COLONY_DECAY_HALF_LIFE_DAYS", "7"))
+            except (TypeError, ValueError):
+                half_life_days = 7.0
+        if semantic_half_life_days is None:
+            _sem_env = os.environ.get("COLONY_DECAY_HALF_LIFE_SEMANTIC_DAYS", "")
+            try:
+                semantic_half_life_days = (
+                    float(_sem_env) if _sem_env.strip() else half_life_days)
+            except (TypeError, ValueError):
+                semantic_half_life_days = half_life_days
+
         lambda_normal = math.log(2) / max(half_life_days, 0.001)
         lambda_procedural = lambda_normal / 2
+        lambda_semantic = math.log(2) / max(semantic_half_life_days, 0.001)
 
         async with self.driver.session(database=self.database) as session:
             # First pass: update strength
@@ -895,6 +939,8 @@ class ColonyGraph:
                      toFloat(duration.inDays(coalesce(m.accessed_at, m.created_at, datetime()), datetime()).days) AS days_since,
                      CASE WHEN m.type = 'procedural'
                           THEN $lambda_proc
+                          WHEN m.type IN ['fact', 'semantic']
+                          THEN $lambda_sem
                           ELSE $lambda_norm
                      END AS lam
                 WITH m,
@@ -909,6 +955,7 @@ class ColonyGraph:
                 """,
                 lambda_norm=lambda_normal,
                 lambda_proc=lambda_procedural,
+                lambda_sem=lambda_semantic,
             )
 
         # Second pass: update effective_confidence in batches

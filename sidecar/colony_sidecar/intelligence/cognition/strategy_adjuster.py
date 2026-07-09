@@ -223,12 +223,22 @@ class StrategyAdjuster:
             return {"success": False, "action": action, "error": str(e)}
 
     async def _decay_signals(self, factor: float) -> dict:
-        """Apply decay to old signals."""
-        try:
-            await self.graph.decay_memories(half_life_days=7.0 / factor)
-            return {"success": True, "action": "decay_signals", "factor": factor}
-        except (OSError, RuntimeError, AttributeError) as e:
-            return {"success": False, "error": str(e)}
+        """RETIRED — this action never decayed signals.
+
+        Despite its name it called graph.decay_memories(half_life_days=7/factor),
+        silently compressing the half-life of EVERY memory whenever a
+        'stale_data' gap fired — a second, hidden writer racing the autonomy
+        loop's memory_decay phase. Memory decay has exactly one writer (the
+        loop phase, tuned via COLONY_DECAY_HALF_LIFE_DAYS); this action now
+        refuses and never touches the graph.
+        """
+        return {
+            "success": False,
+            "action": "decay_signals",
+            "error": ("retired: decayed memories, not signals; memory decay "
+                      "is owned solely by the autonomy loop's memory_decay "
+                      "phase"),
+        }
 
     async def _recalibrate_baselines(self) -> dict:
         """Recalculate baseline signal values for all persons over the last 30 days."""
