@@ -1423,6 +1423,34 @@ async def migrate_status(task_id: str) -> MigrateResponse:
     )
 
 
+class VectorVacuumRequest(BaseModel):
+    dry_run: bool = True
+    max_delete: Optional[int] = None
+
+
+@router.post("/memory/vector-vacuum")
+async def memory_vector_vacuum(body: VectorVacuumRequest) -> dict:
+    """Explicit admin op: remove orphaned memory vectors (ANN entries whose
+    graph node was deleted without its vector). Orphans keep matching in
+    semantic search and then vanish at hydration, stealing recall slots.
+
+    dry_run defaults true (count + sample only). Fails closed: a Neo4j
+    error aborts before any deletion — see ColonyGraph.vacuum_orphan_vectors.
+    """
+    if _graph is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                            detail="Memory graph not initialized")
+    if not hasattr(_graph, "vacuum_orphan_vectors"):
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                            detail="Graph backend lacks vacuum_orphan_vectors")
+    try:
+        return await _graph.vacuum_orphan_vectors(
+            dry_run=body.dry_run, max_delete=body.max_delete)
+    except Exception as exc:
+        raise HTTPException(status_code=500,
+                            detail=f"vector vacuum aborted: {exc}")
+
+
 @router.post("/memory/index", response_model=IndexResponse)
 async def memory_index(body: IndexRequest) -> IndexResponse:
     """Embed and store items in one call."""

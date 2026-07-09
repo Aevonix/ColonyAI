@@ -2665,6 +2665,23 @@ class AutonomyLoop:
             logger.info(
                 "Phase memory_pruning (%s): matched=%s deleted=%s",
                 mode, result.get("matched"), result.get("deleted"))
+            # Post-prune orphan-vector sweep (live mode only, bounded):
+            # pruning couples vector deletion to node deletion, but any
+            # vector delete that failed leaves an orphan that keeps
+            # matching in ANN search. Best-effort — a sweep failure never
+            # fails the prune pass; leftovers are caught next week or via
+            # the explicit /memory/vector-vacuum endpoint.
+            if mode == "live" and hasattr(graph, "vacuum_orphan_vectors"):
+                try:
+                    sweep = await graph.vacuum_orphan_vectors(
+                        dry_run=False, max_delete=2000)
+                    logger.info(
+                        "Phase memory_pruning orphan sweep: orphans=%s "
+                        "deleted=%s", sweep.get("orphans"),
+                        sweep.get("deleted"))
+                except Exception:
+                    logger.warning("post-prune orphan-vector sweep failed",
+                                   exc_info=True)
         await self._run_periodic_phase("memory_pruning", "week", work)
 
     async def _phase_memory_distillation(self) -> None:

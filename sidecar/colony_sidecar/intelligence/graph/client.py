@@ -1035,6 +1035,68 @@ class ColonyGraph:
         return {"matched": matched, "deleted": deleted, "dry_run": False,
                 "ids": ids}
 
+    async def vacuum_orphan_vectors(
+        self,
+        *,
+        dry_run: bool = False,
+        max_delete: Optional[int] = None,
+        batch_size: int = 200,
+        batch_sleep_secs: float = 0.05,
+    ) -> Dict[str, Any]:
+        """Delete MEMORIES-collection vectors whose graph node no longer exists.
+
+        Orphan vectors (a node deleted without its vector — pre-coupling
+        prunes, or a vector removal that failed after node deletion) keep
+        matching in ANN search and then silently vanish at hydration,
+        stealing recall slots from real memories.
+
+        Fails closed: the graph-id read is NOT exception-wrapped — a Neo4j
+        failure aborts the vacuum before any deletion, because an empty or
+        partial graph-id set would classify every vector as an orphan and
+        wipe the store. Deletion runs in batches of *batch_size* with
+        *batch_sleep_secs* between batches; *max_delete* bounds one run.
+
+        Returns:
+            Dict with ``vectors`` (total scanned), ``orphans`` (total found),
+            ``deleted``, ``dry_run``, and a capped ``ids`` sample.
+        """
+        if self._vector_store is None:
+            return {"available": False, "vectors": 0, "orphans": 0,
+                    "deleted": 0, "dry_run": dry_run, "ids": []}
+
+        from colony_sidecar.vector.collections import Collection
+        vector_ids = await self._vector_store.list_ids(Collection.MEMORIES)
+
+        graph_ids: set = set()
+        async with self.driver.session(database=self.database) as session:
+            result = await session.run("MATCH (m:Memory) RETURN m.id AS id")
+            async for record in result:
+                if record["id"]:
+                    graph_ids.add(record["id"])
+
+        orphans = [vid for vid in vector_ids if vid not in graph_ids]
+        total_orphans = len(orphans)
+        if max_delete is not None:
+            orphans = orphans[:max_delete]
+
+        if dry_run:
+            return {"available": True, "vectors": len(vector_ids),
+                    "orphans": total_orphans, "deleted": 0, "dry_run": True,
+                    "ids": orphans[:20]}
+
+        deleted = 0
+        for start in range(0, len(orphans), batch_size):
+            for vid in orphans[start:start + batch_size]:
+                await self._vector_store.delete(
+                    collection=Collection.MEMORIES, id=vid)
+                deleted += 1
+            if start + batch_size < len(orphans) and batch_sleep_secs > 0:
+                await asyncio.sleep(batch_sleep_secs)
+
+        return {"available": True, "vectors": len(vector_ids),
+                "orphans": total_orphans, "deleted": deleted,
+                "dry_run": False, "ids": orphans[:20]}
+
     async def touch_memory(self, memory_id: str) -> None:
         """Record a memory recall, incrementing its recall counter and updating accessed_at.
 
