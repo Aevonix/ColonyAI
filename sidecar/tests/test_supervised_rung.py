@@ -101,3 +101,28 @@ def test_stage_ladder(monkeypatch):
     assert effective_mode("beliefs", "shadow", _Trust("act_first")) == "live"
     # the flag only unlocks the listed domain
     assert effective_mode("goals", "shadow", _Trust("ask_first")) == "shadow"
+
+
+# --- rung visibility (H1.4) -----------------------------------------------------
+
+def test_trust_snapshot_shows_rung(monkeypatch):
+    """TrustEngine.snapshot() (surfaced via GET /v1/host/self) carries the
+    rung: supervised_enabled + effective_rung per domain."""
+    from colony_sidecar.self_model import (
+        ActionJournal, CompetenceStore, TrustEngine,
+    )
+    trust = TrustEngine(CompetenceStore(), journal=ActionJournal())
+    trust.set_stage("beliefs", "ask_first", notify=False)
+    trust.set_stage("goals", "act_first", notify=False)
+
+    snap = {r["domain"]: r for r in trust.snapshot()}
+    assert snap["beliefs"]["supervised_enabled"] is False
+    assert snap["beliefs"]["effective_rung"] == "ask_first"
+
+    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "beliefs")
+    snap = {r["domain"]: r for r in trust.snapshot()}
+    assert snap["beliefs"]["supervised_enabled"] is True
+    assert snap["beliefs"]["effective_rung"] == "supervised"
+    # the rung only ever refines ask_first; other stages pass through
+    assert snap["goals"]["effective_rung"] == "act_first"
+    assert snap["goals"]["supervised_enabled"] is False

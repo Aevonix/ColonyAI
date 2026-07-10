@@ -228,6 +228,7 @@ class TrustEngine:
             })
 
     def snapshot(self) -> List[Dict[str, Any]]:
+        from colony_sidecar.self_model.supervised import supervised_enabled
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM trust_stage ORDER BY updated_at DESC").fetchall()
@@ -235,6 +236,19 @@ class TrustEngine:
         for r in rows:
             d = dict(r)
             d["confidence"] = round(self.confidence(d["domain"]), 3)
+            # Rung visibility (H1.4): whether the supervised rung is
+            # unlocked for the domain, and the rung it would actually run
+            # at — so "why is beliefs mutating at ask_first?" is answerable
+            # from GET /v1/host/self instead of by reading env vars.
+            try:
+                d["supervised_enabled"] = supervised_enabled(d["domain"])
+                d["effective_rung"] = (
+                    "supervised"
+                    if d["stage"] == "ask_first" and d["supervised_enabled"]
+                    else d["stage"])
+            except Exception:
+                d["supervised_enabled"] = False
+                d["effective_rung"] = d.get("stage")
             out.append(d)
         return out
 
