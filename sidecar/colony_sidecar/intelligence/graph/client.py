@@ -57,18 +57,24 @@ def _recency_factor(days_old: float) -> float:
 def distill_turn_summary(summary: str) -> str:
     """The distilled form of a turn summary (what COLONY_DISTILL_TURNS=1 stores).
 
-    Strips the agent-side wrapper but PRESERVES the user speaker label:
-    "User: my X is Y" carries attribution that a bare "my X is Y" loses
-    (whose preference is it?). Joined with "; " — this text is injected
-    into prompts, so it must never introduce an em dash.
+    PRESERVES BOTH speaker labels ("User:" and "Agent:", with "assistant"
+    normalized to "Agent:"). Attribution matters in both directions:
+    "User: my X is Y" says whose preference it is, and "Agent: ..." marks
+    the agent's own prose so downstream consumers (e.g. the belief claim
+    extractor) never mistake something the agent SAID for a fact a contact
+    ASSERTED. Lines are joined with "; " — this text is injected into
+    prompts, so it must never introduce an em dash.
     """
     _lines = []
     for ln in (summary or "").splitlines():
         if ":" in ln:
             _speaker, _rest = ln.split(":", 1)
             _rest = _rest.strip()
-            if _speaker.strip().lower() == "user" and _rest:
+            sp = _speaker.strip().lower()
+            if sp == "user" and _rest:
                 _lines.append(f"User: {_rest}")
+            elif sp in ("agent", "assistant") and _rest:
+                _lines.append(f"Agent: {_rest}")
             else:
                 _lines.append(_rest)
         else:

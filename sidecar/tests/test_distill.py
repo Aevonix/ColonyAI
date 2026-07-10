@@ -109,7 +109,7 @@ async def test_default_stores_verbatim_summary(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_distill_on_joins_with_semicolon_and_keeps_user_speaker(monkeypatch):
+async def test_distill_on_joins_with_semicolon_and_keeps_both_speakers(monkeypatch):
     monkeypatch.setenv("COLONY_DISTILL_TURNS", "1")
     fx = _RecordTurnFixture()
     await fx.graph.record_turn(
@@ -117,7 +117,7 @@ async def test_distill_on_joins_with_semicolon_and_keeps_user_speaker(monkeypatc
         tools_used=[], summary=_SUMMARY)
     content = fx.stored[0]["content"]
     assert content == ("User: my favorite color is blue; "
-                       "noted, I will remember that; standalone line")
+                       "Agent: noted, I will remember that; standalone line")
     # prompt-injected text: never an em dash, in any join
     assert "—" not in content
 
@@ -129,7 +129,39 @@ async def test_distill_on_empty_lines_dropped(monkeypatch):
     await fx.graph.record_turn(
         session_id="s1", contact_id="c1", topics=[], entities=[],
         tools_used=[], summary="User: hello\n\nAgent:\nAgent: done")
-    assert fx.stored[0]["content"] == "User: hello; done"
+    assert fx.stored[0]["content"] == "User: hello; Agent: done"
+
+
+def test_distill_normalizes_assistant_to_agent():
+    assert client_mod.distill_turn_summary(
+        "User: hi\nAssistant: hello there") == "User: hi; Agent: hello there"
+
+
+def test_agent_label_blocks_contact_claim_extraction():
+    """H5.2: an Agent:-labeled statement must NOT parse as a contact claim.
+    Unlabeled, the same sentence extracts a (Jordan, works_at, Initech)
+    claim — the leak that let the agent's own prose enter belief
+    maintenance as if a contact had asserted it."""
+    from colony_sidecar.beliefs.contradictions import claims_from_text
+
+    distilled = client_mod.distill_turn_summary("Agent: Jordan works at Initech")
+    assert distilled == "Agent: Jordan works at Initech"
+    assert claims_from_text(distilled) == []
+    # control: the label is what makes the difference
+    assert claims_from_text("Jordan works at Initech") != []
+
+
+@pytest.mark.asyncio
+async def test_content_hash_over_final_content(monkeypatch):
+    import hashlib
+    monkeypatch.setenv("COLONY_DISTILL_TURNS", "1")
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=[],
+        tools_used=[], summary=_SUMMARY)
+    stored = fx.stored[0]
+    assert stored["content_hash"] == hashlib.sha256(
+        stored["content"].encode("utf-8")).hexdigest()
 
 
 # --- shadow distill preview ring (H5.1) -------------------------------------------
