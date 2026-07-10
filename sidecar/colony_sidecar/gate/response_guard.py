@@ -72,13 +72,18 @@ class GuardMode(str, Enum):
 def enforce_allowlist() -> Optional[frozenset]:
     """Checks allowed to BLOCK in enforce mode (per-check enforce ramp).
 
-    COLONY_GUARD_ENFORCE_CHECKS, default ``secret_leak`` — the lowest
-    false-positive check goes first; everything else keeps shadow semantics
-    (observed, audited, never suppressing) until explicitly added.
+    COLONY_GUARD_ENFORCE_CHECKS, default ``secret_leak,tom2_epistemic`` —
+    the lowest false-positive checks go first; everything else keeps shadow
+    semantics (observed, audited, never suppressing) until explicitly
+    added. ``tom2_epistemic`` ships allowlisted because it is INERT until a
+    level-2 injection registers a taint (zero findings, zero false
+    positives, on all other traffic) — and the level resolver requires it
+    enforcing before level 2 can ever render.
     ``all`` / ``*`` restores full enforcement across every check (legacy).
     Returns None for "all checks", else a frozenset of check names.
     """
-    raw = os.environ.get("COLONY_GUARD_ENFORCE_CHECKS", "secret_leak").strip()
+    raw = os.environ.get("COLONY_GUARD_ENFORCE_CHECKS",
+                         "secret_leak,tom2_epistemic").strip()
     if raw.lower() in ("all", "*"):
         return None
     return frozenset(c.strip() for c in raw.split(",") if c.strip())
@@ -150,7 +155,8 @@ class ResponseGuard:
                  cross_context: Optional[CrossContextGuard] = None,
                  default_mode: GuardMode = GuardMode.SHADOW,
                  excluded_gateways: Optional[Iterable[str]] = None,
-                 audit_store: Optional[Any] = None) -> None:
+                 audit_store: Optional[Any] = None,
+                 tom2_epistemic: Optional[Any] = None) -> None:
         self._config = config or GateConfig()
         self._audit = audit_store
         # Gateways the embedding deployment never wants gated (e.g. its voice path).
@@ -164,6 +170,10 @@ class ResponseGuard:
             logger.warning("ResponseGuard: injection detector unavailable: %s", exc)
             self._injection = None
         self._cross = cross_context
+        # tom2 epistemic egress net (L3.2): injected like cross_context so
+        # this module stays decoupled from the taint/tom layer. Inert (zero
+        # findings) whenever no level-2 injection taint is live.
+        self._tom2_epistemic = tom2_epistemic
         self._default_mode = default_mode
         # Circuit breaker state: timestamps of enforce-mode blocks (24h
         # rolling window). The breaker only ever WEAKENS enforcement (open =
@@ -214,6 +224,13 @@ class ResponseGuard:
                         mentioned_entities=list(mentioned_entities or [])))
                 except Exception as exc:
                     logger.warning("ResponseGuard: cross_context check failed (skipped): %s", exc)
+            if self._tom2_epistemic is not None:
+                try:
+                    findings += list(await self._tom2_epistemic.check(
+                        response_text=response_text or "",
+                        conversation_key=conversation_key))
+                except Exception as exc:
+                    logger.warning("ResponseGuard: tom2_epistemic check failed (skipped): %s", exc)
 
             # Owner-directed (authorized) cross-context transfers are legitimate, not leaks:
             # downgrade them so enforce never blocks them, while still keeping the audit row.
@@ -309,6 +326,43 @@ class ResponseGuard:
         while self._block_times and self._block_times[0] < cutoff:
             self._block_times.popleft()
         return len(self._block_times) >= threshold
+
+    def evidence_probe(self, audit_store: Optional[Any] = None,
+                       check: str = "tom2_epistemic",
+                       hours: float = 24.0):
+        """Build the live enforce-evidence probe for the tom2 level
+        resolver (tom.levels.set_evidence_probe). The probe answers "is
+        the outbound guard PROVABLY enforcing on this gateway RIGHT NOW?"
+        and requires ALL of:
+
+          * ``check`` on the enforce allowlist (an egress net that cannot
+            suppress is not enforcement),
+          * the circuit breaker CLOSED (an open breaker means suppression
+            is suspended this instant, whatever the audit trail says),
+          * recent enforce-mode audit rows for the gateway
+            (GuardAuditStore.enforce_evidence — silence proves nothing).
+
+        Any error answers False (fail closed) — the resolver then caps the
+        system at level 1 for the turn.
+        """
+        audit = audit_store if audit_store is not None else self._audit
+
+        def probe(gateway: str) -> bool:
+            try:
+                allowed = enforce_allowlist()
+                if allowed is not None and check not in allowed:
+                    return False
+                if self._breaker_open():
+                    return False
+                if audit is None:
+                    return False
+                return bool(audit.enforce_evidence(gateway, hours=hours))
+            except Exception:
+                logger.debug("enforce-evidence probe failed (=> False)",
+                             exc_info=True)
+                return False
+
+        return probe
 
     def breaker_status(self) -> Dict[str, Any]:
         """Observability surface for the enforce breaker + allowlist."""

@@ -569,11 +569,29 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.gate.guard_audit import GuardAuditStore
         guard_audit_db = state_dir / "colony-guard-audit.db"
         guard_audit_store = GuardAuditStore(db_path=str(guard_audit_db))
-        set_response_guard(ResponseGuard(
+        # Injection-taint registry (L3.1) + tom2 epistemic egress net (L3.2).
+        # The check is INERT (zero findings) until the leveled tom2 wiring
+        # registers a taint, which is why it may sit on the default enforce
+        # allowlist from day one.
+        from colony_sidecar.gate.taint import TaintRegistry
+        from colony_sidecar.gate.layers.tom2_epistemic import Tom2EpistemicGuard
+        from colony_sidecar.api.routers.host import set_taint_registry
+        taint_db = state_dir / "colony-tom2-taint.db"
+        taint_registry = TaintRegistry(db_path=str(taint_db))
+        set_taint_registry(taint_registry)
+        _guard = ResponseGuard(
             cross_context=ProvenanceCrossContextGuard(provenance_store, extractor=ConversationExtractor()),
-            default_mode=_guard_mode, excluded_gateways=_excluded, audit_store=guard_audit_store))
-        logger.info("ResponseGuard initialized (mode=%s, excluded_gateways=%s, audit=%s)",
-                    _guard_mode.value, _excluded or "[]", guard_audit_db)
+            default_mode=_guard_mode, excluded_gateways=_excluded, audit_store=guard_audit_store,
+            tom2_epistemic=Tom2EpistemicGuard(taint_registry, facts_store=facts_store))
+        set_response_guard(_guard)
+        logger.info("ResponseGuard initialized (mode=%s, excluded_gateways=%s, audit=%s, taints=%s)",
+                    _guard_mode.value, _excluded or "[]", guard_audit_db, taint_db)
+        # Wire the tom2 level resolver's enforce-evidence probe (L3.2): the
+        # resolver can now SEE live enforcement (allowlist + closed breaker +
+        # recent enforce-mode audit rows) — the prerequisite for level 2.
+        # Until this line, the unset probe capped every resolution at 1.
+        from colony_sidecar.tom.levels import set_evidence_probe
+        set_evidence_probe(_guard.evidence_probe())
 
         from colony_sidecar.tom.engagement import EngagementStore
         engagement_db = state_dir / "colony-engagement.db"

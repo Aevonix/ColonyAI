@@ -4301,6 +4301,17 @@ def set_presence_store(store) -> None:
     _presence_store = store
 
 
+_taint_registry = None
+
+
+def set_taint_registry(registry) -> None:
+    """Wire the injection-taint registry (L3.1). The level-2 context wiring
+    registers a taint per rendered epistemic line; the tom2_epistemic guard
+    check reads it. No registry => level 2 never renders (fail closed)."""
+    global _taint_registry
+    _taint_registry = registry
+
+
 def _observe_channel(channel_id: str) -> None:
     """Auto-register a channel on first sighting and keep last_seen_at fresh.
 

@@ -1,7 +1,9 @@
 """Per-check enforce allowlist + circuit breaker (H6.3).
 
 Enforce ramps one check at a time (COLONY_GUARD_ENFORCE_CHECKS, default
-secret_leak); a rolling-24h block counter trips a breaker that suspends
+secret_leak,tom2_epistemic since L3.2 — tom2_epistemic is inert without an
+active injection taint, so adding it changed no observable behavior here);
+a rolling-24h block counter trips a breaker that suspends
 suppression (fails open — it can only ever weaken enforcement, never latch
 INTO enforce).
 """
@@ -77,7 +79,9 @@ async def test_breaker_trips_after_n_blocks(monkeypatch):
     status = guard.breaker_status()
     assert status["tripped"] is True
     assert status["blocks_24h"] == 3
-    assert status["enforce_checks"] == ["secret_leak"]
+    # default allowlist since L3.2: secret_leak + the (taint-inert)
+    # tom2_epistemic egress net
+    assert status["enforce_checks"] == ["secret_leak", "tom2_epistemic"]
 
 
 @pytest.mark.asyncio
