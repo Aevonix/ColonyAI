@@ -3452,6 +3452,34 @@ async def response_guard_audit(limit: int = 50, authorized: Optional[bool] = Non
             "breaker": breaker}
 
 
+@router.get("/env-risk")
+async def env_risk(conversation_key: str, contact_id: str) -> Dict[str, Any]:
+    """Owner observability for the environment-risk classifier (L1.2): grade
+    one (conversation, reader) pair R0..R3 and show the census it was graded
+    on. Identity/topology only — contact ids, methods, timestamps; never
+    message content. Fail-closed: any missing store or error grades R3."""
+    from colony_sidecar.gate.env_risk import classify, env_risk_window_hours
+    risk = await classify(conversation_key, contact_id,
+                          presence_store=_presence_store,
+                          contacts_store=_contacts_store)
+    census: List[Dict[str, Any]] = []
+    if _presence_store is not None:
+        try:
+            census = [
+                {"contact_id": r.get("contact_id"),
+                 "method": r.get("method"),
+                 "group_id": r.get("group_id"),
+                 "last_seen_at": r.get("last_seen_at")}
+                for r in _presence_store.census(
+                    conversation_key, window_hours=env_risk_window_hours())
+            ]
+        except Exception:
+            census = []
+    return {"conversation_key": conversation_key, "contact_id": contact_id,
+            "window_hours": env_risk_window_hours(),
+            **risk.to_dict(), "census": census}
+
+
 
 @router.post("/contacts/{contact_id}/timezone", response_model=ContactResponse)
 async def set_contact_timezone(contact_id: str, body: ContactTimezoneRequest) -> ContactResponse:
