@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 RELATIONSHIP_PREFIX = "world-relationship:"
 PROPERTY_PREFIX = "world-property:"
 
+# H2.6 — causal falsifiability. Every LIVE causal write/boost creates a
+# ``world-causal:<edge_id>`` prediction ("this causal claim still holds at
+# at least its creation confidence in 30 days"). This is the causal layer's
+# OWN falsifiability path — the generic relationship resolver deliberately
+# refuses causal-typed predictions (H2.5 query-only guard).
+CAUSAL_PREFIX = "world-causal:"
+
 
 def _world_store() -> Any:
     try:
@@ -105,10 +112,69 @@ def resolve_property_unchanged(prediction: Any) -> Optional[bool]:
     return _norm(props.get(key)) == _norm(detail.get("value"))
 
 
+def resolve_causal_edge(prediction: Any) -> Optional[bool]:
+    """Score a causal claim against its own survival (H2.6).
+
+    HIT: the edge still exists, is active, holds at least the confidence it
+    had when the prediction was made, and no opposing edge (H2.3 polarity)
+    exists on the same ordered pair.
+    MISS: the edge decayed below its creation confidence, was deleted or
+    deactivated, or acquired an active opposing edge.
+    None: the world store cannot be seen at all (never a fabricated miss).
+    """
+    store = _world_store()
+    detail = getattr(prediction, "detail", None) or {}
+    edge_id = detail.get("edge_id")
+    source_id = detail.get("source_id")
+    target_id = detail.get("target_id")
+    rel_type = str(detail.get("relationship_type") or "").upper()
+    try:
+        conf_floor = float(detail.get("confidence_at_creation"))
+    except (TypeError, ValueError):
+        return None
+    if store is None or not edge_id or not source_id or not target_id \
+            or not rel_type:
+        return None
+    try:
+        rels = _run_async(store.query_relationships(
+            source_id=source_id, target_id=target_id,
+            relationship_type=rel_type, min_confidence=0.0, limit=50))
+    except Exception:
+        return None  # store unreachable -> unseen, not a miss
+    edge = next((r for r in rels or [] if r.id == edge_id), None)
+    if edge is None:
+        # fall back to same pair + type (the claim, if not the row)
+        edge = (rels or [None])[0]
+    if edge is None:
+        return False  # deleted — the claim did not survive
+    if getattr(edge, "valid_to", None) is not None:
+        return False  # deactivated
+    if float(getattr(edge, "confidence", 0.0) or 0.0) < conf_floor:
+        return False  # decayed below its creation confidence
+    # Opposing edge on the same ordered pair (H2.3 polarity sets)?
+    try:
+        from colony_sidecar.world_model.causal_maintenance import (
+            NEGATIVE_CAUSAL, POSITIVE_CAUSAL,
+        )
+        opposing = (NEGATIVE_CAUSAL if rel_type in POSITIVE_CAUSAL
+                    else POSITIVE_CAUSAL if rel_type in NEGATIVE_CAUSAL
+                    else frozenset())
+        for opp_type in sorted(opposing):
+            opp = _run_async(store.query_relationships(
+                source_id=source_id, target_id=target_id,
+                relationship_type=opp_type, min_confidence=0.0, limit=10))
+            if any(getattr(o, "valid_to", None) is None for o in opp or []):
+                return False  # opposed
+    except Exception:
+        return None  # cannot verify the no-opposition clause -> unseen
+    return True
+
+
 def register_world_resolvers(engine: Any) -> None:
-    """Attach both world-model resolvers to an ExpectationEngine."""
+    """Attach the world-model resolvers to an ExpectationEngine."""
     if engine is None:
         return
     engine.register_resolver(RELATIONSHIP_PREFIX,
                              resolve_relationship_still_active)
     engine.register_resolver(PROPERTY_PREFIX, resolve_property_unchanged)
+    engine.register_resolver(CAUSAL_PREFIX, resolve_causal_edge)

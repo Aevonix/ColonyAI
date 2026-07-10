@@ -447,10 +447,12 @@ class WorldLLMExtractor:
                 self._journal_write(
                     f"corroborated causal {src_id} -{rel}-> {tgt_id}",
                     float(edge.confidence), edge.id)
+                self._predict_causal(edge.id, src_id, rel, tgt_id,
+                                     float(edge.confidence))
                 return
             from colony_sidecar.world_model.relationships import WorldRelationship
             create_conf = min(_CAUSAL_CREATE_CEILING, conf)
-            await self._store.upsert_relationship(WorldRelationship(
+            created = await self._store.upsert_relationship(WorldRelationship(
                 id="", source_id=src_id, target_id=tgt_id,
                 relationship_type=rel, confidence=create_conf,
                 properties={"evidence": evidence[:300],
@@ -458,8 +460,45 @@ class WorldLLMExtractor:
                             "last_support_at": now_iso}))
             self._journal_write(
                 f"causal {src_id} -{rel}-> {tgt_id}", create_conf, src_id)
+            if created is not None and getattr(created, "id", ""):
+                self._predict_causal(created.id, src_id, rel, tgt_id,
+                                     create_conf)
         except Exception:
             logger.debug("llm-extract causal upsert failed", exc_info=True)
+
+    def _predict_causal(self, edge_id: str, src_id: str, rel: str,
+                        tgt_id: str, confidence: float) -> None:
+        """Causal falsifiability (H2.6): every LIVE causal write/boost stakes
+        a scoreable prediction — "this edge still holds at >= this confidence,
+        unopposed, in 30 days". Resolved by resolve_causal_edge; a claim that
+        decays, is deleted, or acquires an opposing edge scores a MISS and
+        feeds the world_causal calibration bucket. Rides COLONY_EXPECTATIONS;
+        never blocks the write path."""
+        try:
+            from colony_sidecar.self_model.expectations import (
+                expectations_enabled,
+            )
+            if not expectations_enabled():
+                return
+            from colony_sidecar.api.routers.host import _expectations
+            if _expectations is None:
+                return
+            import time as _time
+            _expectations.store.create(
+                subject=f"world-causal:{edge_id}", domain="world_causal",
+                expectation=(f"causal claim {src_id} -{rel}-> {tgt_id} "
+                             f"still holds at >= {confidence:.2f} confidence, "
+                             "unopposed, in 30 days"),
+                confidence=confidence,
+                horizon=_time.time() + 30 * 86400,
+                source="llm_causal_extract",
+                dedup_key=f"world-causal:{edge_id}",
+                detail={"edge_id": edge_id, "source_id": src_id,
+                        "target_id": tgt_id, "relationship_type": rel,
+                        "confidence_at_creation": confidence})
+        except Exception:
+            logger.debug("causal falsifiability prediction failed",
+                         exc_info=True)
 
     def _journal_write(self, description: str, conf: float, ref: str) -> None:
         if self._journal is None:
