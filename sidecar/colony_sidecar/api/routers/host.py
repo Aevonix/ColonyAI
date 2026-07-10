@@ -4115,6 +4115,40 @@ def set_tom2_engine(engine) -> None:
     _tom2_engine = engine
 
 
+_tom2_exposure = None
+
+
+def set_tom2_exposure_store(store) -> None:
+    global _tom2_exposure
+    _tom2_exposure = store
+
+
+@router.get("/tom2/exposure")
+async def tom2_exposure(reader: str = "", subject: str = "",
+                        limit: int = 50) -> dict:
+    """Owner read surface for the level-2 exposure ledger (L2.3): what was
+    rendered to whom about whom, by REFS only (contact ids, fact refs,
+    conversation keys — never fact text), plus the live budget posture.
+    Empty and inert until level-2 rendering is wired and used."""
+    from colony_sidecar.tom.exposure import (
+        budget_global_day, budget_pair_day, budget_reader_day)
+    budgets = {"pair_day": budget_pair_day(),
+               "reader_day": budget_reader_day(),
+               "global_day": budget_global_day()}
+    if _tom2_exposure is None:
+        return {"available": False, "budgets": budgets, "events": []}
+    try:
+        return {"available": True,
+                "budgets": budgets,
+                "summary": _tom2_exposure.counts(),
+                "events": _tom2_exposure.recent(
+                    reader_contact_id=reader or None,
+                    subject_contact_id=subject or None, limit=limit)}
+    except Exception as exc:
+        return {"available": True, "budgets": budgets,
+                "error": str(exc), "events": []}
+
+
 @router.get("/tom2/status")
 async def tom2_status() -> dict:
     """Owner observability for the asymmetry engine: mode, aggregate counts

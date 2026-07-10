@@ -528,6 +528,15 @@ async def lifespan(app: FastAPI):
         logger.info("Tom2Store + AsymmetryEngine initialized (db=%s, mode=%s)",
                     tom2_db, tom2_mode())
 
+        # Level-2 exposure ledger (L2.3): refs-only record of any future
+        # level-2 rendering + its budgets. Empty and inert until the leveled
+        # rendering path is wired; the owner endpoint reads it regardless.
+        from colony_sidecar.tom.exposure import Tom2ExposureStore
+        from colony_sidecar.api.routers.host import set_tom2_exposure_store
+        tom2_exposure_db = state_dir / "colony-tom2-exposure.db"
+        set_tom2_exposure_store(Tom2ExposureStore(db_path=str(tom2_exposure_db)))
+        logger.info("Tom2ExposureStore initialized (db=%s)", tom2_exposure_db)
+
         # Conversation presence registry (L1.1): passive census of WHO was
         # seen in WHICH conversation, fed from the turns/sync attribution
         # chokepoint. Read by the environment-risk classifier; recording is
