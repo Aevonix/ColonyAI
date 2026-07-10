@@ -32,8 +32,12 @@ CONCERN_KINDS = ("question", "goal", "thread", "anomaly", "maintenance")
 
 
 def workspace_mode() -> str:
-    m = os.environ.get("COLONY_WORKSPACE", "off").strip().lower()
-    return m if m in ("off", "shadow", "live") else "off"
+    """Effective COLONY_WORKSPACE: explicit env > autonomy preset > off.
+
+    An explicitly-set invalid value falls back to "off", exactly as the
+    legacy reader did; the preset only fills the unset case."""
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_WORKSPACE", ("off", "shadow", "live"), "off")
 
 
 def workspace_enabled() -> bool:

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+**Preset activation — expectations + workspace** (`util.autonomy_preset`):
+`COLONY_EXPECTATIONS` and `COLONY_WORKSPACE` are now managed by
+`COLONY_AUTONOMY_PRESET` (calibration: expectations `on` + workspace
+`shadow`; autonomous: expectations `on` + workspace `live`; passive: both
+`off`). Deployments running under a preset WITHOUT these env vars set will
+see both subsystems come on at the preset's default on restart — that is
+the intended activation. An explicitly set env var still always wins in
+both directions, so deployments that pin `COLONY_EXPECTATIONS` /
+`COLONY_WORKSPACE` themselves are unchanged. `COLONY_EXPECTATIONS=on` is
+newly accepted as the canonical enabled value (`shadow`/`live` remain
+aliases). Two world-model prediction resolvers (relationship-still-active,
+property-unchanged) now register with the expectation engine at boot.
+
 ## v0.33.0 — comms ledger reads + concern-to-memory provenance
 
 Two additive, backward-compatible reads that let an operations surface show

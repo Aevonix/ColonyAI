@@ -701,6 +701,7 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.self_model.expectations import (
             ExpectationEngine, ExpectationStore, expectations_enabled,
+            expectations_mode,
         )
         from colony_sidecar.api.routers.host import set_expectations
         if expectations_enabled():
@@ -716,8 +717,20 @@ async def lifespan(app: FastAPI):
             # autonomy phase links the workspace ref at runtime.
             _expectations = ExpectationEngine(_exp_store, journal=_exp_journal)
             set_expectations(_expectations)
+            # World-model prediction classes (relationship-still-active,
+            # property-unchanged) — registered here, guarded on the engine;
+            # the resolvers fetch the world store lazily so boot order and
+            # a missing world model are both safe (they resolve to None).
+            try:
+                from colony_sidecar.world_model.expectation_resolvers import (
+                    register_world_resolvers,
+                )
+                register_world_resolvers(_expectations)
+            except Exception as rexc:
+                logger.warning("World expectation resolvers not registered: "
+                               "%s", rexc)
             logger.info("Expectation engine ready (mode=%s, db=%s)",
-                        os.environ.get("COLONY_EXPECTATIONS", "off"),
+                        expectations_mode(),
                         state_dir / "colony-expectations.db")
         else:
             logger.info("Expectation engine disabled (COLONY_EXPECTATIONS=off)")

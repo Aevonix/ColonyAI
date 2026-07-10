@@ -46,6 +46,8 @@ PRESETS: Dict[str, Dict[str, str]] = {
         "COLONY_WORKERS_MODE": "off",
         "COLONY_DIRECTED_MODE": "off",
         "COLONY_SANDBOX_MODE": "off",
+        "COLONY_EXPECTATIONS": "off",
+        "COLONY_WORKSPACE": "off",
     },
     "calibration": {
         "COLONY_EXECUTOR_ENABLED": "true",
@@ -62,6 +64,12 @@ PRESETS: Dict[str, Dict[str, str]] = {
         "COLONY_WORKERS_MODE": "shadow",
         "COLONY_DIRECTED_MODE": "dry_run",
         "COLONY_SANDBOX_MODE": "dry_run",
+        # Expectations are pure measurement (predictions scored against
+        # reality -> the calibration signal the trust engine graduates on),
+        # so calibration turns them fully on; the workspace runs shadow like
+        # every other thinking subsystem.
+        "COLONY_EXPECTATIONS": "on",
+        "COLONY_WORKSPACE": "shadow",
     },
     "autonomous": {
         "COLONY_EXECUTOR_ENABLED": "true",
@@ -78,6 +86,8 @@ PRESETS: Dict[str, Dict[str, str]] = {
         "COLONY_WORKERS_MODE": "live",
         "COLONY_DIRECTED_MODE": "live",
         "COLONY_SANDBOX_MODE": "dry_run",  # live is explicit-only
+        "COLONY_EXPECTATIONS": "on",       # binary: on/off (no shadow tier)
+        "COLONY_WORKSPACE": "live",
     },
 }
 
@@ -142,6 +152,8 @@ def snapshot() -> Dict[str, str]:
         "COLONY_WORKERS_MODE": (("off", "shadow", "live"), "shadow"),
         "COLONY_DIRECTED_MODE": (("off", "dry_run", "live"), "dry_run"),
         "COLONY_SANDBOX_MODE": (("off", "dry_run", "live"), "off"),
+        "COLONY_EXPECTATIONS": (("off", "on", "shadow", "live"), "off"),
+        "COLONY_WORKSPACE": (("off", "shadow", "live"), "off"),
     }
     for env_name, (valid, fallback) in domains.items():
         if valid == ("true", "false"):

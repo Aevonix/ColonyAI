@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3
 import threading
 import time
@@ -31,9 +30,21 @@ logger = logging.getLogger(__name__)
 OUTCOMES = ("pending", "hit", "miss", "unresolved")
 
 
+def expectations_mode() -> str:
+    """Effective COLONY_EXPECTATIONS: explicit env > autonomy preset > off.
+
+    Expectations are binary in behavior (they only measure), so "on" is the
+    canonical enabled value; the historical "shadow"/"live" spellings remain
+    accepted aliases. An explicitly-set invalid value falls back to "off",
+    exactly as the legacy reader treated any unrecognized value.
+    """
+    from colony_sidecar.util.autonomy_preset import resolve
+    return resolve("COLONY_EXPECTATIONS", ("off", "on", "shadow", "live"),
+                   "off")
+
+
 def expectations_enabled() -> bool:
-    return os.environ.get(
-        "COLONY_EXPECTATIONS", "off").strip().lower() in ("shadow", "live")
+    return expectations_mode() != "off"
 
 
 def _now() -> float:
@@ -354,7 +365,7 @@ class ExpectationEngine:
     def snapshot(self, limit: int = 50) -> Dict[str, Any]:
         pending = self.store.pending(limit=limit)
         return {
-            "mode": os.environ.get("COLONY_EXPECTATIONS", "off"),
+            "mode": expectations_mode(),
             "pending": [p.public() for p in pending],
             "calibration": self.calibration(),
         }

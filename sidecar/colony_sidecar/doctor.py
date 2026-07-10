@@ -919,7 +919,7 @@ def check_server_autonomy_posture(base_url: str, api_key: str, timeout: float) -
     shadow = sorted(k.replace("COLONY_", "").replace("_MODE", "").lower()
                     for k, v in posture.items() if v in ("shadow", "dry_run"))
     on = sorted(k.replace("COLONY_", "").replace("_ENABLED", "").lower()
-                for k, v in posture.items() if v == "true")
+                for k, v in posture.items() if v in ("true", "on"))
     parts = [f"preset={preset}"]
     if on:
         parts.append("on: " + ",".join(on))
@@ -960,7 +960,10 @@ def _preset_downgrades(preset: str, posture: dict) -> List[str]:
         from colony_sidecar.util.autonomy_preset import PRESETS
     except Exception:
         return []
-    rank = {"off": 0, "false": 0, "shadow": 1, "dry_run": 1,
+    # "on" ranks with shadow/dry_run: for a binary flag (expectations)
+    # anything but "off" is fully enabled, so only an explicit "off"
+    # counts as a downgrade from an "on" preset default.
+    rank = {"off": 0, "false": 0, "shadow": 1, "dry_run": 1, "on": 1,
             "true": 2, "live": 2}
     out = []
     for flag, want in PRESETS.get(preset, {}).items():
