@@ -114,6 +114,7 @@ class BeliefEngine:
         report: Dict[str, Any] = {
             "mode": mode, "supersessions": 0, "conflicts_detected": 0,
             "resolved": 0, "review_initiatives": 0, "decayed": 0,
+            "pass_errors": 0,
         }
         self.last_report = report
         if mode == "off":
@@ -121,32 +122,60 @@ class BeliefEngine:
         try:
             await self._world_model_pass(report)
         except Exception:
+            report["pass_errors"] += 1
             logger.debug("belief world-model pass failed", exc_info=True)
         try:
             await self._graph_pass(report, mode)
         except Exception:
+            report["pass_errors"] += 1
             logger.debug("belief graph pass failed", exc_info=True)
         try:
             await self._decay_pass(report, mode)
         except Exception:
+            report["pass_errors"] += 1
             logger.debug("belief decay pass failed", exc_info=True)
         logger.info(
             "belief-maintenance[%s]: supersessions=%d conflicts=%d "
-            "resolved=%d review=%d decayed=%d", mode,
+            "resolved=%d review=%d decayed=%d errors=%d", mode,
             report["supersessions"], report["conflicts_detected"],
             report["resolved"], report["review_initiatives"],
-            report["decayed"])
-        if self._self_model is not None:
-            try:
-                # supervised outcomes are REAL (shadow=False): that is the
-                # whole point of the rung — a track record the trust engine
-                # can graduate ask_first -> act_first on.
-                self._self_model.record(
-                    "beliefs", "success",
-                    shadow=(mode not in ("live", "supervised")))
-            except Exception:
-                pass
+            report["decayed"], report["pass_errors"])
+        self._record_outcome(mode, report)
         return report
+
+    def _record_outcome(self, mode: str, report: Dict[str, Any]) -> None:
+        """Feed the trust ladder what the run EARNED (H1.3).
+
+        Strict (COLONY_TRUST_STRICT_OUTCOMES=1, the default): a run where
+        any pass raised records a failure; a run that actually mutated
+        state (resolved + decayed + supersessions > 0) records a success;
+        a no-op run records nothing. Supervised/live outcomes stay REAL
+        (shadow=False) — that is the whole point of the rung — but a
+        streak of no-op runs no longer builds a fake track record that
+        would graduate beliefs to act_first (and unlock destructive
+        resolution) unearned.
+
+        Legacy (flag=0): the historical unconditional per-run success.
+        """
+        if self._self_model is None:
+            return
+        try:
+            from colony_sidecar.self_model.supervised import (
+                strict_trust_outcomes,
+            )
+            shadow = mode not in ("live", "supervised")
+            if not strict_trust_outcomes():
+                self._self_model.record("beliefs", "success", shadow=shadow)
+                return
+            mutated = (report["resolved"] + report["decayed"]
+                       + report["supersessions"]) > 0
+            if report["pass_errors"] > 0:
+                self._self_model.record("beliefs", "failure", shadow=shadow)
+            elif mutated:
+                self._self_model.record("beliefs", "success", shadow=shadow)
+            # else: no-op run — nothing earned, nothing recorded
+        except Exception:
+            pass
 
     # -- world model: snapshot diff -> supersession audit -------------------
     async def _world_model_pass(self, report: Dict[str, Any]) -> None:

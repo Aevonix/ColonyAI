@@ -53,6 +53,22 @@ _LEGACY_ALIASES: Dict[str, str] = {
 _TRUTHY = ("1", "true", "yes")
 
 
+def strict_trust_outcomes() -> bool:
+    """H1.3: is trust-outcome integrity enforced? DEFAULT ON.
+
+    Strict means a maintenance run only feeds the trust ladder what it
+    earned: a run where a pass raised records a FAILURE; a run that
+    actually mutated state records a SUCCESS; a no-op run records NOTHING.
+    Without this, an engine that unconditionally logs "success" per run
+    graduates to act_first on a streak of doing nothing.
+
+    COLONY_TRUST_STRICT_OUTCOMES=0 restores the legacy unconditional
+    per-run success (a deliberate escape hatch, not a recommended mode).
+    """
+    return os.environ.get("COLONY_TRUST_STRICT_OUTCOMES",
+                          "1").strip().lower() in _TRUTHY
+
+
 def supervised_domains() -> FrozenSet[str]:
     """Domains the generic flag enables the rung for (default: none)."""
     raw = os.environ.get("COLONY_SUPERVISED_LIVE_DOMAINS", "")
