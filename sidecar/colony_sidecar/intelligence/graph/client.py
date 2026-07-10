@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Coroutine, Dict, List, Optional, TYPE_CHECKING
@@ -51,6 +52,28 @@ def _recency_factor(days_old: float) -> float:
         floor = 0.5
     floor = min(max(floor, 0.0), 1.0)
     return floor + (1.0 - floor) * (0.5 ** (max(days_old, 0.0) / half_life))
+
+
+def distill_turn_summary(summary: str) -> str:
+    """The distilled form of a turn summary (what COLONY_DISTILL_TURNS=1 stores).
+
+    Strips the agent-side wrapper but PRESERVES the user speaker label:
+    "User: my X is Y" carries attribution that a bare "my X is Y" loses
+    (whose preference is it?). Joined with "; " — this text is injected
+    into prompts, so it must never introduce an em dash.
+    """
+    _lines = []
+    for ln in (summary or "").splitlines():
+        if ":" in ln:
+            _speaker, _rest = ln.split(":", 1)
+            _rest = _rest.strip()
+            if _speaker.strip().lower() == "user" and _rest:
+                _lines.append(f"User: {_rest}")
+            else:
+                _lines.append(_rest)
+        else:
+            _lines.append(ln)
+    return "; ".join(x for x in _lines if x) or (summary or "")
 
 
 @dataclass
@@ -573,6 +596,19 @@ class ColonyGraph:
 
         return memory_id
 
+    def _distill_preview_ring(self) -> "deque":
+        """Bounded ring of shadow distill previews (created on first use so
+        alternate construction paths, e.g. tests, still work)."""
+        ring = getattr(self, "_distill_preview", None)
+        if ring is None:
+            ring = deque(maxlen=50)
+            self._distill_preview = ring
+        return ring
+
+    def distill_preview(self) -> List[Dict[str, Any]]:
+        """Newest-first shadow distill previews (empty once the flag is live)."""
+        return list(reversed(self._distill_preview_ring()))
+
     async def record_turn(
         self,
         session_id: str,
@@ -629,28 +665,26 @@ class ColonyGraph:
         importance = round(min(_score, 0.95), 3)
 
         # Optional distillation (shadow by default): store the salient content rather
-        # than the verbatim "User:/Agent:" wrapper. Off => log what it WOULD store so
-        # we can validate before flipping live. On => strip the wrapper prefix.
+        # than the verbatim "User:/Agent:" wrapper. The distilled form is ALWAYS
+        # computed; off => stored content is unchanged and the would-be result goes
+        # into a bounded in-memory preview ring (GET /v1/host/memory/distill-preview)
+        # so the flip can be validated on real traffic first. On => store it.
         content = summary
+        distilled = distill_turn_summary(summary)
         _distill = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
         if _distill:
-            # Strip the agent-side wrapper but PRESERVE the user speaker label:
-            # "User: my X is Y" carries attribution that a bare "my X is Y"
-            # loses (whose preference is it?). Joined with "; " — this text is
-            # injected into prompts, so it must never introduce an em dash.
-            _lines = []
-            for ln in summary.splitlines():
-                if ":" in ln:
-                    _speaker, _rest = ln.split(":", 1)
-                    _rest = _rest.strip()
-                    if _speaker.strip().lower() == "user" and _rest:
-                        _lines.append(f"User: {_rest}")
-                    else:
-                        _lines.append(_rest)
-                else:
-                    _lines.append(ln)
-            content = "; ".join(x for x in _lines if x) or summary
+            content = distilled
         else:
+            try:
+                self._distill_preview_ring().append({
+                    "session_id": session_id,
+                    "original": summary[:400],
+                    "distilled": distilled[:400],
+                    "importance": importance,
+                    "ts": time.time(),
+                })
+            except Exception:
+                logger.debug("distill preview append failed", exc_info=True)
             logger.debug("distill(shadow): would store salient content for session %s (imp=%.2f)",
                          session_id, importance)
 

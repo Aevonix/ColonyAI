@@ -801,6 +801,23 @@ async def memory_status():
     }
 
 
+@router.get("/memory/distill-preview")
+async def memory_distill_preview(limit: int = 50) -> Dict[str, Any]:
+    """Shadow distill previews: while COLONY_DISTILL_TURNS is off, every stored
+    turn also computes what distillation WOULD have stored; the last 50 pairs
+    (original vs distilled, newest first) live in an in-memory ring here so the
+    flip can be validated against real traffic before it changes stored content."""
+    enabled = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
+    if _graph is None or not hasattr(_graph, "distill_preview"):
+        return {"enabled": enabled, "count": 0, "preview": []}
+    try:
+        items = _graph.distill_preview()[: max(0, int(limit))]
+    except Exception as exc:
+        logger.warning("memory_distill_preview failed: %s", exc)
+        return {"enabled": enabled, "count": 0, "preview": []}
+    return {"enabled": enabled, "count": len(items), "preview": items}
+
+
 @router.post("/memory/write", response_model=MemoryWriteResponse)
 async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
     if _graph is None:

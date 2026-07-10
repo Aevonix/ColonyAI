@@ -130,3 +130,69 @@ async def test_distill_on_empty_lines_dropped(monkeypatch):
         session_id="s1", contact_id="c1", topics=[], entities=[],
         tools_used=[], summary="User: hello\n\nAgent:\nAgent: done")
     assert fx.stored[0]["content"] == "User: hello; done"
+
+
+# --- shadow distill preview ring (H5.1) -------------------------------------------
+
+@pytest.mark.asyncio
+async def test_flag_off_pushes_preview_but_stores_verbatim(monkeypatch):
+    """Off => stored content unchanged AND a preview pair is captured, so the
+    flip can be judged on real traffic before it changes anything."""
+    monkeypatch.delenv("COLONY_DISTILL_TURNS", raising=False)
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s9", contact_id="c1", topics=[], entities=["color"],
+        tools_used=[], summary=_SUMMARY)
+    assert fx.stored[0]["content"] == _SUMMARY
+    preview = fx.graph.distill_preview()
+    assert len(preview) == 1
+    p = preview[0]
+    assert p["session_id"] == "s9"
+    assert p["original"] == _SUMMARY[:400]
+    assert p["distilled"] == client_mod.distill_turn_summary(_SUMMARY)[:400]
+    assert 0.0 < p["importance"] <= 0.95
+    assert p["ts"] > 0
+
+
+@pytest.mark.asyncio
+async def test_preview_ring_is_bounded_and_newest_first(monkeypatch):
+    monkeypatch.delenv("COLONY_DISTILL_TURNS", raising=False)
+    fx = _RecordTurnFixture()
+    for i in range(55):
+        await fx.graph.record_turn(
+            session_id=f"s{i}", contact_id="c1", topics=[], entities=[],
+            tools_used=[], summary=f"User: message number {i}")
+    preview = fx.graph.distill_preview()
+    assert len(preview) == 50                       # deque(maxlen=50)
+    assert preview[0]["session_id"] == "s54"        # newest first
+    assert preview[-1]["session_id"] == "s5"        # oldest survivor
+
+
+@pytest.mark.asyncio
+async def test_flag_on_does_not_push_preview(monkeypatch):
+    monkeypatch.setenv("COLONY_DISTILL_TURNS", "1")
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=[],
+        tools_used=[], summary=_SUMMARY)
+    assert fx.graph.distill_preview() == []
+
+
+@pytest.mark.asyncio
+async def test_distill_preview_endpoint(monkeypatch):
+    from colony_sidecar.api.routers import host as host_mod
+
+    monkeypatch.delenv("COLONY_DISTILL_TURNS", raising=False)
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=[],
+        tools_used=[], summary=_SUMMARY)
+    monkeypatch.setattr(host_mod, "_graph", fx.graph)
+    out = await host_mod.memory_distill_preview()
+    assert out["enabled"] is False
+    assert out["count"] == 1
+    assert out["preview"][0]["session_id"] == "s1"
+    # no graph wired -> harmless empty payload
+    monkeypatch.setattr(host_mod, "_graph", None)
+    out = await host_mod.memory_distill_preview()
+    assert out == {"enabled": False, "count": 0, "preview": []}
