@@ -22,9 +22,21 @@ attaches no meaning.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
+
+
+def evidence_min() -> int:
+    """COLONY_GUARD_EVIDENCE_MIN (default 3): enforce-mode audit rows per
+    gateway per window required to call enforcement 'proven'. Malformed
+    values fall back to the default; values below 1 clamp to 1 ('zero rows
+    prove enforcement' is a contradiction, not a configuration)."""
+    try:
+        return max(1, int(os.environ.get("COLONY_GUARD_EVIDENCE_MIN", "3")))
+    except (TypeError, ValueError):
+        return 3
 
 
 def _now() -> str:
@@ -64,12 +76,17 @@ class GuardAuditStore:
             );
             """
         )
-        # Migration: pre-existing DBs lack the would_block column.
+        # Migrations (additive): pre-existing DBs lack these columns.
         cols = {r["name"] for r in self._conn.execute(
             "PRAGMA table_info(guard_events)").fetchall()}
         if "would_block" not in cols:
             self._conn.execute(
                 "ALTER TABLE guard_events ADD COLUMN would_block INTEGER NOT NULL DEFAULT 0")
+        if "gateway" not in cols:
+            # Nullable: rows recorded before the gateway was threaded stay
+            # NULL and can never satisfy a per-gateway evidence query.
+            self._conn.execute(
+                "ALTER TABLE guard_events ADD COLUMN gateway TEXT")
         self._conn.commit()
 
     def count_evaluation(self) -> None:
@@ -83,13 +100,15 @@ class GuardAuditStore:
 
     def record(self, *, conversation_key: Optional[str], mode: str, decision: str,
                authorized: bool, checks: Sequence[str], entities: Sequence[str],
-               response_text: str = "", would_block: bool = False) -> None:
+               response_text: str = "", would_block: bool = False,
+               gateway: Optional[str] = None) -> None:
         self._conn.execute(
             "INSERT INTO guard_events (ts, conversation_key, mode, decision, authorized, "
-            "checks, entities, response_excerpt, would_block) VALUES (?,?,?,?,?,?,?,?,?)",
+            "checks, entities, response_excerpt, would_block, gateway) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (_now(), conversation_key, mode, decision, 1 if authorized else 0,
              ",".join(checks), ",".join(entities), (response_text or "")[:240],
-             1 if would_block else 0),
+             1 if would_block else 0, (gateway or "").strip().lower() or None),
         )
         self._conn.commit()
 
@@ -137,6 +156,31 @@ class GuardAuditStore:
             "would_block_rate": round(would_block / evals, 4) if evals else None,
             "by_check": by_check,
         }
+
+    def enforce_evidence(self, gateway: str, hours: float = 24.0) -> bool:
+        """Is the guard PROVABLY enforcing on this gateway right now?
+
+        Evidence = at least COLONY_GUARD_EVIDENCE_MIN (default 3)
+        enforce-mode audit rows for THIS gateway inside the window. This is
+        deliberately conservative: shadow rows prove nothing, another
+        gateway's rows prove nothing, pre-migration NULL-gateway rows prove
+        nothing, and silence proves nothing — no rows means no proof, which
+        keeps the tom2 level resolver capped at 1. Any error => False
+        (fail closed), never an exception into the caller.
+        """
+        try:
+            g = (gateway or "").strip().lower()
+            if not g:
+                return False
+            cutoff = (datetime.now(tz=timezone.utc)
+                      - timedelta(hours=float(hours))).isoformat()
+            n = self._conn.execute(
+                "SELECT COUNT(*) n FROM guard_events "
+                "WHERE mode = 'enforce' AND gateway = ? AND ts >= ?",
+                (g, cutoff)).fetchone()["n"]
+            return int(n) >= evidence_min()
+        except Exception:
+            return False
 
     def summary(self) -> Dict[str, Any]:
         """All-time authorized/unauthorized split + windowed rates for the

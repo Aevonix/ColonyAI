@@ -256,7 +256,8 @@ class ResponseGuard:
                             authorized=authorized, checks=[f.check for f in findings],
                             entities=[f.excerpt or "" for f in findings],
                             response_text=response_text or "",
-                            would_block=any(f.severity == "block" for f in findings))
+                            would_block=any(f.severity == "block" for f in findings),
+                            gateway=target_gateway or None)
                 except Exception:
                     logger.debug("guard audit record failed", exc_info=True)
             if findings:
