@@ -900,19 +900,51 @@ def check_server_autonomy_posture(base_url: str, api_key: str, timeout: float) -
     # ticks; a reactive loop never ticks, so a calibration/autonomous preset
     # with a reactive loop is a Colony that never thinks, calibrates, or
     # earns trust — the worst kind of misconfiguration because everything
-    # LOOKS enabled. Deliberately diagnostic-only: the preset never flips
-    # the loop mode itself (owner decision). Older servers that do not
-    # report the loop mode are not failed on a missing key.
+    # LOOKS enabled. Since preset-loop coupling (default on), the preset
+    # supplies the mode itself, so a reactive loop under such a preset can
+    # only mean an explicit COLONY_AUTONOMY_MODE=reactive pin, coupling
+    # switched off, or an older server without coupling — those FAIL; a
+    # reactive loop the coupling machinery failed to raise only WARNs
+    # (fail-safe worked as designed). Older servers that do not report the
+    # loop mode are not failed on a missing key.
     autonomy_mode = str(posture.get("COLONY_AUTONOMY_MODE", "") or "").lower()
+    mode_source = str(posture.get("COLONY_AUTONOMY_MODE_SOURCE", "") or "").lower()
+    coupling = str(posture.get("COLONY_PRESET_LOOP_COUPLING", "") or "").lower()
     if preset in ("calibration", "autonomous") and autonomy_mode == "reactive":
+        base = (f"preset={preset} but the autonomy loop is REACTIVE — "
+                "preset-enabled subsystems only run on loop ticks, so "
+                "nothing thinks, calibrates, or earns trust on its own")
+        if mode_source == "env":
+            return CheckResult(
+                "server-autonomy-posture", FAIL,
+                detail=base + " (COLONY_AUTONOMY_MODE=reactive is explicitly "
+                       "pinned below the preset)",
+                remedy="unset COLONY_AUTONOMY_MODE and restart (the preset "
+                       "supplies proactive via COLONY_PRESET_LOOP_COUPLING), "
+                       "or leave the pin if the rollback is deliberate — "
+                       "then this FAIL is the reminder")
+        if coupling == "off":
+            return CheckResult(
+                "server-autonomy-posture", FAIL,
+                detail=base + " (COLONY_PRESET_LOOP_COUPLING=off disabled "
+                       "the preset's mode default)",
+                remedy="unset COLONY_PRESET_LOOP_COUPLING (it defaults on) "
+                       "or set COLONY_AUTONOMY_MODE=proactive and restart")
+        if not mode_source:
+            # Older server: no coupling, no source reporting — the original
+            # misconfiguration, still a FAIL.
+            return CheckResult(
+                "server-autonomy-posture", FAIL, detail=base,
+                remedy="set COLONY_AUTONOMY_MODE=proactive and restart (or "
+                       "upgrade to a server with preset-loop coupling)")
+        # Coupling on, mode not pinned, yet still reactive: the coupling
+        # machinery failed safe toward reactive. Honest but degraded.
         return CheckResult(
-            "server-autonomy-posture", FAIL,
-            detail=f"preset={preset} but the autonomy loop is REACTIVE — "
-                   "preset-enabled subsystems only run on loop ticks, so "
-                   "nothing thinks, calibrates, or earns trust on its own",
-            remedy="set COLONY_AUTONOMY_MODE=proactive and restart (the "
-                   "preset deliberately never flips the loop mode for you; "
-                   "this is an owner decision)")
+            "server-autonomy-posture", WARN,
+            detail=base + f" (mode_source={mode_source}; coupling is on but "
+                   "did not resolve — it fails toward reactive by design)",
+            remedy="set COLONY_AUTONOMY_MODE=proactive explicitly and "
+                   "check server logs for preset resolution errors")
 
     live = sorted(k.replace("COLONY_", "").replace("_MODE", "").lower()
                   for k, v in posture.items() if v == "live")

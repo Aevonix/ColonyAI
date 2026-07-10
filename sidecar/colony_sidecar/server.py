@@ -1530,6 +1530,42 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.autonomy.registry import SubsystemRegistry
         from colony_sidecar.autonomy.scheduler import AutonomyScheduler
         autonomy_config = AutonomyConfig.from_env()
+
+        # H4.2 annunciation: when the loop mode came from the preset (via
+        # COLONY_PRESET_LOOP_COUPLING, default on) rather than an explicit
+        # COLONY_AUTONOMY_MODE, say so loudly at startup and leave ONE
+        # durable journal record the first time a deployment boots coupled —
+        # a default flip an operator can always see and always roll back.
+        if getattr(autonomy_config, "mode_source", "") == "preset":
+            try:
+                from colony_sidecar.util.autonomy_preset import preset_name
+                _preset = preset_name() or "(unknown)"
+            except Exception:
+                _preset = "(unknown)"
+            logger.warning(
+                "Autonomy loop mode %s inherited from COLONY_AUTONOMY_PRESET=%s "
+                "via preset-loop coupling (COLONY_PRESET_LOOP_COUPLING=on by "
+                "default). Set COLONY_AUTONOMY_MODE explicitly to override, or "
+                "COLONY_PRESET_LOOP_COUPLING=off to restore env-only resolution.",
+                autonomy_config.mode.value, _preset)
+            try:
+                from colony_sidecar.api.routers.host import _self_model as _sm_j
+                _cj = getattr(_sm_j, "journal", None)
+                if _cj is not None and not _cj.recent(
+                        limit=1, domain="preset_coupling"):
+                    _cj.record(
+                        "preset_coupling",
+                        f"First coupled boot: loop mode {autonomy_config.mode.value} "
+                        f"inherited from preset '{_preset}'",
+                        reasoning="COLONY_AUTONOMY_MODE unset; "
+                                  "COLONY_PRESET_LOOP_COUPLING on (default). "
+                                  "Rollback: set COLONY_AUTONOMY_MODE=reactive "
+                                  "or COLONY_PRESET_LOOP_COUPLING=off.",
+                        reversibility="reversible", decision="noted",
+                        ref="preset-loop-coupling")
+            except Exception:
+                pass  # annunciation must never block startup
+
         registry = SubsystemRegistry()
 
         # Wire scheduler BEFORE the loop so the loop gets a direct reference.

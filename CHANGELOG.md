@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+**Preset-loop coupling — default flip + migration note**
+(`util.autonomy_preset`, `autonomy.config`): an active
+`COLONY_AUTONOMY_PRESET` now supplies the autonomy loop mode when
+`COLONY_AUTONOMY_MODE` is unset (passive: `reactive`;
+calibration/autonomous: `proactive`), governed by
+`COLONY_PRESET_LOOP_COUPLING` (new, default `on`). MIGRATION: a deployment
+running `COLONY_AUTONOMY_PRESET=calibration` or `=autonomous` WITHOUT an
+explicit `COLONY_AUTONOMY_MODE` will come up with a proactive loop on next
+restart — previously it silently stayed reactive and none of the
+preset-enabled subsystems ever ran. This is the intended fix for the
+"everything looks enabled, nothing ever ticks" misconfiguration. Rollback:
+set `COLONY_AUTONOMY_MODE=reactive` (explicit env always wins) or
+`COLONY_PRESET_LOOP_COUPLING=off` (restores the old env-only resolution
+exactly). Resolution precedence: explicit env > coupled preset > legacy
+tick-interval migration > default; coupling errors fail toward reactive.
+Annunciation: the server logs a startup WARNING whenever the mode is
+preset-inherited, records one durable action-journal entry (domain
+`preset_coupling`) on the first coupled boot, and
+`GET /v1/host/autonomy/posture` now reports `COLONY_AUTONOMY_MODE_SOURCE`
+(`env`/`preset`/`legacy_tick`/`default`) plus the coupling flag. `colony
+doctor` reworded: FAIL only for an explicit reactive pin under a
+calibration/autonomous preset or coupling switched off under a preset; a
+coupling fail-safe (reactive despite coupling on) is WARN.
+
 **Preset activation — expectations + workspace** (`util.autonomy_preset`):
 `COLONY_EXPECTATIONS` and `COLONY_WORKSPACE` are now managed by
 `COLONY_AUTONOMY_PRESET` (calibration: expectations `on` + workspace

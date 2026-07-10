@@ -766,7 +766,8 @@ def test_cmd_doctor_human_output_exit_zero(clean_env, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 def test_posture_preset_with_reactive_loop_fails(clean_env, monkeypatch):
-    """calibration/autonomous preset + reactive loop = nothing ever ticks."""
+    """Older server (no mode-source reporting, no coupling): calibration/
+    autonomous preset + reactive loop = nothing ever ticks — still FAIL."""
     for preset in ("calibration", "autonomous"):
         monkeypatch.setattr(doctor, "_http_get", _fake_http({
             "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
@@ -779,9 +780,73 @@ def test_posture_preset_with_reactive_loop_fails(clean_env, monkeypatch):
         r = doctor.check_server_autonomy_posture(URL, "key", 5)
         assert r.status == FAIL
         assert "REACTIVE" in r.detail
-        # the remedy is advisory only — the preset never flips the mode
         assert "COLONY_AUTONOMY_MODE=proactive" in r.remedy
-        assert "owner decision" in r.remedy
+
+
+def test_posture_explicit_reactive_pin_under_preset_fails(
+        clean_env, monkeypatch):
+    """H4.2: with coupling on, a reactive loop under a working preset can
+    only be an explicit COLONY_AUTONOMY_MODE=reactive pin — FAIL, with a
+    remedy that names the pin (it may be a deliberate rollback)."""
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_AUTONOMY_MODE": "reactive",
+            "COLONY_AUTONOMY_MODE_SOURCE": "env",
+            "COLONY_PRESET_LOOP_COUPLING": "on",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == FAIL
+    assert "explicitly pinned" in r.detail
+    assert "rollback" in r.remedy
+
+
+def test_posture_coupling_off_under_preset_fails(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "autonomous",
+            "COLONY_AUTONOMY_MODE": "reactive",
+            "COLONY_AUTONOMY_MODE_SOURCE": "default",
+            "COLONY_PRESET_LOOP_COUPLING": "off",
+            "COLONY_THINKING_MODE": "live",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == FAIL
+    assert "COLONY_PRESET_LOOP_COUPLING=off" in r.detail
+
+
+def test_posture_coupled_preset_mode_passes(clean_env, monkeypatch):
+    """The new normal: preset supplies proactive via coupling — PASS."""
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_AUTONOMY_MODE": "proactive",
+            "COLONY_AUTONOMY_MODE_SOURCE": "preset",
+            "COLONY_PRESET_LOOP_COUPLING": "on",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+    }))
+    assert doctor.check_server_autonomy_posture(URL, "key", 5).status == PASS
+
+
+def test_posture_coupling_failed_safe_warns_not_fails(clean_env, monkeypatch):
+    """Coupling on, nothing pinned, yet reactive: the fail-safe fired.
+    Degraded but by design — WARN, not FAIL."""
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_AUTONOMY_MODE": "reactive",
+            "COLONY_AUTONOMY_MODE_SOURCE": "default",
+            "COLONY_PRESET_LOOP_COUPLING": "on",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == WARN
+    assert "fails toward reactive" in r.detail
 
 
 def test_posture_calibration_proactive_passes_labeled_expected(

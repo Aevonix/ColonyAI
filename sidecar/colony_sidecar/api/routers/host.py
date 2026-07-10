@@ -4869,10 +4869,29 @@ async def get_autonomy_posture() -> dict:
         try:
             if _autonomy_loop is not None:
                 posture["COLONY_AUTONOMY_MODE"] = _autonomy_loop.config.mode.value
+                posture["COLONY_AUTONOMY_MODE_SOURCE"] = getattr(
+                    _autonomy_loop.config, "mode_source", "") or "default"
             else:
-                posture["COLONY_AUTONOMY_MODE"] = (
-                    os.environ.get("COLONY_AUTONOMY_MODE", "reactive")
-                    .strip().lower() or "reactive")
+                # No running loop: mirror AutonomyConfig.from_env's mode
+                # resolution (env > coupled preset > legacy tick > default)
+                # so the reported source is honest even pre-loop.
+                raw = (os.environ.get("COLONY_AUTONOMY_MODE") or "").strip().lower()
+                if raw:
+                    posture["COLONY_AUTONOMY_MODE"] = (
+                        raw if raw in ("reactive", "proactive") else "reactive")
+                    posture["COLONY_AUTONOMY_MODE_SOURCE"] = "env"
+                else:
+                    from colony_sidecar.util.autonomy_preset import coupled_loop_mode
+                    coupled = coupled_loop_mode()
+                    if coupled:
+                        posture["COLONY_AUTONOMY_MODE"] = coupled
+                        posture["COLONY_AUTONOMY_MODE_SOURCE"] = "preset"
+                    elif os.environ.get("COLONY_AUTONOMY_TICK_INTERVAL_SECS"):
+                        posture["COLONY_AUTONOMY_MODE"] = "proactive"
+                        posture["COLONY_AUTONOMY_MODE_SOURCE"] = "legacy_tick"
+                    else:
+                        posture["COLONY_AUTONOMY_MODE"] = "reactive"
+                        posture["COLONY_AUTONOMY_MODE_SOURCE"] = "default"
         except Exception:
             pass
         return {"available": True, "posture": posture}
