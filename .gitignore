@@ -14,7 +14,7 @@ dist/
 sidecar/*.db
 sidecar/events/
 sidecar/build/
-events/
+/events/
 sidecar.log
 sidecar.pid
 

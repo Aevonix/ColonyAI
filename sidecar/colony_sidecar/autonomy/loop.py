@@ -41,8 +41,9 @@ def _get_broadcast():
             from colony_sidecar.api.routers.host import broadcast_event
             _broadcast = broadcast_event
         except ImportError:
-            def _broadcast(e):
-                return None
+            # A circular import during startup must not permanently replace the
+            # durable publisher for the process lifetime.
+            return lambda _event: None
     return _broadcast
 
 logger = logging.getLogger(__name__)

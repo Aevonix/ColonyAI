@@ -1495,12 +1495,13 @@ def register(ctx):
         return None
 
     def _on_session_end(**kwargs):
-        if _event_subscriber is not None:
-            try:
-                loop = asyncio.get_event_loop()
-                loop.create_task(_event_subscriber.stop())
-            except RuntimeError:
-                pass
+        """Per-turn Hermes hook; the event subscriber is process-scoped.
+
+        Hermes invokes ``on_session_end`` after each completed interaction, not
+        only during process shutdown. Stopping the shared subscriber here made
+        proactive Colony events disappear after the first turn.
+        """
+        return None
 
     def _pre_tool_call_activity(**kwargs):
         # Generic observability hook: record a friendly summary of each tool call

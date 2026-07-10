@@ -9,9 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Optional
 
 import websockets
 
@@ -24,6 +23,7 @@ class CachedEvent:
     payload: dict[str, Any]
     occurred_at: str
     seq: int
+    recorded_at: str = ""
 
 
 class EventCache:
@@ -34,16 +34,24 @@ class EventCache:
         self._events: dict[str, list[CachedEvent]] = {}
         self._max_per_type = max_per_type
         self._last_seq = 0
-        self._last_event_id = ""
+        self._last_recorded_at = ""
 
-    async def add(self, event: CachedEvent) -> None:
+    async def add(self, event: CachedEvent) -> bool:
         async with self._lock:
+            # Replay/live overlap and reconnect retries can legitimately offer
+            # the same durable record twice. Sequence is the authoritative
+            # idempotency key for modern sidecars.
+            if event.seq > 0 and event.seq <= self._last_seq:
+                return False
             self._events.setdefault(event.type, [])
             self._events[event.type].insert(0, event)
             self._events[event.type] = self._events[event.type][: self._max_per_type]
             if event.seq > self._last_seq:
                 self._last_seq = event.seq
-                self._last_event_id = event.occurred_at
+            recorded_at = event.recorded_at or event.occurred_at
+            if recorded_at:
+                self._last_recorded_at = recorded_at
+            return True
 
     async def get(self, event_type: str) -> list[CachedEvent]:
         async with self._lock:
@@ -60,9 +68,31 @@ class EventCache:
         async with self._lock:
             self._events.pop(event_type, None)
 
+    async def advance_cursor(self, seq: int) -> None:
+        """Acknowledge a replay high-water mark with no intervening event."""
+        async with self._lock:
+            if seq > self._last_seq:
+                self._last_seq = seq
+
+    async def reset_cursor(self, seq: int = 0) -> None:
+        """Reset cached epoch state when the server journal moves backwards."""
+        async with self._lock:
+            self._events.clear()
+            self._last_seq = max(0, seq)
+            self._last_recorded_at = ""
+
     @property
     def last_event_id(self) -> str:
-        return self._last_event_id
+        """Legacy timestamp cursor retained for older Colony sidecars."""
+        return self._last_recorded_at
+
+    @property
+    def last_event_seq(self) -> int:
+        return self._last_seq
+
+    @property
+    def last_event_time(self) -> str:
+        return self._last_recorded_at
 
 
 class ColonyEventSubscriber:
@@ -128,52 +158,124 @@ class ColonyEventSubscriber:
 
         async with websockets.connect(ws_url, additional_headers=headers) as ws:
             # Auth handshake
-            await ws.send(json.dumps({
+            auth = {
                 "type": "auth",
                 "token": self._api_key,
                 "contact_id": self._contact_id,
-                "lastEventId": self._cache.last_event_id,
-            }))
+            }
+            if self._cache.last_event_seq > 0:
+                auth["lastEventSeq"] = self._cache.last_event_seq
+            if self._cache.last_event_time:
+                # Send both the explicit field and the legacy alias so either
+                # side of a rolling upgrade can resume correctly.
+                auth["lastEventTime"] = self._cache.last_event_time
+                auth["lastEventId"] = self._cache.last_event_time
+            await ws.send(json.dumps(auth))
 
-            # Wait for replay complete or timeout
-            replay_done = False
-            try:
-                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                data = json.loads(msg)
-                if data.get("type") == "replay_complete":
-                    replay_done = True
-            except asyncio.TimeoutError:
-                pass
-
-            # Listen loop
+            # Every received frame goes through one handler. The old handshake
+            # consumed the first frame while looking for replay_complete, which
+            # silently dropped a real event when there was nothing to replay.
             while not self._stop_event.is_set():
                 try:
                     msg = await asyncio.wait_for(ws.recv(), timeout=30.0)
                     data = json.loads(msg)
                     await self._handle_message(data)
+                    if data.get("type") in ("stream_overflow", "replay_error"):
+                        break
                 except asyncio.TimeoutError:
-                    # Send ping to keepalive
-                    await ws.send(json.dumps({"type": "ping"}))
+                    # Use a protocol-level ping; the host stream is write-only
+                    # after auth and does not consume application ping frames.
+                    await ws.ping()
                 except websockets.exceptions.ConnectionClosed:
                     break
 
     async def _handle_message(self, data: dict[str, Any]) -> None:
         msg_type = data.get("type", "")
-        if msg_type in ("ping", "pong", "replay_complete"):
+        if msg_type == "connected":
+            if "journalHighWaterSeq" not in data:
+                return
+            try:
+                server_high_water = int(data.get("journalHighWaterSeq", 0) or 0)
+            except (TypeError, ValueError):
+                server_high_water = 0
+            if server_high_water < self._cache.last_event_seq:
+                logger.error(
+                    "Colony event journal moved backwards (%s -> %s); "
+                    "resetting the local replay cursor",
+                    self._cache.last_event_seq,
+                    server_high_water,
+                )
+                await self._cache.reset_cursor(server_high_water)
+            return
+        if msg_type in (
+            "ping",
+            "pong",
+            "auth_ok",
+        ):
+            return
+        if msg_type == "replay_complete":
+            try:
+                replay_through = int(
+                    data.get("replayThroughSeq", data.get("lastSeq", 0)) or 0
+                )
+            except (TypeError, ValueError):
+                replay_through = 0
+            if replay_through > 0:
+                await self._cache.advance_cursor(replay_through)
+            return
+        if msg_type == "replay_gap":
+            logger.error(
+                "Colony event replay has a retention gap: requested after "
+                "seq=%s, first available seq=%s",
+                data.get("requestedAfterSeq"),
+                data.get("firstAvailableSeq"),
+            )
+            return
+        if msg_type == "replay_reset":
+            logger.warning(
+                "Colony event replay cursor reset: requested seq=%s, "
+                "journal high-water seq=%s",
+                data.get("requestedAfterSeq"),
+                data.get("journalHighWaterSeq"),
+            )
+            return
+        if msg_type == "replay_integrity_warning":
+            logger.error(
+                "Colony event replay skipped %s corrupt journal records",
+                data.get("corruptRecordCount"),
+            )
+            return
+        if msg_type == "replay_error":
+            logger.error("Colony event replay failed: %s", data.get("reason"))
+            return
+        if msg_type == "stream_overflow":
+            logger.warning(
+                "Colony event stream overflowed; reconnecting from seq=%s "
+                "(server dropped %s frames, seq %s..%s)",
+                self._cache.last_event_seq,
+                data.get("droppedCount"),
+                data.get("firstDroppedSeq"),
+                data.get("lastDroppedSeq"),
+            )
             return
 
         payload = data.get("payload", data)
-        seq = data.get("seq", 0)
+        try:
+            seq = int(data.get("seq", 0))
+        except (TypeError, ValueError):
+            seq = 0
         occurred_at = data.get("occurred_at", data.get("recordedAt", ""))
+        recorded_at = data.get("recordedAt", occurred_at)
 
         event = CachedEvent(
             type=msg_type,
             payload=payload,
             occurred_at=occurred_at,
             seq=seq,
+            recorded_at=recorded_at,
         )
-        await self._cache.add(event)
-        logger.debug("Colony event cached: %s (seq=%d)", msg_type, seq)
+        if await self._cache.add(event):
+            logger.debug("Colony event cached: %s (seq=%d)", msg_type, seq)
 
     def get_proactive_events(self) -> list[CachedEvent]:
         """Return cached proactive events suitable for LLM injection.

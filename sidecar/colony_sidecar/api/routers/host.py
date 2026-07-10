@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from pydantic import BaseModel
 
 from colony_sidecar.goals.store import GoalNotFoundError
 from colony_sidecar import get_state_dir
+from colony_sidecar.events.stream import EventSubscriberBuffer
 
 from colony_sidecar.api.schemas.host import (
     HostConfigureRequest,
@@ -256,21 +258,75 @@ _signal_collector = None
 _embedder = None
 _reasoning_loop = None
 _consolidator = None
-_event_subscribers: list[asyncio.Queue] = []
+_event_subscribers: list[EventSubscriberBuffer] = []
+_event_broadcast_lock = threading.RLock()
 
 
-def broadcast_event(event: dict) -> None:
-    """Push an event dict to all connected WebSocket subscribers.
+def _event_subscriber_queue_size() -> int:
+    """Configured bound for each live event subscriber."""
+    raw = os.environ.get("COLONY_EVENT_SUBSCRIBER_QUEUE_SIZE", "256")
+    try:
+        size = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid COLONY_EVENT_SUBSCRIBER_QUEUE_SIZE=%r; using 256", raw
+        )
+        return 256
+    if size < 1:
+        logger.warning(
+            "COLONY_EVENT_SUBSCRIBER_QUEUE_SIZE must be positive; using 256"
+        )
+        return 256
+    return min(size, 10_000)
+
+
+def broadcast_event(event: dict) -> Optional[dict]:
+    """Persist, canonicalize, then publish an event to live subscribers.
 
     Called by the autonomy loop, signal collector, and other subsystems
     when state changes that the host should know about (proactive
-    messages, briefings, anomalies, etc.).
+    messages, briefings, anomalies, etc.).  A journal failure suppresses the
+    live frame: clients must never observe an event which cannot be replayed.
     """
-    for q in _event_subscribers:
-        try:
-            q.put_nowait(event)
-        except Exception:
-            pass  # Queue full or closed — drop and continue
+    from colony_sidecar.events.journal import append_event_record
+
+    event_type = str(event.get("type", "unknown"))
+    payload = event.get("payload") or {}
+    occurred_at = str(event.get("occurred_at") or "") or None
+
+    # This lock preserves journal-sequence order in local live buffers when
+    # emitters run concurrently on request handlers or worker threads.
+    with _event_broadcast_lock:
+        record = append_event_record(
+            event_type,
+            payload,
+            occurred_at=occurred_at,
+        )
+        if record is None:
+            logger.error(
+                "Suppressing live event %s because journal append failed",
+                event_type,
+            )
+            return None
+
+        frame = {
+            **event,
+            "type": event_type,
+            "payload": payload,
+            "occurred_at": record["occurredAt"],
+            "recordedAt": record["recordedAt"],
+            "seq": record["seq"],
+            "eventId": record["ulid"],
+        }
+        for subscriber in tuple(_event_subscribers):
+            try:
+                subscriber.publish(dict(frame))
+            except Exception:
+                logger.exception(
+                    "Failed to enqueue event seq=%s for one subscriber",
+                    record["seq"],
+                )
+        return frame
 
 
 def set_graph(graph) -> None:
@@ -2838,8 +2894,10 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
 async def events_ws(ws: WebSocket) -> None:
     await ws.accept()
 
-    # Read auth message (may include lastEventId for reconnect replay)
-    last_event_id: Optional[str] = None
+    # Read auth message. New clients send an exact sequence plus the journal
+    # record time; ``lastEventId`` remains accepted as the legacy time cursor.
+    last_event_seq: Optional[int] = None
+    last_event_time = ""
     try:
         raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
         import json as _json
@@ -2863,8 +2921,18 @@ async def events_ws(ws: WebSocket) -> None:
         ):
             await ws.close(code=4003, reason="Invalid API key")
             return
-        # Client sends lastEventId (ISO timestamp) to replay missed events
-        last_event_id = msg.get("lastEventId")
+
+        raw_seq = msg.get("lastEventSeq")
+        legacy_cursor = str(msg.get("lastEventId") or "")
+        if raw_seq is None and legacy_cursor.isdigit():
+            raw_seq = legacy_cursor
+        if raw_seq is not None:
+            last_event_seq = int(raw_seq)
+            if last_event_seq < 0:
+                raise ValueError("lastEventSeq must be non-negative")
+        last_event_time = str(msg.get("lastEventTime") or "")
+        if not last_event_time and legacy_cursor and not legacy_cursor.isdigit():
+            last_event_time = legacy_cursor
     except asyncio.TimeoutError:
         await ws.close(code=4001, reason="Auth timeout")
         return
@@ -2872,60 +2940,227 @@ async def events_ws(ws: WebSocket) -> None:
         await ws.close(code=4001, reason="Invalid auth")
         return
 
-    # Replay missed events if client provided lastEventId
-    if last_event_id:
+    subscriber = EventSubscriberBuffer(
+        _event_subscriber_queue_size(), loop=asyncio.get_running_loop()
+    )
+
+    # Subscribe before capturing the durable high-water mark. Events committed
+    # during replay are buffered and later filtered by sequence, closing the
+    # replay/live race without duplicate delivery.
+    from colony_sidecar.events.journal import current_sequence, replay_events
+    with _event_broadcast_lock:
+        _event_subscribers.append(subscriber)
+        replay_through_seq = current_sequence()
+
+    disconnect_event = asyncio.Event()
+    receive_task: Optional[asyncio.Task] = None
+
+    async def _watch_disconnect() -> None:
+        """Consume post-auth client frames so quiet disconnects are observed."""
         try:
-            from colony_sidecar.events.journal import replay_events
-            result = replay_events(since=last_event_id, limit=500)
-            for event in result["events"]:
+            while True:
+                message = await ws.receive()
+                if message.get("type") == "websocket.disconnect":
+                    return
+                # Application-level pings from legacy clients are deliberately
+                # consumed. Modern clients use protocol-level WebSocket ping.
+        except (WebSocketDisconnect, RuntimeError):
+            return
+        except Exception:
+            logger.debug("Event WebSocket receive watcher stopped", exc_info=True)
+            return
+        finally:
+            disconnect_event.set()
+
+    try:
+        cursor_reset = (
+            last_event_seq is not None
+            and last_event_seq > replay_through_seq
+        )
+        await ws.send_json({
+            "type": "connected",
+            "journalHighWaterSeq": replay_through_seq,
+            "queueCapacity": subscriber.queue.maxsize,
+            "cursorReset": cursor_reset,
+        })
+        if cursor_reset:
+            await ws.send_json({
+                "type": "replay_reset",
+                "requestedAfterSeq": last_event_seq,
+                "journalHighWaterSeq": replay_through_seq,
+                "reason": "cursor_ahead_of_journal",
+            })
+
+        # A brand-new subscriber starts at the captured high-water mark rather
+        # than receiving an arbitrary retention-window history. Reconnects use
+        # the exact processed sequence, with timestamp fallback for old clients.
+        replay_after_seq = 0 if cursor_reset else last_event_seq
+        if replay_after_seq is None and not last_event_time:
+            replay_after_seq = replay_through_seq
+
+        replayed_count = 0
+        replay_cursor = replay_after_seq
+        replay_since = last_event_time
+        first_page = True
+        last_replayed_seq = min(replay_after_seq or 0, replay_through_seq)
+
+        while True:
+            result = await asyncio.to_thread(
+                replay_events,
+                replay_since,
+                1000,
+                None,
+                False,
+                after_seq=replay_cursor,
+                until_seq=replay_through_seq,
+            )
+            if result.get("replayError"):
                 await ws.send_json({
+                    "type": "replay_error",
+                    "reason": result["replayError"],
+                })
+                await ws.close(code=1011, reason="Event replay unavailable")
+                return
+
+            first_available = int(result.get("firstAvailableSeq") or 0)
+            if (
+                first_page
+                and replay_cursor is not None
+                and first_available > 0
+                and replay_cursor + 1 < first_available
+            ):
+                await ws.send_json({
+                    "type": "replay_gap",
+                    "requestedAfterSeq": replay_cursor,
+                    "firstAvailableSeq": first_available,
+                    "reason": "cursor_precedes_retention_window",
+                })
+            corrupt_count = int(result.get("corruptCount") or 0)
+            if first_page and corrupt_count:
+                await ws.send_json({
+                    "type": "replay_integrity_warning",
+                    "corruptRecordCount": corrupt_count,
+                })
+
+            page = result.get("events", [])
+            for event in page:
+                frame = {
                     "type": event["type"],
-                    "occurred_at": event["recordedAt"],
+                    "occurred_at": event.get("occurredAt") or event["recordedAt"],
+                    "recordedAt": event["recordedAt"],
                     "payload": event.get("data", {}),
                     "seq": event["seq"],
-                })
-            if result["events"]:
-                await ws.send_json({
-                    "type": "replay_complete",
-                    "replayedCount": len(result["events"]),
-                    "lastSeq": result["lastSeq"],
-                })
-        except Exception:
-            logging.getLogger(__name__).debug(
-                "Event replay failed for lastEventId=%s", last_event_id, exc_info=True
-            )
+                    "eventId": event.get("ulid", ""),
+                }
+                await ws.send_json(frame)
+                subscriber.mark_delivered(frame)
+                replayed_count += 1
+                last_replayed_seq = max(last_replayed_seq, int(event["seq"]))
 
-    q: asyncio.Queue = asyncio.Queue()
-    _event_subscribers.append(q)
-    try:
+            if not result.get("hasMore") or not page:
+                break
+            replay_cursor = int(result["lastSeq"])
+            replay_since = ""
+            first_page = False
+
+        # Always terminate the handshake explicitly. This means an idle stream
+        # never requires a client to guess whether replay has completed.
+        await ws.send_json({
+            "type": "replay_complete",
+            "replayedCount": replayed_count,
+            "lastSeq": last_replayed_seq,
+            "replayThroughSeq": replay_through_seq,
+        })
+        subscriber.mark_delivered({"seq": replay_through_seq})
+
+        receive_task = asyncio.create_task(_watch_disconnect())
         while True:
-            event = await q.get()
+            event_task = asyncio.create_task(subscriber.get())
+            disconnect_task = asyncio.create_task(disconnect_event.wait())
+            done, _ = await asyncio.wait(
+                {event_task, disconnect_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disconnect_task in done:
+                event_task.cancel()
+                try:
+                    await event_task
+                except asyncio.CancelledError:
+                    pass
+                return
+            disconnect_task.cancel()
+            try:
+                await disconnect_task
+            except asyncio.CancelledError:
+                pass
+            event = event_task.result()
+            if subscriber.is_overflow(event):
+                await ws.send_json(subscriber.overflow_frame())
+                await ws.close(
+                    code=1013,
+                    reason="Event subscriber overflow; reconnect and replay",
+                )
+                return
+            # Frames at or below the replay snapshot were both journaled and
+            # buffered while the replay ran. They have already been delivered.
+            try:
+                seq = int(event.get("seq", 0))
+            except (TypeError, ValueError):
+                seq = 0
+            if seq and seq <= replay_through_seq:
+                continue
             await ws.send_json(event)
+            subscriber.mark_delivered(event)
     except WebSocketDisconnect:
         pass
     finally:
-        try:
-            _event_subscribers.remove(q)
-        except ValueError:
-            pass
+        if receive_task is not None and not receive_task.done():
+            receive_task.cancel()
+            try:
+                await receive_task
+            except asyncio.CancelledError:
+                pass
+        subscriber.close()
+        with _event_broadcast_lock:
+            try:
+                _event_subscribers.remove(subscriber)
+            except ValueError:
+                pass
 
 
 @router.get("/events/replay")
 async def events_replay(
-    since: str = Query(..., description="ISO 8601 timestamp — replay events after this time"),
+    since: str = Query("", description="ISO 8601 journal time — replay events after this time"),
     limit: int = Query(500, ge=1, le=1000, description="Max events to return"),
     types: Optional[str] = Query(None, description="Comma-separated event type filter"),
+    after_seq: Optional[int] = Query(
+        None,
+        alias="afterSeq",
+        ge=0,
+        description="Exact sequence cursor; takes precedence over since",
+    ),
+    until_seq: Optional[int] = Query(
+        None,
+        alias="untilSeq",
+        ge=0,
+        description="Optional inclusive replay high-water sequence",
+    ),
 ) -> dict:
     """Replay journal events for disconnected clients.
 
-    Returns events recorded after ``since`` in sequential order.
-    Use ``Last-Event-Id`` from a previous WebSocket frame or the
-    ``recordedAt`` timestamp of the last event you processed.
+    Returns events in sequential order. Prefer ``afterSeq`` from the last
+    processed WebSocket frame; ``since`` supports legacy timestamp clients.
     """
     from colony_sidecar.events.journal import replay_events
 
     type_list = [t.strip() for t in types.split(",")] if types else None
-    return replay_events(since=since, limit=limit, types=type_list)
+    return replay_events(
+        since=since,
+        limit=limit,
+        types=type_list,
+        after_seq=after_seq,
+        until_seq=until_seq,
+    )
 
 
 # ---------------------------------------------------------------------------
