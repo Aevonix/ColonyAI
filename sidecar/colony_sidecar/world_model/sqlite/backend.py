@@ -25,6 +25,7 @@ def _fts_escape(q: str, max_len: int = 200) -> str:
     return re.sub(r'\s+', ' ', safe).strip()
 
 from ..constants import (
+    CAUSAL_RELATIONSHIP_TYPES,
     ENTITY_ID_PREFIX,
     RELATIONSHIP_ID_PREFIX,
     OBSERVATION_ID_PREFIX,
@@ -33,6 +34,10 @@ from ..constants import (
 )
 from ..entities import BaseEntity, ENTITY_CLASS_MAP, entity_from_dict
 from ..relationships import WorldRelationship
+
+# Query-only causal guard (H2.5): untyped (generic) reads NEVER return
+# causal edges; only /world/causal/* and explicitly typed queries do.
+_CAUSAL_EXCLUSION = tuple(sorted(CAUSAL_RELATIONSHIP_TYPES))
 
 
 def _generate_id(prefix: str) -> str:
@@ -474,6 +479,11 @@ class SQLiteBackend:
         if relationship_type:
             conditions.append("r.relationship_type = ?")
             params.append(relationship_type)
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            ph = ",".join("?" * len(_CAUSAL_EXCLUSION))
+            conditions.append(f"r.relationship_type NOT IN ({ph})")
+            params.extend(_CAUSAL_EXCLUSION)
         if active_only:
             conditions.append("r.valid_to IS NULL")
 
@@ -503,6 +513,11 @@ class SQLiteBackend:
             placeholders = ",".join("?" * len(relationship_types))
             sql += f" AND relationship_type IN ({placeholders})"
             params.extend(relationship_types)
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            ph = ",".join("?" * len(_CAUSAL_EXCLUSION))
+            sql += f" AND relationship_type NOT IN ({ph})"
+            params.extend(_CAUSAL_EXCLUSION)
         async with self._db.execute(sql, params) as cur:
             rows = await cur.fetchall()
         return [_row_to_relationship(r) for r in rows]
@@ -534,6 +549,11 @@ class SQLiteBackend:
             placeholders = ",".join("?" * len(relationship_types))
             sql += f" AND r.relationship_type IN ({placeholders})"
             params.extend(relationship_types)
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            ph = ",".join("?" * len(_CAUSAL_EXCLUSION))
+            sql += f" AND r.relationship_type NOT IN ({ph})"
+            params.extend(_CAUSAL_EXCLUSION)
         async with self._db.execute(sql, params) as cur:
             rows = await cur.fetchall()
 

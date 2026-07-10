@@ -12,11 +12,16 @@ from typing import Any, Dict, List, Optional, Union
 from collections import deque
 
 from .config import WorldModelConfig
+from .constants import CAUSAL_RELATIONSHIP_TYPES
 from .entities import BaseEntity
 from .relationships import WorldRelationship
 from .sqlite.backend import SQLiteBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _is_causal(rel_type: str) -> bool:
+    return str(rel_type or "").strip().upper() in CAUSAL_RELATIONSHIP_TYPES
 
 # Optional inline belief-maintenance hook (item 7): called as
 # cb(entity_id, key, old_value, new_value, old_conf, new_conf) when a
@@ -189,6 +194,11 @@ class WorldModelStore:
                 relationship_types=relationship_types,
             )
             for neighbor, rel in neighbors:
+                # Query-only causal guard (H2.5, belt-and-braces over the
+                # backend exclusion): an untyped traversal never returns or
+                # walks causal edges; only explicitly typed queries do.
+                if not relationship_types and _is_causal(rel.relationship_type):
+                    continue
                 edges.append(rel)
                 if neighbor.id not in visited:
                     hop = current_hop + 1
@@ -237,6 +247,10 @@ class WorldModelStore:
                 current_id, min_confidence=min_confidence
             )
             for neighbor, rel in neighbors:
+                # Query-only causal guard: untyped path-finding never walks
+                # causal edges (see get_neighborhood).
+                if _is_causal(rel.relationship_type):
+                    continue
                 if neighbor.id not in visited:
                     visited[neighbor.id] = (current_id, rel)
                     if neighbor.id == target_id:
@@ -278,8 +292,14 @@ class WorldModelStore:
         min_confidence: float = 0.30,
         limit: int = 100,
     ) -> List[WorldRelationship]:
-        """Query relationships with flexible filtering."""
-        return await self._backend.query_relationships(
+        """Query relationships with flexible filtering.
+
+        Query-only causal guard (H2.5): when ``relationship_type`` is None
+        (an untyped, generic read) causal edges are excluded — enforced in
+        every backend and re-checked here so no backend drift can leak them.
+        Only explicitly typed queries (and /world/causal/*) return them.
+        """
+        rels = await self._backend.query_relationships(
             source_id=source_id,
             target_id=target_id,
             relationship_type=relationship_type,
@@ -288,6 +308,9 @@ class WorldModelStore:
             min_confidence=min_confidence,
             limit=limit,
         )
+        if not relationship_type:
+            rels = [r for r in rels if not _is_causal(r.relationship_type)]
+        return rels
 
     async def query_at_time(
         self,
@@ -295,10 +318,14 @@ class WorldModelStore:
         as_of: str,
         relationship_types: Optional[List[str]] = None,
     ) -> List[WorldRelationship]:
-        """Return relationships active at a specific point in time."""
-        return await self._backend.query_at_time(
+        """Return relationships active at a specific point in time.
+        Untyped calls exclude causal edges (query-only guard, H2.5)."""
+        rels = await self._backend.query_at_time(
             entity_id=entity_id, as_of=as_of, relationship_types=relationship_types
         )
+        if not relationship_types:
+            rels = [r for r in rels if not _is_causal(r.relationship_type)]
+        return rels
 
     # ── Entity writes ─────────────────────────────────────────────────────────
 

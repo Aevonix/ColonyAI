@@ -56,12 +56,25 @@ def _norm(v: Any) -> str:
 
 
 def resolve_relationship_still_active(prediction: Any) -> Optional[bool]:
-    """Hit when at least one matching relationship is still active."""
+    """Hit when at least one matching relationship is still active.
+
+    Causal-typed predictions are NOT resolved here (query-only guard,
+    H2.5): a causal edge must never be scored true/false through the
+    generic relationship machinery — its falsifiability path is the causal
+    subsystem's own. Returning None leaves the prediction unresolved,
+    which calibration excludes (never a fabricated hit or miss).
+    """
     store = _world_store()
     detail = getattr(prediction, "detail", None) or {}
     source_id = detail.get("source_id")
     target_id = detail.get("target_id")
     if store is None or not source_id or not target_id:
+        return None
+    try:
+        from colony_sidecar.world_model.causal_policy import is_causal
+        if is_causal(detail.get("relationship_type") or ""):
+            return None
+    except Exception:
         return None
     rels = _run_async(store.query_relationships(
         source_id=source_id, target_id=target_id,
