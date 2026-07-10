@@ -1087,6 +1087,70 @@ def _configure_colony_llm(client: ColonyClient, plugin_config: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Chat-path response-guard mode (H6.4)
+# ---------------------------------------------------------------------------
+
+_GUARD_CHAT_MODES = ("off", "shadow", "enforce")
+_guard_enforce_warned = False
+_GUARD_WITHHELD_TEXT = (
+    "[message withheld: the outbound reply tripped the response guard]")
+
+
+def _guard_chat_mode() -> str:
+    """COLONY_GUARD_CHAT_MODE: off | shadow | enforce.
+
+    Unset (or an unrecognized value) inherits the legacy
+    COLONY_GUARD_CHAT_SHADOW boolean (truthy -> shadow, else off), so every
+    existing deployment keeps today's behavior without touching config.
+    """
+    raw = os.environ.get("COLONY_GUARD_CHAT_MODE", "").strip().lower()
+    if raw in _GUARD_CHAT_MODES:
+        return raw
+    legacy = os.environ.get("COLONY_GUARD_CHAT_SHADOW", "0").strip().lower()
+    return "shadow" if legacy in ("1", "true", "yes") else "off"
+
+
+def _host_supports_post_reply_mutation(ctx) -> bool:
+    """Capability probe: can this host APPLY a reply mutation returned from
+    a post_llm_call hook? Current Hermes consumes only pre_llm_call
+    returns, so enforcement on the chat path is impossible there; a future
+    host that can must advertise it explicitly (a declared capability set
+    containing 'post_llm_call_mutation', or a truthy
+    supports_post_llm_mutation attribute). Fail closed: unknown host =>
+    cannot mutate."""
+    try:
+        caps = getattr(ctx, "capabilities", None) or ()
+        if "post_llm_call_mutation" in caps:
+            return True
+        return bool(getattr(ctx, "supports_post_llm_mutation", False))
+    except Exception:
+        return False
+
+
+def _effective_guard_chat_mode(ctx) -> str:
+    """The mode the chat path actually runs. enforce downgrades to shadow
+    (with ONE honest warning per process) on hosts that cannot apply
+    post-hook reply mutations — shipping 'enforce' that silently does
+    nothing would be worse than no enforce at all."""
+    global _guard_enforce_warned
+    mode = _guard_chat_mode()
+    if mode != "enforce":
+        return mode
+    if _host_supports_post_reply_mutation(ctx):
+        return "enforce"
+    if not _guard_enforce_warned:
+        logger.warning(
+            "COLONY_GUARD_CHAT_MODE=enforce requested, but this host cannot "
+            "apply post-hook reply mutations (Hermes consumes only "
+            "pre_llm_call returns) — running the chat guard in SHADOW "
+            "instead. Findings still accumulate in the guard audit; "
+            "enforcement requires a host that advertises "
+            "post_llm_call_mutation support.")
+        _guard_enforce_warned = True
+    return "shadow"
+
+
+# ---------------------------------------------------------------------------
 # Plugin registration
 # ---------------------------------------------------------------------------
 
@@ -1372,34 +1436,62 @@ def register(ctx):
         except Exception:
             _do_sync()
 
-        # Chat hot-path ResponseGuard shadow (COLONY_GUARD_CHAT_SHADOW=1):
-        # mirror the outbound reply to the sidecar guard for OBSERVATION only
-        # (mode=shadow), so leak/injection findings accumulate in the guard
-        # audit on real chat traffic. Fire-and-forget on a daemon thread with
-        # a short timeout: it can never block, delay, or modify the reply,
-        # and every error is swallowed (fail open by construction).
-        if assistant_msg and os.environ.get(
-                "COLONY_GUARD_CHAT_SHADOW", "0").strip().lower() in ("1", "true", "yes"):
+        # Chat hot-path ResponseGuard (H6.4, COLONY_GUARD_CHAT_MODE:
+        # off | shadow | enforce; unset inherits the legacy
+        # COLONY_GUARD_CHAT_SHADOW boolean). Shadow mirrors the outbound
+        # reply to the sidecar guard for OBSERVATION only, fire-and-forget
+        # on a daemon thread — it can never block, delay, or modify the
+        # reply, and every error is swallowed. Enforce is capability-probed:
+        # on hosts that cannot apply post-hook reply mutations (current
+        # Hermes) it logs one warning and runs as shadow; on a capable host
+        # it checks synchronously and withholds a blocked reply, failing
+        # OPEN on any guard error (a down guard never silences the agent).
+        _gc_mode = _effective_guard_chat_mode(ctx)
+        if assistant_msg and _gc_mode != "off":
             _guard_gateway = str(kwargs.get("platform", "") or _plat)
-
-            def _do_guard_shadow():
+            _guard_payload = {
+                "response_text": assistant_msg[:8000],
+                "incoming_message_text": user_msg[:2000],
+                "target_contact_id": contact_id,
+                "target_gateway": _guard_gateway,
+                "session_id": session_id,
+                "mode": _gc_mode,
+            }
+            if _gc_mode == "enforce":
                 try:
-                    _colony_client.post("/v1/host/response-guard/check", json={
-                        "response_text": assistant_msg[:8000],
-                        "incoming_message_text": user_msg[:2000],
-                        "target_contact_id": contact_id,
-                        "target_gateway": _guard_gateway,
-                        "session_id": session_id,
-                        "mode": "shadow",
-                    }, timeout=3)
+                    _gresp = _colony_client.post(
+                        "/v1/host/response-guard/check",
+                        json=_guard_payload, timeout=3)
+                    _verdict = {}
+                    try:
+                        _verdict = _gresp.json() if _gresp is not None else {}
+                    except Exception:
+                        _verdict = {}
+                    if _verdict.get("decision") in ("block", "revise"):
+                        logger.warning(
+                            "response-guard ENFORCE withheld an outbound "
+                            "chat reply (session=%s decision=%s)",
+                            session_id, _verdict.get("decision"))
+                        return {"assistant_response": _GUARD_WITHHELD_TEXT}
                 except Exception as exc:
-                    logger.debug("response-guard shadow check failed: %s", exc)
+                    logger.debug(
+                        "response-guard enforce check failed (fail open): %s",
+                        exc)
+            else:
+                def _do_guard_shadow():
+                    try:
+                        _colony_client.post("/v1/host/response-guard/check",
+                                            json=_guard_payload, timeout=3)
+                    except Exception as exc:
+                        logger.debug("response-guard shadow check failed: %s",
+                                     exc)
 
-            try:
-                import threading
-                threading.Thread(target=_do_guard_shadow, daemon=True).start()
-            except Exception:
-                pass
+                try:
+                    import threading
+                    threading.Thread(target=_do_guard_shadow,
+                                     daemon=True).start()
+                except Exception:
+                    pass
         return None
 
     def _on_session_end(**kwargs):
