@@ -17,6 +17,12 @@ from colony_sidecar.self_model.store import CompetenceStore, SelfModel, self_mod
 from colony_sidecar.self_model.brief import self_brief
 from colony_sidecar.self_model.journal import ActionJournal
 from colony_sidecar.self_model.trust import TrustEngine, floor_class, autograduate_enabled
+from colony_sidecar.self_model.supervised import (
+    REVERSIBLE_CONTRACT,
+    effective_mode,
+    reversible,
+    supervised_enabled,
+)
 from colony_sidecar.self_model.params import (
     AdaptiveParamStore,
     register_core_params,
@@ -27,6 +33,7 @@ from colony_sidecar.self_model.params import (
 __all__ = [
     "CompetenceStore", "SelfModel", "self_brief", "self_model_enabled",
     "ActionJournal", "TrustEngine", "floor_class", "autograduate_enabled",
+    "REVERSIBLE_CONTRACT", "effective_mode", "reversible", "supervised_enabled",
     "AdaptiveParamStore", "register_core_params",
     "PARAM_CONSOLIDATION_THRESHOLD", "PARAM_RECALL_MIN_RELEVANCE",
 ]
