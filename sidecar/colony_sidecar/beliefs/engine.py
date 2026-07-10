@@ -87,7 +87,18 @@ class BeliefEngine:
         """Env mode graduated by the trust engine (Amendment 1.2). Belief
         RESOLUTION mutates epistemic state autonomously (no sub-gate), so it
         requires the fully-earned act_first stage; env "live" remains the
-        owner override, "off" stays off."""
+        owner override, "off" stays off.
+
+        The trust ladder had a catch-22 for beliefs: graduation ask_first ->
+        act_first needs a real (non-shadow) track record, but the engine only
+        acted at act_first, so every outcome stayed shadow and the domain
+        could never graduate. COLONY_BELIEFS_SUPERVISED_LIVE=1 adds a
+        'supervised' rung at ask_first: REVERSIBLE mutations only (epistemic
+        supersession that preserves the old value on the superseded node,
+        and bounded stale-confidence decay — no deletion), journaled with
+        prior state, outcomes recorded shadow=False. Destructive resolution
+        (anything that deletes or merges nodes) must still gate on the full
+        "live" mode, i.e. act_first or the explicit env override."""
         mode = beliefs_mode()
         if mode in ("off", "live"):
             return mode
@@ -98,7 +109,12 @@ class BeliefEngine:
             stage = trust.stage("beliefs", default="shadow")
         except Exception:
             return mode
-        return "live" if stage == "act_first" else "shadow"
+        if stage == "act_first":
+            return "live"
+        from colony_sidecar.beliefs.models import beliefs_supervised_live
+        if stage == "ask_first" and beliefs_supervised_live():
+            return "supervised"
+        return "shadow"
 
     async def run(self) -> Dict[str, Any]:
         mode = self._effective_mode()
@@ -129,8 +145,12 @@ class BeliefEngine:
             report["decayed"])
         if self._self_model is not None:
             try:
-                self._self_model.record("beliefs", "success",
-                                        shadow=(mode != "live"))
+                # supervised outcomes are REAL (shadow=False): that is the
+                # whole point of the rung — a track record the trust engine
+                # can graduate ask_first -> act_first on.
+                self._self_model.record(
+                    "beliefs", "success",
+                    shadow=(mode not in ("live", "supervised")))
             except Exception:
                 pass
         return report
@@ -182,7 +202,13 @@ class BeliefEngine:
                 report["review_initiatives"] += 1
                 continue
             winner, loser = picked
-            if mode != "live":
+            # Supersession is the REVERSIBLE resolution: the loser node is
+            # marked (epistemic_state + superseded_by pointer) with its old
+            # value preserved on it, and the transition is journaled — so
+            # the supervised rung may perform it. Any future DESTRUCTIVE
+            # resolution (deleting or merging nodes) must check
+            # mode == "live" here, never "supervised".
+            if mode not in ("live", "supervised"):
                 logger.info(
                     "SHADOW-BELIEF conflict %s: would supersede %r "
                     "(%s=%s) in favor of %r", cid, loser.value,
@@ -278,7 +304,10 @@ class BeliefEngine:
         stale = await stale_entities(self._world)
         if not stale:
             return
-        if mode != "live":
+        # Decay is reversible by construction (bounded multiplicative drop,
+        # floored at 0.1, never a deletion; prior value journaled below), so
+        # the supervised rung may perform it.
+        if mode not in ("live", "supervised"):
             logger.info("SHADOW-BELIEF decay: %d stale entit(ies) would "
                         "lose confidence", len(stale))
             return
@@ -303,6 +332,7 @@ class BeliefEngine:
     def status(self) -> Dict[str, Any]:
         return {
             "mode": beliefs_mode(),
+            "effective_mode": self._effective_mode(),
             "last_report": self.last_report,
             "open_conflicts": len(self.store.conflicts(status="open",
                                                        limit=1000)),

@@ -291,3 +291,109 @@ def test_inline_property_hook_records_audit():
     # same value -> no audit row
     engine.note_property_update("we-1", "status", "paused", "paused", 0.7, 0.8)
     assert len(store.supersessions()) == 1
+
+
+# ---------------------------------------------------------------------------
+# U26: supervised-live rung (COLONY_BELIEFS_SUPERVISED_LIVE)
+# ---------------------------------------------------------------------------
+
+def _self_model_at(stage, monkeypatch=None):
+    from colony_sidecar.self_model import (
+        ActionJournal, CompetenceStore, SelfModel, TrustEngine,
+    )
+    cstore = CompetenceStore()
+    trust = TrustEngine(cstore, journal=ActionJournal())
+    sm = SelfModel(cstore, trust=trust)
+    trust.set_stage("beliefs", stage, notify=False)
+    return sm, cstore
+
+
+def test_supervised_flag_off_is_todays_exact_behavior(monkeypatch):
+    """Regression-lock: with the flag unset OR explicitly 0, ask_first still
+    resolves to shadow — the pre-existing catch-22 posture."""
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.delenv("COLONY_BELIEFS_SUPERVISED_LIVE", raising=False)
+    sm, _ = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    assert engine._effective_mode() == "shadow"
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "0")
+    assert engine._effective_mode() == "shadow"
+
+
+def test_supervised_mode_only_at_ask_first(monkeypatch):
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    for stage, want in (("shadow", "shadow"),
+                        ("ask_first", "supervised"),
+                        ("act_first", "live")):
+        sm, _ = _self_model_at(stage)
+        engine = BeliefEngine(BeliefStore(), self_model=sm)
+        assert engine._effective_mode() == want, stage
+    # env off/live stay owner-controlled regardless of the flag
+    sm, _ = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "off")
+    assert engine._effective_mode() == "off"
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "live")
+    assert engine._effective_mode() == "live"
+
+
+@pytest.mark.asyncio
+async def test_supervised_performs_reversible_mutations(monkeypatch):
+    """At ask_first with the flag on: supersession (old value preserved on
+    the superseded node) and floored decay run, are journaled, and the
+    outcome is recorded shadow=False so graduation can proceed."""
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    monkeypatch.setenv("COLONY_BELIEFS_STALE_DAYS", "10")
+    sm, cstore = _self_model_at("ask_first")
+    old_ts = datetime.now(timezone.utc) - timedelta(days=30)
+    graph = FakeGraph([
+        _mem_row("m-old", "Jordan works at Initech.", ts=old_ts),
+        _mem_row("m-new", "Jordan works at Globex."),
+    ])
+    stale = _entity(name="Old Thing", conf=0.11, last_seen=old_ts)
+    world = FakeWorld([stale])
+    store = BeliefStore()
+    engine = BeliefEngine(store, graph=graph, world_store=world,
+                          journal=ActionJournal(), self_model=sm)
+    report = await engine.run()
+    assert report["mode"] == "supervised"
+    # reversible supersession: loser MARKED, old value preserved in audit
+    assert report["resolved"] == 1
+    assert graph.transitions == [("m-old", "superseded", "m-new")]
+    assert store.supersessions()[0]["old_value"] == "Initech"
+    # reversible decay: floored at 0.1, entity upserted, never deleted
+    assert report["decayed"] == 1
+    assert stale.confidence == pytest.approx(0.1)
+    assert world.upserts == [stale]
+    # REAL outcome recorded -> trust graduation has something to chew on
+    real = cstore.events("beliefs", include_shadow=False)
+    assert len(real) == 1 and real[0]["outcome"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_shadow_stage_records_shadow_even_with_flag(monkeypatch):
+    """The flag never lets a shadow-stage domain emit real outcomes."""
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    sm, cstore = _self_model_at("shadow")
+    graph = FakeGraph([
+        _mem_row("m-old", "Jordan works at Initech.",
+                 ts=datetime.now(timezone.utc) - timedelta(days=30)),
+        _mem_row("m-new", "Jordan works at Globex."),
+    ])
+    engine = BeliefEngine(BeliefStore(), graph=graph, self_model=sm)
+    report = await engine.run()
+    assert report["mode"] == "shadow" and report["resolved"] == 0
+    assert graph.transitions == []
+    assert cstore.events("beliefs", include_shadow=False) == []
+
+
+def test_status_reports_effective_mode(monkeypatch):
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    sm, _ = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    st = engine.status()
+    assert st["mode"] == "shadow" and st["effective_mode"] == "supervised"

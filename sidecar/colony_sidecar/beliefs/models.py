@@ -13,6 +13,17 @@ def beliefs_mode() -> str:
     return resolve("COLONY_BELIEFS_MODE", ("off", "shadow", "live"), "shadow")
 
 
+def beliefs_supervised_live() -> bool:
+    """COLONY_BELIEFS_SUPERVISED_LIVE=1 unlocks the 'supervised' rung: at
+    trust stage ask_first the engine may perform REVERSIBLE mutations only
+    (supersession that preserves the old value on the superseded node, and
+    bounded stale-confidence decay) and records real (non-shadow) outcomes,
+    so the beliefs domain can build the track record ask_first -> act_first
+    graduation requires. Default 0 = today's exact behavior."""
+    return os.environ.get("COLONY_BELIEFS_SUPERVISED_LIVE",
+                          "0").strip().lower() in ("1", "true", "yes")
+
+
 def stale_ttl_days() -> float:
     try:
         return max(1.0, float(os.environ.get("COLONY_BELIEFS_STALE_DAYS", "90")))
