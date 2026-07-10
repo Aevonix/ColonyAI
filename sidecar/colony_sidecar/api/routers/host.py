@@ -7545,6 +7545,50 @@ async def find_entity_path(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ============================================================================
+# World Model — Causal chain (read-only; the sanctioned causal-edge surface)
+# ============================================================================
+
+@router.get("/world/causal/chain")
+async def world_causal_chain(
+    entity_id: str,
+    direction: str = "downstream",
+    max_hops: int = 3,
+    min_confidence: float = 0.0,
+) -> dict:
+    """Walk causal edges only (WM_CAUSES/ENABLES/BLOCKS/INHIBITS) to answer
+    "why" / "what happens if" questions. Causal edges are query-only by
+    policy and excluded from generic graph reads; this endpoint (and
+    explicitly-typed relationship queries) are the only surfaces returning
+    them."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        from colony_sidecar.world_model.causal_query import causal_chain
+        return await causal_chain(
+            _world_store, entity_id, direction=direction,
+            max_hops=max_hops, min_confidence=min_confidence)
+    except Exception as exc:
+        logger.warning("world_causal_chain failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/world/causal/edges")
+async def world_causal_edges(min_confidence: float = 0.0,
+                             limit: int = 100) -> dict:
+    """Flat list of stored causal edges (read-only observability surface)."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        from colony_sidecar.world_model.causal_query import causal_edges
+        edges = await causal_edges(_world_store, min_confidence=min_confidence,
+                                   limit=limit)
+        return {"edges": edges, "total": len(edges)}
+    except Exception as exc:
+        logger.warning("world_causal_edges failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/world/stats", response_model=WorldStatsResponse)
 async def get_world_stats() -> WorldStatsResponse:
     """Get world model statistics."""
