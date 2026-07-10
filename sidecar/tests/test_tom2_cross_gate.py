@@ -116,11 +116,14 @@ def test_inference_about_the_reader_never_renders(stores, monkeypatch):
 @pytest.mark.asyncio
 async def test_no_live_injection_even_with_every_flag_on(stores,
                                                          monkeypatch):
-    """All tom2 flags forced on: a NON-owner context assembly still carries
-    zero tom2 content — the cross-contact renderer is not wired anywhere."""
+    """H3.5 flags alone still inject nothing: a NON-owner context assembly
+    carries zero tom2 content unless the LEVELED system (COLONY_TOM2_LEVEL,
+    default 0 — L4.2) is explicitly raised. The flags tested here gate the
+    renderer, not the wiring."""
     monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
     monkeypatch.setenv("COLONY_TOM2_CONTEXT", "1")
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", OWNER)
+    monkeypatch.delenv("COLONY_TOM2_LEVEL", raising=False)
     facts, tom2, _ = stores
     monkeypatch.setattr(host, "_tom2_store", tom2)
     monkeypatch.setattr(host, "_facts_store", facts)
@@ -134,12 +137,20 @@ async def test_no_live_injection_even_with_every_flag_on(stores,
     assert "has not heard" not in joined
 
 
-def test_renderer_not_referenced_by_context_assembly():
-    """Source-level unwired lock: context assembly never calls the
-    cross-contact renderer."""
+def test_raw_renderer_not_referenced_by_context_assembly():
+    """Supersedes the old 'unwired' lock (the leveled wiring, L4.2, now
+    exists): context assembly must still never call the RAW H3.5 renderer
+    directly — every level-2 line flows through the eligibility pipeline +
+    leveled renderers (which delegate to H3.5 internally). The stronger
+    behavioral pair — flag-off byte-equivalence and not-invoked-below-level
+    — lives in test_tom2_wiring.py."""
     src = inspect.getsource(host.context_assemble)
     assert "render_for_contact" not in src
     assert "render_inference_for_contact" not in src
+    # the sanctioned path IS referenced (belt and suspenders: the block
+    # exists and goes through the leveled modules)
+    assert "render_level2" in src
+    assert "eligible_inferences" in src
 
 
 # ---------------------------------------------------------------------------

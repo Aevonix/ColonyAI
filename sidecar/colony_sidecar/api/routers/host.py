@@ -1947,6 +1947,96 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.debug("context_assemble tom2 failed: %s", exc)
 
+    # --- Leveled cross-contact tom2 (L4.2) — NON-owner readers only. ---
+    # The flip point of the leveled system (docs/TOM2-LEVELS.md). The H3.3
+    # owner block above is untouched and test-locked. This block is
+    # default-inert: COLONY_TOM2_LEVEL=0 (shipped) skips it entirely — the
+    # same variable is the single-var kill switch — and fail-closed: ANY
+    # error anywhere inside renders no section (lowest level wins).
+    if _tom2_store is not None and _facts_store is not None and contact_id:
+        try:
+            from colony_sidecar.tom.levels import (
+                configured_level, resolve_effective_level)
+            from colony_sidecar.identity import get_owner_contact_id
+            _lvl_owner = get_owner_contact_id() or ""
+            if configured_level() >= 1 and contact_id != _lvl_owner:
+                _conv_key = body.context.channel_id or \
+                    await _ensure_channel_id(body.context,
+                                             identity=body.identity)
+                _lres = await resolve_effective_level(
+                    _conv_key, contact_id,
+                    presence_store=_presence_store,
+                    contacts_store=_contacts_store)
+                if _lres.level >= 1:
+                    from colony_sidecar.tom.leveled import render_level1
+                    _l1_body = render_level1(_tom2_store, _facts_store,
+                                             contact_id)
+                    if _l1_body:
+                        sections.append(ContextSection(
+                            id="colony-tom2-l1",
+                            title="What they already know (their own "
+                                  "shared context)",
+                            body=_l1_body,
+                            priority=60,
+                        ))
+                if _lres.level >= 2:
+                    from colony_sidecar.tom.eligibility import (
+                        eligible_inferences)
+                    from colony_sidecar.tom.leveled import render_level2
+                    _reg = _tom2_approvals()
+                    _elig = await eligible_inferences(
+                        _tom2_store.list_inferences(limit=100), limit=3,
+                        reader_contact_id=contact_id,
+                        conversation_key=_conv_key,
+                        facts_store=_facts_store,
+                        contacts_store=_contacts_store,
+                        presence_store=_presence_store,
+                        approval_check=(_reg.is_approved
+                                        if _reg is not None else None),
+                        budget_check=(_tom2_exposure.budget_ok
+                                      if _tom2_exposure is not None
+                                      else None),
+                    )
+                    # Ledger-first (L2.3/L3.1): a row renders only AFTER its
+                    # exposure row and injection taint are durably recorded;
+                    # missing ledger/taint stores render nothing, and any
+                    # bookkeeping failure aborts the whole section via the
+                    # enclosing except (over-recording is safe, silent
+                    # rendering is not).
+                    _booked: list = []
+                    if _tom2_exposure is not None \
+                            and _taint_registry is not None:
+                        for _row in _elig:
+                            _subj = str(_row.get("contact_id") or "")
+                            _names = [_subj]
+                            if _contacts_store is not None:
+                                _sc = await _contacts_store.get(_subj)
+                                _dn = str(getattr(_sc, "display_name", "")
+                                          or "")
+                                if _dn:
+                                    _names.append(_dn)
+                            _tom2_exposure.record_exposure(
+                                reader_contact_id=contact_id,
+                                subject_contact_id=_subj,
+                                fact_ref=str(_row.get("fact_ref") or ""),
+                                conversation_key=_conv_key)
+                            _taint_registry.register(
+                                _conv_key, _subj, subject_names=_names,
+                                fact_ref=str(_row.get("fact_ref") or ""),
+                                kind=str(_row.get("kind") or ""))
+                            _booked.append(_row)
+                    _l2_body = render_level2(_booked, _facts_store,
+                                             contact_id, limit=3)
+                    if _l2_body:
+                        sections.append(ContextSection(
+                            id="colony-tom2-l2",
+                            title="Epistemic prior (silent)",
+                            body=_l2_body,
+                            priority=60,
+                        ))
+        except Exception as exc:
+            logger.debug("context_assemble leveled tom2 failed: %s", exc)
+
     # --- Standing boundaries (owner directives: MUST NOT / MUST) ---
     # Injected for every context so the reasoner is always aware of the owner's
     # binding boundaries. This is the SOFT layer; the DirectiveGuard hard-gate
