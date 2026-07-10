@@ -4123,6 +4123,57 @@ def set_tom2_exposure_store(store) -> None:
     _tom2_exposure = store
 
 
+def _tom2_approvals():
+    """Pair-approval registry over the live ProposalStore, or None."""
+    if _proposal_store is None:
+        return None
+    from colony_sidecar.tom.approvals import Tom2ApprovalRegistry
+    return Tom2ApprovalRegistry(_proposal_store)
+
+
+class Tom2PairApprovalRequest(BaseModel):
+    reader: str
+    subject: str
+    action: str = "request"      # request | approve | revoke
+
+
+@router.get("/tom2/approvals")
+async def tom2_approvals_list(limit: int = 100) -> dict:
+    """Owner view of level-2 pair approvals (L2.4): who may receive
+    epistemic lines about whom, with live TTL validity. Ids only."""
+    reg = _tom2_approvals()
+    if reg is None:
+        return {"available": False, "pairs": []}
+    return {"available": True, "pairs": reg.list_pairs(limit=limit)}
+
+
+@router.post("/tom2/approvals")
+async def tom2_approvals_act(body: Tom2PairApprovalRequest) -> dict:
+    """Owner action on a (reader, subject) pair: request files a proposal,
+    approve stamps it with a fresh TTL, revoke kills it. The eligibility
+    pipeline consumes only is_approved — everything else here is inert."""
+    reg = _tom2_approvals()
+    if reg is None:
+        raise HTTPException(status_code=501,
+                            detail="Proposal store not initialized")
+    action = (body.action or "request").strip().lower()
+    try:
+        if action == "approve":
+            reg.approve_pair(body.reader, body.subject)
+        elif action == "revoke":
+            reg.revoke_pair(body.reader, body.subject)
+        elif action == "request":
+            reg.request_pair(body.reader, body.subject)
+        else:
+            raise HTTPException(status_code=400,
+                                detail=f"unknown action {action!r}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "action": action, "reader": body.reader,
+            "subject": body.subject,
+            "approved": reg.is_approved(body.reader, body.subject)}
+
+
 @router.get("/tom2/exposure")
 async def tom2_exposure(reader: str = "", subject: str = "",
                         limit: int = 50) -> dict:
