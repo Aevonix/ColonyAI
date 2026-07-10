@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sqlite3
 import threading
@@ -185,3 +186,92 @@ class Tom2Store:
             self._conn.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Cross-contact rendering gate (H3.5) — BUILT, SHIPPED DARK, UNWIRED.
+#
+# This is the ONLY sanctioned way a tom2 inference could ever be rendered for
+# a non-owner contact, and it is deliberately NOT called from any live
+# injection path (context assembly, briefings, delivery — nothing). Flipping
+# COLONY_TOM2_CROSS_CONTEXT alone therefore changes no live behavior; wiring
+# it anywhere is a separate owner decision that additionally requires the
+# chat guard to be ENFORCING (the doctor warns on the incoherent combination)
+# because "X hasn't heard this" carries implication-leak risk that only an
+# enforcing outbound guard can backstop.
+# ---------------------------------------------------------------------------
+
+def tom2_cross_context_enabled() -> bool:
+    """COLONY_TOM2_CROSS_CONTEXT (default 0): first half of the double gate.
+    Ships OFF by design; see the block comment above."""
+    return os.environ.get("COLONY_TOM2_CROSS_CONTEXT", "0").strip().lower() \
+        in ("1", "true", "yes", "on")
+
+
+def _ref_visible_to(facts_store: Any, ref: str, contact_id: str) -> bool:
+    """A fact ref is visible to a contact only when the fact ROW belongs to
+    that contact (it was shared with / told by them). Missing or unreadable
+    facts are NOT visible — fail closed."""
+    try:
+        f = facts_store.get_fact(str(ref or ""))
+    except Exception:
+        return False
+    return bool(f) and str(f.get("contact_id") or "") == str(contact_id)
+
+
+def render_inference_for_contact(inference: Dict[str, Any], facts_store: Any,
+                                 contact_id: str) -> Optional[str]:
+    """Render ONE inference for a non-owner contact, or None.
+
+    Second half of the double gate: EVERY ref the inference rests on
+    (fact_ref AND each evidence_ref) must be independently visible to the
+    reading contact. ANY partial visibility renders None — never a redacted
+    line, never a hint that something was withheld (a redaction IS a leak
+    of topology). Inferences about the reading contact themselves render
+    None (first-order information wearing a second-order hat).
+    """
+    if not tom2_cross_context_enabled():
+        return None
+    if facts_store is None or not contact_id or not isinstance(inference, dict):
+        return None
+    subject_cid = str(inference.get("contact_id") or "")
+    if not subject_cid or subject_cid == str(contact_id):
+        return None
+    refs = [inference.get("fact_ref")] + list(inference.get("evidence_refs")
+                                              or [])
+    if not refs or any(not _ref_visible_to(facts_store, r, contact_id)
+                       for r in refs):
+        return None
+    fact = facts_store.get_fact(str(inference.get("fact_ref")))
+    text = str((fact or {}).get("fact") or "").strip()
+    if not text:
+        return None
+    kind = inference.get("kind")
+    if kind == "unaware_of":
+        return f"{subject_cid} has not heard: {text[:160]}"
+    if kind == "knows":
+        return f"{subject_cid} already knows: {text[:160]}"
+    return None
+
+
+def render_for_contact(store: Any, facts_store: Any, contact_id: str,
+                       *, limit: int = 5) -> Optional[str]:
+    """Aggregate cross-contact rendering: only inferences whose EVERY ref is
+    visible to the reader make it in; None when the gate is off, nothing is
+    fully visible, or anything errors (fail closed, no partial output)."""
+    if not tom2_cross_context_enabled():
+        return None
+    if store is None or facts_store is None or not contact_id:
+        return None
+    try:
+        rows = store.list_inferences(limit=100)
+    except Exception:
+        return None
+    lines: List[str] = []
+    for r in rows:
+        line = render_inference_for_contact(r, facts_store, contact_id)
+        if line:
+            lines.append(f"- {line}")
+        if len(lines) >= limit:
+            break
+    return "\n".join(lines) if lines else None

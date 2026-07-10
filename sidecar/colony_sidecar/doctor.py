@@ -504,6 +504,38 @@ def check_feature_gates() -> CheckResult:
     )
 
 
+def check_tom2_cross_context() -> CheckResult:
+    """Cross-contact tom2 rendering (H3.5) must never run ahead of chat
+    enforcement. The render path ships dark (COLONY_TOM2_CROSS_CONTEXT=0
+    and unwired); if the flag is ever found on while the chat guard is not
+    ENFORCING, that is an incoherent posture — 'X hasn't heard this'
+    carries implication-leak risk only an enforcing outbound guard can
+    backstop."""
+    on = os.environ.get("COLONY_TOM2_CROSS_CONTEXT", "0").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if not on:
+        return CheckResult(
+            "tom2-cross-context", PASS,
+            detail="COLONY_TOM2_CROSS_CONTEXT off (default; the "
+                   "cross-contact render path ships dark)")
+    chat_mode = os.environ.get("COLONY_GUARD_CHAT_MODE", "").strip().lower()
+    if chat_mode != "enforce":
+        return CheckResult(
+            "tom2-cross-context", WARN,
+            detail="COLONY_TOM2_CROSS_CONTEXT is ON while the chat guard is "
+                   f"not enforcing (COLONY_GUARD_CHAT_MODE={chat_mode or '(unset)'}) — "
+                   "cross-contact epistemic rendering without an enforcing "
+                   "outbound guard risks implication leaks",
+            remedy="set COLONY_TOM2_CROSS_CONTEXT=0 (recommended; this path "
+                   "is built but deliberately unwired) or finish the chat "
+                   "guard enforce ramp first (COLONY_GUARD_CHAT_MODE=enforce "
+                   "after its shadow burn-in)")
+    return CheckResult(
+        "tom2-cross-context", PASS,
+        detail="COLONY_TOM2_CROSS_CONTEXT on with an enforcing chat guard "
+               "(note: the render path is still unwired by design)")
+
+
 def check_home_channel() -> CheckResult:
     """8. At least one *_HOME_CHANNEL so initiatives can be delivered."""
     found = sorted(
@@ -597,6 +629,7 @@ def run_local_checks() -> List[CheckResult]:
     results += _run("approval-policy", check_approval_policy)
     results += _run("standing-approvals", check_standing_approvals)
     results += _run("feature-gates", check_feature_gates)
+    results += _run("tom2-cross-context", check_tom2_cross_context)
     results += _run("home-channel", check_home_channel)
     results += _run("hermes-skills-dir", check_hermes_skills_dir)
     results += _run("relationship-attribution", check_relationship_attribution)
