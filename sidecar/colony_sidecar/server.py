@@ -1041,7 +1041,8 @@ async def lifespan(app: FastAPI):
             )
             _wle = WorldLLMExtractor(
                 world_store, graph=graph, directive_manager=_get_dm3(),
-                journal=getattr(_sm_for_directed, "journal", None))
+                journal=getattr(_sm_for_directed, "journal", None),
+                self_model=_sm_for_directed)
             set_world_llm_extractor(_wle)
             logger.info("WorldLLMExtractor initialized (mode=%s)",
                         llm_extract_mode())

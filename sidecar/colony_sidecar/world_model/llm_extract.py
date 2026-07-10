@@ -82,6 +82,15 @@ def llm_extract_mode() -> str:
                    ("off", "shadow", "live"), "off")
 
 
+def world_supervised_max_writes() -> int:
+    """Per-run cap on supervised world-model writes (H1.5, default 25)."""
+    try:
+        v = int(os.environ.get("COLONY_WORLD_SUPERVISED_MAX_WRITES", "25"))
+        return v if v > 0 else 25
+    except (TypeError, ValueError):
+        return 25
+
+
 def causal_extract_mode() -> str:
     """Effective causal-extraction mode: min(COLONY_CAUSAL_EXTRACT,
     COLONY_WORLD_LLM_EXTRACT) over off < shadow < live — causal extraction
@@ -122,11 +131,13 @@ def _parse_obj(content: str) -> Optional[dict]:
 
 class WorldLLMExtractor:
     def __init__(self, store: Any, *, graph: Any = None,
-                 directive_manager: Any = None, journal: Any = None) -> None:
+                 directive_manager: Any = None, journal: Any = None,
+                 self_model: Any = None) -> None:
         self._store = store
         self._graph = graph
         self._directives = directive_manager
         self._journal = journal
+        self._self_model = self_model
         self._resolver = None
         if store is not None:
             try:
@@ -223,15 +234,70 @@ class WorldLLMExtractor:
         except Exception:
             return True
 
+    # -- supervised rung (H1.5) -----------------------------------------------
+
+    def _effective_mode(self) -> str:
+        """Env mode, graduated by the trust engine ONLY when the world_model
+        domain is explicitly enrolled in COLONY_SUPERVISED_LIVE_DOMAINS —
+        otherwise the env mode is returned untouched (regression lock: a
+        deployment that never enrolls the domain sees zero behavior change,
+        whatever the trust stage says)."""
+        env = llm_extract_mode()
+        try:
+            from colony_sidecar.self_model.supervised import (
+                effective_mode, supervised_domains,
+            )
+            if "world_model" not in supervised_domains():
+                return env
+            return effective_mode(
+                "world_model", env,
+                getattr(self._self_model, "trust", None))
+        except Exception:
+            return env
+
+    def _may_write(self, mode: str, op: str, report: Dict[str, Any]) -> bool:
+        """live => yes. supervised => only ops pinned reversible for the
+        world_model domain, and only under the per-run write cap. Anything
+        else => no."""
+        if mode == "live":
+            return True
+        if mode != "supervised":
+            return False
+        from colony_sidecar.self_model.supervised import reversible
+        if not reversible("world_model", op):
+            return False
+        if report.get("writes", 0) >= world_supervised_max_writes():
+            report["supervised_capped"] = report.get("supervised_capped", 0) + 1
+            return False
+        return True
+
+    def _record_outcome(self, mode: str, report: Dict[str, Any]) -> None:
+        """Real trust outcomes for the world_model domain — but only when
+        the domain is enrolled on the rung, and only when the run actually
+        wrote something (a no-op run earns nothing; see H1.3)."""
+        if self._self_model is None:
+            return
+        try:
+            from colony_sidecar.self_model.supervised import supervised_domains
+            if "world_model" not in supervised_domains():
+                return
+            if mode not in ("live", "supervised"):
+                return
+            if report.get("writes", 0) > 0:
+                self._self_model.record("world_model", "success", shadow=False)
+        except Exception:
+            pass
+
     # -- main run -------------------------------------------------------------
     async def run(self, texts: Optional[List[str]] = None) -> Dict[str, Any]:
-        mode = llm_extract_mode()
+        mode = self._effective_mode()
         cmode = causal_extract_mode()
         report: Dict[str, Any] = {"mode": mode, "batches": 0, "created": [],
                                   "merged": [], "relationships": [],
                                   "skipped": 0, "causal_mode": cmode,
                                   "causal": [], "causal_corroborated": [],
-                                  "causal_skipped": 0}
+                                  "causal_skipped": 0,
+                                  "writes": 0, "supervised_capped": 0}
         self.last_report = report
         if mode == "off" or self._store is None:
             return report
@@ -315,9 +381,11 @@ class WorldLLMExtractor:
                         evidence, conf, cmode, report)
         logger.info(
             "world-llm-extract[%s]: %d batch(es), created=%d merged=%d "
-            "rel=%d skipped=%d", mode, report["batches"],
+            "rel=%d skipped=%d writes=%d", mode, report["batches"],
             len(report["created"]), len(report["merged"]),
-            len(report["relationships"]), report["skipped"])
+            len(report["relationships"]), report["skipped"],
+            report["writes"])
+        self._record_outcome(mode, report)
         return report
 
     async def _upsert(self, name: str, etype: str, conf: float, mode: str,
@@ -339,9 +407,10 @@ class WorldLLMExtractor:
                 pass
         if action == "merge" and matched:
             report["merged"].append({"name": name, "into": matched})
-            if mode == "live":
+            if self._may_write(mode, "alias_merge", report):
                 try:
                     await self._store.add_entity_alias(matched, name)
+                    report["writes"] = report.get("writes", 0) + 1
                 except Exception:
                     pass
                 self._journal_write(f"merged alias {name!r} into {matched}",
@@ -352,7 +421,7 @@ class WorldLLMExtractor:
             return matched
         report["created"].append({"name": name, "type": etype,
                                   "confidence": round(conf, 2)})
-        if mode != "live":
+        if not self._may_write(mode, "entity_upsert", report):
             return None
         try:
             from colony_sidecar.world_model.entities import ENTITY_CLASS_MAP, BaseEntity
@@ -361,6 +430,7 @@ class WorldLLMExtractor:
             ent = cls(id=_generate_id("we"), name=name, entity_type=etype,
                       confidence=conf)
             await self._store.upsert_entity(ent)
+            report["writes"] = report.get("writes", 0) + 1
             self._journal_write(f"created {etype} entity {name!r}", conf,
                                 ent.id)
             return ent.id
@@ -377,11 +447,13 @@ class WorldLLMExtractor:
         self._seen_rels.add(key)
         report["relationships"].append(
             {"source": src_id, "rel": rel, "target": tgt_id})
-        if mode != "live":
+        if mode not in ("live", "supervised"):
             return
         try:
             # Repeated mentions must corroborate, not duplicate: an existing
-            # edge of the same type between the same pair is left alone.
+            # edge of the same type between the same pair is left alone in
+            # live mode; the supervised rung corroborates it (a bounded
+            # confidence bump is its one permitted edge operation, H1.5).
             try:
                 existing = await self._store.query_relationships(
                     source_id=src_id, target_id=tgt_id,
@@ -389,11 +461,34 @@ class WorldLLMExtractor:
             except Exception:
                 existing = []
             if existing:
+                if mode == "supervised" and self._may_write(
+                        mode, "edge_corroborate", report):
+                    edge = existing[0]
+                    old = float(edge.confidence or 0.0)
+                    new_conf = min(0.7, old + 0.05)
+                    if new_conf > old:
+                        edge.confidence = new_conf
+                        props = dict(edge.properties or {})
+                        props["corroborations"] = int(
+                            props.get("corroborations", 0) or 0) + 1
+                        edge.properties = props
+                        await self._store.upsert_relationship(edge)
+                        report["writes"] = report.get("writes", 0) + 1
+                        self._journal_write(
+                            f"corroborated {src_id} -{rel}-> {tgt_id} "
+                            f"({old:.2f} -> {new_conf:.2f})",
+                            new_conf, edge.id)
+                return
+            # Edge CREATION is deliberately not in the reversible contract:
+            # the supervised rung corroborates what exists, never invents
+            # topology. Creation requires full live.
+            if not self._may_write(mode, "edge_create", report):
                 return
             from colony_sidecar.world_model.relationships import WorldRelationship
             await self._store.upsert_relationship(WorldRelationship(
                 id="", source_id=src_id, target_id=tgt_id,
                 relationship_type=rel, confidence=min(0.7, conf)))
+            report["writes"] = report.get("writes", 0) + 1
             self._journal_write(f"linked {src_id} -{rel}-> {tgt_id}", conf,
                                 src_id)
         except Exception:

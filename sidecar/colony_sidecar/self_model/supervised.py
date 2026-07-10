@@ -43,6 +43,17 @@ REVERSIBLE_CONTRACT: Dict[str, FrozenSet[str]] = {
     #  - decay: bounded multiplicative confidence drop floored at 0.1,
     #    never a deletion, prior value journaled.
     "beliefs": frozenset({"supersede", "decay"}),
+    # World-model LLM extraction (see world_model/llm_extract.py, H1.5):
+    #  - entity_upsert: creates/updates an entity row, journaled with its
+    #    id — removable without touching anything else.
+    #  - alias_merge: adds an alias string to an existing entity; the
+    #    alias list is additive and the addition is journaled.
+    #  - edge_corroborate: bounded confidence bump on an EXISTING
+    #    non-causal edge, journaled; never creates, deletes, or retypes.
+    #  Edge CREATION and every causal edge type stay live-only (causal
+    #  writes additionally require the explicit causal-extract unlock).
+    "world_model": frozenset({"entity_upsert", "alias_merge",
+                              "edge_corroborate"}),
 }
 
 # Domain-specific flags that predate the generic rung; kept working forever.
