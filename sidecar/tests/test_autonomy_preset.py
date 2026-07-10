@@ -19,6 +19,8 @@ _MANAGED = [
     "COLONY_DIRECTED_MODE", "COLONY_SANDBOX_MODE",
     "COLONY_ENABLE_INTERNAL_THINKING",
     "COLONY_EXPECTATIONS", "COLONY_WORKSPACE",
+    "COLONY_AUTONOMY_MODE", "COLONY_PRESET_LOOP_COUPLING",
+    "COLONY_AUTONOMY_TICK_INTERVAL_SECS",
 ]
 
 
@@ -72,7 +74,12 @@ class TestResolution:
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "passive")
         snap = ap.snapshot()
         for k, v in snap.items():
-            if k in ("preset",):
+            # H4.1: the coupling flag reports its own on/off state, and the
+            # loop mode's passive value is "reactive" (the off-equivalent).
+            if k in ("preset", "COLONY_PRESET_LOOP_COUPLING"):
+                continue
+            if k == "COLONY_AUTONOMY_MODE":
+                assert v == "reactive", f"{k}={v} not passive"
                 continue
             assert v in ("off", "false"), f"{k}={v} not passive"
 

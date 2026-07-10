@@ -30,8 +30,19 @@ logger = logging.getLogger(__name__)
 
 PRESET_ENV = "COLONY_AUTONOMY_PRESET"
 
+# Preset <-> loop-mode coupling (H4.1). The presets exist to make subsystems
+# run on loop ticks, but a reactive loop never ticks — so historically a
+# preset without an explicit COLONY_AUTONOMY_MODE=proactive was a Colony
+# where everything LOOKED enabled and nothing ever ran. With coupling ON
+# (the default), an active preset also supplies the loop mode default.
+# Explicit COLONY_AUTONOMY_MODE always wins (the rollback path), and
+# COLONY_PRESET_LOOP_COUPLING=off restores the old env-only resolution.
+COUPLING_ENV = "COLONY_PRESET_LOOP_COUPLING"
+LOOP_MODE_ENV = "COLONY_AUTONOMY_MODE"
+
 PRESETS: Dict[str, Dict[str, str]] = {
     "passive": {
+        "COLONY_AUTONOMY_MODE": "reactive",
         "COLONY_EXECUTOR_ENABLED": "false",
         "COLONY_COGNITION_ENABLED": "false",
         "COLONY_INTROSPECT_ENABLED": "false",
@@ -50,6 +61,7 @@ PRESETS: Dict[str, Dict[str, str]] = {
         "COLONY_WORKSPACE": "off",
     },
     "calibration": {
+        "COLONY_AUTONOMY_MODE": "proactive",
         "COLONY_EXECUTOR_ENABLED": "true",
         "COLONY_COGNITION_ENABLED": "true",
         "COLONY_INTROSPECT_ENABLED": "true",
@@ -72,6 +84,7 @@ PRESETS: Dict[str, Dict[str, str]] = {
         "COLONY_WORKSPACE": "shadow",
     },
     "autonomous": {
+        "COLONY_AUTONOMY_MODE": "proactive",
         "COLONY_EXECUTOR_ENABLED": "true",
         "COLONY_COGNITION_ENABLED": "true",
         "COLONY_INTROSPECT_ENABLED": "true",
@@ -121,6 +134,40 @@ def resolve(env_name: str, valid: tuple, fallback: str) -> str:
     return fallback
 
 
+def loop_coupling_enabled() -> bool:
+    """Whether preset<->loop-mode coupling is on (default ON).
+
+    Any error resolving the flag fails toward OFF, so the loop mode falls
+    back to the pre-coupling env-only resolution (reactive by default) —
+    coupling can only ever raise the posture deliberately, never by accident.
+    """
+    try:
+        raw = os.environ.get(COUPLING_ENV, "on").strip().lower()
+        return raw not in ("off", "false", "0", "no")
+    except Exception:
+        return False
+
+
+def coupled_loop_mode() -> Optional[str]:
+    """The active preset's loop mode when coupling is on; None otherwise.
+
+    Returns "reactive"/"proactive" only when COLONY_PRESET_LOOP_COUPLING is
+    on AND a known preset is active AND the preset table carries a valid
+    mode. Never raises — every failure path yields None (i.e. reactive via
+    the caller's default), so coupling errors always fail safe.
+    """
+    try:
+        if not loop_coupling_enabled():
+            return None
+        preset = preset_name()
+        if not preset:
+            return None
+        v = PRESETS[preset].get(LOOP_MODE_ENV, "")
+        return v if v in ("reactive", "proactive") else None
+    except Exception:
+        return None
+
+
 def resolve_bool(env_name: str, fallback: bool = False) -> bool:
     """Boolean twin of :func:`resolve` (true/1/yes are truthy)."""
     raw = os.environ.get(env_name)
@@ -160,4 +207,14 @@ def snapshot() -> Dict[str, str]:
             out[env_name] = str(resolve_bool(env_name, fallback == "true")).lower()
         else:
             out[env_name] = resolve(env_name, valid, fallback)
+    # Loop mode is coupling-aware (H4.1): the preset only supplies it while
+    # COLONY_PRESET_LOOP_COUPLING is on; explicit env always wins. The
+    # posture endpoint overrides this with the RUNNING loop's mode when a
+    # loop exists, so this is the boot-time resolution view.
+    out[COUPLING_ENV] = "on" if loop_coupling_enabled() else "off"
+    raw = (os.environ.get(LOOP_MODE_ENV) or "").strip().lower()
+    if raw in ("reactive", "proactive"):
+        out[LOOP_MODE_ENV] = raw
+    else:
+        out[LOOP_MODE_ENV] = coupled_loop_mode() or "reactive"
     return out

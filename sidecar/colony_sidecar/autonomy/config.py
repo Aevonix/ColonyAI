@@ -36,6 +36,13 @@ class AutonomyConfig:
     # Operating mode: reactive (on-demand) or proactive (timer-based)
     mode: AutonomyMode = AutonomyMode.REACTIVE
 
+    # Where the mode came from: "env" (explicit COLONY_AUTONOMY_MODE),
+    # "preset" (COLONY_AUTONOMY_PRESET via preset-loop coupling, H4.1),
+    # "legacy_tick" (tick interval set without a mode), "config" (config
+    # file), or "default". Diagnostic only — surfaced in the posture
+    # endpoint so an operator can always see WHY the loop runs as it does.
+    mode_source: str = "default"
+
     # IANA timezone for quiet hours (e.g., "America/El_Salvador")
     timezone: str = "UTC"
 
@@ -141,6 +148,7 @@ class AutonomyConfig:
 
         return cls(
             mode=mode,
+            mode_source="config",
             timezone=timezone,
             tick_interval_secs=float(_get("tick_interval_secs", defaults.tick_interval_secs)),
             initiative_confidence_threshold=float(_get(
@@ -212,6 +220,9 @@ class AutonomyConfig:
 
         Environment variables:
             COLONY_AUTONOMY_MODE
+            COLONY_PRESET_LOOP_COUPLING (default on: an active
+                COLONY_AUTONOMY_PRESET supplies the mode when
+                COLONY_AUTONOMY_MODE is unset)
             COLONY_TIMEZONE
             COLONY_AUTONOMY_TICK_INTERVAL_SECS
             COLONY_AUTONOMY_INITIATIVE_CONFIDENCE_THRESHOLD
@@ -234,9 +245,32 @@ class AutonomyConfig:
         """
         logger = logging.getLogger(__name__)
 
-        # Mode selection
-        mode_str = os.environ.get("COLONY_AUTONOMY_MODE", "reactive").lower()
-        mode = AutonomyMode(mode_str) if mode_str in [m.value for m in AutonomyMode] else AutonomyMode.REACTIVE
+        # Mode selection. Precedence (H4.1):
+        #   explicit COLONY_AUTONOMY_MODE  >  coupled preset mode
+        #   >  legacy tick-interval migration  >  default (reactive)
+        # Explicit env ALWAYS wins — COLONY_AUTONOMY_MODE=reactive is the
+        # rollback path even under a preset. Coupling errors fail toward
+        # reactive (coupled_loop_mode never raises; a broken import just
+        # falls through to the legacy resolution).
+        mode = AutonomyMode.REACTIVE
+        mode_source = "default"
+        raw_mode = os.environ.get("COLONY_AUTONOMY_MODE")
+        if raw_mode is not None and raw_mode.strip():
+            mode_str = raw_mode.strip().lower()
+            mode = (AutonomyMode(mode_str)
+                    if mode_str in [m.value for m in AutonomyMode]
+                    else AutonomyMode.REACTIVE)
+            mode_source = "env"
+        else:
+            coupled = None
+            try:
+                from colony_sidecar.util.autonomy_preset import coupled_loop_mode
+                coupled = coupled_loop_mode()
+            except Exception:
+                coupled = None  # fail toward reactive
+            if coupled in ("reactive", "proactive"):
+                mode = AutonomyMode(coupled)
+                mode_source = "preset"
 
         # Timezone
         timezone = os.environ.get("COLONY_TIMEZONE", "UTC")
@@ -246,15 +280,17 @@ class AutonomyConfig:
             logger.warning("Invalid COLONY_TIMEZONE '%s', falling back to UTC", timezone)
             timezone = "UTC"
 
-        # Legacy migration: if tick interval set without mode, assume proactive
+        # Legacy migration: if tick interval set without mode (and no coupled
+        # preset supplied one), assume proactive
         legacy_tick = os.environ.get("COLONY_AUTONOMY_TICK_INTERVAL_SECS")
-        if legacy_tick and not os.environ.get("COLONY_AUTONOMY_MODE"):
+        if legacy_tick and mode_source == "default":
             logger.warning(
                 "COLONY_AUTONOMY_TICK_INTERVAL_SECS set without COLONY_AUTONOMY_MODE. "
                 "Defaulting to PROACTIVE mode to preserve existing behavior. "
                 "Add COLONY_AUTONOMY_MODE=proactive to make this explicit."
             )
             mode = AutonomyMode.PROACTIVE
+            mode_source = "legacy_tick"
 
         def _float(key: str, default: float) -> float:
             v = os.environ.get(key)
@@ -278,6 +314,7 @@ class AutonomyConfig:
         defaults = cls()
         return cls(
             mode=mode,
+            mode_source=mode_source,
             timezone=timezone,
             tick_interval_secs=_float(
                 "COLONY_AUTONOMY_TICK_INTERVAL_SECS",
