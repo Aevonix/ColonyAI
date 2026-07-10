@@ -1923,6 +1923,30 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.debug("context_assemble owner preferences failed: %s", exc)
 
+    # --- Second-order theory of mind (owner ONLY, H3.3) ---
+    # Who knows / is unaware of what is the owner's lens on their own world.
+    # Double-keyed: COLONY_TOM2_CONTEXT (default off) turns the section on,
+    # and the assembling contact must BE the owner — the flag can never
+    # widen the audience, so a non-owner context stays tom2-free even with
+    # the flag set (test-locked).
+    if _tom2_store is not None and contact_id:
+        try:
+            from colony_sidecar.tom.asymmetry import tom2_context_enabled
+            from colony_sidecar.identity import get_owner_contact_id
+            _owner_cid = get_owner_contact_id() or ""
+            if (tom2_context_enabled() and _owner_cid
+                    and contact_id == _owner_cid):
+                _tom2_body = _render_tom2_context()
+                if _tom2_body:
+                    sections.append(ContextSection(
+                        id="colony-tom2",
+                        title="Knowledge asymmetries (who has not heard what)",
+                        body=_tom2_body,
+                        priority=60,
+                    ))
+        except Exception as exc:
+            logger.debug("context_assemble tom2 failed: %s", exc)
+
     # --- Standing boundaries (owner directives: MUST NOT / MUST) ---
     # Injected for every context so the reasoner is always aware of the owner's
     # binding boundaries. This is the SOFT layer; the DirectiveGuard hard-gate
@@ -4060,6 +4084,65 @@ async def tom2_status() -> dict:
             counts = None
     return {"mode": tom2_mode(), "counts": counts,
             "last_run": getattr(_tom2_engine, "last_report", None)}
+
+
+@router.get("/tom2/report")
+async def tom2_report(contact_id: str = "", kind: str = "",
+                      limit: int = 100) -> dict:
+    """Owner-facing tom2 report (H3.3): the full inference rows, owner
+    reader scope, with fact refs resolved to their text where the facts
+    store can. This is the OWNER'S API surface — rendering any of this for
+    a non-owner contact is a separate, double-gated path that ships dark
+    (see tom.render_for_contact)."""
+    if _tom2_store is None:
+        return {"available": False, "inferences": []}
+    try:
+        rows = _tom2_store.list_inferences(
+            contact_id=contact_id or None, kind=kind or None,
+            limit=max(1, min(500, int(limit))))
+        if _facts_store is not None:
+            for r in rows:
+                try:
+                    f = _facts_store.get_fact(str(r.get("fact_ref") or ""))
+                    if f:
+                        r["fact"] = f.get("fact")
+                        r["fact_contact_id"] = f.get("contact_id")
+                except Exception:
+                    pass
+        return {"available": True, "count": len(rows), "inferences": rows}
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "inferences": []}
+
+
+def _render_tom2_context(max_lines: int = 8) -> str:
+    """Compact owner-context rendering of the freshest asymmetries.
+
+    unaware_of rows are the informative ones ("X hasn't heard this yet");
+    fact refs resolve to text here because this renders ONLY into the
+    owner's context — the caller enforces that."""
+    if _tom2_store is None:
+        return ""
+    rows = _tom2_store.list_inferences(kind="unaware_of", limit=50)
+    lines = []
+    for r in rows[:max_lines]:
+        subject = ""
+        if _facts_store is not None:
+            try:
+                f = _facts_store.get_fact(str(r.get("fact_ref") or ""))
+                subject = str((f or {}).get("fact") or "")[:120]
+            except Exception:
+                subject = ""
+        if not subject:
+            subject = f"a shared fact ({r.get('fact_ref')})"
+        lines.append(
+            f"- {r.get('contact_id')} appears unaware of: {subject} "
+            f"(confidence {float(r.get('confidence') or 0):.2f})")
+    if not lines:
+        return ""
+    if len(rows) > max_lines:
+        lines.append(f"... and {len(rows) - max_lines} more "
+                     "(GET /v1/host/tom2/report)")
+    return "\n".join(lines)
 
 
 _context_provenance = None

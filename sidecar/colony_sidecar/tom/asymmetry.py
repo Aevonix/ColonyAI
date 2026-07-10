@@ -19,6 +19,7 @@ writes nothing) | live (writes owner-only inference rows).
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any, Dict, List
 
@@ -33,6 +34,15 @@ _MIN_SOURCE_CONFIDENCE = 0.6
 def tom2_mode() -> str:
     from colony_sidecar.util.autonomy_preset import resolve
     return resolve("COLONY_TOM2", ("off", "shadow", "live"), "off")
+
+
+def tom2_context_enabled() -> bool:
+    """COLONY_TOM2_CONTEXT (default 0, H3.3): may tom2 inferences be
+    injected into the OWNER'S assembled context? Injection is additionally
+    keyed to the owner's contact identity at assembly time — this flag can
+    never widen the audience, only turn the owner section on."""
+    return os.environ.get("COLONY_TOM2_CONTEXT", "0").strip().lower() in (
+        "1", "true", "yes", "on")
 
 
 def _norm(text: Any) -> str:
