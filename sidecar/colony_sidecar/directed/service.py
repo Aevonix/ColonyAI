@@ -22,8 +22,12 @@ Pipeline (option A: delegation only, Colony never mutates anything itself):
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
+import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 from colony_sidecar.directed.models import ScopedTask, ScopedTaskStore
@@ -43,6 +47,33 @@ def _dispatch_url() -> str:
     return (os.environ.get("COLONY_DIRECTED_TASK_URL", "")
             or os.environ.get("COLONY_BRIDGE_JOBS_WEBHOOK_URL", "")
             or os.environ.get("COLONY_JOBS_WEBHOOK_URL", ""))
+
+
+def _max_dispatch_per_day() -> int:
+    """Daily dispatch cap (rolling 24h). <=0 disables the cap (legacy)."""
+    try:
+        return int(os.environ.get("COLONY_DIRECTED_MAX_DISPATCH_PER_DAY", "10"))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _hmac_key() -> bytes:
+    """Optional shared secret for the dispatch envelope. Empty = unsigned."""
+    return os.environ.get("COLONY_DIRECTED_HMAC_KEY", "").encode("utf-8")
+
+
+def _sign(key: bytes, message: str) -> str:
+    return hmac.new(key, message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def report_token_for(task_id: str) -> str:
+    """Deterministic report-back token for a task (only when a key is set).
+
+    The delegate receives it inside the dispatch envelope and must echo it as
+    ``report_token`` in the completion report; ``complete`` recomputes and
+    compares. Empty string when no key is configured (check disabled)."""
+    key = _hmac_key()
+    return _sign(key, f"report:{task_id}") if key else ""
 
 
 class DirectedActionService:
@@ -247,7 +278,40 @@ class DirectedActionService:
             task.status = "expired"; self.store.save(task)
             return {"dispatched": False, "reason": "expired"}
 
+        # Daily dispatch cap (rolling 24h, dry + live both count): bounds the
+        # blast radius of a runaway approval/dispatch loop. The task stays
+        # approved so the owner loses nothing but time.
+        cap = _max_dispatch_per_day()
+        if cap > 0:
+            recent = 0
+            try:
+                recent = self.store.dispatches_since(time.time() - 86400.0)
+            except Exception:
+                logger.debug("dispatch cap count failed (allowing)", exc_info=True)
+            if recent >= cap:
+                logger.warning(
+                    "Directed dispatch %s REFUSED: daily cap reached (%d/%d "
+                    "in 24h; COLONY_DIRECTED_MAX_DISPATCH_PER_DAY)",
+                    task.id, recent, cap)
+                self._journal(task, "held",
+                              f"daily dispatch cap reached ({recent}/{cap})")
+                return {"dispatched": False, "reason": "daily_dispatch_cap",
+                        "cap": cap, "count": recent}
+
         mode = directed_mode()
+        # Dispatch envelope: verifiable provenance for the contract. Signed
+        # only when COLONY_DIRECTED_HMAC_KEY is set (unset = legacy unsigned).
+        envelope: Dict[str, Any] = {
+            "task_id": task.id,
+            "issued_at": time.time(),
+            "nonce": uuid.uuid4().hex,
+        }
+        key = _hmac_key()
+        if key:
+            envelope["algo"] = "hmac-sha256"
+            envelope["signature"] = _sign(
+                key, f"{task.id}.{envelope['issued_at']}.{envelope['nonce']}")
+            envelope["report_token"] = report_token_for(task.id)
         payload = {
             "type": "directed_task",
             "task": task.to_dict(),
@@ -262,6 +326,7 @@ class DirectedActionService:
                 ),
             },
             "report_url": f"/v1/host/directed/tasks/{task.id}/report",
+            "envelope": envelope,
         }
         if mode != "live":
             logger.info(
@@ -273,6 +338,10 @@ class DirectedActionService:
             )
             task.status = "dispatched_dry"
             self.store.save(task)
+            try:
+                self.store.log_dispatch(task.id, mode)
+            except Exception:
+                logger.debug("dispatch log failed", exc_info=True)
             return {"dispatched": False, "dry_run": True, "payload": payload}
 
         url = _dispatch_url()
@@ -281,9 +350,11 @@ class DirectedActionService:
         try:
             import aiohttp
             headers = {"Content-Type": "application/json"}
-            key = os.environ.get("COLONY_API_KEY", "")
+            api_key = os.environ.get("COLONY_API_KEY", "")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             if key:
-                headers["Authorization"] = f"Bearer {key}"
+                headers["X-Colony-Directed-Signature"] = envelope["signature"]
             async with aiohttp.ClientSession() as s:
                 async with s.post(url, json=payload, headers=headers,
                                   timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -293,6 +364,11 @@ class DirectedActionService:
             ok = False
         task.status = "dispatched" if ok else "failed"
         self.store.save(task)
+        if ok:
+            try:
+                self.store.log_dispatch(task.id, mode)
+            except Exception:
+                logger.debug("dispatch log failed", exc_info=True)
         return {"dispatched": ok, "url": url}
 
     # -- report-back + audit ----------------------------------------------

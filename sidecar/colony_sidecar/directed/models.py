@@ -140,6 +140,11 @@ class ScopedTaskStore:
                     status TEXT, refusal_reason TEXT, approval TEXT, audit TEXT,
                     created_at REAL, expires_at REAL
                 )""")
+            # Durable dispatch log (additive; feeds the daily dispatch cap).
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS dispatch_log (
+                    task_id TEXT, ts REAL, mode TEXT
+                )""")
             self._conn.commit()
 
     def save(self, task: ScopedTask) -> ScopedTask:
@@ -158,6 +163,22 @@ class ScopedTaskStore:
             r = self._conn.execute(
                 "SELECT * FROM scoped_tasks WHERE id=?", (task_id,)).fetchone()
         return ScopedTask.from_row(dict(r)) if r else None
+
+    def log_dispatch(self, task_id: str, mode: str) -> None:
+        """Record one dispatch operation (dry or live) for the daily cap."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO dispatch_log (task_id, ts, mode) VALUES (?,?,?)",
+                (task_id, time.time(), mode))
+            self._conn.commit()
+
+    def dispatches_since(self, since_ts: float) -> int:
+        """Count dispatch operations recorded at or after ``since_ts``."""
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT COUNT(*) FROM dispatch_log WHERE ts >= ?",
+                (since_ts,)).fetchone()
+        return int(r[0]) if r else 0
 
     def list(self, status: Optional[str] = None, limit: int = 50) -> List[ScopedTask]:
         q = "SELECT * FROM scoped_tasks"
