@@ -24,6 +24,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from colony_sidecar.world_model.constants import CAUSAL_RELATIONSHIP_TYPES
 from colony_sidecar.world_model.populator import _is_low_quality, _looks_like_fragment
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,13 @@ _ENTITY_TYPES = {"person", "company", "project", "product", "location",
 _REL_TYPES = {"WM_WORKS_AT", "WM_KNOWS", "WM_PART_OF", "WM_RELATED_TO",
               "WM_LOCATED_IN", "WM_BUILDS"}
 _MIN_CONF = 0.5
+
+# Causal extraction confidence economics (fabrication controls): an edge is
+# born at most half-sure, corroboration nudges it, and it can never exceed
+# the ceiling without falsification machinery vouching for it.
+_CAUSAL_CREATE_CEILING = 0.5
+_CAUSAL_CORROBORATION_STEP = 0.05
+_CAUSAL_CONF_CEILING = 0.75
 
 _SYSTEM_PROMPT = """\
 You extract structured world knowledge from conversation excerpts for a
@@ -56,11 +64,32 @@ Respond with ONLY a JSON object (no prose, no markdown fences):
 "WM_PART_OF","WM_RELATED_TO","WM_LOCATED_IN","WM_BUILDS"], "target": str,
 "confidence": float}]}"""
 
+_CAUSAL_PROMPT = """
+
+Additionally extract clearly stated CAUSAL claims between those same
+entities as "causal": [{"source": str, "rel": one of ["WM_CAUSES",
+"WM_ENABLES","WM_BLOCKS","WM_INHIBITS"], "target": str, "evidence": str,
+"confidence": float}].
+Causal rules:
+- Only when the text itself asserts the causal link. Never infer one.
+- "evidence" MUST be a short verbatim quote copied character-for-character
+  from the excerpt; a claim without its exact quote will be discarded."""
+
 
 def llm_extract_mode() -> str:
     from colony_sidecar.util.autonomy_preset import resolve
     return resolve("COLONY_WORLD_LLM_EXTRACT",
                    ("off", "shadow", "live"), "off")
+
+
+def causal_extract_mode() -> str:
+    """Effective causal-extraction mode: min(COLONY_CAUSAL_EXTRACT,
+    COLONY_WORLD_LLM_EXTRACT) over off < shadow < live — causal extraction
+    can never be MORE live than the extractor that carries it."""
+    from colony_sidecar.util.autonomy_preset import resolve
+    order = ("off", "shadow", "live")
+    causal = resolve("COLONY_CAUSAL_EXTRACT", order, "off")
+    return order[min(order.index(causal), order.index(llm_extract_mode()))]
 
 
 def _endpoint() -> Dict[str, str]:
@@ -139,6 +168,12 @@ class WorldLLMExtractor:
             return []
 
     # -- one LLM batch -------------------------------------------------------
+    @staticmethod
+    def _excerpt(texts: List[str]) -> str:
+        """The exact excerpt sent to the LLM — also the anti-fabrication
+        reference that causal evidence quotes are pinned against."""
+        return "\n---\n".join(t[:600] for t in texts)[:8000]
+
     async def _llm_batch(self, texts: List[str]) -> Optional[dict]:
         ep = _endpoint()
         if not ep["base"] or not ep["model"]:
@@ -147,10 +182,13 @@ class WorldLLMExtractor:
             import aiohttp
         except ImportError:
             return None
-        excerpt = "\n---\n".join(t[:600] for t in texts)[:8000]
+        excerpt = self._excerpt(texts)
+        system_prompt = _SYSTEM_PROMPT
+        if causal_extract_mode() != "off":
+            system_prompt = _SYSTEM_PROMPT + _CAUSAL_PROMPT
         payload = {
             "model": ep["model"], "temperature": 0, "max_tokens": 900,
-            "messages": [{"role": "system", "content": _SYSTEM_PROMPT},
+            "messages": [{"role": "system", "content": system_prompt},
                          {"role": "user", "content": excerpt}],
         }
         headers = {"Content-Type": "application/json"}
@@ -188,9 +226,12 @@ class WorldLLMExtractor:
     # -- main run -------------------------------------------------------------
     async def run(self, texts: Optional[List[str]] = None) -> Dict[str, Any]:
         mode = llm_extract_mode()
+        cmode = causal_extract_mode()
         report: Dict[str, Any] = {"mode": mode, "batches": 0, "created": [],
                                   "merged": [], "relationships": [],
-                                  "skipped": 0}
+                                  "skipped": 0, "causal_mode": cmode,
+                                  "causal": [], "causal_corroborated": [],
+                                  "causal_skipped": 0}
         self.last_report = report
         if mode == "off" or self._store is None:
             return report
@@ -244,6 +285,34 @@ class WorldLLMExtractor:
                                        name_to_id[tgt],
                                        float(r.get("confidence", 0.5) or 0.5),
                                        mode, report)
+            if cmode != "off":
+                excerpt_lower = self._excerpt(batch).lower()
+                for c in (data.get("causal") or []):
+                    if not isinstance(c, dict):
+                        continue
+                    rel = str(c.get("rel", "")).strip().upper()
+                    src = str(c.get("source", "")).strip().lower()
+                    tgt = str(c.get("target", "")).strip().lower()
+                    evidence = str(c.get("evidence", "")).strip()
+                    try:
+                        conf = float(c.get("confidence", 0.5) or 0.5)
+                    except (TypeError, ValueError):
+                        conf = 0.5
+                    if (rel not in CAUSAL_RELATIONSHIP_TYPES
+                            or src not in name_to_id or tgt not in name_to_id
+                            or src == tgt):
+                        report["causal_skipped"] += 1
+                        continue
+                    # Anti-fabrication pin: the evidence quote must actually
+                    # occur in the source excerpt (case-insensitive). A causal
+                    # claim the model cannot quote is a fabrication and is
+                    # discarded, whatever its confidence.
+                    if not evidence or evidence.lower() not in excerpt_lower:
+                        report["causal_skipped"] += 1
+                        continue
+                    await self._upsert_causal(
+                        name_to_id[src], rel, name_to_id[tgt],
+                        evidence, conf, cmode, report)
         logger.info(
             "world-llm-extract[%s]: %d batch(es), created=%d merged=%d "
             "rel=%d skipped=%d", mode, report["batches"],
@@ -330,6 +399,60 @@ class WorldLLMExtractor:
         except Exception:
             logger.debug("llm-extract relationship upsert failed",
                          exc_info=True)
+
+    async def _upsert_causal(self, src_id: str, rel: str, tgt_id: str,
+                             evidence: str, conf: float, mode: str,
+                             report: Dict[str, Any]) -> None:
+        """Evidence-pinned causal edge write with confidence economics:
+        create at <=0.5, corroborate +0.05 per repeat, ceiling 0.75.
+        Shadow mode writes NOTHING (the report is the only output)."""
+        key = (src_id, rel, tgt_id)
+        if key in self._seen_rels:
+            return
+        self._seen_rels.add(key)
+        report["causal"].append({"source": src_id, "rel": rel,
+                                 "target": tgt_id,
+                                 "evidence": evidence[:200],
+                                 "confidence": round(conf, 2)})
+        if mode != "live":
+            return
+        try:
+            try:
+                existing = await self._store.query_relationships(
+                    source_id=src_id, target_id=tgt_id,
+                    relationship_type=rel, min_confidence=0.0, limit=1)
+            except Exception:
+                existing = []
+            if existing:
+                edge = existing[0]
+                old = float(edge.confidence or 0.0)
+                new_conf = min(_CAUSAL_CONF_CEILING,
+                               old + _CAUSAL_CORROBORATION_STEP)
+                if new_conf > old:
+                    edge.confidence = new_conf
+                    props = dict(edge.properties or {})
+                    props["corroborations"] = int(
+                        props.get("corroborations", 0) or 0) + 1
+                    props.setdefault("evidence", evidence[:300])
+                    edge.properties = props
+                    await self._store.upsert_relationship(edge)
+                report["causal_corroborated"].append(
+                    {"id": edge.id, "confidence": round(float(edge.confidence), 2)})
+                self._journal_write(
+                    f"corroborated causal {src_id} -{rel}-> {tgt_id}",
+                    float(edge.confidence), edge.id)
+                return
+            from colony_sidecar.world_model.relationships import WorldRelationship
+            create_conf = min(_CAUSAL_CREATE_CEILING, conf)
+            await self._store.upsert_relationship(WorldRelationship(
+                id="", source_id=src_id, target_id=tgt_id,
+                relationship_type=rel, confidence=create_conf,
+                properties={"evidence": evidence[:300],
+                            "extraction": "llm_causal"}))
+            self._journal_write(
+                f"causal {src_id} -{rel}-> {tgt_id}", create_conf, src_id)
+        except Exception:
+            logger.debug("llm-extract causal upsert failed", exc_info=True)
 
     def _journal_write(self, description: str, conf: float, ref: str) -> None:
         if self._journal is None:
