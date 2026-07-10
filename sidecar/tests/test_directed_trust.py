@@ -76,7 +76,7 @@ async def test_violation_records_and_demotes():
     task = await svc.intake(_KNOWN_DIRECTIVE_MUTATE)
     domain = svc._trust_domain(task)
     sm.trust.set_stage(domain, "act_first", notify=False)
-    task.status = "approved"
+    task.status = "dispatched"          # strict reports (H7.2)
     svc.store.save(task)
     # delegate reports an out-of-scope op -> audit violation
     out = await svc.complete(task.id, {
@@ -91,6 +91,8 @@ async def test_clean_read_completion_builds_track_record():
     sm = _self_model()
     svc = _service(sm)
     task = await svc.intake(_KNOWN_DIRECTIVE_READ)
+    task.status = "dispatched"          # strict reports (H7.2)
+    svc.store.save(task)
     await svc.complete(task.id, {
         "summary": "summarized", "operations": ["analyze", "read"],
         "files_touched": [], "commits": 0, "branch": ""})

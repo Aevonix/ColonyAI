@@ -49,6 +49,13 @@ def _dispatch_url() -> str:
             or os.environ.get("COLONY_JOBS_WEBHOOK_URL", ""))
 
 
+def _strict_reports() -> bool:
+    """Strict report-back (default): a completion report is accepted only for
+    a task that was actually dispatched. COLONY_DIRECTED_STRICT_REPORTS=0
+    restores the legacy accept-in-any-status behavior."""
+    return os.environ.get("COLONY_DIRECTED_STRICT_REPORTS", "1").strip() != "0"
+
+
 def _max_dispatch_per_day() -> int:
     """Daily dispatch cap (rolling 24h). <=0 disables the cap (legacy)."""
     try:
@@ -372,11 +379,44 @@ class DirectedActionService:
         return {"dispatched": ok, "url": url}
 
     # -- report-back + audit ----------------------------------------------
+    def _reject_report(self, task: ScopedTask, reason: str) -> Dict[str, Any]:
+        """Reject a report-back loudly: journaled WARNING, nothing recorded."""
+        logger.warning(
+            "Directed report for %s REJECTED (%s): task status=%s "
+            "(strict reports; COLONY_DIRECTED_STRICT_REPORTS=0 for legacy)",
+            task.id, reason, task.status)
+        self._journal(task, "blocked",
+                      f"report-back rejected: {reason} (status={task.status})")
+        return {"ok": False, "reason": reason, "status": task.status}
+
     async def complete(self, task_id: str, report: Dict[str, Any]) -> Dict[str, Any]:
-        """Delegate report-back: audit vs scope, record outcome, notify owner."""
+        """Delegate report-back: audit vs scope, record outcome, notify owner.
+
+        Strict mode (default) closes a real hole — a report used to be
+        accepted for a task in ANY status, letting a stray or duplicate POST
+        fabricate audited outcomes (and trust evidence) for work that was
+        never dispatched. Now only ``dispatched`` tasks take a report; a
+        ``dispatched_dry`` task takes a dry echo that records no trust
+        outcome; anything else is rejected with a journaled WARNING.
+        """
         task = self.store.get(task_id)
         if task is None:
             return {"ok": False, "reason": "not_found"}
+
+        report = report or {}
+        dry_echo = False
+        if _strict_reports():
+            # Envelope report token (only enforced when a key is configured).
+            expected = report_token_for(task.id)
+            if expected and not hmac.compare_digest(
+                    str(report.get("report_token", "")), expected):
+                return self._reject_report(task, "bad_report_token")
+            if task.status in ("completed", "violated"):
+                return self._reject_report(task, "double_report")
+            if task.status == "dispatched_dry":
+                dry_echo = True
+            elif task.status != "dispatched":
+                return self._reject_report(task, "status_mismatch")
 
         mirror_path = None
         if self._mirrors is not None and task.targets:
@@ -385,7 +425,7 @@ class DirectedActionService:
             except Exception:
                 mirror_path = None
 
-        audit = audit_completion(task, report or {}, mirror_path=mirror_path)
+        audit = audit_completion(task, report, mirror_path=mirror_path)
         task.audit = audit
         verdict = audit["verdict"]
         task.status = "violated" if verdict == "violation" else "completed"
@@ -404,8 +444,10 @@ class DirectedActionService:
         # Trust engine: audited outcomes are the earned-autonomy evidence
         # (Amendment 1.7); a violation trips the circuit breaker. An
         # unverified MUTATING completion is recorded as nothing: it must
-        # neither graduate a scope class nor trip its breaker.
-        if self._self_model is not None:
+        # neither graduate a scope class nor trip its breaker. A dry echo
+        # (report against a dry-run dispatch) records NO trust outcome —
+        # nothing real happened, so nothing may graduate or demote.
+        if self._self_model is not None and not dry_echo:
             try:
                 if verdict == "violation":
                     self._self_model.record(self._trust_domain(task),
@@ -420,8 +462,11 @@ class DirectedActionService:
 
         # Owner-facing report through the guarded reach-out path (still held
         # by delivery shadow until go-live).
-        await self._notify_owner(task, report or {}, audit)
-        return {"ok": True, "verdict": verdict, "audit": audit}
+        await self._notify_owner(task, report, audit)
+        out = {"ok": True, "verdict": verdict, "audit": audit}
+        if dry_echo:
+            out["dry_echo"] = True
+        return out
 
     async def _notify_owner(self, task: ScopedTask, report: Dict[str, Any],
                             audit: Dict[str, Any]) -> None:

@@ -171,6 +171,7 @@ def test_complete_records_outcome_and_notifies():
     svc = _service(feedback=FB(), deliver=deliver)
     async def run():
         t = await svc.intake("summarize the module")
+        t.status = "dispatched"; svc.store.save(t)   # strict reports (H7.2)
         out = await svc.complete(t.id, {
             "summary": "3 modules reviewed", "operations": ["read"],
             "files_touched": [], "commits": 0, "branch": ""})
@@ -189,6 +190,7 @@ def test_complete_violation_flags_loud():
     svc = _service(feedback=fb)
     async def run():
         t = await svc.intake("summarize the module")   # read-only scope
+        t.status = "dispatched"; svc.store.save(t)     # strict reports (H7.2)
         out = await svc.complete(t.id, {
             "summary": "i changed things", "operations": ["modify_files", "commit"],
             "files_touched": ["a.py"], "commits": 2, "branch": "main"})
