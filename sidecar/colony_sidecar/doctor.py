@@ -536,6 +536,27 @@ def check_tom2_cross_context() -> CheckResult:
                "(note: the render path is still unwired by design)")
 
 
+def check_tom2_risk_caps() -> CheckResult:
+    """Leveled tom2 (L1.3): COLONY_TOM2_RISK_CAPS must parse. A malformed
+    value fails closed at runtime (all environments cap at level 0), which
+    is SAFE but silently ignores whatever caps the owner intended — a
+    posture mismatch the doctor must surface."""
+    from colony_sidecar.tom.levels import DEFAULT_RISK_CAPS, risk_caps_valid
+    raw = os.environ.get("COLONY_TOM2_RISK_CAPS", "").strip()
+    if risk_caps_valid():
+        return CheckResult(
+            "tom2-risk-caps", PASS,
+            detail=f"COLONY_TOM2_RISK_CAPS={raw or f'(default {DEFAULT_RISK_CAPS})'}")
+    return CheckResult(
+        "tom2-risk-caps", WARN,
+        detail=f"COLONY_TOM2_RISK_CAPS={raw!r} is malformed — the level "
+               "resolver fails closed to all-0 caps (every environment "
+               "renders level 0), NOT the caps you configured",
+        remedy="set COLONY_TOM2_RISK_CAPS to four 'risk:cap' pairs covering "
+               f"risks 0-3 with caps 0-2, e.g. {DEFAULT_RISK_CAPS}, or unset "
+               "it for the default")
+
+
 def check_home_channel() -> CheckResult:
     """8. At least one *_HOME_CHANNEL so initiatives can be delivered."""
     found = sorted(
@@ -630,6 +651,7 @@ def run_local_checks() -> List[CheckResult]:
     results += _run("standing-approvals", check_standing_approvals)
     results += _run("feature-gates", check_feature_gates)
     results += _run("tom2-cross-context", check_tom2_cross_context)
+    results += _run("tom2-risk-caps", check_tom2_risk_caps)
     results += _run("home-channel", check_home_channel)
     results += _run("hermes-skills-dir", check_hermes_skills_dir)
     results += _run("relationship-attribution", check_relationship_attribution)
