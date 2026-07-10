@@ -92,7 +92,11 @@ async def test_extractor_pulls_entities_from_response_text(store):
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_through_response_guard(store):
+async def test_end_to_end_through_response_guard(store, monkeypatch):
+    # Written against legacy all-checks enforcement; the per-check enforce
+    # allowlist (H6.3, default secret_leak) is covered in
+    # test_guard_enforce_policy.py.
+    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
     store.record(CONV_A, ["Project Falcon"], contact_id="alice")
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE,
                           cross_context=ProvenanceCrossContextGuard(store))
