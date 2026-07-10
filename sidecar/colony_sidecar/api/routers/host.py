@@ -4032,6 +4032,36 @@ def set_facts_store(store):
     _facts_store = store
 
 
+# --- Second-order theory of mind (tom2: refs-not-content, owner-only) ---
+_tom2_store = None
+_tom2_engine = None
+
+
+def set_tom2_store(store) -> None:
+    global _tom2_store
+    _tom2_store = store
+
+
+def set_tom2_engine(engine) -> None:
+    global _tom2_engine
+    _tom2_engine = engine
+
+
+@router.get("/tom2/status")
+async def tom2_status() -> dict:
+    """Owner observability for the asymmetry engine: mode, aggregate counts
+    and the last run report. Counts only — no inference contents here."""
+    from colony_sidecar.tom.asymmetry import tom2_mode
+    counts = None
+    if _tom2_store is not None:
+        try:
+            counts = _tom2_store.counts()
+        except Exception:
+            counts = None
+    return {"mode": tom2_mode(), "counts": counts,
+            "last_run": getattr(_tom2_engine, "last_report", None)}
+
+
 _context_provenance = None
 
 

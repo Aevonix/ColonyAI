@@ -515,6 +515,19 @@ async def lifespan(app: FastAPI):
         set_facts_store(facts_store)
         logger.info("SharedFactsStore initialized (db=%s)", facts_db)
 
+        # Second-order theory of mind (tom2): refs-not-content inference
+        # store + daily asymmetry engine. Inert unless COLONY_TOM2 is set
+        # (default off; shadow = counts only).
+        from colony_sidecar.tom.tom2 import Tom2Store
+        from colony_sidecar.tom.asymmetry import AsymmetryEngine, tom2_mode
+        from colony_sidecar.api.routers.host import set_tom2_store, set_tom2_engine
+        tom2_db = state_dir / "colony-tom2.db"
+        tom2_store = Tom2Store(db_path=str(tom2_db))
+        set_tom2_store(tom2_store)
+        set_tom2_engine(AsymmetryEngine(facts_store, tom2_store))
+        logger.info("Tom2Store + AsymmetryEngine initialized (db=%s, mode=%s)",
+                    tom2_db, tom2_mode())
+
         from colony_sidecar.gate.context_provenance import (
             ContextProvenanceStore, ProvenanceCrossContextGuard)
         provenance_db = state_dir / "colony-context-provenance.db"

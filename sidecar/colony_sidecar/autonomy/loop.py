@@ -337,6 +337,9 @@ class AutonomyLoop:
         # Phase 11d: LLM-assisted world-model extraction (daily, batch)
         await self._phase_world_llm_extract()
 
+        # Phase 11d2: tom2 knowledge asymmetry (daily; COLONY_TOM2, default off)
+        await self._phase_tom2_asymmetry()
+
         # Phase 11e: connector ingest (read-only pull senses, cognition item 2)
         await self._phase_connectors()
 
@@ -2559,6 +2562,29 @@ class AutonomyLoop:
             self.stats.errors += 1
             logger.error("Phase world_llm_extract error: %s", exc,
                          exc_info=True)
+
+    async def _phase_tom2_asymmetry(self) -> None:
+        """Phase 11d2 (daily): tom2 knowledge-asymmetry sweep. Inert unless
+        COLONY_TOM2 is set (default off; shadow computes counts only, live
+        writes refs-not-content inference rows)."""
+        engine = getattr(self._registry, "tom2_engine", None)
+        if engine is None:
+            return
+        try:
+            from colony_sidecar.tom.asymmetry import tom2_mode
+            if tom2_mode() == "off":
+                return
+        except Exception:
+            return
+        key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._periodic_last.get("tom2_asymmetry") == key:
+            return
+        try:
+            engine.run()
+            self._periodic_last["tom2_asymmetry"] = key
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase tom2_asymmetry error: %s", exc, exc_info=True)
 
     async def _phase_connectors(self) -> None:
         """Phase 11e: poll due read-only connectors (cognition item 2).

@@ -306,6 +306,12 @@ class SubsystemRegistry:
         from colony_sidecar.api.routers.host import _world_llm_extractor
         return _world_llm_extractor
 
+    @property
+    def tom2_engine(self) -> Any:
+        """Knowledge-asymmetry engine (tom2, refs-not-content)."""
+        from colony_sidecar.api.routers.host import _tom2_engine
+        return _tom2_engine
+
     # === Cognition program Phase B (items 5/6) ===
 
     @property
