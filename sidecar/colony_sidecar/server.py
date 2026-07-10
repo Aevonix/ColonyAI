@@ -888,6 +888,15 @@ async def lifespan(app: FastAPI):
         surprise_store = SurpriseStore(db_path=surprise_db)
         set_surprise_store(surprise_store)
         logger.info("SurpriseStore initialized (db=%s)", surprise_db)
+
+        # Close the surprise loop: the condition worker's
+        # surprise.accumulation event now lands as a workspace concern
+        # (the consumer checks workspace enablement at event time, so this
+        # registration is unconditional and a clean no-op when it is off).
+        from colony_sidecar.surprise.accumulation import (
+            register as register_surprise_consumer,
+        )
+        register_surprise_consumer()
     except Exception as exc:
         logger.warning("Pattern/Surprise init failed: %s", exc)
 
@@ -1592,6 +1601,42 @@ async def lifespan(app: FastAPI):
                 retention_days=retention_days, max_turns=max_turns)}
 
         scheduler.register("mining_prune", _run_mining_prune, interval_seconds=86400, metadata={"description": "Prune banked mining turns per COLONY_MINING_RETENTION_DAYS / COLONY_MINING_MAX_TURNS (0 = keep everything)"})
+
+        # Daily pattern extraction (U25): the pattern store fed compute_surprise
+        # but only ever filled via the manual /patterns/extract endpoint, so
+        # surprise scoring ran against an empty store. Flag-gated off by
+        # default; registered only when on so the loop never counts a
+        # deliberately-disabled subsystem as running.
+        if os.environ.get("COLONY_PATTERNS_SCHEDULE",
+                          "off").strip().lower() == "on":
+            async def _run_pattern_extract():
+                from colony_sidecar.api.routers.host import (
+                    _pattern_store as ps, _world_store as ws,
+                )
+                if ws is None or ps is None:
+                    return {"status": "skipped",
+                            "reason": "stores_not_wired"}
+                from colony_sidecar.patterns.extract import extract_patterns
+                return {"status": "ok",
+                        **extract_patterns(world_store=ws, pattern_store=ps)}
+
+            scheduler.register("pattern_extract", _run_pattern_extract, interval_seconds=86400, metadata={"description": "Extract world-model patterns into the pattern store (COLONY_PATTERNS_SCHEDULE=on)"})
+
+        async def _run_surprise_ttl():
+            from colony_sidecar.api.routers.host import _surprise_store as ss
+            if ss is None:
+                return {"status": "skipped",
+                        "reason": "surprise_store_not_wired"}
+            try:
+                ttl_days = float(os.environ.get(
+                    "COLONY_SURPRISE_TTL_DAYS", "14"))
+            except ValueError:
+                ttl_days = 14.0
+            if ttl_days <= 0:
+                return {"status": "skipped", "reason": "ttl_disabled"}
+            return {"status": "ok", "auto_resolved": ss.resolve_stale(ttl_days)}
+
+        scheduler.register("surprise_ttl", _run_surprise_ttl, interval_seconds=86400, metadata={"description": "Auto-resolve surprises unaddressed past COLONY_SURPRISE_TTL_DAYS (default 14; 0 disables)"})
 
         async def _run_digest_flush():
             from colony_sidecar.api.routers.host import _delivery_bridge as bridge

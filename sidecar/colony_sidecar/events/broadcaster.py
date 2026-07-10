@@ -14,11 +14,26 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 _broadcast_fn = None
+
+# In-process consumers by event type. emit() used to reach only WebSocket
+# subscribers, so an event with no client connected simply died; subsystems
+# that need to REACT to an event (not just display it) register here.
+_subscribers: Dict[str, List[Callable[[Dict[str, Any]], Any]]] = {}
+
+
+def subscribe(event_type: str, fn: Callable[[Dict[str, Any]], Any]) -> None:
+    """Register an in-process consumer for one event type.
+
+    Consumers are invoked synchronously from ``emit()`` with the full event
+    dict (``type``/``occurred_at``/``payload``); keep them cheap. A consumer
+    error is swallowed — emission must never break the emitting subsystem.
+    """
+    _subscribers.setdefault(event_type, []).append(fn)
 
 
 def _resolve_broadcaster():
@@ -61,6 +76,14 @@ def emit(event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
             "payload": payload or {},
         }
         broadcaster(event)
+
+        # In-process consumers (best-effort, each isolated)
+        for fn in _subscribers.get(event_type, ()):
+            try:
+                fn(event)
+            except Exception:
+                logger.debug("in-process consumer failed for %s",
+                             event_type, exc_info=True)
 
         # Journal the event for replay (best-effort, non-blocking)
         try:

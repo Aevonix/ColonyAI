@@ -166,6 +166,29 @@ class SurpriseStore:
         self._conn.commit()
         return cursor.rowcount > 0
 
+    def resolve_stale(self, ttl_days: float) -> int:
+        """Auto-resolve unresolved surprises older than ``ttl_days``.
+
+        A surprise nobody addressed in two weeks is stale context, not a
+        live signal — leaving it unresolved forever keeps it in context
+        assembly and inflates the accumulation trigger. Marks (never
+        deletes) with an explicit auto-resolution note. ``ttl_days <= 0``
+        disables. Returns the number resolved.
+        """
+        if ttl_days <= 0:
+            return 0
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(days=ttl_days)).isoformat()
+        cursor = self._conn.execute(
+            "UPDATE surprises SET resolved = 1, resolution = ? "
+            "WHERE resolved = 0 AND timestamp < ?",
+            (f"auto-resolved: unaddressed for {ttl_days:g} days "
+             "(COLONY_SURPRISE_TTL_DAYS)", cutoff),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
     def count_unresolved(self, since_hours: float = 1.0) -> int:
         """Count unresolved surprises within the last N hours."""
         from datetime import timedelta
