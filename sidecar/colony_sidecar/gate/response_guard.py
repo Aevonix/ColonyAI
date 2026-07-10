@@ -188,14 +188,20 @@ class ResponseGuard:
 
             decision = self._decide(findings, mode)
             result = GuardResult(decision=decision, mode=str(getattr(mode, "value", mode)), findings=findings)
-            # Record every cross-context event (authorized or not) so an operator can measure,
-            # in shadow, whether the classifier separates valid transfers from real leaks.
-            if cross and self._audit is not None:
+            # Audit trail: count EVERY evaluation (the rate denominator), and record a
+            # row for any evaluation with findings or a non-allow decision — all checks,
+            # not just cross_context — so per-check rates and the would-block rate can
+            # be measured in shadow before enforcement is turned on.
+            if self._audit is not None:
                 try:
-                    self._audit.record(
-                        conversation_key=conversation_key, mode=result.mode, decision=decision,
-                        authorized=authorized, checks=[f.check for f in cross],
-                        entities=[f.excerpt or "" for f in cross], response_text=response_text or "")
+                    self._audit.count_evaluation()
+                    if findings or decision != GuardDecision.ALLOW.value:
+                        self._audit.record(
+                            conversation_key=conversation_key, mode=result.mode, decision=decision,
+                            authorized=authorized, checks=[f.check for f in findings],
+                            entities=[f.excerpt or "" for f in findings],
+                            response_text=response_text or "",
+                            would_block=any(f.severity == "block" for f in findings))
                 except Exception:
                     logger.debug("guard audit record failed", exc_info=True)
             if findings:
