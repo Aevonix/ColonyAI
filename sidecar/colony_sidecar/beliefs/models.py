@@ -14,14 +14,18 @@ def beliefs_mode() -> str:
 
 
 def beliefs_supervised_live() -> bool:
-    """COLONY_BELIEFS_SUPERVISED_LIVE=1 unlocks the 'supervised' rung: at
-    trust stage ask_first the engine may perform REVERSIBLE mutations only
+    """Is the 'supervised' rung unlocked for beliefs? At trust stage
+    ask_first the engine may perform REVERSIBLE mutations only
     (supersession that preserves the old value on the superseded node, and
     bounded stale-confidence decay) and records real (non-shadow) outcomes,
     so the beliefs domain can build the track record ask_first -> act_first
-    graduation requires. Default 0 = today's exact behavior."""
-    return os.environ.get("COLONY_BELIEFS_SUPERVISED_LIVE",
-                          "0").strip().lower() in ("1", "true", "yes")
+    graduation requires. Default off = today's exact behavior.
+
+    H1.2: delegates to the generic rung (self_model/supervised.py) —
+    COLONY_SUPERVISED_LIVE_DOMAINS=beliefs and the legacy
+    COLONY_BELIEFS_SUPERVISED_LIVE=1 are equivalent."""
+    from colony_sidecar.self_model.supervised import supervised_enabled
+    return supervised_enabled("beliefs")
 
 
 def stale_ttl_days() -> float:

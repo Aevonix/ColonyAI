@@ -98,23 +98,16 @@ class BeliefEngine:
         and bounded stale-confidence decay — no deletion), journaled with
         prior state, outcomes recorded shadow=False. Destructive resolution
         (anything that deletes or merges nodes) must still gate on the full
-        "live" mode, i.e. act_first or the explicit env override."""
-        mode = beliefs_mode()
-        if mode in ("off", "live"):
-            return mode
-        trust = getattr(self._self_model, "trust", None)
-        if trust is None:
-            return mode
-        try:
-            stage = trust.stage("beliefs", default="shadow")
-        except Exception:
-            return mode
-        if stage == "act_first":
-            return "live"
-        from colony_sidecar.beliefs.models import beliefs_supervised_live
-        if stage == "ask_first" and beliefs_supervised_live():
-            return "supervised"
-        return "shadow"
+        "live" mode, i.e. act_first or the explicit env override.
+
+        H1.2: the rung logic itself now lives in self_model/supervised.py
+        (generic across domains; enable via COLONY_SUPERVISED_LIVE_DOMAINS=
+        beliefs or the legacy alias COLONY_BELIEFS_SUPERVISED_LIVE=1). The
+        reversible operations named above are pinned in its
+        REVERSIBLE_CONTRACT under ("beliefs", "supersede"/"decay")."""
+        from colony_sidecar.self_model.supervised import effective_mode
+        return effective_mode("beliefs", beliefs_mode(),
+                              getattr(self._self_model, "trust", None))
 
     async def run(self) -> Dict[str, Any]:
         mode = self._effective_mode()

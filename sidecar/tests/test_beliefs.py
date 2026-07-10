@@ -397,3 +397,43 @@ def test_status_reports_effective_mode(monkeypatch):
     engine = BeliefEngine(BeliefStore(), self_model=sm)
     st = engine.status()
     assert st["mode"] == "shadow" and st["effective_mode"] == "supervised"
+
+
+# ---------------------------------------------------------------------------
+# H1.2: beliefs on the generic supervised rung (self_model/supervised.py)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_legacy_and_generic_flags_are_equivalent(monkeypatch):
+    """COLONY_BELIEFS_SUPERVISED_LIVE=1 and COLONY_SUPERVISED_LIVE_DOMAINS=
+    beliefs must produce identical run() reports at ask_first."""
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_STALE_DAYS", "10")
+    old_ts = datetime.now(timezone.utc) - timedelta(days=30)
+
+    async def _run():
+        sm, cstore = _self_model_at("ask_first")
+        graph = FakeGraph([
+            _mem_row("m-old", "Jordan works at Initech.", ts=old_ts),
+            _mem_row("m-new", "Jordan works at Globex."),
+        ])
+        stale = _entity(name="Old Thing", conf=0.11, last_seen=old_ts)
+        engine = BeliefEngine(BeliefStore(), graph=graph,
+                              world_store=FakeWorld([stale]),
+                              journal=ActionJournal(), self_model=sm)
+        report = await engine.run()
+        return report, graph.transitions, cstore.events(
+            "beliefs", include_shadow=False)
+
+    monkeypatch.delenv("COLONY_SUPERVISED_LIVE_DOMAINS", raising=False)
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    legacy = await _run()
+
+    monkeypatch.delenv("COLONY_BELIEFS_SUPERVISED_LIVE", raising=False)
+    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "beliefs")
+    generic = await _run()
+
+    assert legacy[0] == generic[0]                       # identical reports
+    assert legacy[0]["mode"] == "supervised"
+    assert legacy[1] == generic[1]                       # same graph effects
+    assert [e["outcome"] for e in legacy[2]] == [e["outcome"] for e in generic[2]]
