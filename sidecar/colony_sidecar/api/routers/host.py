@@ -7327,11 +7327,18 @@ async def update_shared_fact(fact_id: str, body: SharedFactUpdateRequest) -> Sha
 
 @router.delete("/mind/facts/{fact_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_shared_fact(fact_id: str):
-    """Delete a shared fact."""
+    """Delete a shared fact. Cascades to second-order inferences that
+    reference it (reversibility, docs/TOM2-LEVELS.md): a dangling ref could
+    never render anyway — H3.5 fails closed — this keeps the store honest."""
     if _facts_store is None:
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
     if not _facts_store.delete_fact(fact_id):
         raise HTTPException(status_code=404, detail="Shared fact not found")
+    if _tom2_store is not None:
+        try:
+            _tom2_store.delete_for_fact(fact_id)
+        except Exception:
+            logger.debug("tom2 delete_for_fact cascade failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
