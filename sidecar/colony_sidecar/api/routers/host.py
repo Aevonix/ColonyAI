@@ -4362,16 +4362,38 @@ async def tom2_exposure(reader: str = "", subject: str = "",
 @router.get("/tom2/status")
 async def tom2_status() -> dict:
     """Owner observability for the asymmetry engine: mode, aggregate counts
-    and the last run report. Counts only — no inference contents here."""
+    and the last run report, plus the leveled posture (L4.3) — configured/
+    max level, live risk caps, and a SAMPLE decision resolved against a
+    hostile placeholder environment so the owner can see every brake term
+    (configured, max, risk cap, enforce evidence, cross-context) as the
+    resolver sees it right now. Counts only — no inference contents here."""
     from colony_sidecar.tom.asymmetry import tom2_mode
+    from colony_sidecar.tom.levels import (
+        configured_level, configured_max_level, parse_risk_caps,
+        resolve_effective_level, risk_caps_valid)
     counts = None
     if _tom2_store is not None:
         try:
             counts = _tom2_store.counts()
         except Exception:
             counts = None
+    sample = None
+    try:
+        sample = (await resolve_effective_level(
+            "status:probe", "status-probe-reader",
+            presence_store=_presence_store,
+            contacts_store=_contacts_store,
+            use_cache=False)).to_dict()
+    except Exception:
+        sample = None
     return {"mode": tom2_mode(), "counts": counts,
-            "last_run": getattr(_tom2_engine, "last_report", None)}
+            "last_run": getattr(_tom2_engine, "last_report", None),
+            "configured": configured_level(),
+            "max": configured_max_level(),
+            "risk_caps": {"valid": risk_caps_valid(),
+                          "caps": {str(k): v for k, v
+                                   in parse_risk_caps().items()}},
+            "sample_decision": sample}
 
 
 @router.get("/tom2/report")

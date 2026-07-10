@@ -29,7 +29,7 @@ import sqlite3
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -557,6 +557,87 @@ def check_tom2_risk_caps() -> CheckResult:
                "it for the default")
 
 
+def check_tom2_level_coherence() -> CheckResult:
+    """Leveled cross-contact tom2 (L4.3): a raised COLONY_TOM2_LEVEL must
+    be COHERENT — reachable under the other brakes and backed by live
+    enforcement evidence. The min-chain silently degrades an incoherent
+    posture every turn (which is SAFE); what the doctor surfaces is the
+    owner believing a level is live when it can never actually render."""
+    from colony_sidecar.gate.response_guard import enforce_allowlist
+    from colony_sidecar.tom.levels import (
+        configured_level, configured_max_level, risk_caps_valid)
+    from colony_sidecar.tom.tom2 import tom2_cross_context_enabled
+
+    lvl = configured_level()
+    if lvl == 0:
+        return CheckResult(
+            "tom2-level-coherence", PASS,
+            detail="COLONY_TOM2_LEVEL=0 (default; leveled rendering off — "
+                   "this variable is also the single-var kill switch)")
+
+    problems: List[str] = []
+    if not risk_caps_valid():
+        problems.append("COLONY_TOM2_RISK_CAPS is malformed — every "
+                        "environment caps at level 0")
+    if lvl >= 2:
+        if configured_max_level() < 2:
+            problems.append("level 2 unreachable: COLONY_TOM2_MAX_LEVEL "
+                            f"caps at {configured_max_level()}")
+        if not tom2_cross_context_enabled():
+            problems.append("level 2 unreachable: "
+                            "COLONY_TOM2_CROSS_CONTEXT is off")
+        allowed = enforce_allowlist()
+        if allowed is not None and "tom2_epistemic" not in allowed:
+            problems.append("level 2 unreachable: tom2_epistemic is not on "
+                            "COLONY_GUARD_ENFORCE_CHECKS, so enforce "
+                            "evidence can never accrue")
+        else:
+            problems.extend(_tom2_enforce_evidence_problem())
+    if problems:
+        return CheckResult(
+            "tom2-level-coherence", WARN,
+            detail=f"COLONY_TOM2_LEVEL={lvl} but " + "; ".join(problems),
+            remedy="either lower COLONY_TOM2_LEVEL to the level you can "
+                   "actually reach, or complete the graduation ladder "
+                   "(docs/TOM2-LEVELS.md): MAX_LEVEL=2 + CROSS_CONTEXT=1 + "
+                   "tom2_epistemic allowlisted + a chat guard actually "
+                   "running enforce on the target gateway")
+    return CheckResult(
+        "tom2-level-coherence", PASS,
+        detail=f"COLONY_TOM2_LEVEL={lvl} with a coherent brake posture")
+
+
+def _tom2_enforce_evidence_problem() -> List[str]:
+    """[] when some gateway shows fresh enforce-mode audit rows; else one
+    problem string. Reads the guard audit DB read-only; any read failure is
+    reported as missing evidence (fail closed, matching the resolver)."""
+    from colony_sidecar.gate.guard_audit import evidence_min
+
+    audit_db = _state_dir() / "colony-guard-audit.db"
+    if not audit_db.exists():
+        return ["no guard audit trail yet — no enforce evidence on any "
+                "gateway (level 2 caps at 1)"]
+    try:
+        conn = sqlite3.connect(f"file:{audit_db}?mode=ro", uri=True)
+        try:
+            cutoff = (datetime.now(tz=timezone.utc)
+                      - timedelta(hours=24)).isoformat()
+            rows = conn.execute(
+                "SELECT gateway, COUNT(*) n FROM guard_events "
+                "WHERE mode='enforce' AND gateway IS NOT NULL AND ts >= ? "
+                "GROUP BY gateway", (cutoff,)).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return [f"guard audit trail unreadable ({exc}) — treated as no "
+                "enforce evidence"]
+    best = max((int(n) for _, n in rows), default=0)
+    if best < evidence_min():
+        return [f"no gateway shows enforce evidence in the last 24h "
+                f"(best {best}/{evidence_min()} rows) — level 2 caps at 1"]
+    return []
+
+
 def check_home_channel() -> CheckResult:
     """8. At least one *_HOME_CHANNEL so initiatives can be delivered."""
     found = sorted(
@@ -652,6 +733,7 @@ def run_local_checks() -> List[CheckResult]:
     results += _run("feature-gates", check_feature_gates)
     results += _run("tom2-cross-context", check_tom2_cross_context)
     results += _run("tom2-risk-caps", check_tom2_risk_caps)
+    results += _run("tom2-level-coherence", check_tom2_level_coherence)
     results += _run("home-channel", check_home_channel)
     results += _run("hermes-skills-dir", check_hermes_skills_dir)
     results += _run("relationship-attribution", check_relationship_attribution)
