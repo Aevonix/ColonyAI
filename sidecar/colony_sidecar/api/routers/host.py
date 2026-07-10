@@ -3402,12 +3402,81 @@ async def scope_promote(body: ScopePromoteRequest) -> Dict[str, Any]:
     return {"ok": True, "contact_id": body.contact_id, "changed": changed}
 
 
+def guard_derive_context_enabled() -> bool:
+    """COLONY_GUARD_DERIVE_CONTEXT (default on): complete a guard-check
+    request server-side when the host omits context. Off restores the
+    legacy null-key behavior (context-dependent checks silently pass)."""
+    return os.environ.get("COLONY_GUARD_DERIVE_CONTEXT", "1").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+async def _derive_guard_context(body: ResponseGuardCheckRequest) -> None:
+    """L3.3 — server-side completion of the guard-check context.
+
+    The chat hot path's host plugin sends only text + ids today, so the
+    context-dependent checks (cross_context, tom2_epistemic) evaluated
+    against a null conversation_key and returned [] — dead in exactly the
+    place they matter. Derive what the host omitted, from what the sidecar
+    already knows:
+
+      * ``conversation_key``  — the same derivation turns/sync uses
+        (_ensure_channel_id: session gateway, then primary handle gateway,
+        then unknown:<contact>), so guard keys and provenance keys AGREE;
+      * ``trust_tier``        — the contact store's tier for the target;
+      * ``mentioned_entities``— rule-based NER over the INCOMING message
+        (entities the counterpart just introduced belong to this
+        conversation and must not read as leaks).
+
+    Mutates ``body`` in place; never raises — any failure evaluates with
+    whatever the host sent (today's behavior).
+    """
+    if not guard_derive_context_enabled():
+        return
+    try:
+        from types import SimpleNamespace
+        if not body.conversation_key and body.target_contact_id:
+            body.conversation_key = await _ensure_channel_id(
+                SimpleNamespace(channel_id=None,
+                                contact_id=body.target_contact_id))
+        if not body.trust_tier and body.target_contact_id \
+                and _contacts_store is not None:
+            contact = await _contacts_store.get(body.target_contact_id)
+            tier = str(getattr(contact, "trust_tier", "") or "") \
+                if contact is not None else ""
+            if tier:
+                body.trust_tier = tier
+        if not body.mentioned_entities and body.incoming_message_text:
+            extractor = _get_conversation_extractor()
+            if extractor is not None:
+                res = await extractor.extract(body.incoming_message_text,
+                                              "guard-context")
+                names: List[str] = []
+                seen: set = set()
+                for cand in getattr(res, "entities", []):
+                    name = (getattr(cand, "text", None)
+                            or getattr(cand, "name", "") or "").strip()
+                    if name and name.lower() not in seen:
+                        seen.add(name.lower())
+                        names.append(name)
+                    if len(names) >= 10:
+                        break
+                if names:
+                    body.mentioned_entities = names
+    except Exception:
+        logger.debug("guard context derivation failed (evaluating with "
+                     "what the host sent)", exc_info=True)
+
+
 @router.post("/response-guard/check")
 async def response_guard_check(body: ResponseGuardCheckRequest) -> Dict[str, Any]:
     """Evaluate an outbound reply before sending. Returns {decision, mode, findings}.
-    When no guard is configured, allows everything (the gate is opt-in)."""
+    When no guard is configured, allows everything (the gate is opt-in).
+    Missing context (conversation_key / trust_tier / mentioned_entities) is
+    derived server-side (COLONY_GUARD_DERIVE_CONTEXT, default on) so the
+    context-dependent checks actually fire on the chat hot path."""
     if _response_guard is None:
         return {"decision": "allow", "mode": "disabled", "findings": []}
+    await _derive_guard_context(body)
     from colony_sidecar.gate.response_guard import GuardMode
     mode = None
     if body.mode:
