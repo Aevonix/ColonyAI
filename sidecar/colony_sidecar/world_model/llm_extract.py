@@ -423,6 +423,8 @@ class WorldLLMExtractor:
                     relationship_type=rel, min_confidence=0.0, limit=1)
             except Exception:
                 existing = []
+            from datetime import datetime, timezone
+            now_iso = datetime.now(timezone.utc).isoformat()
             if existing:
                 edge = existing[0]
                 old = float(edge.confidence or 0.0)
@@ -434,6 +436,10 @@ class WorldLLMExtractor:
                     props["corroborations"] = int(
                         props.get("corroborations", 0) or 0) + 1
                     props.setdefault("evidence", evidence[:300])
+                    # Support stamp: the staleness clock (H2.3) reads this,
+                    # so corroboration — and only corroboration/creation —
+                    # resets it (a decay write never does).
+                    props["last_support_at"] = now_iso
                     edge.properties = props
                     await self._store.upsert_relationship(edge)
                 report["causal_corroborated"].append(
@@ -448,7 +454,8 @@ class WorldLLMExtractor:
                 id="", source_id=src_id, target_id=tgt_id,
                 relationship_type=rel, confidence=create_conf,
                 properties={"evidence": evidence[:300],
-                            "extraction": "llm_causal"}))
+                            "extraction": "llm_causal",
+                            "last_support_at": now_iso}))
             self._journal_write(
                 f"causal {src_id} -{rel}-> {tgt_id}", create_conf, src_id)
         except Exception:
