@@ -16,6 +16,14 @@ from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
 LEAK = "his home address is on file"   # trips L4 private-detail at group_guest/peripheral
 
 
+@pytest.fixture(autouse=True)
+def _full_enforce(monkeypatch):
+    """These tests predate the per-check enforce allowlist (H6.3): pin the
+    legacy all-checks enforcement they were written against. The allowlist
+    default (secret_leak only) is covered in test_guard_enforce_policy.py."""
+    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
+
+
 @pytest.mark.asyncio
 async def test_excluded_gateway_is_never_gated():
     # a deployment supplies the gateways to skip (e.g. its voice path); Colony hardcodes none

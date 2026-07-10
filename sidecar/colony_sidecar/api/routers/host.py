@@ -3399,10 +3399,17 @@ async def response_guard_audit(limit: int = 50, authorized: Optional[bool] = Non
     windows with per-check counts and the would_block_rate — the numbers that decide whether
     a check is inside its false-positive budget before enforce is turned on."""
     audit = getattr(_response_guard, "_audit", None) if _response_guard is not None else None
+    breaker = None
+    if _response_guard is not None and hasattr(_response_guard, "breaker_status"):
+        try:
+            breaker = _response_guard.breaker_status()
+        except Exception:
+            breaker = None
     if audit is None:
-        return {"summary": {"total": 0}, "events": []}
+        return {"summary": {"total": 0}, "events": [], "breaker": breaker}
     return {"summary": audit.summary(),
-            "events": audit.recent(limit=limit, authorized=authorized, check=check)}
+            "events": audit.recent(limit=limit, authorized=authorized, check=check),
+            "breaker": breaker}
 
 
 

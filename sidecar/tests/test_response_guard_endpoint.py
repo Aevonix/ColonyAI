@@ -12,6 +12,10 @@ from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
 
 @pytest.mark.asyncio
 async def test_endpoint_flags_cross_context_leak(monkeypatch):
+    # Written against legacy all-checks enforcement; the per-check enforce
+    # allowlist (H6.3, default secret_leak) is covered in
+    # test_guard_enforce_policy.py.
+    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
     store = ContextProvenanceStore(":memory:")
     store.record("rcs:conv-A", ["Project Falcon"])
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE,

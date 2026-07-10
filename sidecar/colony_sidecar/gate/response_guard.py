@@ -28,10 +28,13 @@ injection); the cross-context check is an injected, provenance-backed dependency
 from __future__ import annotations
 
 import logging
+import os
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from colony_sidecar.gate.config import GateConfig
 from colony_sidecar.gate.layers.l2_pii import PIIScanner
@@ -64,6 +67,36 @@ def to_gate_tier(value: Any) -> TrustTier:
 class GuardMode(str, Enum):
     SHADOW = "shadow"
     ENFORCE = "enforce"
+
+
+def enforce_allowlist() -> Optional[frozenset]:
+    """Checks allowed to BLOCK in enforce mode (per-check enforce ramp).
+
+    COLONY_GUARD_ENFORCE_CHECKS, default ``secret_leak`` — the lowest
+    false-positive check goes first; everything else keeps shadow semantics
+    (observed, audited, never suppressing) until explicitly added.
+    ``all`` / ``*`` restores full enforcement across every check (legacy).
+    Returns None for "all checks", else a frozenset of check names.
+    """
+    raw = os.environ.get("COLONY_GUARD_ENFORCE_CHECKS", "secret_leak").strip()
+    if raw.lower() in ("all", "*"):
+        return None
+    return frozenset(c.strip() for c in raw.split(",") if c.strip())
+
+
+def breaker_enabled() -> bool:
+    """COLONY_GUARD_BREAKER, default on. off/0/false disables the breaker."""
+    return os.environ.get("COLONY_GUARD_BREAKER", "on").strip().lower() not in (
+        "off", "0", "false", "no")
+
+
+def breaker_trip_blocks() -> int:
+    """Enforce blocks within 24h that trip the breaker (default 10).
+    <=0 disables tripping."""
+    try:
+        return int(os.environ.get("COLONY_GUARD_TRIP_BLOCKS", "10"))
+    except (TypeError, ValueError):
+        return 10
 
 
 class GuardDecision(str, Enum):
@@ -132,6 +165,10 @@ class ResponseGuard:
             self._injection = None
         self._cross = cross_context
         self._default_mode = default_mode
+        # Circuit breaker state: timestamps of enforce-mode blocks (24h
+        # rolling window). The breaker only ever WEAKENS enforcement (open =
+        # fall back to shadow semantics); it can never latch INTO enforce.
+        self._block_times: deque = deque()
 
     async def evaluate(
         self,
@@ -187,6 +224,24 @@ class ResponseGuard:
                     f.reason = "authorized owner-directed transfer: " + f.reason
 
             decision = self._decide(findings, mode)
+            # Circuit breaker (fails open, never INTO enforce): repeated
+            # enforce blocks in a 24h window suspend suppression — the guard
+            # keeps evaluating and auditing, but allows, until the window
+            # slides. A breaker fault leaves the decision unchanged.
+            if decision != GuardDecision.ALLOW.value:
+                try:
+                    if self._breaker_open():
+                        logger.warning(
+                            "ResponseGuard breaker OPEN (%d blocks/24h >= %d)"
+                            " — enforce suspended, allowing (would be %s)",
+                            len(self._block_times), breaker_trip_blocks(),
+                            decision)
+                        decision = GuardDecision.ALLOW.value
+                    else:
+                        self._block_times.append(time.time())
+                except Exception:
+                    logger.debug("guard breaker check failed (decision "
+                                 "unchanged)", exc_info=True)
             result = GuardResult(decision=decision, mode=str(getattr(mode, "value", mode)), findings=findings)
             # Audit trail: count EVERY evaluation (the rate denominator), and record a
             # row for any evaluation with findings or a non-allow decision — all checks,
@@ -232,6 +287,39 @@ class ResponseGuard:
     def _decide(findings: List[GuardFinding], mode: GuardMode) -> str:
         if getattr(mode, "value", mode) == GuardMode.SHADOW.value:
             return GuardDecision.ALLOW.value          # shadow never changes the outcome
-        if any(f.severity == "block" for f in findings):
-            return GuardDecision.REVISE.value         # caller regenerates once, then suppresses
+        # Per-check enforce allowlist: only allowlisted checks may suppress;
+        # everything else keeps shadow semantics inside enforce mode.
+        allowed = enforce_allowlist()
+        for f in findings:
+            if f.severity != "block":
+                continue
+            if allowed is None or f.check in allowed:
+                return GuardDecision.REVISE.value     # caller regenerates once, then suppresses
         return GuardDecision.ALLOW.value
+
+    def _breaker_open(self) -> bool:
+        """True when the enforce circuit breaker is tripped (24h window)."""
+        if not breaker_enabled():
+            return False
+        threshold = breaker_trip_blocks()
+        if threshold <= 0:
+            return False
+        cutoff = time.time() - 86400.0
+        while self._block_times and self._block_times[0] < cutoff:
+            self._block_times.popleft()
+        return len(self._block_times) >= threshold
+
+    def breaker_status(self) -> Dict[str, Any]:
+        """Observability surface for the enforce breaker + allowlist."""
+        allowed = enforce_allowlist()
+        cutoff = time.time() - 86400.0
+        while self._block_times and self._block_times[0] < cutoff:
+            self._block_times.popleft()
+        return {
+            "enabled": breaker_enabled(),
+            "trip_blocks": breaker_trip_blocks(),
+            "blocks_24h": len(self._block_times),
+            "tripped": self._breaker_open(),
+            "enforce_checks": (sorted(allowed) if allowed is not None
+                               else "all"),
+        }
