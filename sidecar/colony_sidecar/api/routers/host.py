@@ -2313,6 +2313,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # affect/facts/psyche/interactions. Rewriting context.contact_id here
     # means every downstream consumer in this handler sees the truth.
     _resolved_human_sender = False
+    _resolution_method = "client"   # server did NOT verify the claimed contact
     try:
         from colony_sidecar.identity.participants import (
             SYSTEM_CONTACT_ID, ParticipantResolver, is_machine_turn,
@@ -2332,6 +2333,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                         body.context.contact_id, _res.contact_id, _res.method,
                         ", shadow-created" if _res.created else "")
                 body.context.contact_id = _res.contact_id
+                _resolution_method = _res.method
                 _resolved_human_sender = True
         if not _resolved_human_sender and is_machine_turn(
                 body.context.channel_id or "",
@@ -2343,6 +2345,20 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         logger.debug("participant attribution failed; keeping client contact",
                      exc_info=True)
     _is_system_turn = body.context.contact_id == "system"
+
+    # Conversation presence (L1.1, passive): now that WHO is settled, record
+    # the sighting so the environment-risk classifier has a real census. The
+    # store itself skips the system sentinel; any failure must never affect
+    # turn processing.
+    if _presence_store is not None and not _is_system_turn:
+        try:
+            _presence_store.record(
+                body.context.channel_id or "",
+                body.context.contact_id or "",
+                method=_resolution_method,
+                group_id=(body.sender.group_id if body.sender else "") or "")
+        except Exception:
+            logger.debug("conversation presence record failed", exc_info=True)
 
     # If structured fields are empty but raw messages are present,
     # extract topics/entities/summary from the raw messages.
@@ -4160,6 +4176,16 @@ def set_channel_store(store) -> None:
     """Wire the channel registration store so turn traffic keeps it alive."""
     global _channel_store
     _channel_store = store
+
+
+_presence_store = None
+
+
+def set_presence_store(store) -> None:
+    """Wire the conversation presence registry (L1.1) so attributed turns
+    feed the census the environment-risk classifier reads."""
+    global _presence_store
+    _presence_store = store
 
 
 def _observe_channel(channel_id: str) -> None:

@@ -528,6 +528,17 @@ async def lifespan(app: FastAPI):
         logger.info("Tom2Store + AsymmetryEngine initialized (db=%s, mode=%s)",
                     tom2_db, tom2_mode())
 
+        # Conversation presence registry (L1.1): passive census of WHO was
+        # seen in WHICH conversation, fed from the turns/sync attribution
+        # chokepoint. Read by the environment-risk classifier; recording is
+        # gated by COLONY_CONV_PRESENCE (default on).
+        from colony_sidecar.channels.presence import ConversationPresenceStore
+        from colony_sidecar.api.routers.host import set_presence_store
+        presence_db = state_dir / "colony-presence.db"
+        presence_store = ConversationPresenceStore(db_path=str(presence_db))
+        set_presence_store(presence_store)
+        logger.info("ConversationPresenceStore initialized (db=%s)", presence_db)
+
         from colony_sidecar.gate.context_provenance import (
             ContextProvenanceStore, ProvenanceCrossContextGuard)
         provenance_db = state_dir / "colony-context-provenance.db"
@@ -1973,6 +1984,16 @@ async def lifespan(app: FastAPI):
     set_commitment_store(None)
     set_affect_store(None)
     set_facts_store(None)
+    try:
+        from colony_sidecar.api.routers.host import (
+            set_presence_store as _set_presence_store,
+            _presence_store as _presence_ref,
+        )
+        if _presence_ref is not None:
+            _presence_ref.close()
+        _set_presence_store(None)
+    except Exception:
+        logger.debug("presence store shutdown failed", exc_info=True)
     set_context_provenance_store(None)
     set_response_guard(None)
     set_pattern_store(None)
