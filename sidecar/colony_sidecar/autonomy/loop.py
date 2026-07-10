@@ -1098,21 +1098,43 @@ class AutonomyLoop:
                 _tgt = (preview or {}).get("target", {})
                 _chat = _tgt.get("user_chat") or _tgt.get("home_chat") or ""
                 _plat, _, _cid = _chat.partition(":")
+                _authorized = await self._recipient_is_owner(person_id, payload)
                 _guard = await _response_guard.evaluate(
                     response_text=_msg,
                     target_contact_id=person_id,
                     target_gateway=_plat,
                     session_id=str(iid),
                     turn_id=str(iid),
-                    authorized=await self._recipient_is_owner(person_id, payload),
+                    authorized=_authorized,
                 )
                 if _guard.blocked:
-                    logger.warning(
-                        "Reach-out %s BLOCKED by ResponseGuard (%s): %s",
-                        iid, _guard.decision,
-                        "; ".join(str(getattr(f, "name", f))
-                                  for f in (_guard.findings or [])[:4]))
-                    return False
+                    # Enforce branch: one guarded regeneration attempt through
+                    # the rejection feedback loop. A loop-internal error never
+                    # overrides the guard BLOCK (fail closed on the block
+                    # side); only a revision the guard itself clears may ship.
+                    revised = None
+                    try:
+                        revised = await self._run_rejection_feedback(
+                            _msg, _guard, person_id=person_id, gateway=_plat,
+                            iid=iid, authorized=_authorized)
+                    except Exception:
+                        logger.debug("rejection feedback loop failed "
+                                     "(block stands)", exc_info=True)
+                    if revised:
+                        logger.info(
+                            "Reach-out %s revised by rejection feedback loop "
+                            "after ResponseGuard block", iid)
+                        if payload.get("description"):
+                            payload["description"] = revised
+                        else:
+                            payload["title"] = revised
+                    else:
+                        logger.warning(
+                            "Reach-out %s BLOCKED by ResponseGuard (%s): %s",
+                            iid, _guard.decision,
+                            "; ".join(str(getattr(f, "name", f))
+                                      for f in (_guard.findings or [])[:4]))
+                        return False
         except Exception:
             logger.debug("delivery ResponseGuard check failed (allowing)",
                          exc_info=True)
@@ -1174,6 +1196,58 @@ class AutonomyLoop:
             except Exception:
                 logger.warning("Telemetry touch failed (non-critical)")
         return bool(ok)
+
+    def _get_rejection_store(self) -> Any:
+        """Lazy durable RejectionStore under the state dir (best-effort)."""
+        if not hasattr(self, "_rejection_store"):
+            self._rejection_store = None
+            try:
+                from pathlib import Path
+                from colony_sidecar.gate.rejection import RejectionStore
+                state_dir = Path(os.environ.get(
+                    "COLONY_STATE_DIR", os.path.expanduser("~/.colony")))
+                self._rejection_store = RejectionStore(
+                    str(state_dir / "colony-gate-rejections.db"))
+            except Exception:
+                logger.debug("RejectionStore unavailable", exc_info=True)
+        return self._rejection_store
+
+    async def _run_rejection_feedback(self, text: str, guard_result: Any, *,
+                                      person_id: str, gateway: str,
+                                      iid: Any, authorized: bool) -> Optional[str]:
+        """One rejection-feedback cycle for a proactive message the guard
+        blocked in enforce mode. Returns the guard-cleared revision, or None
+        when no clean revision exists (the block stands). Regeneration uses
+        the registry's LLM router when wired; without one the loop records
+        the rejection and the block stands."""
+        from colony_sidecar.api.routers.host import _response_guard
+        from colony_sidecar.gate.rejection import RejectionFeedbackLoop
+        if _response_guard is None:
+            return None
+
+        regen = None
+        llm = getattr(self._registry, "llm_router", None)
+        if llm is not None and hasattr(llm, "complete"):
+            async def regen(prompt_fragment: str, blocked_text: str):
+                resp = await llm.complete(
+                    [{"role": "system",
+                      "content": ("You revise outbound messages that were "
+                                  "blocked by a safety gate. Reply with ONLY "
+                                  "the revised message text.")},
+                     {"role": "user",
+                      "content": (f"{prompt_fragment}\n\n"
+                                  f"Original message:\n{blocked_text}")}],
+                    context={"task": "guard_revision"})
+                return getattr(resp, "content", None)
+
+        floop = RejectionFeedbackLoop(
+            _response_guard, store=self._get_rejection_store(),
+            regenerate=regen)
+        res = await floop.run(
+            text, initial_result=guard_result,
+            target_contact_id=person_id, target_gateway=gateway,
+            session_id=str(iid), turn_id=str(iid), authorized=authorized)
+        return res.payload if (res.passed and res.payload) else None
 
     async def _phase_observation_sync(self) -> None:
         """Request fresh observations for stale domains (v0.16.0).
