@@ -173,11 +173,19 @@ class ColonyClient:
             logger.debug("ingest_signals failed: %s", exc)
             return False
 
-    def replay_events(self, since: str, limit: int = 500, types: Optional[List[str]] = None) -> List[dict]:
+    def replay_events(
+        self,
+        since: str = "",
+        limit: int = 500,
+        types: Optional[List[str]] = None,
+        after_seq: Optional[int] = None,
+    ) -> List[dict]:
         try:
             params: dict[str, Any] = {"since": since, "limit": limit}
             if types:
                 params["types"] = ",".join(types)
+            if after_seq is not None:
+                params["afterSeq"] = after_seq
             resp = self.get("/v1/host/events/replay", params=params, timeout=10)
             resp.raise_for_status()
             return resp.json().get("events", [])

@@ -1,8 +1,10 @@
 """Tests for the event journal subsystem."""
 
 import json
+import multiprocessing
 import os
 import tempfile
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -10,10 +12,17 @@ import pytest
 
 from colony_sidecar.events.journal import (
     append_event,
+    append_event_record,
+    current_sequence,
     replay_events,
     _atomic_write,
     _format_seq,
 )
+
+
+def _append_from_process(i):
+    """Pickleable worker for the cross-process sequence-allocation test."""
+    return append_event("process.event", {"i": i})
 
 
 @pytest.fixture
@@ -84,6 +93,59 @@ class TestAppendEvent:
         seq = append_event("test.event", {})
         assert seq == -1
 
+    def test_concurrent_appenders_allocate_unique_monotonic_sequences(self, journal_dir):
+        count = 80
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            sequences = list(pool.map(
+                lambda i: append_event("concurrent.event", {"i": i}),
+                range(count),
+            ))
+
+        assert sorted(sequences) == list(range(1, count + 1))
+        assert current_sequence() == count
+        assert len(list(journal_dir.glob("*.json"))) == count
+        assert not list(journal_dir.rglob("*.tmp"))
+
+    @pytest.mark.skipif(os.name != "posix", reason="cross-process flock is POSIX-only")
+    def test_processes_share_sequence_allocator(self, journal_dir):
+        count = 40
+        with ProcessPoolExecutor(
+            max_workers=4,
+            mp_context=multiprocessing.get_context("spawn"),
+        ) as pool:
+            sequences = list(pool.map(_append_from_process, range(count)))
+
+        assert sorted(sequences) == list(range(1, count + 1))
+        assert current_sequence() == count
+
+    def test_steady_state_append_uses_cursor_not_directory_scan(
+        self, journal_dir, monkeypatch
+    ):
+        from colony_sidecar.events import journal
+
+        assert append_event("test.event", {"i": 1}) == 1
+
+        def _unexpected_scan(_directory):
+            raise AssertionError("steady-state append rescanned the journal")
+
+        monkeypatch.setattr(journal, "_event_files", _unexpected_scan)
+        assert append_event("test.event", {"i": 2}) == 2
+
+    def test_append_record_exposes_exact_durable_metadata(self, journal_dir):
+        occurred_at = "2026-07-09T12:00:00+00:00"
+        record = append_event_record(
+            "test.event", {"truth": True}, occurred_at=occurred_at
+        )
+
+        assert record is not None
+        assert record["seq"] == 1
+        assert record["occurredAt"] == occurred_at
+        assert record["recordedAt"]
+        persisted = json.loads(next(journal_dir.glob("*.json")).read_text())
+        assert persisted["seq"] == record["seq"]
+        assert persisted["recordedAt"] == record["recordedAt"]
+        assert persisted["ulid"] == record["ulid"]
+
 
 class TestReplayEvents:
     def test_replay_empty_journal(self, journal_dir):
@@ -137,6 +199,28 @@ class TestReplayEvents:
         assert "data" in event
         assert event["type"] == "test.event"
         assert event["data"]["key"] == "value"
+
+    def test_replay_by_exact_sequence_and_high_water(self, journal_dir):
+        for i in range(6):
+            append_event("test.event", {"i": i})
+
+        result = replay_events(after_seq=2, until_seq=5, limit=10)
+
+        assert [event["seq"] for event in result["events"]] == [3, 4, 5]
+        assert result["firstAvailableSeq"] == 1
+        assert result["journalLastSeq"] == 6
+
+    def test_replay_rejects_valid_json_with_bad_checksum(self, journal_dir):
+        append_event("test.event", {"value": "original"})
+        path = next(journal_dir.glob("*.json"))
+        tampered = json.loads(path.read_text())
+        tampered["data"]["value"] = "tampered"
+        path.write_text(json.dumps(tampered) + "\n")
+
+        result = replay_events(after_seq=0)
+
+        assert result["events"] == []
+        assert result["corruptCount"] == 1
 
 
 class TestAtomicWrite:

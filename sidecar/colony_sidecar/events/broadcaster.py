@@ -48,16 +48,18 @@ def _resolve_broadcaster():
             from colony_sidecar.api.routers.host import broadcast_event
             _broadcast_fn = broadcast_event
         except ImportError:
-            _broadcast_fn = lambda _e: None  # noqa: E731
+            # Do not cache startup/circular-import failure forever. A later
+            # emission can resolve the fully initialized host publisher.
+            return lambda _e: None
     return _broadcast_fn
 
 
 def emit(event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
-    """Broadcast a typed event to all WebSocket subscribers.
+    """Send a typed event through the durable host event publisher.
 
-    Also appends the event to the persistent journal so disconnected
-    clients can replay missed events via
-    ``GET /v1/host/events/replay?since=...``.
+    The production host publisher journals and assigns a sequence before it
+    broadcasts.  Test doubles may return ``None``; in-process consumers still
+    receive the source event in that case.
 
     Args:
         event_type: One of the canonical ``HostEventType`` values —
@@ -75,22 +77,16 @@ def emit(event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "payload": payload or {},
         }
-        broadcaster(event)
+        published = broadcaster(event)
+        consumer_event = published if isinstance(published, dict) else event
 
         # In-process consumers (best-effort, each isolated)
         for fn in _subscribers.get(event_type, ()):
             try:
-                fn(event)
+                fn(consumer_event)
             except Exception:
                 logger.debug("in-process consumer failed for %s",
                              event_type, exc_info=True)
-
-        # Journal the event for replay (best-effort, non-blocking)
-        try:
-            from colony_sidecar.events.journal import append_event
-            append_event(event_type, payload or {})
-        except Exception:
-            logger.debug("journal append failed for %s", event_type, exc_info=True)
 
     except Exception:
         logger.debug("broadcast_event(%s) failed", event_type, exc_info=True)
