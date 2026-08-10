@@ -54,17 +54,45 @@ class CommsLog:
             CREATE INDEX IF NOT EXISTS idx_comms_contact ON communications(contact_id, ts);
             """
         )
+        existing = {str(row[1]) for row in self._conn.execute(
+            "PRAGMA table_info(communications)").fetchall()}
+        for name, sql_type in {
+            "external_ref": "TEXT",
+            "reply_to_ref": "TEXT",
+            "reaction": "TEXT",
+            "receipt_ref": "TEXT",
+        }.items():
+            if name not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE communications ADD COLUMN {name} {sql_type}")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_comms_reply_ref "
+            "ON communications(contact_id,reply_to_ref,ts)")
         self._conn.commit()
 
     def log(self, contact_id: str, *, channel: str = "unknown", direction: str = "in",
-            summary: str = "", session_id: str = "") -> None:
+            summary: str = "", session_id: str = "",
+            external_ref: str = "", reply_to_ref: str = "",
+            reaction: str = "", receipt_ref: str = "",
+            ts: Optional[str] = None) -> None:
         if not contact_id or direction not in ("in", "out"):
             return
+        normalized_reaction = (reaction or "").strip().lower()
+        if normalized_reaction not in {
+                "", "accepted", "acknowledged", "actioned", "negative",
+                "dismissed", "corrected", "rejected", "neutral"}:
+            normalized_reaction = "neutral"
         self._conn.execute(
-            "INSERT INTO communications (id, contact_id, channel, direction, summary, session_id, ts)"
-            " VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO communications "
+            "(id,contact_id,channel,direction,summary,session_id,ts,"
+            "external_ref,reply_to_ref,reaction,receipt_ref) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (uuid.uuid4().hex, contact_id, channel or "unknown", direction,
-             (summary or "")[:500], session_id or "", _now().isoformat()),
+             (summary or "")[:500], session_id or "", ts or _now().isoformat(),
+             (external_ref or "")[:512] or None,
+             (reply_to_ref or "")[:512] or None,
+             normalized_reaction or None,
+             (receipt_ref or "")[:512] or None),
         )
         self._conn.commit()
 
@@ -95,6 +123,50 @@ class CommsLog:
             " direction='in' AND ts >= ? ORDER BY ts ASC LIMIT 5000",
             (contact_id, since_iso)).fetchall()
         return [r["ts"] for r in rows]
+
+    def reactions_for_refs(
+        self,
+        contact_id: str,
+        refs: List[str],
+        *,
+        since_iso: str,
+        until_iso: str,
+    ) -> List[Dict[str, Any]]:
+        """Explicit inbound reactions tied to exact outbound references."""
+
+        bounded = sorted({str(ref) for ref in refs if str(ref).strip()})[:5000]
+        if not bounded:
+            return []
+        placeholders = ",".join("?" for _ in bounded)
+        rows = self._conn.execute(
+            "SELECT id,channel,summary,ts,external_ref,reply_to_ref,reaction,"
+            "receipt_ref FROM communications WHERE contact_id=? "
+            "AND direction='in' AND ts>=? AND ts<? AND reply_to_ref IN ("
+            f"{placeholders}) AND reaction IS NOT NULL ORDER BY ts",
+            [contact_id, since_iso, until_iso, *bounded],
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def outbound_between(
+        self,
+        contact_id: str,
+        since_iso: str,
+        until_iso: str,
+        *,
+        require_receipt: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """One auditable outbound cohort for benchmark denominators."""
+
+        query = (
+            "SELECT id,channel,summary,ts,external_ref,receipt_ref "
+            "FROM communications WHERE contact_id=? AND direction='out' "
+            "AND ts>=? AND ts<?")
+        if require_receipt:
+            query += " AND receipt_ref IS NOT NULL AND receipt_ref!=''"
+        query += " ORDER BY ts"
+        rows = self._conn.execute(
+            query, (contact_id, since_iso, until_iso)).fetchall()
+        return [dict(row) for row in rows]
 
     def counts(self, contact_id: str) -> Dict[str, Any]:
         r = self._conn.execute(

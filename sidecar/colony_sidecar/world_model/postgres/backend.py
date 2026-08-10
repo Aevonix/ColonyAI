@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ..constants import (
+    CAUSAL_RELATIONSHIP_TYPES,
     ENTITY_ID_PREFIX,
     RELATIONSHIP_ID_PREFIX,
     OBSERVATION_ID_PREFIX,
@@ -23,6 +24,10 @@ from ..constants import (
 )
 from ..entities import BaseEntity, ENTITY_CLASS_MAP
 from ..relationships import WorldRelationship
+
+# Query-only causal guard (H2.5): untyped (generic) reads NEVER return
+# causal edges; only /world/causal/* and explicitly typed queries do.
+_CAUSAL_EXCLUSION = tuple(sorted(CAUSAL_RELATIONSHIP_TYPES))
 
 logger = logging.getLogger(__name__)
 
@@ -438,6 +443,13 @@ class PostgresBackend:
             conditions.append(f"r.relationship_type = ${idx}")
             params.append(relationship_type)
             idx += 1
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            placeholders = ", ".join(
+                f"${idx + i}" for i in range(len(_CAUSAL_EXCLUSION)))
+            conditions.append(f"r.relationship_type NOT IN ({placeholders})")
+            params.extend(_CAUSAL_EXCLUSION)
+            idx += len(_CAUSAL_EXCLUSION)
         if active_only:
             conditions.append("r.valid_to IS NULL")
 
@@ -466,6 +478,12 @@ class PostgresBackend:
             placeholders = ", ".join(f"${5 + i}" for i in range(len(relationship_types)))
             sql += f" AND relationship_type IN ({placeholders})"
             params.extend(relationship_types)
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            placeholders = ", ".join(
+                f"${5 + i}" for i in range(len(_CAUSAL_EXCLUSION)))
+            sql += f" AND relationship_type NOT IN ({placeholders})"
+            params.extend(_CAUSAL_EXCLUSION)
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
         return [_record_to_relationship(r) for r in rows]
@@ -496,6 +514,12 @@ class PostgresBackend:
             placeholders = ", ".join(f"${5 + i}" for i in range(len(relationship_types)))
             sql += f" AND r.relationship_type IN ({placeholders})"
             params.extend(relationship_types)
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            placeholders = ", ".join(
+                f"${5 + i}" for i in range(len(_CAUSAL_EXCLUSION)))
+            sql += f" AND r.relationship_type NOT IN ({placeholders})"
+            params.extend(_CAUSAL_EXCLUSION)
 
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)

@@ -275,7 +275,7 @@ class WhatsAppBriefingGateway(BriefingGateway):
 
     def send(self, briefing: Briefing, formatted: str) -> DeliveryResult:
         try:
-            success = self._push(formatted)
+            success = self._push(formatted, briefing.briefing_id)
             if success:
                 return DeliveryResult(
                     success=True,
@@ -297,13 +297,15 @@ class WhatsAppBriefingGateway(BriefingGateway):
                 error=str(exc),
             )
 
-    def _push(self, message: str) -> bool:
+    def _push(self, message: str, briefing_id: str) -> bool:
         """Synchronous wrapper around the async push_to_gateway call."""
         coro = self._bridge.push_to_gateway(
             platform="whatsapp",
             chat_id=self._chat_id,
             message=message,
             source="briefing",
+            delivery_id="briefing:" + briefing_id,
+            source_id="briefing:" + briefing_id,
         )
         try:
             asyncio.get_running_loop()

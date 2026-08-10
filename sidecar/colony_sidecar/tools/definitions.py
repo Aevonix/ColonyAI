@@ -695,6 +695,11 @@ NATIVE_TOOLS: list[dict[str, Any]] = [
 # All tools combined
 COLONY_TOOLS: list[dict[str, Any]] = COLONY_CORE_TOOLS + COLONY_EXTENDED_TOOLS + NATIVE_TOOLS
 
+# Names in the shipped model surface are permanently reserved. Toolsmith
+# capabilities are additive and must never impersonate a first-party tool,
+# including one that is not registered in a particular process.
+STATIC_TOOL_NAMES = frozenset(str(tool["name"]) for tool in COLONY_TOOLS)
+
 
 def _wrap_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
     """Wrap a raw tool definition in OpenAI function-calling format.

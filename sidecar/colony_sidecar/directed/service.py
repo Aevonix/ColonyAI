@@ -6,8 +6,8 @@ Pipeline (option A: delegation only, Colony never mutates anything itself):
   gate 1  -> DirectiveGuard boundary check FIRST (a standing "leave X alone"
              refuses intake with the citation)
   gate 2  -> approval tiering: read-only scopes auto-approve; any mutating
-             scope requires owner approval (standing approvals honoured via
-             the existing standing_approvals machinery)
+             scope requires owner approval (legacy repeat approvals are
+             expiring and use-capped during migration)
   dispatch-> POST the ScopedTask contract to the EXISTING env-configured
              delegate endpoint (COLONY_DIRECTED_TASK_URL, falling back to the
              agent-bridge jobs webhook). Dry-run mode logs the exact would-be
@@ -22,8 +22,12 @@ Pipeline (option A: delegation only, Colony never mutates anything itself):
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
+import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 from colony_sidecar.directed.models import ScopedTask, ScopedTaskStore
@@ -45,6 +49,40 @@ def _dispatch_url() -> str:
             or os.environ.get("COLONY_JOBS_WEBHOOK_URL", ""))
 
 
+def _strict_reports() -> bool:
+    """Strict report-back (default): a completion report is accepted only for
+    a task that was actually dispatched. COLONY_DIRECTED_STRICT_REPORTS=0
+    restores the legacy accept-in-any-status behavior."""
+    return os.environ.get("COLONY_DIRECTED_STRICT_REPORTS", "1").strip() != "0"
+
+
+def _max_dispatch_per_day() -> int:
+    """Daily dispatch cap (rolling 24h). <=0 disables the cap (legacy)."""
+    try:
+        return int(os.environ.get("COLONY_DIRECTED_MAX_DISPATCH_PER_DAY", "10"))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _hmac_key() -> bytes:
+    """Optional shared secret for the dispatch envelope. Empty = unsigned."""
+    return os.environ.get("COLONY_DIRECTED_HMAC_KEY", "").encode("utf-8")
+
+
+def _sign(key: bytes, message: str) -> str:
+    return hmac.new(key, message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def report_token_for(task_id: str) -> str:
+    """Deterministic report-back token for a task (only when a key is set).
+
+    The delegate receives it inside the dispatch envelope and must echo it as
+    ``report_token`` in the completion report; ``complete`` recomputes and
+    compares. Empty string when no key is configured (check disabled)."""
+    key = _hmac_key()
+    return _sign(key, f"report:{task_id}") if key else ""
+
+
 class DirectedActionService:
     def __init__(
         self,
@@ -61,6 +99,8 @@ class DirectedActionService:
         self._feedback = feedback_store
         self._deliver = delivery_router
         self._self_model = self_model
+        # Observability: boundary checks that raised (see intake gate 1).
+        self.boundary_check_errors = 0
 
     # -- trust helpers (Amendment 1.7) -----------------------------------
     @staticmethod
@@ -120,11 +160,26 @@ class DirectedActionService:
                     logger.warning("Directed intake REFUSED by boundary: %s", verdict.reason)
                     return task
             except Exception:
+                # An owner boundary we cannot evaluate must not be assumed
+                # permissive: fail CLOSED by default and refuse the intake
+                # (the owner can simply re-issue the directive).
+                self.boundary_check_errors += 1
+                from colony_sidecar.directives.guard import boundary_fail_closed
+                if boundary_fail_closed():
+                    task.status = "refused"
+                    task.refusal_reason = "boundary_check_error"
+                    self.store.save(task)
+                    logger.warning(
+                        "Directed intake REFUSED: boundary_check_error "
+                        "(boundary check raised; failing closed)",
+                        exc_info=True,
+                    )
+                    return task
                 logger.debug("directed boundary check failed (allowing)", exc_info=True)
 
         # Gate 2: approval tiering, now trust-graduated (Amendment 1.7).
-        # Read-only scopes act with journaling. Mutating scopes honor a
-        # standing owner approval; otherwise the trust engine decides: an
+        # Read-only scopes act with journaling. Mutating scopes may consume a
+        # bounded compatibility approval; otherwise the trust engine decides: an
         # earned act_first class self-approves (journaled + reported), an
         # ask_first class asks the owner WITH the reasoning and confidence.
         # The immutable floor always asks.
@@ -143,7 +198,7 @@ class DirectedActionService:
                 task.approval = {"required": True, "granted_by": "standing",
                                  "standing": True, "key": task.approval_key}
                 task.status = "approved"
-                self._journal(task, "acted", "standing owner approval")
+                self._journal(task, "acted", "bounded repeat approval")
             else:
                 gate = None
                 trust = getattr(self._self_model, "trust", None)
@@ -202,8 +257,14 @@ class DirectedActionService:
         except Exception:
             logger.debug("approval request delivery failed", exc_info=True)
 
-    def approve(self, task_id: str, approved_by: str = "owner",
-                standing: bool = False) -> Optional[ScopedTask]:
+    def approve(
+        self,
+        task_id: str,
+        approved_by: str = "trusted-internal",
+        standing: bool = False,
+        grant_expires_in_seconds: int = 7 * 24 * 60 * 60,
+        grant_max_uses: int = 5,
+    ) -> Optional[ScopedTask]:
         task = self.store.get(task_id)
         if task is None or task.status != "awaiting_approval":
             return task
@@ -212,7 +273,12 @@ class DirectedActionService:
         if standing:
             try:
                 from colony_sidecar.initiatives import standing_approvals
-                standing_approvals.grant(task.approval_key, approved_by=approved_by)
+                standing_approvals.grant(
+                    task.approval_key,
+                    approved_by=approved_by,
+                    expires_in_seconds=grant_expires_in_seconds,
+                    max_uses=grant_max_uses,
+                )
             except Exception:
                 pass
         self.store.save(task)
@@ -230,7 +296,40 @@ class DirectedActionService:
             task.status = "expired"; self.store.save(task)
             return {"dispatched": False, "reason": "expired"}
 
+        # Daily dispatch cap (rolling 24h, dry + live both count): bounds the
+        # blast radius of a runaway approval/dispatch loop. The task stays
+        # approved so the owner loses nothing but time.
+        cap = _max_dispatch_per_day()
+        if cap > 0:
+            recent = 0
+            try:
+                recent = self.store.dispatches_since(time.time() - 86400.0)
+            except Exception:
+                logger.debug("dispatch cap count failed (allowing)", exc_info=True)
+            if recent >= cap:
+                logger.warning(
+                    "Directed dispatch %s REFUSED: daily cap reached (%d/%d "
+                    "in 24h; COLONY_DIRECTED_MAX_DISPATCH_PER_DAY)",
+                    task.id, recent, cap)
+                self._journal(task, "held",
+                              f"daily dispatch cap reached ({recent}/{cap})")
+                return {"dispatched": False, "reason": "daily_dispatch_cap",
+                        "cap": cap, "count": recent}
+
         mode = directed_mode()
+        # Dispatch envelope: verifiable provenance for the contract. Signed
+        # only when COLONY_DIRECTED_HMAC_KEY is set (unset = legacy unsigned).
+        envelope: Dict[str, Any] = {
+            "task_id": task.id,
+            "issued_at": time.time(),
+            "nonce": uuid.uuid4().hex,
+        }
+        key = _hmac_key()
+        if key:
+            envelope["algo"] = "hmac-sha256"
+            envelope["signature"] = _sign(
+                key, f"{task.id}.{envelope['issued_at']}.{envelope['nonce']}")
+            envelope["report_token"] = report_token_for(task.id)
         payload = {
             "type": "directed_task",
             "task": task.to_dict(),
@@ -245,6 +344,7 @@ class DirectedActionService:
                 ),
             },
             "report_url": f"/v1/host/directed/tasks/{task.id}/report",
+            "envelope": envelope,
         }
         if mode != "live":
             logger.info(
@@ -256,6 +356,10 @@ class DirectedActionService:
             )
             task.status = "dispatched_dry"
             self.store.save(task)
+            try:
+                self.store.log_dispatch(task.id, mode)
+            except Exception:
+                logger.debug("dispatch log failed", exc_info=True)
             return {"dispatched": False, "dry_run": True, "payload": payload}
 
         url = _dispatch_url()
@@ -264,9 +368,11 @@ class DirectedActionService:
         try:
             import aiohttp
             headers = {"Content-Type": "application/json"}
-            key = os.environ.get("COLONY_API_KEY", "")
+            api_key = os.environ.get("COLONY_API_KEY", "")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             if key:
-                headers["Authorization"] = f"Bearer {key}"
+                headers["X-Colony-Directed-Signature"] = envelope["signature"]
             async with aiohttp.ClientSession() as s:
                 async with s.post(url, json=payload, headers=headers,
                                   timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -276,14 +382,52 @@ class DirectedActionService:
             ok = False
         task.status = "dispatched" if ok else "failed"
         self.store.save(task)
+        if ok:
+            try:
+                self.store.log_dispatch(task.id, mode)
+            except Exception:
+                logger.debug("dispatch log failed", exc_info=True)
         return {"dispatched": ok, "url": url}
 
     # -- report-back + audit ----------------------------------------------
+    def _reject_report(self, task: ScopedTask, reason: str) -> Dict[str, Any]:
+        """Reject a report-back loudly: journaled WARNING, nothing recorded."""
+        logger.warning(
+            "Directed report for %s REJECTED (%s): task status=%s "
+            "(strict reports; COLONY_DIRECTED_STRICT_REPORTS=0 for legacy)",
+            task.id, reason, task.status)
+        self._journal(task, "blocked",
+                      f"report-back rejected: {reason} (status={task.status})")
+        return {"ok": False, "reason": reason, "status": task.status}
+
     async def complete(self, task_id: str, report: Dict[str, Any]) -> Dict[str, Any]:
-        """Delegate report-back: audit vs scope, record outcome, notify owner."""
+        """Delegate report-back: audit vs scope, record outcome, notify owner.
+
+        Strict mode (default) closes a real hole — a report used to be
+        accepted for a task in ANY status, letting a stray or duplicate POST
+        fabricate audited outcomes (and trust evidence) for work that was
+        never dispatched. Now only ``dispatched`` tasks take a report; a
+        ``dispatched_dry`` task takes a dry echo that records no trust
+        outcome; anything else is rejected with a journaled WARNING.
+        """
         task = self.store.get(task_id)
         if task is None:
             return {"ok": False, "reason": "not_found"}
+
+        report = report or {}
+        dry_echo = False
+        if _strict_reports():
+            # Envelope report token (only enforced when a key is configured).
+            expected = report_token_for(task.id)
+            if expected and not hmac.compare_digest(
+                    str(report.get("report_token", "")), expected):
+                return self._reject_report(task, "bad_report_token")
+            if task.status in ("completed", "violated"):
+                return self._reject_report(task, "double_report")
+            if task.status == "dispatched_dry":
+                dry_echo = True
+            elif task.status != "dispatched":
+                return self._reject_report(task, "status_mismatch")
 
         mirror_path = None
         if self._mirrors is not None and task.targets:
@@ -292,7 +436,7 @@ class DirectedActionService:
             except Exception:
                 mirror_path = None
 
-        audit = audit_completion(task, report or {}, mirror_path=mirror_path)
+        audit = audit_completion(task, report, mirror_path=mirror_path)
         task.audit = audit
         verdict = audit["verdict"]
         task.status = "violated" if verdict == "violation" else "completed"
@@ -311,8 +455,10 @@ class DirectedActionService:
         # Trust engine: audited outcomes are the earned-autonomy evidence
         # (Amendment 1.7); a violation trips the circuit breaker. An
         # unverified MUTATING completion is recorded as nothing: it must
-        # neither graduate a scope class nor trip its breaker.
-        if self._self_model is not None:
+        # neither graduate a scope class nor trip its breaker. A dry echo
+        # (report against a dry-run dispatch) records NO trust outcome —
+        # nothing real happened, so nothing may graduate or demote.
+        if self._self_model is not None and not dry_echo:
             try:
                 if verdict == "violation":
                     self._self_model.record(self._trust_domain(task),
@@ -327,8 +473,11 @@ class DirectedActionService:
 
         # Owner-facing report through the guarded reach-out path (still held
         # by delivery shadow until go-live).
-        await self._notify_owner(task, report or {}, audit)
-        return {"ok": True, "verdict": verdict, "audit": audit}
+        await self._notify_owner(task, report, audit)
+        out = {"ok": True, "verdict": verdict, "audit": audit}
+        if dry_echo:
+            out["dry_echo"] = True
+        return out
 
     async def _notify_owner(self, task: ScopedTask, report: Dict[str, Any],
                             audit: Dict[str, Any]) -> None:

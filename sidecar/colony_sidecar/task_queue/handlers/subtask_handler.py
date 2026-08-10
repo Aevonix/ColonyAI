@@ -84,6 +84,8 @@ class SubtaskHandler(JobHandler):
             )
             return {
                 "success": False,
+                "status": "failed",
+                "action_plane": {"state": "failed"},
                 "error": "ANTHROPIC_API_KEY not configured",
                 "goal_id": goal_id,
                 "subtask_id": subtask_id,
@@ -95,6 +97,8 @@ class SubtaskHandler(JobHandler):
             logger.error("SubtaskHandler: anthropic package not installed")
             return {
                 "success": False,
+                "status": "failed",
+                "action_plane": {"state": "failed"},
                 "error": "anthropic package not available",
                 "goal_id": goal_id,
                 "subtask_id": subtask_id,
@@ -134,6 +138,9 @@ class SubtaskHandler(JobHandler):
             output_text = message.content[0].text if message.content else ""
             return {
                 "success": True,
+                "status": "completed",
+                "summary": output_text,
+                "action_plane": {"state": "completed"},
                 "output": output_text,
                 "goal_id": goal_id,
                 "subtask_id": subtask_id,
@@ -148,6 +155,8 @@ class SubtaskHandler(JobHandler):
             )
             return {
                 "success": False,
+                "status": "failed",
+                "action_plane": {"state": "failed"},
                 "error": str(exc),
                 "goal_id": goal_id,
                 "subtask_id": subtask_id,

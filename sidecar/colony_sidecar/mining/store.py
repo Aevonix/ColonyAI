@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from typing import Any, List, Optional
 
 from colony_sidecar.mining.models import EscalationRecord, MinedTurn
@@ -121,6 +122,35 @@ class MiningStore:
         with self._lock:
             r = self._conn.execute("SELECT COUNT(*) AS n FROM mined_turns").fetchone()
         return int(r["n"])
+
+    def prune_turns(self, *, retention_days: int = 0,
+                    max_turns: int = 0) -> dict:
+        """Prune banked turns by age and/or count (newest kept).
+
+        Both knobs default to 0 = keep everything: the verbatim corpus is
+        unbounded by design unless a deployment opts into retention via
+        COLONY_MINING_RETENTION_DAYS / COLONY_MINING_MAX_TURNS. Escalation
+        records are never pruned here — they are the distilled, high-value
+        output the turn bank exists to produce.
+        """
+        deleted_by_age = deleted_by_count = 0
+        with self._lock:
+            if retention_days > 0:
+                cutoff = time.time() - retention_days * 86400
+                cur = self._conn.execute(
+                    "DELETE FROM mined_turns WHERE ts < ?", (cutoff,))
+                deleted_by_age = cur.rowcount
+            if max_turns > 0:
+                cur = self._conn.execute(
+                    "DELETE FROM mined_turns WHERE id NOT IN ("
+                    "SELECT id FROM mined_turns ORDER BY ts DESC LIMIT ?)",
+                    (max_turns,))
+                deleted_by_count = cur.rowcount
+            if deleted_by_age or deleted_by_count:
+                self._conn.commit()
+        return {"deleted_by_age": deleted_by_age,
+                "deleted_by_count": deleted_by_count,
+                "remaining": self.turn_count()}
 
     # -- escalations -----------------------------------------------------------
 

@@ -33,6 +33,10 @@ from colony_sidecar.task_queue.models import (
 from colony_sidecar.task_queue.queue_manager import QueueManager
 from colony_sidecar.task_queue.scheduler import Scheduler
 from colony_sidecar.task_queue.worker import JobHandler, WorkerNode, detect_local_capabilities
+from colony_sidecar.task_queue.work_control import (
+    WorkControlError,
+    WorkControlService,
+)
 
 __all__ = [
     # Models
@@ -51,6 +55,8 @@ __all__ = [
     "deadline_urgency",
     # Core components
     "QueueManager",
+    "WorkControlService",
+    "WorkControlError",
     "WorkerNode",
     "JobHandler",
     "Scheduler",

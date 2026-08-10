@@ -194,9 +194,19 @@ class ResearchPipeline:
     entire run.
     """
 
-    def __init__(self, config: Optional[PipelineConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[PipelineConfig] = None,
+        *,
+        graph: Any = None,
+        allow_fallback_graph: bool = True,
+    ) -> None:
         self.config = config or PipelineConfig()
-        self._gatherer = SourceGatherer(self.config.gather)
+        self._gatherer = SourceGatherer(
+            self.config.gather,
+            graph=graph,
+            allow_fallback_graph=allow_fallback_graph,
+        )
         self._synthesizer = ResearchSynthesizer(self.config.synthesis)
         self._renderer = ArtifactRenderer()
 

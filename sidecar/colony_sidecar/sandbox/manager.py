@@ -5,8 +5,8 @@ Wraps a backend with the safety envelope:
     live (execute in the backend).
   - boundary gate: the purpose + script are checked against DirectiveGuard
     (ACT capability, fail-closed); a boundaried subject blocks the run.
-  - approval tiering: an owner-directed experiment within default limits runs
-    AUTO; anything else is FLAGGED for owner approval and does not execute.
+  - approval tiering: an owner-directed experiment or a contained read-only
+    evaluation runs AUTO; other mutations are FLAGGED for owner approval.
   - server-side limits: the caller cannot widen containment -- limits are
     resolved here from env and handed to the backend, which applies them.
   - never mounts secrets: the backend passes no env/credentials into the
@@ -73,15 +73,18 @@ class SandboxManager:
 
     # -- approval tiering -------------------------------------------------
     @staticmethod
-    def approval_tier(owner_directed: bool) -> str:
-        """AUTO for an owner-directed experiment within default limits;
-        FLAGGED (owner approval) otherwise."""
-        return "auto" if owner_directed else "flagged"
+    def approval_tier(owner_directed: bool, read_only: bool = False) -> str:
+        """Keep contained read-only work fast without inventing authority."""
+
+        return "auto" if owner_directed or read_only else "flagged"
 
     # -- boundary gate ----------------------------------------------------
     def _boundary_ok(self, purpose: str, script: str) -> Dict[str, Any]:
         if self._directives is None:
-            return {"allowed": True, "reason": "ok"}
+            # No directive manager: nothing was evaluated. Never report the
+            # fabricated "ok" of a real allow — callers/journals must be able
+            # to tell "unchecked" from "checked and allowed".
+            return {"allowed": True, "reason": "boundary_unchecked"}
         try:
             from colony_sidecar.directives import Action
             verdict = self._directives.check(Action(
@@ -92,16 +95,17 @@ class SandboxManager:
                 high_risk=True))
             return {"allowed": bool(verdict.allowed), "reason": verdict.reason}
         except Exception:
-            logger.debug("sandbox boundary check failed (allowing)", exc_info=True)
-            return {"allowed": True, "reason": "ok"}
+            logger.warning("sandbox boundary check failed closed", exc_info=True)
+            return {"allowed": False, "reason": "boundary_check_error"}
 
     # -- the run entry point ----------------------------------------------
     def run(self, script: str, lang: str = "python", *, purpose: str = "",
             owner_directed: bool = False,
-            approved: bool = False) -> Dict[str, Any]:
+            approved: bool = False,
+            read_only: bool = False) -> Dict[str, Any]:
         mode = sandbox_mode()
         limits = resolve_limits()
-        tier = self.approval_tier(owner_directed)
+        tier = self.approval_tier(owner_directed, read_only)
 
         if mode == "off":
             self._journal("sandbox", purpose, decision="held",
@@ -127,6 +131,7 @@ class SandboxManager:
             self._journal("sandbox", purpose, decision="held",
                           reasoning="dry_run: validated, executed nothing")
             return {"ran": False, "dry_run": True, "tier": tier,
+                    "read_only": bool(read_only),
                     "command": command, "limits": limits.__dict__, "mode": mode}
 
         # live
@@ -147,7 +152,8 @@ class SandboxManager:
                 logger.debug("sandbox self-model record failed", exc_info=True)
         self._journal("sandbox", purpose, decision="acted", outcome=outcome,
                       reasoning=f"tier={tier}, exit={result.exit_code}")
-        return {"ran": True, "tier": tier, "mode": mode, "outcome": outcome,
+        return {"ran": True, "tier": tier, "read_only": bool(read_only),
+                "mode": mode, "outcome": outcome,
                 "result": result.as_dict()}
 
     def status(self) -> Dict[str, Any]:

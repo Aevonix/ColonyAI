@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -159,11 +160,67 @@ class TestAffectDetection:
         assert store.detect_negative_spike("nobody") is False
 
     def test_sustained_decline(self, store):
-        store.create_event(contact_id="owner", valence=0.8, source="explicit")
-        store.create_event(contact_id="owner", valence=0.3, source="explicit")
-        store.create_event(contact_id="owner", valence=-0.2, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.1, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.5, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.9, source="explicit")
         assert store.detect_sustained_decline("owner") is True
 
     def test_no_sustained_decline(self, store):
         store.create_event(contact_id="owner", valence=0.5, source="explicit")
         assert store.detect_sustained_decline("owner") is False
+
+    def test_near_neutral_decline_is_below_magnitude_floor(self, store):
+        store.create_event(contact_id="owner", valence=0.06, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.04, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.08, source="explicit")
+
+        state = store.get_state("owner")
+        assert state["trend"] == "declining"
+        assert -0.02 < state["current_valence"] < 0
+        assert store.detect_sustained_decline("owner") is False
+
+    def test_time_decay_below_magnitude_floor_clears_detection(self, store):
+        store.create_event(contact_id="owner", valence=-0.1, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.5, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.9, source="explicit")
+        assert store.detect_sustained_decline("owner") is True
+
+        stale = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+        store._conn.execute(
+            "UPDATE affect_state SET last_updated = ? WHERE contact_id = ?",
+            (stale, "owner"),
+        )
+        store._conn.commit()
+
+        assert store.detect_sustained_decline("owner") is False
+        assert store.get_state("owner")["current_valence"] > -0.3
+
+    def test_decay_only_events_do_not_form_declining_trend(self, store):
+        store.create_event(contact_id="owner", valence=-0.1, source="decay")
+        store.create_event(contact_id="owner", valence=-0.5, source="decay")
+        store.create_event(contact_id="owner", valence=-0.9, source="decay")
+
+        state = store.get_state("owner")
+        assert state["current_valence"] <= -0.3
+        assert state["trend"] == "stable"
+        assert store.detect_sustained_decline("owner") is False
+
+    @pytest.mark.asyncio
+    async def test_condition_worker_does_not_emit_neutral_decline(
+        self, store, monkeypatch,
+    ):
+        from colony_sidecar.api.routers import host
+        from colony_sidecar.autonomy.condition_worker import _check_affect_decline
+        from colony_sidecar.events import broadcaster
+
+        store.create_event(contact_id="owner", valence=0.06, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.04, source="explicit")
+        store.create_event(contact_id="owner", valence=-0.08, source="explicit")
+        emitted = []
+        monkeypatch.setattr(host, "_affect_store", store)
+        monkeypatch.setattr(broadcaster, "emit", lambda *args: emitted.append(args))
+
+        result = await _check_affect_decline({})
+
+        assert result == {"condition_met": False, "declining_contacts": 0}
+        assert emitted == []

@@ -17,6 +17,12 @@ import logging
 import os
 import uuid
 import json
+import hashlib
+import sqlite3
+import stat
+import threading
+import time
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,11 +30,245 @@ from typing import Any, Dict, List, Optional
 
 from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
 from colony_sidecar.delivery.channels import ChannelRegistry
+from colony_sidecar.workers.queue_worker import encode_hermes_webhook
 
 logger = logging.getLogger(__name__)
 
 # Default internal port for the gateway's /internal/deliver endpoint.
 _DEFAULT_GATEWAY_INTERNAL_PORT = 7779
+_GATEWAY_CONTRACTS = frozenset(("legacy_delivery", "governed_admission_v1"))
+_GOVERNED_GATEWAY_PLATFORMS = frozenset(("whatsapp",))
+
+
+def _strict_gateway_json(raw: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 64 * 1024:
+        return None
+
+    def pairs(values):
+        result: Dict[str, Any] = {}
+        for key, value in values:
+            if key in result:
+                raise ValueError("duplicate gateway response field")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            raw,
+            object_pairs_hook=pairs,
+            parse_constant=lambda _value: (_ for _ in ()).throw(
+                ValueError("non-finite gateway response number")
+            ),
+        )
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+@dataclass(frozen=True)
+class GatewayPushResult:
+    """Truthful result of handing one message to a gateway boundary.
+
+    ``accepted`` means only that the immediate boundary accepted the request.
+    ``provider_delivered`` is a separate fact so a governed approval queue can
+    never be reported as a completed send.
+    """
+
+    accepted: bool
+    provider_delivered: bool
+    contract: str
+    admission_state: str = ""
+    delivery_id: str = ""
+    terminal: bool = False
+    observation_new: bool = True
+
+    def __bool__(self) -> bool:
+        return self.accepted
+
+
+class _GatewayOutcomeStore:
+    """PII-free durable lifecycle cache for one governed gateway boundary."""
+
+    _STATES = frozenset(
+        ("queued", "awaiting_approval", "accepted", "delivered", "failed", "ambiguous")
+    )
+
+    def __init__(self, path: Path, *, clock, poll_seconds: float) -> None:
+        raw_path = Path(path).expanduser()
+        self.path = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
+        self.clock = clock
+        self.poll_seconds = float(poll_seconds)
+        self._lock = threading.RLock()
+        # resolve() would hide a symlink before the safety check.  Inspect the
+        # existing ancestry before and after creating a missing private state
+        # directory, and let SQLite see the same unresolved absolute path.
+        for component in (self.path, *self.path.parents):
+            if component.is_symlink():
+                raise ValueError("gateway outcome path is unsafe")
+        parent_existed = self.path.parent.exists()
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not parent_existed:
+            os.chmod(self.path.parent, 0o700)
+        for component in (self.path, *self.path.parents):
+            if component.is_symlink():
+                raise ValueError("gateway outcome path is unsafe")
+        self._conn = sqlite3.connect(
+            str(self.path), timeout=30.0, isolation_level=None, check_same_thread=False
+        )
+        os.chmod(self.path, 0o600)
+        if stat.S_IMODE(self.path.stat().st_mode) != 0o600:
+            self._conn.close()
+            raise ValueError("gateway outcome database must be private")
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA busy_timeout=30000")
+        self._conn.execute("PRAGMA journal_mode=DELETE")
+        self._conn.execute("PRAGMA synchronous=FULL")
+        version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if version not in (0, 1):
+            self._conn.close()
+            raise ValueError("gateway outcome schema is unsupported")
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS governed_gateway_outcomes (
+                delivery_id TEXT PRIMARY KEY,
+                request_sha256 TEXT NOT NULL,
+                state TEXT NOT NULL,
+                intent_id TEXT NOT NULL,
+                provider_delivered INTEGER NOT NULL,
+                next_poll_at REAL NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            """
+        )
+        if version == 0:
+            self._conn.execute("PRAGMA user_version=1")
+
+    @staticmethod
+    def _row(row) -> Dict[str, Any]:
+        value = dict(row)
+        if value.get("state") not in _GatewayOutcomeStore._STATES:
+            raise ValueError("gateway outcome state is invalid")
+        value["provider_delivered"] = bool(value["provider_delivered"])
+        return value
+
+    def reserve(self, delivery_id: str, request_sha256: str) -> Dict[str, Any]:
+        now = float(self.clock())
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT * FROM governed_gateway_outcomes WHERE delivery_id=?",
+                    (delivery_id,),
+                ).fetchone()
+                if row is None:
+                    self._conn.execute(
+                        """INSERT INTO governed_gateway_outcomes
+                           (delivery_id,request_sha256,state,intent_id,
+                            provider_delivered,next_poll_at,created_at,updated_at)
+                           VALUES (?,?,'queued','',0,0,?,?)""",
+                        (delivery_id, request_sha256, now, now),
+                    )
+                elif row["request_sha256"] != request_sha256:
+                    raise ValueError("gateway delivery identity conflicts")
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+        return self.get(delivery_id)
+
+    def get(self, delivery_id: str) -> Dict[str, Any]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM governed_gateway_outcomes WHERE delivery_id=?",
+                (delivery_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("gateway outcome is unavailable")
+        return self._row(row)
+
+    def observe(
+        self, delivery_id: str, *, state: str, intent_id: str,
+        provider_delivered: bool,
+    ) -> tuple[Dict[str, Any], bool]:
+        if state not in self._STATES or state == "queued":
+            raise ValueError("gateway outcome transition is invalid")
+        if provider_delivered is not (state == "delivered"):
+            raise ValueError("gateway provider-delivery outcome is inconsistent")
+        now = float(self.clock())
+        terminal = state in {"delivered", "failed", "ambiguous"}
+        next_poll_at = 0.0 if terminal else now + self.poll_seconds
+        with self._lock:
+            current = self.get(delivery_id)
+            transitions = {
+                "queued": {
+                    "awaiting_approval", "accepted", "delivered", "failed", "ambiguous",
+                },
+                "awaiting_approval": {
+                    "awaiting_approval", "accepted", "delivered", "failed", "ambiguous",
+                },
+                "accepted": {"accepted", "delivered", "failed", "ambiguous"},
+                "delivered": {"delivered"},
+                "failed": {"failed"},
+                "ambiguous": {"ambiguous"},
+            }
+            if state not in transitions[current["state"]]:
+                raise ValueError("gateway outcome transition regressed")
+            # A governed intent is immutable once the producer has admitted
+            # it. A direct provider delivery may legitimately be the first
+            # and only observation and carry the boundary's empty intent ID.
+            # Every pending or failed/ambiguous producer observation requires
+            # a nonempty intent, and every later observation must match it.
+            current_intent = str(current["intent_id"])
+            if current["state"] == "queued":
+                if state != "delivered" and not intent_id:
+                    raise ValueError("gateway intent identity is missing")
+            elif not current_intent or intent_id != current_intent:
+                raise ValueError("gateway intent identity changed")
+            if current["state"] in {"delivered", "failed", "ambiguous"}:
+                if (
+                    state != current["state"]
+                    or intent_id != current_intent
+                    or provider_delivered is not current["provider_delivered"]
+                ):
+                    raise ValueError("gateway terminal outcome is immutable")
+                return current, False
+            changed = bool(
+                current["state"] != state
+                or current["intent_id"] != intent_id
+                or current["provider_delivered"] is not provider_delivered
+            )
+            self._conn.execute(
+                """UPDATE governed_gateway_outcomes
+                   SET state=?,intent_id=?,provider_delivered=?,next_poll_at=?,updated_at=?
+                   WHERE delivery_id=?""",
+                (
+                    state, intent_id, 1 if provider_delivered else 0,
+                    next_poll_at, now, delivery_id,
+                ),
+            )
+        return self.get(delivery_id), changed
+
+    def defer(self, delivery_id: str) -> Dict[str, Any]:
+        now = float(self.clock())
+        with self._lock:
+            self._conn.execute(
+                """UPDATE governed_gateway_outcomes
+                   SET next_poll_at=?,updated_at=? WHERE delivery_id=?""",
+                (now + self.poll_seconds, now, delivery_id),
+            )
+        return self.get(delivery_id)
+
+    def pending_delivery_ids(self, *, limit: int = 100) -> tuple[str, ...]:
+        bounded = max(1, min(100, int(limit)))
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT delivery_id FROM governed_gateway_outcomes
+                   WHERE state IN ('accepted','awaiting_approval')
+                   ORDER BY created_at ASC,delivery_id ASC LIMIT ?""",
+                (bounded,),
+            ).fetchall()
+        return tuple(str(row["delivery_id"]) for row in rows)
 
 
 @dataclass
@@ -65,6 +305,10 @@ class ProactiveDeliveryBridge:
         gateway_url: Optional[str] = None,
         gateway_api_key: Optional[str] = None,
         channel_registry: Optional[ChannelRegistry] = None,
+        gateway_contract: Optional[str] = None,
+        gateway_outcome_db: Optional[str] = None,
+        gateway_poll_seconds: float = 5.0,
+        clock=time.time,
     ) -> None:
         if rate_limiter is None:
             # Persist rate-limit state so a crashloop can't reset the daily
@@ -86,8 +330,48 @@ class ProactiveDeliveryBridge:
         )
         self._gateway_api_key: str = (
             gateway_api_key
+            or os.environ.get("COLONY_GATEWAY_API_KEY", "")
             or os.environ.get("COLONY_API_KEY", "")
         )
+        self._gateway_contract = str(
+            gateway_contract
+            or os.environ.get("COLONY_GATEWAY_CONTRACT", "legacy_delivery")
+        ).strip().lower()
+        if self._gateway_contract not in _GATEWAY_CONTRACTS:
+            raise ValueError("unsupported gateway response contract")
+        if self._gateway_contract == "governed_admission_v1":
+            parsed = urllib.parse.urlsplit(self._gateway_url)
+            if (
+                parsed.scheme != "http"
+                or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+                or parsed.path not in ("", "/")
+                or parsed.port is None
+                or not self._gateway_api_key
+            ):
+                raise ValueError(
+                    "governed gateway admission requires one authenticated loopback origin"
+                )
+        try:
+            bounded_poll = float(gateway_poll_seconds)
+        except (TypeError, ValueError) as error:
+            raise ValueError("gateway lifecycle poll interval is invalid") from error
+        if not 1.0 <= bounded_poll <= 300.0:
+            raise ValueError("gateway lifecycle poll interval is invalid")
+        self._clock = clock
+        self._gateway_poll_seconds = bounded_poll
+        self._gateway_outcomes: Optional[_GatewayOutcomeStore] = None
+        if self._gateway_contract == "governed_admission_v1":
+            state_dir = Path(os.environ.get("COLONY_STATE_DIR", "."))
+            outcome_path = Path(gateway_outcome_db) if gateway_outcome_db else (
+                state_dir / "colony-governed-gateway-outcomes.db"
+            )
+            self._gateway_outcomes = _GatewayOutcomeStore(
+                outcome_path, clock=clock, poll_seconds=bounded_poll
+            )
 
         # Channel registry for per-person delivery routing
         self._channel_registry = channel_registry or ChannelRegistry.load()
@@ -95,6 +379,75 @@ class ProactiveDeliveryBridge:
         # Home channel config read from env vars — used to resolve
         # platform/chat_id when only person_id is available.
         self._home_channels: Dict[str, Dict[str, str]] = self._load_home_channels()
+
+    def governed_gateway_admission_enabled(
+        self, platform: Optional[str] = None,
+    ) -> bool:
+        """Whether governed admission owns this exact platform route.
+
+        A no-argument call reports whether lifecycle reconciliation should run.
+        Send-authority callers must provide a platform so a governed WhatsApp
+        sidecar cannot silently exempt an RCS/SMS route from Colony's legacy
+        non-owner approval gate.
+        """
+
+        if self._gateway_contract != "governed_admission_v1":
+            return False
+        if platform is None:
+            return True
+        return str(platform).strip().lower() in _GOVERNED_GATEWAY_PLATFORMS
+
+    def _gateway_contract_for_platform(self, platform: str) -> str:
+        if self.governed_gateway_admission_enabled(platform):
+            return "governed_admission_v1"
+        return "legacy_delivery"
+
+    def governed_gateway_poll_seconds(self) -> float:
+        """Bounded cadence for unattended governed-lifecycle reconciliation."""
+
+        return self._gateway_poll_seconds
+
+    def governed_pending_delivery_ids(self, *, limit: int = 100) -> tuple[str, ...]:
+        """PII-free durable identities that still need a terminal observation."""
+
+        if self._gateway_outcomes is None:
+            return ()
+        return self._gateway_outcomes.pending_delivery_ids(limit=limit)
+
+    def _stored_gateway_result(
+        self, row: Dict[str, Any], *, observation_new: bool = False
+    ) -> GatewayPushResult:
+        state = str(row["state"])
+        return GatewayPushResult(
+            accepted=state in {"accepted", "awaiting_approval", "delivered"},
+            provider_delivered=row["provider_delivered"] is True,
+            contract=self._gateway_contract,
+            admission_state=state,
+            delivery_id=str(row["delivery_id"]),
+            terminal=state in {"delivered", "failed", "ambiguous"},
+            observation_new=observation_new,
+        )
+
+    def _defer_or_fail_gateway(
+        self,
+        row: Optional[Dict[str, Any]],
+        delivery_id: str,
+        *,
+        gateway_contract: Optional[str] = None,
+    ) -> GatewayPushResult:
+        effective_contract = gateway_contract or self._gateway_contract
+        if (
+            self._gateway_outcomes is not None
+            and row is not None
+            and row.get("state") in {"accepted", "awaiting_approval"}
+        ):
+            return self._stored_gateway_result(
+                self._gateway_outcomes.defer(delivery_id), observation_new=False
+            )
+        return GatewayPushResult(
+            False, False, effective_contract,
+            delivery_id=delivery_id, observation_new=False,
+        )
 
     # ------------------------------------------------------------------
     # Home channel resolution
@@ -189,29 +542,89 @@ class ProactiveDeliveryBridge:
         chat_id: str,
         message: str,
         source: str = "initiative",
-    ) -> bool:
+        delivery_id: str = "",
+        source_id: str = "",
+    ) -> GatewayPushResult:
         """Push a proactive message directly to the gateway's /internal/deliver endpoint.
 
-        Returns True if the gateway accepted the message, False otherwise.
-        The caller is responsible for prior rate-limit checks if needed.
+        The legacy contract preserves its historic HTTP-200 delivery meaning.
+        The opt-in governed contract durably tracks the exact boundary outcome
+        from admission through provider delivery or terminal failure.  The
+        caller remains responsible for prior rate-limit checks if needed.
         """
-        try:
-            import aiohttp
-        except ImportError:
-            logger.warning("aiohttp not available — cannot push to gateway")
-            return False
-
-        url = f"{self._gateway_url.rstrip('/')}/internal/deliver"
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if self._gateway_api_key:
-            headers["Authorization"] = f"Bearer {self._gateway_api_key}"
-
+        gateway_contract = self._gateway_contract_for_platform(platform)
         payload = {
             "platform": platform,
             "chat_id": chat_id,
             "message": message,
             "source": source,
         }
+        # Optional, deployment-neutral correlation fields.  Existing gateways
+        # continue to receive the original four-field contract when callers do
+        # not provide them.  Governed sidecars can use these stable source
+        # identities to make retries durable and idempotent without teaching
+        # Colony anything about a deployment's authority model.
+        if delivery_id:
+            payload["delivery_id"] = delivery_id
+        if source_id:
+            payload["source_id"] = source_id
+
+        stored: Optional[Dict[str, Any]] = None
+        if gateway_contract == "governed_admission_v1":
+            if not delivery_id or not source_id or self._gateway_outcomes is None:
+                logger.warning(
+                    "Governed gateway lifecycle requires stable delivery and source IDs"
+                )
+                return GatewayPushResult(
+                    False,
+                    False,
+                    gateway_contract,
+                    delivery_id=delivery_id,
+                    observation_new=False,
+                )
+            request_sha256 = hashlib.sha256(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            try:
+                stored = self._gateway_outcomes.reserve(delivery_id, request_sha256)
+            except (OSError, sqlite3.Error, ValueError):
+                logger.warning(
+                    "Governed gateway delivery identity could not be reserved",
+                    exc_info=True,
+                )
+                return GatewayPushResult(
+                    False,
+                    False,
+                    gateway_contract,
+                    delivery_id=delivery_id,
+                    observation_new=False,
+                )
+            if stored["state"] in {"delivered", "failed", "ambiguous"}:
+                return self._stored_gateway_result(stored, observation_new=False)
+            if (
+                stored["state"] in {"accepted", "awaiting_approval"}
+                and float(stored["next_poll_at"]) > float(self._clock())
+            ):
+                return self._stored_gateway_result(stored, observation_new=False)
+
+        try:
+            import aiohttp
+        except ImportError:
+            logger.warning("aiohttp not available — cannot push to gateway")
+            return self._defer_or_fail_gateway(
+                stored, delivery_id, gateway_contract=gateway_contract,
+            )
+
+        url = f"{self._gateway_url.rstrip('/')}/internal/deliver"
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if self._gateway_api_key:
+            headers["Authorization"] = f"Bearer {self._gateway_api_key}"
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -221,24 +634,112 @@ class ProactiveDeliveryBridge:
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=5.0),
                 ) as resp:
-                    if resp.status == 200:
+                    body = await resp.text()
+                    if resp.status == 200 and gateway_contract == "legacy_delivery":
                         logger.info(
                             "Proactive message pushed to gateway (platform=%s, chat_id=%s, source=%s)",
                             platform,
                             chat_id,
                             source,
                         )
-                        return True
-                    body = await resp.text()
+                        return GatewayPushResult(
+                            True, True, gateway_contract,
+                            admission_state="delivered", delivery_id=delivery_id,
+                        )
+                    if resp.status == 200 and gateway_contract == "governed_admission_v1":
+                        content_type = str(
+                            getattr(resp, "headers", {}).get("Content-Type", "")
+                        ).split(";", 1)[0].strip().lower()
+                        document = _strict_gateway_json(body)
+                        expected_fields = {
+                            "schema", "version", "delivery_id", "state",
+                            "intent_id", "provider_delivered",
+                        }
+                        admission_receipt = bool(
+                            isinstance(document, dict)
+                            and document.get("provider_delivered") is False
+                            and document.get("state") in {
+                                "accepted", "awaiting_approval"
+                            }
+                            and isinstance(document.get("intent_id"), str)
+                            and bool(document.get("intent_id"))
+                        )
+                        delivery_receipt = bool(
+                            isinstance(document, dict)
+                            and document.get("provider_delivered") is True
+                            and document.get("state") == "delivered"
+                            and isinstance(document.get("intent_id"), str)
+                        )
+                        terminal_failure_receipt = bool(
+                            isinstance(document, dict)
+                            and document.get("provider_delivered") is False
+                            and document.get("state") in {"failed", "ambiguous"}
+                            and isinstance(document.get("intent_id"), str)
+                            and bool(document.get("intent_id"))
+                        )
+                        if (
+                            content_type != "application/json"
+                            or not isinstance(document, dict)
+                            or set(document) != expected_fields
+                            or document.get("schema") != "GatewayBoundaryOutcomeV1"
+                            or document.get("version") != 1
+                            or document.get("delivery_id") != delivery_id
+                            or not (
+                                admission_receipt
+                                or delivery_receipt
+                                or terminal_failure_receipt
+                            )
+                        ):
+                            logger.warning(
+                                "Governed gateway admission response failed exact attestation"
+                            )
+                            return self._defer_or_fail_gateway(
+                                stored,
+                                delivery_id,
+                                gateway_contract=gateway_contract,
+                            )
+                        if admission_receipt:
+                            logger.info(
+                                "Gateway admitted proactive message without provider-delivery "
+                                "claim (platform=%s, source=%s, state=%s)",
+                                platform, source, document["state"],
+                            )
+                        elif delivery_receipt:
+                            logger.info(
+                                "Gateway attested provider delivery "
+                                "(platform=%s, source=%s)", platform, source,
+                            )
+                        else:
+                            logger.warning(
+                                "Gateway attested terminal outcome without delivery "
+                                "(platform=%s, source=%s, state=%s)",
+                                platform,
+                                source,
+                                document["state"],
+                            )
+                        assert self._gateway_outcomes is not None
+                        observed, changed = self._gateway_outcomes.observe(
+                            delivery_id,
+                            state=str(document["state"]),
+                            intent_id=str(document["intent_id"]),
+                            provider_delivered=bool(document["provider_delivered"]),
+                        )
+                        return self._stored_gateway_result(
+                            observed, observation_new=changed
+                        )
                     logger.warning(
                         "Gateway /internal/deliver returned %d: %s",
                         resp.status,
                         body[:200],
                     )
-                    return False
+                    return self._defer_or_fail_gateway(
+                        stored, delivery_id, gateway_contract=gateway_contract,
+                    )
         except Exception as exc:
             logger.warning("push_to_gateway failed: %s", exc)
-            return False
+            return self._defer_or_fail_gateway(
+                stored, delivery_id, gateway_contract=gateway_contract,
+            )
 
     def _prepare_initiative_dispatch(self, initiative: Dict[str, Any]) -> Dict[str, Any]:
         """Build everything needed to dispatch an initiative to Hermes.
@@ -264,6 +765,8 @@ class ProactiveDeliveryBridge:
 
         # Resolve agent name from env var — never hardcode
         agent_name = os.environ.get("COLONY_AGENT_NAME", "the assistant")
+        initiative_id = initiative.get("id") or str(uuid.uuid4())
+        dedup_subject = initiative.get("entity_id") or initiative_id
 
         # Rate-limit urgency stays on the 0-1 scale the limiter expects.
         urgency = float(initiative.get("priority", 0.5) or 0.5)
@@ -284,8 +787,10 @@ class ProactiveDeliveryBridge:
                 "description": initiative.get("description", ""),
                 "priority": priority,
                 "status": "pending",
-                "id": initiative.get("id", str(uuid.uuid4())),
-                "dedup_key": f"{initiative.get('type', 'unknown')}:{initiative.get('entity_id', 'none')}",
+                "id": initiative_id,
+                "dedup_key": (
+                    f"{initiative.get('type', 'unknown')}:{dedup_subject}"
+                ),
                 "agent_name": agent_name,
                 "context": {
                     "trigger": initiative.get("rationale", ""),
@@ -345,14 +850,10 @@ class ProactiveDeliveryBridge:
         # Serialize the payload exactly once and sign the bytes that go on the
         # wire. Sending `json=payload` would let aiohttp re-serialize, so the
         # HMAC could disagree with the receiver's view of the body.
-        body_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        if webhook_secret:
-            import hmac
-            import hashlib
-            sig = hmac.new(
-                webhook_secret.encode("utf-8"), body_bytes, hashlib.sha256
-            ).hexdigest()
-            headers["X-Webhook-Signature"] = sig
+        body_bytes, headers = encode_hermes_webhook(
+            payload,
+            secret=webhook_secret,
+        )
 
         return {
             "url": hermes_webhook_url,
@@ -365,6 +866,67 @@ class ProactiveDeliveryBridge:
             "target": dict(delivery_context),
         }
 
+    async def _prepare_initiative_dispatch_async(
+        self, initiative: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Prepare dispatch with an exact async contact route when governed.
+
+        Legacy and owner/default routing retains the synchronous registry
+        priority order.  A governed relationship message to a non-owner is
+        stricter: it must resolve one verified WhatsApp handle from the
+        canonical async contact store and can never fall back to a home chat.
+        This resolves identity/transport only; authorization remains at the
+        governed producer boundary.
+        """
+        prep = self._prepare_initiative_dispatch(initiative)
+        if not self.governed_gateway_admission_enabled("whatsapp"):
+            return prep
+        if str(initiative.get("type") or "") != "relationship":
+            return prep
+
+        person_id = str(prep.get("person_id") or "").strip()
+        configured_owner = str(
+            os.environ.get("COLONY_OWNER_CONTACT_ID", "owner") or "owner"
+        ).strip()
+        if not person_id or person_id in {"owner", configured_owner}:
+            return prep
+
+        resolver = getattr(
+            self._channel_registry, "resolve_exact_verified_dm", None,
+        )
+        channel = None
+        if callable(resolver):
+            try:
+                channel = await resolver(person_id, platform="whatsapp")
+            except Exception:
+                logger.debug(
+                    "Governed exact contact route resolution failed",
+                    exc_info=True,
+                )
+
+        # Non-owner governed outreach has no fallback target.  In particular,
+        # a configured home chat must never turn a missing/ambiguous DM into a
+        # group disclosure.
+        target: Dict[str, str] = {}
+        if channel is not None:
+            target["user_chat"] = f"{channel.platform}:{channel.chat_id}"
+        prep["target"] = target
+        payload = prep["payload"]
+        if target:
+            payload["delivery_context"] = dict(target)
+            payload["channel_hint"] = "dm"
+        else:
+            payload.pop("delivery_context", None)
+            payload.pop("channel_hint", None)
+
+        body_bytes, headers = encode_hermes_webhook(
+            payload,
+            secret=os.environ.get("COLONY_HERMES_WEBHOOK_SECRET", ""),
+        )
+        prep["body_bytes"] = body_bytes
+        prep["headers"] = headers
+        return prep
+
     def preview_initiative(self, initiative: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve where/what an initiative WOULD be delivered, without sending.
 
@@ -373,6 +935,24 @@ class ProactiveDeliveryBridge:
         operator review.
         """
         prep = self._prepare_initiative_dispatch(initiative)
+        return {
+            "person_id": prep["person_id"],
+            "urgency": prep["urgency"],
+            "channel_hint": prep["channel_hint"],
+            "target": prep["target"],
+            "initiative_type": initiative.get("type", "unknown"),
+            "title": initiative.get("title", ""),
+            "description": initiative.get("description", ""),
+            "rationale": initiative.get("rationale", ""),
+            "suggested_action": initiative.get("suggested_action", ""),
+            "webhook_payload": prep["payload"],
+        }
+
+    async def preview_initiative_async(
+        self, initiative: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Async preview used by the guarded autonomous delivery path."""
+        prep = await self._prepare_initiative_dispatch_async(initiative)
         return {
             "person_id": prep["person_id"],
             "urgency": prep["urgency"],
@@ -589,18 +1169,20 @@ class ProactiveDeliveryBridge:
         ``{"sent": 0, "reason": "no_home_channel"}`` so a scheduler can
         still drain the item count at call time.
 
-        Returns a summary dict: ``{"sent": N, "skipped": M, "recipients":
-        [...], "reason": ...}``.
+        Returns a summary dict: ``{"sent": N, "admitted": N, "skipped": M,
+        "recipients": [...], "reason": ...}``.  ``admitted`` is explicitly
+        not provider delivery.
         """
         recipients = self.pending_digest_recipients()
         if not recipients:
-            return {"sent": 0, "skipped": 0, "recipients": []}
+            return {"sent": 0, "admitted": 0, "skipped": 0, "recipients": []}
 
         if not platform or not chat_id:
             home = self.resolve_home_channel()
             if home is None:
                 return {
                     "sent": 0,
+                    "admitted": 0,
                     "skipped": len(recipients),
                     "recipients": recipients,
                     "reason": "no_home_channel",
@@ -609,24 +1191,46 @@ class ProactiveDeliveryBridge:
             chat_id = chat_id or home["chat_id"]
 
         sent = 0
+        admitted = 0
         skipped = 0
         for person_id in recipients:
             bundle = self.build_digest_bundle(person_id, header=header)
             if not bundle:
                 continue
-            ok = await self.push_to_gateway(
+            digest_source_ids = sorted(
+                delivery.delivery_id
+                for delivery in self.get_pending_digest(person_id)
+            )
+            digest_identity = hashlib.sha256(
+                json.dumps(
+                    digest_source_ids,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            outcome = await self.push_to_gateway(
                 platform=platform,
                 chat_id=chat_id,
                 message=bundle,
                 source="digest",
+                delivery_id="digest:" + digest_identity,
+                source_id="digest:" + digest_identity,
             )
-            if ok:
+            if bool(outcome) and getattr(
+                outcome, "provider_delivered", bool(outcome)
+            ) is True:
                 self.consume_digest(person_id)
                 sent += 1
+            elif bool(outcome):
+                # Admission to a governed approval/dispatch queue is durable
+                # work, but it is not provider delivery and must not consume
+                # the delivery-rate budget or pending digest evidence.
+                admitted += 1
             else:
                 skipped += 1
         return {
             "sent": sent,
+            "admitted": admitted,
             "skipped": skipped,
             "recipients": recipients,
         }

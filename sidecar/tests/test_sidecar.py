@@ -85,6 +85,17 @@ def test_openapi_spec_export():
     assert len(paths) >= 25, f"Only {len(paths)} paths"
 
 
+def test_unrecognised_guard_mode_refuses():
+    """A COLONY_GUARD_MODE typo must refuse loudly, never silently shadow."""
+    from colony_sidecar.gate.response_guard import GuardMode
+    from colony_sidecar.server import _resolve_guard_mode
+    assert _resolve_guard_mode(None) is GuardMode.SHADOW
+    assert _resolve_guard_mode("shadow") is GuardMode.SHADOW
+    assert _resolve_guard_mode("ENFORCE") is GuardMode.ENFORCE
+    with pytest.raises(RuntimeError):
+        _resolve_guard_mode("enforec")   # the typo that used to silently shadow
+
+
 # ---------------------------------------------------------------------------
 # Health endpoint
 # ---------------------------------------------------------------------------
@@ -195,16 +206,20 @@ async def test_reasoning_turn_not_wired(client):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_safety_check_passthrough(client):
+async def test_safety_check_unavailable_when_gate_missing(client, monkeypatch):
+    """No response gate => 503 + decision "unavailable", NEVER "pass" —
+    a caller must not mistake "not evaluated" for "evaluated and clean"."""
+    from colony_sidecar.api.routers import host as host_mod
+    monkeypatch.setattr(host_mod, "_response_gate", None)
     resp = await client.post("/v1/host/safety/check", json={
         "identity": {"host_id": "test"},
         "context": {"session_id": "s1", "contact_id": "c1"},
         "response_text": "Hello!",
     })
-    assert resp.status_code == 200
+    assert resp.status_code == 503
     data = resp.json()
-    assert data["decision"] == "pass"
-    assert data["blocked"] is False
+    assert data["decision"] == "unavailable"
+    assert data["blocked"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -243,10 +258,12 @@ async def test_turns_sync(client):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_list_goals_empty(client):
+async def test_list_goals_not_wired(client):
     resp = await client.get("/v1/host/goals")
-    assert resp.status_code == 200
-    assert resp.json()["goals"] == []
+    assert resp.status_code == 501
+    assert resp.json()["detail"] == {
+        "error": {"code": "not_wired", "message": "Backend not configured"},
+    }
 
 
 @pytest.mark.asyncio
@@ -324,7 +341,9 @@ async def test_cognition_cycle_no_backend(client):
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data["cpi"] is None
+    assert data["cpi"]["deprecated"] is True
+    assert data["cpi"]["canonical_endpoint"] == "/v1/host/self/benchmark"
+    assert "memory" not in data["cpi"]
 
 
 @pytest.mark.asyncio
@@ -332,7 +351,9 @@ async def test_cpi_no_backend(client):
     resp = await client.get("/v1/host/cognition/cpi")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["overall"] == 0.0
+    assert data["deprecated"] is True
+    assert data["canonical_endpoint"] == "/v1/host/self/benchmark"
+    assert "overall" not in data
 
 
 # ---------------------------------------------------------------------------
@@ -738,6 +759,9 @@ async def test_phase_scheduled_runs_due_tasks(tmp_path):
     await loop._phase_scheduled()
     assert calls["n"] == 1
     assert loop.stats.scheduled_runs == 1
+    schedule = scheduler.list_schedules()[0]
+    assert schedule.last_run is not None
+    assert schedule.failure_count == 0
 
 
 @pytest.mark.asyncio
@@ -825,3 +849,6 @@ async def test_phase_scheduled_failing_task_counts_errors(tmp_path):
     await loop._phase_scheduled()
     assert loop.stats.scheduled_runs == 0
     assert loop.stats.errors == 1
+    schedule = scheduler.list_schedules()[0]
+    assert schedule.last_run is None
+    assert schedule.failure_count == 1

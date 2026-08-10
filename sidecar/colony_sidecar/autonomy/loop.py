@@ -14,7 +14,10 @@ Kill it at any point and it picks up cleanly on restart.
 from __future__ import annotations
 
 import asyncio
+import copy
 import functools
+import hashlib
+import json
 import logging
 import os
 import time
@@ -41,11 +44,192 @@ def _get_broadcast():
             from colony_sidecar.api.routers.host import broadcast_event
             _broadcast = broadcast_event
         except ImportError:
-            def _broadcast(e):
-                return None
+            # A circular import during startup must not permanently replace the
+            # durable publisher for the process lifetime.
+            return lambda _event: None
     return _broadcast
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ProactiveFindingSnapshot:
+    """Immutable, scalar-only finding projection used for feedback/logging."""
+
+    check: str
+    severity: str
+    reason: str
+    excerpt: Optional[str]
+
+
+@dataclass(frozen=True)
+class _ProactiveVerdictSnapshot:
+    """One-read authority snapshot of a guard result.
+
+    A guard result may be an arbitrary object with descriptors rather than a
+    plain ``GuardResult``.  The send boundary therefore reads every field it
+    uses exactly once, rejects non-built-in scalar types, and never consults
+    the source object again.  Frozen scalar values close the validation/use
+    gap even for stateful or adversarial properties.
+    """
+
+    decision: Optional[str]
+    mode: Optional[str]
+    surface: Optional[str]
+    surface_family: Optional[str]
+    applicability: Optional[str]
+    guard_status: Optional[str]
+    policy_id: Optional[str]
+    policy_digest: Optional[str]
+    candidate_digest: Optional[str]
+    blocked: Optional[bool]
+    findings: tuple[_ProactiveFindingSnapshot, ...]
+
+
+def _exact_builtin_text(value: Any) -> Optional[str]:
+    return value if type(value) is str else None
+
+
+def _snapshot_proactive_findings(value: Any) -> tuple[_ProactiveFindingSnapshot, ...]:
+    # GuardResult.findings is a list.  Reject custom iterables at this
+    # authority boundary instead of executing caller-controlled iteration.
+    if type(value) not in {list, tuple}:
+        return ()
+    snapshots = []
+    for finding in tuple(value)[:64]:
+        raw_check = getattr(finding, "check", None)
+        raw_severity = getattr(finding, "severity", None)
+        raw_reason = getattr(finding, "reason", None)
+        raw_excerpt = getattr(finding, "excerpt", None)
+        snapshots.append(_ProactiveFindingSnapshot(
+            check=_exact_builtin_text(raw_check) or "blocked",
+            severity=_exact_builtin_text(raw_severity) or "",
+            reason=_exact_builtin_text(raw_reason) or "",
+            excerpt=_exact_builtin_text(raw_excerpt),
+        ))
+    return tuple(snapshots)
+
+
+def _snapshot_proactive_verdict(result: Any) -> _ProactiveVerdictSnapshot:
+    """Read every egress-relevant raw verdict field exactly once."""
+
+    raw_decision = getattr(result, "decision", None)
+    raw_mode = getattr(result, "mode", None)
+    raw_surface = getattr(result, "surface", None)
+    raw_surface_family = getattr(result, "surface_family", None)
+    raw_applicability = getattr(result, "applicability", None)
+    raw_guard_status = getattr(result, "guard_status", None)
+    raw_policy_id = getattr(result, "policy_id", None)
+    raw_policy_digest = getattr(result, "policy_digest", None)
+    raw_candidate_digest = getattr(result, "candidate_digest", None)
+    raw_blocked = getattr(result, "blocked", None)
+    raw_findings = getattr(result, "findings", None)
+    return _ProactiveVerdictSnapshot(
+        decision=_exact_builtin_text(raw_decision),
+        mode=_exact_builtin_text(raw_mode),
+        surface=_exact_builtin_text(raw_surface),
+        surface_family=_exact_builtin_text(raw_surface_family),
+        applicability=_exact_builtin_text(raw_applicability),
+        guard_status=_exact_builtin_text(raw_guard_status),
+        policy_id=_exact_builtin_text(raw_policy_id),
+        policy_digest=_exact_builtin_text(raw_policy_digest),
+        candidate_digest=_exact_builtin_text(raw_candidate_digest),
+        blocked=raw_blocked if type(raw_blocked) is bool else None,
+        findings=_snapshot_proactive_findings(raw_findings),
+    )
+
+
+def _proactive_enforce_verdict_error(
+    result: _ProactiveVerdictSnapshot,
+    candidate: str,
+) -> Optional[str]:
+    """Return why an enforce verdict cannot authorize this exact candidate.
+
+    The guard object is an in-process dependency, but its result still crosses
+    an authority boundary: only a canonical policy decision over the exact
+    UTF-8 candidate may reach a delivery adapter.  Keep this validation local
+    to the send path so a malformed result object cannot inherit authority from
+    a truthy/falsey ``blocked`` attribute.
+    """
+
+    from colony_sidecar.gate.response_guard import (
+        GuardDecision,
+        response_text_digest,
+    )
+    from colony_sidecar.gate.surface_policy import ResponseGuardSurfacePolicyV1
+
+    expected = ResponseGuardSurfacePolicyV1().resolve(
+        "proactive_text",
+        configured_mode="enforce",
+        requested_mode="enforce",
+    )
+    decision = result.decision
+    valid_decisions = {item.value for item in GuardDecision}
+    if type(decision) is not str or decision not in valid_decisions:
+        return "decision is absent or invalid"
+
+    guard_status = result.guard_status
+    if type(guard_status) is not str or guard_status not in {
+        "evaluated",
+        "degraded",
+    }:
+        return "guard_status is absent or invalid"
+    if (
+        guard_status == "degraded"
+        and decision != GuardDecision.BLOCK.value
+    ):
+        return "degraded enforce verdict is not a block"
+
+    expected_fields = {
+        "mode": expected.effective_mode,
+        "surface": expected.surface,
+        "surface_family": expected.family,
+        "applicability": expected.disposition,
+        "policy_id": expected.policy_id,
+        "policy_digest": expected.policy_digest,
+        "candidate_digest": response_text_digest(candidate),
+    }
+    for field_name, expected_value in expected_fields.items():
+        observed = getattr(result, field_name)
+        if type(observed) is not str or observed != expected_value:
+            return "%s does not match the canonical proactive policy" % field_name
+
+    blocked = result.blocked
+    if type(blocked) is not bool or blocked != (
+        decision != GuardDecision.ALLOW.value
+    ):
+        return "blocked projection conflicts with decision"
+    return None
+
+
+def _record_p3_thinker_candidates(workspace: Any, initiatives: list[Any]) -> int:
+    """Record SelfDirectedThinker output as shadow provenance, never live.
+
+    Workspace mode describes the scheduler consuming a concern. It cannot
+    relabel the trust/mode of the producer that originated the candidate.
+    """
+
+    recorded = 0
+    for init in initiatives:
+        key = str(getattr(init, "dedup_key", "") or "").strip()
+        if not key:
+            import hashlib
+            key = hashlib.sha256(
+                str(getattr(init, "description", init)).encode("utf-8")
+            ).hexdigest()[:24]
+        workspace.bump(
+            kind="question",
+            summary=str(getattr(init, "description", init))[:300],
+            dedup_key=f"self-directed:{key}"[:200],
+            salience=max(0.3, min(0.85, float(
+                getattr(init, "priority", 0.5) or 0.5))),
+            sources=[f"self-directed-thinker:{key}"],
+            producer_name="self_directed_thinker",
+            producer_mode="shadow",
+            producer_revision="self-directed-thinker:v1",
+        )
+        recorded += 1
+    return recorded
 
 
 @dataclass
@@ -68,6 +252,8 @@ class LoopStats:
     memories_promoted: int = 0
     task_follow_ups: int = 0
     scheduled_runs: int = 0
+    phases_skipped: int = 0
+    boundary_check_errors: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -87,6 +273,8 @@ class LoopStats:
             "memories_promoted": self.memories_promoted,
             "task_follow_ups": self.task_follow_ups,
             "scheduled_runs": self.scheduled_runs,
+            "phases_skipped": self.phases_skipped,
+            "boundary_check_errors": self.boundary_check_errors,
         }
 
 
@@ -107,7 +295,8 @@ class AutonomyLoop:
       4. Run initiative engine — Colony decides whether to act
       5. Execute approved actions
       6. Run cognition pipeline tick
-      7. Memory consolidation (hourly)
+      7. (memory consolidation runs via the memory_consolidate scheduler
+         task, not a tick phase)
       8. Memory decay (daily)
       9. Memory pruning (weekly)
      10. Task completion follow-ups
@@ -145,6 +334,15 @@ class AutonomyLoop:
         self._last_bootstrap_check: Optional[datetime] = None
         self._last_self_reflection: Optional[datetime] = None
         self._last_task_completion_check: Optional[datetime] = None
+        # Phases already warned about skipping (warn once, count always).
+        self._phase_skip_warned: set = set()
+        # High-water mark for _phase_events so each event is counted once.
+        self._last_event_seen_id: Optional[str] = None
+        # Exact already-admitted requests awaiting a terminal gateway outcome.
+        # This is intentionally bounded and in-memory; the initiative store +
+        # startup re-push rebuild it after a proactive-mode restart.
+        self._governed_delivery_replays: dict[str, dict] = {}
+        self._governed_reconcile_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -172,6 +370,18 @@ class AutonomyLoop:
             )
         except Exception as exc:
             logger.warning("Owner identity startup check failed: %s", exc)
+
+        # Boot self-check: a periodic phase that dispatches on a graph
+        # capability which does not exist would otherwise no-op silently
+        # forever (exactly how the old consolidation and pruning phases went
+        # dead for months). Surface any such mismatch once, loudly, at start.
+        self._check_phase_capabilities()
+
+        # Governed message lifecycle reconciliation is independent of the
+        # main autonomy cadence. It must also run in REACTIVE mode: an already
+        # admitted message can reach provider delivery while no new event or
+        # initiative wakes the ordinary loop.
+        self._start_governed_delivery_reconciler()
 
         # Reactive mode: just mark as running, no timer
         if self.config.mode == AutonomyMode.REACTIVE:
@@ -212,6 +422,7 @@ class AutonomyLoop:
                         self._tick_budget_secs())
                 await self._sleep_until_next_tick()
         finally:
+            await self._stop_governed_delivery_reconciler()
             if self._wake_sub is not None:
                 self.events.unsubscribe(self._wake_sub)
             self._running = False
@@ -222,6 +433,62 @@ class AutonomyLoop:
         logger.info("Autonomy loop stop requested")
         self._stop_event.set()
         self._wake_event.set()
+        await self._stop_governed_delivery_reconciler()
+
+    def _start_governed_delivery_reconciler(self) -> None:
+        delivery = getattr(self._registry, "delivery", None)
+        enabled = False
+        if delivery is not None and hasattr(
+            delivery, "governed_gateway_admission_enabled"
+        ):
+            try:
+                enabled = delivery.governed_gateway_admission_enabled() is True
+            except Exception:
+                enabled = False
+        if not enabled:
+            return
+        task = self._governed_reconcile_task
+        if task is None or task.done():
+            self._governed_reconcile_task = asyncio.create_task(
+                self._governed_delivery_reconciliation_loop(),
+                name="colony-governed-delivery-reconciliation",
+            )
+
+    async def _stop_governed_delivery_reconciler(self) -> None:
+        task = self._governed_reconcile_task
+        self._governed_reconcile_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _governed_delivery_reconciliation_loop(self) -> None:
+        """Poll admitted requests until the boundary reports a terminal state."""
+
+        while not self._stop_event.is_set():
+            delivery = getattr(self._registry, "delivery", None)
+            interval = 5.0
+            getter = getattr(delivery, "governed_gateway_poll_seconds", None)
+            if callable(getter):
+                try:
+                    interval = max(0.01, min(300.0, float(getter())))
+                except (TypeError, ValueError):
+                    interval = 5.0
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                continue
+            except asyncio.TimeoutError:
+                pass
+            try:
+                await self._phase_governed_delivery_reconciliation()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.stats.errors += 1
+                logger.exception("Governed delivery reconciliation failed")
 
     def wake(self) -> None:
         """Wake the loop early from its sleep. Thread-safe."""
@@ -249,6 +516,12 @@ class AutonomyLoop:
             logger.warning("Telemetry touch failed (non-critical)")
 
         logger.debug("Tick #%d starting", self.stats.ticks)
+
+        # Phase -1: reconcile terminal WorkOrder truth before any phase that
+        # may invoke an LLM.  This is bounded separately and never dispatches
+        # work, so a slow thinking/planning phase (or whole-tick cancellation)
+        # cannot starve durable queue-result projection.
+        await self._phase_project_result_reconciliation()
 
         # Phase 0: evaluate skill triggers
         event_text = self._gather_event_text()
@@ -296,8 +569,10 @@ class AutonomyLoop:
         # Phase 7: cognition pipeline tick
         await self._phase_cognition()
 
-        # Phase 8: memory consolidation (hourly)
-        await self._phase_memory_consolidation()
+        # (memory consolidation is NOT a tick phase: the consolidator runs
+        # hourly via the memory_consolidate scheduler task. The old phase
+        # here dispatched on graph.consolidate_memories, which never
+        # existed — deleted rather than repointed to avoid a double-run.)
 
         # Phase 9: memory decay (daily)
         await self._phase_memory_decay()
@@ -319,6 +594,9 @@ class AutonomyLoop:
 
         # Phase 11d: LLM-assisted world-model extraction (daily, batch)
         await self._phase_world_llm_extract()
+
+        # Phase 11d2: tom2 knowledge asymmetry (daily; COLONY_TOM2, default off)
+        await self._phase_tom2_asymmetry()
 
         # Phase 11e: connector ingest (read-only pull senses, cognition item 2)
         await self._phase_connectors()
@@ -399,12 +677,85 @@ class AutonomyLoop:
     # ------------------------------------------------------------------
 
     async def _phase_events(self) -> None:
-        """Count recent events into stats. Per-event routing was a dead loop
-        that only ever `pass`ed — deliberately not implemented here: message
-        traffic is Hermes' domain and reaches Colony through turn_sync /
-        signal ingest, so the tick only tracks volume."""
+        """Reduce the durable host journal, with the private bus as fallback.
+
+        When the event-to-concern reducer is enabled its persisted cursor is
+        authoritative across restarts.  The old in-memory history remains only
+        for deployments that have not enabled the migration flag.
+        """
         try:
-            self.stats.events_processed += len(self.events.get_history(limit=50))
+            registry = getattr(self, "_registry", None)
+            workspace = getattr(registry, "workspace", None) if registry is not None else None
+            external_reducer = (
+                getattr(workspace, "external_event_reducer", None)
+                if workspace else None
+            )
+            if (
+                external_reducer is not None
+                and getattr(external_reducer, "mode", "off") != "off"
+            ):
+                try:
+                    result = external_reducer.run_once(limit=100)
+                    self.stats.events_processed += int(
+                        result.get("processed") or 0
+                    )
+                    if result.get("error"):
+                        self.stats.errors += 1
+                        logger.warning(
+                            "External event concern reducer paused: %s",
+                            result["error"],
+                        )
+                except Exception:
+                    self.stats.errors += 1
+                    logger.exception(
+                        "External event concern reducer failed this tick"
+                    )
+
+            turn_reducer = (
+                getattr(workspace, "turn_event_reducer", None)
+                if workspace else None
+            )
+            if (
+                turn_reducer is not None
+                and getattr(turn_reducer, "mode", "off") != "off"
+            ):
+                try:
+                    result = turn_reducer.run_once(limit=100)
+                    self.stats.events_processed += int(
+                        result.get("processed") or 0
+                    )
+                    if result.get("error"):
+                        self.stats.errors += 1
+                        logger.warning(
+                            "Conversation turn concern reducer paused: %s",
+                            result["error"],
+                        )
+                except Exception:
+                    self.stats.errors += 1
+                    logger.exception(
+                        "Conversation turn concern reducer failed this tick"
+                    )
+
+            reducer = getattr(workspace, "event_reducer", None) if workspace else None
+            if reducer is not None and getattr(reducer, "mode", "off") != "off":
+                result = reducer.run_once(limit=100)
+                self.stats.events_processed += int(result.get("processed") or 0)
+                if result.get("error"):
+                    self.stats.errors += 1
+                    logger.warning("Durable event reducer paused: %s", result["error"])
+                return
+
+            recent = list(self.events.get_history(limit=50))
+            if self._last_event_seen_id is not None:
+                for i in range(len(recent) - 1, -1, -1):
+                    if getattr(recent[i], "id", None) == self._last_event_seen_id:
+                        recent = recent[i + 1:]
+                        break
+                # marker not found (aged out of the window): count the whole
+                # window, same bounded over-count the old code always had
+            if recent:
+                self._last_event_seen_id = getattr(recent[-1], "id", None)
+            self.stats.events_processed += len(recent)
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase events error: %s", exc, exc_info=True)
@@ -415,11 +766,13 @@ class AutonomyLoop:
         if goals is None:
             return
         try:
+            from colony_sidecar.cognition.goal_spine import cognition_spine_exclusive
+            legacy_read_only = cognition_spine_exclusive()
             blocked = goals.list_goals(status="blocked", limit=20) if hasattr(goals, "list_goals") else []
             accepted = goals.list_goals(status="accepted", limit=20) if hasattr(goals, "list_goals") else []
             active = goals.list_goals(status="active", limit=50) if hasattr(goals, "list_goals") else []
 
-            for goal in accepted:
+            for goal in ([] if legacy_read_only else accepted):
                 try:
                     if hasattr(goals, "activate_goal"):
                         goals.activate_goal(goal.get("goal_id", goal.get("id")))
@@ -583,6 +936,28 @@ class AutonomyLoop:
             situation = self._build_thinking_situation()
             initiatives = await thinker.think(situation)
             if not initiatives:
+                return
+
+            # P3 turns the legacy free-running thinker into a candidate
+            # generator only.  Its observations enter the scoped workspace;
+            # it may no longer write initiatives/projects in parallel with
+            # the canonical Concern -> ThoughtJob -> Project path.
+            try:
+                from colony_sidecar.cognition.goal_spine import cognition_spine_exclusive
+                if cognition_spine_exclusive():
+                    workspace = getattr(self._registry, "workspace", None)
+                    if workspace is None:
+                        logger.warning(
+                            "P3 thinker candidates held: workspace unavailable")
+                        return
+                    _record_p3_thinker_candidates(workspace, initiatives)
+                    logger.info(
+                        "P3 thinker: converted %d proposal(s) to workspace candidates",
+                        len(initiatives),
+                    )
+                    return
+            except Exception:
+                logger.exception("P3 thinker candidate conversion failed")
                 return
 
             # Package each thought into a well-formed Proposal and route it
@@ -908,6 +1283,107 @@ class AutonomyLoop:
 
         self._pending_initiatives = []
 
+    @staticmethod
+    def _stored_initiative_delivery_payload(initiative: Any) -> dict:
+        initiative_type = getattr(initiative, "type", "unknown")
+        type_value = (
+            initiative_type.value
+            if hasattr(initiative_type, "value")
+            else str(initiative_type)
+        )
+        created_at = getattr(initiative, "created_at", None)
+        description = getattr(initiative, "description", "") or ""
+        return {
+            "id": str(getattr(initiative, "id", "")),
+            "type": type_value,
+            "priority": getattr(initiative, "priority", 0.5),
+            "title": description.split(".")[0][:80] if description else "(no title)",
+            "description": description,
+            "rationale": getattr(initiative, "rationale", "") or "",
+            "suggested_action": (
+                getattr(initiative, "action_hint", None) or "review_and_decide"
+            ),
+            "entity_id": getattr(initiative, "entity_id", None),
+            "entity_type": type_value,
+            "context": getattr(initiative, "context", None) or {},
+            "generated_at": (
+                created_at.isoformat()
+                if created_at is not None
+                else datetime.now(timezone.utc).isoformat()
+            ),
+        }
+
+    async def _rebuild_governed_delivery_replays(self, delivery: Any) -> None:
+        """Rebuild exact admitted replays after restart without admitting new work."""
+
+        getter = getattr(delivery, "governed_pending_delivery_ids", None)
+        initiative_store = getattr(self._registry, "initiative_store", None)
+        if not callable(getter) or initiative_store is None:
+            return
+        try:
+            pending_delivery_ids = set(getter(limit=100))
+        except Exception:
+            logger.exception("Could not read durable governed delivery identities")
+            return
+        if not pending_delivery_ids:
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            initiatives = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    initiative_store.list, status=["pending"], limit=1000
+                ),
+            )
+        except Exception:
+            logger.exception("Could not read pending initiatives for delivery rebuild")
+            return
+        for initiative in initiatives:
+            initiative_id = str(getattr(initiative, "id", "") or "")
+            initiative_type = getattr(initiative, "type", "unknown")
+            type_value = (
+                initiative_type.value
+                if hasattr(initiative_type, "value")
+                else str(initiative_type)
+            )
+            if not initiative_id:
+                continue
+            source_id = "initiative:" + initiative_id
+            delivery_id = "initiative:" + hashlib.sha256(
+                (type_value + "\0" + source_id).encode("utf-8")
+            ).hexdigest()
+            if delivery_id not in pending_delivery_ids:
+                continue
+            self._governed_delivery_replays[delivery_id] = (
+                self._stored_initiative_delivery_payload(initiative)
+            )
+            if len(self._governed_delivery_replays) >= 100:
+                break
+
+    async def _phase_governed_delivery_reconciliation(self) -> None:
+        """Re-poll a bounded set of admitted messages without a new trigger."""
+
+        delivery = getattr(self._registry, "delivery", None)
+        if delivery is None:
+            return
+        if not self._governed_delivery_replays:
+            await self._rebuild_governed_delivery_replays(delivery)
+        if not self._governed_delivery_replays:
+            return
+        # A hard bound prevents a large approval backlog from monopolizing the
+        # event loop. The next cadence continues from the same stable requests;
+        # the bridge itself suppresses HTTP until each row's next_poll_at.
+        for _delivery_id, payload in list(
+            self._governed_delivery_replays.items()
+        )[:25]:
+            try:
+                await self._route_reachout_delivery(copy.deepcopy(payload), delivery)
+            except Exception:
+                self.stats.errors += 1
+                logger.exception(
+                    "Governed delivery lifecycle replay failed for %s", _delivery_id
+                )
+
     async def _recipient_is_owner(self, person_id: str, payload: dict) -> bool:
         """True when a delivery is owner-directed (exempt from the outbound
         third-party approval gate).
@@ -971,6 +1447,18 @@ class AutonomyLoop:
                     )
                     return False
             except Exception:
+                # An owner boundary we cannot evaluate must not be assumed
+                # permissive: fail CLOSED by default (a missed delivery is
+                # recoverable; messaging about a forbidden subject is not).
+                self.stats.boundary_check_errors += 1
+                from colony_sidecar.directives.guard import boundary_fail_closed
+                if boundary_fail_closed():
+                    logger.warning(
+                        "Reach-out %s (%s) REFUSED: boundary_check_error "
+                        "(boundary check raised; failing closed)",
+                        iid, type_value, exc_info=True,
+                    )
+                    return False
                 logger.debug("delivery boundary check failed (allowing)", exc_info=True)
 
         # Staleness guard: a long-overdue reach-out is noise, not a timely ping.
@@ -988,8 +1476,19 @@ class AutonomyLoop:
         # Resolve the ACTUAL recipient bucket + target the same way a real send
         # would, so the rate gate binds per recipient and the shadow view
         # matches reality.
+        transport = os.environ.get(
+            "COLONY_DELIVERY_TRANSPORT", "hermes_webhook"
+        ).strip().lower()
         preview = None
-        if hasattr(delivery, "preview_initiative"):
+        if (
+            transport == "gateway"
+            and hasattr(delivery, "preview_initiative_async")
+        ):
+            try:
+                preview = await delivery.preview_initiative_async(payload)
+            except Exception as exc:
+                logger.warning("Delivery preview failed for %s: %s", iid, exc)
+        elif hasattr(delivery, "preview_initiative"):
             try:
                 preview = delivery.preview_initiative(payload)
             except Exception as exc:
@@ -1009,6 +1508,7 @@ class AutonomyLoop:
         if getattr(self.config, "delivery_shadow_mode", False):
             # Shadow: log the intended (sanitised) delivery; send nothing,
             # consume no budget.
+            self._observe_p8_outbound(payload, preview or {})
             target = (preview or {}).get("target", {})
             logger.info(
                 "SHADOW-DELIVERY reach-out id=%s type=%s recipient=%s target=%s "
@@ -1019,14 +1519,40 @@ class AutonomyLoop:
             )
             return False
 
-        # Outbound third-party gate: any delivery whose recipient is NOT the
-        # owner requires an explicit standing owner approval, independent of
-        # the rate limiter. Owner-directed delivery (proposals, owner
-        # check-ins) is exempt and unchanged. The agent must never message a
-        # third party on its own initiative.
-        if not await self._recipient_is_owner(person_id, payload):
+        governed_admission_route = False
+        preview_target = (preview or {}).get("target", {})
+        preview_chat = (
+            preview_target.get("user_chat")
+            or preview_target.get("home_chat")
+            or ""
+        )
+        preview_platform, _, _preview_chat_id = preview_chat.partition(":")
+        if transport == "gateway" and hasattr(
+            delivery, "governed_gateway_admission_enabled"
+        ):
+            try:
+                governed_admission_route = (
+                    delivery.governed_gateway_admission_enabled(
+                        preview_platform,
+                    ) is True
+                )
+            except Exception:
+                governed_admission_route = False
+
+        # Legacy outbound third-party gate remains the default.  A deployment
+        # may instead opt one gateway transport into a downstream governed
+        # admission contract: that boundary owns bounded route/one-off
+        # authorization and must later return an exact, non-delivery admission
+        # receipt.  A mere gateway HTTP 200 is never enough in that mode.
+        recipient_is_owner = await self._recipient_is_owner(person_id, payload)
+        if not recipient_is_owner:
             from colony_sidecar.initiatives import standing_approvals
-            if not standing_approvals.is_approved("outbound_third_party_delivery"):
+            if (
+                not governed_admission_route
+                and not standing_approvals.is_approved(
+                    "outbound_third_party_delivery"
+                )
+            ):
                 logger.warning(
                     "Reach-out %s (%s) to non-owner recipient %s BLOCKED: "
                     "outbound third-party delivery requires owner approval "
@@ -1045,33 +1571,135 @@ class AutonomyLoop:
         # real send path so it is not merely an opt-in endpoint: in shadow it
         # logs, in enforce (COLONY_GUARD_MODE=enforce) it blocks a leaking
         # proactive message before it leaves. Owner-directed delivery is
-        # authorized; third-party delivery already passed the standing-approval
+        # authorized; third-party delivery already spent a bounded approval
         # gate above.
+        guard_enforcing = (
+            os.environ.get("COLONY_GUARD_MODE", "").strip().lower()
+            == "enforce"
+        )
         try:
             from colony_sidecar.api.routers.host import _response_guard
-            if _response_guard is not None:
+            if _response_guard is None:
+                if guard_enforcing:
+                    logger.warning(
+                        "Reach-out %s BLOCKED: configured ResponseGuard is unavailable",
+                        iid,
+                    )
+                    return False
+            else:
+                configured_mode = getattr(_response_guard, "configured_mode", None)
+                configured_value = str(
+                    getattr(configured_mode, "value", configured_mode) or ""
+                ).strip().lower()
+                # Configuration sources are monotonic at this boundary: a
+                # stale in-process shadow instance cannot weaken an explicit
+                # deployment-level enforce request, while an enforce instance
+                # still strengthens an unset/shadow environment.
+                guard_enforcing = (
+                    guard_enforcing or configured_value == "enforce"
+                )
                 _msg = (payload.get("description") or payload.get("title") or "")
                 _tgt = (preview or {}).get("target", {})
                 _chat = _tgt.get("user_chat") or _tgt.get("home_chat") or ""
                 _plat, _, _cid = _chat.partition(":")
-                _guard = await _response_guard.evaluate(
+                _authorized = recipient_is_owner
+                _guard_context = {
+                    "surface": "proactive_text",
+                    "target_contact_id": person_id,
+                    "target_gateway": _plat,
+                    "session_id": str(iid),
+                    "turn_id": str(iid),
+                    "authorized": _authorized,
+                }
+                _guard_result = await _response_guard.evaluate(
                     response_text=_msg,
-                    target_contact_id=person_id,
-                    target_gateway=_plat,
-                    session_id=str(iid),
-                    turn_id=str(iid),
-                    authorized=await self._recipient_is_owner(person_id, payload),
+                    **_guard_context,
                 )
-                if _guard.blocked:
+                _guard = _snapshot_proactive_verdict(_guard_result)
+                verdict_error = (
+                    _proactive_enforce_verdict_error(_guard, _msg)
+                    if guard_enforcing else None
+                )
+                if verdict_error is not None:
                     logger.warning(
-                        "Reach-out %s BLOCKED by ResponseGuard (%s): %s",
-                        iid, _guard.decision,
-                        "; ".join(str(getattr(f, "name", f))
-                                  for f in (_guard.findings or [])[:4]))
+                        "Reach-out %s BLOCKED: ResponseGuard returned an invalid "
+                        "enforce verdict (%s)",
+                        iid, verdict_error,
+                    )
                     return False
+                guard_blocked = (
+                    _guard.decision != "allow"
+                    if guard_enforcing else _guard.blocked is True
+                )
+                if guard_blocked:
+                    # Enforce branch: one guarded regeneration attempt through
+                    # the rejection feedback loop. A loop-internal error never
+                    # overrides the guard BLOCK (fail closed on the block
+                    # side); only a revision the guard itself clears may ship.
+                    revised = None
+                    try:
+                        revised = await self._run_rejection_feedback(
+                            _msg, _guard, person_id=person_id, gateway=_plat,
+                            iid=iid, authorized=_authorized)
+                    except Exception:
+                        logger.debug("rejection feedback loop failed "
+                                     "(block stands)", exc_info=True)
+                    if revised and guard_enforcing:
+                        # The feedback loop is not an egress authority. Recheck
+                        # its exact revision at this boundary and require a
+                        # canonical ALLOW bound to those bytes before mutation.
+                        revised_result = await _response_guard.evaluate(
+                            response_text=revised,
+                            **_guard_context,
+                        )
+                        revised_guard = _snapshot_proactive_verdict(
+                            revised_result
+                        )
+                        revised_error = _proactive_enforce_verdict_error(
+                            revised_guard, revised
+                        )
+                        if (
+                            revised_error is not None
+                            or revised_guard.decision != "allow"
+                        ):
+                            logger.warning(
+                                "Reach-out %s BLOCKED: ResponseGuard did not "
+                                "authorize the exact revision (%s)",
+                                iid, revised_error or "decision is not allow",
+                            )
+                            return False
+                    if revised:
+                        logger.info(
+                            "Reach-out %s revised by rejection feedback loop "
+                            "after ResponseGuard block", iid)
+                        if payload.get("description"):
+                            payload["description"] = revised
+                        else:
+                            payload["title"] = revised
+                    else:
+                        logger.warning(
+                            "Reach-out %s BLOCKED by ResponseGuard (%s): %s",
+                            iid, _guard.decision,
+                            "; ".join(str(getattr(f, "name", f))
+                                      for f in (_guard.findings or [])[:4]))
+                        return False
         except Exception:
-            logger.debug("delivery ResponseGuard check failed (allowing)",
-                         exc_info=True)
+            if guard_enforcing:
+                logger.warning(
+                    "Reach-out %s BLOCKED: enforce ResponseGuard check failed",
+                    iid,
+                    exc_info=True,
+                )
+                return False
+            logger.debug(
+                "delivery ResponseGuard shadow check failed (allowing)",
+                exc_info=True,
+            )
+
+        # P8 is a write-only observer at this boundary: it sees a detached,
+        # bounded snapshot of the final sanitized/revised text. Its result is
+        # deliberately ignored and it cannot mutate transport-owned objects.
+        self._observe_p8_outbound(payload, preview or {})
 
         if not getattr(self.config, "proactive_delivery_enabled", False):
             logger.debug("Proactive delivery disabled — initiative stored for agent polling")
@@ -1085,8 +1713,6 @@ class AutonomyLoop:
         #     message gateway /internal/deliver (push_to_gateway), for
         #     deployments whose channel transport speaks the flat
         #     {platform, chat_id, message} contract.
-        transport = os.environ.get(
-            "COLONY_DELIVERY_TRANSPORT", "hermes_webhook").strip().lower()
         if transport == "gateway" and hasattr(delivery, "push_to_gateway"):
             target = (preview or {}).get("target", {})
             chat = target.get("user_chat") or target.get("home_chat") or ""
@@ -1098,21 +1724,111 @@ class AutonomyLoop:
                     "(target=%r) — not delivered", iid, target,
                 )
                 return False
-            ok = await delivery.push_to_gateway(
+            raw_source_id = str(iid or "")
+            if raw_source_id:
+                source_id = "initiative:" + raw_source_id
+            else:
+                # Older/custom producers may omit an initiative ID.  Preserve
+                # their delivery behavior while deriving a retry-stable,
+                # deployment-neutral source identity from the final sanitized
+                # initiative instead of generating a fresh UUID per attempt.
+                source_id = "initiative-derived:" + hashlib.sha256(
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                        default=str,
+                    ).encode("utf-8")
+                ).hexdigest()
+            delivery_id = "initiative:" + hashlib.sha256(
+                (str(type_value) + "\0" + source_id).encode("utf-8")
+            ).hexdigest()
+            if (
+                governed_admission_route
+                and delivery_id not in self._governed_delivery_replays
+                and len(self._governed_delivery_replays) >= 100
+            ):
+                logger.error(
+                    "Governed delivery reconciliation backlog is full; "
+                    "refusing a new admission for %s", iid,
+                )
+                return False
+            outcome = await delivery.push_to_gateway(
                 platform=platform, chat_id=chat_id, message=message,
                 source=type_value,
+                delivery_id=delivery_id,
+                source_id=source_id,
             )
         else:
-            ok = await delivery.push_initiative(payload)
-        # Self-model: real push attempts build (or erode) the "delivery"
-        # domain's track record, which the adaptive daily cap draws on.
+            outcome = await delivery.push_initiative(payload)
+
+        transport_accepted = bool(outcome)
+        outcome_state = str(getattr(outcome, "admission_state", ""))
+        outcome_provider_delivered = getattr(outcome, "provider_delivered", None)
+        outcome_terminal = getattr(outcome, "terminal", None)
+        observation_new = getattr(outcome, "observation_new", True) is True
+        governed_admitted = bool(
+            governed_admission_route
+            and getattr(outcome, "contract", "") == "governed_admission_v1"
+            and transport_accepted
+            and outcome_provider_delivered is False
+            and outcome_state in {"accepted", "awaiting_approval"}
+            and outcome_terminal is False
+        )
+        governed_delivered = bool(
+            governed_admission_route
+            and getattr(outcome, "contract", "") == "governed_admission_v1"
+            and transport_accepted
+            and outcome_provider_delivered is True
+            and outcome_state == "delivered"
+            and outcome_terminal is True
+        )
+        governed_terminal_failure = bool(
+            governed_admission_route
+            and getattr(outcome, "contract", "") == "governed_admission_v1"
+            and not transport_accepted
+            and outcome_provider_delivered is False
+            and outcome_state in {"failed", "ambiguous"}
+            and outcome_terminal is True
+        )
+        governed_boundary_attested = bool(
+            governed_admitted or governed_delivered or governed_terminal_failure
+        )
+        if governed_admission_route and not governed_boundary_attested:
+            logger.warning(
+                "Governed gateway returned no permitted exact boundary attestation; "
+                "treating the attempt as failed"
+            )
+            transport_accepted = False
+        outcome_delivery_id = str(getattr(outcome, "delivery_id", "") or "")
+        if governed_admitted and outcome_delivery_id:
+            self._governed_delivery_replays[outcome_delivery_id] = copy.deepcopy(payload)
+        elif (governed_delivered or governed_terminal_failure) and outcome_delivery_id:
+            self._governed_delivery_replays.pop(outcome_delivery_id, None)
+        provider_delivered = bool(
+            governed_delivered
+            if governed_admission_route
+            else (
+                transport_accepted
+                and getattr(outcome, "provider_delivered", transport_accepted) is True
+            )
+        )
+
+        # Self-model delivery success means provider delivery, never admission
+        # to an approval/dispatch queue.  A rejected transport remains a real
+        # failure; a governed pending admission is neither.
         sm = getattr(self._registry, "self_model", None)
-        if sm is not None:
+        if sm is not None and observation_new:
             try:
-                sm.record("delivery", "success" if ok else "failure")
+                if provider_delivered:
+                    sm.record("delivery", "success")
+                elif governed_terminal_failure or not transport_accepted:
+                    sm.record("delivery", "failure")
             except Exception:
                 pass
-        if ok:
+        if provider_delivered and observation_new:
             # Consume the per-recipient rate budget so the 3/day + cooldown
             # caps actually bind (the push path previously never recorded).
             if rate_limiter is not None:
@@ -1129,7 +1845,118 @@ class AutonomyLoop:
                     await _telemetry.touch("last_initiative_at")
             except Exception:
                 logger.warning("Telemetry touch failed (non-critical)")
-        return bool(ok)
+        elif governed_admitted and observation_new:
+            logger.info(
+                "Admitted initiative pending provider delivery: %s -> %s (%s)",
+                iid, person_id, getattr(outcome, "admission_state", "pending"),
+            )
+        elif governed_terminal_failure and observation_new:
+            logger.warning(
+                "Governed initiative reached terminal non-delivery: %s -> %s (%s)",
+                iid, person_id, outcome_state,
+            )
+        return provider_delivered
+
+    def _observe_p8_outbound(self, payload: dict, preview: dict) -> None:
+        """Best-effort, synchronous journal hook for non-real-time text.
+
+        The runtime itself enforces explicit shadow mode and excludes all
+        real-time voice surfaces.  Exceptions remain advisory and therefore
+        never change the established delivery result.
+        """
+        runtime = getattr(self._registry, "p8", None)
+        if runtime is None:
+            return
+        try:
+            context = payload.get("context")
+            context = context if isinstance(context, dict) else {}
+            values = context.get("fact_refs") or payload.get("fact_refs") or ()
+            if not isinstance(values, (list, tuple)):
+                values = ()
+            fact_refs = [
+                str(value).strip()[:256]
+                for value in values[:64]
+                if str(value).strip()
+            ]
+            target = preview.get("target")
+            target = target if isinstance(target, dict) else {}
+            payload_snapshot = {
+                "id": str(payload.get("id") or "")[:256],
+                # Strings are immutable; preserve the exact text that may ship
+                # so the sample digest is truthful. The simulator's own size
+                # bound may reject it after sampling, leaving incomplete
+                # coverage rather than a false truncated evaluation.
+                "title": str(payload.get("title") or ""),
+                "description": str(payload.get("description") or ""),
+                "context": {"fact_refs": fact_refs},
+            }
+            preview_snapshot = {
+                "person_id": str(
+                    preview.get("person_id") or "")[:256],
+                "target": {
+                    "user_chat": str(
+                        target.get("user_chat") or "")[:512],
+                    "home_chat": str(
+                        target.get("home_chat") or "")[:512],
+                },
+            }
+            runtime.observe_outbound_payload(
+                payload_snapshot, preview_snapshot)
+        except Exception:
+            logger.debug("P8 outbound shadow observation failed", exc_info=True)
+
+    def _get_rejection_store(self) -> Any:
+        """Lazy durable RejectionStore under the state dir (best-effort)."""
+        if not hasattr(self, "_rejection_store"):
+            self._rejection_store = None
+            try:
+                from pathlib import Path
+                from colony_sidecar.gate.rejection import RejectionStore
+                state_dir = Path(os.environ.get(
+                    "COLONY_STATE_DIR", os.path.expanduser("~/.colony")))
+                self._rejection_store = RejectionStore(
+                    str(state_dir / "colony-gate-rejections.db"))
+            except Exception:
+                logger.debug("RejectionStore unavailable", exc_info=True)
+        return self._rejection_store
+
+    async def _run_rejection_feedback(self, text: str, guard_result: Any, *,
+                                      person_id: str, gateway: str,
+                                      iid: Any, authorized: bool) -> Optional[str]:
+        """One rejection-feedback cycle for a proactive message the guard
+        blocked in enforce mode. Returns the guard-cleared revision, or None
+        when no clean revision exists (the block stands). Regeneration uses
+        the registry's LLM router when wired; without one the loop records
+        the rejection and the block stands."""
+        from colony_sidecar.api.routers.host import _response_guard
+        from colony_sidecar.gate.rejection import RejectionFeedbackLoop
+        if _response_guard is None:
+            return None
+
+        regen = None
+        llm = getattr(self._registry, "llm_router", None)
+        if llm is not None and hasattr(llm, "complete"):
+            async def regen(prompt_fragment: str, blocked_text: str):
+                resp = await llm.complete(
+                    [{"role": "system",
+                      "content": ("You revise outbound messages that were "
+                                  "blocked by a safety gate. Reply with ONLY "
+                                  "the revised message text.")},
+                     {"role": "user",
+                      "content": (f"{prompt_fragment}\n\n"
+                                  f"Original message:\n{blocked_text}")}],
+                    context={"task": "guard_revision"})
+                return getattr(resp, "content", None)
+
+        floop = RejectionFeedbackLoop(
+            _response_guard, store=self._get_rejection_store(),
+            regenerate=regen)
+        res = await floop.run(
+            text, initial_result=guard_result,
+            surface="proactive_text",
+            target_contact_id=person_id, target_gateway=gateway,
+            session_id=str(iid), turn_id=str(iid), authorized=authorized)
+        return res.payload if (res.passed and res.payload) else None
 
     async def _phase_observation_sync(self) -> None:
         """Request fresh observations for stale domains (v0.16.0).
@@ -1219,11 +2046,10 @@ class AutonomyLoop:
 
         Gated actions are posted as BLOCKED awaiting owner approval; the
         rest are posted as QUEUED for immediate claiming. What counts as
-        gated depends on COLONY_APPROVAL_POLICY (v0.18.0): strict gates
-        everything non-read-only (v0.17 behavior); graduated only gates
-        destructive actions and outbound actions whose recipient is not
-        an authorized contact. Auto-passed mutating/outbound jobs carry
-        audit tags and emit ``action_auto_approved``.
+        gated depends on the immutable effect floor: every non-read-only
+        mutation, disclosure, destructive, or outbound action requires a
+        canonical direct decision or exact bounded grant. Graduated policy is
+        retained for presentation compatibility, not execution authority.
         """
         task_queue = getattr(self._registry, "task_queue", None)
         if task_queue is None:
@@ -1238,7 +2064,6 @@ class AutonomyLoop:
         from colony_sidecar.initiatives.action_registry import (
             RiskTier,
             classify_agent_action,
-            get_action,
             get_approval_policy,
         )
 
@@ -1252,7 +2077,10 @@ class AutonomyLoop:
             )
             return
 
-        auto_approve = os.environ.get("COLONY_AGENT_AUTO_APPROVE", "false").lower() == "true"
+        legacy_auto_approve_requested = (
+            os.environ.get("COLONY_AGENT_AUTO_APPROVE", "false").lower()
+            == "true"
+        )
 
         # Mirror _phase_execute's fallback: when there is no focused context for this type,
         # carry the initiative's own trigger_data. Agent_action initiatives (e.g. a deliverable)
@@ -1270,43 +2098,30 @@ class AutonomyLoop:
             "description": getattr(initiative, "description", ""),
             "entity_id": getattr(initiative, "entity_id", None),
             "risk": verdict["risk"],
-            "auto_approve": auto_approve,
+            # Compatibility field retained for old workers, but the historical
+            # env toggle is no longer authority and is always projected false.
+            "auto_approve": False,
             "context": action_context,
         }
 
-        # v0.18.0 graduated policy: an OUTBOUND action auto-passes only
-        # when its recipient resolves to an authorized contact
-        # (interaction_allowed=True). Fails closed — no contact store, no
-        # target, unknown or unauthorized contact all keep the gate.
-        target_verdict = ""
-        if (
-            policy == "graduated"
-            and verdict["risk"] == RiskTier.OUTBOUND.value
-            and verdict["requires_approval"]
-        ):
-            from colony_sidecar.initiatives.approval_policy import is_authorized_target
+        # A contact-store match is identity/context, not execution authority.
+        # Outbound actions remain gated until a durable human/bounded decision
+        # (phone or Operator Deck) is consumed. A future server-issued target
+        # and transport attestation may safely restore a graduated fast path.
 
-            contacts_store = getattr(self._registry, "contacts", None)
-            authorized, target_verdict = await is_authorized_target(
-                job_payload, get_action(action_hint), contacts_store,
-            )
-            if authorized:
-                verdict = classify_agent_action(
-                    action_hint,
-                    params=job_payload,
-                    policy=policy,
-                    target_authorized=True,
-                )
-
-        # Gated actions require HUMAN OWNER approval — the agent cannot
-        # approve its own mutations. COLONY_AGENT_AUTO_APPROVE collapses
-        # the gate for trusted deployments (default false).
+        # Gated actions require HUMAN OWNER approval — the agent and legacy
+        # environment toggles cannot approve mutations.
         is_gated = bool(verdict["requires_approval"])
         job_payload["destructive"] = is_gated  # legacy field name, kept for workers
+        if legacy_auto_approve_requested and is_gated:
+            logger.warning(
+                "Ignoring retired COLONY_AGENT_AUTO_APPROVE for effectful %s",
+                action_hint,
+            )
 
         # v0.17.0: gated jobs are created directly in BLOCKED so no worker
         # can claim them in the window before a post-hoc transition lands.
-        gate_pending = is_gated and not auto_approve
+        gate_pending = is_gated
 
         # v0.18.0: non-read-only jobs that the POLICY (not the legacy env
         # bypass) waved through get a visible audit trail.
@@ -1316,16 +2131,10 @@ class AutonomyLoop:
         if gate_pending:
             job_tags = {"blocked_reason": "awaiting_owner_approval"}
         elif policy_auto_pass:
-            approved_via = (
-                "standing_approval" if verdict["reason"] == "standing_approval"
-                else policy
-            )
             job_tags = {
-                "auto_approved_by_policy": approved_via,
+                "auto_approved_by_policy": policy,
                 "risk": str(verdict["risk"]),
             }
-            if verdict["reason"] == "outbound_authorized_contact" and target_verdict:
-                job_tags["outbound_target"] = target_verdict
         else:
             job_tags = None
 
@@ -1342,6 +2151,55 @@ class AutonomyLoop:
             )
             job_id = job_result.get("id")
             logger.info("Posted agent_action job %s for initiative %s", job_id, initiative_id)
+
+            # QueueManager is the sole approval-at-birth owner. Read its
+            # server-stamped result instead of independently consuming grants
+            # or creating a second request in the autonomy loop.
+            approval_request = None
+            bounded_grant = None
+            if gate_pending and job_id:
+                stored_job = await task_queue.queue.get_job(job_id)
+                stamped = dict(stored_job.tags or {}) if stored_job else {}
+                if (
+                    stored_job is not None
+                    and stored_job.status is JobStatus.QUEUED
+                    and stamped.get("approval_provenance")
+                    == "server_bounded_grant"
+                ):
+                    bounded_grant = {
+                        "grant_id": stamped.get("bounded_grant_id"),
+                    }
+                    gate_pending = False
+                elif (
+                    stored_job is not None
+                    and stored_job.status is JobStatus.QUEUED
+                    and stamped.get("approval_provenance")
+                    == "server_direct_decision"
+                ):
+                    gate_pending = False
+                elif stamped.get("approval_request_id"):
+                    approval_request = {
+                        "request_id": stamped["approval_request_id"],
+                        "action_digest": stamped.get("action_digest"),
+                    }
+
+            if bounded_grant is not None and job_id:
+                logger.info(
+                    "Bounded grant %s authorized %s job %s",
+                    bounded_grant["grant_id"], verdict["risk"], job_id,
+                )
+                try:
+                    from colony_sidecar.events.broadcaster import emit as broadcast
+                    broadcast("action_auto_approved", {
+                        "job_id": job_id,
+                        "initiative_id": initiative_id,
+                        "action_hint": action_hint,
+                        "risk": verdict["risk"],
+                        "policy": "bounded_grant",
+                        "grant_id": bounded_grant["grant_id"],
+                    })
+                except Exception:
+                    pass
 
             if policy_auto_pass and job_id:
                 logger.info(
@@ -1396,7 +2254,18 @@ class AutonomyLoop:
                         "suggested_action": "colony_approve_initiative",
                         "entity_id": getattr(initiative, "entity_id", None),
                         "channel_hint": "dm",
-                        "context": {"job_id": job_id, "action_hint": action_hint},
+                        "context": {
+                            "job_id": job_id,
+                            "action_hint": action_hint,
+                            "approval_request_id": (
+                                approval_request.get("request_id")
+                                if approval_request else None
+                            ),
+                            "action_digest": (
+                                approval_request.get("action_digest")
+                                if approval_request else None
+                            ),
+                        },
                         "generated_at": datetime.now(timezone.utc).isoformat(),
                     })
 
@@ -1416,6 +2285,14 @@ class AutonomyLoop:
         goals = self._registry.goals
         if goals is None:
             return
+
+        try:
+            from colony_sidecar.cognition.goal_spine import cognition_spine_exclusive
+            if cognition_spine_exclusive():
+                engine.add_context("pending_tasks", [])
+                return
+        except Exception:
+            pass
 
         try:
             # Use get_active_tasks which respects cooldown and snooze (v0.7.10)
@@ -1714,7 +2591,22 @@ class AutonomyLoop:
         """Propagate one finished agent job to goals, memory, initiatives."""
         result = job.result
         payload = job.payload or {}
-        succeeded = bool(result is not None and result.succeeded)
+        reported_succeeded = bool(result is not None and result.succeeded)
+        tags = job.tags or {}
+        operational_only = (
+            tags.get("operational_completion_only") == "true"
+            and tags.get("success_attested") != "true"
+        )
+        try:
+            from colony_sidecar.task_queue.governor import job_declares_effect
+            effectful = job_declares_effect(job)
+        except Exception:
+            # Unknown classification cannot authorize downstream effects.
+            effectful = True
+        verification_pending = bool(
+            reported_succeeded and operational_only and effectful
+        )
+        succeeded = bool(reported_succeeded and not verification_pending)
         action = payload.get("action_hint") or job.job_type
         description = payload.get("description", "")
 
@@ -1724,7 +2616,11 @@ class AutonomyLoop:
         if (goals is not None and result is not None
                 and hasattr(goals, "on_job_completed")):
             output = result.output or {}
-            if output.get("goal_id") and output.get("subtask_id"):
+            if (
+                not verification_pending
+                and output.get("goal_id")
+                and output.get("subtask_id")
+            ):
                 try:
                     goals.on_job_completed(result)
                 except Exception as exc:
@@ -1734,8 +2630,11 @@ class AutonomyLoop:
         # 2. Episodic memory of what the agent did.
         graph = self._registry.graph
         if graph is not None and hasattr(graph, "store_memory"):
-            outcome = "completed" if succeeded else (
-                f"FAILED ({(result.error if result else None) or 'unknown error'})")
+            if verification_pending:
+                outcome = "reported completion; verification pending"
+            else:
+                outcome = "completed" if succeeded else (
+                    f"FAILED ({(result.error if result else None) or 'unknown error'})")
             summary = ""
             if result is not None and isinstance(result.output, dict):
                 raw = result.output.get("summary") or result.output.get("result")
@@ -1749,7 +2648,8 @@ class AutonomyLoop:
                 memory_type="episodic",
                 entities=[],
                 metadata={"job_id": job.job_id, "action_hint": str(action),
-                          "succeeded": succeeded},
+                          "succeeded": succeeded,
+                          "verification_pending": verification_pending},
                 importance=0.6 if succeeded else 0.7,
                 source_type="tool_output",
                 source_uri=f"colony://jobs/{job.job_id}",
@@ -1764,7 +2664,7 @@ class AutonomyLoop:
                     store.complete(initiative_id,
                                    agent_id=job.claimed_by or "agent",
                                    result=f"job {job.job_id} completed")
-                elif not succeeded and hasattr(store, "update"):
+                elif not succeeded and not verification_pending and hasattr(store, "update"):
                     store.update(initiative_id, status="failed",
                                  failed_reason=f"job {job.job_id} failed")
             except Exception as exc:
@@ -1792,15 +2692,21 @@ class AutonomyLoop:
         # Captured skills are DRAFT and deny-by-default; the v0.13
         # approval workflow gates activation, so nothing synthesized can
         # execute without the owner.
-        if succeeded:
+        if succeeded and not operational_only:
             await self._maybe_capture_skill(job, action, description)
 
         # 5. Broadcast for anything listening (WS clients, audit log).
         try:
             from colony_sidecar.events.broadcaster import emit as broadcast
-            broadcast("job_completed" if succeeded else "job_failed",
+            event_type = (
+                "job_verification_pending"
+                if verification_pending
+                else ("job_completed" if succeeded else "job_failed")
+            )
+            broadcast(event_type,
                       {"job_id": job.job_id, "action_hint": str(action),
-                       "initiative_id": initiative_id})
+                       "initiative_id": initiative_id,
+                       "verification_pending": verification_pending})
         except Exception:
             pass
 
@@ -1961,6 +2867,62 @@ class AutonomyLoop:
             self.stats.errors += 1
             logger.error("Phase projects error: %s", exc, exc_info=True)
 
+    async def _phase_project_result_reconciliation(self) -> None:
+        """Bounded early projection of already-terminal WorkOrder results."""
+
+        engine = getattr(self._registry, "project_engine", None)
+        reconcile = getattr(engine, "reconcile_terminal_results", None)
+        if not callable(reconcile):
+            return
+        try:
+            raw_limit = int(os.environ.get(
+                "COLONY_PROJECT_RECONCILIATION_LIMIT", "25",
+            ))
+        except (TypeError, ValueError):
+            raw_limit = 25
+        limit = max(1, min(100, raw_limit))
+        try:
+            raw_budget = float(os.environ.get(
+                "COLONY_PROJECT_RECONCILIATION_BUDGET_SECS", "5",
+            ))
+        except (TypeError, ValueError):
+            raw_budget = 5.0
+        # Preserve most of the whole-tick budget for ordinary cognition while
+        # guaranteeing reconciliation gets the first bounded slice.
+        budget = max(0.05, min(10.0, raw_budget,
+                               self._tick_budget_secs() * 0.25))
+        try:
+            report = await asyncio.wait_for(
+                reconcile(limit=limit), timeout=budget,
+            )
+        except asyncio.TimeoutError:
+            self.stats.errors += 1
+            logger.warning(
+                "project result reconciliation exceeded %.2fs budget; "
+                "durable rows remain retryable", budget,
+            )
+            return
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error(
+                "Phase project result reconciliation error: %s",
+                exc, exc_info=True,
+            )
+            return
+        errors = int(report.get("errors") or 0) if isinstance(report, dict) else 0
+        self.stats.errors += errors
+        if isinstance(report, dict) and (
+            report.get("projected") or errors
+        ):
+            logger.info(
+                "Phase project-result reconciliation: checked=%d "
+                "terminal=%d projected=%d errors=%d",
+                int(report.get("checked") or 0),
+                int(report.get("terminal") or 0),
+                int(report.get("projected") or 0),
+                errors,
+            )
+
     async def _phase_trust_notices(self) -> None:
         """Deliver trust-engine graduation/demotion notices to the owner
         (Amendment 1.2: notifications, not permission requests). The queue is
@@ -2087,11 +3049,15 @@ class AutonomyLoop:
             )
         except Exception:
             return
-        # feed concerns from existing signals (deduped by key so they merge)
-        try:
-            self._workspace_ingest(ws)
-        except Exception:
-            logger.debug("workspace ingest failed", exc_info=True)
+        # During migration, polling remains only when the durable reducer is
+        # absent/off.  Re-polling the same live state otherwise manufactures
+        # salience without a material event.
+        reducer = getattr(ws, "event_reducer", None)
+        if reducer is None or getattr(reducer, "mode", "off") == "off":
+            try:
+                self._workspace_ingest(ws)
+            except Exception:
+                logger.debug("workspace ingest failed", exc_info=True)
         # decay + evict
         try:
             ws.decay()
@@ -2101,6 +3067,30 @@ class AutonomyLoop:
         # thought calls the LLM; bound it so a slow model can't stall the tick.
         rounds = 4 if in_sleep_window() else 1
         live = workspace_mode() == "live"
+        try:
+            from colony_sidecar.cognition.goal_spine import (
+                cognition_spine_enabled, cognition_spine_exclusive,
+            )
+            if cognition_spine_enabled():
+                spine = getattr(ws, "cognition_spine", None)
+                if spine is None:
+                    logger.warning("P3 cognition spine enabled but not wired")
+                    if cognition_spine_exclusive():
+                        return
+                else:
+                    for _ in range(rounds):
+                        try:
+                            result = await asyncio.wait_for(
+                                spine.run_once(), timeout=self._phase_budget_secs())
+                        except asyncio.TimeoutError:
+                            logger.warning("P3 thought phase exceeded budget; stopping")
+                            break
+                        if result.get("status") in {"idle", "off"}:
+                            break
+                    return
+        except Exception:
+            logger.exception("P3 workspace phase failed")
+            return
         for _ in range(rounds):
             try:
                 outcome = await asyncio.wait_for(
@@ -2120,6 +3110,12 @@ class AutonomyLoop:
         """Live-mode: turn a thought's action into a real, gated effect. An
         initiative surfaces to the owner (through the same reachout gates);
         an experiment is proposed to the experiment framework."""
+        try:
+            from colony_sidecar.cognition.goal_spine import cognition_spine_exclusive
+            if cognition_spine_exclusive():
+                return
+        except Exception:
+            pass
         kind = (action or {}).get("kind")
         if kind == "initiative":
             delivery = self._registry.delivery
@@ -2276,9 +3272,11 @@ class AutonomyLoop:
             # 2. verify any draft
             for tool in ts.registry.list(status=ToolStatus.DRAFT):
                 await ts.verify(tool)
-            # 3. exercise shadow tools (re-run their own test as a clean run)
-            for tool in ts.registry.list(status=ToolStatus.SHADOW):
-                passed, _ = await ts.verify_shadow_run(tool)
+            # 3. Shadow evidence is supplied only when the incumbent and the
+            # candidate can be compared on the same bounded captured input.
+            # Replaying a generated self-test is verification, not operational
+            # evidence, so the daily loop intentionally does not manufacture
+            # shadow wins here.
             # 4. auto-retire failing tools
             for tool in ts.retirement_candidates():
                 ts.retire(tool.tool_id, reason="failing/unused")
@@ -2293,21 +3291,16 @@ class AutonomyLoop:
         cands = ts.graduation_candidates()
         if not cands:
             return
-        stage = ts.trust_stage()
         for tool in cands:
-            if stage == "act_first":
-                ts.graduate(tool.tool_id)
-                title = f"New tool live: {tool.name}"
-                finding = (f"I built and graduated a tool, {tool.name}: "
-                           f"{tool.description}. It passed sandbox "
-                           f"verification and {tool.shadow_runs} clean shadow "
-                           "runs, and my toolsmith track record is trusted.")
-            else:
-                title = f"New tool ready: {tool.name}"
-                finding = (f"I built a tool, {tool.name}: {tool.description}. "
-                           f"It passed sandbox verification and "
-                           f"{tool.shadow_runs} clean shadow runs. Approve it "
-                           "to let me use it for real.")
+            # Trust is useful evidence, but never publication authority.  A
+            # one-shot owner-scoped graduation envelope is required at every
+            # trust stage, including act_first.
+            title = f"New tool ready: {tool.name}"
+            comparison_count = ts.registry.clean_comparison_count(tool.tool_id)
+            finding = (f"I built a tool, {tool.name}: {tool.description}. "
+                       f"It passed sandbox verification and "
+                       f"{comparison_count} clean same-input comparisons. "
+                       "Approve its exact artifact to let me use it for real.")
             if delivery is None:
                 continue
             try:
@@ -2317,9 +3310,8 @@ class AutonomyLoop:
                     why_it_helps="I get more capable at things I do often, "
                                  "and you see every new capability first",
                     suggested_action=(
-                        "It is already live."
-                        if stage == "act_first" else
-                        f"Approve via the tools API to graduate {tool.name}."),
+                        f"Approve the bounded artifact digest via the tools "
+                        f"API to graduate {tool.name}."),
                     source="toolsmith", initiative_type="proposal",
                     confidence=0.85)
                 await self._route_reachout_delivery(
@@ -2441,6 +3433,29 @@ class AutonomyLoop:
             self.stats.errors += 1
             logger.error("Phase world_llm_extract error: %s", exc,
                          exc_info=True)
+
+    async def _phase_tom2_asymmetry(self) -> None:
+        """Phase 11d2 (daily): tom2 knowledge-asymmetry sweep. Inert unless
+        COLONY_TOM2 is set (default off; shadow computes counts only, live
+        writes refs-not-content inference rows)."""
+        engine = getattr(self._registry, "tom2_engine", None)
+        if engine is None:
+            return
+        try:
+            from colony_sidecar.tom.asymmetry import tom2_mode
+            if tom2_mode() == "off":
+                return
+        except Exception:
+            return
+        key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._periodic_last.get("tom2_asymmetry") == key:
+            return
+        try:
+            engine.run()
+            self._periodic_last["tom2_asymmetry"] = key
+        except Exception as exc:
+            self.stats.errors += 1
+            logger.error("Phase tom2_asymmetry error: %s", exc, exc_info=True)
 
     async def _phase_connectors(self) -> None:
         """Phase 11e: poll due read-only connectors (cognition item 2).
@@ -2567,23 +3582,91 @@ class AutonomyLoop:
                 logger.debug("condition poll failed for goal %s",
                              getattr(goal, "goal_id", "?"), exc_info=True)
 
-    async def _phase_memory_consolidation(self) -> None:
-        async def work(graph):
-            if hasattr(graph, "consolidate_memories"):
-                promoted = await graph.consolidate_memories()
-                self.stats.memories_promoted += len(promoted) if promoted else 0
-        await self._run_periodic_phase("memory_consolidation", "hour", work)
+    # Graph capabilities the periodic memory phases dispatch on. A missing
+    # method means the phase silently does nothing every cycle — checked
+    # once at loop start and counted (stats.phases_skipped) at skip time.
+    _GRAPH_PHASE_CAPABILITIES = {
+        "memory_decay": "decay_memories",
+        "memory_pruning": "prune_weak_memories",
+        "memory_archive": "archive_memories",
+    }
+
+    def _check_phase_capabilities(self) -> None:
+        """Boot self-check: warn once per phase whose graph capability is
+        missing, so a renamed/removed backend method can never turn a
+        maintenance phase into a silent no-op again."""
+        try:
+            graph = self._registry.graph
+        except Exception:
+            graph = None
+        if graph is None:
+            return
+        for phase, attr in self._GRAPH_PHASE_CAPABILITIES.items():
+            if not hasattr(graph, attr):
+                self._note_phase_skipped(
+                    phase, f"graph backend lacks {attr}()", count=False)
+
+    def _note_phase_skipped(self, name: str, reason: str,
+                            count: bool = True) -> None:
+        """Record a phase skip: count every occurrence, warn only once."""
+        if count:
+            self.stats.phases_skipped += 1
+        if name not in self._phase_skip_warned:
+            self._phase_skip_warned.add(name)
+            logger.warning("Phase %s skipped: %s", name, reason)
 
     async def _phase_memory_decay(self) -> None:
         async def work(graph):
             if hasattr(graph, "decay_memories"):
                 await graph.decay_memories()
+            else:
+                self._note_phase_skipped(
+                    "memory_decay", "graph backend lacks decay_memories()")
         await self._run_periodic_phase("memory_decay", "day", work)
 
     async def _phase_memory_pruning(self) -> None:
+        """Weekly: prune memories whose strength decayed below threshold.
+
+        COLONY_MEMORY_PRUNE_MODE gates the phase: ``off`` disables it,
+        ``shadow`` (default) counts what WOULD be pruned without deleting
+        anything, ``live`` deletes for real (capped per pass, graph node +
+        vector together). The default preserves shipped behavior — nothing
+        is ever deleted until a deployment flips the flag deliberately.
+        """
+        mode = os.environ.get(
+            "COLONY_MEMORY_PRUNE_MODE", "shadow").strip().lower()
+        if mode == "off":
+            return
+        if mode not in ("shadow", "live"):
+            mode = "shadow"  # unknown values fail safe to counting only
+
         async def work(graph):
-            if hasattr(graph, "prune_memories"):
-                await graph.prune_memories()
+            if not hasattr(graph, "prune_weak_memories"):
+                self._note_phase_skipped(
+                    "memory_pruning",
+                    "graph backend lacks prune_weak_memories()")
+                return
+            result = await graph.prune_weak_memories(dry_run=(mode != "live"))
+            logger.info(
+                "Phase memory_pruning (%s): matched=%s deleted=%s",
+                mode, result.get("matched"), result.get("deleted"))
+            # Post-prune orphan-vector sweep (live mode only, bounded):
+            # pruning couples vector deletion to node deletion, but any
+            # vector delete that failed leaves an orphan that keeps
+            # matching in ANN search. Best-effort — a sweep failure never
+            # fails the prune pass; leftovers are caught next week or via
+            # the explicit /memory/vector-vacuum endpoint.
+            if mode == "live" and hasattr(graph, "vacuum_orphan_vectors"):
+                try:
+                    sweep = await graph.vacuum_orphan_vectors(
+                        dry_run=False, max_delete=2000)
+                    logger.info(
+                        "Phase memory_pruning orphan sweep: orphans=%s "
+                        "deleted=%s", sweep.get("orphans"),
+                        sweep.get("deleted"))
+                except Exception:
+                    logger.warning("post-prune orphan-vector sweep failed",
+                                   exc_info=True)
         await self._run_periodic_phase("memory_pruning", "week", work)
 
     async def _phase_memory_distillation(self) -> None:
@@ -2618,6 +3701,10 @@ class AutonomyLoop:
             if hasattr(graph, "archive_memories"):
                 archived = await graph.archive_memories(max_age_days=30)
                 logger.info("Phase memory_archive: archived=%d", archived)
+            else:
+                self._note_phase_skipped(
+                    "memory_archive",
+                    "graph backend lacks archive_memories()")
         await self._run_periodic_phase("memory_archive", "week", work)
 
     async def _phase_task_completion(self) -> None:
@@ -2935,19 +4022,7 @@ class AutonomyLoop:
                 pending = initiative_store.list(status=["pending"], limit=100)
                 repushed = 0
                 for initiative in pending:
-                    payload = {
-                        "id": initiative.id,
-                        "type": initiative.type,
-                        "priority": initiative.priority,
-                        "title": initiative.description.split(".")[0][:80] if initiative.description else "(no title)",
-                        "description": initiative.description,
-                        "rationale": initiative.rationale or "",
-                        "suggested_action": initiative.action_hint or "review_and_decide",
-                        "entity_id": initiative.entity_id,
-                        "entity_type": initiative.type,
-                        "context": getattr(initiative, "context", None) or {},
-                        "generated_at": initiative.created_at.isoformat() if initiative.created_at else datetime.now(timezone.utc).isoformat(),
-                    }
+                    payload = self._stored_initiative_delivery_payload(initiative)
                     try:
                         if await self._route_reachout_delivery(payload, delivery):
                             repushed += 1
@@ -3134,18 +4209,12 @@ class AutonomyLoop:
         except (ValueError, AttributeError):
             return False
 
-        start_minutes = start_h * 60 + start_m
-        end_minutes = end_h * 60 + end_m
-        current_minutes = now.hour * 60 + now.minute
-
-        # Disabled if both are 00:00
-        if start_minutes == 0 and end_minutes == 0:
-            return False
-
-        # Handle overnight quiet hours (e.g., 22:00 - 07:00)
-        if start_minutes > end_minutes:
-            return current_minutes >= start_minutes or current_minutes < end_minutes
-        return start_minutes <= current_minutes < end_minutes
+        from colony_sidecar.util.quiet_hours import in_quiet_window
+        return in_quiet_window(
+            now.hour * 60 + now.minute,
+            start_h * 60 + start_m,
+            end_h * 60 + end_m,
+        )
 
     def _reset_hour_bucket(self) -> None:
         current_hour = datetime.now(timezone.utc).hour

@@ -1,4 +1,4 @@
-"""AdaptiveParamStore + the closed meta-learning loop.
+"""AdaptiveParamStore + the controlled meta-learning loop.
 
 The historical bug this guards: StrategyAdjuster persisted a
 similarity_threshold that no consumer ever read back (the consolidator
@@ -106,31 +106,35 @@ class TestConsolidatorReadsBack:
         assert c.similarity_threshold == pytest.approx(0.92)
 
 
-class TestStrategyAdjusterWritesReadableKnobs:
+class TestStrategyAdjusterProposesReadableKnobs:
     def _adjuster(self, store):
         from colony_sidecar.intelligence.cognition.strategy_adjuster import (
             StrategyAdjuster,
         )
         return StrategyAdjuster(graph=object(), params=store)
 
-    async def test_adjust_similarity_threshold_sets_recall_floor(self, store):
+    async def test_adjust_similarity_threshold_proposes_recall_floor(self, store):
         adj = self._adjuster(store)
         result = await adj._adjust_threshold(threshold=0.35)
-        assert result["success"] is True
+        assert result["success"] is False
+        assert result["proposal_required"] is True
         assert result["param"] == PARAM_RECALL_MIN_RELEVANCE
-        assert store.get(PARAM_RECALL_MIN_RELEVANCE) == pytest.approx(0.35)
+        assert result["requested"] == pytest.approx(0.35)
+        assert store.get(PARAM_RECALL_MIN_RELEVANCE) == pytest.approx(0.0)
 
     async def test_adjust_consolidation_threshold(self, store):
         adj = self._adjuster(store)
         result = await adj._adjust_consolidation_threshold(threshold=0.95)
-        assert result["success"] is True
-        assert store.get(PARAM_CONSOLIDATION_THRESHOLD) == pytest.approx(0.95)
+        assert result["success"] is False
+        assert result["proposal_required"] is True
+        assert store.get(PARAM_CONSOLIDATION_THRESHOLD) == pytest.approx(0.92)
 
-    async def test_out_of_bounds_request_is_clamped_not_applied_raw(self, store):
+    async def test_out_of_bounds_request_is_only_a_proposal(self, store):
         adj = self._adjuster(store)
         result = await adj._adjust_consolidation_threshold(threshold=0.5)
-        assert result["success"] is True
-        assert result["applied"] == pytest.approx(0.85)
+        assert result["success"] is False
+        assert result["requested"] == pytest.approx(0.5)
+        assert store.get(PARAM_CONSOLIDATION_THRESHOLD) == pytest.approx(0.92)
 
     async def test_without_param_store_adjustment_fails_loudly(self):
         from colony_sidecar.intelligence.cognition.strategy_adjuster import (

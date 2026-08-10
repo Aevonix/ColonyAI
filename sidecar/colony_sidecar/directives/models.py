@@ -67,7 +67,7 @@ def default_level() -> "Level":
 
 # Explicit perception language -> OBSERVE (full blackout).
 PERCEPTION_RE = re.compile(
-    r"\b(?:look(?:ing)?\s+at|read(?:ing)?|watch(?:ing)?|monitor(?:ing)?|"
+    r"\b(?:look(?:ing)?\s+at|read(?:ing)?(?!-only\b)|watch(?:ing)?|monitor(?:ing)?|"
     r"track(?:ing)?|stay\s+out\s+of|snoop|peek|observe|observing|"
     r"even\s+look)\b", re.IGNORECASE,
 )

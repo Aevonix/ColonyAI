@@ -1,0 +1,230 @@
+"""Distiller thresholds + record_turn distill format (U13).
+
+Locks: env unset -> distiller thresholds are the historical 3/0.5/7 and
+record_turn stores the VERBATIM summary (COLONY_DISTILL_TURNS stays a
+shadow flag, flip is owner-gated). When distill is on, the stored content
+joins lines with '; ' (never an em dash — the text is prompt-injected) and
+preserves the user speaker label.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from colony_sidecar.intelligence.graph import client as client_mod
+from colony_sidecar.intelligence.graph.distiller import MemoryDistiller
+
+
+# --- MemoryDistiller threshold knobs -------------------------------------------
+
+class _FakeGraph:
+    def __init__(self):
+        self.executed = []
+
+    async def execute(self, query, **params):
+        self.executed.append((query, params))
+        return []
+
+
+class TestDistillerKnobs:
+    def test_defaults_unchanged_without_env(self, monkeypatch):
+        for var in ("COLONY_DISTILL_MIN_RECALLS", "COLONY_DISTILL_MIN_STRENGTH",
+                    "COLONY_DISTILL_MIN_AGE_DAYS"):
+            monkeypatch.delenv(var, raising=False)
+        d = MemoryDistiller(_FakeGraph())
+        assert d._min_recalls == 3
+        assert d._min_strength == 0.5
+        assert d._min_age_days == 7
+
+    def test_env_knobs_apply(self, monkeypatch):
+        monkeypatch.setenv("COLONY_DISTILL_MIN_RECALLS", "2")
+        monkeypatch.setenv("COLONY_DISTILL_MIN_STRENGTH", "0.3")
+        monkeypatch.setenv("COLONY_DISTILL_MIN_AGE_DAYS", "1")
+        d = MemoryDistiller(_FakeGraph())
+        assert d._min_recalls == 2
+        assert d._min_strength == 0.3
+        assert d._min_age_days == 1
+
+    def test_explicit_args_beat_env(self, monkeypatch):
+        monkeypatch.setenv("COLONY_DISTILL_MIN_RECALLS", "2")
+        monkeypatch.setenv("COLONY_DISTILL_MIN_STRENGTH", "0.3")
+        monkeypatch.setenv("COLONY_DISTILL_MIN_AGE_DAYS", "1")
+        d = MemoryDistiller(_FakeGraph(), min_recalls=5, min_strength=0.9,
+                            min_age_days=14)
+        assert d._min_recalls == 5
+        assert d._min_strength == 0.9
+        assert d._min_age_days == 14
+
+    def test_invalid_env_falls_back_to_defaults(self, monkeypatch):
+        monkeypatch.setenv("COLONY_DISTILL_MIN_RECALLS", "banana")
+        monkeypatch.setenv("COLONY_DISTILL_MIN_STRENGTH", "")
+        d = MemoryDistiller(_FakeGraph())
+        assert d._min_recalls == 3
+        assert d._min_strength == 0.5
+
+    @pytest.mark.asyncio
+    async def test_thresholds_reach_candidate_query(self, monkeypatch):
+        monkeypatch.setenv("COLONY_DISTILL_MIN_RECALLS", "4")
+        monkeypatch.setenv("COLONY_DISTILL_MIN_STRENGTH", "0.6")
+        monkeypatch.setenv("COLONY_DISTILL_MIN_AGE_DAYS", "10")
+        graph = _FakeGraph()
+        d = MemoryDistiller(graph)
+        await d._fetch_candidates()
+        _, params = graph.executed[0]
+        assert params["min_recalls"] == 4
+        assert params["min_strength"] == 0.6
+        assert params["min_age_days"] == 10
+
+
+# --- record_turn distill format --------------------------------------------------
+
+class _RecordTurnFixture:
+    def __init__(self):
+        self.stored = []
+        g = client_mod.ColonyGraph.__new__(client_mod.ColonyGraph)
+
+        async def _store_memory(**kwargs):
+            self.stored.append(kwargs)
+            return "mem-1"
+
+        g.store_memory = _store_memory
+        self.graph = g
+
+
+_SUMMARY = ("User: my favorite color is blue\n"
+            "Agent: noted, I will remember that\n"
+            "standalone line")
+
+
+@pytest.mark.asyncio
+async def test_default_stores_verbatim_summary(monkeypatch):
+    """Regression lock: COLONY_DISTILL_TURNS unset -> content == summary."""
+    monkeypatch.delenv("COLONY_DISTILL_TURNS", raising=False)
+    fx = _RecordTurnFixture()
+    mid = await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=["color"],
+        tools_used=[], summary=_SUMMARY)
+    assert mid == "mem-1"
+    assert fx.stored[0]["content"] == _SUMMARY
+
+
+@pytest.mark.asyncio
+async def test_distill_on_joins_with_semicolon_and_keeps_both_speakers(monkeypatch):
+    monkeypatch.setenv("COLONY_DISTILL_TURNS", "1")
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=["color"],
+        tools_used=[], summary=_SUMMARY)
+    content = fx.stored[0]["content"]
+    assert content == ("User: my favorite color is blue; "
+                       "Agent: noted, I will remember that; standalone line")
+    # prompt-injected text: never an em dash, in any join
+    assert "—" not in content
+
+
+@pytest.mark.asyncio
+async def test_distill_on_empty_lines_dropped(monkeypatch):
+    monkeypatch.setenv("COLONY_DISTILL_TURNS", "1")
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=[],
+        tools_used=[], summary="User: hello\n\nAgent:\nAgent: done")
+    assert fx.stored[0]["content"] == "User: hello; Agent: done"
+
+
+def test_distill_normalizes_assistant_to_agent():
+    assert client_mod.distill_turn_summary(
+        "User: hi\nAssistant: hello there") == "User: hi; Agent: hello there"
+
+
+def test_agent_label_blocks_contact_claim_extraction():
+    """H5.2: an Agent:-labeled statement must NOT parse as a contact claim.
+    Unlabeled, the same sentence extracts a (Jordan, works_at, Initech)
+    claim — the leak that let the agent's own prose enter belief
+    maintenance as if a contact had asserted it."""
+    from colony_sidecar.beliefs.contradictions import claims_from_text
+
+    distilled = client_mod.distill_turn_summary("Agent: Jordan works at Initech")
+    assert distilled == "Agent: Jordan works at Initech"
+    assert claims_from_text(distilled) == []
+    # control: the label is what makes the difference
+    assert claims_from_text("Jordan works at Initech") != []
+
+
+@pytest.mark.asyncio
+async def test_content_hash_over_final_content(monkeypatch):
+    import hashlib
+    monkeypatch.setenv("COLONY_DISTILL_TURNS", "1")
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=[],
+        tools_used=[], summary=_SUMMARY)
+    stored = fx.stored[0]
+    assert stored["content_hash"] == hashlib.sha256(
+        stored["content"].encode("utf-8")).hexdigest()
+
+
+# --- shadow distill preview ring (H5.1) -------------------------------------------
+
+@pytest.mark.asyncio
+async def test_flag_off_pushes_preview_but_stores_verbatim(monkeypatch):
+    """Off => stored content unchanged AND a preview pair is captured, so the
+    flip can be judged on real traffic before it changes anything."""
+    monkeypatch.delenv("COLONY_DISTILL_TURNS", raising=False)
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s9", contact_id="c1", topics=[], entities=["color"],
+        tools_used=[], summary=_SUMMARY)
+    assert fx.stored[0]["content"] == _SUMMARY
+    preview = fx.graph.distill_preview()
+    assert len(preview) == 1
+    p = preview[0]
+    assert p["session_id"] == "s9"
+    assert p["original"] == _SUMMARY[:400]
+    assert p["distilled"] == client_mod.distill_turn_summary(_SUMMARY)[:400]
+    assert 0.0 < p["importance"] <= 0.95
+    assert p["ts"] > 0
+
+
+@pytest.mark.asyncio
+async def test_preview_ring_is_bounded_and_newest_first(monkeypatch):
+    monkeypatch.delenv("COLONY_DISTILL_TURNS", raising=False)
+    fx = _RecordTurnFixture()
+    for i in range(55):
+        await fx.graph.record_turn(
+            session_id=f"s{i}", contact_id="c1", topics=[], entities=[],
+            tools_used=[], summary=f"User: message number {i}")
+    preview = fx.graph.distill_preview()
+    assert len(preview) == 50                       # deque(maxlen=50)
+    assert preview[0]["session_id"] == "s54"        # newest first
+    assert preview[-1]["session_id"] == "s5"        # oldest survivor
+
+
+@pytest.mark.asyncio
+async def test_flag_on_does_not_push_preview(monkeypatch):
+    monkeypatch.setenv("COLONY_DISTILL_TURNS", "1")
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=[],
+        tools_used=[], summary=_SUMMARY)
+    assert fx.graph.distill_preview() == []
+
+
+@pytest.mark.asyncio
+async def test_distill_preview_endpoint(monkeypatch):
+    from colony_sidecar.api.routers import host as host_mod
+
+    monkeypatch.delenv("COLONY_DISTILL_TURNS", raising=False)
+    fx = _RecordTurnFixture()
+    await fx.graph.record_turn(
+        session_id="s1", contact_id="c1", topics=[], entities=[],
+        tools_used=[], summary=_SUMMARY)
+    monkeypatch.setattr(host_mod, "_graph", fx.graph)
+    out = await host_mod.memory_distill_preview()
+    assert out["enabled"] is False
+    assert out["count"] == 1
+    assert out["preview"][0]["session_id"] == "s1"
+    # no graph wired -> harmless empty payload
+    monkeypatch.setattr(host_mod, "_graph", None)
+    out = await host_mod.memory_distill_preview()
+    assert out == {"enabled": False, "count": 0, "preview": []}

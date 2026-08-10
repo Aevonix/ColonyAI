@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 import colony_sidecar.api.routers.host as host_mod
+from colony_sidecar.api.authority import RequestAuthority, legacy_authority
 from colony_sidecar.self_model.workspace import (
     ConcernStore, WorkspaceEngine, in_sleep_window,
 )
@@ -209,10 +210,14 @@ def test_ingest_from_all_sources(tmp_path):
 # --- API -------------------------------------------------------------------
 
 @asynccontextmanager
-async def _client(ws):
+async def _client(ws, authority=None):
     orig = host_mod._workspace
     host_mod._workspace = ws
     app = FastAPI()
+    @app.middleware("http")
+    async def _legacy_authority(request, call_next):
+        request.state.colony_authority = authority or legacy_authority()
+        return await call_next(request)
     app.include_router(host_mod.router)
     try:
         async with AsyncClient(transport=ASGITransport(app=app),
@@ -254,3 +259,43 @@ async def test_api_resolve(tmp_path):
 async def test_api_unavailable():
     async with _client(None) as c:
         assert (await c.get("/v1/host/self/workspace")).json() == {"available": False}
+
+
+def _scoped(viewer, *, audiences=("viewer",)):
+    return RequestAuthority(
+        principal_id=f"test-{viewer}", credential_id="cred",
+        scopes=frozenset({"api:access"}), viewer_person_id=viewer,
+        person_ids=frozenset({viewer}), audiences=frozenset(audiences),
+        authenticated=True,
+    )
+
+
+async def test_api_filters_private_concerns_and_resolve_is_owner_only(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    ws, store = make(tmp_path)
+    owner = ws.bump(kind="question", summary="owner only", dedup_key="owner")
+    subject = ws.bump(kind="thread", summary="subject visible", dedup_key="subject")
+    with store._lock:
+        store._conn.execute(
+            "UPDATE concerns SET subject_person_id=?,shareability=?,viewer_scope=? "
+            "WHERE concern_id=?",
+            ("person-a", "subject_private", "person:person-a", subject.concern_id),
+        )
+        store._conn.commit()
+
+    async with _client(ws, _scoped("person-a")) as client:
+        snapshot = (await client.get("/v1/host/self/workspace")).json()
+        assert [row["summary"] for row in snapshot["concerns"]] == ["subject visible"]
+        assert (await client.post(
+            f"/v1/host/self/workspace/{subject.concern_id}/resolve"
+        )).status_code == 404
+
+    async with _client(ws, _scoped("person-owner", audiences=("viewer", "owner"))) as client:
+        snapshot = (await client.get("/v1/host/self/workspace")).json()
+        assert {row["summary"] for row in snapshot["concerns"]} == {
+            "owner only", "subject visible",
+        }
+        assert (await client.post(
+            f"/v1/host/self/workspace/{owner.concern_id}/resolve"
+        )).status_code == 200

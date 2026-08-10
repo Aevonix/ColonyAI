@@ -33,6 +33,7 @@ Environment:
   COLONY_WORKER_JOB_TYPES    csv job types        (default research)
   COLONY_WORKER_MAX_JOBS     jobs per cycle       (default 1)
   COLONY_WORKER_POLL_SECS    seconds between polls (default 30; daemon mode)
+  COLONY_WORKER_HEARTBEAT_SECS heartbeat cadence while running (default 20)
   COLONY_WORKER_LLM_BASE_URL OpenAI-compatible base (default OPENAI_BASE_URL)
   COLONY_WORKER_LLM_MODEL    model name           (default gpt-4o-mini)
   COLONY_WORKER_LLM_API_KEY  LLM key              (default OPENAI_API_KEY)
@@ -43,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 import time
 import urllib.request
 from typing import Any, Dict, List, Optional
@@ -75,6 +77,10 @@ def load_config() -> Dict[str, Any]:
         "COLONY_WORKER_CAPABILITIES", "research,analyst,read").split(",") if c.strip()]
     job_types = [t.strip() for t in os.environ.get(
         "COLONY_WORKER_JOB_TYPES", "research").split(",") if t.strip()]
+    if os.environ.get(
+        "COLONY_AGENT_JOB_CLAIMS_ENABLED", "true"
+    ).strip().lower() not in {"1", "true", "yes", "on"}:
+        job_types = [item for item in job_types if item != "agent_action"]
     return {
         "colony_url": os.environ.get("COLONY_URL", "http://127.0.0.1:7777").rstrip("/"),
         "api_key": os.environ.get("COLONY_API_KEY", "dev-mode-no-key"),
@@ -83,6 +89,10 @@ def load_config() -> Dict[str, Any]:
         "job_types": job_types,
         "max_jobs": int(os.environ.get("COLONY_WORKER_MAX_JOBS", "1")),
         "poll_secs": float(os.environ.get("COLONY_WORKER_POLL_SECS", "30")),
+        "heartbeat_secs": max(
+            1.0,
+            float(os.environ.get("COLONY_WORKER_HEARTBEAT_SECS", "20")),
+        ),
         "llm_base_url": (os.environ.get("COLONY_WORKER_LLM_BASE_URL")
                          or os.environ.get("OPENAI_BASE_URL", "")).rstrip("/"),
         "llm_model": os.environ.get("COLONY_WORKER_LLM_MODEL", "gpt-4o-mini"),
@@ -152,8 +162,12 @@ def _parse_report(content: str) -> Dict[str, Any]:
         import re
         m = re.search(r"\{.*\}", text, re.DOTALL)
         text = m.group(0) if m else "{}"
+    parsed = False
     try:
         data = json.loads(text)
+        parsed = isinstance(data, dict) and bool(
+            str(data.get("summary") or "").strip()
+        )
     except Exception:
         data = {"summary": (content or "")[:600]}
     allowed_ops = {"analyze", "read", "search"}
@@ -165,7 +179,7 @@ def _parse_report(content: str) -> Dict[str, Any]:
     except (TypeError, ValueError):
         conf = 0.5
     # Read/analyse posture is enforced client-side too: never report a mutation.
-    return {
+    report = {
         "summary": str(data.get("summary", ""))[:2000],
         "operations": ops,
         "files_touched": [],
@@ -174,6 +188,33 @@ def _parse_report(content: str) -> Dict[str, Any]:
         "confidence": conf,
         "remaining_work": str(data.get("remaining_work", ""))[:600],
     }
+    if parsed:
+        report.update({
+            "status": "completed",
+            "action_plane": {"state": "completed"},
+        })
+    return report
+
+
+def _heartbeat_loop(
+    cfg: Dict[str, Any],
+    job_id: str,
+    claim_attempt_id: str,
+    stop: threading.Event,
+) -> None:
+    """Maintain the exact RUNNING lease around the blocking LLM request."""
+
+    interval = float(cfg.get("heartbeat_secs") or 20.0)
+    while not stop.wait(interval):
+        try:
+            _post(
+                cfg,
+                f"{cfg['colony_url']}/v1/host/queue/jobs/{job_id}/heartbeat",
+                {"claim_attempt_id": claim_attempt_id},
+                timeout=10,
+            )
+        except Exception as exc:
+            print(f"Heartbeat failed for job {job_id}: {exc}")
 
 
 def call_llm(cfg: Dict[str, Any], messages: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -196,22 +237,69 @@ def call_llm(cfg: Dict[str, Any], messages: List[Dict[str, str]]) -> Dict[str, A
 def execute_job(cfg: Dict[str, Any], job: dict) -> bool:
     """Run one claimed job to completion (report) or failure."""
     job_id = job.get("job_id") or job.get("id")
+    claim_attempt_id = job.get("claim_attempt_id")
     try:
+        started = _post(
+            cfg,
+            f"{cfg['colony_url']}/v1/host/queue/jobs/{job_id}/start",
+            {"claim_attempt_id": claim_attempt_id},
+        )
+        if not isinstance(started, dict) or started.get("success") is not True:
+            raise RuntimeError("start transition was not accepted")
+    except Exception as exc:
+        print(f"Start failed for job {job_id}: {exc}")
+        try:
+            _post(
+                cfg,
+                f"{cfg['colony_url']}/v1/host/queue/jobs/{job_id}/release",
+                {"claim_attempt_id": claim_attempt_id},
+            )
+        except Exception:
+            pass
+        return False
+    heartbeat_stop = threading.Event()
+    heartbeat = threading.Thread(
+        target=_heartbeat_loop,
+        args=(cfg, str(job_id), str(claim_attempt_id), heartbeat_stop),
+        daemon=True,
+        name=f"colony-heartbeat-{job_id}",
+    )
+    try:
+        # Confirm this exact attempt is still authoritative before spending
+        # inference time, then keep it alive during the blocking request.
+        _post(
+            cfg,
+            f"{cfg['colony_url']}/v1/host/queue/jobs/{job_id}/heartbeat",
+            {"claim_attempt_id": claim_attempt_id},
+            timeout=10,
+        )
+        heartbeat.start()
         report = call_llm(cfg, build_llm_messages(job))
     except Exception as exc:
         try:
             _post(cfg, f"{cfg['colony_url']}/v1/host/queue/jobs/{job_id}/fail",
-                  {"error": f"worker execution failed: {exc}"[:400]})
+                  {"error": f"worker execution failed: {exc}"[:400],
+                   "claim_attempt_id": claim_attempt_id})
         except Exception:
             pass
         return False
+    finally:
+        heartbeat_stop.set()
+        if heartbeat.is_alive():
+            heartbeat.join(timeout=2.0)
     try:
         resp = _post(cfg, f"{cfg['colony_url']}/v1/host/queue/jobs/{job_id}/complete",
-                     {"output": report})
+                     {"output": report, "claim_attempt_id": claim_attempt_id})
         verdict = resp.get("verdict", "?")
+        semantic_success = (
+            resp.get("transitioned") is True
+            and resp.get("job_status") == "completed"
+            and resp.get("governor_outcome") == "success"
+        )
         print(f"Completed job {job_id} (verdict={verdict}, "
+              f"status={resp.get('job_status', '?')}, "
               f"confidence={report['confidence']})")
-        return True
+        return semantic_success
     except Exception as exc:
         print(f"Complete post failed for {job_id}: {exc}")
         return False
@@ -219,6 +307,9 @@ def execute_job(cfg: Dict[str, Any], job: dict) -> bool:
 
 def run_cycle(cfg: Dict[str, Any]) -> int:
     """One poll cycle: register, claim up to max_jobs, execute each."""
+    if not cfg.get("job_types"):
+        print("No enabled worker job types.")
+        return 0
     try:
         register_worker(cfg)
     except Exception as exc:

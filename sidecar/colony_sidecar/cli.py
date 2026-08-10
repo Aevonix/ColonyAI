@@ -1237,29 +1237,30 @@ def _is_loopback_host(host: str) -> bool:
 def _guard_bind_auth(host: str) -> None:
     """Refuse to start an unauthenticated sidecar on a non-loopback interface.
 
-    Auth is enforced by ApiKeyMiddleware, but when COLONY_API_KEY is unset the
-    API runs fully open ("dev mode"). That is only safe on loopback. Binding to
-    0.0.0.0 / a LAN address without a key exposes every endpoint to the network,
-    so fail closed with an actionable message instead of silently serving open.
+    Auth is enforced by ApiKeyMiddleware, but when both COLONY_API_KEY and
+    COLONY_API_KEYRING_PATH are unset the API runs in dev mode. That is only
+    safe on loopback. Binding to 0.0.0.0 / a LAN address without either auth
+    mechanism exposes every endpoint to the network, so fail closed.
     Set COLONY_ALLOW_OPEN_BIND=1 to override (e.g. behind a trusted proxy).
     """
     if _is_loopback_host(host):
         return
-    if os.environ.get("COLONY_API_KEY"):
+    if os.environ.get("COLONY_API_KEY") or os.environ.get("COLONY_API_KEYRING_PATH"):
         return
     if os.environ.get("COLONY_ALLOW_OPEN_BIND", "").strip().lower() in {"1", "true", "yes", "on"}:
         print(
             f"⚠️  Sidecar binding to non-loopback host {host!r} with NO "
-            "COLONY_API_KEY (COLONY_ALLOW_OPEN_BIND override set) — the API is "
+            "API authentication (COLONY_ALLOW_OPEN_BIND override set) — the API is "
             "open to the network.",
             file=sys.stderr,
         )
         return
     print(
         f"❌ Refusing to start: binding to {host!r} (non-loopback) with no "
-        "COLONY_API_KEY — the API would be open to the network.\n"
+        "API authentication — the API would be open to the network.\n"
         "  Fix one of:\n"
-        "    • set COLONY_API_KEY=<secret> to require bearer/X-API-Key auth, or\n"
+        "    • set COLONY_API_KEY=<secret> or COLONY_API_KEYRING_PATH=<file> "
+        "to require bearer/X-API-Key auth, or\n"
         "    • bind to 127.0.0.1 (default) and reach it via SSH/proxy, or\n"
         "    • set COLONY_ALLOW_OPEN_BIND=1 to intentionally serve open "
         "(only behind a trusted network/proxy).",
@@ -1798,6 +1799,34 @@ def _cmd_status() -> None:
             if "fail" in str(v).lower() or "error" in str(v).lower() or "not wired" in str(v).lower():
                 print(f"  ⚠️  {k}: {v}")
 
+        # Detailed auth migration evidence is intentionally separate from the
+        # public health response and requires legacy or scoped auth:admin.
+        auth_response = httpx.get(
+            f"{url}/v1/host/admin/auth/status", headers=headers, timeout=5,
+        )
+        if auth_response.status_code == 200:
+            auth_status = auth_response.json()
+            telemetry = auth_status.get("telemetry") or {}
+            totals = telemetry.get("totals") or {}
+            principals = telemetry.get("principals") or {}
+            grants = auth_status.get("contact_grants") or {}
+            print(
+                "  Auth migration: scoped=%d legacy=%d denied=%d exact_contacts=%d"
+                % (
+                    int(totals.get("scoped_allow") or 0),
+                    int(totals.get("legacy_allow") or 0),
+                    int(totals.get("deny") or 0),
+                    int(grants.get("total_exact_person_ids") or 0),
+                )
+            )
+            legacy_last_seen = (principals.get("legacy") or {}).get("last_seen_at")
+            if legacy_last_seen:
+                print(f"  Legacy last seen: {legacy_last_seen}")
+            if telemetry.get("error") or grants.get("error"):
+                print("  ⚠️  Auth migration telemetry/grants report an error; run colony doctor")
+        elif auth_response.status_code in (401, 403):
+            print("  ⚠️  Auth migration status requires an auth:admin credential")
+
         # Check E2E validation stamp
         stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
         if stamp.exists():
@@ -2335,6 +2364,11 @@ def _load_dotenv() -> None:
     
     Does not override existing environment variables.
     """
+    if os.environ.get("COLONY_SKIP_DOTENV", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        return
+
     from pathlib import Path
     
     # Priority: ~/.colony/.env > CWD/.env

@@ -65,9 +65,13 @@ def test_not_aged_out_when_fresh(monkeypatch):
 
 
 def test_max_age_env_override(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
     monkeypatch.setenv("COLONY_REACHOUT_MAX_AGE_DAYS", "30")
     p = {"type": "follow_up", "context": {"days_pending": 16.5},
-         "generated_at": "2026-07-04T00:00:00+00:00"}
+         "generated_at": (
+             datetime.now(timezone.utc) - timedelta(days=16.5)
+         ).isoformat()}
     # with a 30-day threshold a 16-day item is NOT aged out
     assert rp.is_aged_out(p) is False
 

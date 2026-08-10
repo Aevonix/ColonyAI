@@ -136,6 +136,34 @@ class _FakeEngagement:
                 "observation_count": 10}
 
 
+class _FakeP8:
+    def __init__(self):
+        from types import SimpleNamespace
+        self.facts = (
+            SimpleNamespace(content="Scoped woodworking detail"),
+            SimpleNamespace(content="More scoped woodworking plans"),
+        )
+
+    def internal_recipient_viewer(self, *_args, **_kwargs):
+        raise AssertionError("relationship profiler minted its own authority")
+
+    def project_shared_facts(
+        self, viewer, *, now, subject_person_id, max_facts,
+        max_total_chars=8_000,
+    ):
+        assert viewer == ("sealed-request", subject_person_id)
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            facts=self.facts,
+            audit_digest=f"projection:{len(self.facts)}",
+        )
+
+
+class _RawFactsMustNotRun:
+    def list_facts(self, **_kwargs):
+        raise AssertionError("raw SharedFacts bypassed P8")
+
+
 class TestProfiler:
     async def test_brief_composes_all_signals(self, store, tmp_path):
         c = await store.create(display_name="Dana", trust_tier="trusted")
@@ -161,6 +189,50 @@ class TestProfiler:
         # cached round-trip
         cached = p.cached(c.contact_id)
         assert cached is not None and cached.contact_id == c.contact_id
+
+    async def test_p8_profile_uses_projected_facts_and_sanitizes_legacy_cache(
+        self, store, tmp_path,
+    ):
+        c = await store.create(display_name="Scoped Dana")
+        db_path = str(tmp_path / "rel.db")
+
+        legacy = RelationshipProfiler(
+            contacts_store=store,
+            facts_store=_FakeFacts(),
+            db_path=db_path,
+        )
+        old = await legacy.profile(c.contact_id)
+        assert "woodworking" in old.rapport_topics
+
+        p8 = _FakeP8()
+        scoped = RelationshipProfiler(
+            contacts_store=store,
+            facts_store=_RawFactsMustNotRun(),
+            p8_runtime=p8,
+            db_path=db_path,
+        )
+        # Cached/autonomy briefs are contentless until a request-sealed viewer
+        # is supplied at the render boundary.
+        unsealed = scoped.cached(c.contact_id)
+        assert unsealed.rapport_topics == []
+        assert unsealed.rapport_projection_digest == ""
+
+        viewer = ("sealed-request", c.contact_id)
+        cached = scoped.cached(c.contact_id, viewer=viewer)
+        assert "woodworking" in cached.rapport_topics
+        assert "projects" not in cached.rapport_topics
+        assert cached.rapport_projection_digest == "projection:2"
+
+        unsealed_fresh = await scoped.profile(c.contact_id)
+        assert unsealed_fresh.rapport_topics == []
+        fresh = await scoped.profile(c.contact_id, viewer=viewer)
+        assert "woodworking" in fresh.rapport_topics
+        assert fresh.rapport_projection_digest == "projection:2"
+
+        p8.facts = ()
+        current = scoped.cached(c.contact_id, viewer=viewer)
+        assert current.rapport_topics == []
+        assert current.rapport_projection_digest == "projection:0"
 
     async def test_profile_refuses_placeholders(self, store, tmp_path):
         p = RelationshipProfiler(contacts_store=store,

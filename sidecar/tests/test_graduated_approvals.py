@@ -1,19 +1,17 @@
 """Graduated approval policy v0.18.0 — COLONY_APPROVAL_POLICY=graduated.
 
-Owner's policy: nothing waits on a manual approval unless it is
-potentially destructive or an outreach to an unauthorized individual.
+Graduated policy may tune presentation, but it is not execution authority.
+Every effectful action needs a canonical direct decision or bounded grant.
 
 Covers:
 - policy resolution (env, default strict; unknown values fail closed)
 - strict mode preserves v0.17 classification (everything non-read-only
   gated) — test_approval_gate.py runs unchanged alongside this file
-- graduated: mutating auto-queues with an audit tag + broadcast;
-  destructive blocks; outbound to an authorized contact auto-queues;
-  outbound to unknown/unauthorized targets blocks with a reason
+- graduated: read-only stays automatic; mutating, destructive, and outbound
+  actions remain canonically gated regardless of contact context
 - is_authorized_target failure reasons (no store / unknown / not allowed)
-- standing approvals: grant via approve {"always": true}, override in
-  both modes (even destructive), revoke restores blocking, persistence
-  across module reload, list/delete endpoints
+- bounded approvals: legacy {"always": true} maps to exact expiring/use-capped
+  authority, is consumed on matching jobs, and revocation restores blocking
 """
 
 from __future__ import annotations
@@ -164,8 +162,8 @@ def test_graduated_classification():
         "commitment_list_open", policy="graduated")["requires_approval"] is False
 
     mutating = classify_agent_action("commitment_mark_complete", policy="graduated")
-    assert mutating["requires_approval"] is False
-    assert mutating["reason"] == "graduated_auto_mutating"
+    assert mutating["requires_approval"] is True
+    assert mutating["reason"] == "mutating_requires_owner"
 
     destructive = classify_agent_action("coding_merge_pr", policy="graduated")
     assert destructive["requires_approval"] is True
@@ -174,12 +172,12 @@ def test_graduated_classification():
 
     outbound = classify_agent_action("calendar_send_reminder", policy="graduated")
     assert outbound["requires_approval"] is True
-    assert outbound["reason"] == "outbound_target_unverified"
+    assert outbound["reason"] == "outbound_requires_owner"
 
     authorized = classify_agent_action(
         "calendar_send_reminder", policy="graduated", target_authorized=True)
-    assert authorized["requires_approval"] is False
-    assert authorized["reason"] == "outbound_authorized_contact"
+    assert authorized["requires_approval"] is True
+    assert authorized["reason"] == "outbound_requires_owner"
 
 
 def test_unregistered_still_fails_closed_in_both_modes():
@@ -219,7 +217,7 @@ def test_registry_tier_audit():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_graduated_mutating_auto_queues_with_audit(
+async def test_graduated_mutating_requires_canonical_authority(
         tmp_path, monkeypatch, captured_events):
     monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
     mgr = await _make_mgr(tmp_path)
@@ -227,20 +225,19 @@ async def test_graduated_mutating_auto_queues_with_audit(
         stub = _loop_stub(mgr)
         await _submit(stub, "commitment_mark_complete")
 
-        queued = await mgr.queue.get_jobs_by_status(JobStatus.QUEUED)
-        assert len(queued) == 1
-        job = queued[0]
-        assert job.tags.get("auto_approved_by_policy") == "graduated"
-        assert job.tags.get("risk") == "mutating"
-        assert job.payload["destructive"] is False
-        assert await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED) == []
-        assert stub.stats.actions_executed == 1
-
-        audits = [e for e in captured_events if e["type"] == "action_auto_approved"]
-        assert len(audits) == 1
-        assert audits[0]["payload"]["action_hint"] == "commitment_mark_complete"
-        assert audits[0]["payload"]["policy"] == "graduated"
-        assert audits[0]["payload"]["risk"] == "mutating"
+        blocked = await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED)
+        assert len(blocked) == 1
+        job = blocked[0]
+        assert job.tags["blocked_reason"] == "awaiting_owner_approval"
+        assert job.tags["approval_request_id"].startswith("apr_")
+        assert "auto_approved_by_policy" not in job.tags
+        assert job.payload["destructive"] is True
+        assert await mgr.queue.get_jobs_by_status(JobStatus.QUEUED) == []
+        assert stub.stats.actions_executed == 0
+        assert [
+            event for event in captured_events
+            if event["type"] == "action_auto_approved"
+        ] == []
     finally:
         await mgr.stop()
 
@@ -267,7 +264,7 @@ async def test_graduated_destructive_blocks(tmp_path, monkeypatch, captured_even
 
 
 @pytest.mark.asyncio
-async def test_graduated_outbound_authorized_contact_auto_queues(
+async def test_graduated_outbound_authorized_contact_still_requires_approval(
         tmp_path, monkeypatch, captured_events):
     monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
     mgr = await _make_mgr(tmp_path)
@@ -281,17 +278,17 @@ async def test_graduated_outbound_authorized_contact_auto_queues(
         )
         await _submit(stub, "calendar_send_reminder")
 
-        queued = await mgr.queue.get_jobs_by_status(JobStatus.QUEUED)
-        assert len(queued) == 1
-        job = queued[0]
-        assert job.tags.get("auto_approved_by_policy") == "graduated"
-        assert job.tags.get("risk") == "outbound"
-        assert job.tags.get("outbound_target") == "contact:cid-bob"
-        assert await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED) == []
-
-        audits = [e for e in captured_events if e["type"] == "action_auto_approved"]
-        assert len(audits) == 1
-        assert audits[0]["payload"]["reason"] == "outbound_authorized_contact"
+        blocked = await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED)
+        assert len(blocked) == 1
+        job = blocked[0]
+        assert job.tags.get("blocked_reason") == "awaiting_owner_approval"
+        assert "auto_approved_by_policy" not in job.tags
+        assert "outbound_target" not in job.tags
+        assert await mgr.queue.get_jobs_by_status(JobStatus.QUEUED) == []
+        assert [
+            e for e in captured_events
+            if e["type"] == "action_auto_approved"
+        ] == []
     finally:
         await mgr.stop()
 
@@ -407,13 +404,12 @@ async def test_is_authorized_target_reasons():
 
 
 # ---------------------------------------------------------------------------
-# Standing approvals
+# Bounded approvals (legacy endpoint compatibility)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_approve_always_grants_standing_and_unblocks_next_job(tmp_path):
-    """grant via approve always:true → next same-action job auto-queues
-    even though it is destructive; revoke restores blocking."""
+    """Legacy always:true mints a bounded exact-scope grant, never standing."""
     mgr = await _make_mgr(tmp_path)
     try:
         stub = _loop_stub(mgr)
@@ -430,9 +426,12 @@ async def test_approve_always_grants_standing_and_unblocks_next_job(tmp_path):
             tq_router.JobApproveRequest(approved_by="sam", always=True),
         )
         assert resp["success"] is True
-        assert resp["standing_approval"]["action_name"] == "coding_merge_pr"
-        assert resp["standing_approval"]["approved_by"] == "sam"
-        assert standing_approvals.is_approved("coding_merge_pr") is True
+        grant = resp["bounded_grant"]
+        assert resp["standing_approval"] == grant  # response compatibility alias
+        assert grant["scope"]["action_name"] == "coding_merge_pr"
+        assert grant["granted_by"] == "trusted-internal"
+        assert grant["max_uses"] == 5
+        assert grant["uses"] == 0
         assert (await mgr.queue.get_job(job_id)).status == JobStatus.QUEUED
 
         # 3. Next job for the same action auto-queues, with audit tag
@@ -440,13 +439,13 @@ async def test_approve_always_grants_standing_and_unblocks_next_job(tmp_path):
         queued = await mgr.queue.get_jobs_by_status(JobStatus.QUEUED)
         new_jobs = [j for j in queued if j.job_id != job_id]
         assert len(new_jobs) == 1
-        assert new_jobs[0].tags.get("auto_approved_by_policy") == "standing_approval"
+        assert new_jobs[0].tags.get("auto_approved_by_policy") == "bounded_grant"
+        assert new_jobs[0].tags.get("bounded_grant_id") == grant["grant_id"]
         assert await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED) == []
 
         # 4. Revoke → blocking restored
         resp = await tq_router.revoke_standing_approval("coding_merge_pr")
         assert resp["success"] is True
-        assert standing_approvals.is_approved("coding_merge_pr") is False
 
         await _submit(stub, "coding_merge_pr", "init-3", entity_id="pr-3")
         blocked = await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED)
@@ -467,20 +466,19 @@ async def test_plain_approve_does_not_grant_standing(tmp_path):
             blocked[0].job_id, tq_router.JobApproveRequest(approved_by="sam"),
         )
         assert resp["standing_approval"] is None
-        assert standing_approvals.is_approved("coding_merge_pr") is False
+        assert resp["bounded_grant"] is None
     finally:
         await mgr.stop()
 
 
-def test_standing_approval_overrides_both_modes():
+def test_policy_classifier_never_spends_or_invents_grant_authority():
     for policy in ("strict", "graduated"):
         assert classify_agent_action(
             "coding_merge_pr", policy=policy)["requires_approval"] is True
     standing_approvals.grant("coding_merge_pr", approved_by="sam")
     for policy in ("strict", "graduated"):
         verdict = classify_agent_action("coding_merge_pr", policy=policy)
-        assert verdict["requires_approval"] is False, policy
-        assert verdict["reason"] == "standing_approval"
+        assert verdict["requires_approval"] is True, policy
     # Unregistered actions stay non-executable even with a grant
     standing_approvals.grant("agent_rm_rf_slash", approved_by="sam")
     assert classify_agent_action("agent_rm_rf_slash")["executable"] is False
@@ -518,16 +516,28 @@ def test_corrupt_standing_approvals_file_fails_closed():
         "coding_merge_pr", policy="graduated")["requires_approval"] is True
 
 
+def test_unbounded_legacy_entry_gets_one_migration_use():
+    path = standing_approvals._path()
+    path.write_text(json.dumps({
+        "outbound_third_party_delivery": {
+            "approved_by": "historical-owner",
+            "granted_at": "2026-01-01T00:00:00+00:00",
+        }
+    }))
+    assert standing_approvals.is_approved("outbound_third_party_delivery") is True
+    assert standing_approvals.is_approved("outbound_third_party_delivery") is False
+    migrated = json.loads(path.read_text())["outbound_third_party_delivery"]
+    assert migrated["max_uses"] == 1
+    assert migrated["uses"] == 1
+    assert migrated["status"] == "exhausted"
+
+
 @pytest.mark.asyncio
 async def test_standing_approval_endpoints():
-    standing_approvals.grant("coding_merge_pr", approved_by="sam")
-
+    # The legacy endpoint now reflects only durable bounded queue grants; the
+    # compatibility JSON is intentionally not executable queue authority.
     items = await tq_router.list_standing_approvals()
-    assert [e["action_name"] for e in items] == ["coding_merge_pr"]
-
-    resp = await tq_router.revoke_standing_approval("coding_merge_pr")
-    assert resp == {"success": True, "action_name": "coding_merge_pr"}
-    assert await tq_router.list_standing_approvals() == []
+    assert items == []
 
     with pytest.raises(HTTPException) as exc_info:
         await tq_router.revoke_standing_approval("coding_merge_pr")

@@ -237,3 +237,99 @@ async def test_api_unavailable():
         r = await c.post("/v1/host/self/benchmark/samples",
                          json={"samples": []})
         assert r.json()["available"] is False
+
+
+# --- on-demand recall probe (U0) --------------------------------------------
+
+class ManyFakeFacts:
+    """Enough facts that a seeded sample is a real subset."""
+
+    def list_facts(self, min_confidence=0.0, limit=100, **kw):
+        return {"facts": [
+            {"id": f"f{i}", "fact": f"unique subject number{i} lives in "
+                                    f"building{i} downtown"}
+            for i in range(10)
+        ]}
+
+
+class HalfHitGraph:
+    """Covers even-numbered facts only, and records every query."""
+
+    def __init__(self):
+        self.queries = []
+
+    async def recall(self, query, limit=10, min_strength=0.1,
+                     min_confidence=0.1):
+        self.queries.append(query)
+        import re
+        m = re.search(r"number(\d+)", query)
+        if m and int(m.group(1)) % 2 == 0:
+            return [{"content": query + " extra context"}]
+        return [{"content": "something entirely unrelated"}]
+
+
+async def test_recall_probe_seeded_deterministic(tmp_path):
+    g1, g2 = HalfHitGraph(), HalfHitGraph()
+    b1 = make_bench(tmp_path, graph=g1, facts=ManyFakeFacts())
+    b2 = make_bench(tmp_path, graph=g2, facts=ManyFakeFacts())
+    r1 = await b1.run_recall_probe(probes=4, seed=42)
+    r2 = await b2.run_recall_probe(probes=4, seed=42)
+    assert r1 is not None and r2 is not None
+    # Same seed -> identical fact picks and identical score
+    assert g1.queries == g2.queries
+    assert len(g1.queries) == 4
+    assert r1["value"] == r2["value"]
+    assert r1["denominator"] == 4
+    assert r1["detail"]["seed"] == 42
+    assert r1["detail"]["source"] == "manual-probe"
+
+
+async def test_recall_probe_samples_excluded_from_rollups(tmp_path):
+    bench = make_bench(tmp_path, graph=HalfHitGraph(), facts=ManyFakeFacts())
+    await bench.run_recall_probe(probes=5, seed=7)
+    import time as _time
+    samples = bench.store.samples_in(0, _time.time() + 10,
+                                     metric="recall.probe")
+    assert len(samples) == 5
+    assert all(s["source"] == "manual-probe" for s in samples)
+    # The generic sample rollup never reads recall.probe samples, so a
+    # manual probe run cannot leak into the weekly scorecard.
+    submitted = bench._m_submitted(0, _time.time() + 10)
+    assert "recall.probe" not in submitted
+
+
+async def test_recall_probe_clamps_and_skips(tmp_path):
+    bench = make_bench(tmp_path, graph=HalfHitGraph(), facts=ManyFakeFacts())
+    r = await bench.run_recall_probe(probes=500, seed=1)
+    assert r is not None and r["denominator"] == 10  # capped at 100, 10 facts
+    # honest skip when a source is missing
+    assert await make_bench(tmp_path, graph=None,
+                            facts=ManyFakeFacts()).run_recall_probe() is None
+
+
+async def test_weekly_recall_metric_unchanged_by_refactor(tmp_path):
+    """Regression lock: the weekly recall.fact_coverage derivation still
+    produces the pre-refactor result and source tag."""
+    bench = make_bench(tmp_path)
+    out = (await bench.compute_week(WEEK))["metrics"]
+    assert out["recall.fact_coverage"]["value"] == pytest.approx(0.5)
+    assert out["recall.fact_coverage"]["detail"] == {"probes": 2}
+    import time as _time
+    probes = bench.store.samples_in(0, _time.time() + 10,
+                                    metric="recall.probe")
+    assert {p["source"] for p in probes} == {"benchmark"}
+
+
+async def test_api_recall_probe(tmp_path):
+    bench = make_bench(tmp_path, graph=HalfHitGraph(), facts=ManyFakeFacts())
+    async with _client(bench) as c:
+        r = await c.post("/v1/host/self/benchmark/recall-probe",
+                         json={"probes": 4, "seed": 42})
+        body = r.json()
+        assert r.status_code == 200
+        assert body["available"] is True and body["ran"] is True
+        assert body["denominator"] == 4
+        assert body["detail"]["seed"] == 42
+    async with _client(None) as c:
+        r = await c.post("/v1/host/self/benchmark/recall-probe", json={})
+        assert r.json() == {"available": False}

@@ -1,5 +1,6 @@
 """Unit tests for ChannelRegistry."""
 
+import asyncio
 import json
 import os
 import tempfile
@@ -214,6 +215,121 @@ class TestChannelRegistryLoad:
         # Must not crash — returns None gracefully
         ch = registry.resolve("owner", "dm")
         assert ch is None
+
+    def test_exact_async_verified_dm_requires_one_exact_platform_handle(
+        self, temp_json_path,
+    ):
+        class Contact:
+            contact_id = "cid-contact"
+            deleted_at = None
+
+        class Handle:
+            contact_id = "cid-contact"
+            gateway = "whatsapp"
+            address = "12125550199@s.whatsapp.net"
+            verified = True
+
+        class AsyncStore:
+            async def get(self, contact_id):
+                return Contact() if contact_id == "cid-contact" else None
+
+            async def get_handles(self, _contact_id):
+                return [Handle()]
+
+        registry = ChannelRegistry.load(
+            json_path=temp_json_path,
+            contacts_store=AsyncStore(),
+        )
+        channel = asyncio.run(registry.resolve_exact_verified_dm(
+            "cid-contact", platform="whatsapp",
+        ))
+        assert channel == Channel(
+            platform="whatsapp",
+            chat_id="12125550199@s.whatsapp.net",
+            channel_type="dm",
+        )
+
+    def test_exact_async_verified_dm_does_not_infer_whatsapp_from_sms(
+        self, temp_json_path,
+    ):
+        class Contact:
+            contact_id = "cid-contact"
+            deleted_at = None
+
+        class Handle:
+            contact_id = "cid-contact"
+            gateway = "sms"
+            address = "+12125550199"
+            verified = True
+
+        class AsyncStore:
+            async def get(self, _contact_id):
+                return Contact()
+
+            async def get_handles(self, _contact_id):
+                return [Handle()]
+
+        registry = ChannelRegistry.load(
+            json_path=temp_json_path,
+            contacts_store=AsyncStore(),
+        )
+        assert asyncio.run(registry.resolve_exact_verified_dm(
+            "cid-contact", platform="whatsapp",
+        )) is None
+
+    def test_exact_async_verified_dm_fails_closed_on_unverified_or_ambiguous(
+        self, temp_json_path,
+    ):
+        class Contact:
+            contact_id = "cid-contact"
+            deleted_at = None
+
+        class Handle:
+            contact_id = "cid-contact"
+            gateway = "whatsapp"
+
+            def __init__(self, address, verified):
+                self.address = address
+                self.verified = verified
+
+        class AsyncStore:
+            def __init__(self, handles):
+                self.handles = handles
+
+            async def get(self, _contact_id):
+                return Contact()
+
+            async def get_handles(self, _contact_id):
+                return self.handles
+
+        for handles in (
+            [Handle("12125550199@s.whatsapp.net", False)],
+            [
+                Handle("12125550199@s.whatsapp.net", True),
+                Handle("12125550200@s.whatsapp.net", True),
+            ],
+        ):
+            registry = ChannelRegistry.load(
+                json_path=temp_json_path,
+                contacts_store=AsyncStore(handles),
+            )
+            assert asyncio.run(registry.resolve_exact_verified_dm(
+                "cid-contact", platform="whatsapp",
+            )) is None
+
+        duplicate = "12125550199@s.whatsapp.net"
+        registry = ChannelRegistry.load(
+            json_path=temp_json_path,
+            contacts_store=AsyncStore([
+                Handle(duplicate, True),
+                Handle(duplicate, True),
+            ]),
+        )
+        resolved = asyncio.run(registry.resolve_exact_verified_dm(
+            "cid-contact", platform="whatsapp",
+        ))
+        assert resolved is not None
+        assert resolved.chat_id == duplicate
 
     def test_system_initiative_no_dm(self, temp_json_path):
         """System initiatives (no person_id) should not try DM."""

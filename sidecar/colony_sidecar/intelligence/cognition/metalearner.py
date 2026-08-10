@@ -139,15 +139,19 @@ class MetaLearner:
     async def evaluate(self) -> "CognitivePerformanceIndex":
         """Compute current Cognitive Performance Index."""
         if not self._performance_index:
-            logger.warning("MetaLearner.evaluate: PerformanceIndexComputer not wired — returning default CPI")
+            logger.warning("MetaLearner.evaluate: PerformanceIndexComputer not wired — CPI unavailable")
             from colony_sidecar.intelligence.cognition.performance_index import CognitivePerformanceIndex, CPIComponent
             now = datetime.now(timezone.utc)
-            default_comp = CPIComponent(name="default", score=50.0)
+            default_comp = CPIComponent(
+                name="unavailable", score=0.0, trend="unavailable",
+                metrics={"available": False, "deprecated": True},
+                available=False)
             return CognitivePerformanceIndex(
                 retrieval=default_comp, prediction=default_comp,
                 goal_progress=default_comp, tool_efficiency=default_comp,
                 initiative=default_comp, response_quality=default_comp,
-                overall=50.0, computed_at=now,
+                overall=0.0, computed_at=now, deprecated=True,
+                available_components=[],
             )
 
         cpi = await self._performance_index.compute(self._metrics_collector)
@@ -296,7 +300,7 @@ class MetaLearner:
                 today = datetime.now().strftime("%Y-%m-%d")
                 for component_name in ["retrieval", "prediction", "goal_progress", "tool_efficiency", "initiative", "response_quality"]:
                     component = getattr(cpi, component_name, None)
-                    if component:
+                    if component and getattr(component, "available", True):
                         await session.run("""
                             MERGE (m:CognitiveMetric {metric_type: $component_name, day: $day})
                             SET m.value = $score,

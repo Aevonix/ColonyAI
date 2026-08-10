@@ -54,14 +54,22 @@ def build_default_handlers(
     }
 
     if router is not None:
-        from colony_sidecar.task_queue.handlers.inference import InferenceHandler
-        handlers[JobType.INFERENCE] = InferenceHandler(
+        from colony_sidecar.task_queue.handlers.inference import (
+            InferenceHandler,
+            ThoughtOnlyInferenceHandler,
+        )
+        inference_handler = InferenceHandler(
             router,
             world_model_store=world_model_store,
             contact_store=contact_store,
             response_gate=response_gate,
             gate_session_store=gate_session_store,
         )
+        handlers[JobType.INFERENCE] = inference_handler
+        # ThoughtJobV1 shares only the router transport. A distinct strict
+        # handler makes it impossible for a registry mix-up to run a generic
+        # inference payload on the owner-private cognition lane.
+        handlers[JobType.THOUGHT] = ThoughtOnlyInferenceHandler(router)
 
     if desktop_config is not None and desktop_config.enabled:
         try:

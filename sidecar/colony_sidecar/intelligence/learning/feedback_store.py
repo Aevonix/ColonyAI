@@ -229,6 +229,30 @@ class FeedbackStore:
             "by_type": by_type,
         }
 
+    def between(
+        self,
+        since_iso: str,
+        until_iso: str,
+        *,
+        person_id: str = "",
+        limit: int = 10000,
+    ) -> List[Dict[str, Any]]:
+        """Read a stable correction cohort without consuming its rows."""
+
+        query = (
+            "SELECT correction_id,timestamp,correction_type,context_hash,"
+            "applied,person_id,processed_at FROM corrections "
+            "WHERE timestamp>=? AND timestamp<?")
+        params: List[Any] = [since_iso, until_iso]
+        if person_id:
+            query += " AND person_id=?"
+            params.append(person_id)
+        query += " ORDER BY timestamp,correction_id LIMIT ?"
+        params.append(max(1, min(int(limit), 100000)))
+        with self._conn() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
     def count(self) -> int:
         """Return total number of stored corrections."""
         with self._conn() as conn:

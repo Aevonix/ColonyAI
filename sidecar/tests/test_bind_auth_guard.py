@@ -26,8 +26,15 @@ def test_non_loopback_with_key_allowed(monkeypatch):
     _guard_bind_auth("0.0.0.0")  # must not raise/exit
 
 
+def test_non_loopback_with_scoped_keyring_allowed(monkeypatch, tmp_path):
+    monkeypatch.delenv("COLONY_API_KEY", raising=False)
+    monkeypatch.setenv("COLONY_API_KEYRING_PATH", str(tmp_path / "keys.json"))
+    _guard_bind_auth("0.0.0.0")  # middleware will validate the file itself
+
+
 def test_non_loopback_without_key_fails_closed(monkeypatch):
     monkeypatch.delenv("COLONY_API_KEY", raising=False)
+    monkeypatch.delenv("COLONY_API_KEYRING_PATH", raising=False)
     monkeypatch.delenv("COLONY_ALLOW_OPEN_BIND", raising=False)
     with pytest.raises(SystemExit) as exc:
         _guard_bind_auth("0.0.0.0")

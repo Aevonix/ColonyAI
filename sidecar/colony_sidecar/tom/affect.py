@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 # Default decay: 5% per hour toward neutral.
 DEFAULT_DECAY_FACTOR = 0.95
 DEFAULT_AROUSAL_BASELINE = 0.3
+DEFAULT_SUSTAINED_DECLINE_MAGNITUDE = 0.3
+_DECAY_ONLY_SOURCES = frozenset({"decay"})
 
 
 class AffectStore:
@@ -208,14 +210,53 @@ class AffectStore:
         ).fetchone()
         return row is not None and row["valence"] <= threshold
 
-    def detect_sustained_decline(self, contact_id: str, min_events: int = 3) -> bool:
-        """Check if the contact has a sustained declining trend."""
+    def detect_sustained_decline(
+        self,
+        contact_id: str,
+        min_events: int = 3,
+        min_magnitude: float = DEFAULT_SUSTAINED_DECLINE_MAGNITUDE,
+    ) -> bool:
+        """Check for a material decline supported by observed affect events.
+
+        Time decay changes the current state toward neutral but is not new
+        evidence about a contact.  Recompute the trend from non-decay events
+        here so a stale/decayed state cannot trigger proactive initiative.
+        """
         state = self.get_state(contact_id)
-        return state["trend"] == "declining" and state["event_count"] >= min_events
+        if state["current_valence"] > -abs(min_magnitude):
+            return False
+
+        rows = self._conn.execute(
+            "SELECT * FROM affect_events WHERE contact_id = ? ORDER BY timestamp ASC",
+            (contact_id,),
+        ).fetchall()
+        observed = [row for row in rows if not self._is_decay_only(row)]
+        return len(observed) >= min_events and self._event_trend(observed) == "declining"
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_decay_only(event: sqlite3.Row) -> bool:
+        return str(event["source"]).strip().lower() in _DECAY_ONLY_SOURCES
+
+    @staticmethod
+    def _event_trend(rows: List[sqlite3.Row]) -> str:
+        """Return the trend of the latest observed affect events."""
+        recent = rows[-5:] if len(rows) >= 5 else rows
+        if len(recent) < 2:
+            return "stable"
+
+        midpoint = len(recent) // 2
+        early_avg = sum(row["valence"] for row in recent[:midpoint]) / midpoint
+        late_avg = sum(row["valence"] for row in recent[midpoint:]) / (len(recent) - midpoint)
+        diff = late_avg - early_avg
+        if diff > 0.1:
+            return "improving"
+        if diff < -0.1:
+            return "declining"
+        return "stable"
 
     def _apply_decay(self, contact_id: str) -> None:
         """Apply exponential decay to a contact's affect state."""
@@ -279,20 +320,10 @@ class AffectStore:
         current_valence = round(weighted_valence / total_weight, 4)
         current_arousal = round(weighted_arousal / total_weight, 4)
 
-        # Determine trend from last 5 events.
-        recent = rows[-5:] if len(rows) >= 5 else rows
-        if len(recent) >= 2:
-            early_avg = sum(r["valence"] for r in recent[: len(recent) // 2]) / (len(recent) // 2)
-            late_avg = sum(r["valence"] for r in recent[len(recent) // 2 :]) / (len(recent) - len(recent) // 2)
-            diff = late_avg - early_avg
-            if diff > 0.1:
-                trend = "improving"
-            elif diff < -0.1:
-                trend = "declining"
-            else:
-                trend = "stable"
-        else:
-            trend = "stable"
+        # Decay is a state projection, not a new observation.  Keep it out of
+        # the event trend even if an imported/legacy row labels it explicitly.
+        observed = [row for row in rows if not self._is_decay_only(row)]
+        trend = self._event_trend(observed)
 
         last_event = rows[-1]
         now = datetime.now(timezone.utc).isoformat()

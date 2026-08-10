@@ -116,6 +116,10 @@ def audit_via_report(task: ScopedTask, report: Dict[str, Any]) -> Dict[str, Any]
     missing = [k for k in task.reporting if k not in report]
     if missing:
         findings.append(f"report missing expected fields: {missing}")
+        if ok:
+            # What was not reported cannot be verified: an empty/partial
+            # report is "unverified" (ok=None), never "clean" (ok=True).
+            ok = None
 
     return {"method": "report", "ok": ok, "branch": branch, "commits": n_commits,
             "files_touched": files[:100], "findings": findings}
@@ -133,6 +137,14 @@ def audit_completion(task: ScopedTask, report: Dict[str, Any],
     branch = report_audit.get("branch") or ""
     if mirror_path and branch:
         mirror_audit = audit_via_mirror(task, mirror_path, branch)
+    elif mirror_path and not branch and task.mutating:
+        # A mirror was available but the mutating delegate reported no
+        # branch, so the mirror inspection silently could not run: the
+        # report side may not verdict "clean" on its own say-so.
+        report_audit["findings"].append(
+            "mirror audit skipped: no branch reported for mutating task")
+        if report_audit.get("ok") is True:
+            report_audit["ok"] = None
 
     oks = [a["ok"] for a in (report_audit, mirror_audit) if a is not None]
     if any(o is False for o in oks):

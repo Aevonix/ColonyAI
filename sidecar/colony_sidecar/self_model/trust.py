@@ -153,10 +153,33 @@ class TrustEngine:
                 (notice_id,))
             self._conn.commit()
 
+    @staticmethod
+    def _autonomy_evidence(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Exclude self-attested worker wins while retaining negative evidence."""
+
+        return [
+            event for event in events
+            if not (
+                event.get("source") == "task_queue.governor"
+                and event.get("outcome") == "success"
+                and event.get("evidence_status") != "verified"
+            )
+        ]
+
     # -- confidence -------------------------------------------------------
     def confidence(self, domain: str) -> float:
         """Calibrated confidence for a domain from REAL (non-shadow) outcomes."""
-        events = self._store.events(domain, include_shadow=False)
+        # An unresolved provenance gap is not negative evidence, but it is
+        # insufficient evidence for autonomy. Fail closed until an operator
+        # either invalidates exact rows or appends a gap resolution.
+        try:
+            if self._store.active_evidence_gaps(domain):
+                return 0.0
+        except (AttributeError, TypeError):
+            pass
+        events = self._autonomy_evidence(
+            self._store.events(domain, include_shadow=False)
+        )
         n = len(events)
         wins = sum(1 for e in events if e["outcome"] == "success")
         violations = sum(1 for e in events if e.get("violation"))
@@ -228,6 +251,7 @@ class TrustEngine:
             })
 
     def snapshot(self) -> List[Dict[str, Any]]:
+        from colony_sidecar.self_model.supervised import supervised_enabled
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM trust_stage ORDER BY updated_at DESC").fetchall()
@@ -235,6 +259,19 @@ class TrustEngine:
         for r in rows:
             d = dict(r)
             d["confidence"] = round(self.confidence(d["domain"]), 3)
+            # Rung visibility (H1.4): whether the supervised rung is
+            # unlocked for the domain, and the rung it would actually run
+            # at — so "why is beliefs mutating at ask_first?" is answerable
+            # from GET /v1/host/self instead of by reading env vars.
+            try:
+                d["supervised_enabled"] = supervised_enabled(d["domain"])
+                d["effective_rung"] = (
+                    "supervised"
+                    if d["stage"] == "ask_first" and d["supervised_enabled"]
+                    else d["stage"])
+            except Exception:
+                d["supervised_enabled"] = False
+                d["effective_rung"] = d.get("stage")
             out.append(d)
         return out
 
@@ -282,9 +319,18 @@ class TrustEngine:
     # -- breaker + graduation (invoked after every recorded outcome) --------
     def after_outcome(self, domain: str) -> None:
         domain = (domain or "unknown").strip().lower()
+        has_evidence_gap = False
+        try:
+            has_evidence_gap = bool(
+                self._store.active_evidence_gaps(domain))
+        except (AttributeError, TypeError):
+            pass
         window = _fenv("COLONY_TRUST_BREAKER_WINDOW_HOURS", 24.0) * 3600.0
-        recent = self._store.events(domain, since=time.time() - window,
-                                    include_shadow=False)
+        recent = self._autonomy_evidence(self._store.events(
+            domain,
+            since=time.time() - window,
+            include_shadow=False,
+        ))
         failures = sum(1 for e in recent
                        if e["outcome"] in ("failure", "timeout"))
         violations = sum(1 for e in recent if e.get("violation"))
@@ -299,18 +345,26 @@ class TrustEngine:
                         else f"{failures} failures in "
                              f"{window / 3600:.0f}h window"))
             return
+        # Unknown history blocks graduation, but it must not disable the
+        # safety circuit breaker for a new, attributable failure/violation.
+        if has_evidence_gap:
+            return
         if not autograduate_enabled():
             return
         # Graduation.
         if stage == "shadow":
-            cal = self._store.events(domain, include_shadow=True)
+            cal = self._autonomy_evidence(
+                self._store.events(domain, include_shadow=True)
+            )
             n = len(cal)
             bad = sum(1 for e in cal if e["outcome"] != "success")
             if n >= _ienv("COLONY_TRUST_ASK_MIN_N", 3) and bad == 0:
                 self.set_stage(domain, "ask_first",
                                reason=f"{n} clean calibration run(s)")
         elif stage == "ask_first":
-            real = self._store.events(domain, include_shadow=False)
+            real = self._autonomy_evidence(
+                self._store.events(domain, include_shadow=False)
+            )
             conf = self.confidence(domain)
             if (len(real) >= _ienv("COLONY_TRUST_ACT_MIN_N", 5)
                     and conf >= _fenv("COLONY_TRUST_ACT_THRESHOLD", 0.8)

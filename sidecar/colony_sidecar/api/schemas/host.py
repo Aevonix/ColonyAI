@@ -9,7 +9,10 @@ from __future__ import annotations
 import os as _os
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from colony_sidecar.gate.communication_policy import CommunicationPolicyContextV1
+from colony_sidecar.gate.surface_policy import ResponseGuardSurfaceName
 
 MAX_NAME_LEN = 256
 
@@ -92,6 +95,7 @@ class MemoryReadRequest(BaseModel):
     identity: HostIdentity
     memory_id: Optional[str] = None
     person_id: Optional[str] = None
+    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
     limit: Optional[int] = None
 
 
@@ -105,6 +109,7 @@ class MemoryWriteRequest(BaseModel):
     content: str
     type: Optional[str] = None
     person_id: Optional[str] = None
+    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
     entities: Optional[List[str]] = None
     tags: Optional[List[str]] = None
     strength: Optional[float] = None
@@ -126,6 +131,7 @@ class MemorySearchRequest(BaseModel):
     min_score: Optional[float] = None
     min_confidence: Optional[float] = 0.1
     person_id: Optional[str] = None
+    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
     types: Optional[List[str]] = None
     tags: Optional[List[str]] = None
 
@@ -202,10 +208,14 @@ class MemoryStatsResponse(BaseModel):
 class ContextAssembleRequest(BaseModel):
     identity: HostIdentity
     context: HostTurnContext
+    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
     incoming_message: HostMessage
     available_tools: Optional[List[str]] = None
     citations_mode: Optional[Literal["off", "inline", "appendix"]] = None
     include_initiatives: Optional[bool] = None  # v0.13.0
+    projection_policy: Optional[
+        Literal["scoped_viewer_required"]
+    ] = None
 
 
 class ContextSection(BaseModel):
@@ -216,9 +226,27 @@ class ContextSection(BaseModel):
     citations: Optional[List[Dict[str, Any]]] = None
 
 
+class ContextProjectionAttestation(BaseModel):
+    """Server-sealed viewer/projection posture for one context response."""
+
+    model_config = ConfigDict(populate_by_name=True)
+    schema_name: Literal["ContextProjectionAttestationV1"] = Field(
+        default="ContextProjectionAttestationV1",
+        alias="schema",
+    )
+    version: Literal[1] = 1
+    viewer_person_id: str = ""
+    viewer_attested: bool = False
+    viewer_is_owner: bool = False
+    p8_mode: Literal["off", "shadow", "live"] = "off"
+    scoped_projection_ready: bool = False
+    legacy_global_allowed: bool = False
+
+
 class ContextAssembleResponse(BaseModel):
     sections: List[ContextSection] = []
     notices: Optional[List[str]] = None
+    projection_attestation: Optional[ContextProjectionAttestation] = None
 
 
 class MemoryFlushRequest(BaseModel):
@@ -397,24 +425,7 @@ class SkillExecuteResponse(BaseModel):
     duration_ms: Optional[int] = None
 
 
-# --- Signals ----------------------------------------------------------------
-
-class SignalIngestRequest(BaseModel):
-    identity: HostIdentity
-    context: HostTurnContext
-    incoming_message: Optional[HostMessage] = None
-    outgoing_message: Optional[HostMessage] = None
-    tool_calls: List[ReasoningToolCall] = Field(default_factory=list)
-    correction: Optional[str] = None
-    signals: List[Dict[str, Any]] = Field(default_factory=list)
-
-
-class SignalIngestResponse(BaseModel):
-    accepted: bool
-    signals_recorded: int
-
-
-# --- Turns ------------------------------------------------------------------
+# --- Sender identity ---------------------------------------------------------
 
 class HostSender(BaseModel):
     """WHO produced the user side of this turn (docs/RELATIONSHIPS.md).
@@ -428,6 +439,26 @@ class HostSender(BaseModel):
     display_name: str = Field(default="", max_length=256)
     group_id: str = Field(default="", max_length=256)
 
+
+# --- Signals ----------------------------------------------------------------
+
+class SignalIngestRequest(BaseModel):
+    identity: HostIdentity
+    context: HostTurnContext
+    sender: Optional[HostSender] = None
+    incoming_message: Optional[HostMessage] = None
+    outgoing_message: Optional[HostMessage] = None
+    tool_calls: List[ReasoningToolCall] = Field(default_factory=list)
+    correction: Optional[str] = None
+    signals: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class SignalIngestResponse(BaseModel):
+    accepted: bool
+    signals_recorded: int
+
+
+# --- Turns ------------------------------------------------------------------
 
 class TurnSyncRequest(BaseModel):
     identity: HostIdentity
@@ -469,7 +500,9 @@ class SafetyCheckRequest(BaseModel):
 
 
 class SafetyCheckResponse(BaseModel):
-    decision: Literal["pass", "block", "pending"]
+    # "unavailable" (with HTTP 503) = the gate did not evaluate; never
+    # reported as "pass".
+    decision: Literal["pass", "block", "pending", "unavailable"]
     blocked: bool
     blocking_layer: Optional[int] = None
     reason: Optional[str] = None
@@ -814,6 +847,16 @@ class LearningCorrectionRequest(BaseModel):
     original: str
     correction: str
     component: Optional[str] = None
+    correction_type: Literal[
+        "factual", "tone", "action", "preference"
+    ] = "factual"
+    # Exact reference of the corrected outbound response.  The benchmark
+    # later joins this to a receipt-backed CommsLog row; an absent or unknown
+    # reference remains useful learning feedback but is not causal evidence.
+    external_ref: Optional[str] = None
+    # Callers that retry can supply a stable id.  FeedbackStore makes the
+    # resulting persistence idempotent across process restarts.
+    correction_id: Optional[str] = None
 
 
 class LearningEngagementRequest(BaseModel):
@@ -874,6 +917,7 @@ class InsightsListResponse(BaseModel):
 class EnrichedContextRequest(BaseModel):
     identity: HostIdentity
     context: HostTurnContext
+    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
     message: str
     features: Optional[Dict[str, bool]] = None
     compression: Optional[Literal["off", "conservative", "balanced", "aggressive"]] = None
@@ -1750,6 +1794,7 @@ class ScopePromoteRequest(BaseModel):
 
 class ResponseGuardCheckRequest(BaseModel):
     """A host asks the gate to evaluate an outbound reply before sending it."""
+    surface: ResponseGuardSurfaceName
     response_text: str
     incoming_message_text: Optional[str] = None
     trust_tier: Optional[str] = None
@@ -1759,5 +1804,23 @@ class ResponseGuardCheckRequest(BaseModel):
     turn_id: Optional[str] = None
     conversation_key: Optional[str] = None
     mentioned_entities: Optional[List[str]] = None
-    mode: Optional[str] = None   # override the configured default ("shadow" | "enforce")
-    authorized: bool = False     # True when the disclosure is owner-directed (exempt from leak block)
+    mode: Optional[Literal["shadow", "enforce"]] = None
+    # Optional, exact host-owned purpose/disclosure binding.  This narrows the
+    # candidate's permitted use; its literal-false capability fields cannot
+    # grant authority or select owner-private context.
+    communication_policy: Optional[CommunicationPolicyContextV1] = None
+    # A request may strengthen shadow to enforce. It cannot weaken a server
+    # configured for enforce; ResponseGuardSurfacePolicyV1 resolves the mode.
+    # Legacy compatibility input.  The host API never treats a caller-declared
+    # boolean as owner authority; trusted in-process paths derive that fact from
+    # server-owned identity state.
+    authorized: bool = False
+
+    @model_validator(mode="after")
+    def _communication_policy_matches_target(self) -> "ResponseGuardCheckRequest":
+        policy = self.communication_policy
+        if policy is not None and self.target_contact_id != policy.target_contact_id:
+            raise ValueError(
+                "communication policy target must match target_contact_id"
+            )
+        return self

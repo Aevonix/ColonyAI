@@ -83,8 +83,10 @@ class SubsystemRegistry:
 
     @property
     def queue(self) -> Any:
-        from colony_sidecar.api.routers.host import _consolidator
-        return _consolidator
+        """Task-queue manager (was a copy-paste bug returning the memory
+        consolidator; ``task_queue`` below is the canonical accessor)."""
+        from colony_sidecar.api.routers.host import _task_queue
+        return _task_queue
 
     @property
     def briefings(self) -> Any:
@@ -100,6 +102,12 @@ class SubsystemRegistry:
     def delivery(self) -> Any:
         from colony_sidecar.api.routers.host import _delivery_bridge
         return _delivery_bridge
+
+    @property
+    def p8(self) -> Any:
+        """Shadow-only P8 integration runtime, when explicitly attached."""
+        from colony_sidecar.api.routers.host import _p8_runtime
+        return _p8_runtime
 
     @property
     def cognition(self) -> Any:
@@ -303,6 +311,12 @@ class SubsystemRegistry:
         """LLM-assisted world-model extractor (batch, journaled)."""
         from colony_sidecar.api.routers.host import _world_llm_extractor
         return _world_llm_extractor
+
+    @property
+    def tom2_engine(self) -> Any:
+        """Knowledge-asymmetry engine (tom2, refs-not-content)."""
+        from colony_sidecar.api.routers.host import _tom2_engine
+        return _tom2_engine
 
     # === Cognition program Phase B (items 5/6) ===
 

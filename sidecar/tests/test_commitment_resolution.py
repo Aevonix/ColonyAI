@@ -7,6 +7,8 @@ nothing settles the commitment, so the next ingest tick re-raises the concern
 and the resolve is silently undone. These tests pin the whole chain shut.
 """
 
+import hashlib
+import sqlite3
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -16,8 +18,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 import colony_sidecar.api.routers.host as host_mod
+from colony_sidecar.api.authority import legacy_authority
 from colony_sidecar.commitments.store import (
-    CommitmentStore, _normalize_desc, _similar_desc,
+    CommitmentResolutionConflict, CommitmentStore, _normalize_desc, _similar_desc,
 )
 from colony_sidecar.self_model import settlement
 from colony_sidecar.self_model.workspace import ConcernStore, WorkspaceEngine
@@ -37,10 +40,14 @@ def ws(tmp_path):
 @pytest.fixture(autouse=True)
 def _clean_settlers():
     saved = dict(settlement._SETTLERS)
+    saved_retry_safe = set(settlement._RETRY_SAFE)
     settlement._SETTLERS.clear()
+    settlement._RETRY_SAFE.clear()
     yield
     settlement._SETTLERS.clear()
     settlement._SETTLERS.update(saved)
+    settlement._RETRY_SAFE.clear()
+    settlement._RETRY_SAFE.update(saved_retry_safe)
 
 
 def _overdue(store, person="owner", desc="send Sam the build recap"):
@@ -98,6 +105,81 @@ class TestStoreResolve:
         r = store.resolve(c["id"], outcome="done")
         assert r["metadata"]["kind"] == "deliverable"
         assert "resolution" in r["metadata"]
+
+    def test_operation_bound_replay_matches_full_note_and_rejects_conflicts(
+        self, store,
+    ):
+        c = store.create(person_id="owner", description="x")
+        note = "n" * 350
+        first = store.resolve(
+            c["id"], outcome="done", note=note, resolved_by="operator",
+            operation_id="concern-source-operation:" + "a" * 64,
+        )
+        resolution = first["metadata"]["resolution"]
+        assert resolution["note"] == note[:300]
+        assert resolution["note_digest"] == hashlib.sha256(
+            note.encode("utf-8")
+        ).hexdigest()
+        assert store.resolve(
+            c["id"], outcome="done", note=note, resolved_by="operator",
+            operation_id=resolution["operation_id"],
+        ) == first
+        with pytest.raises(CommitmentResolutionConflict):
+            store.resolve(
+                c["id"], outcome="invalid", note=note,
+                resolved_by="operator", operation_id=resolution["operation_id"],
+            )
+        with pytest.raises(CommitmentResolutionConflict):
+            store.resolve(
+                c["id"], outcome="done", note=note,
+                resolved_by="operator",
+                operation_id="concern-source-operation:" + "b" * 64,
+            )
+
+    def test_operation_proof_survives_metadata_replacement_and_blocks_delete(
+        self, store,
+    ):
+        c = store.create(person_id="owner", description="x")
+        operation_id = "concern-source-operation:" + "c" * 64
+        store.resolve(
+            c["id"], outcome="done", note="bound", resolved_by="operator",
+            operation_id=operation_id,
+        )
+        proof = store.get_resolution_operation(c["id"])
+        replaced = store.update(c["id"], metadata={"replacement": True})
+        assert replaced["metadata"] == {"replacement": True}
+        assert store.get_resolution_operation(c["id"]) == proof
+        replay = store.resolve(
+            c["id"], outcome="done", note="bound", resolved_by="operator",
+            operation_id=operation_id,
+        )
+        assert replay["metadata"] == {"replacement": True}
+        assert store.delete(c["id"]) is False
+        assert store.get(c["id"]) is not None
+
+        conn = store._connect()
+        try:
+            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                conn.execute(
+                    """UPDATE commitment_resolution_operations
+                       SET outcome='invalid' WHERE commitment_id=?""",
+                    (c["id"],),
+                )
+            conn.rollback()
+            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                conn.execute(
+                    """DELETE FROM commitment_resolution_operations
+                       WHERE commitment_id=?""",
+                    (c["id"],),
+                )
+            conn.rollback()
+            with pytest.raises(sqlite3.IntegrityError, match="cannot be deleted"):
+                conn.execute(
+                    "DELETE FROM commitments WHERE id=?", (c["id"],),
+                )
+            conn.rollback()
+        finally:
+            conn.close()
 
 
 # --- open-status model ------------------------------------------------------
@@ -209,6 +291,49 @@ class TestSettlement:
         assert out[1]["settled"] is True
         assert store.get(c["id"])["status"] == "fulfilled"
 
+    def test_retry_safe_settler_attests_full_long_note_operation(self, store):
+        c = store.create(person_id="o", description="long note")
+        _wire_commitment_settler(store)
+        source = f"commitment:{c['id']}"
+        note = "long-note-" * 40
+        first = settlement.settle_sources(
+            [source],
+            outcome="done",
+            note=note,
+            resolved_by="operator",
+            operation_root="concern-cascade-intent:" + "a" * 64,
+        )
+        first_at = store.get(c["id"])["metadata"]["resolution"]["at"]
+        recovered = settlement.retry_safe_settle_sources(
+            [source],
+            outcome="done",
+            note=note,
+            resolved_by="operator",
+            operation_root="concern-cascade-intent:" + "a" * 64,
+        )
+        assert first[0]["settled"] is recovered[0]["settled"] is True
+        assert first[0]["operation_id"] == recovered[0]["operation_id"]
+        assert first[0]["note_digest"] == hashlib.sha256(
+            note.encode("utf-8")
+        ).hexdigest()
+        assert store.get(c["id"])["metadata"]["resolution"]["at"] == first_at
+
+    def test_retry_safe_label_without_operation_attestation_fails(self):
+        settlement.register_settler(
+            "unproven",
+            lambda source_id, **decision: {"status": "done"},
+            retry_safe=True,
+        )
+        result = settlement.retry_safe_settle_sources(
+            ["unproven:item-1"],
+            operation_root="concern-cascade-intent:" + "a" * 64,
+            outcome="done",
+            note="bound note",
+            resolved_by="operator",
+        )
+        assert result[0]["settled"] is False
+        assert result[0]["error"] == "operation_unverified"
+
 
 # --- workspace re-raise suppression ------------------------------------------
 
@@ -257,6 +382,10 @@ async def _client(ws_engine, cstore):
     host_mod._workspace = ws_engine
     host_mod._commitment_store = cstore
     app = FastAPI()
+    @app.middleware("http")
+    async def _legacy_authority(request, call_next):
+        request.state.colony_authority = legacy_authority()
+        return await call_next(request)
     app.include_router(host_mod.router)
     try:
         async with AsyncClient(transport=ASGITransport(app=app),
@@ -268,11 +397,32 @@ async def _client(ws_engine, cstore):
 
 
 def _wire_commitment_settler(cstore):
-    def _settle(source_id, *, outcome="done", note="", resolved_by="owner"):
+    def _settle(source_id, *, outcome="done", note="", resolved_by="owner",
+                operation_id=None):
         row = cstore.resolve(source_id, outcome=outcome, note=note,
-                             resolved_by=resolved_by)
-        return {"kind": "commitment", "status": row["status"]} if row else None
-    settlement.register_settler("commitment", _settle)
+                             resolved_by=resolved_by,
+                             operation_id=operation_id)
+        if not row:
+            return None
+        operation = (
+            cstore.get_resolution_operation(source_id)
+            if operation_id is not None else None
+        )
+        resolution = operation or (
+            (row.get("metadata") or {}).get("resolution") or {}
+        )
+        return {
+            "kind": "commitment",
+            "status": row["status"],
+            "operation_id": resolution.get("operation_id"),
+            "outcome": resolution.get("outcome"),
+            "note_digest": resolution.get("note_digest"),
+            "resolved_by": (
+                resolution.get("resolved_by")
+                if operation is not None else resolution.get("by")
+            ),
+        }
+    settlement.register_settler("commitment", _settle, retry_safe=True)
 
 
 async def test_deck_resolve_settles_commitment_and_stays_resolved(tmp_path):
@@ -295,9 +445,17 @@ async def test_deck_resolve_settles_commitment_and_stays_resolved(tmp_path):
                                "resolved_by": "owner"})
         assert r.status_code == 200
         body = r.json()
-        assert body["settled_sources"] == [
-            {"source": f"commitment:{cm['id']}", "settled": True,
-             "kind": "commitment", "status": "fulfilled"}]
+        assert len(body["settled_sources"]) == 1
+        settled = body["settled_sources"][0]
+        assert {
+            key: settled[key]
+            for key in ("source", "settled", "kind", "status")
+        } == {
+            "source": f"commitment:{cm['id']}", "settled": True,
+            "kind": "commitment", "status": "fulfilled",
+        }
+        assert settled["operation_id"].startswith("concern-source-operation:")
+        assert settled["outcome"] == "done"
 
     # the source is settled...
     assert cstore.get(cm["id"])["status"] == "fulfilled"

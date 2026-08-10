@@ -371,6 +371,19 @@ class VectorStore:
         table = await self._db.open_table(collection.value)
         return await table.count_rows()
 
+    async def list_ids(self, collection: Collection) -> list[str]:
+        """Return all row ids in a collection via a projected query.
+
+        Unlike ``scan_all`` this never materializes the vector column — an
+        id-only projection, cheap enough to run against a large store (used
+        by the orphan-vector vacuum to diff against graph node ids).
+        """
+        table = await self._db.open_table(collection.value)
+        df = await table.query().select(["id"]).to_pandas()
+        if df.empty:
+            return []
+        return [str(x) for x in df["id"].tolist()]
+
     async def scan_all(self, collection: Collection) -> list[dict[str, Any]]:
         """Return all rows from a collection as raw dicts."""
         table = await self._db.open_table(collection.value)

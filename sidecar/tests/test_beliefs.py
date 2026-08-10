@@ -291,3 +291,275 @@ def test_inline_property_hook_records_audit():
     # same value -> no audit row
     engine.note_property_update("we-1", "status", "paused", "paused", 0.7, 0.8)
     assert len(store.supersessions()) == 1
+
+
+# ---------------------------------------------------------------------------
+# U26: supervised-live rung (COLONY_BELIEFS_SUPERVISED_LIVE)
+# ---------------------------------------------------------------------------
+
+def _self_model_at(stage, monkeypatch=None):
+    from colony_sidecar.self_model import (
+        ActionJournal, CompetenceStore, SelfModel, TrustEngine,
+    )
+    cstore = CompetenceStore()
+    trust = TrustEngine(cstore, journal=ActionJournal())
+    sm = SelfModel(cstore, trust=trust)
+    trust.set_stage("beliefs", stage, notify=False)
+    return sm, cstore
+
+
+def test_supervised_flag_off_is_todays_exact_behavior(monkeypatch):
+    """Regression-lock: with the flag unset OR explicitly 0, ask_first still
+    resolves to shadow — the pre-existing catch-22 posture."""
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.delenv("COLONY_BELIEFS_SUPERVISED_LIVE", raising=False)
+    sm, _ = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    assert engine._effective_mode() == "shadow"
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "0")
+    assert engine._effective_mode() == "shadow"
+
+
+def test_supervised_mode_only_at_ask_first(monkeypatch):
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    for stage, want in (("shadow", "shadow"),
+                        ("ask_first", "supervised"),
+                        ("act_first", "live")):
+        sm, _ = _self_model_at(stage)
+        engine = BeliefEngine(BeliefStore(), self_model=sm)
+        assert engine._effective_mode() == want, stage
+    # env off/live stay owner-controlled regardless of the flag
+    sm, _ = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "off")
+    assert engine._effective_mode() == "off"
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "live")
+    assert engine._effective_mode() == "live"
+
+
+@pytest.mark.asyncio
+async def test_supervised_performs_reversible_mutations(monkeypatch):
+    """At ask_first with the flag on: supersession (old value preserved on
+    the superseded node) and floored decay run, are journaled, and the
+    outcome is recorded shadow=False so graduation can proceed."""
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    monkeypatch.setenv("COLONY_BELIEFS_STALE_DAYS", "10")
+    sm, cstore = _self_model_at("ask_first")
+    old_ts = datetime.now(timezone.utc) - timedelta(days=30)
+    graph = FakeGraph([
+        _mem_row("m-old", "Jordan works at Initech.", ts=old_ts),
+        _mem_row("m-new", "Jordan works at Globex."),
+    ])
+    stale = _entity(name="Old Thing", conf=0.11, last_seen=old_ts)
+    world = FakeWorld([stale])
+    store = BeliefStore()
+    engine = BeliefEngine(store, graph=graph, world_store=world,
+                          journal=ActionJournal(), self_model=sm)
+    report = await engine.run()
+    assert report["mode"] == "supervised"
+    # reversible supersession: loser MARKED, old value preserved in audit
+    assert report["resolved"] == 1
+    assert graph.transitions == [("m-old", "superseded", "m-new")]
+    assert store.supersessions()[0]["old_value"] == "Initech"
+    # reversible decay: floored at 0.1, entity upserted, never deleted
+    assert report["decayed"] == 1
+    assert stale.confidence == pytest.approx(0.1)
+    assert world.upserts == [stale]
+    # REAL outcome recorded -> trust graduation has something to chew on
+    real = cstore.events("beliefs", include_shadow=False)
+    assert len(real) == 1 and real[0]["outcome"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_shadow_stage_records_shadow_even_with_flag(monkeypatch):
+    """The flag never lets a shadow-stage domain emit real outcomes."""
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    sm, cstore = _self_model_at("shadow")
+    graph = FakeGraph([
+        _mem_row("m-old", "Jordan works at Initech.",
+                 ts=datetime.now(timezone.utc) - timedelta(days=30)),
+        _mem_row("m-new", "Jordan works at Globex."),
+    ])
+    engine = BeliefEngine(BeliefStore(), graph=graph, self_model=sm)
+    report = await engine.run()
+    assert report["mode"] == "shadow" and report["resolved"] == 0
+    assert graph.transitions == []
+    assert cstore.events("beliefs", include_shadow=False) == []
+
+
+def test_status_reports_effective_mode(monkeypatch):
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    sm, _ = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    st = engine.status()
+    assert st["mode"] == "shadow" and st["effective_mode"] == "supervised"
+
+
+# ---------------------------------------------------------------------------
+# H1.2: beliefs on the generic supervised rung (self_model/supervised.py)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_legacy_and_generic_flags_are_equivalent(monkeypatch):
+    """COLONY_BELIEFS_SUPERVISED_LIVE=1 and COLONY_SUPERVISED_LIVE_DOMAINS=
+    beliefs must produce identical run() reports at ask_first."""
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_STALE_DAYS", "10")
+    old_ts = datetime.now(timezone.utc) - timedelta(days=30)
+
+    async def _run():
+        sm, cstore = _self_model_at("ask_first")
+        graph = FakeGraph([
+            _mem_row("m-old", "Jordan works at Initech.", ts=old_ts),
+            _mem_row("m-new", "Jordan works at Globex."),
+        ])
+        stale = _entity(name="Old Thing", conf=0.11, last_seen=old_ts)
+        engine = BeliefEngine(BeliefStore(), graph=graph,
+                              world_store=FakeWorld([stale]),
+                              journal=ActionJournal(), self_model=sm)
+        report = await engine.run()
+        return report, graph.transitions, cstore.events(
+            "beliefs", include_shadow=False)
+
+    monkeypatch.delenv("COLONY_SUPERVISED_LIVE_DOMAINS", raising=False)
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    legacy = await _run()
+
+    monkeypatch.delenv("COLONY_BELIEFS_SUPERVISED_LIVE", raising=False)
+    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "beliefs")
+    generic = await _run()
+
+    assert legacy[0] == generic[0]                       # identical reports
+    assert legacy[0]["mode"] == "supervised"
+    assert legacy[1] == generic[1]                       # same graph effects
+    assert [e["outcome"] for e in legacy[2]] == [e["outcome"] for e in generic[2]]
+
+
+# ---------------------------------------------------------------------------
+# H1.3: trust outcome integrity (COLONY_TRUST_STRICT_OUTCOMES, default ON)
+# ---------------------------------------------------------------------------
+#
+# The live bug this fixes: run() recorded ONE unconditional "success" per
+# run, so five no-op supervised runs looked like a clean real track record
+# and would graduate beliefs to act_first (unlocking destructive
+# resolution) without a single earned outcome.
+
+async def _raise_pass(*a, **k):
+    raise RuntimeError("boom")
+
+
+@pytest.mark.asyncio
+async def test_strict_noop_supervised_run_records_nothing(monkeypatch):
+    """Default (strict): a supervised run that mutates nothing must not
+    feed the trust ladder at all."""
+    monkeypatch.delenv("COLONY_TRUST_STRICT_OUTCOMES", raising=False)
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    sm, cstore = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)   # nothing wired
+    report = await engine.run()
+    assert report["mode"] == "supervised"
+    assert report["resolved"] + report["decayed"] + report["supersessions"] == 0
+    assert cstore.events("beliefs", include_shadow=True) == []
+
+
+@pytest.mark.asyncio
+async def test_strict_noop_live_run_records_nothing(monkeypatch):
+    monkeypatch.delenv("COLONY_TRUST_STRICT_OUTCOMES", raising=False)
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "live")
+    sm, cstore = _self_model_at("act_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    report = await engine.run()
+    assert report["mode"] == "live"
+    assert cstore.events("beliefs", include_shadow=True) == []
+
+
+@pytest.mark.asyncio
+async def test_strict_errored_pass_records_failure(monkeypatch):
+    """Any pass raising => the run is a FAILURE, even if another pass
+    mutated something."""
+    monkeypatch.delenv("COLONY_TRUST_STRICT_OUTCOMES", raising=False)
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    monkeypatch.setenv("COLONY_BELIEFS_STALE_DAYS", "10")
+    sm, cstore = _self_model_at("ask_first")
+    stale = _entity(name="Old Thing", conf=0.11,
+                    last_seen=datetime.now(timezone.utc) - timedelta(days=30))
+    engine = BeliefEngine(BeliefStore(), world_store=FakeWorld([stale]),
+                          journal=ActionJournal(), self_model=sm)
+    engine._graph_pass = _raise_pass
+    report = await engine.run()
+    assert report["pass_errors"] == 1
+    assert report["decayed"] == 1                       # decay still ran
+    events = cstore.events("beliefs", include_shadow=True)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "failure"
+    assert events[0]["shadow"] == 0                     # supervised = real
+
+
+@pytest.mark.asyncio
+async def test_strict_mutating_run_records_real_success(monkeypatch):
+    monkeypatch.delenv("COLONY_TRUST_STRICT_OUTCOMES", raising=False)
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    monkeypatch.setenv("COLONY_BELIEFS_STALE_DAYS", "10")
+    sm, cstore = _self_model_at("ask_first")
+    stale = _entity(name="Old Thing", conf=0.11,
+                    last_seen=datetime.now(timezone.utc) - timedelta(days=30))
+    engine = BeliefEngine(BeliefStore(), world_store=FakeWorld([stale]),
+                          journal=ActionJournal(), self_model=sm)
+    report = await engine.run()
+    assert report["pass_errors"] == 0 and report["decayed"] == 1
+    events = cstore.events("beliefs", include_shadow=True)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "success" and events[0]["shadow"] == 0
+
+
+@pytest.mark.asyncio
+async def test_legacy_flag_zero_restores_unconditional_success(monkeypatch):
+    """Regression lock for the escape hatch: COLONY_TRUST_STRICT_OUTCOMES=0
+    is exactly the old behavior — one success per run, no-op or not."""
+    monkeypatch.setenv("COLONY_TRUST_STRICT_OUTCOMES", "0")
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    # no-op supervised run -> real success anyway (the old bug, preserved)
+    sm, cstore = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    await engine.run()
+    events = cstore.events("beliefs", include_shadow=True)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "success" and events[0]["shadow"] == 0
+    # no-op shadow-stage run -> shadow success
+    sm2, cstore2 = _self_model_at("shadow")
+    engine2 = BeliefEngine(BeliefStore(), self_model=sm2)
+    await engine2.run()
+    events2 = cstore2.events("beliefs", include_shadow=True)
+    assert len(events2) == 1
+    assert events2[0]["outcome"] == "success" and events2[0]["shadow"] == 1
+    # errored pass -> still success under legacy
+    sm3, cstore3 = _self_model_at("ask_first")
+    engine3 = BeliefEngine(BeliefStore(), self_model=sm3)
+    engine3._graph_pass = _raise_pass
+    await engine3.run()
+    assert [e["outcome"] for e in
+            cstore3.events("beliefs", include_shadow=True)] == ["success"]
+
+
+@pytest.mark.asyncio
+async def test_strict_stops_false_graduation(monkeypatch):
+    """End-to-end on the trust engine: five no-op supervised runs used to
+    look like five real successes (enough to graduate ask_first ->
+    act_first); under strict they contribute nothing."""
+    monkeypatch.delenv("COLONY_TRUST_STRICT_OUTCOMES", raising=False)
+    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    sm, cstore = _self_model_at("ask_first")
+    engine = BeliefEngine(BeliefStore(), self_model=sm)
+    for _ in range(5):
+        await engine.run()
+    assert cstore.events("beliefs", include_shadow=True) == []
+    assert sm.trust.stage("beliefs") == "ask_first"      # no false graduation

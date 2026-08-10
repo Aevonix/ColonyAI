@@ -13,12 +13,15 @@ when ``db_path`` is None the limiter stays purely in-memory (used in tests).
 
 from __future__ import annotations
 
+from contextlib import closing
 import logging
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from colony_sidecar.util.quiet_hours import in_quiet_window
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +163,7 @@ class DeliveryRateLimiter:
         self._last_delivery[person_id] = now
         if self._db_path is not None:
             try:
-                with sqlite3.connect(self._db_path) as conn:
+                with closing(sqlite3.connect(self._db_path)) as conn, conn:
                     conn.execute(
                         "INSERT INTO delivery_log (person_id, delivered_at) VALUES (?, ?)",
                         (person_id, now.isoformat()),
@@ -203,11 +206,11 @@ class DeliveryRateLimiter:
     def _in_quiet_hours(self) -> bool:
         """Return True if current time is within quiet hours (owner-local tz)."""
         now = datetime.now(self._tz)
-        h = now.hour
-        if self._quiet_start > self._quiet_end:
-            # Spans midnight (22:00–08:00)
-            return h >= self._quiet_start or h < self._quiet_end
-        return self._quiet_start <= h < self._quiet_end
+        return in_quiet_window(
+            now.hour * 60 + now.minute,
+            self._quiet_start * 60,
+            self._quiet_end * 60,
+        )
 
     # ------------------------------------------------------------------
     # Persistence
@@ -217,7 +220,7 @@ class DeliveryRateLimiter:
         """Create the delivery-log table on first use and prune stale rows."""
         assert self._db_path is not None
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self._db_path) as conn:
+        with closing(sqlite3.connect(self._db_path)) as conn, conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS delivery_log ("
                 "  person_id TEXT NOT NULL,"
@@ -238,10 +241,14 @@ class DeliveryRateLimiter:
     def _reload_from_db(self) -> None:
         """Reload today's counts and the most-recent delivery per person."""
         assert self._db_path is not None
+        # "Today" is the OWNER-LOCAL date (matching _reset_if_new_day), so
+        # its start is local midnight converted to UTC — the log stores UTC
+        # timestamps. Combining the local date with UTC midnight shifted the
+        # reload window by the UTC offset, over- or under-counting restarts.
         today_start = datetime.combine(
-            self._today, datetime.min.time(), tzinfo=timezone.utc
-        ).isoformat()
-        with sqlite3.connect(self._db_path) as conn:
+            self._today, datetime.min.time(), tzinfo=self._tz
+        ).astimezone(timezone.utc).isoformat()
+        with closing(sqlite3.connect(self._db_path)) as conn, conn:
             # Today's deliveries → daily count
             cur = conn.execute(
                 "SELECT person_id, delivered_at FROM delivery_log "

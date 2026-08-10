@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
+from colony_sidecar.gate.communication_policy import CommunicationPolicyContextV1
 from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
 
 
@@ -36,6 +37,10 @@ class GatePayload:
     mentioned_entities: frozenset  # entities from THIS session's history
     turn_id: str
     incoming_message_text: str     # original incoming message (for Layer 5)
+    # Immutable host-owned purpose/disclosure constraints.  Checkers and any
+    # restricted review model see the exact same object whose digest is bound
+    # into the ResponseGuard result.  None preserves the legacy contract.
+    communication_policy: Optional[CommunicationPolicyContextV1] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
 

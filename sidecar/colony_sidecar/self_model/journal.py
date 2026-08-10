@@ -36,16 +36,19 @@ class ActionJournal:
                     decision TEXT,
                     outcome TEXT,
                     ref TEXT,
+                    event_key TEXT,
                     prompt_version TEXT
                 )""")
-            # Migration: prompt_version added after first ship (behavior
-            # shifts must be attributable to prompt versions).
+            # Additive migrations preserve existing accountability history.
             try:
                 cols = {r[1] for r in self._conn.execute(
                     "PRAGMA table_info(action_journal)").fetchall()}
                 if "prompt_version" not in cols:
                     self._conn.execute(
                         "ALTER TABLE action_journal ADD COLUMN prompt_version TEXT")
+                if "event_key" not in cols:
+                    self._conn.execute(
+                        "ALTER TABLE action_journal ADD COLUMN event_key TEXT")
             except Exception:
                 pass
             self._conn.execute(
@@ -53,12 +56,16 @@ class ActionJournal:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_journal_domain "
                 "ON action_journal(domain)")
+            self._conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_event_key "
+                "ON action_journal(event_key) WHERE event_key IS NOT NULL")
             self._conn.commit()
 
     def record(self, domain: str, description: str, *,
                reasoning: str = "", confidence: Optional[float] = None,
                reversibility: str = "reversible", decision: str = "acted",
-               outcome: str = "", ref: str = "") -> int:
+               outcome: str = "", ref: str = "",
+               event_key: Optional[str] = None) -> int:
         """Append one journal entry; returns its row id. Never raises.
 
         Each entry carries the active charter PROMPT_VERSION so behavior
@@ -69,20 +76,29 @@ class ActionJournal:
                 from colony_sidecar.cognition.charter import PROMPT_VERSION
             except Exception:
                 PROMPT_VERSION = ""
+            event_key = str(event_key or "").strip()[:512] or None
             with self._lock:
                 cur = self._conn.execute(
-                    """INSERT INTO action_journal
+                    """INSERT OR IGNORE INTO action_journal
                        (ts, domain, description, reasoning, confidence,
-                        reversibility, decision, outcome, ref, prompt_version)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        reversibility, decision, outcome, ref, event_key,
+                        prompt_version)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (time.time(), (domain or "unknown").lower(),
                      (description or "")[:500], (reasoning or "")[:800],
                      confidence,
                      reversibility if reversibility in REVERSIBILITY else "reversible",
                      decision if decision in DECISIONS else "acted",
                      (outcome or "")[:500], (ref or "")[:120],
+                     event_key,
                      PROMPT_VERSION))
                 self._conn.commit()
+                if cur.rowcount == 0 and event_key is not None:
+                    existing = self._conn.execute(
+                        "SELECT id FROM action_journal WHERE event_key=?",
+                        (event_key,),
+                    ).fetchone()
+                    return int(existing["id"]) if existing else -1
                 return int(cur.lastrowid)
         except Exception:
             return -1
@@ -96,6 +112,22 @@ class ActionJournal:
                 self._conn.commit()
         except Exception:
             pass
+
+    def has_event_key(self, event_key: str) -> bool:
+        """Whether an exact, durable accountability event already exists."""
+
+        key = str(event_key or "").strip()[:512]
+        if not key:
+            return False
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT 1 FROM action_journal WHERE event_key=? LIMIT 1",
+                    (key,),
+                ).fetchone()
+            return row is not None
+        except Exception:
+            return False
 
     def recent(self, limit: int = 50, domain: Optional[str] = None,
                since: Optional[float] = None) -> List[Dict[str, Any]]:

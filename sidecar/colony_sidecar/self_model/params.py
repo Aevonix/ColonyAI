@@ -21,6 +21,8 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from colony_sidecar.self_model.benchmark import cognition_p4_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +33,8 @@ class AdaptiveParamStore:
                  journal: Any = None) -> None:
         self._lock = threading.RLock()
         self._journal = journal
+        self._experiment_writer_id: Optional[str] = None
+        self._experiment_writer_token: Any = None
         self._conn = sqlite3.connect(str(db_path) if db_path else ":memory:",
                                      check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -53,6 +57,35 @@ class AdaptiveParamStore:
         """Attach the ActionJournal after boot (it is created later than
         this store in the server lifespan)."""
         self._journal = journal
+
+    def claim_experiment_writer(self, writer_id: str) -> Any:
+        """Claim the one in-process capability that may mutate P4 knobs.
+
+        The object token is intentionally not serializable. The database still
+        records every mutation; this capability prevents legacy components
+        from racing the canonical ExperimentEngine inside one sidecar.
+        """
+
+        normalized = (writer_id or "").strip()
+        if not normalized:
+            raise ValueError("experiment writer id is required")
+        with self._lock:
+            if self._experiment_writer_id is None:
+                self._experiment_writer_id = normalized
+                self._experiment_writer_token = object()
+            elif self._experiment_writer_id != normalized:
+                raise RuntimeError(
+                    "AdaptiveParamStore already has an ExperimentEngine writer")
+            return self._experiment_writer_token
+
+    def _assert_writer(self, writer_token: Any) -> None:
+        if cognition_p4_mode() == "off":
+            return
+        if (self._experiment_writer_token is None
+                or writer_token is not self._experiment_writer_token):
+            raise PermissionError(
+                "ExperimentEngine is the sole adaptive-parameter writer "
+                "while COLONY_COGNITION_P4_MODE is enabled")
 
     # -- registration (consumers declare their knob + safe range) ---------
     def register(self, name: str, default: float, lo: float, hi: float,
@@ -99,10 +132,11 @@ class AdaptiveParamStore:
 
     # -- writes (clamped + journaled) ---------------------------------------
     def set(self, name: str, value: float, *, reason: str = "",
-            source: str = "") -> Optional[float]:
+            source: str = "", writer_token: Any = None) -> Optional[float]:
         """Set a parameter. Returns the APPLIED (clamped) value, or None if
         the parameter was never registered (unknown knobs are refused --
         a writer cannot invent parameters no consumer reads)."""
+        self._assert_writer(writer_token)
         name = (name or "").strip()
         with self._lock:
             row = self._conn.execute(
@@ -136,8 +170,10 @@ class AdaptiveParamStore:
                 logger.debug("param journal write failed", exc_info=True)
         return applied
 
-    def reset(self, name: str, *, reason: str = "", source: str = "") -> None:
+    def reset(self, name: str, *, reason: str = "", source: str = "",
+              writer_token: Any = None) -> None:
         """Clear a set value so the registered default applies again."""
+        self._assert_writer(writer_token)
         with self._lock:
             self._conn.execute(
                 "UPDATE adaptive_params SET value=NULL, reason=?, source=?, "

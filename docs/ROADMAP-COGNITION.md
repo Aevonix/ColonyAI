@@ -797,7 +797,8 @@ adopted, upstream is unlicensed and immature):
   at 8944715 pre-Phase-B (1362 passed, 118 skipped).
 - Phase B: COMPLETE (2026-07-04, successor session). Landed:
   - `task_queue/governor.py` (item 5, server-side enforcement): WorkerGovernor
-    re-decides every claim server-side (capability coverage recompute +
+    returns an immutable, invariant-checked `ClaimVerdict` for every claim
+    (capability coverage recompute +
     DirectiveGuard boundary re-check on the job subject; never trusts the
     worker) and audits every completion report (a mutation/force-push reported
     on a job not authorized to change state is a VIOLATION). Each worker job
@@ -807,10 +808,26 @@ adopted, upstream is unlicensed and immature):
     Mode COLONY_WORKERS_MODE off|shadow|live (default shadow = CALIBRATION:
     evaluates + journals but never blocks, so enabling it does not disturb
     the already-live agent_action path; live enforces). `required_capability`
-    rides job.tags (no schema migration). Wired into api/routers/task_queue.py
-    claim (release/block on refusal) + complete (audit + record) + fail
-    (failure -> breaker); GET /queue/governor status. Registry accessor
+    rides job.tags (no schema migration). Enforcement lives inside
+    `QueueManager.claim_job`, before any lease is assigned, rather than in the
+    HTTP route. HTTP, embedded `WorkerNode`, mesh, and raw queue consumers
+    therefore share one atomic chokepoint. Completion/failure audit and trust
+    recording likewise live in QueueManager. GET /queue/governor and
+    /queue/stats report the central dependency, distinct hold counts, and a
+    bounded content-free list of governance-held job IDs/reasons. Registry accessor
     worker_governor; set_worker_governor; boot section 22c.
+    A later failing-first hardening pass closes the configured-boundary and raw
+    queue seams: a DirectiveGuard exception is a refusal in live mode and an
+    explicit `would_refuse` in shadow; an absent/crashed/malformed or
+    compatibility governor moves a still-unclaimed live job into an explicit
+    governor/boundary hold with every lease field clear. Dependency unblocking
+    cannot release governance or approval holds. A bounded reconciler releases
+    a hold after a healthy re-check, directive lift, or off/shadow rollback,
+    exactly once. The embedded worker starts only after central authority is
+    installed, and repeated/shutdown lifespans clear both handles. The
+    server-owned governor requires a live DirectiveGuard; the class default is
+    usable only for direct compatibility evaluation and is rejected as live
+    QueueManager authority.
   - `workers/colony_worker.py` (item 5, installable worker daemon): stdlib-only
     console script `colony-worker`; authenticates (COLONY_API_KEY), registers
     capability-typed (COLONY_WORKER_CAPABILITIES/_JOB_TYPES), polls claim,

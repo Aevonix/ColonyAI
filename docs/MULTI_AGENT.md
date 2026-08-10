@@ -405,7 +405,11 @@ Colony. See `plugins/hermes-plugin/poller/README.md`.
 | `COLONY_URL` | Public URL for remote agents | — |
 | `COLONY_SIDECAR_HOST` | Bind host | `127.0.0.1` |
 | `COLONY_SIDECAR_PORT` | Bind port | `7777` |
-| `COLONY_API_KEY` | API key for local access | — |
+| `COLONY_API_KEY` | Legacy global API key (migration compatibility) | — |
+| `COLONY_API_KEYRING_PATH` | Mode-private scoped-principal keyring | — |
+| `COLONY_API_CONTACT_GRANTS_PATH` | Mode-private server-attested exact-contact projection | `$COLONY_STATE_DIR/api-contact-grants.json` |
+| `COLONY_AUTH_TELEMETRY_PATH` | Privacy-safe durable auth migration counters | `$COLONY_STATE_DIR/colony-auth-telemetry.db` |
+| `COLONY_AUTH_LEGACY_QUIET_HOURS` | Doctor's required no-legacy observation window | `24` |
 | `COLONY_TIMEZONE` | IANA timezone | `UTC` |
 
 ### Agent Config (`~/.colony/agent.json`)

@@ -1,68 +1,21 @@
-# Colony ⇄ Hermes integration ops add-ons (generic, host-side)
+# Operations boundary
 
-These are **generic** add-ons that make a Colony cognitive sidecar robust on a
-Hermes agent host — not specific to any single agent. They live host-side under
-`~/.hermes/` (which survives Hermes updates) and are the building blocks the
-Colony setup wizard installs/validates.
+The governed general plugin does not install anything from this directory.
+These files are retained for migration and diagnostics only.
 
-| File | Installs to | Purpose |
-|------|-------------|---------|
-| `colony-doctor.py` | `~/.hermes/scripts/` | Validates the deployed Hermes↔Colony integration. STATIC: every plugin's registered hook names are checked against the running Hermes build's `VALID_HOOKS`; hook callbacks must be **sync** (Hermes invokes them as `cb(**kwargs)` and drops un-awaited coroutines) and accept `**kwargs`; tool handlers must absorb `**kwargs`; flags `ctx.config` / `register_slash_command`. LIVE: sidecar reachable, contact-resolve answers, Colony LLM is a generative (non-embedding) provider. Exits non-zero on any failure. |
-| `colony-doctor-cron.sh` | `~/.hermes/scripts/` | Runs the doctor; alerts the WhatsApp **home/ops channel** only on a regression **or a Hermes version change** (the doctor records the last-seen version in `~/.hermes/.colony_doctor_state.json`). |
-| `ai.aevonix.colony-doctor.plist` | `~/Library/LaunchAgents/` | launchd job: runs the doctor at load + every 6h. |
-| `hermes-patch-runner.py` | `~/.hermes/scripts/` | Registry runner for guarded, idempotent patches to the Hermes framework source (the only sanctioned way to alter framework behavior beyond config/plugins/hooks). `status` verifies without touching anything, `apply` heals after a framework update, and anchors that drifted report FUNDAMENTAL_CHANGE instead of blind-patching. Patch definitions are deployment-specific and belong in your private deployment repo (registry dir: `~/.hermes/patches/`); see `PATCHES.md` for the contract. The doctor invokes `apply --json` on every run. |
-| `hermes-gateway-restart-runner.sh` | `~/.hermes/scripts/` | Robust gateway restart (bootout-wait + bootstrap-retry + bridge-wait). Writes a pre-restart resume marker and posts the restart notice to the **home/ops channel** (never the owner's main chat). |
-| `pre-restart-summary.py` | `~/.hermes/scripts/` | Captures the last exchange + recent (deduped) tools + Colony timeline digest into `~/.hermes/.post_restart_resume` so the agent resumes context after a restart. |
+- `colony-doctor.py` performs static/read-only integration checks and reports a
+  non-zero exit status on drift.
+- `colony-doctor-cron.sh` writes the doctor result to a local log. It does not
+  send a message.
+- `hermes-patch-runner.py` inventories old patch files without executing them.
+  A clean deployment has no Hermes core patch registry.
+- `colony-activity-monitor.py` and `hermes-gateway-restart-runner.sh` are inert
+  compatibility targets. Their former direct notification/restart behavior
+  bypassed the action plane.
+- `pre-restart-summary.py` reads the local agent log and Colony timeline, then
+  writes `~/.hermes/.post_restart_resume`; it is a local-state-writing summary
+  helper and is not installed by the plugin.
 
-## Why the doctor exists
-
-Hermes invokes plugin hooks **synchronously** as `cb(**kwargs)` and injects any
-returned `{"context": str}` into the user turn. Several failure modes are
-**silent** — no error, the hook just never fires:
-
-- an `async def` hook → returns an un-awaited coroutine that is dropped
-- a hook registered under a name not in this build's `VALID_HOOKS` (e.g.
-  `agent:start`) → dropped with only a one-line WARNING at load
-- a hook/tool handler whose signature can't absorb the kwargs Hermes passes
-  (`sender_id`, `task_id`, …) → raises and is swallowed
-
-The doctor catches all of these statically, and re-runs automatically when the
-Hermes version changes — so a Hermes upgrade that shifts hook conventions is
-surfaced immediately instead of silently degrading Colony.
-
-Convention status as of Hermes v0.18.0 (v2026.7.1): verified UNCHANGED. Hooks
-are still sync `cb(**kwargs)`; `pre_llm_call` still receives `sender_id` and
-now also `task_id`, `turn_id`, `conversation_history`, `is_first_turn`,
-`model`, `platform`; `{"context": str}` returns still inject into the user
-message. New at 0.18 (not used by this plugin yet): the `pre_verify` hook, the
-`kanban_task_*` lifecycle hooks, a middleware layer (`register_middleware`)
-for payload rewriting, and a `plugins.entries.<id>.allow_tool_override` trust
-gate for `register_tool(override=True)` (we register no overrides). See
-`docs/ROADMAP-COGNITION.md`, "Hermes integration", for the full capability map.
-
-## Install
-
-```bash
-cp colony-doctor.py colony-doctor-cron.sh hermes-gateway-restart-runner.sh \
-   hermes-patch-runner.py pre-restart-summary.py ~/.hermes/scripts/
-mkdir -p ~/.hermes/patches   # deployment patch registry (definitions come from your private repo)
-cp ai.aevonix.colony-doctor.plist ~/Library/LaunchAgents/
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/ai.aevonix.colony-doctor.plist
-~/.hermes/scripts/colony-doctor.py   # run once
-```
-
-Override the plugins dir for testing: `COLONY_DOCTOR_PLUGINS_DIR=/path ./colony-doctor.py`.
-
-## Tool-activity stream (meaningful ops-channel lines)
-
-The general plugin's `pre_tool_call` hook records a friendly one-line summary of
-*what each tool call is doing* (the shell command, the file path, the search
-query, the colony verb+args) to `~/.hermes/.tool_activity.jsonl` — generic, any
-agent. `colony-activity-monitor.py` (a reference consumer) enriches each home-channel
-line with it, so a muted ops channel still reads as meaningful actions:
-
-```
-↳ session · ⚡ shell · date · 0.03s · 73 chars
-↳ session · 📖 read · ~/.hermes/config.yaml · 0.09s · 264 chars
-↳ session · 🔧 colony_list_goals · list goals: active · 0.02s · 13 chars
-```
+Effects such as outbound notices, service restarts, or source changes must be
+requested through the deployment's authenticated action plane. Existing jobs
+that invoke an inert compatibility target should be removed after upgrade.

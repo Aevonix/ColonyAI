@@ -134,6 +134,84 @@ class ChannelRegistry:
 
         return None
 
+    async def resolve_exact_verified_dm(
+        self,
+        person_id: str,
+        *,
+        platform: str,
+    ) -> Optional[Channel]:
+        """Resolve one canonical contact's exact verified platform handle.
+
+        This is the asynchronous, fail-closed path for a delivery boundary
+        that must address a specific contact.  Unlike legacy handle inference,
+        it does not map a phone-bearing handle from one gateway to another and
+        it never falls back to a home/shared channel.  Authority is deliberately
+        out of scope: the caller's policy boundary must still decide whether a
+        message may be sent.
+        """
+        if self._contacts_store is None:
+            return None
+        canonical_id = str(person_id or "").strip()
+        exact_platform = str(platform or "").strip().lower()
+        if not canonical_id or not exact_platform:
+            return None
+
+        get_contact = getattr(self._contacts_store, "get", None)
+        get_handles = getattr(self._contacts_store, "get_handles", None)
+        if not callable(get_contact) or not callable(get_handles):
+            return None
+        try:
+            contact = get_contact(canonical_id)
+            if inspect.isawaitable(contact):
+                contact = await contact
+            if (
+                contact is None
+                or str(getattr(contact, "contact_id", "")) != canonical_id
+                or getattr(contact, "deleted_at", None)
+            ):
+                return None
+
+            handles = get_handles(canonical_id)
+            if inspect.isawaitable(handles):
+                handles = await handles
+        except Exception:
+            logger.debug(
+                "Exact verified DM resolution failed for %s",
+                canonical_id,
+                exc_info=True,
+            )
+            return None
+
+        candidates: set[str] = set()
+        for handle in handles or ():
+            handle_contact = getattr(handle, "contact_id", canonical_id)
+            if str(handle_contact) != canonical_id:
+                logger.warning(
+                    "Exact DM resolution rejected a cross-contact handle record"
+                )
+                return None
+            gateway = str(getattr(handle, "gateway", "") or "").strip().lower()
+            if gateway != exact_platform or getattr(handle, "verified", None) is not True:
+                continue
+            address = getattr(handle, "address", None)
+            if not isinstance(address, str) or not address:
+                continue
+            candidates.add(address)
+
+        if len(candidates) != 1:
+            if candidates:
+                logger.warning(
+                    "Exact verified DM resolution is ambiguous for contact %s on %s",
+                    canonical_id,
+                    exact_platform,
+                )
+            return None
+        return Channel(
+            platform=exact_platform,
+            chat_id=next(iter(candidates)),
+            channel_type="dm",
+        )
+
     def _resolve_home_from_store(self) -> Optional[Channel]:
         """Home route from the channel registration DB (Framework Part 4)."""
         if self._channel_store is None:

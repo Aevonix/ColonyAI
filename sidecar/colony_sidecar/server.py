@@ -7,7 +7,10 @@ etc.) as a plugin via the ``/v1/host`` API surface.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import math
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -16,7 +19,10 @@ from pathlib import Path
 # Load ~/.colony/.env before any config reads (mirrors CLI behaviour for
 # service/standalone launches that skip the CLI entrypoint).
 _env_loaded = False
-if not _env_loaded:
+_skip_dotenv = os.environ.get("COLONY_SKIP_DOTENV", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+if not _env_loaded and not _skip_dotenv:
     for _env_path in (Path.home() / ".colony" / ".env", Path.cwd() / ".env"):
         if _env_path.exists():
             with open(_env_path) as _f:
@@ -37,6 +43,7 @@ from fastapi import FastAPI
 
 from colony_sidecar.api.routers.host import (
     router as host_router,
+    v2_router as host_v2_router,
     set_llm_router,
     set_autonomy_loop,
     set_scheduler,
@@ -69,6 +76,7 @@ from colony_sidecar.api.routers.host import (
     set_commitment_store,
     set_affect_store,
     set_facts_store,
+    set_p8_runtime,
     set_context_provenance_store,
     set_response_guard,
     set_engagement_store,
@@ -87,6 +95,13 @@ from colony_sidecar.api.routers.host import (
     set_session_report_store,
     set_agent_bridge,
     set_initiative_executor,
+    set_situation_spine,
+    set_cognition_evidence,
+    set_drive_governance,
+    set_cognition_spine,
+    set_cognition_attachment_status,
+    set_external_event_intake,
+    set_worker_governor,
     supported_capabilities,
 )
 
@@ -100,10 +115,1351 @@ def _state_dir() -> Path:
     return get_state_dir()
 
 
+def _embedded_worker_enabled() -> bool:
+    """Whether this process may construct its in-process execution worker.
+
+    Generic installs retain the historical default (enabled). Deployment
+    cutovers can pin ``COLONY_EMBEDDED_WORKER_ENABLED=false`` while keeping
+    queue maintenance, health, and durable outcome reconciliation online.
+    """
+
+    raw = os.environ.get(
+        "COLONY_EMBEDDED_WORKER_ENABLED", "true"
+    ).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(
+        "COLONY_EMBEDDED_WORKER_ENABLED must be true or false"
+    )
+
+
+def _configured_embedded_worker_enabled() -> bool:
+    """Read the same posture for startup wiring outside worker construction.
+
+    The host's release attestation intentionally reserves
+    ``_embedded_worker_enabled`` for the exact lifespan branch that constructs
+    ``WorkerNode``. Cognition readiness still needs the same strict setting
+    before that branch, so keep this non-construction reader behaviorally
+    identical and lock both parsers together in lifecycle tests.
+    """
+
+    raw = os.environ.get(
+        "COLONY_EMBEDDED_WORKER_ENABLED", "true"
+    ).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(
+        "COLONY_EMBEDDED_WORKER_ENABLED must be true or false"
+    )
+
+
+def _resolve_guard_mode(raw: Optional[str]):
+    """Strict COLONY_GUARD_MODE parser: 'enforce', 'shadow', or unset only.
+
+    An unrecognised value (e.g. a typo of 'enforce') must never silently
+    fall back to shadow — that would quietly disable the enforcement the
+    operator asked for. Log loudly and raise; the ResponseGuard then stays
+    uninitialized and the gate endpoints report unavailable (fail closed).
+    """
+    from colony_sidecar.gate.response_guard import GuardMode
+    value = (raw or "").strip().lower()
+    if value in ("", "shadow"):
+        return GuardMode.SHADOW
+    if value == "enforce":
+        return GuardMode.ENFORCE
+    logger.error(
+        "COLONY_GUARD_MODE=%r is not a recognised guard mode "
+        "(expected 'enforce' or 'shadow') — refusing to silently "
+        "fall back to shadow", raw,
+    )
+    raise RuntimeError(
+        f"COLONY_GUARD_MODE must be 'enforce' or 'shadow', got {raw!r}"
+    )
+
+
+def _cognition_owner_spec(*, router, node_id: str):
+    """Build the mechanically isolated embedded ThoughtJobV1 owner."""
+
+    from colony_sidecar.task_queue.handlers.inference import (
+        ThoughtOnlyInferenceHandler,
+    )
+    from colony_sidecar.task_queue.models import JobType, WorkerCapabilities
+    from colony_sidecar.task_queue.routing import THOUGHT_ROUTE
+
+    handlers = {
+        JobType.THOUGHT: ThoughtOnlyInferenceHandler(router),
+    }
+    capabilities = WorkerCapabilities(
+        node_id=node_id,
+        capabilities={"cognition_scoped", THOUGHT_ROUTE},
+        job_types={JobType.THOUGHT},
+        max_concurrent=1,
+    )
+    return handlers, capabilities
+
+
+def _cognition_worker_profile(*, configured_mode: str, attached: bool) -> str:
+    """Select the embedded worker profile without inspecting partial objects.
+
+    A configured cognition owner is never allowed to become a generic action
+    worker merely because P3 attachment failed.  The caller must hold worker
+    startup when this returns ``held``.
+    """
+
+    mode = str(configured_mode or "off").strip().lower()
+    if mode in {"shadow", "live"}:
+        return "thought_only" if attached else "held"
+    return "generic"
+
+
+def _queue_seconds_env(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be numeric") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise RuntimeError(f"{name} must be positive")
+    return value
+
+
+def _attach_p8_runtime(*, state_dir: Path, facts_store, graph=None):
+    """Atomically attach the reviewed P8 stores in explicit shadow mode.
+
+    Unset, off, unknown, and live all stay dark and create no P8 artifacts.
+    Live is intentionally excluded from this integration slice: recipient
+    simulation remains an ignored non-real-time shadow observation.
+    """
+
+    from colony_sidecar.tom.integration import P8Runtime, p8_integration_mode
+
+    set_p8_runtime(None)
+    graph_policy = getattr(graph, "set_recall_source_exclusions", None)
+    if callable(graph_policy):
+        # Clear any policy left on a reused graph before resolving this mode.
+        graph_policy(())
+    if p8_integration_mode() != "shadow":
+        return None
+    if facts_store is None:
+        raise RuntimeError("P8 shadow requires the canonical SharedFactsStore")
+
+    visibility = None
+    arcs = None
+    audit = None
+    try:
+        from colony_sidecar.tom.arcs import ArcStore
+        from colony_sidecar.tom.recipient_audit import (
+            open_recipient_simulation_audit_store,
+        )
+        from colony_sidecar.tom.visibility_store import (
+            open_visibility_envelope_store,
+        )
+
+        visibility = open_visibility_envelope_store(
+            state_dir / "colony-p8-visibility.db", enabled=True)
+        arcs = ArcStore(str(state_dir / "colony-p8-arcs.db"))
+        audit = open_recipient_simulation_audit_store(
+            state_dir / "colony-p8-recipient-audit.db", mode="shadow")
+        if visibility is None or audit is None:
+            raise RuntimeError("P8 shadow stores failed to open")
+        runtime = P8Runtime(
+            visibility_store=visibility,
+            arc_store=arcs,
+            audit_store=audit,
+            facts_store=facts_store,
+            mode="shadow",
+        )
+        if graph is not None:
+            if not callable(graph_policy):
+                raise RuntimeError(
+                    "P8 shadow requires graph-wide recall source exclusions")
+            # SharedFacts graph rows are compatibility mirrors, not an
+            # authorized content path. Typed projection is their only reader.
+            graph_policy(
+                ("tom:shared_fact",),
+                legacy_metadata_markers=("shared_fact",),
+            )
+        set_p8_runtime(runtime)
+        return runtime
+    except Exception:
+        if callable(graph_policy):
+            try:
+                graph_policy(())
+            except Exception:
+                pass
+        for store in (audit, arcs, visibility):
+            if store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    pass
+        set_p8_runtime(None)
+        raise
+
+
+def _build_research_pipeline(*, graph, p8_runtime):
+    """Preserve legacy research ownership unless P8 needs the governed graph."""
+
+    from colony_sidecar.research.pipeline import ResearchPipeline
+
+    if p8_runtime is None:
+        return ResearchPipeline()
+    return ResearchPipeline(
+        graph=graph,
+        allow_fallback_graph=False,
+    )
+
+
+async def _governed_autonomy_stop_signal(autonomy_loop) -> None:
+    """Request a prompt stop without awaiting the host route's task join."""
+
+    if autonomy_loop is not None:
+        await autonomy_loop.stop()
+
+
+def _work_order_runtime_hold_reason(job, project_store, concern_store) -> str:
+    """Resolve one canonical cognition WorkOrder to its current source hold."""
+
+    from collections.abc import Mapping
+    from colony_sidecar.self_model.event_concerns import (
+        project_turn_concern_hold_reason,
+    )
+    from colony_sidecar.task_queue.models import JobType
+    from colony_sidecar.work_orders import WorkOrderV1
+
+    payload = getattr(job, "payload", None)
+    if not isinstance(payload, Mapping) or payload.get("schema") != "WorkOrderV1":
+        return ""
+    try:
+        order = WorkOrderV1.from_payload(payload)
+    except Exception:
+        # A malformed row is not a canonical WorkOrder.  Fail closed only
+        # when it asserts the cognition-spine source this fence owns; generic
+        # and external queue jobs retain their existing lifecycle.
+        if str(payload.get("source") or "") == "cognition_spine":
+            raise
+        return ""
+    if order.source != "cognition_spine":
+        return ""
+    if (
+        getattr(job, "job_type", None) is not JobType.AGENT_ACTION
+        or str(getattr(job, "job_id", "") or "") != order.work_order_id
+    ):
+        raise RuntimeError("canonical cognition WorkOrder queue identity mismatch")
+    ledger = project_store.get_work_order(order.work_order_id)
+    if ledger is None:
+        raise RuntimeError("canonical cognition WorkOrder ledger row unavailable")
+    ledger_order = WorkOrderV1.from_payload(ledger.get("payload") or {})
+    if (
+        ledger_order.work_order_digest != order.work_order_digest
+        or str(ledger.get("work_order_digest") or "")
+        != order.work_order_digest
+        or str(ledger.get("project_id") or "") != order.project_id
+        or str(ledger.get("step_id") or "") != order.step_id
+    ):
+        raise RuntimeError("canonical cognition WorkOrder ledger binding mismatch")
+    project = project_store.get_project(order.project_id)
+    if project is None or str(project.source or "") != order.source:
+        raise RuntimeError("canonical cognition WorkOrder project binding mismatch")
+    return project_turn_concern_hold_reason(project, concern_store)
+
+
+_COGNITION_RUNTIME_INITIALIZATION_HOLD = (
+    "cognition_runtime_initialization_pending"
+)
+
+
+def _cognition_work_order_startup_hold_reason(job) -> str:
+    """Hold only cognition WorkOrders until their durable stores are wired.
+
+    This deliberately relies only on the queue payload declaration.  The
+    digest-bound verifier cannot run until ProjectStore initialization has
+    succeeded, so a payload asserting the owned source must remain held even
+    when the rest of that payload is malformed.
+    """
+
+    from collections.abc import Mapping
+
+    payload = getattr(job, "payload", None)
+    if not isinstance(payload, Mapping):
+        return ""
+    if (
+        payload.get("schema") == "WorkOrderV1"
+        and str(payload.get("source") or "") == "cognition_spine"
+    ):
+        return _COGNITION_RUNTIME_INITIALIZATION_HOLD
+    return ""
+
+
+def _install_cognition_work_order_startup_fence(task_queue) -> None:
+    """Install the pre-initialization queue fence when a queue is present."""
+
+    if task_queue is not None:
+        task_queue.queue.configure_runtime_claim_hold(
+            _cognition_work_order_startup_hold_reason,
+        )
+
+
+def _install_cognition_work_order_runtime_fence(
+    task_queue, project_store, concern_store,
+) -> None:
+    """Replace the startup fence with the complete digest-bound verifier."""
+
+    if task_queue is None:
+        return
+
+    def _runtime_hold(job) -> str:
+        return _work_order_runtime_hold_reason(
+            job, project_store, concern_store,
+        )
+
+    task_queue.queue.configure_runtime_claim_hold(_runtime_hold)
+
+
+def _attach_cognition_spine(
+    *,
+    state_dir: Path,
+    task_queue,
+    workspace,
+    concern_store,
+    project_store,
+    project_engine,
+    directive_manager,
+    llm_router=None,
+    embedded_worker_enabled: Optional[bool] = None,
+    proposal_store=None,
+):
+    """Attach the typed P3 cognition spine when its migration flag is on.
+
+    This is kept as one small, directly testable startup seam.  In particular,
+    the default-off path must not create a database, and an enabled spine must
+    never fall back to a partial attachment when a durable dependency is
+    absent.
+    """
+
+    from colony_sidecar.cognition.goal_spine import (
+        CognitionSpine,
+        CognitionSpineStore,
+        ThoughtQueueAdapter,
+        ThoughtProposalPresentationSink,
+        cognition_spine_enabled,
+        cognition_spine_mode,
+    )
+    from colony_sidecar.cognition.runtime import CognitionRuntimeContractV1
+
+    configured_mode = cognition_spine_mode()
+    configured_catalog = (
+        ["thought"] if configured_mode in {"shadow", "live"} else []
+    )
+    set_cognition_spine(None, attachment_status={
+        "configured_mode": configured_mode,
+        "state": "attaching" if cognition_spine_enabled() else "off",
+        "reason": (
+            "attachment_in_progress" if cognition_spine_enabled()
+            else "cognition_not_configured"
+        ),
+        "configured_handler_catalog": configured_catalog,
+        "effective_handler_catalog": [],
+    })
+    if not cognition_spine_enabled():
+        return None
+
+    required = {
+        "task_queue": task_queue,
+        "workspace": workspace,
+        "concern_store": concern_store,
+        "project_store": project_store,
+        "project_engine": project_engine,
+        "directive_manager": directive_manager,
+    }
+    missing = sorted(name for name, value in required.items() if value is None)
+    if missing:
+        raise RuntimeError(
+            "P3 cognition spine missing durable dependencies: "
+            + ", ".join(missing)
+        )
+
+    if cognition_spine_mode() == "live":
+        from colony_sidecar.directives import Action
+        from colony_sidecar.projects.models import projects_mode
+
+        if projects_mode() != "live":
+            raise RuntimeError(
+                "P3 live cognition requires ProjectEngine live mode"
+            )
+        if getattr(project_engine, "_work_orders", None) is None:
+            raise RuntimeError(
+                "P3 live cognition requires the canonical WorkOrder adapter"
+            )
+        try:
+            # This is a read-only health probe. An active boundary (including
+            # an observation blackout) may deny it; either verdict proves the
+            # store was readable. Only an exception or malformed result is
+            # unhealthy. A read avoids manufacturing a global-pause action
+            # block during startup.
+            boundary_probe = directive_manager.check(Action(
+                kind="read",
+                text="colony cognition startup boundary health probe",
+                target="cognition startup",
+                high_risk=False,
+            ))
+        except Exception as exc:
+            raise RuntimeError(
+                "P3 live cognition requires a readable DirectiveGuard"
+            ) from exc
+        if not isinstance(getattr(boundary_probe, "allowed", None), bool):
+            raise RuntimeError(
+                "P3 live cognition received a malformed DirectiveGuard verdict"
+            )
+        if llm_router is None:
+            raise RuntimeError(
+                "P3 live cognition requires the ThoughtJobV1 LLM router"
+            )
+        enabled = (
+            _configured_embedded_worker_enabled()
+            if embedded_worker_enabled is None
+            else bool(embedded_worker_enabled)
+        )
+        if not enabled:
+            raise RuntimeError(
+                "P3 live cognition requires the embedded strict ThoughtJobV1 "
+                "handler"
+            )
+        configured_owner = os.environ.get(
+            "COLONY_THOUGHT_WORKER_NODE_ID", ""
+        ).strip()
+        if not configured_owner:
+            raise RuntimeError(
+                "P3 live cognition requires COLONY_THOUGHT_WORKER_NODE_ID"
+            )
+        from colony_sidecar.chain.node import get_or_create_node_id
+
+        actual_owner = get_or_create_node_id(state_dir)
+        if configured_owner != actual_owner:
+            raise RuntimeError(
+                "COLONY_THOUGHT_WORKER_NODE_ID does not match the local "
+                "cognition worker node"
+            )
+
+    try:
+        project_limit = int(
+            os.environ.get("COLONY_PROJECTS_MAX_CONCURRENT", "3")
+        )
+    except ValueError as exc:
+        raise RuntimeError(
+            "COLONY_PROJECTS_MAX_CONCURRENT must be an integer"
+        ) from exc
+    if not 1 <= project_limit <= 100:
+        raise RuntimeError(
+            "COLONY_PROJECTS_MAX_CONCURRENT must be between 1 and 100"
+        )
+
+    available_capabilities = {
+        value.strip()
+        for value in os.environ.get(
+            "COLONY_COGNITION_AVAILABLE_CAPABILITIES",
+            "memory:read,reasoning,web:read",
+        ).split(",")
+        if value.strip()
+    }
+
+    def _charter(proposal, concern):
+        # Parsing already enforces the typed schema.  This deployment seam
+        # adds a deterministic minimum: a goal needs an objective and cited
+        # evidence from its originating concern.
+        allowed = bool(proposal.objective and proposal.evidence_refs)
+        return allowed, (
+            "typed_goal_with_source_evidence"
+            if allowed
+            else "typed_goal_missing_objective_or_source_evidence"
+        )
+
+    def _situation(proposal, concern):
+        active = project_engine.open_capacity_used()
+        allowed = active < project_limit
+        return allowed, (
+            "capacity_available" if allowed else "project_capacity_exhausted"
+        )
+
+    runtime_bindings = {
+        "charter_store": None,
+        "situation_status": None,
+    }
+
+    def _runtime_contract():
+        from colony_sidecar.cognition.drive_governance import (
+            drive_governance_mode,
+        )
+        from colony_sidecar.self_model.event_concerns import event_concern_mode
+        from colony_sidecar.self_model.workspace import workspace_mode
+
+        active_id = None
+        blockers = []
+        charter_store = runtime_bindings["charter_store"]
+        if drive_governance_mode() == "live" and charter_store is not None:
+            try:
+                active = charter_store.active_revision("default")
+                active_id = active.revision_id if active is not None else None
+            except Exception:
+                blockers.append("active_charter_read_failed")
+        return CognitionRuntimeContractV1.compose(
+            requested_mode=cognition_spine_mode(),
+            workspace_mode=workspace_mode(),
+            event_concern_mode=event_concern_mode(),
+            drive_governance_mode=drive_governance_mode(),
+            charter_revision_id=active_id,
+            charter_store_attached=charter_store is not None,
+            attachment_blockers=tuple(blockers),
+        )
+
+    def _revision_snapshot():
+        try:
+            boundary_payload = directive_manager.context_brief() or ""
+        except Exception:
+            boundary_payload = "directive-store-unavailable"
+        policy_payload = {
+            "goal_admission_policy": "v1",
+            "available_capabilities": sorted(available_capabilities),
+        }
+        try:
+            capacity_payload = {
+                "planning": project_store.count("planning"),
+                "active": project_store.count("active"),
+                "used": project_engine.open_capacity_used(),
+                "limit": project_limit,
+            }
+        except Exception:
+            capacity_payload = {"status": "capacity-store-unavailable"}
+        situation_provider = runtime_bindings["situation_status"]
+        if callable(situation_provider):
+            try:
+                governed_situation = situation_provider()
+            except Exception:
+                governed_situation = {"status": "unavailable"}
+        else:
+            governed_situation = {"status": "p6-not-attached"}
+        situation_payload = {
+            "capacity": capacity_payload,
+            "governed_situation": governed_situation,
+        }
+
+        def _revision(label, payload):
+            encoded = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), default=str,
+            ).encode("utf-8")
+            return f"{label}:{hashlib.sha256(encoded).hexdigest()[:24]}"
+
+        return {
+            "policy_revision": _revision("policy", policy_payload),
+            "situation_revision": _revision("situation", situation_payload),
+            "boundary_revision": _revision("boundary", boundary_payload),
+        }
+
+    cognition_store = CognitionSpineStore(
+        str(state_dir / "colony-cognition.db")
+    )
+    spine = CognitionSpine(
+        concern_store=concern_store,
+        cognition_store=cognition_store,
+        project_engine=project_engine,
+        thought_queue=ThoughtQueueAdapter(
+            task_queue, cognition_store=cognition_store
+        ),
+        directive_manager=directive_manager,
+        charter_validator=_charter,
+        situation_validator=_situation,
+        available_capabilities=available_capabilities,
+        enforce_runtime_contract=True,
+        runtime_contract_provider=_runtime_contract,
+        revision_provider=_revision_snapshot,
+        worker_health_provider=(
+            task_queue.queue.execution_readiness
+            if callable(getattr(task_queue.queue, "execution_readiness", None))
+            else None
+        ),
+        proposal_presentation_sink=(
+            ThoughtProposalPresentationSink(proposal_store)
+            if proposal_store is not None else None
+        ),
+        owner_person_id=(
+            os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+            or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+            or "owner"
+        ),
+    )
+    spine._runtime_bindings = runtime_bindings
+    workspace.cognition_spine = spine
+    set_cognition_spine(spine, attachment_status={
+        "configured_mode": configured_mode,
+        "state": "attached",
+        "reason": "cognition_spine_attached_worker_pending",
+        "configured_handler_catalog": configured_catalog,
+        "effective_handler_catalog": [],
+    })
+    return spine
+
+
+def _validator_allowed(result) -> bool:
+    """Interpret P3's existing validator shapes without changing its verdict."""
+
+    if isinstance(result, dict):
+        return result.get("allowed") is True
+    if isinstance(result, (tuple, list)):
+        return bool(result and result[0] is True)
+    return result is True
+
+
+def _situation_failure(reason: str) -> dict:
+    """Stable fail-closed result consumed by P3's policy normalizer."""
+
+    return {
+        "allowed": False,
+        "reason": reason,
+        "evidence_refs": [],
+        "does_not_grant_authority": True,
+    }
+
+
+def _capacity_plus_attachment_failure(original_validator, reason: str):
+    """Preserve an existing P3 denial but never allow past failed P6 startup."""
+
+    def _validator(proposal, concern):
+        try:
+            capacity = original_validator(proposal, concern)
+        except Exception:
+            logger.exception("P3 capacity validator failed during P6 failure")
+            return _situation_failure("capacity_validator_failed_closed")
+        if not _validator_allowed(capacity):
+            return capacity
+        return _situation_failure(reason)
+
+    return _validator
+
+
+def _attach_situation_spine(
+    *,
+    state_dir: Path,
+    cognition_spine,
+    scheduler=None,
+    task_queue=None,
+):
+    """Attach P6 as an observer in shadow and a composed P3 gate in live.
+
+    The off path clears stale in-process router handles before returning and
+    constructs nothing.  Shadow deliberately does not replace P3's situation
+    validator.  Live preserves the exact capacity denial and consults P6 only
+    after capacity allows; any reducer, snapshot, or gate failure is a denial.
+    """
+
+    from colony_sidecar.self_model.situation import (
+        AppropriatenessGate,
+        SituationReducer,
+        SituationStore,
+        situation_spine_enabled,
+        situation_spine_mode,
+        task_queue_resource_observation,
+    )
+
+    set_situation_spine(None, None)
+    if not situation_spine_enabled():
+        return None
+
+    mode = situation_spine_mode()
+    if mode == "live" and cognition_spine is None:
+        raise RuntimeError("P6 live situation spine requires the P3 cognition spine")
+    original_validator = (
+        getattr(cognition_spine, "_situation", None)
+        if mode == "live" else None
+    )
+    if mode == "live" and not callable(original_validator):
+        raise RuntimeError(
+            "P6 live situation spine requires P3's capacity validator"
+        )
+    queue_resource = getattr(task_queue, "queue", None)
+    if queue_resource is not None and (
+        not callable(getattr(queue_resource, "execution_readiness", None))
+        or not callable(getattr(queue_resource, "get_queue_stats", None))
+    ):
+        raise RuntimeError(
+            "P6 task queue observation requires readiness and worker truth"
+        )
+
+    store = SituationStore(str(state_dir / "colony-situation.db"))
+    try:
+        reducer = SituationReducer(store)
+        gate = AppropriatenessGate()
+        try:
+            initial_status = reducer.run_once(limit=100)
+        except Exception as exc:  # the live wrapper remains explicitly fail closed
+            initial_status = {
+                "enabled": True,
+                "mode": mode,
+                "processed": 0,
+                "error": f"initial_reduce_failed:{type(exc).__name__}",
+            }
+
+        if scheduler is not None:
+            try:
+                interval = int(
+                    os.environ.get(
+                        "COLONY_SITUATION_REDUCE_INTERVAL_SECONDS", "30"
+                    )
+                )
+            except ValueError:
+                interval = 30
+            interval = max(5, min(3600, interval))
+
+            if queue_resource is None:
+
+                def _reduce_situation():
+                    return reducer.run_once(limit=100)
+
+            else:
+
+                async def _reduce_situation():
+                    observation = await task_queue_resource_observation(
+                        queue_resource,
+                    )
+                    observed = store.ingest(observation)
+                    result = dict(reducer.run_once(limit=100))
+                    result["resource_observation"] = {
+                        "disposition": observed["disposition"],
+                        "observation_id": observation.observation_id,
+                        "state": observation.state,
+                    }
+                    return result
+
+            scheduler.register(
+                "situation_reduce",
+                _reduce_situation,
+                interval_seconds=interval,
+                metadata={
+                    "description": (
+                        "Reduce durable evidence into the scoped P6 situation spine"
+                    ),
+                    "mode": mode,
+                },
+            )
+    except Exception:
+        store.close()
+        raise
+
+    if mode == "live":
+
+        def _capacity_plus_situation(proposal, concern):
+            try:
+                capacity = original_validator(proposal, concern)
+            except Exception:
+                logger.exception("P3 capacity validator failed before P6")
+                return _situation_failure("capacity_validator_failed_closed")
+            if not _validator_allowed(capacity):
+                return capacity
+            try:
+                reduced = reducer.run_once(limit=100)
+                if not isinstance(reduced, dict) or reduced.get("error"):
+                    return _situation_failure("situation_reducer_unhealthy")
+                snapshot = store.snapshot(
+                    subject_person_id=proposal.subject_person_id,
+                    viewer_scope=proposal.viewer_scope,
+                )
+                verdict = gate.for_goal_proposal(proposal, concern, snapshot)
+                if not isinstance(verdict, dict):
+                    return _situation_failure("situation_gate_invalid_result")
+                return verdict
+            except Exception:
+                logger.exception("P6 live gate failed closed")
+                return _situation_failure("situation_gate_failed_closed")
+
+        cognition_spine._situation = _capacity_plus_situation
+
+    runtime_bindings = getattr(cognition_spine, "_runtime_bindings", None)
+    if isinstance(runtime_bindings, dict):
+        runtime_bindings["situation_status"] = reducer.status
+
+    set_situation_spine(store, reducer)
+    return {
+        "mode": mode,
+        "store": store,
+        "reducer": reducer,
+        "gate": gate,
+        "initial_status": initial_status,
+        "original_validator": original_validator,
+    }
+
+
+def _attach_cognition_evidence(
+    *,
+    state_dir: Path,
+    project_store,
+    self_model=None,
+    expectations=None,
+    scheduler=None,
+):
+    """Attach the project outbox and optional receipt-derived learning loop.
+
+    Project events are operational truth, so their journal projector remains
+    active even when learning is off. Off mode keeps only a minimal durable
+    passthrough cursor so outcomes already counted by the legacy writer cannot
+    be replayed as new learning after live is re-enabled. Live mode requires
+    the canonical SelfModel and fails closed on an unhealthy initial
+    projection/reduction instead of falling back to self-reported success.
+    """
+
+    from colony_sidecar.cognition.evidence_pipeline import (
+        CognitionEvidenceReducer,
+        CognitionEvidenceStore,
+        cognition_evidence_mode,
+    )
+    from colony_sidecar.projects.event_outbox import ProjectEventProjector
+
+    mode = cognition_evidence_mode()
+    set_cognition_evidence(None, None, None, {
+        "configured_mode": mode,
+        "state": "attaching" if project_store is not None else "off",
+        "reason": (
+            "attachment_in_progress" if project_store is not None
+            else "project_store_unavailable"
+        ),
+    })
+    if project_store is None:
+        if mode == "live":
+            raise RuntimeError(
+                "live cognition evidence requires the canonical ProjectStore"
+            )
+        return None
+    if mode == "live" and self_model is None:
+        raise RuntimeError(
+            "live cognition evidence requires the canonical SelfModel"
+        )
+    if mode == "live" and scheduler is None:
+        raise RuntimeError(
+            "live cognition evidence requires the autonomy scheduler"
+        )
+
+    projector = ProjectEventProjector(project_store)
+    evidence_store = None
+    reducer = None
+    try:
+        initial_outbox = projector.run_once(limit=100)
+        if mode == "live" and (
+            initial_outbox.get("failed")
+            or initial_outbox.get("acknowledgement_failures")
+            or initial_outbox.get("outbox", {}).get("last_error")
+        ):
+            raise RuntimeError(
+                "live cognition evidence project outbox is unhealthy"
+            )
+
+        try:
+            interval = int(os.environ.get(
+                "COLONY_COGNITION_EVIDENCE_INTERVAL_SECONDS", "30",
+            ))
+        except ValueError as exc:
+            raise RuntimeError(
+                "COLONY_COGNITION_EVIDENCE_INTERVAL_SECONDS must be an integer"
+            ) from exc
+        interval = max(5, min(3600, interval))
+
+        evidence_store = CognitionEvidenceStore(
+            str(state_dir / "colony-cognition-evidence.db")
+        )
+        reducer = CognitionEvidenceReducer(
+            evidence_store,
+            project_store=project_store,
+            self_model=self_model,
+            expectations=expectations,
+            project_event_projector=projector,
+        )
+        attachment_armed = {"value": False}
+        if scheduler is not None:
+
+            def _reduce_cognition_evidence():
+                if not attachment_armed["value"]:
+                    return {
+                        "enabled": mode != "off", "mode": mode,
+                        "processed": 0, "error": "attachment_not_armed",
+                    }
+                return reducer.run_once(limit=100)
+
+            # Register before any live sink can mutate. A registration failure
+            # therefore leaves competence, expectations, and the evidence
+            # cursor untouched. If a scheduler ticks concurrently during
+            # attachment, the captured callback remains inert until armed.
+            scheduler.register(
+                "cognition_evidence_reduce",
+                _reduce_cognition_evidence,
+                interval_seconds=interval,
+                metadata={
+                    "description": (
+                        "Checkpoint or reduce receipt-bound project evidence"
+                    ),
+                    "mode": mode,
+                },
+            )
+        initial_status = reducer.run_once(limit=100)
+        if mode == "live" and initial_status.get("error"):
+            raise RuntimeError(
+                "live cognition evidence initial reduction failed: "
+                + str(initial_status["error"])[:300]
+            )
+        attachment = {
+            "configured_mode": mode,
+            "state": "attached" if scheduler is not None else "degraded",
+            "reason": (
+                "evidence_passthrough_cursor_attached_learning_off"
+                if mode == "off" and scheduler is not None else
+                "evidence_passthrough_cursor_restart_only"
+                if mode == "off" else
+                "receipt_derived_evidence_attached"
+                if scheduler is not None else
+                "receipt_derived_evidence_restart_replay_only"
+            ),
+        }
+        set_cognition_evidence(
+            evidence_store, reducer, projector, attachment,
+        )
+        attachment_armed["value"] = True
+        return {
+            "mode": mode,
+            "store": evidence_store,
+            "reducer": reducer,
+            "projector": projector,
+            "initial_status": initial_status,
+            "attachment": attachment,
+        }
+    except Exception:
+        if evidence_store is not None:
+            evidence_store.close()
+        set_cognition_evidence(None, None, None, {
+            "configured_mode": mode,
+            "state": "failed",
+            "reason": "cognition_evidence_attachment_failed",
+        })
+        raise
+
+
+def _compose_p7_charter_admission(
+    original_validator, charter_store, directive_manager=None,
+):
+    """Narrow P3 admission to the active owner-ratified P7 charter.
+
+    P7 lifecycle activation is already bound to the canonical approval
+    authority. This adapter consumes that durable fact; it never creates a
+    second approval path and never treats charter prose as executable policy.
+    """
+
+    from colony_sidecar.cognition.drive_governance import (
+        CharterAdmissionConstraintsV1,
+        ScopeV1,
+    )
+
+    def _parts(result):
+        if isinstance(result, dict):
+            return (
+                result.get("allowed") is True,
+                str(result.get("reason") or "charter_validator_denied")[:500],
+                [str(ref) for ref in result.get("evidence_refs") or ()],
+            )
+        if isinstance(result, (tuple, list)):
+            return (
+                bool(result and result[0] is True),
+                str(result[1] if len(result) > 1 else "charter_validator_denied")[:500],
+                [str(ref) for ref in (result[2] if len(result) > 2 else ())],
+            )
+        return result is True, "charter_validator_denied", []
+
+    def _validator(proposal, concern):
+        try:
+            base = original_validator(proposal, concern)
+        except Exception:
+            return {
+                "allowed": False,
+                "reason": "base_charter_validator_failed",
+                "evidence_refs": [],
+            }
+        allowed, _reason, evidence = _parts(base)
+        if not allowed:
+            return base
+        try:
+            active = charter_store.active_revision("default")
+        except Exception:
+            return {
+                "allowed": False,
+                "reason": "active_charter_read_failed",
+                "evidence_refs": list(dict.fromkeys(evidence)),
+            }
+        if active is None:
+            return {
+                "allowed": False,
+                "reason": "active_owner_ratified_charter_required",
+                "evidence_refs": list(dict.fromkeys(evidence)),
+            }
+        try:
+            proposal_scope = ScopeV1(
+                proposal.subject_person_id,
+                proposal.viewer_scope,
+                proposal.shareability,
+            )
+        except Exception:
+            return {
+                "allowed": False,
+                "reason": "goal_scope_invalid_for_active_charter",
+                "evidence_refs": list(dict.fromkeys(evidence)),
+            }
+        charter_evidence = [
+            active.revision_id,
+            f"charter-active:{active.revision_id}",
+            *active.evidence_refs,
+        ]
+        combined = list(dict.fromkeys([*charter_evidence, *evidence]))[:30]
+        if not active.scope.permits_child(proposal_scope):
+            return {
+                "allowed": False,
+                "reason": "active_charter_scope_holds_goal",
+                "evidence_refs": combined,
+            }
+        constraints = (
+            active.admission_constraints
+            if getattr(active, "admission_constraints", None) is not None
+            else CharterAdmissionConstraintsV1()
+        )
+        required_boundaries = set(constraints.required_boundary_refs)
+        if required_boundaries:
+            if directive_manager is None:
+                return {
+                    "allowed": False,
+                    "reason": "charter_boundary_reader_unavailable",
+                    "evidence_refs": combined,
+                }
+            try:
+                active_boundaries = {
+                    str(item.id) for item in directive_manager.active()
+                }
+            except Exception:
+                return {
+                    "allowed": False,
+                    "reason": "charter_boundary_read_failed",
+                    "evidence_refs": combined,
+                }
+            if not required_boundaries.issubset(active_boundaries):
+                return {
+                    "allowed": False,
+                    "reason": "charter_required_boundary_missing",
+                    "evidence_refs": combined,
+                }
+        objective = (
+            f"{getattr(proposal, 'title', '')} "
+            f"{getattr(proposal, 'objective', '')}"
+        ).casefold()
+        if any(term in objective for term in constraints.objective_deny_terms):
+            return {
+                "allowed": False,
+                "reason": "charter_objective_explicitly_denied",
+                "evidence_refs": combined,
+            }
+        if constraints.objective_allow_terms and not any(
+            term in objective for term in constraints.objective_allow_terms
+        ):
+            return {
+                "allowed": False,
+                "reason": "charter_objective_not_explicitly_allowed",
+                "evidence_refs": combined,
+            }
+        destructive_terms = {
+            "delete", "destroy", "drop", "format", "overwrite", "wipe",
+        }
+        if (
+            any(term in objective for term in destructive_terms)
+            and not constraints.allow_destructive
+        ):
+            return {
+                "allowed": False,
+                "reason": "charter_destructive_objective_not_allowed",
+                "evidence_refs": combined,
+            }
+        requested = set(getattr(proposal, "required_capabilities", ()) or ())
+        denied = sorted(requested.intersection(constraints.capability_deny))
+        if denied:
+            return {
+                "allowed": False,
+                "reason": "charter_capability_explicitly_denied:" + ",".join(denied),
+                "evidence_refs": combined,
+            }
+        if not requested.issubset(set(constraints.capability_ceiling)):
+            return {
+                "allowed": False,
+                "reason": "charter_capability_ceiling_exceeded",
+                "evidence_refs": combined,
+            }
+        if "root:shell" in requested and not constraints.allow_root_shell:
+            return {
+                "allowed": False,
+                "reason": "charter_root_shell_not_allowed",
+                "evidence_refs": combined,
+            }
+        if "messaging:send" in requested:
+            if not constraints.allow_messaging:
+                return {
+                    "allowed": False,
+                    "reason": "charter_messaging_not_allowed",
+                    "evidence_refs": combined,
+                }
+            # GoalProposalV1 deliberately has no recipient field. Until a
+            # digest-bound recipient envelope exists, even an explicit
+            # charter allowance cannot infer one from the concern/model.
+            return {
+                "allowed": False,
+                "reason": "charter_recipient_envelope_required",
+                "evidence_refs": combined,
+            }
+        if proposal.shareability not in set(constraints.allowed_shareability):
+            return {
+                "allowed": False,
+                "reason": "charter_shareability_not_allowed",
+                "evidence_refs": combined,
+            }
+        return {
+            "allowed": True,
+            "reason": "active_owner_ratified_charter",
+            "evidence_refs": combined,
+        }
+
+    return _validator
+
+
+def _attach_drive_governance(
+    *,
+    state_dir: Path,
+    cognition_spine,
+    workspace,
+    project_store,
+    directive_manager,
+    approval_authority=None,
+):
+    """Attach P7 only to the complete, durable P3 dependency graph."""
+
+    from colony_sidecar.cognition.drive_governance import (
+        DriveGovernance,
+        DriveGovernanceStore,
+        DriveRanker,
+        drive_governance_mode,
+    )
+    from colony_sidecar.initiatives.approval_authority import (
+        ApprovalAuthorityStore,
+    )
+
+    set_drive_governance(None, None, None)
+    mode = drive_governance_mode()
+    if mode == "off":
+        return None
+
+    required = {
+        "cognition_spine": cognition_spine,
+        "workspace": workspace,
+        "project_store": project_store,
+        "directive_manager": directive_manager,
+    }
+    missing = sorted(name for name, value in required.items() if value is None)
+    cognition_store = getattr(cognition_spine, "store", None)
+    project_engine = getattr(cognition_spine, "project_engine", None)
+    if cognition_store is None:
+        missing.append("cognition_store")
+    if project_engine is None:
+        missing.append("project_engine")
+    elif getattr(project_engine, "store", None) is not project_store:
+        missing.append("shared_project_store")
+    if missing:
+        raise RuntimeError(
+            "P7 drive governance missing durable dependencies: "
+            + ", ".join(sorted(set(missing)))
+        )
+    resolver = getattr(cognition_store, "get_policy_decision", None)
+    if not callable(resolver):
+        raise RuntimeError(
+            "P7 drive governance requires the P3 policy decision resolver"
+        )
+
+    store = DriveGovernanceStore(state_dir / "cognition-drive-governance.db")
+    try:
+        shared_authority = approval_authority
+        if mode in {"bootstrap", "live"} and shared_authority is None:
+            shared_authority = ApprovalAuthorityStore(
+                state_dir / "approval_authority.db"
+            )
+        governance = DriveGovernance(store, shared_authority, mode=mode)
+        ranker = DriveRanker(
+            store,
+            policy_decision_resolver=resolver,
+            directive_manager=directive_manager,
+        )
+    except Exception:
+        store.close()
+        raise
+    original_charter_validator = getattr(cognition_spine, "_charter", None)
+    if mode == "live":
+        if not callable(original_charter_validator):
+            store.close()
+            raise RuntimeError(
+                "P7 live governance requires P3's charter validator"
+            )
+        cognition_spine._charter = _compose_p7_charter_admission(
+            original_charter_validator, store, directive_manager,
+        )
+    runtime_bindings = getattr(cognition_spine, "_runtime_bindings", None)
+    if isinstance(runtime_bindings, dict):
+        runtime_bindings["charter_store"] = store
+    workspace.drive_governance = governance
+    workspace.drive_ranker = ranker
+    set_drive_governance(governance, ranker, project_store)
+    return {
+        "mode": mode,
+        "store": store,
+        "governance": governance,
+        "ranker": ranker,
+        "approval_authority": shared_authority,
+        "original_charter_validator": original_charter_validator,
+    }
+
+
+def _initialize_controlled_learning(
+    *,
+    state_dir: Path,
+    adaptive_params,
+    journal=None,
+) -> dict:
+    """Build the one P4 evidence/experiment graph for this process.
+
+    The migration flags retain their historical meanings: P4 mode defaults to
+    ``off`` (legacy weekly evaluation), while the independent benchmark and
+    experiment feature flags control whether their databases are opened at
+    all.  Setters are cleared before construction so a second lifespan in the
+    same interpreter cannot retain stale authority or a stale writer.
+    """
+
+    from colony_sidecar.api.routers.host import (
+        set_benchmark,
+        set_experiments,
+        set_learning_feedback_store,
+    )
+    from colony_sidecar.initiatives.approval_authority import (
+        ApprovalAuthorityStore,
+    )
+    from colony_sidecar.intelligence.learning.feedback_store import (
+        FeedbackStore,
+    )
+    from colony_sidecar.self_model.benchmark import (
+        BenchmarkStore,
+        SelfhoodBenchmark,
+        benchmark_enabled,
+    )
+    from colony_sidecar.self_model.experiments import (
+        ExperimentEngine,
+        ExperimentStore,
+        experiment_pregrants_from_env,
+        experiments_enabled,
+    )
+
+    set_learning_feedback_store(None)
+    set_benchmark(None)
+    set_experiments(None)
+
+    correction_store = FeedbackStore(
+        db_path=str(state_dir / "colony-learning-feedback.db"))
+
+    benchmark = None
+    if benchmark_enabled():
+        benchmark = SelfhoodBenchmark(
+            BenchmarkStore(db_path=str(state_dir / "colony-benchmark.db")),
+            corrections=correction_store,
+        )
+
+    experiments = None
+    approval_authority = None
+    if experiments_enabled():
+        if adaptive_params is None:
+            raise RuntimeError(
+                "P4 experiments require the adaptive parameter store")
+        if benchmark is None:
+            raise RuntimeError(
+                "P4 experiments require the canonical SelfhoodBenchmark")
+        # This is the same approval_authority.db used by the queue approval
+        # routes.  Do not create an experiment-specific authority ledger.
+        approval_authority = ApprovalAuthorityStore()
+        experiments = ExperimentEngine(
+            ExperimentStore(
+                db_path=str(state_dir / "colony-experiments.db")),
+            params=adaptive_params,
+            benchmark=benchmark,
+            journal=journal,
+            approval_authority=approval_authority,
+            pregranted_ranges=experiment_pregrants_from_env(),
+        )
+
+    # Publish only after the complete configured graph constructed.  A bad
+    # pregrant or missing dependency must not expose a partially wired P4.
+    set_learning_feedback_store(correction_store)
+    set_benchmark(benchmark)
+    set_experiments(experiments)
+
+    return {
+        "corrections": correction_store,
+        "benchmark": benchmark,
+        "experiments": experiments,
+        "approval_authority": approval_authority,
+    }
+
+
+def _wire_controlled_learning_pipeline(
+    cognition_pipeline,
+    controlled_learning: dict,
+) -> None:
+    """Attach P4's detector adapter and correction reader to shared objects."""
+
+    if cognition_pipeline is None:
+        return
+    correction_store = controlled_learning.get("corrections")
+    if correction_store is not None:
+        cognition_pipeline.meta_learner.set_feedback_store(correction_store)
+    experiments = controlled_learning.get("experiments")
+    if experiments is not None:
+        # StrategyAdjuster is proposal-only; ExperimentEngine remains the sole
+        # adaptive-parameter writer and the only component that can start.
+        cognition_pipeline.strategy_adjuster.set_experiment_proposer(
+            experiments)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize subsystems on startup, tear down on shutdown."""
     state_dir = _state_dir()
+    _p8_wiring = None
+    # Clear stale process authority before any queue/worker can be constructed.
+    # A repeated lifespan that later fails remains fail-closed in live mode.
+    set_worker_governor(None)
+
+    # --- Phase C external text/system evidence intake ---
+    _external_event_intake = None
+    set_external_event_intake(None)
+    try:
+        from colony_sidecar.cognition.external_events import (
+            ExternalEventInboxStore,
+            ExternalEventIntake,
+        )
+        _external_event_intake = ExternalEventIntake(
+            ExternalEventInboxStore(
+                str(state_dir / "external-cognition-events.db")
+            )
+        )
+        set_external_event_intake(_external_event_intake)
+        logger.info(
+            "External cognition event intake initialized (text/system only; db=%s)",
+            state_dir / "external-cognition-events.db",
+        )
+    except Exception as exc:
+        logger.error("External cognition event intake failed: %s", exc)
 
     # --- 0. Adaptive parameters (meta-learning read-back path) ---
     # Created first so downstream consumers (consolidator, graph recall,
@@ -450,6 +1806,14 @@ async def lifespan(app: FastAPI):
                 "Reranker initialized (provider=%s model=%s)",
                 reranker_provider_name or "local", reranker_model,
             )
+            # Wire the reranker into ColonyGraph recall (mirrors the
+            # set_embed_fn wiring above). Registration alone changes
+            # nothing: use is gated by COLONY_RECALL_RERANK (default off).
+            if graph is not None and hasattr(graph, "set_rerank_fn"):
+                graph.set_rerank_fn(reranker_provider.rerank)
+                logger.info(
+                    "ColonyGraph wired to reranker for recall "
+                    "(gated by COLONY_RECALL_RERANK)")
         except Exception as exc:
             logger.warning("Reranker init failed: %s", exc)
     else:
@@ -474,8 +1838,13 @@ async def lifespan(app: FastAPI):
 
         commitments_db = state_dir / "colony-commitments.db"
         commitment_store = CommitmentStore(db_path=commitments_db)
-        set_commitment_store(commitment_store)
-        logger.info("CommitmentStore initialized (db=%s)", commitments_db)
+        commitment_readiness = (
+            commitment_store.resolution_recovery_readiness()
+        )
+        if commitment_readiness.get("ready") is not True:
+            raise RuntimeError(
+                "CommitmentStore resolution recovery is unavailable"
+            )
 
         # Resolving a workspace concern raised from a commitment settles the
         # commitment itself — without this, the ingest loop re-raises the
@@ -483,14 +1852,42 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.self_model.settlement import register_settler
 
         def _settle_commitment(source_id, *, outcome="done", note="",
-                               resolved_by="owner", _cs=commitment_store):
+                               resolved_by="owner", operation_id=None,
+                               _cs=commitment_store):
             row = _cs.resolve(source_id, outcome=outcome, note=note,
-                              resolved_by=resolved_by)
-            return {"kind": "commitment", "status": row["status"]} if row else None
+                              resolved_by=resolved_by,
+                              operation_id=operation_id)
+            if not row:
+                return None
+            operation = (
+                _cs.get_resolution_operation(source_id)
+                if operation_id is not None else None
+            )
+            resolution = operation or (
+                (row.get("metadata") or {}).get("resolution") or {}
+            )
+            return {
+                "kind": "commitment",
+                "status": row["status"],
+                "operation_id": resolution.get("operation_id"),
+                "outcome": resolution.get("outcome"),
+                "note_digest": resolution.get("note_digest"),
+                "resolved_by": (
+                    resolution.get("resolved_by")
+                    if operation is not None else resolution.get("by")
+                ),
+            }
 
-        register_settler("commitment", _settle_commitment)
+        register_settler("commitment", _settle_commitment, retry_safe=True)
+        set_commitment_store(commitment_store)
+        logger.info(
+            "CommitmentStore initialized (db=%s, capability=%s)",
+            commitments_db, commitment_readiness["capability"],
+        )
     except Exception as exc:
-        logger.warning("CommitmentStore init failed: %s", exc)
+        set_commitment_store(None)
+        logger.error("CommitmentStore initialization failed")
+        raise RuntimeError("CommitmentStore initialization failed") from exc
 
     # --- 7c. Theory of Mind ---
     try:
@@ -507,6 +1904,54 @@ async def lifespan(app: FastAPI):
         set_facts_store(facts_store)
         logger.info("SharedFactsStore initialized (db=%s)", facts_db)
 
+        try:
+            _p8_wiring = _attach_p8_runtime(
+                state_dir=state_dir, facts_store=facts_store, graph=graph)
+            if _p8_wiring is not None:
+                logger.info(
+                    "P8 visibility/arcs/recipient audit attached (shadow only)")
+        except Exception:
+            # P8 is an advisory shadow integration.  Its persistence must not
+            # take down the canonical SharedFactsStore or the rest of ToM.
+            _p8_wiring = None
+            logger.warning(
+                "P8 shadow attachment failed; continuing with P8 off",
+                exc_info=True,
+            )
+
+        # Second-order theory of mind (tom2): refs-not-content inference
+        # store + daily asymmetry engine. Inert unless COLONY_TOM2 is set
+        # (default off; shadow = counts only).
+        from colony_sidecar.tom.tom2 import Tom2Store
+        from colony_sidecar.tom.asymmetry import AsymmetryEngine, tom2_mode
+        from colony_sidecar.api.routers.host import set_tom2_store, set_tom2_engine
+        tom2_db = state_dir / "colony-tom2.db"
+        tom2_store = Tom2Store(db_path=str(tom2_db))
+        set_tom2_store(tom2_store)
+        set_tom2_engine(AsymmetryEngine(facts_store, tom2_store))
+        logger.info("Tom2Store + AsymmetryEngine initialized (db=%s, mode=%s)",
+                    tom2_db, tom2_mode())
+
+        # Level-2 exposure ledger (L2.3): refs-only record of any future
+        # level-2 rendering + its budgets. Empty and inert until the leveled
+        # rendering path is wired; the owner endpoint reads it regardless.
+        from colony_sidecar.tom.exposure import Tom2ExposureStore
+        from colony_sidecar.api.routers.host import set_tom2_exposure_store
+        tom2_exposure_db = state_dir / "colony-tom2-exposure.db"
+        set_tom2_exposure_store(Tom2ExposureStore(db_path=str(tom2_exposure_db)))
+        logger.info("Tom2ExposureStore initialized (db=%s)", tom2_exposure_db)
+
+        # Conversation presence registry (L1.1): passive census of WHO was
+        # seen in WHICH conversation, fed from the turns/sync attribution
+        # chokepoint. Read by the environment-risk classifier; recording is
+        # gated by COLONY_CONV_PRESENCE (default on).
+        from colony_sidecar.channels.presence import ConversationPresenceStore
+        from colony_sidecar.api.routers.host import set_presence_store
+        presence_db = state_dir / "colony-presence.db"
+        presence_store = ConversationPresenceStore(db_path=str(presence_db))
+        set_presence_store(presence_store)
+        logger.info("ConversationPresenceStore initialized (db=%s)", presence_db)
+
         from colony_sidecar.gate.context_provenance import (
             ContextProvenanceStore, ProvenanceCrossContextGuard)
         provenance_db = state_dir / "colony-context-provenance.db"
@@ -514,25 +1959,47 @@ async def lifespan(app: FastAPI):
         set_context_provenance_store(provenance_store)
         logger.info("ContextProvenanceStore initialized (db=%s)", provenance_db)
 
-        # Outbound response gate (opt-in; shadow by default). The embedding deployment
-        # supplies the mode and any excluded gateways (e.g. its voice path) via env —
-        # Colony hardcodes neither.
+        # Outbound response gate (opt-in; shadow by default). Applicability is
+        # resolved by the static, deployment-neutral surface policy: guarded
+        # text/artifacts and excluded real-time speech. Gateway labels grant
+        # no bypass authority.
         from colony_sidecar.gate.response_guard import ResponseGuard, GuardMode
+        from colony_sidecar.gate.surface_policy import (
+            POLICY_DIGEST as _guard_policy_digest,
+            POLICY_ID as _guard_policy_id,
+        )
         from colony_sidecar.world_model.extraction.conversation_extractor import (
             ConversationExtractor)
-        _guard_mode = (GuardMode.ENFORCE
-                       if os.environ.get("COLONY_GUARD_MODE", "").strip().lower() == "enforce"
-                       else GuardMode.SHADOW)
-        _excluded = [g.strip() for g in
-                     os.environ.get("COLONY_GUARD_EXCLUDED_GATEWAYS", "").split(",") if g.strip()]
+        _guard_mode = _resolve_guard_mode(os.environ.get("COLONY_GUARD_MODE"))
         from colony_sidecar.gate.guard_audit import GuardAuditStore
         guard_audit_db = state_dir / "colony-guard-audit.db"
         guard_audit_store = GuardAuditStore(db_path=str(guard_audit_db))
-        set_response_guard(ResponseGuard(
+        # Injection-taint registry (L3.1) + tom2 epistemic egress net (L3.2).
+        # The check is INERT (zero findings) until the leveled tom2 wiring
+        # registers a taint, which is why it may sit on the default enforce
+        # allowlist from day one.
+        from colony_sidecar.gate.taint import TaintRegistry
+        from colony_sidecar.gate.layers.tom2_epistemic import Tom2EpistemicGuard
+        from colony_sidecar.api.routers.host import set_taint_registry
+        taint_db = state_dir / "colony-tom2-taint.db"
+        taint_registry = TaintRegistry(db_path=str(taint_db))
+        set_taint_registry(taint_registry)
+        _guard = ResponseGuard(
             cross_context=ProvenanceCrossContextGuard(provenance_store, extractor=ConversationExtractor()),
-            default_mode=_guard_mode, excluded_gateways=_excluded, audit_store=guard_audit_store))
-        logger.info("ResponseGuard initialized (mode=%s, excluded_gateways=%s, audit=%s)",
-                    _guard_mode.value, _excluded or "[]", guard_audit_db)
+            default_mode=_guard_mode, audit_store=guard_audit_store,
+            tom2_epistemic=Tom2EpistemicGuard(taint_registry, facts_store=facts_store))
+        set_response_guard(_guard)
+        logger.info(
+            "ResponseGuard initialized (mode=%s, surface_policy=%s:%s, "
+            "audit=%s, taints=%s)",
+            _guard_mode.value, _guard_policy_id, _guard_policy_digest,
+            guard_audit_db, taint_db,
+        )
+        # Verdict rows prove evaluation, not that an egress mediator actually
+        # withheld or revised the exact bytes.  Keep Tom2 capped at level 1
+        # until a digest-bound applied-output receipt exists.
+        from colony_sidecar.tom.levels import set_evidence_probe
+        set_evidence_probe(None)
 
         from colony_sidecar.tom.engagement import EngagementStore
         engagement_db = state_dir / "colony-engagement.db"
@@ -553,6 +2020,11 @@ async def lifespan(app: FastAPI):
         set_preference_learner(preference_learner)
         logger.info("PreferenceLearner initialized (db=%s)", state_dir / "colony-preferences.db")
     except Exception as exc:
+        try:
+            from colony_sidecar.tom.levels import set_evidence_probe
+            set_evidence_probe(None)
+        except Exception:
+            logger.debug("Tom2 evidence probe init cleanup failed", exc_info=True)
         logger.warning("Theory of Mind init failed: %s", exc)
 
     # --- Directive / boundary memory (safety foundation) ---
@@ -563,12 +2035,25 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.directives import DirectiveManager, DirectiveStore
         from colony_sidecar.api.routers.host import set_directive_manager
         _directive_store = DirectiveStore(db_path=str(state_dir / "colony-directives.db"))
-        set_directive_manager(DirectiveManager(_directive_store))
+        _directive_manager = DirectiveManager(_directive_store)
+        set_directive_manager(_directive_manager)
+        if locals().get("tool_executor") is not None:
+            tool_executor.configure_execution_policy(
+                directive_manager=_directive_manager,
+                boundary_required=True,
+            )
         logger.info(
             "DirectiveManager initialized (db=%s, active=%d)",
             state_dir / "colony-directives.db", _directive_store.count_active(),
         )
     except Exception as exc:
+        if locals().get("tool_executor") is not None:
+            # A configured server may keep public information tools usable,
+            # but private reads/mutations cannot silently lose their boundary.
+            tool_executor.configure_execution_policy(
+                directive_manager=None,
+                boundary_required=True,
+            )
         logger.warning("DirectiveManager init failed (boundaries disabled): %s", exc)
 
     # --- Proposal store (self-directed thinking + research -> proposals) ---
@@ -626,40 +2111,40 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("SelfModel init failed: %s", exc)
 
-    # --- Selfhood benchmark (Mind M0a): falsifiable weekly metrics ---
+    # --- P4 controlled learning: one evidence and authority graph ---
+    _controlled_learning = {
+        "corrections": None,
+        "benchmark": None,
+        "experiments": None,
+        "approval_authority": None,
+    }
     try:
-        from colony_sidecar.self_model.benchmark import (
-            BenchmarkStore, SelfhoodBenchmark, benchmark_enabled,
+        _controlled_learning = _initialize_controlled_learning(
+            state_dir=state_dir,
+            adaptive_params=_adaptive_params,
+            journal=locals().get("_journal"),
         )
-        from colony_sidecar.api.routers.host import set_benchmark
-        if benchmark_enabled():
-            _bench = SelfhoodBenchmark(BenchmarkStore(
-                db_path=str(state_dir / "colony-benchmark.db")))
-            set_benchmark(_bench)
-            logger.info("Selfhood benchmark ready (db=%s)",
-                        state_dir / "colony-benchmark.db")
+        if _controlled_learning["benchmark"] is not None:
+            logger.info(
+                "Selfhood benchmark ready (db=%s, corrections=%s)",
+                state_dir / "colony-benchmark.db",
+                state_dir / "colony-learning-feedback.db",
+            )
         else:
             logger.info(
                 "Selfhood benchmark disabled (COLONY_BENCHMARK_ENABLED=false)")
-    except Exception as exc:
-        logger.warning("Benchmark init failed: %s", exc)
-
-    # --- Experiment framework (Mind M0b): bounded, guarded self-changes ---
-    try:
-        from colony_sidecar.self_model.experiments import (
-            ExperimentEngine, ExperimentStore, experiments_enabled,
-        )
-        from colony_sidecar.api.routers.host import set_experiments
-        if experiments_enabled():
-            set_experiments(ExperimentEngine(ExperimentStore(
-                db_path=str(state_dir / "colony-experiments.db"))))
-            logger.info("Experiment framework ready (db=%s)",
-                        state_dir / "colony-experiments.db")
+        if _controlled_learning["experiments"] is not None:
+            logger.info(
+                "Controlled experiment framework ready (db=%s, shared_authority=%s)",
+                state_dir / "colony-experiments.db",
+                state_dir / "approval_authority.db",
+            )
         else:
-            logger.info("Experiment framework disabled "
-                        "(COLONY_EXPERIMENTS_ENABLED=false)")
+            logger.info(
+                "Experiment framework disabled "
+                "(COLONY_EXPERIMENTS_ENABLED=false)")
     except Exception as exc:
-        logger.warning("Experiment framework init failed: %s", exc)
+        logger.error("Controlled learning init failed closed: %s", exc)
 
     # --- Toolsmith (Mind M1): self-built, sandbox-verified tools ---
     try:
@@ -693,6 +2178,7 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.self_model.expectations import (
             ExpectationEngine, ExpectationStore, expectations_enabled,
+            expectations_mode,
         )
         from colony_sidecar.api.routers.host import set_expectations
         if expectations_enabled():
@@ -708,8 +2194,20 @@ async def lifespan(app: FastAPI):
             # autonomy phase links the workspace ref at runtime.
             _expectations = ExpectationEngine(_exp_store, journal=_exp_journal)
             set_expectations(_expectations)
+            # World-model prediction classes (relationship-still-active,
+            # property-unchanged) — registered here, guarded on the engine;
+            # the resolvers fetch the world store lazily so boot order and
+            # a missing world model are both safe (they resolve to None).
+            try:
+                from colony_sidecar.world_model.expectation_resolvers import (
+                    register_world_resolvers,
+                )
+                register_world_resolvers(_expectations)
+            except Exception as rexc:
+                logger.warning("World expectation resolvers not registered: "
+                               "%s", rexc)
             logger.info("Expectation engine ready (mode=%s, db=%s)",
-                        os.environ.get("COLONY_EXPECTATIONS", "off"),
+                        expectations_mode(),
                         state_dir / "colony-expectations.db")
         else:
             logger.info("Expectation engine disabled (COLONY_EXPECTATIONS=off)")
@@ -722,6 +2220,18 @@ async def lifespan(app: FastAPI):
             ConcernStore, WorkspaceEngine, workspace_enabled, workspace_mode,
         )
         from colony_sidecar.self_model.thinker import build_thinker
+        from colony_sidecar.self_model.event_concerns import (
+            ConversationTurnConcernReducer,
+            EventConcernReducer,
+            ExternalEventConcernReducer,
+            event_concerns_enabled,
+            event_concern_mode,
+            external_event_concerns_enabled,
+            external_event_concern_mode,
+            turn_concerns_enabled,
+            turn_concern_channels,
+            turn_concern_mode,
+        )
         from colony_sidecar.api.routers.host import set_workspace
         if workspace_enabled():
             _concern_store = ConcernStore(
@@ -736,11 +2246,46 @@ async def lifespan(app: FastAPI):
                 _ws_journal = None
             _workspace = WorkspaceEngine(
                 _concern_store, thinker=_thinker, journal=_ws_journal)
+            if event_concerns_enabled():
+                _workspace.event_reducer = EventConcernReducer(_concern_store)
+                logger.info(
+                    "Durable event-to-concern reducer ready (mode=%s, bootstrap=%s)",
+                    event_concern_mode(),
+                    os.environ.get("COLONY_EVENT_CONCERNS_BOOTSTRAP", "tail"),
+                )
+            if external_event_concerns_enabled():
+                _workspace.external_event_reducer = ExternalEventConcernReducer(
+                    _concern_store,
+                )
+                logger.info(
+                    "External event-to-concern reducer ready "
+                    "(mode=%s, bootstrap=replay)",
+                    external_event_concern_mode(),
+                )
+            if turn_concerns_enabled():
+                _workspace.turn_event_reducer = ConversationTurnConcernReducer(
+                    _concern_store,
+                )
+                logger.info(
+                    "Conversation turn-to-concern reducer ready "
+                    "(mode=%s, bootstrap=%s, channels=%s)",
+                    turn_concern_mode(),
+                    os.environ.get("COLONY_TURN_CONCERNS_BOOTSTRAP", "tail"),
+                    ",".join(turn_concern_channels()) or "<none>",
+                )
             set_workspace(_workspace)
             logger.info("Cognitive workspace ready (mode=%s, db=%s)",
                         workspace_mode(), state_dir / "colony-workspace.db")
         else:
             logger.info("Cognitive workspace disabled (COLONY_WORKSPACE=off)")
+            if external_event_concerns_enabled():
+                logger.warning(
+                    "External event concerns requested but workspace is disabled"
+                )
+            if turn_concerns_enabled():
+                logger.warning(
+                    "Conversation turn concerns requested but workspace is disabled"
+                )
     except Exception as exc:
         logger.warning("Workspace init failed: %s", exc)
 
@@ -867,6 +2412,15 @@ async def lifespan(app: FastAPI):
         surprise_store = SurpriseStore(db_path=surprise_db)
         set_surprise_store(surprise_store)
         logger.info("SurpriseStore initialized (db=%s)", surprise_db)
+
+        # Close the surprise loop: the condition worker's
+        # surprise.accumulation event now lands as a workspace concern
+        # (the consumer checks workspace enablement at event time, so this
+        # registration is unconditional and a clean no-op when it is off).
+        from colony_sidecar.surprise.accumulation import (
+            register as register_surprise_consumer,
+        )
+        register_surprise_consumer()
     except Exception as exc:
         logger.warning("Pattern/Surprise init failed: %s", exc)
 
@@ -946,6 +2500,7 @@ async def lifespan(app: FastAPI):
                 affect_store=_host_mod._affect_store,
                 facts_store=_host_mod._facts_store,
                 engagement_store=_host_mod._engagement_store,
+                p8_runtime=_p8_wiring,
                 db_path=str(state_dir / "colony-relationships.db"),
             )
             _host_mod.set_relationship_profiler(_rel_profiler)
@@ -998,7 +2553,8 @@ async def lifespan(app: FastAPI):
             )
             _wle = WorldLLMExtractor(
                 world_store, graph=graph, directive_manager=_get_dm3(),
-                journal=getattr(_sm_for_directed, "journal", None))
+                journal=getattr(_sm_for_directed, "journal", None),
+                self_model=_sm_for_directed)
             set_world_llm_extractor(_wle)
             logger.info("WorldLLMExtractor initialized (mode=%s)",
                         llm_extract_mode())
@@ -1084,8 +2640,15 @@ async def lifespan(app: FastAPI):
                 event_bus=event_bus,
                 params=_adaptive_params,
             )
+            _wire_controlled_learning_pipeline(
+                cognition_pipeline, _controlled_learning)
             set_metalearner(cognition_pipeline.meta_learner)
-            logger.info("CognitionPipeline initialized with all components wired")
+            logger.info(
+                "CognitionPipeline initialized (controlled proposals=%s, "
+                "durable corrections=%s)",
+                _controlled_learning.get("experiments") is not None,
+                _controlled_learning.get("corrections") is not None,
+            )
         else:
             logger.warning("CognitionPipeline skipped — ColonyGraph not available")
     except Exception as exc:
@@ -1093,7 +2656,6 @@ async def lifespan(app: FastAPI):
 
     # --- 12. Research pipeline ---
     try:
-        from colony_sidecar.research.pipeline import ResearchPipeline
         from colony_sidecar.research.search.orchestrator import SearchOrchestrator
 
         # Wire search orchestrator
@@ -1138,7 +2700,8 @@ async def lifespan(app: FastAPI):
                 sandbox_dir,
             )
 
-        research = ResearchPipeline()
+        research = _build_research_pipeline(
+            graph=graph, p8_runtime=_p8_wiring)
         set_research_pipeline(research)
         logger.info("ResearchPipeline initialized")
     except Exception as exc:
@@ -1395,43 +2958,25 @@ async def lifespan(app: FastAPI):
         task_queue = await TaskQueueManager.initialize(
             db_path=state_dir / "task_queue.db",
         )
+        # The queue facade becomes process-visible below, before the project
+        # verifier and ProjectStore are constructed.  Keep persisted
+        # cognition WorkOrders fail-closed throughout that startup window;
+        # successful project wiring replaces this with the digest-bound
+        # callback later.
+        _install_cognition_work_order_startup_fence(task_queue)
+        task_queue.queue.set_execution_ready(False, "scheduler_starting")
         set_task_queue(task_queue)
         logger.info("TaskQueueManager initialized")
     except Exception as exc:
         logger.warning("TaskQueueManager init failed: %s", exc)
 
-    # --- 20b. Worker node (executes queued jobs) ---
+    # The embedded worker starts only after the central governor is installed.
     worker_task = None
-    if task_queue is not None:
-        try:
-            import asyncio as _asyncio
-            from colony_sidecar.task_queue.worker import WorkerNode
-            from colony_sidecar.task_queue.handlers.registry import build_default_handlers
-            from colony_sidecar.chain.node import get_or_create_node_id
-            import colony_sidecar.api.routers.host as _host_mod
-
-            worker_node_id = get_or_create_node_id(state_dir)
-            handlers = build_default_handlers(
-                router=_host_mod._llm_router,
-                world_model_store=_host_mod._world_store,
-                contact_store=_host_mod._contacts_store,
-                response_gate=_host_mod._response_gate,
-                node_id=worker_node_id,
-            )
-            worker = WorkerNode(
-                node_id=worker_node_id,
-                queue=task_queue.queue,
-                handlers=handlers,
-            )
-            worker_task = _asyncio.create_task(worker.start())
-            app.state.worker = worker
-            app.state.worker_task = worker_task
-            logger.info(
-                "WorkerNode started (node=%s, handlers=%s)",
-                worker_node_id, [jt.value for jt in handlers.keys()],
-            )
-        except Exception as exc:
-            logger.warning("WorkerNode init failed — queued jobs will not execute: %s", exc, exc_info=True)
+    queue_scheduler = None
+    queue_scheduler_task = None
+    queue_execution_ready = False
+    agent_bridge_service = None
+    agent_bridge_task = None
 
     # --- 20c. Multi-Agent System (v0.7.0) ---
     try:
@@ -1487,6 +3032,42 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.autonomy.registry import SubsystemRegistry
         from colony_sidecar.autonomy.scheduler import AutonomyScheduler
         autonomy_config = AutonomyConfig.from_env()
+
+        # H4.2 annunciation: when the loop mode came from the preset (via
+        # COLONY_PRESET_LOOP_COUPLING, default on) rather than an explicit
+        # COLONY_AUTONOMY_MODE, say so loudly at startup and leave ONE
+        # durable journal record the first time a deployment boots coupled —
+        # a default flip an operator can always see and always roll back.
+        if getattr(autonomy_config, "mode_source", "") == "preset":
+            try:
+                from colony_sidecar.util.autonomy_preset import preset_name
+                _preset = preset_name() or "(unknown)"
+            except Exception:
+                _preset = "(unknown)"
+            logger.warning(
+                "Autonomy loop mode %s inherited from COLONY_AUTONOMY_PRESET=%s "
+                "via preset-loop coupling (COLONY_PRESET_LOOP_COUPLING=on by "
+                "default). Set COLONY_AUTONOMY_MODE explicitly to override, or "
+                "COLONY_PRESET_LOOP_COUPLING=off to restore env-only resolution.",
+                autonomy_config.mode.value, _preset)
+            try:
+                from colony_sidecar.api.routers.host import _self_model as _sm_j
+                _cj = getattr(_sm_j, "journal", None)
+                if _cj is not None and not _cj.recent(
+                        limit=1, domain="preset_coupling"):
+                    _cj.record(
+                        "preset_coupling",
+                        f"First coupled boot: loop mode {autonomy_config.mode.value} "
+                        f"inherited from preset '{_preset}'",
+                        reasoning="COLONY_AUTONOMY_MODE unset; "
+                                  "COLONY_PRESET_LOOP_COUPLING on (default). "
+                                  "Rollback: set COLONY_AUTONOMY_MODE=reactive "
+                                  "or COLONY_PRESET_LOOP_COUPLING=off.",
+                        reversibility="reversible", decision="noted",
+                        ref="preset-loop-coupling")
+            except Exception:
+                pass  # annunciation must never block startup
+
         registry = SubsystemRegistry()
 
         # Wire scheduler BEFORE the loop so the loop gets a direct reference.
@@ -1551,6 +3132,63 @@ async def lifespan(app: FastAPI):
 
         scheduler.register("world_model_prune", _run_world_model_prune, interval_seconds=86400, metadata={"description": "Remove stale low-confidence world model entities (config TTL)"})
 
+        async def _run_mining_prune():
+            from colony_sidecar.api.routers.mining import get_mining_store
+            store = get_mining_store()
+            if store is None:
+                return {"status": "skipped", "reason": "mining_not_wired"}
+            try:
+                retention_days = int(os.environ.get(
+                    "COLONY_MINING_RETENTION_DAYS", "0"))
+                max_turns = int(os.environ.get(
+                    "COLONY_MINING_MAX_TURNS", "0"))
+            except ValueError:
+                retention_days = max_turns = 0
+            if retention_days <= 0 and max_turns <= 0:
+                # Default posture: the verbatim turn bank is unbounded
+                # unless a deployment opts into retention.
+                return {"status": "skipped", "reason": "retention_unbounded"}
+            return {"status": "ok", **store.prune_turns(
+                retention_days=retention_days, max_turns=max_turns)}
+
+        scheduler.register("mining_prune", _run_mining_prune, interval_seconds=86400, metadata={"description": "Prune banked mining turns per COLONY_MINING_RETENTION_DAYS / COLONY_MINING_MAX_TURNS (0 = keep everything)"})
+
+        # Daily pattern extraction (U25): the pattern store fed compute_surprise
+        # but only ever filled via the manual /patterns/extract endpoint, so
+        # surprise scoring ran against an empty store. Flag-gated off by
+        # default; registered only when on so the loop never counts a
+        # deliberately-disabled subsystem as running.
+        if os.environ.get("COLONY_PATTERNS_SCHEDULE",
+                          "off").strip().lower() == "on":
+            async def _run_pattern_extract():
+                from colony_sidecar.api.routers.host import (
+                    _pattern_store as ps, _world_store as ws,
+                )
+                if ws is None or ps is None:
+                    return {"status": "skipped",
+                            "reason": "stores_not_wired"}
+                from colony_sidecar.patterns.extract import extract_patterns
+                return {"status": "ok",
+                        **extract_patterns(world_store=ws, pattern_store=ps)}
+
+            scheduler.register("pattern_extract", _run_pattern_extract, interval_seconds=86400, metadata={"description": "Extract world-model patterns into the pattern store (COLONY_PATTERNS_SCHEDULE=on)"})
+
+        async def _run_surprise_ttl():
+            from colony_sidecar.api.routers.host import _surprise_store as ss
+            if ss is None:
+                return {"status": "skipped",
+                        "reason": "surprise_store_not_wired"}
+            try:
+                ttl_days = float(os.environ.get(
+                    "COLONY_SURPRISE_TTL_DAYS", "14"))
+            except ValueError:
+                ttl_days = 14.0
+            if ttl_days <= 0:
+                return {"status": "skipped", "reason": "ttl_disabled"}
+            return {"status": "ok", "auto_resolved": ss.resolve_stale(ttl_days)}
+
+        scheduler.register("surprise_ttl", _run_surprise_ttl, interval_seconds=86400, metadata={"description": "Auto-resolve surprises unaddressed past COLONY_SURPRISE_TTL_DAYS (default 14; 0 disables)"})
+
         async def _run_digest_flush():
             from colony_sidecar.api.routers.host import _delivery_bridge as bridge
             if bridge is None:
@@ -1593,25 +3231,13 @@ async def lifespan(app: FastAPI):
             len(te._handlers),
         )
 
-    # --- 22. Agent Bridge service (auto-wired initiative/job forwarding) ---
-    try:
-        from colony_sidecar.services.agent_bridge import create_from_env as _create_bridge
-        _bridge_svc = _create_bridge(
-            initiative_store=locals().get("initiative_store"),
-            autonomy_loop=autonomy_loop,
-            task_queue=task_queue,
-            observation_store=locals().get("observation_store"),
-        )
-        if _bridge_svc is not None:
-            set_agent_bridge(_bridge_svc)
-            asyncio.create_task(_bridge_svc.start())
-            logger.info("AgentBridgeService auto-start scheduled")
-    except Exception as exc:
-        logger.warning("AgentBridgeService init failed (non-fatal): %s", exc)
-
     # --- 22b. Project engine (goal persistence, cognition item 1) ---
     try:
         from colony_sidecar.projects import ProjectEngine, ProjectStore, projects_mode
+        from colony_sidecar.work_orders import (
+            QueueWorkOrderAdapter,
+            load_receipt_verifier_from_env,
+        )
         from colony_sidecar.api.routers.host import (
             set_project_engine,
             get_directive_manager as _get_dm_p,
@@ -1632,8 +3258,23 @@ async def lifespan(app: FastAPI):
                 logger.debug("project deliver failed", exc_info=True)
             return False
 
+        # A failed verifier import/configuration must not leave a project
+        # engine from an earlier lifespan reachable in this process.
+        set_project_engine(None)
+        _receipt_verifier = load_receipt_verifier_from_env()
+        _project_store = ProjectStore(db_path=str(state_dir / "colony-projects.db"))
+        _project_concern_store = locals().get("_concern_store")
+
+        def _project_hold_reason(project) -> str:
+            from colony_sidecar.self_model.event_concerns import (
+                project_turn_concern_hold_reason,
+            )
+            return project_turn_concern_hold_reason(
+                project, _project_concern_store,
+            )
+
         _project_engine_obj = ProjectEngine(
-            ProjectStore(db_path=str(state_dir / "colony-projects.db")),
+            _project_store,
             directive_manager=_get_dm_p(),
             llm_router=llm_router,
             reasoning_loop=locals().get("reasoning_loop"),
@@ -1645,8 +3286,27 @@ async def lifespan(app: FastAPI):
             skill_store=_skills_mem_store,
             delivery_router=_project_deliver,
             initiative_store=locals().get("initiative_store"),
+            work_order_adapter=(
+                QueueWorkOrderAdapter(
+                    task_queue,
+                    project_store=_project_store,
+                    receipt_verifier=_receipt_verifier,
+                )
+                if task_queue is not None else None
+            ),
+            project_hold_reason=_project_hold_reason,
         )
+        if task_queue is not None:
+            _install_cognition_work_order_runtime_fence(
+                task_queue, _project_store, _project_concern_store,
+            )
+            await task_queue.queue.reconcile_runtime_claim_holds()
         set_project_engine(_project_engine_obj)
+        if _receipt_verifier is not None:
+            logger.info(
+                "External WorkOrder receipt verifier initialized (%s)",
+                getattr(_receipt_verifier, "identity", type(_receipt_verifier).__name__),
+            )
         logger.info("ProjectEngine initialized (db=%s, mode=%s)",
                     state_dir / "colony-projects.db", projects_mode())
         # Late-attach the initiative store to the belief engine (it is wired
@@ -1660,14 +3320,139 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("ProjectEngine init failed: %s", exc)
 
+    # --- 22b.1 Receipt-derived cognition evidence (migration-gated) ---
+    _evidence_wiring = None
+    try:
+        _evidence_wiring = _attach_cognition_evidence(
+            state_dir=state_dir,
+            project_store=locals().get("_project_store"),
+            self_model=_sm_for_directed,
+            expectations=locals().get("_expectations"),
+            scheduler=locals().get("scheduler"),
+        )
+        if _evidence_wiring is not None:
+            logger.info(
+                "Cognition evidence attached (mode=%s, db=%s, initial=%s)",
+                _evidence_wiring["mode"],
+                (
+                    state_dir / "colony-cognition-evidence.db"
+                    if _evidence_wiring["store"] is not None else "disabled"
+                ),
+                _evidence_wiring["initial_status"],
+            )
+    except Exception as exc:
+        # A requested live pipeline suppresses the legacy direct competence
+        # writer independently, so attachment failure loses no authority by
+        # silently falling back to self-reported outcomes.
+        logger.error("Cognition evidence attachment failed closed: %s", exc)
+
+    # --- 22b.2 Typed cognition/goal spine (P3, migration-gated) ---
+    try:
+        _cognition_spine = _attach_cognition_spine(
+            state_dir=state_dir,
+            task_queue=task_queue,
+            workspace=locals().get("_workspace"),
+            concern_store=locals().get("_concern_store"),
+            project_store=locals().get("_project_store"),
+            project_engine=locals().get("_project_engine_obj"),
+            directive_manager=(
+                _get_dm_p() if "_get_dm_p" in locals() else None
+            ),
+            llm_router=llm_router,
+            embedded_worker_enabled=_configured_embedded_worker_enabled(),
+            proposal_store=locals().get("_proposal_store"),
+        )
+        if _cognition_spine is not None:
+            from colony_sidecar.cognition.goal_spine import cognition_spine_mode
+            logger.info(
+                "Typed cognition spine attached (db=%s, mode=%s)",
+                state_dir / "colony-cognition.db",
+                cognition_spine_mode(),
+            )
+    except Exception as exc:
+        # In live mode, P3's legacy-writer guards remain active and the
+        # workspace loop refuses a missing spine.  The failure is therefore
+        # fail-closed for autonomous goal creation without taking the whole
+        # sidecar (and daily owner-directed work) offline.
+        from colony_sidecar.cognition.goal_spine import cognition_spine_mode
+        failed_mode = cognition_spine_mode()
+        set_cognition_attachment_status({
+            "configured_mode": failed_mode,
+            "state": "failed",
+            "reason": str(exc)[:500],
+            "configured_handler_catalog": (
+                ["thought"] if failed_mode in {"shadow", "live"} else []
+            ),
+            "effective_handler_catalog": [],
+        })
+        logger.error("Typed cognition spine attachment failed: %s", exc)
+
+    # --- 22b.3 Evidence-derived situation spine (P6, migration-gated) ---
+    _situation_wiring = None
+    try:
+        _situation_wiring = _attach_situation_spine(
+            state_dir=state_dir,
+            cognition_spine=locals().get("_cognition_spine"),
+            scheduler=locals().get("scheduler"),
+            task_queue=task_queue,
+        )
+        if _situation_wiring is not None:
+            logger.info(
+                "Situation spine attached (db=%s, mode=%s, initial=%s)",
+                state_dir / "colony-situation.db",
+                _situation_wiring["mode"],
+                _situation_wiring["initial_status"],
+            )
+    except Exception as exc:
+        # A configured live P6 that cannot attach must not silently leave P3's
+        # capacity-only allow path active. Preserve capacity denials, then hold
+        # everything else until a healthy pinned restart.
+        try:
+            from colony_sidecar.self_model.situation import situation_spine_mode
+            cognition = locals().get("_cognition_spine")
+            existing = getattr(cognition, "_situation", None)
+            if situation_spine_mode() == "live" and callable(existing):
+                cognition._situation = _capacity_plus_attachment_failure(
+                    existing, "situation_attachment_failed_closed",
+                )
+        except Exception:
+            logger.exception("Could not install P6 attachment failure gate")
+        logger.error("Situation spine attachment failed closed: %s", exc)
+
+    # --- 22b.4 Owner-ratified drive governance (P7, migration-gated) ---
+    _drive_wiring = None
+    try:
+        _drive_wiring = _attach_drive_governance(
+            state_dir=state_dir,
+            cognition_spine=locals().get("_cognition_spine"),
+            workspace=locals().get("_workspace"),
+            project_store=locals().get("_project_store"),
+            directive_manager=(
+                _get_dm_p() if "_get_dm_p" in locals() else None
+            ),
+            approval_authority=_controlled_learning.get(
+                "approval_authority"
+            ),
+        )
+        if _drive_wiring is not None:
+            logger.info(
+                "Drive governance attached (db=%s, mode=%s, shared_authority=%s)",
+                state_dir / "cognition-drive-governance.db",
+                _drive_wiring["mode"],
+                getattr(
+                    _drive_wiring["approval_authority"], "path", None,
+                ),
+            )
+    except Exception as exc:
+        logger.error("Drive governance attachment failed closed: %s", exc)
+
     # --- 22c. Worker governor (server-side queue enforcement, item 5) ---
     try:
-        from colony_sidecar.task_queue.governor import WorkerGovernor, workers_mode
         from colony_sidecar.api.routers.host import (
-            set_worker_governor,
             get_directive_manager as _get_dm_w,
             _feedback_store as _fb_for_workers,
         )
+        from colony_sidecar.task_queue.governor import WorkerGovernor, workers_mode
 
         async def _worker_deliver(payload: dict) -> bool:
             try:
@@ -1686,13 +3471,151 @@ async def lifespan(app: FastAPI):
             feedback_store=_fb_for_workers,
             self_model=_sm_for_directed,
             delivery_router=_worker_deliver,
+            proposal_store=locals().get("_proposal_store"),
             skill_store=_skills_mem_store,
             llm_router=llm_router,
+            boundary_required=True,
         )
         set_worker_governor(_worker_gov)
         logger.info("WorkerGovernor initialized (mode=%s)", workers_mode())
     except Exception as exc:
         logger.warning("WorkerGovernor init failed: %s", exc)
+
+    # Queue maintenance is independent from execution-worker enablement. It
+    # expires deadlines and leases, reconciles holds, and drains durable
+    # outcome evidence even during a health-only deployment cutover.
+    if task_queue is not None:
+        try:
+            from colony_sidecar.task_queue.scheduler import Scheduler
+
+            queue_scheduler = Scheduler(
+                queue=task_queue.queue,
+                tick_interval_secs=_queue_seconds_env(
+                    "COLONY_QUEUE_SCHEDULER_TICK_SECS", 2.0,
+                ),
+                claim_timeout_secs=_queue_seconds_env(
+                    "COLONY_QUEUE_CLAIM_TIMEOUT_SECS", 30.0,
+                ),
+                readiness_callback=task_queue.queue.set_execution_ready,
+            )
+            # A successful synchronous first tick is the execution-readiness
+            # gate. Configuration/import/database failures leave the API and
+            # read surfaces online but no worker may claim work.
+            await queue_scheduler.tick_once()
+            queue_scheduler_task = asyncio.create_task(
+                queue_scheduler.run()
+            )
+            app.state.queue_scheduler = queue_scheduler
+            app.state.queue_scheduler_task = queue_scheduler_task
+            queue_readiness = task_queue.queue.execution_readiness()
+            queue_execution_ready = bool(queue_readiness.get("ready"))
+            if queue_execution_ready:
+                logger.info("Task queue scheduler started")
+            else:
+                logger.error(
+                    "Task queue maintenance started but execution remains "
+                    "held: %s",
+                    queue_readiness.get("reason"),
+                )
+        except Exception as exc:
+            queue_execution_ready = False
+            task_queue.queue.set_execution_ready(
+                False, f"scheduler_unavailable:{exc}",
+            )
+            logger.error(
+                "Task queue scheduler unavailable; execution workers disabled: %s",
+                exc,
+                exc_info=True,
+            )
+
+    # --- 22c.0 Agent Bridge (after claim authority + scheduler readiness) ---
+    # The bridge can still forward initiatives when queue execution is held,
+    # but it receives no queue handle and therefore cannot claim jobs.
+    try:
+        from colony_sidecar.services.agent_bridge import (
+            create_from_env as _create_bridge,
+        )
+        agent_bridge_service = _create_bridge(
+            initiative_store=locals().get("initiative_store"),
+            autonomy_loop=autonomy_loop,
+            task_queue=(task_queue if queue_execution_ready else None),
+            observation_store=locals().get("observation_store"),
+        )
+        if agent_bridge_service is not None:
+            set_agent_bridge(agent_bridge_service)
+            agent_bridge_task = asyncio.create_task(
+                agent_bridge_service.start()
+            )
+            logger.info("AgentBridgeService auto-start scheduled")
+    except Exception as exc:
+        logger.warning("AgentBridgeService init failed (non-fatal): %s", exc)
+
+    # --- 22c.1 Embedded worker (after mandatory central authority wiring) ---
+    if task_queue is not None and _embedded_worker_enabled():
+        try:
+            if not queue_execution_ready:
+                raise RuntimeError("queue scheduler is not execution-ready")
+            import asyncio as _asyncio
+            from colony_sidecar.task_queue.worker import WorkerNode
+            from colony_sidecar.task_queue.handlers.registry import build_default_handlers
+            from colony_sidecar.chain.node import get_or_create_node_id
+            import colony_sidecar.api.routers.host as _host_mod
+
+            worker_node_id = get_or_create_node_id(state_dir)
+            from colony_sidecar.cognition.goal_spine import cognition_spine_mode
+            worker_profile = _cognition_worker_profile(
+                configured_mode=cognition_spine_mode(),
+                attached=locals().get("_cognition_spine") is not None,
+            )
+            if worker_profile == "held":
+                raise RuntimeError(
+                    "configured cognition owner is held because P3 attachment "
+                    "is unavailable"
+                )
+            if worker_profile == "thought_only":
+                handlers, worker_capabilities = _cognition_owner_spec(
+                    router=_host_mod._llm_router,
+                    node_id=worker_node_id,
+                )
+            else:
+                handlers = build_default_handlers(
+                    router=_host_mod._llm_router,
+                    world_model_store=_host_mod._world_store,
+                    contact_store=_host_mod._contacts_store,
+                    response_gate=_host_mod._response_gate,
+                    node_id=worker_node_id,
+                )
+                worker_capabilities = None
+            worker = WorkerNode(
+                node_id=worker_node_id,
+                queue=task_queue.queue,
+                handlers=handlers,
+                capabilities=worker_capabilities,
+            )
+            worker_task = _asyncio.create_task(worker.start())
+            app.state.worker = worker
+            app.state.worker_task = worker_task
+            if worker_profile == "thought_only":
+                set_cognition_attachment_status({
+                    "configured_mode": cognition_spine_mode(),
+                    "state": "attached",
+                    "reason": "cognition_thought_worker_started",
+                    "configured_handler_catalog": ["thought"],
+                    "effective_handler_catalog": ["thought"],
+                })
+            logger.info(
+                "WorkerNode started after central governor "
+                "(node=%s, handlers=%s, governance=%s)",
+                worker_node_id,
+                [jt.value for jt in handlers.keys()],
+                task_queue.queue.governance_configuration(),
+            )
+        except Exception as exc:
+            logger.warning(
+                "WorkerNode init failed — queued jobs will not execute: %s",
+                exc,
+                exc_info=True,
+            )
 
     # --- 22d. Exploration sandbox (gated isolated execution, item 6) ---
     try:
@@ -1799,9 +3722,81 @@ async def lifespan(app: FastAPI):
         logger.warning("Conversation synthesis registration failed: %s", exc)
 
     logger.info("Sidecar capabilities: %s", supported_capabilities())
+
+    # Dedicated, owner-bound governed action execution.  This ledger is
+    # separate from the general API and task queue so a crash after an effect
+    # starts can be recovered honestly as ambiguous without ever retrying the
+    # mutation.  No live action is enabled merely by constructing the service;
+    # the exact scoped keyring principal is still required at the HTTP edge.
+    governed_action_service = None
+    try:
+        import colony_sidecar.api.routers.host as _host_actions
+        from colony_sidecar.api.routers.governed_actions import (
+            set_governed_action_service,
+        )
+        from colony_sidecar.governed_actions import (
+            ColonySubsystemActionExecutor,
+            GovernedActionLedger,
+            GovernedActionService,
+        )
+
+        async def _autonomy_enable():
+            await _host_actions.autonomy_start()
+
+        async def _autonomy_disable():
+            await _governed_autonomy_stop_signal(_host_actions._autonomy_loop)
+
+        def _autonomy_running():
+            loop = _host_actions._autonomy_loop
+            return bool(loop is not None and loop.is_running)
+
+        governed_action_service = GovernedActionService(
+            GovernedActionLedger(
+                state_dir / "governed-actions" / "ledger.db"
+            ),
+            ColonySubsystemActionExecutor(
+                graph=_host_actions._graph,
+                goals=_host_actions._goals_store,
+                commitments=_host_actions._commitment_store,
+                initiatives=_host_actions._initiative_store,
+                projects=_host_actions._project_engine,
+                feedback=_host_actions._feedback_store,
+                autonomy_enable=_autonomy_enable,
+                autonomy_disable=_autonomy_disable,
+                autonomy_running=_autonomy_running,
+            ),
+        )
+        set_governed_action_service(governed_action_service)
+        logger.info("Governed action ledger initialized")
+    except Exception as exc:
+        logger.warning("Governed action ledger init failed: %s", exc)
     yield
 
     # Shutdown — close connections
+    set_external_event_intake(None)
+    if _external_event_intake is not None:
+        try:
+            _external_event_intake.close()
+        except Exception:
+            logger.debug(
+                "external cognition event intake shutdown failed",
+                exc_info=True,
+            )
+    # Stop the queue-consuming bridge before its stores, governor, or queue.
+    try:
+        if agent_bridge_service is not None:
+            await agent_bridge_service.stop()
+        if agent_bridge_task is not None:
+            try:
+                await asyncio.wait_for(agent_bridge_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                agent_bridge_task.cancel()
+                try:
+                    await agent_bridge_task
+                except asyncio.CancelledError:
+                    pass
+    except Exception:
+        logger.debug("Agent bridge shutdown error", exc_info=True)
     if graph is not None:
         try:
             await graph.close()
@@ -1828,6 +3823,21 @@ async def lifespan(app: FastAPI):
     set_briefings_engine(None)
     set_world_store(None)
     set_metalearner(None)
+    try:
+        from colony_sidecar.api.routers.host import (
+            set_adaptive_params as _set_adaptive_params,
+            set_benchmark as _set_benchmark,
+            set_experiments as _set_experiments,
+            set_learning_feedback_store as _set_learning_feedback_store,
+        )
+        _set_experiments(None)
+        _set_benchmark(None)
+        _set_learning_feedback_store(None)
+        _set_adaptive_params(None)
+        if _adaptive_params is not None:
+            _adaptive_params.close()
+    except Exception:
+        logger.debug("controlled learning shutdown failed", exc_info=True)
     set_research_pipeline(None)
     set_delivery_bridge(None)
     set_connection_discoverer(None)
@@ -1835,9 +3845,30 @@ async def lifespan(app: FastAPI):
     set_skills_registry(None)
     set_commitment_store(None)
     set_affect_store(None)
+    try:
+        if _p8_wiring is not None:
+            _p8_wiring.close()
+    except Exception:
+        logger.debug("P8 runtime shutdown failed", exc_info=True)
+    set_p8_runtime(None)
     set_facts_store(None)
+    try:
+        from colony_sidecar.api.routers.host import (
+            set_presence_store as _set_presence_store,
+            _presence_store as _presence_ref,
+        )
+        if _presence_ref is not None:
+            _presence_ref.close()
+        _set_presence_store(None)
+    except Exception:
+        logger.debug("presence store shutdown failed", exc_info=True)
     set_context_provenance_store(None)
     set_response_guard(None)
+    try:
+        from colony_sidecar.tom.levels import set_evidence_probe
+        set_evidence_probe(None)
+    except Exception:
+        logger.debug("Tom2 evidence probe shutdown failed", exc_info=True)
     set_pattern_store(None)
     set_surprise_store(None)
     set_tom_extractor(None)
@@ -1867,6 +3898,24 @@ async def lifespan(app: FastAPI):
             worker_task.cancel()
     except Exception:
         logger.debug("Worker shutdown error", exc_info=True)
+    # Stop queue maintenance only after the execution worker has drained, and
+    # before closing the shared queue connection.
+    try:
+        if queue_scheduler is not None:
+            await queue_scheduler.stop()
+        if queue_scheduler_task is not None:
+            try:
+                await asyncio.wait_for(queue_scheduler_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                queue_scheduler_task.cancel()
+                try:
+                    await queue_scheduler_task
+                except asyncio.CancelledError:
+                    pass
+    except Exception:
+        logger.debug("Task queue scheduler shutdown error", exc_info=True)
+    # No stopped/repeated lifespan may retain a usable authority handle.
+    set_worker_governor(None)
     # Stop task queue
     try:
         from colony_sidecar.api.routers.host import _task_queue
@@ -1883,12 +3932,61 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Autonomy loop shutdown failed")
     set_autonomy_loop(None)
+    # Evidence/P6 periodic reducers are owned by the autonomy scheduler. Close
+    # them only after that loop is stopped so an in-flight tick cannot race a
+    # closed SQLite handle. Clear HTTP handles before releasing connections.
+    set_cognition_evidence(None, None, None, {
+        "configured_mode": "off",
+        "state": "off",
+        "reason": "sidecar_stopped",
+    })
+    try:
+        evidence_wiring = locals().get("_evidence_wiring")
+        if evidence_wiring is not None and evidence_wiring.get("store") is not None:
+            evidence_wiring["store"].close()
+    except Exception:
+        logger.debug("cognition evidence shutdown failed", exc_info=True)
+    set_situation_spine(None, None)
+    set_drive_governance(None, None, None)
+    try:
+        situation_wiring = locals().get("_situation_wiring")
+        if situation_wiring is not None:
+            original = situation_wiring.get("original_validator")
+            cognition = locals().get("_cognition_spine")
+            if original is not None and cognition is not None:
+                cognition._situation = original
+            situation_wiring["store"].close()
+    except Exception:
+        logger.debug("situation spine shutdown failed", exc_info=True)
+    try:
+        drive_wiring = locals().get("_drive_wiring")
+        if drive_wiring is not None:
+            drive_wiring["store"].close()
+    except Exception:
+        logger.debug("drive governance shutdown failed", exc_info=True)
+    try:
+        from colony_sidecar.api.routers.host import set_project_engine
+        set_project_engine(None)
+        project_store = locals().get("_project_store")
+        if project_store is not None:
+            project_store.close()
+    except Exception:
+        logger.debug("project store shutdown failed", exc_info=True)
     set_session_store(None)
     set_task_queue(None)
     # Multi-Agent cleanup
     set_agent_store(None)
     set_invite_store(None)
     set_initiative_store(None)
+    try:
+        from colony_sidecar.api.routers.governed_actions import (
+            set_governed_action_service,
+        )
+        set_governed_action_service(None)
+        if governed_action_service is not None:
+            governed_action_service.close()
+    except Exception:
+        logger.debug("Governed action ledger shutdown failed", exc_info=True)
     set_assignment_engine(None)
     set_websocket_manager(None)
     try:
@@ -1896,6 +3994,12 @@ async def lifespan(app: FastAPI):
         set_observation_store(None)
     except Exception:
         pass
+    auth_telemetry = getattr(app.state, "auth_telemetry", None)
+    if auth_telemetry is not None:
+        try:
+            auth_telemetry.close()
+        except Exception:
+            logger.debug("Auth telemetry shutdown failed", exc_info=True)
     logger.info("Sidecar shutdown complete")
 
 
@@ -1907,7 +4011,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # API key authentication (skips health/docs; open access if no key set)
+    # API authentication (skips health/docs; loopback dev mode if no auth set).
+    # The scoped keyring runs alongside COLONY_API_KEY during migration.
+    from colony_sidecar.api.auth_telemetry import AuthTelemetry
+    from colony_sidecar.api.contact_grants import ContactGrantRegistry
     from colony_sidecar.api.middleware import ApiKeyMiddleware, BodySizeLimitMiddleware
 
     # Body-size cap runs before auth so oversized payloads are rejected with
@@ -1919,13 +4026,46 @@ def create_app() -> FastAPI:
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body)
 
     api_key = os.environ.get("COLONY_API_KEY")
-    app.add_middleware(ApiKeyMiddleware, api_key=api_key)
-    if api_key:
-        logger.info("API key authentication enabled")
+    keyring_path = os.environ.get("COLONY_API_KEYRING_PATH")
+    state_dir = _state_dir()
+    telemetry_path = os.environ.get(
+        "COLONY_AUTH_TELEMETRY_PATH",
+        str(state_dir / "colony-auth-telemetry.db"),
+    )
+    contact_grants_path = os.environ.get(
+        "COLONY_API_CONTACT_GRANTS_PATH",
+        str(state_dir / "api-contact-grants.json"),
+    )
+    auth_telemetry = AuthTelemetry(telemetry_path)
+    contact_grants = ContactGrantRegistry(contact_grants_path)
+    # HTTP middleware uses request.state; WebSocket/admin status paths use
+    # app.state because BaseHTTPMiddleware does not wrap WebSocket frames.
+    app.state.auth_telemetry = auth_telemetry
+    app.state.contact_grants = contact_grants
+    app.add_middleware(
+        ApiKeyMiddleware,
+        api_key=api_key,
+        keyring_path=keyring_path,
+        auth_telemetry=auth_telemetry,
+        contact_grants=contact_grants,
+    )
+    if api_key and keyring_path:
+        logger.info("Legacy and scoped API authentication enabled (dual-accept)")
+    elif keyring_path:
+        logger.info("Scoped API authentication enabled")
+    elif api_key:
+        logger.info("Legacy API key authentication enabled")
     else:
-        logger.warning("No COLONY_API_KEY set — API is open (dev mode)")
+        logger.warning("No API auth configured — API is open (loopback dev mode)")
 
     app.include_router(host_router)
+    app.include_router(host_v2_router)
+
+    # Exact PUT/GET action endpoint.  Middleware maps these methods to
+    # actions:execute/actions:verify; the router independently rejects legacy,
+    # unscoped, non-owner, and differently named principals.
+    from colony_sidecar.api.routers import governed_actions as governed_actions_router
+    app.include_router(governed_actions_router.router)
 
     # Channel registration router
     from colony_sidecar.channels.router import router as channels_router

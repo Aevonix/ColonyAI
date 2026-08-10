@@ -244,3 +244,93 @@ async def test_api_snapshot(tmp_path):
 async def test_api_unavailable():
     async with _client(None) as c:
         assert (await c.get("/v1/host/self/expectations")).json() == {"available": False}
+
+
+# ---------------------------------------------------------------------------
+# World-model resolvers (U24): relationship-still-active, property-unchanged
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+from colony_sidecar.world_model import expectation_resolvers as wr
+
+
+class FakeWorldStore:
+    def __init__(self, relationships=None, entities=None):
+        self.relationships = relationships or []
+        self.entities = entities or {}
+
+    async def query_relationships(self, **kw):
+        return self.relationships
+
+    async def get_entity(self, entity_id, min_confidence=0.0):
+        return self.entities.get(entity_id)
+
+
+def _pred(subject, detail):
+    return Prediction(prediction_id="p-1", subject=subject, domain="world",
+                      expectation="x", confidence=0.6,
+                      horizon=time.time(), source="t", detail=detail)
+
+
+def _rel(active=True):
+    return SimpleNamespace(is_active=active)
+
+
+def test_register_world_resolvers(tmp_path):
+    e = ExpectationEngine(store(tmp_path))
+    wr.register_world_resolvers(e)
+    assert wr.RELATIONSHIP_PREFIX in e._resolvers
+    assert wr.PROPERTY_PREFIX in e._resolvers
+    # guarded on engine presence: a missing engine is a clean no-op
+    wr.register_world_resolvers(None)
+
+
+def test_relationship_resolver_hit_miss_unknown(monkeypatch):
+    detail = {"source_id": "we-1", "target_id": "we-2",
+              "relationship_type": "WM_WORKS_AT"}
+    p = _pred("world-relationship:we-1:we-2", detail)
+    monkeypatch.setattr(host_mod, "_world_store",
+                        FakeWorldStore(relationships=[_rel(True)]))
+    assert wr.resolve_relationship_still_active(p) is True
+    monkeypatch.setattr(host_mod, "_world_store",
+                        FakeWorldStore(relationships=[_rel(False)]))
+    assert wr.resolve_relationship_still_active(p) is False
+    # never observed -> unresolvable, never a fabricated miss
+    monkeypatch.setattr(host_mod, "_world_store", FakeWorldStore())
+    assert wr.resolve_relationship_still_active(p) is None
+    # no world store wired -> unresolvable
+    monkeypatch.setattr(host_mod, "_world_store", None)
+    assert wr.resolve_relationship_still_active(p) is None
+
+
+def test_property_resolver_hit_miss_unknown(monkeypatch):
+    ent = SimpleNamespace(id="we-1", properties={"status": "Active"})
+    p = _pred("world-property:we-1:status",
+              {"entity_id": "we-1", "key": "status", "value": "active"})
+    monkeypatch.setattr(host_mod, "_world_store",
+                        FakeWorldStore(entities={"we-1": ent}))
+    assert wr.resolve_property_unchanged(p) is True  # value-normalized match
+    ent.properties["status"] = "paused"
+    assert wr.resolve_property_unchanged(p) is False
+    # property no longer tracked -> visibility loss, not a miss
+    del ent.properties["status"]
+    assert wr.resolve_property_unchanged(p) is None
+    # entity gone -> unresolvable
+    monkeypatch.setattr(host_mod, "_world_store", FakeWorldStore())
+    assert wr.resolve_property_unchanged(p) is None
+
+
+def test_world_prediction_scored_via_engine_check(tmp_path, monkeypatch):
+    """End-to-end: a due world-relationship prediction resolves through
+    engine.check() using the registered resolver."""
+    e = engine(tmp_path)
+    wr.register_world_resolvers(e)
+    e.store.create(
+        subject="world-relationship:we-1:we-2", domain="world",
+        expectation="relationship stays active", confidence=0.7,
+        horizon=time.time() - 1, source="t", dedup_key="wr:we-1:we-2",
+        detail={"source_id": "we-1", "target_id": "we-2"})
+    monkeypatch.setattr(host_mod, "_world_store",
+                        FakeWorldStore(relationships=[_rel(True)]))
+    assert e.check()["hit"] == 1

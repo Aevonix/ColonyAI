@@ -27,6 +27,19 @@ def test_extract_prohibition_variants():
         assert d and d[0].polarity == Polarity.PROHIBIT, msg
 
 
+def test_read_only_adjective_does_not_escalate_boundary_to_observe():
+    from colony_sidecar.directives.models import Level
+
+    goal = extract_directives(
+        "Goal: verify Colony cognition is live with a read-only internal "
+        "plan; do not contact anyone or change external systems"
+    )
+    blackout = extract_directives("don't read the billing spreadsheet")
+
+    assert len(goal) == 1 and goal[0].level == Level.ACT
+    assert len(blackout) == 1 and blackout[0].level == Level.OBSERVE
+
+
 def test_extract_requirement():
     d = extract_directives("from now on always check with me before deploying")
     assert d and d[0].polarity == Polarity.REQUIRE

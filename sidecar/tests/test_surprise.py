@@ -168,3 +168,123 @@ class TestSurpriseScorer:
         )
         result = compute_surprise("works_on", pattern_store=pattern_store)
         assert result["surprise_score"] == 0.2
+
+
+# ---------------------------------------------------------------------------
+# U25: surprise loop closure — TTL auto-resolve + accumulation consumer
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone
+
+from colony_sidecar.events import broadcaster
+from colony_sidecar.surprise.accumulation import (
+    handle_surprise_accumulation, register as register_consumer,
+)
+
+
+def _backdate(store, surprise_id, days):
+    old = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    store._conn.execute("UPDATE surprises SET timestamp = ? WHERE id = ?",
+                        (old, surprise_id))
+    store._conn.commit()
+
+
+class TestResolveStale:
+    def test_stale_auto_resolved_fresh_untouched(self, surprise_store):
+        stale = surprise_store.create_surprise(observation="old one")
+        fresh = surprise_store.create_surprise(observation="new one")
+        _backdate(surprise_store, stale["id"], days=30)
+        assert surprise_store.resolve_stale(14) == 1
+        s = surprise_store.get_surprise(stale["id"])
+        assert s["resolved"] is True
+        assert "auto-resolved" in s["resolution"]
+        assert surprise_store.get_surprise(fresh["id"])["resolved"] is False
+
+    def test_already_resolved_not_touched(self, surprise_store):
+        s = surprise_store.create_surprise(observation="handled")
+        surprise_store.resolve_surprise(s["id"], resolution="owner ack")
+        _backdate(surprise_store, s["id"], days=30)
+        assert surprise_store.resolve_stale(14) == 0
+        assert surprise_store.get_surprise(s["id"])["resolution"] == "owner ack"
+
+    def test_ttl_zero_disables(self, surprise_store):
+        """Regression-lock: ttl <= 0 mutates nothing (opt-out path)."""
+        s = surprise_store.create_surprise(observation="old")
+        _backdate(surprise_store, s["id"], days=365)
+        assert surprise_store.resolve_stale(0) == 0
+        assert surprise_store.resolve_stale(-3) == 0
+        assert surprise_store.get_surprise(s["id"])["resolved"] is False
+
+
+class _FakeWorkspace:
+    def __init__(self):
+        self.bumps = []
+
+    def bump(self, **kw):
+        self.bumps.append(kw)
+
+
+def _event(count):
+    return {"type": "surprise.accumulation",
+            "payload": {"unresolved_count": count}}
+
+
+class TestAccumulationConsumer:
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch):
+        monkeypatch.setattr(broadcaster, "_subscribers", {})
+        monkeypatch.setattr(broadcaster, "_broadcast_fn", lambda _e: None)
+        monkeypatch.delenv("COLONY_WORKSPACE", raising=False)
+        monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
+
+    def test_noop_when_workspace_off(self, monkeypatch):
+        """Regression-lock: default posture (workspace off) consumes
+        nothing and never touches the host router."""
+        assert handle_surprise_accumulation(_event(7)) is False
+
+    def test_noop_when_workspace_enabled_but_unwired(self, monkeypatch):
+        import colony_sidecar.api.routers.host as host_mod
+        monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
+        monkeypatch.setattr(host_mod, "_workspace", None)
+        assert handle_surprise_accumulation(_event(7)) is False
+
+    def test_raises_concern_when_workspace_on(self, monkeypatch):
+        import colony_sidecar.api.routers.host as host_mod
+        ws = _FakeWorkspace()
+        monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
+        monkeypatch.setattr(host_mod, "_workspace", ws)
+        assert handle_surprise_accumulation(_event(7)) is True
+        assert len(ws.bumps) == 1
+        b = ws.bumps[0]
+        assert b["kind"] == "anomaly"
+        assert b["dedup_key"] == "surprise:accumulation"  # stable: merges
+        assert "7 unresolved" in b["summary"]
+        assert b["salience"] <= 0.9  # capped even for huge counts
+        assert handle_surprise_accumulation(_event(100)) is True
+        assert ws.bumps[1]["salience"] == 0.9
+
+    def test_end_to_end_via_emit(self, monkeypatch):
+        """register() + emit('surprise.accumulation') lands as a concern."""
+        import colony_sidecar.api.routers.host as host_mod
+        ws = _FakeWorkspace()
+        monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
+        monkeypatch.setattr(host_mod, "_workspace", ws)
+        register_consumer()
+        broadcaster.emit("surprise.accumulation", {"unresolved_count": 5})
+        assert len(ws.bumps) == 1 and "5 unresolved" in ws.bumps[0]["summary"]
+
+    def test_consumer_error_never_breaks_emit(self, monkeypatch):
+        def boom(_event):
+            raise RuntimeError("consumer bug")
+        broadcaster.subscribe("surprise.accumulation", boom)
+        broadcaster.emit("surprise.accumulation", {"unresolved_count": 5})
+        # no raise = pass
+
+
+class TestPatternsScheduleDefault:
+    def test_default_is_off(self, monkeypatch):
+        """Regression-lock: without COLONY_PATTERNS_SCHEDULE=on the daily
+        pattern_extract task is not registered (server gate condition)."""
+        monkeypatch.delenv("COLONY_PATTERNS_SCHEDULE", raising=False)
+        assert os.environ.get(
+            "COLONY_PATTERNS_SCHEDULE", "off").strip().lower() != "on"

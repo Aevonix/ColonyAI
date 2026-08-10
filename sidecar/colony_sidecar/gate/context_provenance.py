@@ -23,6 +23,7 @@ import unicodedata
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence
 
+from colony_sidecar.gate.communication_policy import CommunicationPolicyContextV1
 from colony_sidecar.gate.response_guard import CrossContextGuard, GuardFinding
 
 
@@ -138,7 +139,14 @@ class ProvenanceCrossContextGuard(CrossContextGuard):
         return {e for e in ents if e}
 
     async def check(self, *, response_text: str, conversation_key: Optional[str],
-                    mentioned_entities: Sequence[str]) -> List[GuardFinding]:
+                    mentioned_entities: Sequence[str],
+                    communication_policy: Optional[
+                        CommunicationPolicyContextV1
+                    ] = None) -> List[GuardFinding]:
+        # The policy is a narrowing input made available to every configured
+        # checker.  Provenance rules intentionally do not use it as an
+        # exemption: even ``owner_explicit`` cannot confer authority here.
+        del communication_policy
         if not conversation_key:
             return []
         findings: List[GuardFinding] = []

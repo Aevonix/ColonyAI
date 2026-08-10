@@ -32,6 +32,7 @@ _ENV_VARS = (
     "COLONY_OWNER_CONTACT_ID",
     "COLONY_HOST_CONTACT_ID",
     "COLONY_APPROVAL_POLICY",
+    "COLONY_APPROVAL_AUTHORITY_MODE",
     "COLONY_ENABLE_INTERNAL_THINKING",
     "COLONY_ENABLE_SKILL_SYNTHESIS",
     "COLONY_EMIT_HERMES_SKILLS",
@@ -272,6 +273,24 @@ def test_approval_policy_typo_fails(clean_env, monkeypatch):
     assert result.remedy
 
 
+def test_approval_authority_mode_typo_fails(clean_env, monkeypatch):
+    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforec")
+    result = doctor.check_approval_policy()
+    assert result.status == FAIL
+    assert "fail closed" in result.detail
+
+
+def test_approval_shadow_authority_with_live_effects_warns(clean_env, monkeypatch):
+    """Shadow approval authority + an effects-on subsystem running live must
+    WARN (approvals are observational, not enforced), never PASS."""
+    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")   # effects on
+    # authority mode unset => shadow default
+    result = doctor.check_approval_policy()
+    assert result.status == WARN
+    assert "workers=live" in result.detail
+    assert result.remedy
+
+
 # ---------------------------------------------------------------------------
 # 6. standing approvals
 # ---------------------------------------------------------------------------
@@ -280,13 +299,25 @@ def test_standing_approvals_absent_passes(clean_env):
     assert doctor.check_standing_approvals().status == PASS
 
 
-def test_standing_approvals_valid_passes(clean_env):
+def test_legacy_unbounded_standing_approvals_warn(clean_env):
     (clean_env / "standing_approvals.json").write_text(
         json.dumps({"agent_git_push": {"approved_by": "owner"}})
     )
     result = doctor.check_standing_approvals()
-    assert result.status == PASS
+    assert result.status == WARN
     assert "1" in result.detail
+
+
+def test_bounded_compatibility_approvals_pass(clean_env):
+    (clean_env / "standing_approvals.json").write_text(json.dumps({
+        "agent_git_push": {
+            "approved_by": "owner",
+            "expires_at": "2026-07-13T12:00:00+00:00",
+            "max_uses": 3,
+            "uses": 0,
+        }
+    }))
+    assert doctor.check_standing_approvals().status == PASS
 
 
 def test_standing_approvals_corrupt_fails(clean_env):
@@ -377,6 +408,29 @@ def _happy_responses(owner="cid-owner-1"):
     return {
         "/v1/host/health": (200, {"status": "ok", "capabilities": ["memory", "goals"], "notes": {"fd_limit": "16384"}}),
         "/v1/host/queue/stats": (200, {"by_status": {}}),
+        "/v1/host/admin/auth/status": (200, {
+            "auth": {
+                "legacy_configured": False,
+                "scoped_configured": True,
+                "dual_accept": False,
+            },
+            "telemetry": {
+                "persistent": True,
+                "error": None,
+                "totals": {"legacy_allow": 0, "scoped_allow": 4, "deny": 0},
+            },
+            "keyring": {
+                "configured": True,
+                "available": True,
+                "error": None,
+                "principal_count": 2,
+                "credential_count": 2,
+            },
+            "contact_grants": {
+                "error": None,
+                "total_exact_person_ids": 2,
+            },
+        }),
         f"/v1/host/contacts/{owner}": (200, {"contact_id": owner}),
         "/v1/host/health/llm": (200, {"ok": True, "tier": "small",
                                       "latency_ms": 40, "error": None}),
@@ -764,6 +818,136 @@ def test_cmd_doctor_human_output_exit_zero(clean_env, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 # Cognition / autonomy checks (v0.22.0) — warn paths
 # ---------------------------------------------------------------------------
+
+def test_posture_preset_with_reactive_loop_fails(clean_env, monkeypatch):
+    """Older server (no mode-source reporting, no coupling): calibration/
+    autonomous preset + reactive loop = nothing ever ticks — still FAIL."""
+    for preset in ("calibration", "autonomous"):
+        monkeypatch.setattr(doctor, "_http_get", _fake_http({
+            "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+                "preset": preset,
+                "COLONY_AUTONOMY_MODE": "reactive",
+                "COLONY_EXECUTOR_ENABLED": "true",
+                "COLONY_THINKING_MODE": "shadow",
+            }}),
+        }))
+        r = doctor.check_server_autonomy_posture(URL, "key", 5)
+        assert r.status == FAIL
+        assert "REACTIVE" in r.detail
+        assert "COLONY_AUTONOMY_MODE=proactive" in r.remedy
+
+
+def test_posture_explicit_reactive_pin_under_preset_fails(
+        clean_env, monkeypatch):
+    """H4.2: with coupling on, a reactive loop under a working preset can
+    only be an explicit COLONY_AUTONOMY_MODE=reactive pin — FAIL, with a
+    remedy that names the pin (it may be a deliberate rollback)."""
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_AUTONOMY_MODE": "reactive",
+            "COLONY_AUTONOMY_MODE_SOURCE": "env",
+            "COLONY_PRESET_LOOP_COUPLING": "on",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == FAIL
+    assert "explicitly pinned" in r.detail
+    assert "rollback" in r.remedy
+
+
+def test_posture_coupling_off_under_preset_fails(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "autonomous",
+            "COLONY_AUTONOMY_MODE": "reactive",
+            "COLONY_AUTONOMY_MODE_SOURCE": "default",
+            "COLONY_PRESET_LOOP_COUPLING": "off",
+            "COLONY_THINKING_MODE": "live",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == FAIL
+    assert "COLONY_PRESET_LOOP_COUPLING=off" in r.detail
+
+
+def test_posture_coupled_preset_mode_passes(clean_env, monkeypatch):
+    """The new normal: preset supplies proactive via coupling — PASS."""
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_AUTONOMY_MODE": "proactive",
+            "COLONY_AUTONOMY_MODE_SOURCE": "preset",
+            "COLONY_PRESET_LOOP_COUPLING": "on",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+    }))
+    assert doctor.check_server_autonomy_posture(URL, "key", 5).status == PASS
+
+
+def test_posture_coupling_failed_safe_warns_not_fails(clean_env, monkeypatch):
+    """Coupling on, nothing pinned, yet reactive: the fail-safe fired.
+    Degraded but by design — WARN, not FAIL."""
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_AUTONOMY_MODE": "reactive",
+            "COLONY_AUTONOMY_MODE_SOURCE": "default",
+            "COLONY_PRESET_LOOP_COUPLING": "on",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == WARN
+    assert "fails toward reactive" in r.detail
+
+
+def test_posture_calibration_proactive_passes_labeled_expected(
+        clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_AUTONOMY_MODE": "proactive",
+            "COLONY_EXECUTOR_ENABLED": "true",
+            "COLONY_THINKING_MODE": "shadow",
+            "COLONY_PROJECTS_MODE": "shadow",
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == PASS
+    # trust-gated shadow is the design under calibration, not a misconfig
+    assert "expected" in r.detail and "trust-gated" in r.detail
+
+
+def test_posture_without_mode_key_unchanged(clean_env, monkeypatch):
+    """Older servers that do not report the loop mode are not failed."""
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "calibration",
+            "COLONY_EXECUTOR_ENABLED": "true",
+            "COLONY_THINKING_MODE": "shadow",
+        }}),
+    }))
+    assert doctor.check_server_autonomy_posture(URL, "key", 5).status == PASS
+
+
+def test_posture_downgraded_below_preset_warns(clean_env, monkeypatch):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
+            "preset": "autonomous",
+            "COLONY_AUTONOMY_MODE": "proactive",
+            "COLONY_EXECUTOR_ENABLED": "true",
+            "COLONY_THINKING_MODE": "off",       # below preset's "live"
+            "COLONY_PROJECTS_MODE": "live",
+            "COLONY_SANDBOX_MODE": "dry_run",    # = preset default, expected
+        }}),
+    }))
+    r = doctor.check_server_autonomy_posture(URL, "key", 5)
+    assert r.status == WARN
+    assert "thinking=off" in r.detail
+    assert "sandbox" not in r.detail.split("below preset default")[1]
+
 
 def test_posture_all_off_warns(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({

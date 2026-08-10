@@ -30,7 +30,7 @@ from colony_sidecar.setup import (
     merge_crontab,
     run_workers_step,
 )
-from colony_sidecar.workers import queue_worker, skills_sync
+from colony_sidecar.workers import colony_worker, queue_worker, skills_sync
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +40,7 @@ def _clean_env(monkeypatch):
         "COLONY_WORKER_NODE_ID", "COLONY_AGENT_NAME", "COLONY_WORKER_MAX_JOBS",
         "HERMES_SKILLS_DIR", "COLONY_STATE_DIR", "COLONY_HOME",
         "COLONY_INIT_DEFAULTS",
+        "COLONY_AGENT_JOB_CLAIMS_ENABLED", "COLONY_WORKER_JOB_TYPES",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -80,6 +81,7 @@ def test_queue_worker_webhook_payload_lifecycle_urls():
     cfg = queue_worker.load_config()
     job = {
         "job_id": "job-42",
+        "claim_attempt_id": "attempt-42",
         "payload": {"action_hint": "agent_sync_github", "risk": "read_only",
                     "domain": "github", "description": "look around"},
     }
@@ -87,11 +89,23 @@ def test_queue_worker_webhook_payload_lifecycle_urls():
     inner = payload["payload"]
     assert payload["type"] == "agent_job"
     assert inner["job_id"] == "job-42"
+    assert inner["claim_attempt_id"] == "attempt-42"
     assert inner["action_hint"] == "agent_sync_github"
     assert inner["observations_url"] == "http://127.0.0.1:7777/v1/host/observations"
+    assert inner["heartbeat_url"] == "http://127.0.0.1:7777/v1/host/queue/jobs/job-42/heartbeat"
     assert inner["complete_url"] == "http://127.0.0.1:7777/v1/host/queue/jobs/job-42/complete"
     assert inner["fail_url"] == "http://127.0.0.1:7777/v1/host/queue/jobs/job-42/fail"
     assert inner["api_key_header"] == "X-API-Key"
+
+
+def test_bundled_hermes_job_route_is_retired_and_empty():
+    route = (
+        Path(__file__).resolve().parents[2]
+        / "plugins/hermes-plugin/examples/webhook-config.yaml"
+    ).read_text()
+    assert "routes: {}" in route
+    assert "heartbeat_url" not in route
+    assert "claim_attempt_id" not in route
 
 
 def test_queue_worker_claim_empty_response_is_none(monkeypatch):
@@ -111,6 +125,60 @@ def test_queue_worker_fire_failure_releases_claim(monkeypatch, capsys):
     assert ok is False
     assert released == ["http://127.0.0.1:7777/v1/host/queue/jobs/job-9/release"]
     assert "Webhook fire failed for job job-9" in capsys.readouterr().out
+
+
+def test_queue_worker_starts_claim_before_handing_it_to_agent(monkeypatch):
+    calls = []
+    claims = [{"job_id": "job-10", "payload": {}}, {}]
+
+    def fake_post(cfg, url, body, timeout=15):  # noqa: ARG001
+        calls.append(url.rsplit("/", 1)[-1])
+        if url.endswith("/jobs/claim"):
+            return claims.pop(0)
+        return {"success": True}
+
+    monkeypatch.setattr(queue_worker, "_post", fake_post)
+    monkeypatch.setattr(
+        queue_worker,
+        "fire_to_agent",
+        lambda cfg, job: calls.append("webhook") or True,
+    )
+    cfg = queue_worker.load_config()
+    assert queue_worker.run(cfg) == 1
+    assert calls.index("start") < calls.index("webhook")
+
+
+def test_global_claim_kill_switch_stops_standalone_queue_worker(
+        monkeypatch):
+    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
+    monkeypatch.setattr(
+        queue_worker, "register_worker",
+        lambda _cfg: (_ for _ in ()).throw(
+            AssertionError("registration must stay dark")
+        ),
+    )
+    monkeypatch.setattr(
+        queue_worker, "claim_job",
+        lambda _cfg: (_ for _ in ()).throw(
+            AssertionError("claim must stay dark")
+        ),
+    )
+    assert queue_worker.run(queue_worker.load_config()) == 0
+
+
+def test_global_claim_kill_switch_removes_agent_action_from_colony_worker(
+        monkeypatch):
+    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
+    monkeypatch.setenv("COLONY_WORKER_JOB_TYPES", "agent_action")
+    cfg = colony_worker.load_config()
+    assert cfg["job_types"] == []
+    monkeypatch.setattr(
+        colony_worker, "register_worker",
+        lambda _cfg: (_ for _ in ()).throw(
+            AssertionError("registration must stay dark")
+        ),
+    )
+    assert colony_worker.run_cycle(cfg) == 0
 
 
 def test_queue_worker_main_dry_run_no_network(monkeypatch, capsys):
@@ -456,19 +524,29 @@ _POLLER_DIR = Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin" 
 
 
 @pytest.mark.skipif(not _POLLER_DIR.is_dir(), reason="repo poller dir not present")
-@pytest.mark.parametrize("script,needle", [
-    ("colony-queue-worker.py", "dry run"),
-    ("colony-skills-sync.py", "No skills found"),
-])
-def test_wrapper_scripts_delegate_to_package(script, needle, tmp_path):
+def test_legacy_queue_wrapper_is_inert(tmp_path):
     env = {
         "PATH": "/usr/bin:/bin",
         "HOME": str(tmp_path),
         "HERMES_SKILLS_DIR": str(tmp_path / "no-skills"),
     }
-    args = [sys.executable, str(_POLLER_DIR / script)]
-    if script == "colony-queue-worker.py":
-        args.append("--dry-run")
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=30, env=env)
+    proc = subprocess.run(
+        [sys.executable, str(_POLLER_DIR / "colony-queue-worker.py"), "--dry-run"],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert proc.returncode == 78
+    assert "disabled" in proc.stderr.lower()
+
+
+def test_skills_sync_wrapper_still_delegates_to_package(tmp_path):
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "HERMES_SKILLS_DIR": str(tmp_path / "no-skills"),
+    }
+    proc = subprocess.run(
+        [sys.executable, str(_POLLER_DIR / "colony-skills-sync.py")],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
     assert proc.returncode == 0, proc.stderr
-    assert needle in proc.stdout
+    assert "No skills found" in proc.stdout

@@ -1,11 +1,14 @@
 """Tests for the full-state backup and restore system."""
 
 import json
+import os
 import sqlite3
+import stat
 from pathlib import Path
 
 import pytest
 
+import colony_sidecar.backup as backup_module
 from colony_sidecar.backup import (
     create_full_backup,
     restore_full_backup,
@@ -105,6 +108,37 @@ class TestDatabaseSnapshot:
         assert cur.fetchone()[0] == "Alice"
         conn.close()
 
+    def test_private_governed_ledger_snapshot_fails_closed_on_vacuum_error(
+        self, tmp_path, monkeypatch
+    ):
+        state = tmp_path / "state"
+        private = state / "governed-actions"
+        private.mkdir(mode=0o700, parents=True)
+        private.chmod(0o700)
+        ledger = private / "ledger.db"
+        conn = sqlite3.connect(str(ledger))
+        conn.execute("CREATE TABLE evidence (action_id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        ledger.chmod(0o600)
+
+        class FailingVacuumConnection:
+            def execute(self, _statement):
+                raise sqlite3.OperationalError("forced VACUUM failure")
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(
+            backup_module.sqlite3,
+            "connect",
+            lambda _path: FailingVacuumConnection(),
+        )
+        destination = tmp_path / "snapshot"
+        with pytest.raises(RuntimeError, match="governed action ledger"):
+            _snapshot_databases(state, destination)
+        assert not (destination / "governed-actions" / "ledger.db").exists()
+
 
 # ── Full backup/restore cycle ────────────────────────────────────────────
 
@@ -135,6 +169,149 @@ class TestFullCycle:
         conn = sqlite3.connect(str(restore_dir / "colony-contacts.db"))
         cur = conn.execute("SELECT name FROM contacts WHERE id = 'c1'")
         assert cur.fetchone()[0] == "Alice"
+        conn.close()
+
+    def test_backup_restores_private_governed_action_ledger(
+        self, colony_state, output_dir, tmp_path
+    ):
+        private = colony_state / "governed-actions"
+        private.mkdir(mode=0o700)
+        private.chmod(0o700)
+        ledger = private / "ledger.db"
+        conn = sqlite3.connect(str(ledger))
+        conn.execute("CREATE TABLE evidence (action_id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO evidence VALUES ('action-1')")
+        conn.commit()
+        conn.close()
+        ledger.chmod(0o600)
+
+        archive = create_full_backup(
+            colony_state,
+            output_dir,
+            include_graph=False,
+            include_vectors=False,
+        )
+        restore_dir = tmp_path / "restored-private"
+        summary = restore_full_backup(archive, restore_dir)
+
+        restored = restore_dir / "governed-actions" / "ledger.db"
+        assert "governed-actions/ledger.db" in summary["databases"]
+        assert stat.S_IMODE(restored.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(restored.stat().st_mode) == 0o600
+        conn = sqlite3.connect(str(restored))
+        assert conn.execute("SELECT action_id FROM evidence").fetchone()[0] == "action-1"
+        conn.close()
+
+    def test_private_ledger_restore_rejects_linked_parent_without_touching_target(
+        self, colony_state, output_dir, tmp_path
+    ):
+        private = colony_state / "governed-actions"
+        private.mkdir(mode=0o700)
+        private.chmod(0o700)
+        ledger = private / "ledger.db"
+        conn = sqlite3.connect(str(ledger))
+        conn.execute("CREATE TABLE evidence (action_id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        ledger.chmod(0o600)
+        archive = create_full_backup(
+            colony_state,
+            output_dir,
+            include_graph=False,
+            include_vectors=False,
+        )
+
+        restore_dir = tmp_path / "linked-parent-restore"
+        restore_dir.mkdir()
+        victim = tmp_path / "parent-victim"
+        victim.mkdir(mode=0o755)
+        before_mode = stat.S_IMODE(victim.stat().st_mode)
+        (restore_dir / "governed-actions").symlink_to(
+            victim, target_is_directory=True
+        )
+        with pytest.raises(ValueError, match="private governed action ledger"):
+            restore_full_backup(archive, restore_dir)
+        assert list(victim.iterdir()) == []
+        assert stat.S_IMODE(victim.stat().st_mode) == before_mode
+
+    @pytest.mark.parametrize("alias_kind", ["symlink", "hardlink"])
+    def test_private_ledger_restore_rejects_leaf_alias_without_touching_target(
+        self, colony_state, output_dir, tmp_path, alias_kind
+    ):
+        private = colony_state / "governed-actions"
+        private.mkdir(mode=0o700)
+        private.chmod(0o700)
+        ledger = private / "ledger.db"
+        conn = sqlite3.connect(str(ledger))
+        conn.execute("CREATE TABLE evidence (action_id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        ledger.chmod(0o600)
+        archive = create_full_backup(
+            colony_state,
+            output_dir,
+            include_graph=False,
+            include_vectors=False,
+        )
+
+        restore_dir = tmp_path / f"{alias_kind}-leaf-restore"
+        destination_parent = restore_dir / "governed-actions"
+        destination_parent.mkdir(mode=0o700, parents=True)
+        destination_parent.chmod(0o700)
+        victim = tmp_path / f"{alias_kind}-victim.db"
+        victim.write_bytes(b"do-not-touch")
+        victim.chmod(0o600)
+        destination = destination_parent / "ledger.db"
+        if alias_kind == "symlink":
+            destination.symlink_to(victim)
+        else:
+            os.link(victim, destination)
+        with pytest.raises(ValueError, match="private governed action ledger"):
+            restore_full_backup(archive, restore_dir)
+        assert victim.read_bytes() == b"do-not-touch"
+
+    def test_private_ledger_restore_never_rewinds_existing_evidence(
+        self, colony_state, output_dir, tmp_path
+    ):
+        private = colony_state / "governed-actions"
+        private.mkdir(mode=0o700)
+        private.chmod(0o700)
+        ledger = private / "ledger.db"
+        conn = sqlite3.connect(str(ledger))
+        conn.execute("CREATE TABLE evidence (action_id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        ledger.chmod(0o600)
+        archive = create_full_backup(
+            colony_state,
+            output_dir,
+            include_graph=False,
+            include_vectors=False,
+        )
+
+        restore_dir = tmp_path / "existing-ledger-restore"
+        destination_parent = restore_dir / "governed-actions"
+        destination_parent.mkdir(mode=0o700, parents=True)
+        destination_parent.chmod(0o700)
+        destination = destination_parent / "ledger.db"
+        destination.write_bytes(b"existing-execution-evidence")
+        destination.chmod(0o600)
+        before = destination.stat()
+        contacts = restore_dir / "colony-contacts.db"
+        conn = sqlite3.connect(str(contacts))
+        conn.execute("CREATE TABLE contacts (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO contacts VALUES ('c1', 'Existing State')")
+        conn.commit()
+        conn.close()
+        with pytest.raises(ValueError, match="already exists"):
+            restore_full_backup(archive, restore_dir)
+        after = destination.stat()
+        assert destination.read_bytes() == b"existing-execution-evidence"
+        assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+        conn = sqlite3.connect(str(contacts))
+        assert conn.execute(
+            "SELECT name FROM contacts WHERE id = 'c1'"
+        ).fetchone()[0] == "Existing State"
         conn.close()
 
     def test_restore_rejects_identity_mismatch(self, colony_state, output_dir, tmp_path):

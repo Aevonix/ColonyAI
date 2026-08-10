@@ -7,21 +7,30 @@ future shim) to mount Colony's intelligence as a plugin.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
 import os
 import re
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Body, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from colony_sidecar.goals.store import GoalNotFoundError
 from colony_sidecar import get_state_dir
+from colony_sidecar.events.stream import EventSubscriberBuffer
+from colony_sidecar.api.authority import (
+    record_attested_contact_grant,
+    request_authority,
+    resolve_request_person,
+    resolve_turn_person,
+)
 
 from colony_sidecar.api.schemas.host import (
     HostConfigureRequest,
@@ -36,9 +45,6 @@ from colony_sidecar.api.schemas.host import (
     ChainVerifyRequest,
     ChainVerifyResponse,
     CognitionCycleRequest,
-    CognitionCycleResponse,
-    CognitionGap,
-    CognitivePerformanceIndex,
     ContactCreateRequest,
     ContactIntroRequest,
     ContactIntroResponse,
@@ -56,6 +62,7 @@ from colony_sidecar.api.schemas.host import (
     ResponseGuardCheckRequest,
     ContextAssembleRequest,
     ContextAssembleResponse,
+    ContextProjectionAttestation,
     ContextSection,
     TemporalConfigRequest,
     TemporalConfigResponse,
@@ -245,6 +252,7 @@ def _to_dict(obj):
     return {}
 
 router = APIRouter(prefix="/v1/host", tags=["host"])
+v2_router = APIRouter(prefix="/v2/host", tags=["host-v2"])
 
 # ---------------------------------------------------------------------------
 # Module-level wiring — subsystems are injected by the server lifespan
@@ -256,21 +264,75 @@ _signal_collector = None
 _embedder = None
 _reasoning_loop = None
 _consolidator = None
-_event_subscribers: list[asyncio.Queue] = []
+_event_subscribers: list[EventSubscriberBuffer] = []
+_event_broadcast_lock = threading.RLock()
 
 
-def broadcast_event(event: dict) -> None:
-    """Push an event dict to all connected WebSocket subscribers.
+def _event_subscriber_queue_size() -> int:
+    """Configured bound for each live event subscriber."""
+    raw = os.environ.get("COLONY_EVENT_SUBSCRIBER_QUEUE_SIZE", "256")
+    try:
+        size = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid COLONY_EVENT_SUBSCRIBER_QUEUE_SIZE=%r; using 256", raw
+        )
+        return 256
+    if size < 1:
+        logger.warning(
+            "COLONY_EVENT_SUBSCRIBER_QUEUE_SIZE must be positive; using 256"
+        )
+        return 256
+    return min(size, 10_000)
+
+
+def broadcast_event(event: dict) -> Optional[dict]:
+    """Persist, canonicalize, then publish an event to live subscribers.
 
     Called by the autonomy loop, signal collector, and other subsystems
     when state changes that the host should know about (proactive
-    messages, briefings, anomalies, etc.).
+    messages, briefings, anomalies, etc.).  A journal failure suppresses the
+    live frame: clients must never observe an event which cannot be replayed.
     """
-    for q in _event_subscribers:
-        try:
-            q.put_nowait(event)
-        except Exception:
-            pass  # Queue full or closed — drop and continue
+    from colony_sidecar.events.journal import append_event_record
+
+    event_type = str(event.get("type", "unknown"))
+    payload = event.get("payload") or {}
+    occurred_at = str(event.get("occurred_at") or "") or None
+
+    # This lock preserves journal-sequence order in local live buffers when
+    # emitters run concurrently on request handlers or worker threads.
+    with _event_broadcast_lock:
+        record = append_event_record(
+            event_type,
+            payload,
+            occurred_at=occurred_at,
+        )
+        if record is None:
+            logger.error(
+                "Suppressing live event %s because journal append failed",
+                event_type,
+            )
+            return None
+
+        frame = {
+            **event,
+            "type": event_type,
+            "payload": payload,
+            "occurred_at": record["occurredAt"],
+            "recordedAt": record["recordedAt"],
+            "seq": record["seq"],
+            "eventId": record["ulid"],
+        }
+        for subscriber in tuple(_event_subscribers):
+            try:
+                subscriber.publish(dict(frame))
+            except Exception:
+                logger.exception(
+                    "Failed to enqueue event seq=%s for one subscriber",
+                    record["seq"],
+                )
+        return frame
 
 
 def set_graph(graph) -> None:
@@ -357,6 +419,18 @@ def supported_capabilities() -> List[str]:
         caps.append("world_model")
     if _metalearner is not None:
         caps.append("cognition")
+    if _cognition_spine is not None:
+        caps.append("cognition_spine")
+    if _situation_store is not None and _situation_reducer is not None:
+        caps.append("situation")
+    if _project_event_projector is not None:
+        caps.append("project_event_outbox")
+    if _cognition_evidence_store is not None \
+            and _cognition_evidence_reducer is not None \
+            and getattr(_cognition_evidence_reducer, "mode", "shadow") != "off":
+        caps.append("cognition_evidence")
+    if _drive_governance is not None and _drive_ranker is not None:
+        caps.append("drive_governance")
     if _research_pipeline is not None:
         caps.append("research")
     if _delivery_bridge is not None:
@@ -380,10 +454,23 @@ def supported_capabilities() -> List[str]:
     caps.append("events")
     if _commitment_store is not None:
         caps.append("commitments")
+        readiness = getattr(
+            _commitment_store, "resolution_recovery_readiness", None,
+        )
+        if readiness is not None:
+            try:
+                status = readiness()
+                capability = status.get("capability")
+                if status.get("ready") is True and capability:
+                    caps.append(str(capability))
+            except Exception:
+                pass
     if _affect_store is not None:
         caps.append("affect")
     if _facts_store is not None:
         caps.append("shared_facts")
+    if _p8_runtime is not None:
+        caps.append("tom_p8_shadow")
     if _pattern_store is not None:
         caps.append("patterns")
     if _surprise_store is not None:
@@ -396,6 +483,8 @@ def supported_capabilities() -> List[str]:
     if _world_store is not None and hasattr(_world_store, '_config') and _world_store._config.backend == "neo4j":
         caps.append("neo4j_backend")
     caps.append("event_journal")
+    if _external_event_intake is not None:
+        caps.append("external_cognition_events")
     caps.append("context_compression")
     caps.append("skill_sandbox")
     caps.append("security_scanner")
@@ -437,14 +526,23 @@ async def configure_host(body: HostConfigureRequest) -> HostConfigureResponse:
         new_router = LLMRouter(tiers=tiers)
         set_llm_router(new_router)
 
-        # Re-wire the reasoning loop with the new router
+        # Re-wire the reasoning loop with the new router while retaining the
+        # one executor that owns native/dynamic handlers and the shared
+        # DirectiveGuard policy. Replacing it here used to silently remove all
+        # three after a host config refresh.
         if _reasoning_loop is not None:
+            tools = _tool_executor or getattr(_reasoning_loop, "_tools", None)
+            if tools is None:
+                tools = ToolExecutor(graph_client=_graph)
+            else:
+                tools._graph = _graph
             _reasoning_loop = ReasoningLoop(
                 model=new_router,
-                tools=ToolExecutor(graph_client=_graph),
+                tools=tools,
             )
 
             set_reasoning_loop(_reasoning_loop)
+            set_tool_executor(tools)
             logger.info(
                 "ReasoningLoop re-wired with host LLM config (provider=%s)",
                 body.llm.get("provider", "unknown"),
@@ -535,6 +633,25 @@ async def list_models() -> ModelListResponse:
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
+
+_TEMPORAL_HEALTH_POLICIES = frozenset({"enforce", "advisory"})
+
+
+def _temporal_health_policy() -> str:
+    """Return the fail-closed policy for temporal activity warnings.
+
+    ``stale_flags`` remain observable under both policies.  ``advisory`` only
+    prevents those activity timestamps from changing the host's top-level
+    readiness; it never clears another degradation source.
+    """
+
+    configured = os.environ.get(
+        "COLONY_TEMPORAL_HEALTH_POLICY", "enforce"
+    ).strip().lower()
+    if configured not in _TEMPORAL_HEALTH_POLICIES:
+        return "enforce"
+    return configured
+
 
 @router.get("/health", response_model=HostHealthResponse)
 async def health() -> HostHealthResponse:
@@ -654,11 +771,22 @@ async def health() -> HostHealthResponse:
     if _task_queue is not None:
         notes["task_queue"] = "TaskQueueManager wired"
     if _commitment_store is not None:
-        notes["commitments"] = "CommitmentStore wired"
+        if "commitment_resolution_recovery_v1" in caps:
+            notes["commitments"] = (
+                "CommitmentStore wired (resolution recovery v1 ready)"
+            )
+        elif hasattr(_commitment_store, "resolution_recovery_readiness"):
+            notes["commitments"] = (
+                "CommitmentStore wired (resolution recovery unavailable)"
+            )
+        else:
+            notes["commitments"] = "CommitmentStore wired"
     if _affect_store is not None:
         notes["affect"] = "AffectStore wired"
     if _facts_store is not None:
         notes["shared_facts"] = "SharedFactsStore wired"
+    if _p8_runtime is not None:
+        notes["tom_p8"] = "P8 scoped context + outbound shadow observer wired"
     if _pattern_store is not None:
         notes["patterns"] = "PatternStore wired"
     if _surprise_store is not None:
@@ -671,6 +799,12 @@ async def health() -> HostHealthResponse:
 
     health_status = "ok"
     if model_mismatch:
+        health_status = "degraded"
+    if (
+        _commitment_store is not None
+        and hasattr(_commitment_store, "resolution_recovery_readiness")
+        and "commitment_resolution_recovery_v1" not in caps
+    ):
         health_status = "degraded"
 
     # Build temporal metrics
@@ -691,7 +825,10 @@ async def health() -> HostHealthResponse:
                 "prefetch": float(os.environ.get("COLONY_STALE_PREFETCH_HOURS", "24.0")),
             }
             temporal_data = await _telemetry.to_dict(thresholds)
-            if temporal_data.get("stale_flags"):
+            if (
+                temporal_data.get("stale_flags")
+                and _temporal_health_policy() == "enforce"
+            ):
                 health_status = "degraded"
             from colony_sidecar.api.schemas.host import TemporalMetrics
             temporal = TemporalMetrics(**temporal_data)
@@ -703,6 +840,360 @@ async def health() -> HostHealthResponse:
         capabilities=caps,
         notes=notes,
         temporal=temporal,
+    )
+
+
+@router.get("/admin/auth/status")
+async def auth_migration_status(request: Request) -> dict:
+    """Admin-only scoped-auth migration evidence without credential material."""
+
+    telemetry = getattr(request.state, "colony_auth_telemetry", None)
+    grants = getattr(request.state, "colony_contact_grants", None)
+    keyring_status = getattr(request.state, "colony_keyring_status", None) or {
+        "configured": False,
+        "available": False,
+        "error": "scoped keyring status is not attached to this application",
+        "principal_count": 0,
+        "credential_count": 0,
+    }
+    telemetry_status = telemetry.snapshot() if telemetry is not None else {
+        "enabled": False,
+        "persistent": False,
+        "error": "auth telemetry is not attached to this application",
+        "totals": {},
+        "principals": {},
+        "records": [],
+    }
+    grants_status = grants.status() if grants is not None else {
+        "configured": False,
+        "available": False,
+        "error": "exact contact grants are not attached to this application",
+        "principal_counts": {},
+        "total_exact_person_ids": 0,
+    }
+    auth_configuration = getattr(request.state, "colony_auth_configuration", None) or {
+        "legacy_configured": False,
+        "scoped_configured": False,
+        "dual_accept": False,
+    }
+    return {
+        "auth": auth_configuration,
+        "telemetry": telemetry_status,
+        "keyring": keyring_status,
+        "contact_grants": grants_status,
+        "secrets_exposed": False,
+    }
+
+
+def _p8_viewer_for_request(
+    request: Request | None,
+    resolved_person_id: str,
+    *,
+    server_resolved: bool = False,
+):
+    """Seal a P8 viewer from middleware authority and a resolved person.
+
+    Body channel/session values are deliberately absent: until a transport
+    attests a conversation scope server-side, conversation-scoped P8 facts
+    remain inaccessible.
+    """
+
+    from colony_sidecar.tom.visibility import ViewerContextV1
+
+    authority = request_authority(request)
+    person = str(resolved_person_id or "").strip()
+    if (
+        not authority.authenticated
+        or authority.anonymous
+        or authority.legacy
+        or not authority.principal_id
+        or not person
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "p8_scoped_authority_required",
+                "message": "P8 requires a scoped authenticated principal",
+            },
+        )
+    granted = person in authority.person_ids
+    resolved_grant = (
+        server_resolved and authority.has_scope("turns:resolve-sender"))
+    if not granted and not resolved_grant:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "person_scope_not_granted",
+                "message": "P8 viewer exceeds principal person authority",
+            },
+        )
+    owner = (
+        os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+        or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+        or "owner"
+    )
+    material = {
+        "principal_id": authority.principal_id,
+        "credential_id": authority.credential_id,
+        "viewer_person_id": person,
+        "owner_person_id": owner,
+        "person_ids": sorted(authority.person_ids),
+        "audiences": sorted(authority.audiences),
+        "server_resolved": bool(server_resolved),
+    }
+    import hashlib
+    revision = hashlib.sha256(json.dumps(
+        material,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")).hexdigest()
+    return ViewerContextV1(
+        principal_id=authority.principal_id,
+        viewer_person_id=person,
+        owner_person_id=owner,
+        audiences=tuple(sorted(authority.audiences)),
+        conversation_scope="",
+        scope_revision=f"scope:{revision}",
+        attested=True,
+    )
+
+
+def _p8_legacy_global_context_allowed(viewer) -> bool:
+    """Keep untyped legacy-global content inside the exact owner context.
+
+    P8 facts carry immutable visibility envelopes. Several older context
+    producers do not yet emit one at all (goals, initiatives, briefings,
+    world-model entities, directives, surprises, and other global snapshots).
+    While P8 is enabled, those sources must not even be queried for a guest or
+    an unsealed migration caller. P8-off deliberately preserves the legacy
+    context contract byte-for-byte.
+    """
+
+    if _p8_runtime is None:
+        return True
+    return bool(
+        viewer is not None
+        and getattr(viewer, "attested", False)
+        and getattr(viewer, "viewer_person_id", "")
+        and getattr(viewer, "viewer_person_id", "")
+        == getattr(viewer, "owner_person_id", "")
+    )
+
+
+def _p8_exact_person_context_allowed(viewer) -> bool:
+    """Require one server-attested exact viewer before person-store queries.
+
+    Empty selectors and legacy/body-selected people are global selectors in
+    several old stores. While P8 is attached, absence of a sealed viewer is a
+    hard no-query boundary rather than permission to fall back to global or
+    body-claimed owner data. P8-off retains the historical migration contract.
+    """
+
+    if _p8_runtime is None:
+        return True
+    return bool(
+        viewer is not None
+        and getattr(viewer, "attested", False)
+        and getattr(viewer, "viewer_person_id", "")
+    )
+
+
+def _require_scoped_context_runtime_for_guest(
+    request: Request | None,
+    resolved_person_id: str,
+) -> None:
+    """Stop scoped guest assembly before legacy-global producers can run.
+
+    P8 is the visibility boundary for non-owner context.  If that runtime is
+    unavailable, a scoped guest request must receive a clear readiness error
+    instead of silently falling through to the historical owner-global
+    assembly path.  The exact scoped owner, the temporary legacy bearer, and
+    local anonymous development retain their migration behavior.
+    """
+
+    if _p8_runtime is not None:
+        return
+    authority = request_authority(request)
+    if authority.legacy or authority.anonymous or not authority.authenticated:
+        return
+    owner = _owner_person_id()
+    person = str(resolved_person_id or "").strip()
+    exact_owner = bool(
+        person
+        and person == owner
+        and authority.viewer_person_id == owner
+        and owner in authority.person_ids
+    )
+    if exact_owner:
+        return
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "scoped_context_runtime_unavailable",
+            "message": (
+                "scoped guest context is unavailable until the P8 "
+                "visibility runtime is ready"
+            ),
+        },
+    )
+
+
+def _context_projection_attestation(
+    *,
+    contact_id: str,
+    viewer,
+) -> ContextProjectionAttestation:
+    """Describe only server-observed viewer authority and P8 readiness."""
+
+    viewer_id = str(getattr(viewer, "viewer_person_id", "") or "")
+    owner_id = str(getattr(viewer, "owner_person_id", "") or "")
+    attested = bool(
+        viewer is not None
+        and getattr(viewer, "attested", False)
+        and viewer_id
+        and viewer_id == str(contact_id or "").strip()
+    )
+    raw_mode = str(getattr(_p8_runtime, "mode", "off") or "off").lower()
+    mode = raw_mode if raw_mode in {"shadow", "live"} else "off"
+    scoped_ready = bool(attested and _p8_runtime is not None and mode != "off")
+    return ContextProjectionAttestation(
+        viewer_person_id=viewer_id if attested else "",
+        viewer_attested=attested,
+        viewer_is_owner=bool(attested and owner_id and viewer_id == owner_id),
+        p8_mode=mode,
+        scoped_projection_ready=scoped_ready,
+        legacy_global_allowed=bool(
+            attested and _p8_legacy_global_context_allowed(
+                viewer if _p8_runtime is not None else None
+            )
+        ),
+    )
+
+def _p8_tool_actor_policy(
+    request: Request | None,
+    resolved_person_id: str | None,
+):
+    """Derive tool capabilities only from authenticated request authority.
+
+    P8 legacy handlers still accept arbitrary selectors inside tool argument
+    dictionaries. Until each handler has typed person/resource envelopes, only
+    the exact sealed owner may use private reads, and mutations additionally
+    require ``tools:mutate``. Guests retain the public information tools.
+    """
+
+    from colony_sidecar.reasoning.tool_policy import ToolActorPolicy
+
+    authority = request_authority(request)
+    person = str(resolved_person_id or "").strip()
+    sealed = bool(
+        authority.authenticated
+        and not authority.anonymous
+        and not authority.legacy
+        and person
+        and authority.viewer_person_id == person
+        and person in authority.person_ids
+    )
+    owner = (
+        os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+        or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+        or "owner"
+    )
+    is_owner = sealed and person == owner
+    return ToolActorPolicy(
+        principal_id=str(authority.principal_id or "unsealed"),
+        viewer_person_id=person if sealed else "",
+        allow_private_read=is_owner,
+        allow_mutation=is_owner and authority.has_scope("tools:mutate"),
+    )
+
+
+def _p8_filter_graph_recall(
+    rows: List[Mapping[str, Any]],
+) -> List[Mapping[str, Any]]:
+    """Remove SharedFacts graph mirrors while P8 owns fact rendering.
+
+    Current writes and the legacy backfill both use the exact source URI.
+    The bounded metadata check covers older mirrors that retained only the
+    marker.  Those memories are rendered through the typed P8 projection
+    instead, so an unavailable/unauthorized envelope stays absent.
+    """
+
+    if _p8_runtime is None:
+        return rows
+
+    def _is_shared_fact_mirror(row: Mapping[str, Any]) -> bool:
+        if str(row.get("source_uri") or "") == "tom:shared_fact":
+            return True
+        metadata = row.get("metadata")
+        if isinstance(metadata, Mapping):
+            return metadata.get("shared_fact") is True
+        raw = str(metadata or "")
+        return bool(
+            len(raw) <= 4_096
+            and re.search(
+                r"[\"']shared_fact[\"']\s*:\s*(?:true|True|1)",
+                raw,
+            )
+        )
+
+    return [
+        row for row in rows
+        if isinstance(row, Mapping) and not _is_shared_fact_mirror(row)
+    ]
+
+
+@router.get("/tom/p8/status")
+async def tom_p8_status(request: Request) -> dict:
+    authority = request_authority(request)
+    person = str(authority.viewer_person_id or "").strip()
+    _p8_viewer_for_request(request, person)
+    if _p8_runtime is None:
+        return {
+            "enabled": False,
+            "mode": "off",
+            "delivery_effect": False,
+            "authority_granted": False,
+            "synchronous_voice_gate": False,
+            "recipient_audit_scope": "owner_wide_or_exact_scope_revision",
+            "fact_min_confidence": None,
+        }
+    return _p8_runtime.status()
+
+
+@router.get("/tom/p8/deck")
+async def tom_p8_deck(
+    request: Request,
+    person_id: Optional[str] = Query(None),
+    max_facts: int = Query(24, ge=1, le=64),
+    max_arcs: int = Query(24, ge=1, le=64),
+    max_audit_events: int = Query(64, ge=1, le=256),
+) -> dict:
+    resolved = resolve_request_person(request, claimed_person_id=person_id)
+    viewer = _p8_viewer_for_request(request, str(resolved or ""))
+    if _p8_runtime is None:
+        return {
+            "enabled": False,
+            "mode": "off",
+            "facts": {"facts": []},
+            "visibility": {"envelopes": []},
+            "arcs": {"arcs": []},
+            "recipient_audit": {"events": []},
+            "coverage": {
+                "status": "no_samples", "coverage_complete": False,
+            },
+            "advisory_only": True,
+            "synchronous_voice_gate": False,
+            "recipient_audit_scope": "owner_wide_or_exact_scope_revision",
+            "fact_min_confidence": None,
+        }
+    return _p8_runtime.deck_projection(
+        viewer,
+        now=datetime.now(timezone.utc),
+        subject_person_id=str(resolved or ""),
+        max_facts=max_facts,
+        max_arcs=max_arcs,
+        max_audit_events=max_audit_events,
     )
 
 
@@ -747,12 +1238,21 @@ def _validate_skill_id(skill_id: str) -> None:
 
 
 @router.post("/memory/read", response_model=MemoryReadResponse)
-async def memory_read(body: MemoryReadRequest) -> MemoryReadResponse:
+async def memory_read(
+    body: MemoryReadRequest,
+    request: Request = None,
+) -> MemoryReadResponse:
+    person_id = resolve_request_person(
+        request,
+        claimed_person_id=body.person_id,
+        audience=body.audience,
+    )
+    body.person_id = person_id
     if _graph is None:
         return MemoryReadResponse(entries=[])
     try:
         entries_raw = await _graph.read_memories(
-            person_id=body.person_id,
+            person_id=person_id,
             memory_id=body.memory_id,
             limit=body.limit or 20,
         )
@@ -801,8 +1301,37 @@ async def memory_status():
     }
 
 
+@router.get("/memory/distill-preview")
+async def memory_distill_preview(limit: int = 50) -> Dict[str, Any]:
+    """Shadow distill previews: while COLONY_DISTILL_TURNS is off, every stored
+    turn also computes what distillation WOULD have stored; the last 50 pairs
+    (original vs distilled, newest first) live in an in-memory ring here so the
+    flip can be validated against real traffic before it changes stored content."""
+    enabled = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
+    if _graph is None or not hasattr(_graph, "distill_preview"):
+        return {"enabled": enabled, "count": 0, "preview": []}
+    try:
+        items = _graph.distill_preview()[: max(0, int(limit))]
+    except Exception as exc:
+        logger.warning("memory_distill_preview failed: %s", exc)
+        return {"enabled": enabled, "count": 0, "preview": []}
+    return {"enabled": enabled, "count": len(items), "preview": items}
+
+
 @router.post("/memory/write", response_model=MemoryWriteResponse)
-async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
+async def memory_write(
+    body: MemoryWriteRequest,
+    request: Request = None,
+) -> MemoryWriteResponse:
+    person_id = resolve_request_person(
+        request,
+        claimed_person_id=body.person_id,
+        context_person_id=(body.context.contact_id if body.context else None),
+        audience=body.audience,
+    )
+    body.person_id = person_id
+    if body.context is not None and person_id is not None:
+        body.context.contact_id = person_id
     if _graph is None:
         # Degrade gracefully to match the pattern used by the rest of
         # the router (list_insights, list_briefings, etc.): when the
@@ -810,8 +1339,6 @@ async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
         # write as not persisted rather than raising 501.
         return MemoryWriteResponse(id="", accepted=False)
     try:
-        # Fallback to context.contact_id if person_id not provided
-        person_id = body.person_id or (body.context.contact_id if body.context else None)
         memory_id = await _graph.store_memory(
             content=body.content,
             person_id=person_id,
@@ -834,7 +1361,16 @@ async def memory_write(body: MemoryWriteRequest) -> MemoryWriteResponse:
 
 
 @router.post("/memory/search", response_model=MemorySearchResponse)
-async def memory_search(body: MemorySearchRequest) -> MemorySearchResponse:
+async def memory_search(
+    body: MemorySearchRequest,
+    request: Request = None,
+) -> MemorySearchResponse:
+    person_id = resolve_request_person(
+        request,
+        claimed_person_id=body.person_id,
+        audience=body.audience,
+    )
+    body.person_id = person_id
     if _graph is None:
         return MemorySearchResponse(entries=[])
     try:
@@ -842,6 +1378,7 @@ async def memory_search(body: MemorySearchRequest) -> MemorySearchResponse:
             query=body.query,
             limit=body.limit or 10,
             min_confidence=body.min_confidence if body.min_confidence is not None else 0.1,
+            person_id=person_id,
         )
         entries = [
             MemoryEntry(
@@ -1307,12 +1844,29 @@ async def memory_search_multimodal(body: MultimodalSearchRequest) -> MultimodalS
         else:
             raise HTTPException(status_code=400, detail="No query provided (use query or query_image)")
 
+        p8_memory_policy = (
+            _p8_runtime is not None and col == Collection.MEMORIES)
+        search_limit = body.limit
+        if p8_memory_policy:
+            requested = max(1, min(int(body.limit or 10), 100))
+            search_limit = min(max(requested * 20, requested), 200)
+
         results = await store.search_cross_modal(
             col, query_vector,
-            limit=body.limit,
+            limit=search_limit,
             filter_modality=body.filter_modality,
             min_score=body.min_score,
         )
+        if p8_memory_policy:
+            filterer = getattr(
+                _graph, "filter_memory_vector_results", None)
+            if not callable(filterer):
+                # Ambiguous legacy vector text cannot be authorized without
+                # authoritative graph hydration.
+                results = []
+            else:
+                results = await filterer(results)
+            results = results[:max(0, int(body.limit))]
 
         model_id = ""
         if hasattr(_embedder, "_provider") and hasattr(_embedder._provider, "_config"):
@@ -1423,6 +1977,34 @@ async def migrate_status(task_id: str) -> MigrateResponse:
     )
 
 
+class VectorVacuumRequest(BaseModel):
+    dry_run: bool = True
+    max_delete: Optional[int] = None
+
+
+@router.post("/memory/vector-vacuum")
+async def memory_vector_vacuum(body: VectorVacuumRequest) -> dict:
+    """Explicit admin op: remove orphaned memory vectors (ANN entries whose
+    graph node was deleted without its vector). Orphans keep matching in
+    semantic search and then vanish at hydration, stealing recall slots.
+
+    dry_run defaults true (count + sample only). Fails closed: a Neo4j
+    error aborts before any deletion — see ColonyGraph.vacuum_orphan_vectors.
+    """
+    if _graph is None:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                            detail="Memory graph not initialized")
+    if not hasattr(_graph, "vacuum_orphan_vectors"):
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                            detail="Graph backend lacks vacuum_orphan_vectors")
+    try:
+        return await _graph.vacuum_orphan_vectors(
+            dry_run=body.dry_run, max_delete=body.max_delete)
+    except Exception as exc:
+        raise HTTPException(status_code=500,
+                            detail=f"vector vacuum aborted: {exc}")
+
+
 @router.post("/memory/index", response_model=IndexResponse)
 async def memory_index(body: IndexRequest) -> IndexResponse:
     """Embed and store items in one call."""
@@ -1511,7 +2093,8 @@ async def memory_index(body: IndexRequest) -> IndexResponse:
 
 
 async def _build_temporal_section(
-    contact_id: Optional[str], override_tz: Optional[str] = None
+    contact_id: Optional[str], override_tz: Optional[str] = None,
+    *, include_global_heads_up: bool = True,
 ) -> ContextSection:
     """The agent's reference frame for "now" (v0.21.0, factored for per-turn use).
 
@@ -1543,37 +2126,40 @@ async def _build_temporal_section(
             f"Last exchange with {contact_label}: {_temporal.humanize_delta(li)} "
             f"({_temporal.bucket(li, agent_tz)})."
         )
-    try:
-        from colony_sidecar.util.session_safety import load_last_user_message_at
-        last_owner = load_last_user_message_at()
-        if last_owner:
-            t_lines.append(f"Owner last messaged {_temporal.humanize_delta(last_owner)}.")
-    except Exception:
-        pass
+    if include_global_heads_up:
+        try:
+            from colony_sidecar.util.session_safety import load_last_user_message_at
+            last_owner = load_last_user_message_at()
+            if last_owner:
+                t_lines.append(
+                    f"Owner last messaged {_temporal.humanize_delta(last_owner)}.")
+        except Exception:
+            pass
     # Heads-up: time-sensitive items (overdue commitments + cadence-overdue contacts)
     heads = []
-    try:
-        if _commitment_store is not None:
-            for c in (_commitment_store.get_overdue() or [])[:3]:
-                desc = (c.get("description") or "a commitment")[:80]
-                heads.append(
-                    f"⚠️ Overdue: {desc} (was due {_temporal.humanize_delta(c.get('due_at'))})"
+    if include_global_heads_up:
+        try:
+            if _commitment_store is not None:
+                for c in (_commitment_store.get_overdue() or [])[:3]:
+                    desc = (c.get("description") or "a commitment")[:80]
+                    heads.append(
+                        f"⚠️ Overdue: {desc} (was due {_temporal.humanize_delta(c.get('due_at'))})"
+                    )
+        except Exception:
+            pass
+        try:
+            if _contacts_store is not None:
+                exclude = {contact_id} if contact_id else set()
+                overdue_contacts = await _contacts_store.compute_cadence_overdue(
+                    overdue_only=True, limit=3, exclude_ids=exclude,
                 )
-    except Exception:
-        pass
-    try:
-        if _contacts_store is not None:
-            exclude = {contact_id} if contact_id else set()
-            overdue_contacts = await _contacts_store.compute_cadence_overdue(
-                overdue_only=True, limit=3, exclude_ids=exclude,
-            )
-            for o in overdue_contacts[:2]:
-                heads.append(
-                    f"🕰️ Haven't talked to {o['name']} in {int(o['days_since'])}d "
-                    f"(usually ~{o['cadence_days']:g}d)."
-                )
-    except Exception:
-        pass
+                for o in overdue_contacts[:2]:
+                    heads.append(
+                        f"🕰️ Haven't talked to {o['name']} in {int(o['days_since'])}d "
+                        f"(usually ~{o['cadence_days']:g}d)."
+                    )
+        except Exception:
+            pass
     if heads:
         t_lines.append("Heads-up:")
         t_lines.extend("  " + h for h in heads)
@@ -1593,28 +2179,126 @@ async def _build_temporal_section(
 
 @router.get("/context/temporal")
 async def context_temporal(contact_id: Optional[str] = None,
-                           tz: Optional[str] = None) -> dict:
+                           tz: Optional[str] = None,
+                           request: Request = None) -> dict:
     """Always-fresh temporal brief for per-turn injection (no caching layer).
 
     The memory provider calls this every turn so the agent's Current Time
     block can never go stale inside a long-running session (the full
     /context/assemble result is session-cached by design; time must not be).
     """
-    section = await _build_temporal_section(contact_id, tz)
+    # Preserve the exact legacy selector contract while P8 is off. Scoped
+    # resolution is required only when it will attest (or deny) a P8 viewer.
+    resolved_contact = contact_id
+    if _p8_runtime is not None:
+        resolved_contact = resolve_request_person(
+            request, context_person_id=contact_id) or contact_id
+    viewer = None
+    if _p8_runtime is not None and resolved_contact:
+        try:
+            viewer = _p8_viewer_for_request(request, resolved_contact)
+        except HTTPException:
+            logger.debug(
+                "P8 temporal global heads-up omitted: scoped viewer unavailable")
+    exact_person_allowed = _p8_exact_person_context_allowed(viewer)
+    section = await _build_temporal_section(
+        resolved_contact if exact_person_allowed else None,
+        tz,
+        include_global_heads_up=_p8_legacy_global_context_allowed(viewer),
+    )
     return {"id": section.id, "title": section.title, "body": section.body}
 
 
+@router.get(
+    "/context/projection-readiness",
+    response_model=ContextProjectionAttestation,
+)
+async def context_projection_readiness(
+    request: Request,
+    contact_id: str = Query(..., min_length=1, max_length=256),
+) -> ContextProjectionAttestation:
+    """Check a viewer-specific context projection without querying producers."""
+
+    resolved = resolve_request_person(
+        request,
+        context_person_id=contact_id,
+    ) or ""
+    viewer = None
+    try:
+        viewer = _p8_viewer_for_request(request, resolved)
+    except HTTPException:
+        # Return an explicit negative posture.  This endpoint never falls back
+        # to body-selected or legacy-global context.
+        pass
+    return _context_projection_attestation(
+        contact_id=resolved,
+        viewer=viewer,
+    )
+
+
 @router.post("/context/assemble", response_model=ContextAssembleResponse)
-async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleResponse:
+async def context_assemble(
+    body: ContextAssembleRequest,
+    request: Request = None,
+) -> ContextAssembleResponse:
+    body.context.contact_id = resolve_request_person(
+        request,
+        context_person_id=body.context.contact_id,
+        audience=body.audience,
+    ) or body.context.contact_id
+    _require_scoped_context_runtime_for_guest(
+        request, body.context.contact_id)
+    _attested_viewer = None
+    try:
+        _attested_viewer = _p8_viewer_for_request(
+            request, body.context.contact_id)
+    except HTTPException:
+        logger.debug("Context viewer attestation unavailable")
+    _projection = _context_projection_attestation(
+        contact_id=body.context.contact_id,
+        viewer=_attested_viewer,
+    )
+    if body.projection_policy == "scoped_viewer_required" and not (
+        _projection.viewer_attested
+        and _projection.scoped_projection_ready
+        and not _projection.legacy_global_allowed
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "scoped_projection_required",
+                "message": (
+                    "exact viewer authority and a P8 scoped projection are "
+                    "required before context producers may run"
+                ),
+            },
+        )
+    _p8_viewer = _attested_viewer if _p8_runtime is not None else None
+    _legacy_global_allowed = _p8_legacy_global_context_allowed(_p8_viewer)
+    _exact_person_allowed = _p8_exact_person_context_allowed(_p8_viewer)
+    _tom_context_facts = _facts_store
+    if _p8_runtime is not None:
+        _tom_context_facts = (
+            _p8_runtime.projected_facts_view(
+                _p8_viewer, now=datetime.now(timezone.utc))
+            if _p8_viewer is not None else None
+        )
     # Context assembly pulls from identity + memory + goals + contacts + world model + skills
     sections: list[ContextSection] = []
     query_text = body.incoming_message.content if body.incoming_message else ""
 
     # --- Temporal Context: see _build_temporal_section ---
     try:
-        cid = body.context.contact_id if body.context else None
+        cid = (
+            body.context.contact_id
+            if body.context and _exact_person_allowed else None
+        )
         override_tz = getattr(body.context, "timezone", None) if body.context else None
-        sections.append(await _build_temporal_section(cid, override_tz))
+        sections.append(await _build_temporal_section(
+            cid,
+            override_tz,
+            include_global_heads_up=_legacy_global_allowed,
+        ))
     except Exception as exc:
         logger.debug("context_assemble temporal section failed: %s", exc)
 
@@ -1662,12 +2346,22 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         logger.debug("context_assemble self-knowledge section failed: %s", exc)
 
     # --- Memory ---
-    if _graph is not None and query_text:
+    if _exact_person_allowed and _graph is not None and query_text:
         try:
-            results = await _graph.recall(
-                query=query_text,
-                limit=5,
-            )
+            recall_kwargs = {
+                "query": query_text,
+                "limit": 5,
+                # Hard viewer/recipient candidate boundary. Ranking happens
+                # only inside this person's ABOUT-linked memories; a miss
+                # remains empty rather than retrying against global memory.
+                "person_id": (
+                    body.context.contact_id if body.context else None),
+            }
+            if _p8_runtime is not None:
+                recall_kwargs["exclude_source_uris"] = [
+                    "tom:shared_fact"]
+            results = await _graph.recall(**recall_kwargs)
+            results = _p8_filter_graph_recall(results)
             if results:
                 body_text = "\n".join(
                     f"- [{r.get('relevance', r.get('score', 0)):.2f}] {r.get('content', '')}"
@@ -1683,7 +2377,7 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.warning("context_assemble memory search failed: %s", exc)
 
     # --- Active Goals ---
-    if _goals_store is not None:
+    if _legacy_global_allowed and _goals_store is not None:
         try:
             from colony_sidecar.goals.models import GoalStatus
             goals = _goals_store.list_goals(status=GoalStatus.ACTIVE)
@@ -1702,7 +2396,8 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.warning("context_assemble goals failed: %s", exc)
 
     # --- Pending Initiatives (v0.13.0) ---
-    if body.include_initiatives and _initiative_store is not None:
+    if _legacy_global_allowed and body.include_initiatives \
+            and _initiative_store is not None:
         try:
             pending = _initiative_store.list(status=["pending"], limit=10)
             if pending:
@@ -1720,7 +2415,8 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.warning("context_assemble initiatives failed: %s", exc)
 
     # --- Contact Briefing ---
-    if _briefings_engine is not None and body.context and body.context.contact_id:
+    if _legacy_global_allowed and _briefings_engine is not None \
+            and body.context and body.context.contact_id:
         try:
             briefings = _briefings_engine.get_recent(limit=3)
             if briefings:
@@ -1735,9 +2431,9 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.warning("context_assemble briefings failed: %s", exc)
 
     # --- World Model Entities ---
-    if _world_store is not None and query_text:
+    if _legacy_global_allowed and _world_store is not None and query_text:
         try:
-            entities = await _world_store.find_entities(query=query_text, limit=5)
+            entities = await _world_context_entities(query_text, limit=5)
             if entities:
                 body_text = "\n".join(
                     f"- [{e.entity_type}] {e.name}" if hasattr(e, 'entity_type') else f"- {e}"
@@ -1769,14 +2465,22 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
 
     # --- Pending Commitments ---
     contact_id = body.context.contact_id if body.context else None
-    if _commitment_store is not None:
+    if _exact_person_allowed and _commitment_store is not None:
         try:
             commitments = _commitment_store.list(
                 person_id=contact_id, status=["pending", "overdue"], limit=5,
             )
-            overdue = _commitment_store.get_overdue()
-            if contact_id:
-                overdue = [c for c in overdue if c.get("person_id") == contact_id]
+            # The exact-person list already includes overdue rows. A sealed
+            # guest must not trigger a global get-then-filter query.
+            overdue = (
+                _commitment_store.get_overdue()
+                if _legacy_global_allowed else []
+            )
+            if contact_id and overdue:
+                overdue = [
+                    c for c in overdue
+                    if c.get("person_id") == contact_id
+                ]
             _listed = (commitments if isinstance(commitments, list)
                        else commitments.get("commitments", []))
             _seen_ids = {c.get("id") for c in _listed}
@@ -1798,7 +2502,7 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.warning("context_assemble commitments failed: %s", exc)
 
     # --- Affect State ---
-    if _affect_store is not None and contact_id:
+    if _exact_person_allowed and _affect_store is not None and contact_id:
         try:
             state = _affect_store.get_state(contact_id)
             if state and (state.get("valence") is not None or state.get("current_valence") is not None):
@@ -1816,7 +2520,7 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.warning("context_assemble affect failed: %s", exc)
 
     # --- Relationship closeness ---
-    if _contacts_store is not None and contact_id:
+    if _exact_person_allowed and _contacts_store is not None and contact_id:
         try:
             _rc = await _contacts_store.get(contact_id)
             if _rc is not None:
@@ -1841,11 +2545,16 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     # --- Approach brief (profiled standing/psyche/approach guidance) ---
     # Cached-only on the hot path (profiling runs in the autonomy phase);
     # the owner's own brief is skipped — approach guidance is for OTHERS.
-    if _relationship_profiler is not None and contact_id:
+    if _exact_person_allowed and _relationship_profiler is not None \
+            and contact_id:
         try:
             from colony_sidecar.identity import get_owner_contact_id
             if contact_id != (get_owner_contact_id() or ""):
-                _brief = _relationship_profiler.cached(contact_id)
+                if _p8_runtime is not None:
+                    _brief = _relationship_profiler.cached(
+                        contact_id, viewer=_p8_viewer)
+                else:
+                    _brief = _relationship_profiler.cached(contact_id)
                 if _brief is not None:
                     _rendered = _brief.render()
                     if _rendered:
@@ -1859,7 +2568,8 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.debug("context_assemble approach brief failed: %s", exc)
 
     # --- Owner's stated preferences (explicit directives the owner gave me) ---
-    if _preference_learner is not None and contact_id:
+    if _legacy_global_allowed and _preference_learner is not None \
+            and contact_id:
         try:
             from colony_sidecar.identity import get_owner_contact_id
             if get_owner_contact_id() == contact_id:
@@ -1874,11 +2584,130 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception as exc:
             logger.debug("context_assemble owner preferences failed: %s", exc)
 
+    # --- Second-order theory of mind (owner ONLY, H3.3) ---
+    # Who knows / is unaware of what is the owner's lens on their own world.
+    # Double-keyed: COLONY_TOM2_CONTEXT (default off) turns the section on,
+    # and the assembling contact must BE the owner — the flag can never
+    # widen the audience, so a non-owner context stays tom2-free even with
+    # the flag set (test-locked).
+    if _tom2_store is not None and contact_id \
+            and _tom_context_facts is not None:
+        try:
+            from colony_sidecar.tom.asymmetry import tom2_context_enabled
+            from colony_sidecar.identity import get_owner_contact_id
+            _owner_cid = get_owner_contact_id() or ""
+            if (tom2_context_enabled() and _owner_cid
+                    and contact_id == _owner_cid):
+                _tom2_body = _render_tom2_context(
+                    facts_store=_tom_context_facts,
+                    strict_projection=_p8_runtime is not None,
+                )
+                if _tom2_body:
+                    sections.append(ContextSection(
+                        id="colony-tom2",
+                        title="Knowledge asymmetries (who has not heard what)",
+                        body=_tom2_body,
+                        priority=60,
+                    ))
+        except Exception as exc:
+            logger.debug("context_assemble tom2 failed: %s", exc)
+
+    # --- Leveled cross-contact tom2 (L4.2) — NON-owner readers only. ---
+    # The flip point of the leveled system (docs/TOM2-LEVELS.md). The H3.3
+    # owner block above is untouched and test-locked. This block is
+    # default-inert: COLONY_TOM2_LEVEL=0 (shipped) skips it entirely — the
+    # same variable is the single-var kill switch — and fail-closed: ANY
+    # error anywhere inside renders no section (lowest level wins).
+    if _tom2_store is not None and _tom_context_facts is not None \
+            and contact_id:
+        try:
+            from colony_sidecar.tom.levels import (
+                configured_level, resolve_effective_level)
+            from colony_sidecar.identity import get_owner_contact_id
+            _lvl_owner = get_owner_contact_id() or ""
+            if configured_level() >= 1 and contact_id != _lvl_owner:
+                _conv_key = body.context.channel_id or \
+                    await _ensure_channel_id(body.context,
+                                             identity=body.identity)
+                _lres = await resolve_effective_level(
+                    _conv_key, contact_id,
+                    presence_store=_presence_store,
+                    contacts_store=_contacts_store)
+                if _lres.level >= 1:
+                    from colony_sidecar.tom.leveled import render_level1
+                    _l1_body = render_level1(_tom2_store, _tom_context_facts,
+                                             contact_id)
+                    if _l1_body:
+                        sections.append(ContextSection(
+                            id="colony-tom2-l1",
+                            title="What they already know (their own "
+                                  "shared context)",
+                            body=_l1_body,
+                            priority=60,
+                        ))
+                if _lres.level >= 2:
+                    from colony_sidecar.tom.eligibility import (
+                        eligible_inferences)
+                    from colony_sidecar.tom.leveled import render_level2
+                    _reg = _tom2_approvals()
+                    _elig = await eligible_inferences(
+                        _tom2_store.list_inferences(limit=100), limit=3,
+                        reader_contact_id=contact_id,
+                        conversation_key=_conv_key,
+                        facts_store=_tom_context_facts,
+                        contacts_store=_contacts_store,
+                        presence_store=_presence_store,
+                        approval_check=(_reg.is_approved
+                                        if _reg is not None else None),
+                        budget_check=(_tom2_exposure.budget_ok
+                                      if _tom2_exposure is not None
+                                      else None),
+                    )
+                    # Ledger-first (L2.3/L3.1): a row renders only AFTER its
+                    # exposure row and injection taint are durably recorded;
+                    # missing ledger/taint stores render nothing, and any
+                    # bookkeeping failure aborts the whole section via the
+                    # enclosing except (over-recording is safe, silent
+                    # rendering is not).
+                    _booked: list = []
+                    if _tom2_exposure is not None \
+                            and _taint_registry is not None:
+                        for _row in _elig:
+                            _subj = str(_row.get("contact_id") or "")
+                            _names = [_subj]
+                            if _contacts_store is not None:
+                                _sc = await _contacts_store.get(_subj)
+                                _dn = str(getattr(_sc, "display_name", "")
+                                          or "")
+                                if _dn:
+                                    _names.append(_dn)
+                            _tom2_exposure.record_exposure(
+                                reader_contact_id=contact_id,
+                                subject_contact_id=_subj,
+                                fact_ref=str(_row.get("fact_ref") or ""),
+                                conversation_key=_conv_key)
+                            _taint_registry.register(
+                                _conv_key, _subj, subject_names=_names,
+                                fact_ref=str(_row.get("fact_ref") or ""),
+                                kind=str(_row.get("kind") or ""))
+                            _booked.append(_row)
+                    _l2_body = render_level2(_booked, _tom_context_facts,
+                                             contact_id, limit=3)
+                    if _l2_body:
+                        sections.append(ContextSection(
+                            id="colony-tom2-l2",
+                            title="Epistemic prior (silent)",
+                            body=_l2_body,
+                            priority=60,
+                        ))
+        except Exception as exc:
+            logger.debug("context_assemble leveled tom2 failed: %s", exc)
+
     # --- Standing boundaries (owner directives: MUST NOT / MUST) ---
-    # Injected for every context so the reasoner is always aware of the owner's
-    # binding boundaries. This is the SOFT layer; the DirectiveGuard hard-gate
-    # at each action chokepoint is the enforced floor.
-    if _directive_manager is not None:
+    # This is the SOFT layer; the DirectiveGuard hard-gate at each action
+    # chokepoint is the enforced floor. Under P8, directive text is owner-only
+    # because legacy directives do not yet carry visibility envelopes.
+    if _legacy_global_allowed and _directive_manager is not None:
         try:
             _parts = []
             # One-shot acknowledgment to echo (confirms a just-captured/lifted
@@ -1905,7 +2734,7 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.debug("context_assemble boundaries failed: %s", exc)
 
     # --- How to engage (evolving engagement profile) ---
-    if _engagement_store is not None and contact_id:
+    if _exact_person_allowed and _engagement_store is not None and contact_id:
         try:
             from colony_sidecar.tom.engagement import build_guidance
             _guid = build_guidance(_engagement_store.get_profile(contact_id))
@@ -1920,7 +2749,8 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.debug("context_assemble engagement failed: %s", exc)
 
     # --- Communication landscape (cross-channel awareness) ---
-    if _comms_log is not None and _contacts_store is not None and contact_id:
+    if _exact_person_allowed and _comms_log is not None \
+            and _contacts_store is not None and contact_id:
         try:
             _lc = await _contacts_store.get(contact_id)
             if _lc is not None:
@@ -1943,10 +2773,13 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
                     except Exception:
                         pass
                 if _bits:
-                    from colony_sidecar.identity import get_owner_contact_id, get_owner_name
+                    from colony_sidecar.identity import get_owner_contact_id
                     _is_owner = (get_owner_contact_id() == contact_id)
                     if not _is_owner:
-                        _bits.append("Proactively reaching out to them needs %s's approval first." % get_owner_name())
+                        _bits.append(
+                            "Proactively reaching out to them needs owner "
+                            "approval first."
+                        )
                     sections.append(ContextSection(
                         id="colony-comms-landscape",
                         title="Communication landscape",
@@ -1959,10 +2792,32 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
     # --- Shared Facts ---
     if _facts_store is not None and contact_id:
         try:
-            facts_result = _facts_store.list_facts(contact_id=contact_id, limit=5)
-            facts = facts_result if isinstance(facts_result, list) else facts_result.get("facts", [])
-            if facts:
-                lines = [f"- [{f.get('confidence', 0):.0%}] {f['fact']}" for f in facts]
+            if _p8_runtime is not None:
+                facts = (
+                    _p8_runtime.project_shared_facts(
+                        _p8_viewer,
+                        now=datetime.now(timezone.utc),
+                        subject_person_id=contact_id,
+                        max_facts=5,
+                    ).facts
+                    if _p8_viewer is not None else ()
+                )
+                lines = [
+                    f"- [{fact.confidence:.0%}] {fact.content}"
+                    for fact in facts
+                ]
+            else:
+                facts_result = _facts_store.list_facts(
+                    contact_id=contact_id, limit=5)
+                facts = (
+                    facts_result if isinstance(facts_result, list)
+                    else facts_result.get("facts", [])
+                )
+                lines = [
+                    f"- [{fact.get('confidence', 0):.0%}] {fact['fact']}"
+                    for fact in facts
+                ]
+            if lines:
                 sections.append(ContextSection(
                     id="colony-shared-facts",
                     title="Known Facts About Contact",
@@ -1973,7 +2828,7 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
             logger.warning("context_assemble shared facts failed: %s", exc)
 
     # --- Unresolved Surprises ---
-    if _surprise_store is not None:
+    if _legacy_global_allowed and _surprise_store is not None:
         try:
             surprises = _surprise_store.get_unresolved(limit=3)
             if surprises:
@@ -1993,7 +2848,10 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
         except Exception:
             pass
 
-    return ContextAssembleResponse(sections=sections)
+    return ContextAssembleResponse(
+        sections=sections,
+        projection_attestation=_projection,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2001,18 +2859,58 @@ async def context_assemble(body: ContextAssembleRequest) -> ContextAssembleRespo
 # ---------------------------------------------------------------------------
 
 @router.post("/reasoning/turn", response_model=ReasoningTurnResponse)
-async def reasoning_turn(body: ReasoningTurnRequest) -> ReasoningTurnResponse:
+async def reasoning_turn(
+    body: ReasoningTurnRequest,
+    request: Request,
+) -> ReasoningTurnResponse:
     if _reasoning_loop is None:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_NOT_WIRED)
 
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
     session_id = body.context.session_id if body.context and body.context.session_id else str(uuid.uuid4())
 
+    available_tools = body.available_tools or None
+    actor_policy = None
+    if _p8_runtime is not None:
+        from colony_sidecar.reasoning.executor import ToolRegistryError
+        from colony_sidecar.reasoning.tool_policy import filter_tools_for_actor
+
+        resolved_person = resolve_request_person(
+            request,
+            context_person_id=body.context.contact_id,
+        )
+        actor_policy = _p8_tool_actor_policy(request, resolved_person)
+        executor = getattr(_reasoning_loop, "_tools", None) or _tool_executor
+        try:
+            # In P8, an empty list means the actor-filtered registered default,
+            # and an explicit list can only narrow it. Production executors
+            # resolve handler provenance before authority: a dynamic handler
+            # is mutation even if its name resembles a shipped read.
+            if executor is not None \
+                    and hasattr(executor, "filter_names_for_actor"):
+                available_tools = executor.filter_names_for_actor(
+                    body.available_tools or None, actor_policy)
+            else:
+                registered = (
+                    executor.available_names()
+                    if executor is not None
+                    and hasattr(executor, "available_names")
+                    else []
+                )
+                available_tools = filter_tools_for_actor(
+                    body.available_tools or registered, actor_policy)
+        except ToolRegistryError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+
     result = await _reasoning_loop.run_turn(
         session_id=session_id,
         messages=messages,
-        available_tools=body.available_tools or None,
+        available_tools=available_tools,
         model_override=body.model_override or None,
+        actor_policy=actor_policy,
     )
 
     response_msg = None
@@ -2035,7 +2933,10 @@ async def reasoning_turn(body: ReasoningTurnRequest) -> ReasoningTurnResponse:
 
 
 @router.post("/reasoning/tools/invoke", response_model=ToolInvokeResponse)
-async def tools_invoke(body: ToolInvokeRequest) -> ToolInvokeResponse:
+async def tools_invoke(
+    body: ToolInvokeRequest,
+    request: Request,
+) -> ToolInvokeResponse:
     """Invoke a single sidecar-resident tool by name.
 
     Used by the OpenClaw plugin to expose Colony's native tools
@@ -2047,6 +2948,126 @@ async def tools_invoke(body: ToolInvokeRequest) -> ToolInvokeResponse:
         return ToolInvokeResponse(
             result="", available=False, error="tool_executor_not_initialized",
         )
+
+    actor_policy = None
+    if _p8_runtime is not None:
+        from colony_sidecar.reasoning.executor import ToolRegistryError
+        from colony_sidecar.reasoning.tool_policy import actor_allows_tool
+
+        authority = request_authority(request)
+        actor_policy = _p8_tool_actor_policy(
+            request, authority.viewer_person_id)
+        if hasattr(_tool_executor, "filter_names_for_actor"):
+            try:
+                actor_tools = _tool_executor.filter_names_for_actor(
+                    [body.name], actor_policy)
+            except ToolRegistryError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+            if body.name not in actor_tools:
+                try:
+                    registered = _tool_executor.available_names()
+                except ToolRegistryError as exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail={"code": exc.code, "message": str(exc)},
+                    ) from exc
+                if body.name not in registered:
+                    return ToolInvokeResponse(
+                        result="",
+                        available=False,
+                        error=f"Tool '{body.name}' is not registered",
+                    )
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "tool_authority_denied",
+                        "message": "tool exceeds authenticated caller authority",
+                    },
+                )
+        elif not actor_allows_tool(body.name, actor_policy):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "tool_authority_denied",
+                    "message": "tool exceeds authenticated caller authority",
+                },
+            )
+
+    if hasattr(_tool_executor, "execute_batch"):
+        if _p8_runtime is None:
+            from colony_sidecar.reasoning.executor import ToolRegistryError
+
+            try:
+                available_names = (
+                    _tool_executor.available_names()
+                    if hasattr(_tool_executor, "available_names")
+                    else list(getattr(_tool_executor, "_handlers", {}).keys())
+                )
+            except ToolRegistryError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+            if body.name not in available_names:
+                return ToolInvokeResponse(
+                    result="", available=False,
+                    error=f"Tool '{body.name}' is not registered",
+                )
+        result = (await _tool_executor.execute_batch(
+            [{
+                "id": f"direct:{uuid.uuid4()}",
+                "name": body.name,
+                "arguments": body.arguments,
+            }],
+            allowed_tools=frozenset({body.name}),
+            actor_policy=actor_policy,
+        ))[0]
+        if result.get("executed") is True:
+            return ToolInvokeResponse(result=result["content"], available=True)
+        error = str(result.get("error") or "tool_execution_failed")
+        detail_message = str(result.get("content") or error)
+        try:
+            detail_payload = json.loads(detail_message)
+            if isinstance(detail_payload, dict):
+                detail_message = str(
+                    detail_payload.get("message")
+                    or detail_payload.get("error")
+                    or error
+                )
+        except (TypeError, ValueError):
+            pass
+        if error in {"tool_authority_denied", "tool_not_authorized",
+                     "tool_boundary_denied"}:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": error, "message": detail_message},
+            )
+        if error == "tool_boundary_unavailable":
+            raise HTTPException(
+                status_code=503,
+                detail={"code": error, "message": detail_message},
+            )
+        if error in {
+            "tool_name_collision",
+            "tool_registry_malformed",
+            "tool_registry_unavailable",
+        }:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": error, "message": detail_message},
+            )
+        return ToolInvokeResponse(
+            result="",
+            available=(error != "tool_unavailable"),
+            error=detail_message,
+        )
+
+    # Minimal third-party/test executors without the shared batch contract keep
+    # the historical direct handler adapter. Production ToolExecutor instances
+    # always take the governed branch above, including when P8 is off.
     handler = _tool_executor._handlers.get(body.name)
     if handler is None:
         return ToolInvokeResponse(
@@ -2077,10 +3098,76 @@ class _LooseMessage:
         self.has_media = False
 
 
+#: contact_ids already warned about as unknown on /signals/ingest (warn-once,
+#: bounded so a churn of junk ids can't grow it without limit).
+_signals_unknown_warned: set = set()
+
+
+async def _attribute_signal_contact(body: SignalIngestRequest) -> None:
+    """Attribution for /signals/ingest (COLONY_SIGNALS_ATTRIBUTION=legacy/strict).
+
+    Mirrors the turns/sync chokepoint: a supplied ``sender`` resolves server-side
+    via ParticipantResolver and OVERWRITES context.contact_id (client contact ids
+    go stale in group sessions). Without a resolvable sender:
+      * legacy (default): keep the client's contact_id exactly as today, but
+        warn once per unknown id so poisoned attribution is at least visible;
+      * strict: attribute to the reserved system sentinel — an unattributable
+        signal must never poison a person's baselines/engagement profile.
+    Never raises; any failure keeps the client contact (legacy behavior).
+    """
+    mode = os.environ.get("COLONY_SIGNALS_ATTRIBUTION", "legacy").strip().lower()
+    try:
+        from colony_sidecar.identity.participants import (
+            SYSTEM_CONTACT_ID, ParticipantResolver,
+        )
+        if body.sender is not None and _contacts_store is not None:
+            res = await ParticipantResolver(_contacts_store).resolve(
+                platform=body.sender.platform,
+                user_id=body.sender.user_id,
+                display_name=body.sender.display_name,
+                group_id=body.sender.group_id,
+                channel_id=body.context.channel_id or "",
+            )
+            if res.contact_id:
+                if res.contact_id != body.context.contact_id:
+                    logger.info(
+                        "signal attribution: %s -> %s (%s%s)",
+                        body.context.contact_id, res.contact_id, res.method,
+                        ", shadow-created" if res.created else "")
+                body.context.contact_id = res.contact_id
+                return
+        # No sender, or the sender was unresolvable: is the claimed contact real?
+        if _contacts_store is None or not body.context.contact_id:
+            return
+        known = None
+        try:
+            known = await _contacts_store.get(body.context.contact_id)
+        except Exception:
+            known = None
+        if known is not None:
+            return
+        if mode == "strict":
+            logger.info("signal attribution (strict): unknown contact %r -> %s",
+                        body.context.contact_id, SYSTEM_CONTACT_ID)
+            body.context.contact_id = SYSTEM_CONTACT_ID
+        elif body.context.contact_id not in _signals_unknown_warned:
+            if len(_signals_unknown_warned) < 512:
+                _signals_unknown_warned.add(body.context.contact_id)
+            logger.warning(
+                "signals_ingest: unknown contact_id %r — signals will accrue to "
+                "an unverified identity (set COLONY_SIGNALS_ATTRIBUTION=strict "
+                "to divert these to the system sentinel)",
+                body.context.contact_id)
+    except Exception:
+        logger.debug("signal attribution failed; keeping client contact",
+                     exc_info=True)
+
+
 @router.post("/signals/ingest", response_model=SignalIngestResponse)
 async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
     if _signal_collector is None:
         return SignalIngestResponse(accepted=True, signals_recorded=0)
+    await _attribute_signal_contact(body)
 
     recorded = 0
     now = datetime.now(tz=timezone.utc)
@@ -2155,8 +3242,300 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
 # Turns
 # ---------------------------------------------------------------------------
 
+def _conversation_turn_concern_metadata(
+    body: TurnSyncRequest,
+    request: Request | None,
+    *,
+    resolved_human_sender: bool,
+    dynamic_contact_grant_attested: bool,
+) -> Dict[str, Any]:
+    """Seal optional concern metadata from server-side authority only.
+
+    ``HostTurnContext.metadata`` and every caller-provided privacy/authority
+    claim are deliberately ignored.  A scoped credential may attest only its
+    exact person grant.  A structured sender may attest the resolver result
+    only when that scoped principal owns the sender-resolution scope and the
+    platform is in its configured attestation set.  Legacy/global bearer,
+    anonymous, client-only contact claims, and the system sentinel all fail
+    closed while the ordinary timeline event remains unchanged.
+    """
+
+    from colony_sidecar.self_model.event_concerns import turn_concerns_enabled
+
+    if not turn_concerns_enabled():
+        return {}
+    authority = request_authority(request)
+    subject = str(body.context.contact_id or "").strip()
+    scoped = bool(
+        authority.authenticated
+        and not authority.legacy
+        and not authority.anonymous
+    )
+    static_subject_granted = bool(
+        scoped
+        and subject
+        and (
+            subject == str(authority.viewer_person_id or "")
+            or subject in authority.static_person_ids
+        )
+    )
+    within_static_grant = bool(body.sender is None and static_subject_granted)
+    claimed_sender_platform = (
+        str(body.sender.platform or "").strip().lower()
+        if body.sender is not None else ""
+    )
+    source_platform = ""
+    ingress_platforms = authority.turn_ingress_platforms
+    if body.sender is not None:
+        if (
+            re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", claimed_sender_platform)
+            and claimed_sender_platform in ingress_platforms
+        ):
+            source_platform = claimed_sender_platform
+    elif len(ingress_platforms) == 1:
+        source_platform = next(iter(ingress_platforms))
+    source_platform_attested = bool(scoped and source_platform)
+    resolved_static_grant = bool(
+        scoped
+        and resolved_human_sender
+        and body.sender is not None
+        and authority.has_scope("turns:resolve-sender")
+        and static_subject_granted
+    )
+    resolved_dynamic_sender = bool(
+        scoped
+        and resolved_human_sender
+        and body.sender is not None
+        and authority.has_scope("turns:resolve-sender")
+        and source_platform in authority.attested_contact_platforms
+        and dynamic_contact_grant_attested
+    )
+    resolved_sender_attested = bool(
+        resolved_static_grant or resolved_dynamic_sender
+    )
+    identity_attested = bool(
+        subject != "system"
+        and (within_static_grant or resolved_sender_attested)
+    )
+    owner = (
+        os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+        or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+    )
+    scope_attested = bool(identity_attested and owner)
+    if scope_attested and subject == owner:
+        viewer_scope, shareability = "owner", "owner_private"
+    elif scope_attested:
+        viewer_scope, shareability = f"person:{subject}", "subject_private"
+    else:
+        viewer_scope, shareability = "", ""
+    attribution_method = (
+        "resolved_sender"
+        if resolved_dynamic_sender else
+        "resolved_static_grant"
+        if resolved_static_grant else
+        "authority_binding"
+        if within_static_grant else
+        "unattested"
+    )
+    canonical_turn_id = str(body.context.turn_id or "").strip()
+    turn_id_source = "client_idempotency_key" if canonical_turn_id else "missing"
+    if (
+        not canonical_turn_id
+        and identity_attested
+        and scope_attested
+        and str(body.context.session_id or "").strip()
+    ):
+        # This digest is only immutable lineage/deduplication. Content cannot
+        # contribute identity, privacy scope, capability, or effect authority.
+        turn_material = {
+            "schema": "ServerDerivedConversationTurnIdV1",
+            "source_principal_id": str(authority.principal_id or ""),
+            "subject_person_id": subject,
+            "session_id": str(body.context.session_id or ""),
+            "channel_id": str(body.context.channel_id or ""),
+            "source_platform": source_platform,
+            "summary": str(body.summary or ""),
+            "user_message": (
+                str(body.user_message.content or "")
+                if body.user_message is not None else ""
+            ),
+            "assistant_message": (
+                str(body.assistant_message.content or "")
+                if body.assistant_message is not None else ""
+            ),
+        }
+        encoded = json.dumps(
+            turn_material,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        canonical_turn_id = "server-turn-" + hashlib.sha256(encoded).hexdigest()
+        turn_id_source = "server_digest"
+    return {
+        "turn_scope_schema": "ConversationTurnJournalScopeV1",
+        "turn_id": canonical_turn_id,
+        "turn_id_source": turn_id_source,
+        "turn_id_attested": bool(
+            canonical_turn_id and identity_attested and scope_attested
+        ),
+        "subject_person_id": subject,
+        "identity_attested": identity_attested,
+        "scope_attested": scope_attested,
+        "attribution_method": attribution_method,
+        "source_principal_id": str(authority.principal_id or ""),
+        "source_platform": source_platform,
+        "source_platform_attested": source_platform_attested,
+        "viewer_scope": viewer_scope,
+        "shareability": shareability,
+        # A completed turn never attests widening to shared/public.
+        "boundary_attested": False,
+    }
+
+async def _ingest_turn_idempotently(
+    body: TurnSyncRequest,
+    request: Request | None = None,
+) -> tuple[TurnSyncResponse, str]:
+    """Run one turn's effects, or replay its durable result.
+
+    Legacy callers without a turn ID retain the v1 behavior. A supplied ID is
+    reserved before attribution, memory, cognition, journal, or relationship
+    effects run. This is the server's final defense even when a host retries or
+    two host integrations accidentally submit the same envelope.
+    """
+    turn_id = (body.context.turn_id or "").strip()
+    if not turn_id:
+        return await _process_turn_sync(body, request=request), "unkeyed"
+    if len(turn_id) > 256:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_turn_id", "message": "turn_id exceeds 256 characters"},
+        )
+    body.context.turn_id = turn_id
+
+    from colony_sidecar.turns import (
+        ReservationOutcome,
+        canonical_turn_digest,
+        get_turn_idempotency_ledger,
+    )
+
+    digest = canonical_turn_digest(body)
+    ledger = get_turn_idempotency_ledger(get_state_dir())
+    reservation = ledger.reserve(turn_id, digest)
+    if reservation.outcome == ReservationOutcome.CONFLICT:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "turn_id_content_conflict",
+                "turn_id": turn_id,
+                "message": "turn_id is already bound to different canonical content",
+            },
+        )
+    if reservation.outcome == ReservationOutcome.AMBIGUOUS:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "turn_ingestion_ambiguous",
+                "turn_id": turn_id,
+                "message": "the first attempt was interrupted; inspect before replaying effects",
+            },
+        )
+    if reservation.outcome == ReservationOutcome.REPLAYED:
+        cached = reservation.response or {
+            "accepted": True,
+            "continuity_updated": False,
+            "skipped_reason": "identical_replay",
+        }
+        return TurnSyncResponse.model_validate(cached), "replayed"
+    if reservation.outcome == ReservationOutcome.IN_PROGRESS:
+        return TurnSyncResponse(
+            # Truthful pending semantics: the first writer has not committed a
+            # result yet and may still fail or become ambiguous. A retry must
+            # not look like a completed successful ingestion.
+            accepted=False,
+            continuity_updated=False,
+            skipped_reason="identical_retry_in_progress",
+        ), "in_progress"
+
+    try:
+        result = await _process_turn_sync(body, request=request)
+    except BaseException as exc:
+        ledger.mark_ambiguous(turn_id, digest, exc)
+        raise
+    ledger.complete(turn_id, digest, result.model_dump(mode="json"))
+    return result, "created"
+
+
 @router.post("/turns/sync", response_model=TurnSyncResponse)
-async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
+async def turns_sync(
+    body: TurnSyncRequest,
+    request: Request = None,
+    response: Response = None,
+) -> TurnSyncResponse:
+    body.context.contact_id = resolve_turn_person(
+        request,
+        context_person_id=body.context.contact_id,
+        has_sender=body.sender is not None,
+    ) or body.context.contact_id
+    result, outcome = await _ingest_turn_idempotently(body, request=request)
+    if response is not None:
+        response.headers["Idempotency-Status"] = outcome
+        if outcome == "in_progress":
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = "1"
+    return result
+
+
+@v2_router.put("/turns/{turn_id:path}", response_model=TurnSyncResponse)
+async def turns_sync_v2(
+    turn_id: str,
+    body: TurnSyncRequest,
+    response: Response,
+    request: Request = None,
+) -> TurnSyncResponse:
+    """Idempotent TurnEnvelopeV2 ingestion compatibility slice.
+
+    The path ID is canonical. Initial acceptance is ``201``; an identical
+    replay is ``200``; changed content under the same ID is ``409``.
+    """
+    path_turn_id = (turn_id or "").strip()
+    if not path_turn_id or len(path_turn_id) > 256:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_turn_id", "message": "turn_id must be 1..256 characters"},
+        )
+    body_turn_id = (body.context.turn_id or "").strip()
+    if body_turn_id and body_turn_id != path_turn_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "turn_id_mismatch",
+                "path_turn_id": path_turn_id,
+                "body_turn_id": body_turn_id,
+            },
+        )
+    body.context.turn_id = path_turn_id
+    body.context.contact_id = resolve_turn_person(
+        request,
+        context_person_id=body.context.contact_id,
+        has_sender=body.sender is not None,
+    ) or body.context.contact_id
+    result, outcome = await _ingest_turn_idempotently(body, request=request)
+    response.headers["Idempotency-Status"] = outcome
+    if outcome == "created":
+        response.status_code = status.HTTP_201_CREATED
+    elif outcome == "in_progress":
+        response.status_code = status.HTTP_202_ACCEPTED
+        response.headers["Retry-After"] = "1"
+    else:
+        response.status_code = status.HTTP_200_OK
+    return result
+
+
+async def _process_turn_sync(
+    body: TurnSyncRequest,
+    request: Request | None = None,
+) -> TurnSyncResponse:
     # Auto-derive channel_id when the host does not provide one, so
     # context provenance and cross-context leak detection always work.
     body.context.channel_id = await _ensure_channel_id(
@@ -2174,6 +3553,8 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # affect/facts/psyche/interactions. Rewriting context.contact_id here
     # means every downstream consumer in this handler sees the truth.
     _resolved_human_sender = False
+    _contact_grant_attested = False
+    _resolution_method = "client"   # server did NOT verify the claimed contact
     try:
         from colony_sidecar.identity.participants import (
             SYSTEM_CONTACT_ID, ParticipantResolver, is_machine_turn,
@@ -2193,7 +3574,13 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                         body.context.contact_id, _res.contact_id, _res.method,
                         ", shadow-created" if _res.created else "")
                 body.context.contact_id = _res.contact_id
+                _resolution_method = _res.method
                 _resolved_human_sender = True
+                _contact_grant_attested = record_attested_contact_grant(
+                    request,
+                    platform=body.sender.platform,
+                    person_id=_res.contact_id,
+                )
         if not _resolved_human_sender and is_machine_turn(
                 body.context.channel_id or "",
                 (getattr(body.user_message, "content", "") or "")
@@ -2204,6 +3591,20 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
         logger.debug("participant attribution failed; keeping client contact",
                      exc_info=True)
     _is_system_turn = body.context.contact_id == "system"
+
+    # Conversation presence (L1.1, passive): now that WHO is settled, record
+    # the sighting so the environment-risk classifier has a real census. The
+    # store itself skips the system sentinel; any failure must never affect
+    # turn processing.
+    if _presence_store is not None and not _is_system_turn:
+        try:
+            _presence_store.record(
+                body.context.channel_id or "",
+                body.context.contact_id or "",
+                method=_resolution_method,
+                group_id=(body.sender.group_id if body.sender else "") or "")
+        except Exception:
+            logger.debug("conversation presence record failed", exc_info=True)
 
     # If structured fields are empty but raw messages are present,
     # extract topics/entities/summary from the raw messages.
@@ -2218,6 +3619,41 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                 words = user_text.split()
                 body.topics = [w.lower().strip(".,!?;:") for w in words if len(w) > 4][:10]
 
+    # Rule-based NER on the incoming message, run ONCE and shared by the
+    # memory write (flag-gated) and context provenance (always) below. Fails
+    # open to body.entities: an extractor error must never drop host entities.
+    _extracted_ents: List[str] = []
+    _turn_ner = os.environ.get(
+        "COLONY_TURN_NER_ENTITIES", "0") not in ("0", "false", "no", "")
+    _user_text = getattr(body.user_message, "content", "") if body.user_message else ""
+    if _user_text and (_turn_ner or _context_provenance is not None):
+        _extractor = _get_conversation_extractor()
+        if _extractor is not None:
+            try:
+                _src = body.context.turn_id or body.context.session_id or "turn"
+                _res = await _extractor.extract(_user_text, _src)
+                _extracted_ents = [getattr(c, "text", None) or getattr(c, "name", "")
+                                   for c in getattr(_res, "entities", [])]
+            except Exception:
+                logger.debug("turn entity extraction failed", exc_info=True)
+
+    # COLONY_TURN_NER_ENTITIES=1: the stored turn memory carries the message's
+    # named entities even when the host sent none, so salience scoring and
+    # :MENTIONS edges reflect what the turn was actually about. Default 0 =
+    # legacy: record_turn sees exactly body.entities.
+    _turn_entities = body.entities
+    if _turn_ner and _extracted_ents:
+        _merged: List[str] = []
+        _seen = set()
+        for _name in list(body.entities or []) + _extracted_ents:
+            _name = (_name or "").strip()
+            if _name and _name.lower() not in _seen:
+                _seen.add(_name.lower())
+                _merged.append(_name)
+            if len(_merged) >= 12:
+                break
+        _turn_entities = _merged
+
     # Best-effort: store turn metadata in the graph if available
     graph_ok = False
     if _graph is not None:
@@ -2226,7 +3662,7 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
                 session_id=body.context.session_id,
                 contact_id=body.context.contact_id,
                 topics=body.topics,
-                entities=body.entities,
+                entities=_turn_entities,
                 tools_used=body.tools_used,
                 summary=body.summary,
             )
@@ -2237,20 +3673,10 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     # Context provenance: record this turn's entities under its conversation context, so a
     # later reply in a DIFFERENT context that surfaces an entity known only from here can be
     # flagged as a cross-context leak. Entities come from the host plus rule-based NER on the
-    # incoming message (what the other party brought up = what belongs to this conversation).
+    # incoming message (what the other party brought up = what belongs to this conversation),
+    # reusing the single extraction above.
     if _context_provenance is not None:
-        ents = list(body.entities or [])
-        _user_text = getattr(body.user_message, "content", "") if body.user_message else ""
-        if _user_text:
-            _extractor = _get_conversation_extractor()
-            if _extractor is not None:
-                try:   # extraction is additive; a failure here must not drop host entities
-                    _src = body.context.turn_id or body.context.session_id or "turn"
-                    _res = await _extractor.extract(_user_text, _src)
-                    ents += [getattr(c, "text", None) or getattr(c, "name", "")
-                             for c in getattr(_res, "entities", [])]
-                except Exception:
-                    logger.debug("provenance entity extraction failed", exc_info=True)
+        ents = list(body.entities or []) + _extracted_ents
         if ents:
             try:
                 _context_provenance.record(
@@ -2421,10 +3847,22 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     try:
         if (_tom_extractor is not None and _affect_store is not None
                 and _facts_store is not None and not _is_system_turn):
+            _p8_producer = None
+            if _p8_runtime is not None:
+                try:
+                    _p8_producer = _p8_viewer_for_request(
+                        request,
+                        body.context.contact_id,
+                        server_resolved=_resolved_human_sender,
+                    )
+                except HTTPException:
+                    logger.debug(
+                        "P8 extracted fact envelope omitted: producer unavailable")
             _spawn_task(_run_tom_extraction(
                 conversation_text=body.summary or "",
                 contact_id=body.context.contact_id,
                 session_id=body.context.session_id,
+                p8_producer=_p8_producer,
             ))
     except Exception:
         logger.debug("ToM extraction from turn_sync failed", exc_info=True)
@@ -2440,14 +3878,21 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
     if body.summary:
         try:
             from colony_sidecar.events.journal import append_event
-            append_event("conversation.turn", {
+            turn_event_data = {
                 "contact_id": body.context.contact_id,
                 "session_id": body.context.session_id,
                 "channel_id": body.context.channel_id,   # cross-channel provenance for the timeline / handoff
                 "summary": (body.summary or "")[:300],
                 "topics": (body.topics or [])[:10],
                 "tools_used": (body.tools_used or [])[:20],
-            })
+            }
+            turn_event_data.update(_conversation_turn_concern_metadata(
+                body,
+                request,
+                resolved_human_sender=_resolved_human_sender,
+                dynamic_contact_grant_attested=_contact_grant_attested,
+            ))
+            append_event("conversation.turn", turn_event_data)
         except Exception:
             logger.debug("journal conversation.turn failed", exc_info=True)
     # Mining: verbatim turn capture + escalation detection (best-effort; the
@@ -2527,11 +3972,27 @@ async def turns_sync(body: TurnSyncRequest) -> TurnSyncResponse:
 # Safety
 # ---------------------------------------------------------------------------
 
+def _safety_unavailable(reason: str):
+    """503 + decision="unavailable": the gate did NOT evaluate this text.
+
+    Never "pass" — a caller must not mistake "not evaluated" for
+    "evaluated and clean". ``blocked=True`` so callers keying only on the
+    boolean fail closed as well.
+    """
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=503,
+        content=SafetyCheckResponse(
+            decision="unavailable", blocked=True, reason=reason,
+        ).model_dump(),
+    )
+
+
 @router.post("/safety/check", response_model=SafetyCheckResponse)
 @router.post("/response-gate/check", response_model=SafetyCheckResponse, include_in_schema=False)
 async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
     if _response_gate is None:
-        return SafetyCheckResponse(decision="pass", blocked=False)
+        return _safety_unavailable("response gate not initialized")
 
     try:
         from colony_sidecar.gate.models import GatePayload
@@ -2556,8 +4017,8 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
             layer_results=getattr(result, "layer_results", None),
         )
     except Exception as exc:
-        logger.warning("safety_check failed — passing through: %s", exc)
-        return SafetyCheckResponse(decision="pass", blocked=False)
+        logger.warning("safety_check failed — unavailable (503): %s", exc)
+        return _safety_unavailable("response gate evaluation failed")
 
 
 # ---------------------------------------------------------------------------
@@ -2566,96 +4027,339 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
 
 @router.websocket("/events")
 async def events_ws(ws: WebSocket) -> None:
+    auth_telemetry = getattr(ws.app.state, "auth_telemetry", None)
+
+    def _record_event_auth(
+        *, authority=None, decision: str, reason: str,
+        auth_kind: str = "unauthenticated", principal_id: str = "unauthenticated",
+    ) -> None:
+        if auth_telemetry is None:
+            return
+        if authority is not None:
+            auth_kind = "legacy" if authority.legacy else "scoped"
+            principal_id = authority.principal_id
+        auth_telemetry.record(
+            auth_kind=auth_kind,
+            principal_id=principal_id,
+            method="WS",
+            route="/v1/host/events",
+            required_scope="events:read",
+            decision=decision,
+            reason=reason,
+        )
+
     await ws.accept()
 
-    # Read auth message (may include lastEventId for reconnect replay)
-    last_event_id: Optional[str] = None
+    # Read auth message. New clients send an exact sequence plus the journal
+    # record time; ``lastEventId`` remains accepted as the legacy time cursor.
+    last_event_seq: Optional[int] = None
+    last_event_time = ""
+    event_authority = None
     try:
         raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
         import json as _json
         msg = _json.loads(raw)
         if msg.get("type") != "auth":
+            _record_event_auth(decision="deny", reason="invalid_auth_payload")
             await ws.close(code=4001, reason="Expected auth message")
             return
         token = msg.get("token", "")
         expected = os.environ.get("COLONY_API_KEY", "")
-        if not expected:
-            # Fail closed: without a configured key we cannot authenticate
-            # event-stream subscribers, and this socket carries live state
-            # changes. Operators must set COLONY_API_KEY to enable it.
+        keyring_path = os.environ.get("COLONY_API_KEYRING_PATH", "")
+        if not expected and not keyring_path:
+            # Fail closed: without either credential source we cannot
+            # authenticate event-stream subscribers, and this socket carries
+            # live state changes.
+            _record_event_auth(
+                decision="deny", reason="auth_not_configured",
+                auth_kind="anonymous", principal_id="anonymous-dev",
+            )
             await ws.close(
                 code=4003,
-                reason="COLONY_API_KEY not set on server",
+                reason="API authentication not configured on server",
             )
             return
-        if not hmac.compare_digest(
-            token.encode("utf-8"), expected.encode("utf-8")
+        scoped_candidate = None
+        if keyring_path:
+            from colony_sidecar.api.authority import KeyringLoader, scoped_authority
+            _match = KeyringLoader(keyring_path).authenticate(str(token))
+            if _match is not None and _match.accepts():
+                _candidate = scoped_authority(_match)
+                scoped_candidate = _candidate
+                if _candidate.has_scope("events:read"):
+                    event_authority = _candidate
+        if event_authority is None and expected and hmac.compare_digest(
+            str(token).encode("utf-8"), expected.encode("utf-8")
         ):
+            from colony_sidecar.api.authority import legacy_authority
+            event_authority = legacy_authority()
+        if event_authority is None:
+            if scoped_candidate is not None:
+                _record_event_auth(
+                    authority=scoped_candidate,
+                    decision="deny", reason="insufficient_scope",
+                )
+            else:
+                _record_event_auth(decision="deny", reason="invalid_key")
             await ws.close(code=4003, reason="Invalid API key")
             return
-        # Client sends lastEventId (ISO timestamp) to replay missed events
-        last_event_id = msg.get("lastEventId")
+        claimed_principal = str(msg.get("principal") or "").strip()
+        if claimed_principal and claimed_principal != event_authority.principal_id:
+            _record_event_auth(
+                authority=event_authority,
+                decision="deny", reason="principal_mismatch",
+            )
+            await ws.close(code=4003, reason="Principal mismatch")
+            return
+
+        raw_seq = msg.get("lastEventSeq")
+        legacy_cursor = str(msg.get("lastEventId") or "")
+        if raw_seq is None and legacy_cursor.isdigit():
+            raw_seq = legacy_cursor
+        if raw_seq is not None:
+            last_event_seq = int(raw_seq)
+            if last_event_seq < 0:
+                raise ValueError("lastEventSeq must be non-negative")
+        last_event_time = str(msg.get("lastEventTime") or "")
+        if not last_event_time and legacy_cursor and not legacy_cursor.isdigit():
+            last_event_time = legacy_cursor
+        _record_event_auth(
+            authority=event_authority,
+            decision="allow", reason="allowed",
+        )
     except asyncio.TimeoutError:
+        _record_event_auth(decision="deny", reason="auth_timeout")
         await ws.close(code=4001, reason="Auth timeout")
         return
     except Exception:
+        _record_event_auth(
+            authority=event_authority,
+            decision="deny", reason="invalid_auth_payload",
+        )
         await ws.close(code=4001, reason="Invalid auth")
         return
 
-    # Replay missed events if client provided lastEventId
-    if last_event_id:
+    subscriber = EventSubscriberBuffer(
+        _event_subscriber_queue_size(), loop=asyncio.get_running_loop()
+    )
+
+    # Subscribe before capturing the durable high-water mark. Events committed
+    # during replay are buffered and later filtered by sequence, closing the
+    # replay/live race without duplicate delivery.
+    from colony_sidecar.events.journal import current_sequence, replay_events
+    with _event_broadcast_lock:
+        _event_subscribers.append(subscriber)
+        replay_through_seq = current_sequence()
+
+    disconnect_event = asyncio.Event()
+    receive_task: Optional[asyncio.Task] = None
+
+    async def _watch_disconnect() -> None:
+        """Consume post-auth client frames so quiet disconnects are observed."""
         try:
-            from colony_sidecar.events.journal import replay_events
-            result = replay_events(since=last_event_id, limit=500)
-            for event in result["events"]:
+            while True:
+                message = await ws.receive()
+                if message.get("type") == "websocket.disconnect":
+                    return
+                # Application-level pings from legacy clients are deliberately
+                # consumed. Modern clients use protocol-level WebSocket ping.
+        except (WebSocketDisconnect, RuntimeError):
+            return
+        except Exception:
+            logger.debug("Event WebSocket receive watcher stopped", exc_info=True)
+            return
+        finally:
+            disconnect_event.set()
+
+    try:
+        cursor_reset = (
+            last_event_seq is not None
+            and last_event_seq > replay_through_seq
+        )
+        await ws.send_json({
+            "type": "connected",
+            "journalHighWaterSeq": replay_through_seq,
+            "queueCapacity": subscriber.queue.maxsize,
+            "cursorReset": cursor_reset,
+        })
+        if cursor_reset:
+            await ws.send_json({
+                "type": "replay_reset",
+                "requestedAfterSeq": last_event_seq,
+                "journalHighWaterSeq": replay_through_seq,
+                "reason": "cursor_ahead_of_journal",
+            })
+
+        # A brand-new subscriber starts at the captured high-water mark rather
+        # than receiving an arbitrary retention-window history. Reconnects use
+        # the exact processed sequence, with timestamp fallback for old clients.
+        replay_after_seq = 0 if cursor_reset else last_event_seq
+        if replay_after_seq is None and not last_event_time:
+            replay_after_seq = replay_through_seq
+
+        replayed_count = 0
+        replay_cursor = replay_after_seq
+        replay_since = last_event_time
+        first_page = True
+        last_replayed_seq = min(replay_after_seq or 0, replay_through_seq)
+
+        while True:
+            result = await asyncio.to_thread(
+                replay_events,
+                replay_since,
+                1000,
+                None,
+                False,
+                after_seq=replay_cursor,
+                until_seq=replay_through_seq,
+            )
+            if result.get("replayError"):
                 await ws.send_json({
+                    "type": "replay_error",
+                    "reason": result["replayError"],
+                })
+                await ws.close(code=1011, reason="Event replay unavailable")
+                return
+
+            first_available = int(result.get("firstAvailableSeq") or 0)
+            if (
+                first_page
+                and replay_cursor is not None
+                and first_available > 0
+                and replay_cursor + 1 < first_available
+            ):
+                await ws.send_json({
+                    "type": "replay_gap",
+                    "requestedAfterSeq": replay_cursor,
+                    "firstAvailableSeq": first_available,
+                    "reason": "cursor_precedes_retention_window",
+                })
+            corrupt_count = int(result.get("corruptCount") or 0)
+            if first_page and corrupt_count:
+                await ws.send_json({
+                    "type": "replay_integrity_warning",
+                    "corruptRecordCount": corrupt_count,
+                })
+
+            page = result.get("events", [])
+            for event in page:
+                frame = {
                     "type": event["type"],
-                    "occurred_at": event["recordedAt"],
+                    "occurred_at": event.get("occurredAt") or event["recordedAt"],
+                    "recordedAt": event["recordedAt"],
                     "payload": event.get("data", {}),
                     "seq": event["seq"],
-                })
-            if result["events"]:
-                await ws.send_json({
-                    "type": "replay_complete",
-                    "replayedCount": len(result["events"]),
-                    "lastSeq": result["lastSeq"],
-                })
-        except Exception:
-            logging.getLogger(__name__).debug(
-                "Event replay failed for lastEventId=%s", last_event_id, exc_info=True
-            )
+                    "eventId": event.get("ulid", ""),
+                }
+                await ws.send_json(frame)
+                subscriber.mark_delivered(frame)
+                replayed_count += 1
+                last_replayed_seq = max(last_replayed_seq, int(event["seq"]))
 
-    q: asyncio.Queue = asyncio.Queue()
-    _event_subscribers.append(q)
-    try:
+            if not result.get("hasMore") or not page:
+                break
+            replay_cursor = int(result["lastSeq"])
+            replay_since = ""
+            first_page = False
+
+        # Always terminate the handshake explicitly. This means an idle stream
+        # never requires a client to guess whether replay has completed.
+        await ws.send_json({
+            "type": "replay_complete",
+            "replayedCount": replayed_count,
+            "lastSeq": last_replayed_seq,
+            "replayThroughSeq": replay_through_seq,
+        })
+        subscriber.mark_delivered({"seq": replay_through_seq})
+
+        receive_task = asyncio.create_task(_watch_disconnect())
         while True:
-            event = await q.get()
+            event_task = asyncio.create_task(subscriber.get())
+            disconnect_task = asyncio.create_task(disconnect_event.wait())
+            done, _ = await asyncio.wait(
+                {event_task, disconnect_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disconnect_task in done:
+                event_task.cancel()
+                try:
+                    await event_task
+                except asyncio.CancelledError:
+                    pass
+                return
+            disconnect_task.cancel()
+            try:
+                await disconnect_task
+            except asyncio.CancelledError:
+                pass
+            event = event_task.result()
+            if subscriber.is_overflow(event):
+                await ws.send_json(subscriber.overflow_frame())
+                await ws.close(
+                    code=1013,
+                    reason="Event subscriber overflow; reconnect and replay",
+                )
+                return
+            # Frames at or below the replay snapshot were both journaled and
+            # buffered while the replay ran. They have already been delivered.
+            try:
+                seq = int(event.get("seq", 0))
+            except (TypeError, ValueError):
+                seq = 0
+            if seq and seq <= replay_through_seq:
+                continue
             await ws.send_json(event)
+            subscriber.mark_delivered(event)
     except WebSocketDisconnect:
         pass
     finally:
-        try:
-            _event_subscribers.remove(q)
-        except ValueError:
-            pass
+        if receive_task is not None and not receive_task.done():
+            receive_task.cancel()
+            try:
+                await receive_task
+            except asyncio.CancelledError:
+                pass
+        subscriber.close()
+        with _event_broadcast_lock:
+            try:
+                _event_subscribers.remove(subscriber)
+            except ValueError:
+                pass
 
 
 @router.get("/events/replay")
 async def events_replay(
-    since: str = Query(..., description="ISO 8601 timestamp — replay events after this time"),
+    since: str = Query("", description="ISO 8601 journal time — replay events after this time"),
     limit: int = Query(500, ge=1, le=1000, description="Max events to return"),
     types: Optional[str] = Query(None, description="Comma-separated event type filter"),
+    after_seq: Optional[int] = Query(
+        None,
+        alias="afterSeq",
+        ge=0,
+        description="Exact sequence cursor; takes precedence over since",
+    ),
+    until_seq: Optional[int] = Query(
+        None,
+        alias="untilSeq",
+        ge=0,
+        description="Optional inclusive replay high-water sequence",
+    ),
 ) -> dict:
     """Replay journal events for disconnected clients.
 
-    Returns events recorded after ``since`` in sequential order.
-    Use ``Last-Event-Id`` from a previous WebSocket frame or the
-    ``recordedAt`` timestamp of the last event you processed.
+    Returns events in sequential order. Prefer ``afterSeq`` from the last
+    processed WebSocket frame; ``since`` supports legacy timestamp clients.
     """
     from colony_sidecar.events.journal import replay_events
 
     type_list = [t.strip() for t in types.split(",")] if types else None
-    return replay_events(since=since, limit=limit, types=type_list)
+    return replay_events(
+        since=since,
+        limit=limit,
+        types=type_list,
+        after_seq=after_seq,
+        until_seq=until_seq,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2701,7 +4405,7 @@ async def create_goal(body: GoalCreateRequest) -> GoalResponse:
 @router.get("/goals", response_model=GoalListResponse)
 async def list_goals(person_id: Optional[str] = None, status_filter: Optional[str] = None) -> GoalListResponse:
     if _goals_store is None:
-        return GoalListResponse(goals=[])
+        raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:
         from colony_sidecar.goals.models import GoalStatus
         status_enum = None
@@ -2726,8 +4430,16 @@ async def list_goals(person_id: Optional[str] = None, status_filter: Optional[st
             ) for g in goals
         ])
     except Exception as exc:
-        logger.warning("list_goals failed: %s", exc)
-        return GoalListResponse(goals=[])
+        logger.warning("list_goals failed (%s)", type(exc).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": "goals_unavailable",
+                    "message": "Goals backend unavailable",
+                },
+            },
+        ) from None
 
 
 @router.get("/goals/{goal_id}", response_model=GoalResponse)
@@ -2867,6 +4579,853 @@ async def list_contacts(
     except Exception as exc:
         logger.warning("list_contacts failed: %s", exc)
         return ContactListResponse(contacts=[])
+
+
+def _contact_policy_text(value: object, maximum: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = "".join(
+        character for character in value.strip()
+        if ord(character) >= 0x20 and ord(character) != 0x7F
+    )
+    return cleaned[:maximum]
+
+
+def _contact_policy_exact_text(value: object, maximum: int) -> str:
+    """Return identity text only when no normalization would change it."""
+
+    if (
+        not isinstance(value, str)
+        or value != value.strip()
+        or not value
+        or len(value) > maximum
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    ):
+        return ""
+    return value
+
+
+def _contact_policy_time(value: object) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+_CONTACT_POLICY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/+\-]{0,127}$")
+
+
+def _contact_policy_page_failure(
+    *,
+    reason: str,
+    principal: str,
+    caller_grants: Mapping[str, Any],
+    offset: int,
+    observed_at: float,
+) -> dict:
+    granted = caller_grants.get("person_ids") or []
+    return {
+        "schema": "ColonyContactPolicySourceV1",
+        "version": 1,
+        "available": False,
+        "complete": False,
+        "reason": reason,
+        "observed_at": observed_at,
+        "read_only": True,
+        "execution_authority": False,
+        "caller_principal": principal,
+        "caller_contact_grants": {
+            "available": bool(caller_grants.get("available")),
+            "reason": caller_grants.get("reason"),
+            "count": len(granted),
+            "updated_at": caller_grants.get("updated_at"),
+        },
+        "offset": offset,
+        "next_offset": None,
+        "truncated": False,
+        "items": [],
+    }
+
+
+@router.get("/contact-policy")
+async def contact_policy_source(
+    request: Request,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=100_000),
+) -> dict:
+    """Bounded, read-only contact-policy source for an authenticated caller.
+
+    Contacts and handles remain canonical in the contact store; outreach is a
+    fresh evaluation of Colony's existing policy.  The exact-person posture is
+    limited to the authenticated caller's server-attested grant projection.
+    This endpoint never enumerates another principal and never mints standing,
+    delivery, approval, goal, Charter, Operator, or private-context authority.
+    """
+
+    authority = request_authority(request)
+    if authority.legacy or authority.anonymous or not authority.authenticated:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "scoped_principal_required",
+                "message": "contact policy requires one scoped authenticated principal",
+            },
+        )
+    if _contacts_store is None:
+        return {
+            "schema": "ColonyContactPolicySourceV1",
+            "version": 1,
+            "available": False,
+            "complete": False,
+            "reason": "contacts_store_unavailable",
+            "observed_at": datetime.now(timezone.utc).timestamp(),
+            "read_only": True,
+            "execution_authority": False,
+            "caller_principal": authority.principal_id,
+            "caller_contact_grants": {
+                "available": False,
+                "reason": "contacts_store_unavailable",
+                "count": 0,
+                "updated_at": None,
+            },
+            "offset": offset,
+            "next_offset": None,
+            "truncated": False,
+            "items": [],
+        }
+
+    registry = getattr(request.state, "colony_contact_grants", None)
+    if authority.attested_contact_limit > 0 and registry is not None:
+        try:
+            caller_grants = registry.principal_projection(
+                authority.principal_id,
+                max_person_ids=authority.attested_contact_limit,
+            )
+        except Exception:
+            logger.warning("contact-policy caller grant projection failed", exc_info=True)
+            caller_grants = {
+                "available": False,
+                "reason": "caller_contact_grant_projection_invalid",
+                "person_ids": [],
+                "updated_at": None,
+            }
+    else:
+        caller_grants = {
+            "available": False,
+            "reason": "caller_not_configured_for_attested_contact_grants",
+            "person_ids": [],
+            "updated_at": None,
+        }
+    granted_ids = frozenset(caller_grants.get("person_ids") or ())
+
+    try:
+        contacts = await _contacts_store.list(
+            include_deleted=False,
+            limit=limit + 1,
+            offset=offset,
+        )
+    except Exception as exc:
+        logger.warning("contact-policy contact list failed: %s", exc)
+        return {
+            "schema": "ColonyContactPolicySourceV1",
+            "version": 1,
+            "available": False,
+            "complete": False,
+            "reason": "contact_list_unavailable",
+            "observed_at": datetime.now(timezone.utc).timestamp(),
+            "read_only": True,
+            "execution_authority": False,
+            "caller_principal": authority.principal_id,
+            "caller_contact_grants": {
+                "available": bool(caller_grants.get("available")),
+                "reason": caller_grants.get("reason"),
+                "count": len(granted_ids),
+                "updated_at": caller_grants.get("updated_at"),
+            },
+            "offset": offset,
+            "next_offset": None,
+            "truncated": False,
+            "items": [],
+        }
+
+    truncated = len(contacts) > limit
+    contacts = contacts[:limit]
+    now = datetime.now(timezone.utc)
+    try:
+        owner_contact_id = await _contact_policy_owner_contact_id()
+    except Exception:
+        logger.error("contact-policy owner identity could not be resolved")
+        return _contact_policy_page_failure(
+            reason="owner_contact_unresolved",
+            principal=authority.principal_id,
+            caller_grants=caller_grants,
+            offset=offset,
+            observed_at=now.timestamp(),
+        )
+
+    items = []
+    for contact in contacts:
+        raw_contact_id = getattr(contact, "contact_id", "")
+        contact_id = _contact_policy_exact_text(raw_contact_id, 128)
+        if (
+            not contact_id
+            or _CONTACT_POLICY_ID_RE.fullmatch(contact_id) is None
+        ):
+            logger.error("contact-policy encountered a non-canonical contact ID")
+            return _contact_policy_page_failure(
+                reason="contact_identity_invalid",
+                principal=authority.principal_id,
+                caller_grants=caller_grants,
+                offset=offset,
+                observed_at=now.timestamp(),
+            )
+        handles = []
+        try:
+            contact_handles = await _contacts_store.get_handles(contact_id)
+        except Exception:
+            logger.warning("contact-policy handle read failed", exc_info=True)
+            return _contact_policy_page_failure(
+                reason="contact_handles_unavailable",
+                principal=authority.principal_id,
+                caller_grants=caller_grants,
+                offset=offset,
+                observed_at=now.timestamp(),
+            )
+        if len(contact_handles) > 32:
+            return _contact_policy_page_failure(
+                reason="contact_handle_limit_exceeded",
+                principal=authority.principal_id,
+                caller_grants=caller_grants,
+                offset=offset,
+                observed_at=now.timestamp(),
+            )
+        for handle in contact_handles[:32]:
+            raw_gateway = getattr(handle, "gateway", "")
+            raw_address = getattr(handle, "address", "")
+            gateway = _contact_policy_exact_text(raw_gateway, 64).lower()
+            address = _contact_policy_exact_text(raw_address, 512)
+            if (
+                not gateway
+                or not address
+            ):
+                logger.error("contact-policy encountered a non-canonical handle")
+                return _contact_policy_page_failure(
+                    reason="contact_handle_invalid",
+                    principal=authority.principal_id,
+                    caller_grants=caller_grants,
+                    offset=offset,
+                    observed_at=now.timestamp(),
+                )
+            handles.append({
+                "gateway": gateway,
+                "address": address,
+                "is_primary": bool(getattr(handle, "is_primary", False)),
+                "verified": bool(getattr(handle, "verified", False)),
+            })
+
+        first = _contact_policy_time(getattr(contact, "first_seen_at", None))
+        last = _contact_policy_time(getattr(contact, "last_interaction_at", None))
+        interactions = int(getattr(contact, "interaction_count", 0) or 0)
+        cadence_days = None
+        overdue = False
+        if first is not None and last is not None and interactions > 1:
+            cadence_days = max(
+                0.5,
+                min(90.0, (last - first).total_seconds() / 86400.0 / (interactions - 1)),
+            )
+            overdue = (now - last).total_seconds() / 86400.0 > max(
+                2.0, cadence_days * 1.5
+            )
+
+        followups = []
+        outreach_dependencies_available = (
+            _commitment_store is not None and _comms_log is not None
+        )
+        if _commitment_store is not None:
+            try:
+                listed = _commitment_store.list(
+                    person_id=contact_id,
+                    status=["pending", "overdue"],
+                    limit=10,
+                )
+                candidates = (
+                    listed.get("commitments", [])
+                    if isinstance(listed, dict) else (listed or [])
+                )
+                followups = [
+                    str(item.get("description"))
+                    for item in candidates
+                    if isinstance(item, Mapping) and item.get("description")
+                ][:10]
+            except Exception:
+                outreach_dependencies_available = False
+                followups = []
+        last_outbound = None
+        if _comms_log is not None:
+            try:
+                last_outbound = _comms_log.last_outbound(contact_id)
+            except Exception:
+                outreach_dependencies_available = False
+                last_outbound = None
+        primary_channel = next(
+            (item["gateway"] for item in handles if item["is_primary"]),
+            handles[0]["gateway"] if handles else "",
+        )
+        is_owner = bool(owner_contact_id and contact_id == owner_contact_id)
+        if outreach_dependencies_available:
+            from colony_sidecar.contacts.comms import evaluate_outreach
+            outreach = evaluate_outreach(
+                contact,
+                is_owner=is_owner,
+                last_outbound_ts=(last_outbound or {}).get("ts"),
+                cadence_days=cadence_days,
+                overdue=overdue,
+                open_followups=followups,
+                suggested_channel=primary_channel,
+                now=now,
+            )
+        else:
+            outreach = {
+                "should_contact": False,
+                "reason": "outreach dependencies unavailable; hold",
+                "requires_owner_approval": not is_owner,
+                "suggested_channel": primary_channel,
+                "cooldown_active": False,
+            }
+        should_contact = outreach.get("should_contact") is True
+        requires_owner = outreach.get("requires_owner_approval") is True
+        if not bool(getattr(contact, "interaction_allowed", False)):
+            decision = "deny"
+            # Standing is the outer contact gate.  Never publish an internally
+            # contradictory deny that still recommends outreach or asks for
+            # an approval; downstream consumers correctly reject that shape.
+            should_contact = False
+            requires_owner = False
+        elif should_contact and requires_owner:
+            decision = "ask_owner"
+        elif should_contact:
+            decision = "allow"
+        else:
+            decision = "hold"
+        items.append({
+            "contact_id": contact_id,
+            "display_name": _contact_policy_text(
+                getattr(contact, "display_name", ""), 160
+            ),
+            "is_owner": is_owner,
+            "authority": "none" if not is_owner else "owner_identity_only",
+            "context_class": "owner_private" if is_owner else "scoped_or_empty",
+            "trust_tier": _contact_policy_text(
+                getattr(contact, "trust_tier", ""), 48
+            ).lower(),
+            "privacy_level": _contact_policy_text(
+                getattr(contact, "privacy_level", ""), 48
+            ).lower(),
+            "interaction_allowed": bool(
+                getattr(contact, "interaction_allowed", False)
+            ),
+            "handles": handles,
+            "caller_exact_person_grant": (
+                contact_id in granted_ids
+                if caller_grants.get("available") is True else None
+            ),
+            "outreach": {
+                "available": outreach_dependencies_available,
+                "decision": decision,
+                "should_contact": should_contact,
+                "requires_owner_approval": requires_owner,
+                "cooldown_active": outreach.get("cooldown_active") is True,
+                "suggested_channel": _contact_policy_text(
+                    outreach.get("suggested_channel"), 64
+                ).lower(),
+                "reason": _contact_policy_text(outreach.get("reason"), 480),
+                "open_followup_count": len(followups),
+            },
+        })
+
+    return {
+        "schema": "ColonyContactPolicySourceV1",
+        "version": 1,
+        "available": True,
+        "complete": (
+            not truncated
+            and all(item["outreach"]["available"] for item in items)
+        ),
+        "reason": (
+            "outreach_dependencies_unavailable"
+            if any(not item["outreach"]["available"] for item in items)
+            else None
+        ),
+        "observed_at": now.timestamp(),
+        "read_only": True,
+        "execution_authority": False,
+        "caller_principal": authority.principal_id,
+        "caller_contact_grants": {
+            "available": bool(caller_grants.get("available")),
+            "reason": caller_grants.get("reason"),
+            "count": len(granted_ids),
+            "updated_at": caller_grants.get("updated_at"),
+        },
+        "offset": offset,
+        "next_offset": offset + len(contacts) if truncated else None,
+        "truncated": truncated,
+        "items": items,
+    }
+
+
+class ContactPolicyStandingRequest(BaseModel):
+    """Exact state toggle requested by a separately scoped operator BFF."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contact_id: str = Field(min_length=1, max_length=128)
+    interaction_allowed: bool
+    operation_id: str = Field(min_length=8, max_length=128)
+
+
+_CONTACT_POLICY_OPERATION_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._:/-]{7,127}$"
+)
+_CONTACT_POLICY_E164_RE = re.compile(r"^\+([1-9][0-9]{7,14})$")
+_CONTACT_POLICY_WHATSAPP_JID_RE = re.compile(
+    r"^([1-9][0-9]{7,19})@(s\.whatsapp\.net|lid)$"
+)
+
+
+class ContactPolicyProvisionRequest(BaseModel):
+    """One exact owner-operated contact create or handle verification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(min_length=1, max_length=16)
+    operation_id: str = Field(min_length=8, max_length=128)
+    whatsapp_identity: str = Field(min_length=1, max_length=255)
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    contact_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+
+
+def _contact_policy_whatsapp_identity(value: object) -> str:
+    """Return one exact WhatsApp DM JID, normalizing only canonical E.164."""
+
+    if not isinstance(value, str) or value != value.strip() or not value:
+        raise ValueError("identity must be exact")
+    e164 = _CONTACT_POLICY_E164_RE.fullmatch(value)
+    if e164 is not None:
+        return e164.group(1) + "@s.whatsapp.net"
+    if _CONTACT_POLICY_WHATSAPP_JID_RE.fullmatch(value) is not None:
+        return value
+    raise ValueError("identity is not a canonical WhatsApp DM")
+
+
+def _contact_policy_display_name(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or value != value.strip()
+        or not 1 <= len(value) <= 120
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    ):
+        raise ValueError("display name must be canonical")
+    return value
+
+
+async def _contact_policy_owner_contact_id() -> str:
+    """Resolve one exact canonical owner CID for reads and mutations."""
+
+    if _contacts_store is None:
+        raise RuntimeError("contacts store unavailable")
+    from colony_sidecar.identity import (
+        IdentityResolver,
+        OwnerIdentityError,
+        get_owner_contact_id,
+    )
+
+    configured = get_owner_contact_id()
+    resolver = IdentityResolver(
+        contact_store=_contacts_store,
+        owner_id=configured,
+    )
+    try:
+        forms = await resolver.owner_identities()
+    except OwnerIdentityError as error:
+        raise RuntimeError("owner identity unresolved") from error
+    candidates = set()
+    for form in forms:
+        if (
+            isinstance(form, str)
+            and form.startswith("cid-")
+            and _CONTACT_POLICY_ID_RE.fullmatch(form)
+        ):
+            contact = await _contacts_store.get(form)
+            if contact is not None and getattr(contact, "contact_id", None) == form:
+                candidates.add(form)
+    if len(candidates) != 1:
+        raise RuntimeError("owner identity is not one canonical contact")
+    return next(iter(candidates))
+
+
+@router.post("/contact-policy/standing")
+async def set_contact_policy_standing(
+    body: ContactPolicyStandingRequest,
+    request: Request,
+) -> dict:
+    """Toggle only standing for one existing non-owner canonical contact.
+
+    This is deliberately separate from the read projection and from contact
+    editing.  The authenticated principal is recorded by the contact store's
+    existing audit path; neither legacy auth nor anonymous dev mode can use it.
+    """
+
+    authority = request_authority(request)
+    contact_id = body.contact_id
+    if (
+        authority.legacy
+        or authority.anonymous
+        or not authority.authenticated
+        or not authority.has_scope("contacts:policy-write")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "scoped_contact_policy_writer_required",
+                "message": (
+                    "contact standing requires one scoped authenticated principal"
+                ),
+            },
+        )
+    if (
+        not contact_id
+        or contact_id != contact_id.strip()
+        or _CONTACT_POLICY_ID_RE.fullmatch(contact_id) is None
+        or _CONTACT_POLICY_OPERATION_RE.fullmatch(body.operation_id) is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "contact_standing_request_invalid",
+                "message": "contact ID and operation ID must be canonical",
+            },
+        )
+    if _contacts_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "contacts_store_unavailable",
+                "message": "contact store is unavailable",
+            },
+        )
+
+    try:
+        owner_contact_id = await _contact_policy_owner_contact_id()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "owner_contact_unavailable",
+                "message": "owner identity is unavailable; standing is immutable",
+            },
+        ) from exc
+    if contact_id == owner_contact_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "owner_standing_immutable",
+                "message": "the owner contact is outside guest standing controls",
+            },
+        )
+
+    try:
+        contact = await _contacts_store.get(contact_id)
+    except Exception as exc:
+        logger.warning("contact standing lookup failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "contact_lookup_unavailable",
+                "message": "contact lookup is unavailable",
+            },
+        ) from exc
+    if contact is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "contact_not_found",
+                "message": "contact does not exist",
+            },
+        )
+
+    current = bool(getattr(contact, "interaction_allowed", False))
+    requested = bool(body.interaction_allowed)
+    changed = current != requested
+    if changed:
+        try:
+            await _contacts_store.update_interaction_allowed(
+                contact_id,
+                requested,
+                performed_by=authority.principal_id,
+            )
+        except Exception as exc:
+            logger.warning("contact standing update failed: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "contact_standing_update_failed",
+                    "message": "contact standing could not be updated",
+                },
+            ) from exc
+
+    try:
+        await _contacts_store.record_audit(
+            contact_id,
+            "contact_policy_standing_command",
+            {
+                "operation_id": body.operation_id,
+                "interaction_allowed": requested,
+                "changed": changed,
+            },
+            performed_by=authority.principal_id,
+        )
+    except Exception as exc:
+        logger.warning("contact standing correlation audit failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "contact_standing_audit_failed",
+                "message": "contact standing audit could not be recorded",
+            },
+        ) from exc
+
+    return {
+        "schema": "ColonyContactStandingResultV1",
+        "version": 1,
+        "contact_id": contact_id,
+        "interaction_allowed": requested,
+        "changed": changed,
+        "operation_id": body.operation_id,
+        "principal": authority.principal_id,
+    }
+
+
+@router.post("/contact-policy/provision")
+async def provision_contact_policy_identity(
+    body: ContactPolicyProvisionRequest,
+    request: Request,
+) -> dict:
+    """Create or map one exact owner-verified WhatsApp identity.
+
+    This command deliberately does not import an allowlist, resolve a display
+    name, change trust, or grant outreach standing.  Existing contacts are
+    selected by their canonical ID from the owner-private projection; the
+    authenticated principal, not the body, supplies audit authority.
+    """
+
+    authority = request_authority(request)
+    if (
+        authority.legacy
+        or authority.anonymous
+        or not authority.authenticated
+        or not authority.has_scope("contacts:policy-write")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "scoped_contact_policy_writer_required",
+                "message": "contact provisioning requires the scoped owner operator",
+            },
+        )
+    if (
+        body.mode not in {"create", "verify"}
+        or _CONTACT_POLICY_OPERATION_RE.fullmatch(body.operation_id) is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "contact_provision_request_invalid",
+                "message": "provisioning mode and operation ID must be canonical",
+            },
+        )
+    try:
+        address = _contact_policy_whatsapp_identity(body.whatsapp_identity)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "contact_whatsapp_identity_invalid",
+                "message": "an exact E.164 number or WhatsApp DM JID is required",
+            },
+        ) from exc
+
+    display_name: Optional[str] = None
+    contact_id: Optional[str] = None
+    if body.mode == "create":
+        if body.contact_id is not None or body.display_name is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "contact_provision_request_invalid",
+                    "message": "create requires only a display name and identity",
+                },
+            )
+        try:
+            display_name = _contact_policy_display_name(body.display_name)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "contact_display_name_invalid",
+                    "message": "display name must be exact bounded text",
+                },
+            ) from exc
+    else:
+        contact_id = body.contact_id
+        if (
+            body.display_name is not None
+            or not isinstance(contact_id, str)
+            or contact_id != contact_id.strip()
+            or _CONTACT_POLICY_ID_RE.fullmatch(contact_id) is None
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "contact_provision_request_invalid",
+                    "message": "verify requires one canonical selected contact ID",
+                },
+            )
+
+    if _contacts_store is None or not callable(
+        getattr(_contacts_store, "provision_verified_handle", None)
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "contacts_store_unavailable",
+                "message": "contact provisioning is unavailable",
+            },
+        )
+    try:
+        owner_contact_id = await _contact_policy_owner_contact_id()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "owner_contact_unavailable",
+                "message": "owner identity is unavailable; contacts are immutable",
+            },
+        ) from exc
+    if contact_id == owner_contact_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "owner_contact_immutable",
+                "message": "the owner contact cannot be provisioned here",
+            },
+        )
+    if contact_id is not None:
+        try:
+            selected = await _contacts_store.get(contact_id)
+        except Exception as exc:
+            logger.warning("contact provisioning selection lookup failed")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "contact_lookup_unavailable",
+                    "message": "contact lookup is unavailable",
+                },
+            ) from exc
+        if selected is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "contact_not_found",
+                    "message": "selected contact does not exist",
+                },
+            )
+
+    try:
+        result = await _contacts_store.provision_verified_handle(
+            operation_id=body.operation_id,
+            performed_by=authority.principal_id,
+            gateway="whatsapp",
+            address=address,
+            display_name=display_name,
+            contact_id=contact_id,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if "display_name is not unique" in message:
+            code = "contact_display_name_ambiguous"
+        elif "operation_id" in message:
+            code = "contact_provision_operation_conflict"
+        elif "handle" in message:
+            code = "contact_handle_conflict"
+        elif "does not exist" in message:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "contact_not_found", "message": "contact does not exist"},
+            ) from exc
+        else:
+            code = "contact_provision_request_invalid"
+        raise HTTPException(
+            status_code=409 if code != "contact_provision_request_invalid" else 400,
+            detail={"code": code, "message": "contact provisioning was rejected"},
+        ) from exc
+    except Exception as exc:
+        logger.warning("contact provisioning transaction failed", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "contact_provision_failed",
+                "message": "contact provisioning did not commit",
+            },
+        ) from exc
+
+    if not isinstance(result, Mapping):
+        logger.error("contact provisioning result is not a mapping")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "contact_provision_result_invalid",
+                "message": "contact provisioning result is invalid",
+            },
+        )
+    expected_id = contact_id or str(result.get("contact_id") or "")
+    if (
+        _CONTACT_POLICY_ID_RE.fullmatch(expected_id) is None
+        or result.get("contact_id") != expected_id
+        or result.get("gateway") != "whatsapp"
+        or result.get("address") != address
+        or result.get("operation_id") != body.operation_id
+        or result.get("verified") is not True
+        or type(result.get("interaction_allowed")) is not bool
+        or (body.mode == "create" and result.get("interaction_allowed") is not False)
+    ):
+        logger.error("contact provisioning result failed invariants")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "contact_provision_result_invalid",
+                "message": "contact provisioning result is invalid",
+            },
+        )
+    return {
+        "schema": "ColonyContactProvisionResultV1",
+        "version": 1,
+        "mode": body.mode,
+        "contact_id": expected_id,
+        "display_name": result.get("display_name"),
+        "gateway": "whatsapp",
+        "address": address,
+        "handle_id": result.get("handle_id"),
+        "created": result.get("created") is True,
+        "handle_created": result.get("handle_created") is True,
+        "changed": result.get("changed") is True,
+        "verified": True,
+        "interaction_allowed": bool(result["interaction_allowed"]),
+        "operation_id": body.operation_id,
+        "principal": authority.principal_id,
+    }
 
 
 @router.post("/contacts", response_model=ContactResponse, status_code=201)
@@ -3222,20 +5781,106 @@ async def scope_promote(body: ScopePromoteRequest) -> Dict[str, Any]:
     return {"ok": True, "contact_id": body.contact_id, "changed": changed}
 
 
+def guard_derive_context_enabled() -> bool:
+    """COLONY_GUARD_DERIVE_CONTEXT (default on): complete a guard-check
+    request server-side when the host omits context. Off restores the
+    legacy null-key behavior (context-dependent checks silently pass)."""
+    return os.environ.get("COLONY_GUARD_DERIVE_CONTEXT", "1").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+async def _derive_guard_context(body: ResponseGuardCheckRequest) -> None:
+    """L3.3 — server-side completion of the guard-check context.
+
+    The chat hot path's host plugin sends only text + ids today, so the
+    context-dependent checks (cross_context, tom2_epistemic) evaluated
+    against a null conversation_key and returned [] — dead in exactly the
+    place they matter. Derive what the host omitted, from what the sidecar
+    already knows:
+
+      * ``conversation_key``  — the same derivation turns/sync uses
+        (_ensure_channel_id: session gateway, then primary handle gateway,
+        then unknown:<contact>), so guard keys and provenance keys AGREE;
+      * ``trust_tier``        — the contact store's tier for the target;
+      * ``mentioned_entities``— rule-based NER over the INCOMING message
+        (entities the counterpart just introduced belong to this
+        conversation and must not read as leaks).
+
+    Mutates ``body`` in place; never raises — any failure evaluates with
+    whatever the host sent (today's behavior).
+    """
+    if not guard_derive_context_enabled():
+        return
+    try:
+        from types import SimpleNamespace
+        if not body.conversation_key and body.target_contact_id:
+            body.conversation_key = await _ensure_channel_id(
+                SimpleNamespace(channel_id=None,
+                                contact_id=body.target_contact_id))
+        if not body.trust_tier and body.target_contact_id \
+                and _contacts_store is not None:
+            contact = await _contacts_store.get(body.target_contact_id)
+            tier = str(getattr(contact, "trust_tier", "") or "") \
+                if contact is not None else ""
+            if tier:
+                body.trust_tier = tier
+        if not body.mentioned_entities and body.incoming_message_text:
+            extractor = _get_conversation_extractor()
+            if extractor is not None:
+                res = await extractor.extract(body.incoming_message_text,
+                                              "guard-context")
+                names: List[str] = []
+                seen: set = set()
+                for cand in getattr(res, "entities", []):
+                    name = (getattr(cand, "text", None)
+                            or getattr(cand, "name", "") or "").strip()
+                    if name and name.lower() not in seen:
+                        seen.add(name.lower())
+                        names.append(name)
+                    if len(names) >= 10:
+                        break
+                if names:
+                    body.mentioned_entities = names
+    except Exception:
+        logger.debug("guard context derivation failed (evaluating with "
+                     "what the host sent)", exc_info=True)
+
+
 @router.post("/response-guard/check")
 async def response_guard_check(body: ResponseGuardCheckRequest) -> Dict[str, Any]:
-    """Evaluate an outbound reply before sending. Returns {decision, mode, findings}.
-    When no guard is configured, allows everything (the gate is opt-in)."""
+    """Evaluate an outbound reply under the exact outbound-surface policy.
+
+    Speech surfaces bypass without context derivation. A missing configured
+    guard allows in shadow and blocks in enforce for guarded text/artifacts.
+    Missing context (conversation_key / trust_tier / mentioned_entities) is
+    derived server-side (COLONY_GUARD_DERIVE_CONTEXT, default on) so the
+    context-dependent checks actually fire on the chat hot path."""
+    from colony_sidecar.gate.response_guard import (
+        GuardMode,
+        unavailable_guard_result,
+    )
+    from colony_sidecar.gate.surface_policy import EXCLUDED_SPEECH_SURFACES
+
     if _response_guard is None:
-        return {"decision": "allow", "mode": "disabled", "findings": []}
-    from colony_sidecar.gate.response_guard import GuardMode
-    mode = None
-    if body.mode:
-        try:
-            mode = GuardMode(body.mode)
-        except ValueError:
-            mode = None
+        configured_mode = (
+            GuardMode.ENFORCE
+            if os.environ.get("COLONY_GUARD_MODE", "").strip().lower()
+            == GuardMode.ENFORCE.value
+            else GuardMode.SHADOW
+        )
+        return unavailable_guard_result(
+            surface=body.surface,
+            configured_mode=configured_mode,
+            requested_mode=body.mode,
+            response_text=body.response_text,
+            communication_policy=body.communication_policy,
+        ).to_dict()
+
+    if body.surface not in EXCLUDED_SPEECH_SURFACES:
+        await _derive_guard_context(body)
+    mode = GuardMode(body.mode) if body.mode else None
     result = await _response_guard.evaluate(
+        surface=body.surface,
         response_text=body.response_text,
         incoming_message_text=body.incoming_message_text or "",
         trust_tier=body.trust_tier or "regular",
@@ -3246,19 +5891,72 @@ async def response_guard_check(body: ResponseGuardCheckRequest) -> Dict[str, Any
         conversation_key=body.conversation_key,
         mentioned_entities=body.mentioned_entities,
         mode=mode,
-        authorized=bool(body.authorized),
+        # A bearer that can request an evaluation is not thereby allowed to
+        # exempt its own cross-context transfer.  Owner-directed exemptions are
+        # available only to trusted in-process paths that derive identity from
+        # server-owned state.
+        authorized=False,
+        communication_policy=body.communication_policy,
     )
     return result.to_dict()
 
 
 @router.get("/response-guard/audit")
-async def response_guard_audit(limit: int = 50, authorized: Optional[bool] = None) -> Dict[str, Any]:
-    """Review cross-context guard events, split by authorized (owner-directed) vs not — used to
-    judge, in shadow, whether the classifier separates valid transfers from leaks before enforce."""
+async def response_guard_audit(limit: int = 50, authorized: Optional[bool] = None,
+                               check: Optional[str] = None) -> Dict[str, Any]:
+    """Review guard audit events (any check, not just cross_context), split by authorized
+    (owner-directed) vs not, optionally filtered to one check. The summary carries 24h/7d/14d
+    windows with per-check counts and the would_block_rate — the numbers that decide whether
+    a check is inside its false-positive budget before enforce is turned on. When present,
+    digest-bound communication-policy evaluations are returned separately so clean policy
+    checks do not alter those metrics."""
     audit = getattr(_response_guard, "_audit", None) if _response_guard is not None else None
+    breaker = None
+    if _response_guard is not None and hasattr(_response_guard, "breaker_status"):
+        try:
+            breaker = _response_guard.breaker_status()
+        except Exception:
+            breaker = None
     if audit is None:
-        return {"summary": {"total": 0}, "events": []}
-    return {"summary": audit.summary(), "events": audit.recent(limit=limit, authorized=authorized)}
+        return {"summary": {"total": 0}, "events": [], "breaker": breaker}
+    policy_reader = getattr(audit, "recent_communication_policy", None)
+    policy_evaluations = (
+        policy_reader(limit=limit) if callable(policy_reader) else []
+    )
+    result = {"summary": audit.summary(),
+              "events": audit.recent(limit=limit, authorized=authorized, check=check),
+              "breaker": breaker}
+    if policy_evaluations:
+        result["communication_policy_evaluations"] = policy_evaluations
+    return result
+
+
+@router.get("/env-risk")
+async def env_risk(conversation_key: str, contact_id: str) -> Dict[str, Any]:
+    """Owner observability for the environment-risk classifier (L1.2): grade
+    one (conversation, reader) pair R0..R3 and show the census it was graded
+    on. Identity/topology only — contact ids, methods, timestamps; never
+    message content. Fail-closed: any missing store or error grades R3."""
+    from colony_sidecar.gate.env_risk import classify, env_risk_window_hours
+    risk = await classify(conversation_key, contact_id,
+                          presence_store=_presence_store,
+                          contacts_store=_contacts_store)
+    census: List[Dict[str, Any]] = []
+    if _presence_store is not None:
+        try:
+            census = [
+                {"contact_id": r.get("contact_id"),
+                 "method": r.get("method"),
+                 "group_id": r.get("group_id"),
+                 "last_seen_at": r.get("last_seen_at")}
+                for r in _presence_store.census(
+                    conversation_key, window_hours=env_risk_window_hours())
+            ]
+        except Exception:
+            census = []
+    return {"conversation_key": conversation_key, "contact_id": contact_id,
+            "window_hours": env_risk_window_hours(),
+            **risk.to_dict(), "census": census}
 
 
 
@@ -3567,57 +6265,57 @@ def set_metalearner(learner) -> None:
     _metalearner = learner
 
 
-@router.post("/cognition/cycle", response_model=CognitionCycleResponse)
-async def cognition_cycle(body: CognitionCycleRequest) -> CognitionCycleResponse:
+@router.post("/cognition/cycle")
+async def cognition_cycle(body: CognitionCycleRequest) -> dict:
+    """Run the legacy detector cycle but publish the canonical benchmark.
+
+    The detector still consumes its internal CPI object until it is retired;
+    the public API must not manufacture the historical memory/reasoning/social
+    dimensions when their evidence is unavailable.
+    """
+    from colony_sidecar.self_model.benchmark import legacy_cpi_payload
+
+    canonical_cpi = legacy_cpi_payload(_benchmark)
     if _metalearner is None:
-        return CognitionCycleResponse()
+        return {"cpi": canonical_cpi, "gaps": [], "adjustments": []}
     try:
         result = await _metalearner.run_cycle()
-        cpi = None
-        if result and hasattr(result, "cpi") and result.cpi:
-            c = result.cpi
-            cpi = CognitivePerformanceIndex(
-                overall=getattr(c, "overall", 0.0),
-                memory=getattr(c, "memory", 0.0),
-                reasoning=getattr(c, "reasoning", 0.0),
-                social=getattr(c, "social", 0.0),
-                autonomy=getattr(c, "autonomy", 0.0),
-            )
         gaps = []
         if result and hasattr(result, "gaps"):
             for g in result.gaps:
-                gaps.append(CognitionGap(
-                    gap_id=getattr(g, "id", str(uuid.uuid4())),
-                    domain=getattr(g, "domain", "general"),
-                    severity=getattr(g, "severity", 0.0),
-                    description=getattr(g, "description"),
-                ))
+                severity = getattr(g, "severity", 0.0)
+                if hasattr(severity, "value"):
+                    severity = severity.value
+                gaps.append({
+                    "gap_id": getattr(g, "id", str(uuid.uuid4())),
+                    "domain": getattr(g, "domain", "general"),
+                    "severity": severity,
+                    "description": getattr(g, "description", None),
+                })
         adjustments = []
         if result and hasattr(result, "adjustments"):
             for a in result.adjustments:
                 adjustments.append({"domain": getattr(a, "domain", ""), "action": getattr(a, "action", "")})
-        return CognitionCycleResponse(cpi=cpi, gaps=gaps, adjustments=adjustments)
+        return {"cpi": canonical_cpi, "gaps": gaps,
+                "adjustments": adjustments}
     except Exception as exc:
         logger.warning("cognition_cycle failed: %s", exc)
-        return CognitionCycleResponse()
+        return {"cpi": canonical_cpi, "gaps": [], "adjustments": [],
+                "error": str(exc)}
 
 
-@router.get("/cognition/cpi", response_model=CognitivePerformanceIndex)
-async def get_cpi() -> CognitivePerformanceIndex:
-    if _metalearner is None:
-        return CognitivePerformanceIndex()
+@router.get("/cognition/cpi")
+async def get_cpi() -> dict:
+    """Deprecated compatibility surface backed by SelfhoodBenchmark."""
+    from colony_sidecar.self_model.benchmark import legacy_cpi_payload
+
     try:
-        cpi = await _metalearner.evaluate()
-        return CognitivePerformanceIndex(
-            overall=getattr(cpi, "overall", 0.0),
-            memory=getattr(cpi, "memory", 0.0),
-            reasoning=getattr(cpi, "reasoning", 0.0),
-            social=getattr(cpi, "social", 0.0),
-            autonomy=getattr(cpi, "autonomy", 0.0),
-        )
+        return legacy_cpi_payload(_benchmark)
     except Exception as exc:
         logger.warning("get_cpi failed: %s", exc)
-        return CognitivePerformanceIndex()
+        return {"deprecated": True, "available": False,
+                "canonical_endpoint": "/v1/host/self/benchmark",
+                "error": str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -3800,27 +6498,64 @@ async def discover_connections(body: SynthesisDiscoverRequest) -> SynthesisDisco
 # ---------------------------------------------------------------------------
 
 _learner = None
+_learning_feedback_store = None
 
 def set_learner(learner) -> None:
     global _learner
     _learner = learner
 
 
+def set_learning_feedback_store(store) -> None:
+    """Wire the one durable correction ledger shared by learning and P4."""
+    global _learning_feedback_store
+    _learning_feedback_store = store
+
+
 @router.post("/learning/correction")
-async def submit_correction(body: LearningCorrectionRequest) -> dict:
-    if _learner is None:
+async def submit_correction(
+    body: LearningCorrectionRequest,
+    request: Request,
+) -> dict:
+    if _learner is None and _learning_feedback_store is None:
         return {"accepted": False}
     try:
-        await _learner.ingest_correction({
-            "original": body.original,
-            "correction": body.correction,
-            "component": body.component,
-            "sender_id": body.context.contact_id if body.context else "unknown",
-        })
-        return {"accepted": True}
+        from colony_sidecar.intelligence.learning.feedback_store import (
+            UserCorrection,
+        )
+
+        person_id = resolve_request_person(
+            request, context_person_id=body.context.contact_id) or ""
+        correction = UserCorrection.create(
+            original_response=body.original,
+            correction_text=body.correction,
+            correction_type=body.correction_type,
+            context_hash=(body.external_ref or "").strip(),
+            person_id=person_id,
+        )
+        if body.correction_id:
+            correction_id = body.correction_id.strip()
+            if not correction_id or len(correction_id) > 192:
+                raise ValueError("correction_id is malformed")
+            correction.correction_id = correction_id
+        if _learning_feedback_store is not None:
+            # Persistence precedes volatile adaptation.  A learner failure
+            # cannot erase owner feedback or its future benchmark evidence.
+            _learning_feedback_store.record_correction(correction)
     except Exception as exc:
-        logger.warning("submit_correction failed: %s", exc)
+        logger.warning("submit_correction persistence failed: %s", exc)
         return {"accepted": False}
+
+    learned = False
+    if _learner is not None:
+        try:
+            await _learner.ingest_correction(correction)
+            learned = True
+        except Exception as exc:
+            # The durable owner correction remains accepted.  Continuous
+            # adaptation can replay it from FeedbackStore after recovery.
+            logger.warning("submit_correction learner failed: %s", exc)
+    return {"accepted": True, "learned": learned,
+            "correction_id": correction.correction_id}
 
 
 @router.post("/learning/engagement")
@@ -3881,6 +6616,271 @@ def set_facts_store(store):
     _facts_store = store
 
 
+_p8_runtime = None
+
+
+def set_p8_runtime(runtime) -> None:
+    global _p8_runtime
+    _p8_runtime = runtime
+
+
+# --- Second-order theory of mind (tom2: refs-not-content, owner-only) ---
+_tom2_store = None
+_tom2_engine = None
+
+
+def set_tom2_store(store) -> None:
+    global _tom2_store
+    _tom2_store = store
+
+
+def set_tom2_engine(engine) -> None:
+    global _tom2_engine
+    _tom2_engine = engine
+
+
+_tom2_exposure = None
+
+
+def set_tom2_exposure_store(store) -> None:
+    global _tom2_exposure
+    _tom2_exposure = store
+
+
+def _tom2_approvals():
+    """Pair-approval registry over the live ProposalStore, or None."""
+    if _proposal_store is None:
+        return None
+    from colony_sidecar.tom.approvals import Tom2ApprovalRegistry
+    return Tom2ApprovalRegistry(_proposal_store)
+
+
+class Tom2PairApprovalRequest(BaseModel):
+    reader: str
+    subject: str
+    action: str = "request"      # request | approve | revoke
+
+
+@router.get("/tom2/approvals")
+async def tom2_approvals_list(limit: int = 100) -> dict:
+    """Owner view of level-2 pair approvals (L2.4): who may receive
+    epistemic lines about whom, with live TTL validity. Ids only."""
+    reg = _tom2_approvals()
+    if reg is None:
+        return {"available": False, "pairs": []}
+    return {"available": True, "pairs": reg.list_pairs(limit=limit)}
+
+
+@router.post("/tom2/approvals")
+async def tom2_approvals_act(body: Tom2PairApprovalRequest) -> dict:
+    """Owner action on a (reader, subject) pair: request files a proposal,
+    approve stamps it with a fresh TTL, revoke kills it. The eligibility
+    pipeline consumes only is_approved — everything else here is inert."""
+    reg = _tom2_approvals()
+    if reg is None:
+        raise HTTPException(status_code=501,
+                            detail="Proposal store not initialized")
+    action = (body.action or "request").strip().lower()
+    try:
+        if action == "approve":
+            reg.approve_pair(body.reader, body.subject)
+        elif action == "revoke":
+            reg.revoke_pair(body.reader, body.subject)
+        elif action == "request":
+            reg.request_pair(body.reader, body.subject)
+        else:
+            raise HTTPException(status_code=400,
+                                detail=f"unknown action {action!r}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "action": action, "reader": body.reader,
+            "subject": body.subject,
+            "approved": reg.is_approved(body.reader, body.subject)}
+
+
+@router.get("/tom2/exposure")
+async def tom2_exposure(reader: str = "", subject: str = "",
+                        limit: int = 50) -> dict:
+    """Owner read surface for the level-2 exposure ledger (L2.3): what was
+    rendered to whom about whom, by REFS only (contact ids, fact refs,
+    conversation keys — never fact text), plus the live budget posture.
+    Empty and inert until level-2 rendering is wired and used."""
+    from colony_sidecar.tom.exposure import (
+        budget_global_day, budget_pair_day, budget_reader_day)
+    budgets = {"pair_day": budget_pair_day(),
+               "reader_day": budget_reader_day(),
+               "global_day": budget_global_day()}
+    if _tom2_exposure is None:
+        return {"available": False, "budgets": budgets, "events": []}
+    try:
+        return {"available": True,
+                "budgets": budgets,
+                "summary": _tom2_exposure.counts(),
+                "events": _tom2_exposure.recent(
+                    reader_contact_id=reader or None,
+                    subject_contact_id=subject or None, limit=limit)}
+    except Exception as exc:
+        return {"available": True, "budgets": budgets,
+                "error": str(exc), "events": []}
+
+
+@router.get("/tom2/status")
+async def tom2_status() -> dict:
+    """Owner observability for the asymmetry engine: mode, aggregate counts
+    and the last run report, plus the leveled posture (L4.3) — configured/
+    max level, live risk caps, and a SAMPLE decision resolved against a
+    hostile placeholder environment so the owner can see every brake term
+    (configured, max, risk cap, enforce evidence, cross-context) as the
+    resolver sees it right now. Counts only — no inference contents here."""
+    from colony_sidecar.tom.asymmetry import tom2_mode
+    from colony_sidecar.tom.levels import (
+        configured_level, configured_max_level, parse_risk_caps,
+        resolve_effective_level, risk_caps_valid)
+    counts = None
+    if _tom2_store is not None:
+        try:
+            counts = _tom2_store.counts()
+        except Exception:
+            counts = None
+    sample = None
+    try:
+        sample = (await resolve_effective_level(
+            "status:probe", "status-probe-reader",
+            presence_store=_presence_store,
+            contacts_store=_contacts_store,
+            use_cache=False)).to_dict()
+    except Exception:
+        sample = None
+    return {"mode": tom2_mode(), "counts": counts,
+            "last_run": getattr(_tom2_engine, "last_report", None),
+            "configured": configured_level(),
+            "max": configured_max_level(),
+            "risk_caps": {"valid": risk_caps_valid(),
+                          "caps": {str(k): v for k, v
+                                   in parse_risk_caps().items()}},
+            "sample_decision": sample}
+
+
+@router.get("/tom2/report")
+async def tom2_report(contact_id: str = "", kind: str = "",
+                      limit: int = 100,
+                      request: Request = None) -> dict:
+    """Owner-facing tom2 report (H3.3): the full inference rows, owner
+    reader scope, with fact refs resolved to their text where the facts
+    store can. This is the OWNER'S API surface — rendering any of this for
+    a non-owner contact is a separate, double-gated path that ships dark
+    (see tom.render_for_contact)."""
+    if _tom2_store is None:
+        return {"available": False, "inferences": []}
+    try:
+        facts_view = _facts_store
+        if _p8_runtime is not None:
+            owner = (
+                os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+                or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+                or "owner"
+            )
+            authority = request_authority(request)
+            if str(authority.viewer_person_id or "") != owner:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "p8_owner_authority_required",
+                        "message": "P8 Tom2 report is owner-scoped",
+                    },
+                )
+            owner_viewer = _p8_viewer_for_request(request, owner)
+            facts_view = _p8_runtime.projected_facts_view(
+                owner_viewer, now=datetime.now(timezone.utc))
+        rows = _tom2_store.list_inferences(
+            contact_id=contact_id or None, kind=kind or None,
+            limit=max(1, min(500, int(limit))))
+        if facts_view is not None:
+            projected_rows = []
+            for r in rows:
+                try:
+                    refs = [r.get("fact_ref")]
+                    if _p8_runtime is not None:
+                        refs += list(r.get("evidence_refs") or [])
+                    visible = [
+                        facts_view.get_fact(str(ref or ""))
+                        for ref in refs
+                    ]
+                    f = visible[0] if visible else None
+                    if f and (
+                        _p8_runtime is None or all(visible)
+                    ):
+                        r["fact"] = f.get("fact")
+                        r["fact_contact_id"] = f.get("contact_id")
+                        if _p8_runtime is not None:
+                            projected_rows.append(r)
+                except Exception:
+                    pass
+            if _p8_runtime is not None:
+                rows = projected_rows
+        return {"available": True, "count": len(rows), "inferences": rows}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"available": True, "error": str(exc), "inferences": []}
+
+
+_DEFAULT_TOM_FACTS_STORE = object()
+
+
+def _render_tom2_context(
+    max_lines: int = 8,
+    *,
+    facts_store: Any = _DEFAULT_TOM_FACTS_STORE,
+    strict_projection: bool = False,
+) -> str:
+    """Compact owner-context rendering of the freshest asymmetries.
+
+    unaware_of rows are the informative ones ("X hasn't heard this yet");
+    fact refs resolve to text here because this renders ONLY into the
+    owner's context — the caller enforces that."""
+    if _tom2_store is None:
+        return ""
+    resolved_facts = (
+        _facts_store
+        if facts_store is _DEFAULT_TOM_FACTS_STORE else facts_store
+    )
+    rows = _tom2_store.list_inferences(kind="unaware_of", limit=50)
+    lines = []
+    candidates = rows if strict_projection else rows[:max_lines]
+    for r in candidates:
+        subject = ""
+        if resolved_facts is not None:
+            try:
+                refs = [r.get("fact_ref")]
+                if strict_projection:
+                    refs += list(r.get("evidence_refs") or [])
+                visible = [
+                    resolved_facts.get_fact(str(ref or ""))
+                    for ref in refs
+                ]
+                f = visible[0] if visible else None
+                if f and all(visible):
+                    subject = str(f.get("fact") or "")[:120]
+            except Exception:
+                subject = ""
+        if not subject:
+            if strict_projection:
+                continue
+            subject = f"a shared fact ({r.get('fact_ref')})"
+        lines.append(
+            f"- {r.get('contact_id')} appears unaware of: {subject} "
+            f"(confidence {float(r.get('confidence') or 0):.2f})")
+        if len(lines) >= max_lines:
+            break
+    if not lines:
+        return ""
+    if not strict_projection and len(rows) > max_lines:
+        lines.append(f"... and {len(rows) - max_lines} more "
+                     "(GET /v1/host/tom2/report)")
+    return "\n".join(lines)
+
+
 _context_provenance = None
 
 
@@ -3896,6 +6896,27 @@ def set_channel_store(store) -> None:
     """Wire the channel registration store so turn traffic keeps it alive."""
     global _channel_store
     _channel_store = store
+
+
+_presence_store = None
+
+
+def set_presence_store(store) -> None:
+    """Wire the conversation presence registry (L1.1) so attributed turns
+    feed the census the environment-risk classifier reads."""
+    global _presence_store
+    _presence_store = store
+
+
+_taint_registry = None
+
+
+def set_taint_registry(registry) -> None:
+    """Wire the injection-taint registry (L3.1). The level-2 context wiring
+    registers a taint per rendered epistemic line; the tom2_epistemic guard
+    check reads it. No registry => level 2 never renders (fail closed)."""
+    global _taint_registry
+    _taint_registry = registry
 
 
 def _observe_channel(channel_id: str) -> None:
@@ -3992,6 +7013,59 @@ def _get_conversation_extractor():
     return _conversation_extractor or None
 
 
+async def _world_context_entities(query_text: str, limit: int = 5) -> list:
+    """World-model entities relevant to a context query.
+
+    COLONY_WORLD_CONTEXT_QUERY governs how the query hits the store:
+      * ``message`` (default): the legacy whole-message FTS call, unchanged.
+      * ``entities``: extract proper-noun candidates from the message with the
+        shared rule-based extractor and OR their find_entities lookups (<=5
+        candidates, limit 2 each, deduped, capped at ``limit``) — precise
+        entity matching instead of FTS noise over a whole sentence.
+    Empty extraction (or extractor failure) falls back to the whole-message
+    call, so entities mode can never return LESS than a degraded message run.
+    """
+    mode = os.environ.get("COLONY_WORLD_CONTEXT_QUERY", "message").strip().lower()
+    if mode == "entities":
+        extractor = _get_conversation_extractor()
+        if extractor is not None:
+            try:
+                res = await extractor.extract(query_text, "context-query")
+                names: list = []
+                seen = set()
+                for c in getattr(res, "entities", []):
+                    name = (getattr(c, "text", None) or getattr(c, "name", "") or "").strip()
+                    key = name.lower()
+                    if name and key not in seen:
+                        seen.add(key)
+                        names.append(name)
+                    if len(names) >= 5:
+                        break
+                if names:
+                    out: list = []
+                    seen_ids = set()
+                    for name in names:
+                        try:
+                            hits = await _world_store.find_entities(query=name, limit=2)
+                        except Exception:
+                            logger.debug("world context lookup failed for %r",
+                                         name, exc_info=True)
+                            continue
+                        for e in hits or []:
+                            eid = getattr(e, "id", None) or getattr(e, "name", str(e))
+                            if eid in seen_ids:
+                                continue
+                            seen_ids.add(eid)
+                            out.append(e)
+                            if len(out) >= limit:
+                                return out
+                    return out
+            except Exception:
+                logger.debug("world context entity extraction failed; falling "
+                             "back to whole-message query", exc_info=True)
+    return await _world_store.find_entities(query=query_text, limit=limit)
+
+
 _response_guard = None
 
 
@@ -4067,18 +7141,41 @@ async def list_relationship_briefs() -> dict:
 
 @router.get("/relationships/{contact_id}")
 async def get_relationship_brief(contact_id: str,
-                                 refresh: bool = False) -> dict:
+                                 refresh: bool = False,
+                                 request: Request = None) -> dict:
     """One contact's RelationshipBrief (standing, psyche, approach guidance).
     ``refresh=true`` recomputes from the live stores."""
     if _relationship_profiler is None:
         return {"available": False}
     try:
-        brief = None if refresh else _relationship_profiler.cached(contact_id)
+        resolved = contact_id
+        p8_viewer = None
+        if _p8_runtime is not None:
+            resolved = resolve_request_person(
+                request, claimed_person_id=contact_id) or contact_id
+            try:
+                p8_viewer = _p8_viewer_for_request(request, resolved)
+            except HTTPException:
+                # Preserve the general relationship endpoint during scoped-auth
+                # migration, but omit all P8-derived content without attestation.
+                logger.debug(
+                    "P8 relationship topics omitted: scoped viewer unavailable")
+        if refresh:
+            brief = None
+        elif _p8_runtime is not None:
+            brief = _relationship_profiler.cached(
+                resolved, viewer=p8_viewer)
+        else:
+            brief = _relationship_profiler.cached(resolved)
         if brief is None:
-            brief = await _relationship_profiler.profile(contact_id)
+            if _p8_runtime is not None:
+                brief = await _relationship_profiler.profile(
+                    resolved, viewer=p8_viewer)
+            else:
+                brief = await _relationship_profiler.profile(resolved)
         if brief is None:
             raise HTTPException(status_code=404,
-                                detail=f"no profile for {contact_id!r}")
+                                detail=f"no profile for {resolved!r}")
         return {"available": True, "brief": brief.to_dict(),
                 "rendered": brief.render()}
     except HTTPException:
@@ -4192,12 +7289,32 @@ async def directed_list(status: str = "", limit: int = 30) -> dict:
 
 
 @router.post("/directed/tasks/{task_id}/approve")
-async def directed_approve(task_id: str, body: dict = Body(default={})) -> dict:
+async def directed_approve(
+    task_id: str,
+    body: dict = Body(default={}),
+    request: Request = None,
+) -> dict:
     if _directed_service is None:
         return {"ok": False, "reason": "directed_not_wired"}
+    from colony_sidecar.api.routers.task_queue import _decision_authority
+
+    actor, _evidence, _mode = _decision_authority(request)
+    try:
+        grant_ttl = int(
+            (body or {}).get("grant_expires_in_seconds", 7 * 24 * 60 * 60)
+        )
+        grant_uses = int((body or {}).get("grant_max_uses", 5))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="invalid bounded grant limits") from exc
+    if not 60 <= grant_ttl <= 30 * 24 * 60 * 60 or not 1 <= grant_uses <= 100:
+        raise HTTPException(status_code=422, detail="bounded grant limits are out of range")
     task = _directed_service.approve(
-        task_id, approved_by=(body or {}).get("approved_by", "owner"),
-        standing=bool((body or {}).get("standing")))
+        task_id,
+        approved_by=actor,
+        standing=bool((body or {}).get("standing")),
+        grant_expires_in_seconds=grant_ttl,
+        grant_max_uses=grant_uses,
+    )
     return {"ok": task is not None, "task": task.to_dict() if task else None}
 
 
@@ -4281,6 +7398,24 @@ def set_world_llm_extractor(x) -> None:
 def set_worker_governor(g) -> None:
     global _worker_governor
     _worker_governor = g
+    # QueueManager is the authority chokepoint. Keep the singleton and the
+    # router handle synchronized so HTTP, embedded, mesh, and direct claimers
+    # cannot observe different governors.
+    queues = []
+    queue = getattr(_task_queue, "queue", None)
+    if queue is not None:
+        queues.append(queue)
+    try:
+        from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+        instance = TaskQueueManager._instance
+        singleton_queue = getattr(instance, "queue", None)
+        if singleton_queue is not None and singleton_queue not in queues:
+            queues.append(singleton_queue)
+    except Exception:
+        pass
+    for queue in queues:
+        if hasattr(queue, "configure_governance"):
+            queue.configure_governance(g)
 
 
 def set_sandbox(s) -> None:
@@ -4321,6 +7456,12 @@ class BenchmarkSample(BaseModel):
     value: float
     ts: Optional[float] = None
     meta: Optional[Dict[str, Any]] = None
+    definition_version: Optional[str] = None
+    source_ref: Optional[str] = None
+    receipt_ref: Optional[str] = None
+    sample_id: Optional[str] = None
+    exposure_id: Optional[str] = None
+    effect_claim: bool = False
 
 
 class BenchmarkSamplesRequest(BaseModel):
@@ -4329,20 +7470,89 @@ class BenchmarkSamplesRequest(BaseModel):
 
 
 @router.post("/self/benchmark/samples")
-async def post_benchmark_samples(body: BenchmarkSamplesRequest) -> dict:
+async def post_benchmark_samples(
+    body: BenchmarkSamplesRequest,
+    request: Request,
+) -> dict:
     """Ingest measured samples from deployment surfaces (e.g. voice TTFB as
-    latency.voice_ttfb_ms). Metric ids must be dotted lowercase; invalid
-    samples are rejected individually."""
+    latency.voice_ttfb_ms).
+
+    P4 shadow/live samples are attributed to the authenticated request
+    principal and bound to a versioned evidence definition.  The historical
+    body ``source`` label survives only in P4-off compatibility mode.
+    """
     if _benchmark is None:
         return {"available": False, "accepted": 0}
+    from colony_sidecar.self_model.benchmark import cognition_p4_mode
+
+    mode = cognition_p4_mode()
+    principal = request_authority(request).principal_id
     accepted = 0
+    rejection_reasons: Dict[str, int] = {}
     for s in body.samples[:500]:
-        if _benchmark.store.add_sample(
-                s.metric, s.value, source=body.source or "host",
-                ts=s.ts, meta=s.meta):
-            accepted += 1
+        try:
+            if mode == "off":
+                saved = _benchmark.store.add_sample(
+                    s.metric, s.value, source=body.source or "host",
+                    ts=s.ts, meta=s.meta)
+            else:
+                if not (s.definition_version or "").strip():
+                    raise ValueError("definition_version is required")
+                if not (s.source_ref or "").strip():
+                    raise ValueError("source_ref is required")
+                if (s.effect_claim or s.exposure_id) and not (
+                        s.receipt_ref or "").strip():
+                    raise ValueError(
+                        "receipt_ref is required for an effect claim")
+                saved = _benchmark.store.add_evidence_sample(
+                    s.metric,
+                    s.value,
+                    definition_version=s.definition_version or "",
+                    sample_principal=principal,
+                    source_ref=s.source_ref or "",
+                    receipt_ref=s.receipt_ref,
+                    sample_id=s.sample_id,
+                    exposure_id=s.exposure_id,
+                    ts=s.ts,
+                    meta=s.meta,
+                )
+            if saved:
+                accepted += 1
+            else:
+                rejection_reasons["invalid_sample"] = (
+                    rejection_reasons.get("invalid_sample", 0) + 1)
+        except ValueError as exc:
+            reason = str(exc)[:160] or "invalid_sample"
+            rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
     return {"available": True, "accepted": accepted,
-            "rejected": len(body.samples[:500]) - accepted}
+            "rejected": len(body.samples[:500]) - accepted,
+            "rejection_reasons": rejection_reasons}
+
+
+class RecallProbeRequest(BaseModel):
+    probes: int = 50
+    seed: Optional[int] = None
+
+
+@router.post("/self/benchmark/recall-probe")
+async def post_benchmark_recall_probe(body: RecallProbeRequest) -> dict:
+    """On-demand, deterministic recall probe (the graduation gate for recall
+    changes): re-queries a seeded sample of high-confidence shared facts
+    against graph recall and grades token coverage. Read-only against the
+    graph; probe samples are recorded as source="manual-probe" and are never
+    read back into weekly rollups, so probing cannot distort the scorecard."""
+    if _benchmark is None:
+        return {"available": False}
+    try:
+        result = await _benchmark.run_recall_probe(
+            probes=body.probes, seed=body.seed)
+        if result is None:
+            return {"available": True, "ran": False,
+                    "reason": "graph/facts unavailable or no "
+                              "high-confidence facts to probe"}
+        return {"available": True, "ran": True, **result}
+    except Exception as exc:
+        return {"available": True, "error": str(exc)}
 
 
 _experiments = None
@@ -4362,11 +7572,386 @@ def set_toolsmith(t) -> None:
 
 
 _workspace = None
+_cognition_spine = None
+_external_event_intake = None
+_cognition_attachment_status = {
+    "configured_mode": "off",
+    "state": "off",
+    "reason": "cognition_not_configured",
+    "configured_handler_catalog": [],
+    "effective_handler_catalog": [],
+}
+_situation_store = None
+_situation_reducer = None
+_cognition_evidence_store = None
+_cognition_evidence_reducer = None
+_project_event_projector = None
+_cognition_evidence_attachment_status = {
+    "configured_mode": "off",
+    "state": "off",
+    "reason": "cognition_evidence_not_configured",
+}
+_drive_governance = None
+_drive_ranker = None
+_drive_project_store = None
 
 
 def set_workspace(w) -> None:
     global _workspace
     _workspace = w
+
+
+def set_cognition_spine(spine, attachment_status=None) -> None:
+    global _cognition_spine, _cognition_attachment_status
+    _cognition_spine = spine
+    if attachment_status is not None:
+        _cognition_attachment_status = dict(attachment_status)
+    elif spine is not None:
+        # Test/local embedders that attach the already-built spine directly
+        # still get truthful, non-stale attachment state.
+        _cognition_attachment_status = {
+            "configured_mode": "attached",
+            "state": "attached",
+            "reason": "cognition_spine_attached_directly",
+            "configured_handler_catalog": [],
+            "effective_handler_catalog": [],
+        }
+
+
+def set_external_event_intake(intake) -> None:
+    """Publish or clear the strict Phase C external evidence intake."""
+
+    global _external_event_intake
+    _external_event_intake = intake
+
+
+def set_cognition_attachment_status(status) -> None:
+    """Publish truthful configured/effective P3 attachment state."""
+
+    global _cognition_attachment_status
+    _cognition_attachment_status = dict(status or {})
+
+
+def set_situation_spine(store, reducer) -> None:
+    """Publish or clear the complete P6 observer graph atomically."""
+
+    global _situation_store, _situation_reducer
+    _situation_store = store
+    _situation_reducer = reducer
+
+
+def set_cognition_evidence(
+    store, reducer, project_event_projector, attachment_status=None,
+) -> None:
+    """Publish or clear the complete receipt-derived evidence graph."""
+
+    global _cognition_evidence_store, _cognition_evidence_reducer
+    global _project_event_projector, _cognition_evidence_attachment_status
+    _cognition_evidence_store = store
+    _cognition_evidence_reducer = reducer
+    _project_event_projector = project_event_projector
+    if attachment_status is not None:
+        _cognition_evidence_attachment_status = dict(attachment_status)
+
+
+def set_drive_governance(governance, ranker, project_store) -> None:
+    """Publish or clear the complete P7 graph atomically."""
+
+    global _drive_governance, _drive_ranker, _drive_project_store
+    _drive_governance = governance
+    _drive_ranker = ranker
+    _drive_project_store = project_store
+
+
+class CognitionConcernPromotionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_material_digest: str = Field(min_length=1, max_length=128)
+
+
+class ExternalCognitionEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(min_length=8, max_length=192)
+    kind: str = Field(min_length=1, max_length=64)
+    occurred_at: str = Field(min_length=20, max_length=64)
+    summary: str = Field(min_length=1, max_length=1000)
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CognitionGoalPromotionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_thought_result_ref: str = Field(min_length=1, max_length=256)
+
+
+def _external_owner_goal_objective(event, authority) -> str:
+    """Return the exact owner RCS ``Goal:`` objective, otherwise no intent.
+
+    External cognition events remain reported evidence.  This narrow adapter
+    promotes only an identity that the server has already authenticated and
+    bound to the configured owner, on the RCS text lane, with the explicit
+    case-sensitive control prefix.  All other text continues through the
+    ordinary observation path.
+    """
+
+    owner = _owner_person_id()
+    if not (
+        authority.authenticated
+        and not authority.legacy
+        and not authority.anonymous
+        and authority.has_scope("cognition:events-ingest")
+        and authority.viewer_person_id == owner
+        and owner in authority.person_ids
+        and "owner" in authority.audiences
+        and event.kind == "text_turn_observation"
+        and event.subject_person_id == owner
+        and event.viewer_person_id == owner
+        and event.viewer_scope == "owner"
+        and event.shareability == "owner_private"
+        and tuple(event.audience_scope) == ("owner",)
+        and event.attributes.get("channel") == "rcs"
+    ):
+        return ""
+    observation = str(event.attributes.get("observation") or "")
+    if not observation.startswith("Goal:"):
+        return ""
+    return " ".join(observation[len("Goal:"):].split()).strip()
+
+
+def _cognition_owner_authority(request: Request):
+    authority = request_authority(request)
+    owner = _owner_person_id()
+    allowed = bool(
+        authority.authenticated
+        and not authority.legacy
+        and not authority.anonymous
+        and authority.has_scope("cognition:manage")
+        and "owner" in authority.audiences
+        and authority.viewer_person_id == owner
+        and authority.principal_id
+        and authority.credential_id
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "owner_authority_required",
+                "message": "scoped authenticated owner authority is required",
+            },
+        )
+    return authority
+
+
+@router.get("/cognition/spine")
+async def get_cognition_spine_health(request: Request, limit: int = 100) -> dict:
+    """Viewer-filtered P3 mode, worker-independent health, and read trace."""
+
+    if _cognition_spine is None:
+        return {
+            "available": False,
+            "healthy": _cognition_attachment_status.get("state") == "off",
+            "attachment": dict(_cognition_attachment_status),
+        }
+    authority = request_authority(request)
+    viewer = authority.viewer_person_id or ""
+    if authority.legacy:
+        viewer = _owner_person_id()
+    if not viewer:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "person_binding_required",
+                "message": "the credential has no exact viewer binding",
+            },
+        )
+    snapshot = _cognition_spine.health_snapshot(
+        viewer_person_id=viewer,
+        owner_person_id=_owner_person_id(),
+        audiences=authority.audiences,
+        limit=max(1, min(int(limit), 500)),
+    )
+    snapshot["attachment"] = dict(_cognition_attachment_status)
+    snapshot["healthy"] = bool(
+        snapshot.get("healthy")
+        and _cognition_attachment_status.get("state") == "attached"
+    )
+    return snapshot
+
+
+@router.post("/cognition/events")
+async def ingest_external_cognition_event(
+    body: ExternalCognitionEventRequest,
+    request: Request,
+) -> dict:
+    """Accept bounded text/system evidence under server-derived authority."""
+
+    from colony_sidecar.cognition.external_events import (
+        ExternalCognitionEventV1,
+        ExternalEventConflict,
+        ExternalEventProjectionError,
+        ExternalEventValidationError,
+    )
+
+    if _external_event_intake is None:
+        raise HTTPException(
+            status_code=503, detail="external cognition intake is unavailable",
+        )
+    authority = request_authority(request)
+    if (
+        not authority.authenticated
+        or authority.legacy
+        or authority.anonymous
+        or not authority.has_scope("cognition:events-ingest")
+        or not authority.viewer_person_id
+        or not authority.principal_id
+        or not authority.credential_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "external_event_authority_required",
+                "message": (
+                    "scoped principal with an exact viewer binding is required"
+                ),
+            },
+        )
+    try:
+        event = ExternalCognitionEventV1.from_authority(
+            body.model_dump(), authority=authority,
+        )
+        receipt = _external_event_intake.ingest(event)
+        owner_goal = _external_owner_goal_objective(event, authority)
+        if owner_goal:
+            if _project_engine is None:
+                raise ExternalEventProjectionError(
+                    "owner goal Project engine is unavailable"
+                )
+            try:
+                promotion = await _project_engine.create_owner_goal_work_order(
+                    owner_goal,
+                    external_event_id=event.event_id,
+                    external_event_digest=event.event_digest,
+                    intake_receipt=receipt,
+                    subject_person_id=event.subject_person_id,
+                    viewer_scope=event.viewer_scope,
+                    shareability=event.shareability,
+                    occurred_at=event.occurred_at,
+                )
+            except ExternalEventProjectionError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "owner Goal promotion failed (%s)", type(exc).__name__,
+                )
+                raise ExternalEventProjectionError(
+                    "owner goal Project/WorkOrder promotion is retryable"
+                ) from exc
+            logger.info(
+                "Owner Goal promoted: event=%s project=%s work_order=%s status=%s",
+                event.event_id,
+                promotion.get("project_id"),
+                promotion.get("work_order_id"),
+                promotion.get("status"),
+            )
+        return receipt
+    except ExternalEventConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ExternalEventValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalEventProjectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "external_event_projection_retryable",
+                "message": str(exc),
+            },
+        ) from exc
+
+
+@router.post("/cognition/concerns/{concern_id}/promote")
+async def promote_cognition_concern(
+    concern_id: str,
+    body: CognitionConcernPromotionRequest,
+    request: Request,
+) -> dict:
+    """Owner-attest one exact shadow/legacy concern material version.
+
+    Promotion only makes that immutable concern version eligible for P3. It
+    does not run cognition, create a project, approve an action, or execute an
+    effect; all downstream canonical gates remain in force.
+    """
+
+    if _cognition_spine is None:
+        return {"available": False, "effect_executed": False}
+    authority = _cognition_owner_authority(request)
+    concern = _cognition_spine.concern_store.get(concern_id)
+    if concern is None:
+        raise HTTPException(status_code=404, detail="concern not found")
+    authority_payload = {
+        "schema": "ConcernPromotionAuthorityV1",
+        "version": 1,
+        "concern_id": concern_id,
+        "material_digest": body.expected_material_digest,
+        "principal_id": authority.principal_id,
+        "credential_id": authority.credential_id,
+    }
+    encoded = json.dumps(
+        authority_payload, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    promotion_ref = (
+        "owner-promotion:" + hashlib.sha256(encoded).hexdigest()[:24]
+    )
+    try:
+        promoted = _cognition_spine.concern_store.promote_concern(
+            concern_id,
+            expected_material_digest=body.expected_material_digest,
+            promotion_ref=promotion_ref,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "available": True,
+        "status": "concern_material_promoted",
+        "concern": promoted.public(),
+        "effect_executed": False,
+    }
+
+
+@router.post("/cognition/goals/{proposal_id}/promote")
+async def promote_cognition_goal(
+    proposal_id: str,
+    body: CognitionGoalPromotionRequest,
+    request: Request,
+) -> dict:
+    """Owner-promote one exact shadow GoalProposal through current gates."""
+
+    if _cognition_spine is None:
+        return {"available": False, "effect_executed": False}
+    authority = _cognition_owner_authority(request)
+    authority_payload = {
+        "schema": "GoalPromotionAuthorityV1",
+        "version": 1,
+        "proposal_id": proposal_id,
+        "expected_thought_result_ref": body.expected_thought_result_ref,
+        "principal_id": authority.principal_id,
+        "credential_id": authority.credential_id,
+    }
+    encoded = json.dumps(
+        authority_payload, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    promotion_ref = (
+        "owner-goal-promotion:" + hashlib.sha256(encoded).hexdigest()[:24]
+    )
+    try:
+        result = await _cognition_spine.promote_goal_proposal(
+            proposal_id,
+            expected_thought_result_ref=body.expected_thought_result_ref,
+            promotion_ref=promotion_ref,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"available": True, **result}
 
 
 _expectations = None
@@ -4375,6 +7960,850 @@ _expectations = None
 def set_expectations(e) -> None:
     global _expectations
     _expectations = e
+
+
+def _owner_person_id() -> str:
+    return (
+        os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+        or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+        or "owner"
+    )
+
+
+def _authority_view(request: Request, *, person_id: str = "") -> tuple:
+    """Derive one exact viewer/subject lane from middleware authority."""
+
+    authority = request_authority(request)
+    if authority.legacy:
+        subject = person_id.strip() or _owner_person_id()
+        return authority, subject, _owner_person_id(), "owner"
+    subject = resolve_request_person(
+        request, claimed_person_id=person_id or None,
+    )
+    if not subject:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "person_binding_required",
+                "message": "the credential has no exact viewer binding",
+            },
+        )
+    viewer = authority.viewer_person_id or subject
+    viewer_scope = (
+        "owner"
+        if "owner" in authority.audiences and viewer == _owner_person_id()
+        else f"person:{viewer}"
+    )
+    return authority, subject, viewer, viewer_scope
+
+
+def _scope_from_authority(request: Request):
+    """Build a P7 scope without accepting person/scope fields from JSON."""
+
+    from colony_sidecar.cognition.drive_governance import ScopeV1
+
+    authority, subject, viewer, viewer_scope = _authority_view(request)
+    if viewer_scope == "owner":
+        return authority, ScopeV1(subject, "owner", "owner_private")
+    return authority, ScopeV1(
+        subject, f"person:{subject}", "subject_private",
+    )
+
+
+def _governance_error(exc, *, not_found: bool = False) -> HTTPException:
+    code = str(getattr(exc, "code", "drive_governance_error"))
+    message = str(getattr(exc, "message", str(exc)))[:500]
+    if not_found or code.endswith("_unknown") or code.endswith("_missing"):
+        status_code = 404
+    elif code in {
+        "operation_replay_conflict", "immutable_drive_conflict",
+        "approval_binding_mismatch", "authority_replay",
+        "transition_not_live", "transition_not_authoritative",
+        "bootstrap_operation_held", "bootstrap_transition_held",
+        "approval_not_approved", "approval_expired",
+        "approval_binding_stale", "stale_action_digest",
+        "stale_request_digest",
+    }:
+        status_code = 409
+    elif code in {
+        "owner_authority_required",
+        "owner_charter_approval_authority_required",
+    }:
+        status_code = 403
+    else:
+        status_code = 400
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message},
+    )
+
+
+@router.get("/self/situation")
+async def get_situation(request: Request, person_id: str = "") -> dict:
+    """Return only the snapshot lane granted by the request credential."""
+
+    if _situation_store is None or _situation_reducer is None:
+        return {"available": False}
+    _authority, subject, _viewer, viewer_scope = _authority_view(
+        request, person_id=person_id,
+    )
+    try:
+        snapshot = _situation_store.snapshot(
+            subject_person_id=subject,
+            viewer_scope=viewer_scope,
+        )
+        return {
+            "available": True,
+            "status": _situation_reducer.status(),
+            "snapshot": snapshot.public(),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/cognition/evidence")
+async def get_cognition_evidence(
+    request: Request,
+    person_id: str = "",
+    project_id: str = "",
+    limit: int = 100,
+) -> dict:
+    """Return a request-scoped receipt/learning trace for operator diagnosis."""
+
+    _authority, subject, _viewer, viewer_scope = _authority_view(
+        request, person_id=person_id,
+    )
+    status = dict(_cognition_evidence_attachment_status)
+    if _cognition_evidence_reducer is not None:
+        try:
+            status = _cognition_evidence_reducer.status()
+            status["attachment"] = dict(
+                _cognition_evidence_attachment_status
+            )
+        except Exception as exc:
+            status = {
+                **status,
+                "healthy": False,
+                "last_error": f"status_failed:{type(exc).__name__}",
+            }
+    elif _project_event_projector is not None:
+        status["project_outbox"] = _project_event_projector.status()
+    trace = []
+    trace_error = ""
+    if _cognition_evidence_store is not None:
+        try:
+            trace = _cognition_evidence_store.trace(
+                project_id=str(project_id or "").strip(),
+                subject_person_id=(
+                    "" if viewer_scope == "owner" and not person_id else subject
+                ),
+                viewer_scope=viewer_scope,
+                limit=max(1, min(int(limit), 500)),
+            )
+        except ValueError as exc:
+            # Never return an unverifiable row as operator truth.
+            trace_error = str(exc)[:500]
+            status["healthy"] = False
+            status["last_error"] = "evidence_ledger_integrity_failed"
+    return {
+        "available": _project_event_projector is not None,
+        "learning_available": (
+            _cognition_evidence_reducer is not None
+            and getattr(_cognition_evidence_reducer, "mode", "shadow") != "off"
+        ),
+        "status": status,
+        "trace": trace,
+        "trace_error": trace_error,
+    }
+
+
+class _StrictGovernanceBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class DriveProposalRequest(_StrictGovernanceBody):
+    operation_id: str
+    key: str
+    version: str
+    title: str
+    definition_summary: str
+    max_abs_contribution: float
+    max_signals_per_goal: int
+    state: str = "enabled"
+    evidence_refs: List[str] = Field(min_length=1, max_length=20)
+    ttl_seconds: Optional[int] = Field(
+        default=None, ge=60, le=366 * 24 * 60 * 60,
+    )
+
+
+class DriveSignalRequest(_StrictGovernanceBody):
+    operation_id: str
+    drive_id: str
+    project_id: str
+    normalized_value: float
+    confidence: float
+    state: str = "active"
+    rationale_summary: str
+    evidence_refs: List[str] = Field(min_length=1, max_length=20)
+    ttl_seconds: int = Field(default=21600, ge=60, le=90 * 24 * 60 * 60)
+
+
+class RankingBudgetRequest(_StrictGovernanceBody):
+    max_goals: int = 50
+    max_signals_per_drive: int = 5
+    max_total_signals: int = 250
+    max_evidence_refs_per_goal: int = 20
+
+
+class CharterAdmissionConstraintsRequest(_StrictGovernanceBody):
+    objective_allow_terms: List[str] = Field(default_factory=list, max_length=30)
+    objective_deny_terms: List[str] = Field(
+        default_factory=lambda: [
+            "destroy", "drop", "format", "overwrite", "wipe",
+        ],
+        max_length=30,
+    )
+    capability_ceiling: List[str] = Field(
+        default_factory=lambda: [
+            "concerns:read", "directives:read", "memory:read",
+            "projects:read", "reasoning", "situation:read", "web:read",
+            "world_model:read",
+        ],
+        max_length=30,
+    )
+    capability_deny: List[str] = Field(
+        default_factory=lambda: ["messaging:send", "root:shell"],
+        max_length=30,
+    )
+    required_boundary_refs: List[str] = Field(default_factory=list, max_length=30)
+    allowed_shareability: List[str] = Field(
+        default_factory=lambda: ["owner_private"], min_length=1, max_length=4,
+    )
+    allowed_recipient_ids: List[str] = Field(default_factory=list, max_length=30)
+    allow_destructive: bool = False
+    allow_root_shell: bool = False
+    allow_messaging: bool = False
+
+
+class CharterProposalRequest(_StrictGovernanceBody):
+    operation_id: str
+    charter_key: str = "default"
+    revision_label: str
+    parent_revision_id: Optional[str] = None
+    title: str
+    purpose_summary: str
+    principles: List[str] = Field(min_length=1, max_length=20)
+    drive_weights: Dict[str, float] = Field(min_length=1, max_length=20)
+    ranking_budget: RankingBudgetRequest = Field(
+        default_factory=RankingBudgetRequest
+    )
+    evidence_refs: List[str] = Field(min_length=1, max_length=30)
+    ttl_seconds: int = Field(
+        default=90 * 24 * 60 * 60,
+        ge=3600,
+        le=366 * 24 * 60 * 60,
+    )
+    admission_constraints: CharterAdmissionConstraintsRequest = Field(
+        default_factory=CharterAdmissionConstraintsRequest,
+    )
+
+
+class CharterTransitionRequest(_StrictGovernanceBody):
+    ttl_seconds: int = Field(default=3600, ge=60, le=24 * 60 * 60)
+
+
+class CharterRatifyRequest(_StrictGovernanceBody):
+    transition: str
+    approval_request_id: str
+    operation_id: str
+
+
+class CharterApprovalDecisionRequest(_StrictGovernanceBody):
+    decision: str
+    decision_id: str
+    expected_action_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_request_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+def _observer_identity(request: Request) -> tuple:
+    authority, _subject, viewer, _viewer_scope = _authority_view(request)
+    return authority, viewer, _owner_person_id()
+
+
+def _owner_charter_approval_authority(request: Request, scope: str):
+    """Require one exact scoped owner principal for the typed surface."""
+
+    authority = request_authority(request)
+    allowed = bool(
+        authority.authenticated
+        and not authority.legacy
+        and not authority.anonymous
+        and authority.has_scope("api:access")
+        and authority.has_scope(scope)
+        and "owner" in authority.audiences
+        and authority.viewer_person_id == _owner_person_id()
+        and _owner_person_id() in authority.person_ids
+    )
+    if not allowed:
+        raise HTTPException(status_code=403, detail={
+            "code": "owner_charter_approval_authority_required",
+            "message": (
+                "an exact scoped owner charter approval principal is required"
+            ),
+            "required_scopes": ["api:access", scope],
+        })
+    return authority
+
+
+def _scope_visible_to_request(scope, request: Request) -> bool:
+    authority, viewer, owner = _observer_identity(request)
+    return bool(scope.visible_to(
+        viewer_person_id=viewer,
+        owner_person_id=owner,
+        audiences=set(authority.audiences),
+    ))
+
+
+def _durable_p3_rank_input(project):
+    """Build one rank input from a complete persisted P3 project or None."""
+    from colony_sidecar.cognition.drive_governance import (
+        GoalRankInputV1,
+        ScopeV1,
+    )
+
+    if (
+        project is None
+        or project.source != "cognition_spine"
+        or project.status not in {"planning", "active"}
+        or not all((
+            project.id,
+            project.goal_proposal_id,
+            project.goal_fingerprint,
+            project.title,
+            project.objective,
+            project.evidence_refs,
+            project.policy_decision_refs,
+            project.subject_person_id,
+            project.viewer_scope,
+            project.shareability,
+        ))
+    ):
+        return None
+    try:
+        return GoalRankInputV1(
+            goal_id=project.id,
+            proposal_id=project.goal_proposal_id,
+            goal_fingerprint=project.goal_fingerprint,
+            title=project.title[:160],
+            objective_summary=project.objective[:600],
+            rationale_summary=(
+                "Durable P3 project admitted through persisted policy gates."
+            ),
+            evidence_refs=tuple(project.evidence_refs[:30]),
+            policy_decision_refs=tuple(project.policy_decision_refs[:20]),
+            scope=ScopeV1(
+                project.subject_person_id,
+                project.viewer_scope,
+                project.shareability,
+            ),
+        )
+    except (TypeError, ValueError):
+        logger.warning(
+            "Skipping malformed durable P3 project %s during P7 ranking",
+            getattr(project, "id", "<unknown>"),
+        )
+        return None
+
+
+def _durable_p3_rank_inputs(limit: int):
+    """Project immutable rank inputs solely from persisted P3 projects."""
+
+    if _drive_project_store is None:
+        return ()
+    bounded = max(1, min(200, int(limit)))
+    result = []
+    # Pull extra rows because legacy/malformed entries are intentionally
+    # filtered and must not crowd durable P3 candidates out of the bound.
+    for project in _drive_project_store.list_projects(limit=min(1000, bounded * 5)):
+        if len(result) >= bounded:
+            break
+        goal = _durable_p3_rank_input(project)
+        if goal is not None:
+            result.append(goal)
+    return tuple(result)
+
+
+@router.get("/cognition/drives")
+async def get_cognition_drives(request: Request, limit: int = 100) -> dict:
+    if _drive_governance is None:
+        return {"available": False, "drives": [], "signals": []}
+    authority, viewer, owner = _observer_identity(request)
+    projection = _drive_governance.store.observer_projection(
+        viewer_person_id=viewer,
+        owner_person_id=owner,
+        audiences=set(authority.audiences),
+        signal_limit=max(1, min(500, limit)),
+    )
+    return {
+        "available": True,
+        "mode": _drive_governance.mode,
+        "drives": projection["drives"],
+        "signals": projection["signals"],
+        "generated_at": projection["generated_at"],
+    }
+
+
+@router.get("/cognition/charters")
+async def get_cognition_charters(request: Request) -> dict:
+    if _drive_governance is None:
+        return {"available": False, "charters": []}
+    authority, viewer, owner = _observer_identity(request)
+    projection = _drive_governance.store.observer_projection(
+        viewer_person_id=viewer,
+        owner_person_id=owner,
+        audiences=set(authority.audiences),
+    )
+    return {
+        "available": True,
+        "mode": _drive_governance.mode,
+        "active_charter_revision_id": projection[
+            "active_charter_revision_id"
+        ],
+        "charters": projection["charter_revisions"],
+        "generated_at": projection["generated_at"],
+    }
+
+
+@router.get("/cognition/rankings")
+async def get_cognition_rankings(request: Request, limit: int = 50) -> dict:
+    if _drive_governance is None or _drive_ranker is None:
+        return {"available": False, "ranking": None}
+    authority, viewer, owner = _observer_identity(request)
+    goals = _durable_p3_rank_inputs(limit)
+    batch = _drive_ranker.rank(goals, mode=_drive_governance.mode)
+    return {
+        "available": True,
+        "mode": _drive_governance.mode,
+        "project_count": len(goals),
+        "ranking": batch.observer_projection(
+            viewer_person_id=viewer,
+            owner_person_id=owner,
+            audiences=set(authority.audiences),
+        ),
+    }
+
+
+@router.post("/cognition/drives")
+async def propose_cognition_drive(
+    body: DriveProposalRequest,
+    request: Request,
+) -> dict:
+    if _drive_governance is None:
+        return {"available": False}
+    from colony_sidecar.cognition.drive_governance import DriveV1
+
+    _authority, scope = _scope_from_authority(request)
+    now = datetime.now(timezone.utc)
+    expires = (
+        now + timedelta(seconds=body.ttl_seconds)
+        if body.ttl_seconds is not None else None
+    )
+    try:
+        drive = DriveV1.create(
+            key=body.key,
+            version=body.version,
+            title=body.title,
+            definition_summary=body.definition_summary,
+            max_abs_contribution=body.max_abs_contribution,
+            max_signals_per_goal=body.max_signals_per_goal,
+            state=body.state,
+            scope=scope,
+            evidence_refs=body.evidence_refs,
+            created_at=now,
+            expires_at=expires,
+        )
+        result = _drive_governance.register_drive(
+            drive, operation_id=body.operation_id,
+        )
+        return {"available": True, **result, "drive": drive.payload()}
+    except ValueError as exc:
+        raise _governance_error(exc) from exc
+
+
+@router.post("/cognition/drive-signals")
+async def propose_cognition_drive_signal(
+    body: DriveSignalRequest,
+    request: Request,
+) -> dict:
+    if _drive_governance is None or _drive_project_store is None:
+        return {"available": False}
+    from colony_sidecar.cognition.drive_governance import DriveSignalV1
+
+    project = _drive_project_store.get_project(body.project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "project_unavailable",
+            "message": "a visible complete durable P3 project is required",
+        })
+    # Reuse the exact durable projection check; signals cannot target a body
+    # fingerprint or a legacy/partially-provenanced project.
+    goal = _durable_p3_rank_input(project)
+    if goal is None or not _scope_visible_to_request(goal.scope, request):
+        # Do not distinguish a hidden project from an unknown one.
+        raise HTTPException(status_code=404, detail={
+            "code": "project_unavailable",
+            "message": "a visible complete durable P3 project is required",
+        })
+    drive = _drive_governance.store.get_drive(body.drive_id)
+    if drive is None or not _scope_visible_to_request(drive.scope, request):
+        raise HTTPException(status_code=404, detail={
+            "code": "drive_unavailable",
+            "message": "a visible drive was not found",
+        })
+    _authority, scope = _scope_from_authority(request)
+    now = datetime.now(timezone.utc)
+    try:
+        signal = DriveSignalV1.derive(
+            drive=drive,
+            goal_fingerprint=goal.goal_fingerprint,
+            normalized_value=body.normalized_value,
+            confidence=body.confidence,
+            state=body.state,
+            rationale_summary=body.rationale_summary,
+            evidence_refs=body.evidence_refs,
+            observed_at=now,
+            expires_at=now + timedelta(seconds=body.ttl_seconds),
+            scope=scope,
+        )
+        result = _drive_governance.record_signal(
+            signal, operation_id=body.operation_id,
+        )
+        return {"available": True, **result, "signal": signal.payload()}
+    except ValueError as exc:
+        raise _governance_error(exc) from exc
+
+
+@router.post("/cognition/charters")
+async def propose_cognition_charter(
+    body: CharterProposalRequest,
+    request: Request,
+) -> dict:
+    if _drive_governance is None:
+        return {"available": False}
+    from colony_sidecar.cognition.drive_governance import (
+        CharterAdmissionConstraintsV1,
+        CharterRevisionV1,
+        RankingBudgetV1,
+    )
+
+    authority, scope = _scope_from_authority(request)
+    now = datetime.now(timezone.utc)
+    try:
+        for drive_id in body.drive_weights:
+            drive = _drive_governance.store.get_drive(drive_id)
+            if drive is None or not _scope_visible_to_request(
+                drive.scope, request,
+            ):
+                raise HTTPException(status_code=404, detail={
+                    "code": "drive_unavailable",
+                    "message": "every proposed drive must be visible",
+                })
+        revision = CharterRevisionV1.create(
+            charter_key=body.charter_key,
+            revision_label=body.revision_label,
+            parent_revision_id=body.parent_revision_id,
+            title=body.title,
+            purpose_summary=body.purpose_summary,
+            principles=body.principles,
+            drive_weights=body.drive_weights,
+            ranking_budget=RankingBudgetV1(
+                **body.ranking_budget.model_dump()
+            ),
+            scope=scope,
+            evidence_refs=body.evidence_refs,
+            proposed_by=authority.principal_id,
+            proposed_at=now,
+            expires_at=now + timedelta(seconds=body.ttl_seconds),
+            admission_constraints=CharterAdmissionConstraintsV1(
+                objective_allow_terms=tuple(sorted({
+                    str(item).strip().casefold()
+                    for item in body.admission_constraints.objective_allow_terms
+                    if str(item).strip()
+                })),
+                objective_deny_terms=tuple(sorted({
+                    str(item).strip().casefold()
+                    for item in body.admission_constraints.objective_deny_terms
+                    if str(item).strip()
+                })),
+                capability_ceiling=tuple(sorted(set(
+                    body.admission_constraints.capability_ceiling
+                ))),
+                capability_deny=tuple(sorted(set(
+                    body.admission_constraints.capability_deny
+                ))),
+                required_boundary_refs=tuple(dict.fromkeys(
+                    body.admission_constraints.required_boundary_refs
+                )),
+                allowed_shareability=tuple(sorted(set(
+                    body.admission_constraints.allowed_shareability
+                ))),
+                allowed_recipient_ids=tuple(sorted(set(
+                    body.admission_constraints.allowed_recipient_ids
+                ))),
+                allow_destructive=body.admission_constraints.allow_destructive,
+                allow_root_shell=body.admission_constraints.allow_root_shell,
+                allow_messaging=body.admission_constraints.allow_messaging,
+            ),
+        )
+        result = _drive_governance.propose_charter(
+            revision, operation_id=body.operation_id,
+        )
+        return {"available": True, **result, "charter": revision.payload()}
+    except ValueError as exc:
+        raise _governance_error(exc) from exc
+
+
+async def _request_charter_transition(
+    revision_id: str,
+    transition: str,
+    body: CharterTransitionRequest,
+    request: Request,
+) -> dict:
+    if _drive_governance is None:
+        return {"available": False}
+    authority, viewer, owner = _observer_identity(request)
+    projection = _drive_governance.store.observer_projection(
+        viewer_person_id=viewer,
+        owner_person_id=owner,
+        audiences=set(authority.audiences),
+    )
+    visible_ids = {
+        item.get("revision_id")
+        for item in projection.get("charter_revisions", ())
+    }
+    if revision_id not in visible_ids:
+        raise HTTPException(status_code=404, detail={
+            "code": "charter_unavailable",
+            "message": "a visible charter revision was not found",
+        })
+    try:
+        result = _drive_governance.ensure_transition_request(
+            revision_id,
+            transition=transition,
+            ttl_seconds=body.ttl_seconds,
+        )
+        return {"available": True, **result}
+    except ValueError as exc:
+        raise _governance_error(exc) from exc
+
+
+@router.post("/cognition/charters/{revision_id}/request-activation")
+async def request_cognition_charter_activation(
+    revision_id: str,
+    body: CharterTransitionRequest,
+    request: Request,
+) -> dict:
+    return await _request_charter_transition(
+        revision_id, "activate", body, request,
+    )
+
+
+@router.post("/cognition/charters/{revision_id}/request-revocation")
+async def request_cognition_charter_revocation(
+    revision_id: str,
+    body: CharterTransitionRequest,
+    request: Request,
+) -> dict:
+    return await _request_charter_transition(
+        revision_id, "revoke", body, request,
+    )
+
+
+@router.get("/cognition/charter-transition-approvals/readiness")
+async def charter_transition_approval_readiness(request: Request) -> dict:
+    _owner_charter_approval_authority(request, "charter:approval-read")
+    if _drive_governance is None:
+        return {
+            "schema": "ColonyCharterApprovalReadinessV1",
+            "version": 1,
+            "available": False,
+            "ready": False,
+            "route_ready": False,
+            "status": "unavailable",
+            "mode": "off",
+            "authority_mode": "unavailable",
+            "pending_count": 0,
+            "approved_unapplied_count": 0,
+            "approved_stale_count": 0,
+            "stale_count": 0,
+            "invalid_hidden_count": 0,
+            "blockers": ["drive_governance_unavailable"],
+        }
+    from colony_sidecar.initiatives.approval_authority import authority_mode
+
+    try:
+        inventory = _drive_governance.transition_approval_inventory()
+    except ValueError as exc:
+        raise _governance_error(exc) from exc
+    projections = inventory["requests"]
+    selected_authority_mode = authority_mode()
+    blockers = []
+    if _drive_governance.mode not in {"bootstrap", "live"}:
+        blockers.append("drive_governance_not_authoritative")
+    if selected_authority_mode == "invalid":
+        blockers.append("approval_authority_mode_invalid")
+    if _drive_governance.approval_store is None:
+        blockers.append("approval_authority_store_unavailable")
+    approved_unapplied = sum(
+        item["status"] == "approved_unapplied" for item in projections
+    )
+    approved_stale = sum(
+        item["status"] == "approved_stale" for item in projections
+    )
+    stale = sum(item["status"] == "stale_pending" for item in projections)
+    if approved_unapplied:
+        blockers.append("approved_transition_recovery_required")
+    if stale:
+        blockers.append("stale_transition_decision_required")
+    invalid_hidden = int(inventory["invalid_hidden_count"])
+    if invalid_hidden:
+        blockers.append("invalid_hidden_transition_approval")
+    route_ready = bool(
+        _drive_governance.mode in {"bootstrap", "live"}
+        and selected_authority_mode in {"shadow", "enforce"}
+        and _drive_governance.approval_store is not None
+    )
+    return {
+        "schema": "ColonyCharterApprovalReadinessV1",
+        "version": 1,
+        "available": True,
+        "ready": not blockers,
+        "route_ready": route_ready,
+        "status": "ready" if not blockers else "blocked",
+        "mode": _drive_governance.mode,
+        "authority_mode": selected_authority_mode,
+        "pending_count": sum(
+            item["status"] == "pending" for item in projections
+        ),
+        "approved_unapplied_count": approved_unapplied,
+        "approved_stale_count": approved_stale,
+        "stale_count": stale,
+        "invalid_hidden_count": invalid_hidden,
+        "request_count": len(projections),
+        "blockers": blockers,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/cognition/charter-transition-approvals")
+async def list_charter_transition_approvals(
+    request: Request,
+    status: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    _owner_charter_approval_authority(request, "charter:approval-read")
+    if _drive_governance is None:
+        return {"available": False, "requests": []}
+    try:
+        inventory = _drive_governance.transition_approval_inventory(
+            status=status, limit=limit,
+        )
+    except ValueError as exc:
+        raise _governance_error(exc) from exc
+    projections = inventory["requests"]
+    return {
+        "available": True,
+        "mode": _drive_governance.mode,
+        "requests": projections,
+        "count": len(projections),
+        "complete": inventory["complete"],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/cognition/charter-transition-approvals/{request_id}")
+async def get_charter_transition_approval(
+    request_id: str,
+    request: Request,
+) -> dict:
+    _owner_charter_approval_authority(request, "charter:approval-read")
+    if _drive_governance is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "charter_transition_approval_unavailable",
+            "message": "charter transition approval was not found",
+        })
+    try:
+        projection = _drive_governance.transition_approval_projection(
+            request_id,
+        )
+    except ValueError as exc:
+        raise _governance_error(exc, not_found=True) from exc
+    return {"available": True, **projection}
+
+
+@router.post(
+    "/cognition/charter-transition-approvals/{request_id}/decision"
+)
+async def decide_charter_transition_approval(
+    request_id: str,
+    body: CharterApprovalDecisionRequest,
+    request: Request,
+) -> dict:
+    authority = _owner_charter_approval_authority(
+        request, "charter:approval-decide",
+    )
+    if _drive_governance is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "charter_transition_approval_unavailable",
+            "message": "charter transition approval was not found",
+        })
+    try:
+        projection = _drive_governance.decide_transition_request(
+            request_id,
+            decision=body.decision,
+            decision_id=body.decision_id,
+            expected_action_digest=body.expected_action_digest,
+            expected_request_digest=body.expected_request_digest,
+            authority=authority,
+        )
+    except ValueError as exc:
+        raise _governance_error(exc) from exc
+    return {"available": True, **projection}
+
+
+@router.post("/cognition/charters/{revision_id}/ratify")
+async def ratify_cognition_charter(
+    revision_id: str,
+    body: CharterRatifyRequest,
+    request: Request,
+) -> dict:
+    if _drive_governance is None:
+        return {"available": False}
+    authority = request_authority(request)
+    if not (
+        authority.authenticated
+        and not authority.legacy
+        and not authority.anonymous
+        and authority.has_scope("approvals:decide")
+        and "owner" in authority.audiences
+    ):
+        raise HTTPException(status_code=403, detail={
+            "code": "owner_authority_required",
+            "message": (
+                "ratification requires scoped owner approvals:decide authority"
+            ),
+        })
+    try:
+        result = _drive_governance.ratify_transition(
+            revision_id,
+            transition=body.transition,
+            approval_request_id=body.approval_request_id,
+            operation_id=body.operation_id,
+            authority=authority,
+        )
+        return {"available": True, **result}
+    except ValueError as exc:
+        raise _governance_error(exc) from exc
 
 
 @router.get("/self/expectations")
@@ -4393,23 +8822,81 @@ async def get_expectations(limit: int = 50) -> dict:
 
 
 @router.get("/self/workspace")
-async def get_workspace(limit: int = 24) -> dict:
+async def get_workspace(request: Request, limit: int = 24) -> dict:
     """Cognitive workspace: the concerns currently on her mind, most salient
     first, with each concern's last thought and how much thinking it has had.
     Real concerns only (Mind M2)."""
     if _workspace is None:
         return {"available": False}
     try:
+        authority = request_authority(request)
+        owner_person_id = (
+            os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+            or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+            or "owner"
+        )
         out = {"available": True}
-        out.update(_workspace.snapshot(limit=max(1, min(200, limit))))
+        out.update(_workspace.snapshot(
+            limit=max(1, min(200, limit)),
+            unrestricted=authority.legacy,
+            viewer_person_id=authority.viewer_person_id or "",
+            owner_person_id=owner_person_id,
+            audiences=authority.audiences,
+        ))
         return out
     except Exception as exc:
         return {"available": True, "error": str(exc)}
 
 
+def _owner_workspace_concern(concern_id: str, request: Request):
+    """Load one concern without disclosing it outside the owner lane."""
+
+    concern = _workspace.store.get(concern_id)
+    if concern is None:
+        raise HTTPException(status_code=404, detail="no concern with that id")
+    authority = request_authority(request)
+    if authority.legacy:
+        return concern
+    owner_person_id = (
+        os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+        or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+        or "owner"
+    )
+    if authority.viewer_person_id != owner_person_id or not concern.visible_to(
+        viewer_person_id=authority.viewer_person_id or "",
+        owner_person_id=owner_person_id,
+        audiences=authority.audiences,
+    ):
+        raise HTTPException(status_code=404, detail="no concern with that id")
+    return concern
+
+
+@router.get("/self/workspace/{concern_id}/resolution")
+async def get_concern_resolution(concern_id: str, request: Request) -> dict:
+    """Return the immutable owner-visible receipt for one terminal concern."""
+
+    if _workspace is None:
+        return {"available": False}
+    _owner_workspace_concern(concern_id, request)
+    receipt = _workspace.store.get_resolution(concern_id)
+    if receipt is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "concern_resolution_not_found",
+            "message": "no immutable resolution receipt exists for that concern",
+        })
+    return {
+        "available": True,
+        "resolved": concern_id,
+        "outcome": receipt["outcome"],
+        "cascade_status": receipt["cascade_evidence"]["status"],
+        "resolution": receipt,
+    }
+
+
 @router.post("/self/workspace/{concern_id}/resolve")
 async def resolve_concern(
     concern_id: str,
+    request: Request,
     body: Optional[ConcernResolveRequest] = None,
     note: str = "resolved by owner",
 ) -> dict:
@@ -4418,29 +8905,122 @@ async def resolve_concern(
     loop re-raises the concern from the still-open source on the next tick
     and the resolve is silently undone. Accepts a JSON body (note, outcome,
     cascade, resolved_by); the bare `note` query param remains for old
-    callers. Idempotent on already-resolved concerns."""
+    callers. A terminal exact replay performs no callback. An exact replay of
+    a durable pending cascade may recover only through source settlers that
+    prove the same operation-bound transition; unsafe recovery is a 409. A
+    different terminal claim conflicts with the first immutable receipt."""
     if _workspace is None:
         return {"available": False}
     req = body or ConcernResolveRequest(note=note)
-    c = _workspace.store.get(concern_id)
-    if c is None:
-        raise HTTPException(status_code=404, detail="no concern with that id")
-    already_resolved = c.status == "resolved"
+    c = _owner_workspace_concern(concern_id, request)
     if c.status not in ("active", "resolved"):
         raise HTTPException(status_code=404, detail="no active concern with that id")
-    if not already_resolved:
-        _workspace.store.record_thought(concern_id, req.note[:300],
-                                        resolved=True, salience=0.0)
+    from colony_sidecar.self_model.workspace import ConcernResolutionConflict
+    try:
+        receipt, created = _workspace.store.resolve_with_owner_record(
+            concern_id,
+            outcome=req.outcome,
+            note=req.note,
+            cascade=req.cascade,
+            resolved_by=req.resolved_by,
+        )
+    except ConcernResolutionConflict as exc:
+        existing = _workspace.store.get_resolution(concern_id)
+        code = "concern_resolution_replay_conflict"
+        if existing and existing.get("provenance") == "legacy_unrecorded":
+            code = "legacy_concern_resolution_conflict"
+        raise HTTPException(status_code=409, detail={
+            "code": code,
+            "message": str(exc),
+            "resolution": existing,
+        }) from exc
+    already_resolved = not created
     settled: list = []
-    if req.cascade and c.sources:
+    recovery_attempted = False
+    cascade_state = receipt["cascade_evidence"]
+    if cascade_state["status"] == "pending":
+        cascade_error = None
+        if created:
+            try:
+                from colony_sidecar.self_model.settlement import settle_sources
+                settled = settle_sources(
+                    cascade_state["source_refs"],
+                    outcome=receipt["outcome"],
+                    note=receipt["note"],
+                    resolved_by=receipt["resolved_by"],
+                    operation_root=cascade_state["intent_id"],
+                )
+            except Exception as exc:
+                logger.warning(
+                    "concern source settlement failed (%s)", type(exc).__name__,
+                )
+                cascade_error = exc
+        else:
+            recovery_attempted = True
+            from colony_sidecar.self_model.settlement import (
+                SettlementRetryUnsafe,
+                retry_safe_settle_sources,
+            )
+            try:
+                settled = retry_safe_settle_sources(
+                    cascade_state["source_refs"],
+                    operation_root=cascade_state["intent_id"],
+                    outcome=receipt["outcome"],
+                    note=receipt["note"],
+                    resolved_by=receipt["resolved_by"],
+                )
+            except SettlementRetryUnsafe as exc:
+                raise HTTPException(status_code=409, detail={
+                    "code": "concern_cascade_reconciliation_required",
+                    "message": "one or more sources do not support safe recovery",
+                    "unsafe_sources": exc.sources,
+                    "resolution": receipt,
+                }) from exc
+            except Exception as exc:
+                logger.warning(
+                    "concern cascade recovery failed (%s)", type(exc).__name__,
+                )
+                cascade_error = exc
+            recovery_proved = (
+                cascade_error is None
+                and len(settled) == len(cascade_state["source_refs"])
+                and [entry.get("source") for entry in settled]
+                == cascade_state["source_refs"]
+                and all(
+                    entry.get("settled") is True and not entry.get("error")
+                    for entry in settled
+                )
+            )
+            if not recovery_proved:
+                raise HTTPException(status_code=409, detail={
+                    "code": "concern_cascade_reconciliation_required",
+                    "message": "cascade recovery did not prove every source operation",
+                    "settled_sources": settled,
+                    "resolution": receipt,
+                })
         try:
-            from colony_sidecar.self_model.settlement import settle_sources
-            settled = settle_sources(c.sources, outcome=req.outcome,
-                                     note=req.note, resolved_by=req.resolved_by)
+            receipt = _workspace.store.finalize_owner_cascade(
+                concern_id, results=settled, error=cascade_error,
+            )
+            cascade_state = receipt["cascade_evidence"]
         except Exception as exc:
-            logger.warning("concern source settlement failed: %s", exc)
+            logger.error(
+                "concern cascade outcome persistence failed",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail={
+                "code": "concern_cascade_evidence_unavailable",
+                "message": "cascade outcome could not be recorded",
+            }) from exc
+        if recovery_attempted and cascade_state["status"] != "succeeded":
+            raise HTTPException(status_code=409, detail={
+                "code": "concern_cascade_reconciliation_required",
+                "message": "cascade recovery did not prove every source operation",
+                "settled_sources": settled,
+                "resolution": receipt,
+            })
     journal = getattr(_workspace, "_journal", None)
-    if journal is not None and not already_resolved:
+    if journal is not None and created:
         try:
             journal.record(
                 "workspace",
@@ -4451,8 +9031,11 @@ async def resolve_concern(
         except Exception:
             logger.debug("concern resolve journal write failed", exc_info=True)
     return {"available": True, "resolved": concern_id,
-            "outcome": req.outcome, "already_resolved": already_resolved,
-            "settled_sources": settled}
+            "outcome": receipt["outcome"],
+            "already_resolved": already_resolved,
+            "cascade_status": cascade_state["status"],
+            "recovery_attempted": recovery_attempted,
+            "settled_sources": settled, "resolution": receipt}
 
 
 @router.get("/self/tools")
@@ -4463,9 +9046,17 @@ async def list_tools(status: str = "") -> dict:
         return {"available": False}
     try:
         tools = _toolsmith.registry.list(status=status or None)
+        projected = []
+        for tool in tools:
+            item = tool.public()
+            audit = _toolsmith.registry.audit_projection(tool.tool_id)
+            item["clean_comparison_receipts"] = sum(
+                1 for row in audit["shadow_comparisons"] if row.get("success"))
+            item["graduation_receipts"] = len(audit["graduations"])
+            projected.append(item)
         return {"available": True, "mode": os.environ.get("COLONY_TOOLSMITH", "off"),
                 "trust_stage": _toolsmith.trust_stage(),
-                "tools": [t.public() for t in tools]}
+                "tools": projected}
     except Exception as exc:
         return {"available": True, "error": str(exc)}
 
@@ -4480,19 +9071,159 @@ async def get_tool(tool_id: str) -> dict:
     d = tool.public()
     d["source_code"] = tool.source_code
     d["test_source"] = tool.test_source
-    return {"available": True, "tool": d}
+    audit = _toolsmith.registry.audit_projection(tool_id)
+    clean_comparisons = _toolsmith.registry.clean_comparison_count(tool_id)
+    try:
+        from colony_sidecar.toolsmith.engine import _shadow_min
+        shadow_min = _shadow_min()
+    except Exception:
+        shadow_min = 5
+    return {
+        "available": True,
+        "tool": d,
+        "graduation_binding": {
+            "tool_id": tool.tool_id,
+            "candidate_digest": tool.candidate_digest,
+            "artifact_digest": tool.artifact_digest,
+            "clean_comparisons": clean_comparisons,
+            "required_clean_comparisons": shadow_min,
+            "eligible": (
+                tool.status == "shadow"
+                and clean_comparisons >= shadow_min
+                and tool.failures == 0
+            ),
+        },
+        "audit": audit,
+    }
+
+
+class ToolShadowComparisonRequest(BaseModel):
+    capture_id: str
+    captured_input: Dict[str, Any]
+    incumbent_output: Any = None
+    capture_source: str = "captured"
+
+
+class ToolGraduationAuthorityRequest(BaseModel):
+    authority_id: str
+    decision_id: str
+    expected_candidate_digest: str
+    expected_artifact_digest: str
+    issued_at: str
+    expires_at: str
+    max_uses: int = 1
+
+
+def _toolsmith_scoped_authority(
+    request: Request,
+    *,
+    scope: str,
+    owner_required: bool = False,
+) -> tuple[Any, str]:
+    authority = request_authority(request)
+    if (
+        not authority.authenticated
+        or authority.legacy
+        or authority.anonymous
+        or not authority.has_scope(scope)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "toolsmith_scope_required",
+                "message": f"a scoped authenticated {scope} principal is required",
+            },
+        )
+    owner_person_id = (
+        os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+        or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+        or "owner"
+    )
+    if owner_required and (
+        "owner" not in authority.audiences
+        or owner_person_id not in authority.person_ids
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "toolsmith_owner_authority_required",
+                "message": "graduation requires an owner-bound scoped principal",
+            },
+        )
+    return authority, owner_person_id
+
+
+@router.post("/self/tools/{tool_id}/shadow-compare")
+async def compare_shadow_tool(
+    tool_id: str,
+    body: ToolShadowComparisonRequest,
+    request: Request,
+) -> dict:
+    """Record a digest-only same-input incumbent/candidate comparison."""
+
+    if _toolsmith is None:
+        return {"available": False}
+    authority, _ = _toolsmith_scoped_authority(
+        request, scope="toolsmith:evaluate")
+    tool = _toolsmith.registry.get(tool_id)
+    if tool is None:
+        raise HTTPException(status_code=404, detail="tool not found")
+    try:
+        passed, evidence = await _toolsmith.verify_shadow_run(
+            tool,
+            captured_input=body.captured_input,
+            incumbent_output=body.incumbent_output,
+            capture_id=body.capture_id,
+            capture_source=body.capture_source,
+            principal_id=authority.principal_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "shadow_comparison_conflict", "message": str(exc)},
+        ) from exc
+    return {"available": True, "passed": passed, "evidence": evidence}
 
 
 @router.post("/self/tools/{tool_id}/graduate")
-async def graduate_tool(tool_id: str) -> dict:
-    """Promote a shadow tool to live (owner approval)."""
+async def graduate_tool(
+    tool_id: str,
+    body: ToolGraduationAuthorityRequest,
+    request: Request,
+) -> dict:
+    """Publish one exact artifact with one owner-scoped bounded authority."""
+
     if _toolsmith is None:
         return {"available": False}
-    ok = _toolsmith.graduate(tool_id)
-    if not ok:
-        raise HTTPException(status_code=400,
-                            detail="tool not in shadow state")
-    return {"available": True, "graduated": tool_id}
+    authority, owner_person_id = _toolsmith_scoped_authority(
+        request, scope="toolsmith:graduate", owner_required=True)
+    try:
+        from colony_sidecar.toolsmith.authority import (
+            GraduationAuthorityError,
+            GraduationAuthorityV1,
+        )
+        payload = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+        grant = GraduationAuthorityV1.from_request(
+            payload,
+            tool_id=tool_id,
+            principal_id=authority.principal_id,
+            owner_person_id=owner_person_id,
+        )
+        result = _toolsmith.graduate(tool_id, authority=grant)
+    except GraduationAuthorityError as exc:
+        status_code = 404 if exc.code == "tool_not_found" else 409
+        if exc.code in {"owner_authority_required"}:
+            status_code = 403
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "graduation_conflict", "message": str(exc)},
+        ) from exc
+    return {"available": True, **result}
 
 
 @router.post("/self/tools/{tool_id}/retire")
@@ -4522,25 +9253,191 @@ class ExperimentRequest(BaseModel):
     ref: str
     variant: float
     metric: str
+    metric_version: str = ""
+    assignment_mode: str = ""
+    control_ratio: float = 0.5
+    min_control_samples: int = 20
+    min_variant_samples: int = 20
+    min_total_samples: int = 40
+    min_power: float = 0.8
+    min_effect: float = 0.0
+    owner_negative_limit: int = 1
     max_regression: float = 0.05
     window_days: int = 7
+    # Deprecated compatibility field.  The handler always derives source from
+    # the authenticated credential and never treats this body label as
+    # authority.
     source: str = "api"
 
 
+def _experiment_approval_response(
+    exc,
+    response: Response,
+) -> dict:
+    """Project a durable approval request without calling it pending falsely."""
+
+    exp = exc.experiment
+    request_id = exp.get("approval_request_id")
+    approval_status = "unknown"
+    authority_store = getattr(_experiments, "_approval_authority", None)
+    if authority_store is not None and request_id:
+        request_row = authority_store.get_request(request_id)
+        if request_row is not None:
+            approval_status = request_row.get("status") or "unknown"
+    if approval_status == "pending":
+        response.status_code = status.HTTP_202_ACCEPTED
+        projected_status = "approval_required"
+    else:
+        # Rejected/expired/superseded authority must never be advertised as a
+        # pending approval that could still authorize this immutable action.
+        response.status_code = status.HTTP_409_CONFLICT
+        projected_status = f"approval_{approval_status}"
+    return {
+        "available": True,
+        "status": projected_status,
+        "approval_status": approval_status,
+        "experiment": exp,
+        "approval_request_id": request_id,
+    }
+
+
 @router.post("/self/experiments")
-async def start_experiment(body: ExperimentRequest) -> dict:
+async def post_experiment(
+    body: ExperimentRequest,
+    request: Request,
+    response: Response,
+) -> dict:
     """Propose and start a bounded self-experiment (adaptive-param variant,
     judged against a benchmark metric with auto-revert on regression)."""
     if _experiments is None:
         return {"available": False}
+    from colony_sidecar.self_model.experiments import (
+        ExperimentApprovalRequired,
+    )
+
     try:
         exp = _experiments.propose_and_start(
             hypothesis=body.hypothesis, ref=body.ref, variant=body.variant,
             metric=body.metric, max_regression=body.max_regression,
-            window_days=body.window_days, source=body.source)
+            window_days=body.window_days,
+            metric_version=body.metric_version,
+            assignment_mode=body.assignment_mode,
+            control_ratio=body.control_ratio,
+            min_control_samples=body.min_control_samples,
+            min_variant_samples=body.min_variant_samples,
+            min_total_samples=body.min_total_samples,
+            min_power=body.min_power,
+            min_effect=body.min_effect,
+            owner_negative_limit=body.owner_negative_limit,
+            source=request_authority(request).principal_id)
         return {"available": True, "experiment": exp}
+    except ExperimentApprovalRequired as exc:
+        return _experiment_approval_response(exc, response)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/self/experiments/{exp_id}/start")
+async def start_experiment(exp_id: str, response: Response) -> dict:
+    """Start an already-approved or pregranted durable proposal."""
+    if _experiments is None:
+        return {"available": False}
+    existing = _experiments.store.get(exp_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="experiment was not found")
+    if existing.get("status") == "running":
+        return {"available": True, "experiment": existing,
+                "idempotent_replay": True}
+    if existing.get("status") != "proposed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"experiment cannot start from {existing.get('status')}",
+        )
+    from colony_sidecar.self_model.experiments import (
+        ExperimentApprovalRequired,
+    )
+
+    try:
+        exp = _experiments.start(exp_id)
+        return {"available": True, "experiment": exp}
+    except ExperimentApprovalRequired as exc:
+        return _experiment_approval_response(exc, response)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class ExperimentExposureRequest(BaseModel):
+    unit_id: str
+    source_ref: str
+    receipt_ref: str = ""
+    exposed_at: Optional[float] = None
+
+
+@router.post("/self/experiments/{exp_id}/exposures")
+async def assign_experiment_exposure(
+    exp_id: str,
+    body: ExperimentExposureRequest,
+    request: Request,
+) -> dict:
+    if _experiments is None:
+        return {"available": False}
+    try:
+        exposure = _experiments.assign_exposure(
+            exp_id,
+            unit_id=body.unit_id,
+            sample_principal=request_authority(request).principal_id,
+            source_ref=body.source_ref,
+            receipt_ref=body.receipt_ref,
+            exposed_at=body.exposed_at,
+        )
+        return {"available": True, "exposure": exposure}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+class ExperimentOutcomeRequest(BaseModel):
+    exposure_id: str
+    value: float
+    source_ref: str
+    receipt_ref: str
+    owner_reaction: str = ""
+    outcome_id: str = ""
+    recorded_at: Optional[float] = None
+
+
+@router.post("/self/experiments/{exp_id}/outcomes")
+async def record_experiment_outcome(
+    exp_id: str,
+    body: ExperimentOutcomeRequest,
+    request: Request,
+) -> dict:
+    if _experiments is None:
+        return {"available": False}
+    try:
+        outcome = _experiments.record_outcome(
+            exp_id,
+            exposure_id=body.exposure_id,
+            value=body.value,
+            sample_principal=request_authority(request).principal_id,
+            source_ref=body.source_ref,
+            receipt_ref=body.receipt_ref,
+            owner_reaction=body.owner_reaction,
+            outcome_id=body.outcome_id,
+            recorded_at=body.recorded_at,
+        )
+        return {"available": True, "outcome": outcome}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/self/experiments/{exp_id}/evidence")
+async def get_experiment_evidence(exp_id: str) -> dict:
+    if _experiments is None:
+        return {"available": False}
+    evidence = _experiments.evidence(exp_id)
+    if evidence.get("experiment") is None:
+        raise HTTPException(status_code=404, detail="experiment was not found")
+    return {"available": True, **evidence}
 
 
 @router.post("/self/experiments/{exp_id}/abort")
@@ -4601,7 +9498,40 @@ async def get_autonomy_posture() -> dict:
     env is never invisible to diagnostics."""
     try:
         from colony_sidecar.util.autonomy_preset import snapshot
-        return {"available": True, "posture": snapshot()}
+        posture = snapshot()
+        # The loop mode decides whether preset-enabled subsystems ever get a
+        # tick at all; report it so the doctor can flag an incoherent posture
+        # (e.g. calibration preset with a reactive loop = nothing calibrates).
+        # Prefer the RUNNING loop's resolved mode over the raw env default.
+        try:
+            if _autonomy_loop is not None:
+                posture["COLONY_AUTONOMY_MODE"] = _autonomy_loop.config.mode.value
+                posture["COLONY_AUTONOMY_MODE_SOURCE"] = getattr(
+                    _autonomy_loop.config, "mode_source", "") or "default"
+            else:
+                # No running loop: mirror AutonomyConfig.from_env's mode
+                # resolution (env > coupled preset > legacy tick > default)
+                # so the reported source is honest even pre-loop.
+                raw = (os.environ.get("COLONY_AUTONOMY_MODE") or "").strip().lower()
+                if raw:
+                    posture["COLONY_AUTONOMY_MODE"] = (
+                        raw if raw in ("reactive", "proactive") else "reactive")
+                    posture["COLONY_AUTONOMY_MODE_SOURCE"] = "env"
+                else:
+                    from colony_sidecar.util.autonomy_preset import coupled_loop_mode
+                    coupled = coupled_loop_mode()
+                    if coupled:
+                        posture["COLONY_AUTONOMY_MODE"] = coupled
+                        posture["COLONY_AUTONOMY_MODE_SOURCE"] = "preset"
+                    elif os.environ.get("COLONY_AUTONOMY_TICK_INTERVAL_SECS"):
+                        posture["COLONY_AUTONOMY_MODE"] = "proactive"
+                        posture["COLONY_AUTONOMY_MODE_SOURCE"] = "legacy_tick"
+                    else:
+                        posture["COLONY_AUTONOMY_MODE"] = "reactive"
+                        posture["COLONY_AUTONOMY_MODE_SOURCE"] = "default"
+        except Exception:
+            pass
+        return {"available": True, "posture": posture}
     except Exception as exc:
         return {"available": False, "error": str(exc)}
 
@@ -4632,50 +9562,144 @@ async def get_skills_memory() -> dict:
         return {"available": True, "error": str(exc)}
 
 
+def _project_visible_to_request(project, request: Request | None) -> bool:
+    """Apply the persisted Project visibility envelope before serialization."""
+
+    authority = request_authority(request)
+    owner = _owner_person_id()
+    viewer = owner if authority.legacy else str(
+        authority.viewer_person_id or ""
+    ).strip()
+    if not viewer:
+        return False
+    if viewer == owner:
+        return True
+    try:
+        from colony_sidecar.cognition.drive_governance import ScopeV1
+        scope = ScopeV1(
+            str(project.subject_person_id or ""),
+            str(project.viewer_scope or ""),
+            str(project.shareability or ""),
+        )
+        return scope.visible_to(
+            viewer_person_id=viewer,
+            owner_person_id=owner,
+            audiences=authority.audiences,
+        )
+    except Exception:
+        # Legacy rows without a valid visibility envelope remain owner-only.
+        return False
+
+
+def _project_owner_request(request: Request | None) -> bool:
+    """Recognize the migration bearer or one exact scoped owner identity.
+
+    Project creation and lifecycle changes are owner-directed operations.  A
+    generic ``api:access`` credential may observe its granted project lane,
+    but that read grant must not become mutation authority.
+    """
+
+    authority = request_authority(request)
+    if authority.legacy:
+        return True
+    owner = _owner_person_id()
+    return bool(
+        authority.authenticated
+        and not authority.anonymous
+        and authority.viewer_person_id == owner
+        and owner in authority.person_ids
+        and "owner" in authority.audiences
+    )
+
+
+def _project_mutation_not_found() -> dict:
+    """One existence-hiding result for missing or unauthorized projects."""
+
+    return {"ok": False, "reason": "not_found", "project": None}
+
+
 @router.get("/projects")
-async def list_projects(status: str = "", limit: int = 30) -> dict:
+async def list_projects(
+    request: Request, status: str = "", limit: int = 30,
+) -> dict:
     if _project_engine is None:
-        return {"available": False, "projects": []}
+        return {
+            "available": False,
+            "reason": "projects_not_wired",
+            "projects": [],
+        }
     try:
         from colony_sidecar.projects.models import projects_mode
         items = _project_engine.store.list_projects(status=status or None,
                                                     limit=limit)
+        items = [
+            project for project in items
+            if _project_visible_to_request(project, request)
+        ]
         return {"available": True, "count": len(items),
                 "mode": projects_mode(),
                 "projects": [p.to_row() for p in items]}
     except Exception as exc:
-        return {"available": True, "error": str(exc), "projects": []}
+        logger.warning("list_projects failed (%s)", type(exc).__name__)
+        return {
+            "available": False,
+            "reason": "projects_unavailable",
+            "projects": [],
+        }
 
 
 @router.get("/projects/{project_id}")
-async def get_project(project_id: str) -> dict:
+async def get_project(project_id: str, request: Request) -> dict:
     if _project_engine is None:
         return {"available": False}
+    project = _project_engine.store.get_project(project_id)
+    if project is None or not _project_visible_to_request(project, request):
+        return {"available": True, "error": "not_found"}
     out = _project_engine.project_status(project_id)
     return {"available": True, **(out or {"error": "not_found"})}
 
 
 @router.post("/projects")
-async def create_project(body: dict = Body(default={})) -> dict:
+async def create_project(
+    request: Request, body: dict = Body(default={}),
+) -> dict:
     """Owner-directed project creation (boundary-gated; planning happens on
     the next autonomy tick; step dispatch carries its own gates)."""
     if _project_engine is None:
         return {"ok": False, "reason": "projects_not_wired"}
+    if not _project_owner_request(request):
+        return {
+            "ok": False,
+            "reason": "owner_authority_required",
+            "project": None,
+        }
     objective = (body or {}).get("objective", "").strip()
     project, reason = _project_engine.create_project(
         objective, title=(body or {}).get("title", ""),
-        source=(body or {}).get("source", "owner"))
+        # The transport body is not a provenance authority.  Governed and
+        # cognition-spine projects are minted only by their typed pipelines.
+        source="owner")
     return {"ok": project is not None, "reason": reason,
             "project": project.to_row() if project else None}
 
 
 @router.post("/projects/{project_id}/abandon")
-async def abandon_project(project_id: str, body: dict = Body(default={})) -> dict:
+async def abandon_project(
+    project_id: str, request: Request, body: dict = Body(default={}),
+) -> dict:
     if _project_engine is None:
         return {"ok": False, "reason": "projects_not_wired"}
+    project = _project_engine.store.get_project(project_id)
+    if (
+        project is None
+        or not _project_owner_request(request)
+        or not _project_visible_to_request(project, request)
+    ):
+        return _project_mutation_not_found()
     project = _project_engine.abandon(
         project_id, reason=(body or {}).get("reason", "owner_request"))
     return {"ok": project is not None,
+            "reason": "ok" if project is not None else "not_found",
             "project": project.to_row() if project else None}
 
 
@@ -4725,19 +9749,41 @@ async def get_sandbox_status() -> dict:
 
 
 @router.post("/sandbox/run")
-async def run_sandbox(body: dict = Body(default={})) -> dict:
+async def run_sandbox(
+    request: Request,
+    body: dict = Body(default={}),
+) -> dict:
     """Owner surface: run a script in the sandbox. Owner-directed runs auto-run
     within default limits; still boundary-checked and journaled. The caller
     cannot widen containment (limits are server-side)."""
     if _sandbox is None:
         return {"ran": False, "reason": "sandbox_not_wired"}
     b = body or {}
+    authority = request_authority(request)
+    owner_person_id = (
+        os.environ.get("COLONY_OWNER_PERSON_ID", "").strip()
+        or os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+        or "owner"
+    )
+    # Owner direction is derived from authenticated transport authority.  The
+    # legacy bearer remains a migration-compatible owner surface, but request
+    # JSON can no longer assert either owner direction or approval.
+    owner_directed = bool(
+        authority.legacy
+        or (
+            authority.authenticated
+            and not authority.anonymous
+            and authority.has_scope("sandbox:execute")
+            and "owner" in authority.audiences
+            and owner_person_id in authority.person_ids
+        )
+    )
     return _sandbox.run(
         b.get("script", ""),
         lang=b.get("lang", "python"),
         purpose=b.get("purpose", ""),
-        owner_directed=bool(b.get("owner_directed", True)),
-        approved=bool(b.get("approved", False)))
+        owner_directed=owner_directed,
+        approved=owner_directed)
 
 
 @router.get("/connectors/status")
@@ -4787,12 +9833,27 @@ async def run_world_llm_extract() -> dict:
 
 
 @router.get("/proposals")
-async def list_proposals(status: str = "", limit: int = 30) -> dict:
+async def list_proposals(
+    request: Request, status: str = "", limit: int = 30,
+) -> dict:
     """List proposals Colony has generated (observability)."""
     if _proposal_store is None:
         return {"available": False, "proposals": []}
     try:
         items = _proposal_store.list(status=status or None, limit=limit)
+        authority = request_authority(request)
+        viewer = (
+            _owner_person_id() if authority.legacy
+            else authority.viewer_person_id or ""
+        )
+        items = [
+            item for item in items
+            if item.visible_to(
+                viewer_person_id=viewer,
+                owner_person_id=_owner_person_id(),
+                audiences=authority.audiences,
+            )
+        ]
         return {
             "available": True,
             "count": len(items),
@@ -4803,6 +9864,12 @@ async def list_proposals(status: str = "", limit: int = 30) -> dict:
                     "citations": p.citations, "source": p.source,
                     "type": p.initiative_type, "confidence": p.confidence,
                     "status": p.status, "rendered": p.render(),
+                    "route_ref": p.route_ref,
+                    "result_ref": p.result_ref,
+                    "subject_person_id": p.subject_person_id,
+                    "viewer_scope": p.viewer_scope,
+                    "shareability": p.shareability,
+                    "scope_digest": p.scope_digest,
                 }
                 for p in items
             ],
@@ -5166,7 +10233,10 @@ async def dismiss_insight(insight_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.post("/context/enriched", response_model=EnrichedContextResponse)
-async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextResponse:
+async def enriched_context(
+    body: EnrichedContextRequest,
+    request: Request = None,
+) -> EnrichedContextResponse:
     """Pull from all intelligence systems to build enriched context.
 
     This is the one-stop endpoint for context assembly — it queries
@@ -5176,7 +10246,24 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     import asyncio
 
     sections: list[ContextSection] = []
-    contact_id = body.context.contact_id if body.context else None
+    contact_id = resolve_request_person(
+        request,
+        context_person_id=(body.context.contact_id if body.context else None),
+        audience=body.audience,
+    )
+    if body.context is not None and contact_id is not None:
+        body.context.contact_id = contact_id
+    _enriched_p8_viewer = None
+    if _p8_runtime is not None and contact_id:
+        try:
+            _enriched_p8_viewer = _p8_viewer_for_request(
+                request, contact_id)
+        except HTTPException:
+            logger.debug("P8 enriched context omitted: scoped viewer unavailable")
+    _enriched_legacy_global_allowed = _p8_legacy_global_context_allowed(
+        _enriched_p8_viewer)
+    _enriched_exact_person_allowed = _p8_exact_person_context_allowed(
+        _enriched_p8_viewer)
     features = body.features or {}
     msg = body.message
 
@@ -5184,17 +10271,27 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
     tasks: dict[str, Any] = {}
 
     # 1. Memory search
-    if _graph is not None:
+    if _enriched_exact_person_allowed and _graph is not None:
         async def _mem():
             try:
-                results = await _graph.recall(query=msg, limit=5)
+                recall_kwargs = {
+                    "query": msg,
+                    "limit": 5,
+                    "person_id": contact_id,
+                }
+                if _p8_runtime is not None:
+                    recall_kwargs["exclude_source_uris"] = [
+                        "tom:shared_fact"]
+                results = await _graph.recall(**recall_kwargs)
+                results = _p8_filter_graph_recall(results)
                 return ("memory", results)
             except Exception:
                 return ("memory", [])
         tasks["memory"] = _mem()
 
     # 2. Contact / relationship
-    if _contacts_store is not None and contact_id and features.get("relationships", True):
+    if _enriched_exact_person_allowed and _contacts_store is not None \
+            and contact_id and features.get("relationships", True):
         async def _contact():
             try:
                 c = await _contacts_store.get(contact_id)
@@ -5204,7 +10301,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
         tasks["contact"] = _contact()
 
     # 3. Contact style
-    if _contacts_store is not None and contact_id and features.get("style", True):
+    if _enriched_exact_person_allowed and _contacts_store is not None \
+            and contact_id and features.get("style", True):
         async def _style():
             try:
                 s = await _contacts_store.get_style(contact_id)
@@ -5214,7 +10312,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
         tasks["style"] = _style()
 
     # 4. Active goals
-    if _goals_store is not None and features.get("goals", True):
+    if _enriched_legacy_global_allowed and _goals_store is not None \
+            and features.get("goals", True):
         async def _goals():
             try:
                 # GoalEngine.list_goals takes (status, limit, offset) — no person_id —
@@ -5232,17 +10331,19 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
         tasks["goals"] = _goals()
 
     # 5. World model entities
-    if _world_store is not None and features.get("worldModel", True):
+    if _enriched_legacy_global_allowed and _world_store is not None \
+            and features.get("worldModel", True):
         async def _world():
             try:
-                e = await _world_store.find_entities(query=msg, limit=5)
+                e = await _world_context_entities(msg, limit=5)
                 return ("world", e)
             except Exception:
                 return ("world", [])
         tasks["world"] = _world()
 
     # 6. Recent insights
-    if _connection_discoverer is not None and features.get("insights", True):
+    if _enriched_legacy_global_allowed and _connection_discoverer is not None \
+            and features.get("insights", True):
         async def _insights():
             try:
                 c = await _connection_discoverer.discover_connections(person_id=contact_id, min_novelty=0.3)
@@ -5262,7 +10363,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
         tasks["identity"] = _identity()
 
     # 8. Recent briefings
-    if _briefings_engine is not None and features.get("briefings", False):
+    if _enriched_legacy_global_allowed and _briefings_engine is not None \
+            and features.get("briefings", False):
         async def _briefings():
             try:
                 briefings = _briefings_engine.get_recent(limit=3)
@@ -5273,7 +10375,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
 
     # 9. Known contacts (top N — useful when the agent references someone
     # not tied to the current contact_id).
-    if _contacts_store is not None and features.get("contactsList", False):
+    if _enriched_legacy_global_allowed and _contacts_store is not None \
+            and features.get("contactsList", False):
         async def _contacts_list():
             try:
                 contacts = await _contacts_store.list()
@@ -5283,7 +10386,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
         tasks["contactsList"] = _contacts_list()
 
     # 10. Cognition snapshot (CPI — self-awareness metric)
-    if _metalearner is not None and features.get("cognition", False):
+    if _enriched_legacy_global_allowed and _metalearner is not None \
+            and features.get("cognition", False):
         async def _cognition():
             try:
                 cpi = await _metalearner.evaluate()
@@ -5291,6 +10395,23 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
             except Exception:
                 return ("cognition", None)
         tasks["cognition"] = _cognition()
+
+    # 11. P8 shared facts: authorization and freshness happen before content
+    # reaches the parallel result set or any renderer.
+    if _p8_runtime is not None and _enriched_p8_viewer is not None \
+            and features.get("shared_facts", True):
+        async def _p8_facts():
+            try:
+                batch = _p8_runtime.project_shared_facts(
+                    _enriched_p8_viewer,
+                    now=datetime.now(timezone.utc),
+                    subject_person_id=contact_id,
+                    max_facts=5,
+                )
+                return ("p8_shared_facts", batch.facts)
+            except Exception:
+                return ("p8_shared_facts", ())
+        tasks["p8_shared_facts"] = _p8_facts()
 
     # Run all tasks in parallel
     results = {}
@@ -5310,6 +10431,17 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
             for r in results["memory"]
         )
         sections.append(ContextSection(id="colony-memory", title="Relevant Memories", body=body_text, priority=90))
+
+    if results.get("p8_shared_facts"):
+        facts = results["p8_shared_facts"]
+        body_text = "\n".join(
+            f"- [{fact.confidence:.0%}] {fact.content}" for fact in facts)
+        sections.append(ContextSection(
+            id="colony-shared-facts",
+            title="Known Facts About Contact",
+            body=body_text,
+            priority=70,
+        ))
 
     if results.get("contact"):
         c = results["contact"]
@@ -5418,7 +10550,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
             ))
 
     # Pending commitments
-    if _commitment_store is not None and contact_id and features.get("commitments", True):
+    if _enriched_exact_person_allowed and _commitment_store is not None \
+            and contact_id and features.get("commitments", True):
         try:
             pending = _commitment_store.get_pending_for_person(contact_id)
             if pending:
@@ -5438,7 +10571,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
             logger.debug("commitment section failed", exc_info=True)
 
     # Affect (emotional context)
-    if _affect_store is not None and contact_id and features.get("affect", True):
+    if _enriched_exact_person_allowed and _affect_store is not None \
+            and contact_id and features.get("affect", True):
         try:
             state = _affect_store.get_state(contact_id)
             if state["event_count"] > 0:
@@ -5460,7 +10594,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
             logger.debug("affect section failed", exc_info=True)
 
     # Shared facts
-    if _facts_store is not None and contact_id and features.get("shared_facts", True):
+    if _p8_runtime is None and _facts_store is not None and contact_id \
+            and features.get("shared_facts", True):
         try:
             result = _facts_store.list_facts(contact_id=contact_id, limit=10)
             if result["total"] > 0:
@@ -5478,7 +10613,8 @@ async def enriched_context(body: EnrichedContextRequest) -> EnrichedContextRespo
             logger.debug("shared facts section failed", exc_info=True)
 
     # Surprises (noteworthy observations)
-    if _surprise_store is not None and contact_id and features.get("surprises", True):
+    if _enriched_legacy_global_allowed and _surprise_store is not None \
+            and contact_id and features.get("surprises", True):
         try:
             unresolved = _surprise_store.get_unresolved(min_score=0.5, limit=5)
             if unresolved:
@@ -5714,6 +10850,9 @@ def set_session_store(store) -> None:
 def set_task_queue(queue) -> None:
     global _task_queue
     _task_queue = queue
+    manager = getattr(queue, "queue", None)
+    if manager is not None and hasattr(manager, "configure_governance"):
+        manager.configure_governance(globals().get("_worker_governor"))
 
 
 def set_session_report_store(store) -> None:
@@ -6359,16 +11498,20 @@ async def delete_affect_event(event_id: str):
 # ---------------------------------------------------------------------------
 
 async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
-                                source: str, confidence: float) -> None:
+                                source: str, confidence: float) -> bool:
     """Mirror a shared fact into the memory graph as a `fact` memory.
 
     Shared facts live in their own store; semantic recall searches the memory
     graph. Without this mirror a stored fact is structurally unrecallable
     (recall.fact_coverage measured exactly that). Content-hash dedup in
     store_memory makes the mirror idempotent: re-extraction reinforces the
-    existing node instead of duplicating it."""
+    existing node instead of duplicating it.
+
+    Returns True when the fact reached the graph (created or reinforced),
+    False otherwise — callers on the hot path ignore this; the backfill
+    endpoint uses it to count per-fact outcomes."""
     if _graph is None or not (fact or "").strip():
-        return
+        return False
     try:
         import hashlib
         await _graph.store_memory(
@@ -6382,15 +11525,43 @@ async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
             source_uri="tom:shared_fact",
             content_hash=hashlib.sha256(fact.encode("utf-8")).hexdigest(),
         )
+        return True
     except Exception:
         logger.debug("shared fact -> graph mirror failed", exc_info=True)
+        return False
+
+
+def _append_p8_fact_record(
+    record: Mapping[str, Any],
+    *,
+    producer,
+    origin: str,
+) -> None:
+    """Best-effort shadow append; never changes SharedFactsStore semantics."""
+
+    if _p8_runtime is None or producer is None:
+        return
+    try:
+        _p8_runtime.append_shared_fact(
+            record, producer=producer, origin=origin)
+    except Exception:
+        logger.warning(
+            "P8 visibility envelope append failed for shared fact %s",
+            record.get("id"),
+            exc_info=True,
+        )
 
 
 @router.post("/mind/facts", response_model=SharedFactResponse, status_code=status.HTTP_201_CREATED)
-async def create_shared_fact(body: SharedFactCreateRequest) -> SharedFactResponse:
+async def create_shared_fact(
+    body: SharedFactCreateRequest,
+    request: Request = None,
+) -> SharedFactResponse:
     """Add a shared fact about what a contact knows."""
     if _facts_store is None:
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    body.contact_id = resolve_request_person(
+        request, claimed_person_id=body.contact_id) or body.contact_id
     await _require_person_contact(body.contact_id)
     try:
         result = _facts_store.create_fact(
@@ -6404,6 +11575,13 @@ async def create_shared_fact(body: SharedFactCreateRequest) -> SharedFactRespons
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
     await _mirror_fact_to_graph(body.fact, body.contact_id, body.source, body.confidence)
+    producer = None
+    if _p8_runtime is not None:
+        try:
+            producer = _p8_viewer_for_request(request, body.contact_id)
+        except HTTPException:
+            logger.debug("P8 fact envelope omitted: scoped producer unavailable")
+    _append_p8_fact_record(result, producer=producer, origin="body")
 
     try:
         from colony_sidecar.events.broadcaster import emit as _emit
@@ -6416,6 +11594,114 @@ async def create_shared_fact(body: SharedFactCreateRequest) -> SharedFactRespons
         pass
 
     return SharedFactResponse(**result)
+
+
+# Single-flight state for the shared-facts -> graph backfill. Facts created
+# before the create-time mirror existed never reached the memory graph, so
+# semantic recall can't see them. The backfill replays them through the same
+# mirror; content-hash dedup makes re-runs mostly idempotent (a re-run
+# reinforces the existing node: +0.05 strength / +1 corroboration — documented
+# behavior, not a bug).
+_facts_backfill_state: Dict[str, Any] = {"running": False}
+
+
+class FactsBackfillRequest(BaseModel):
+    dry_run: bool = True
+    limit: int = 0              # 0 = no cap
+    min_confidence: float = 0.0
+    sleep_ms: int = 150         # serial pacing between embeds (shared embedder)
+
+
+@router.post("/mind/facts/backfill")
+async def backfill_shared_facts(body: FactsBackfillRequest) -> dict:
+    """Mirror existing shared facts into the memory graph (explicit admin op).
+
+    Runs as a background task, mirroring facts serially with ``sleep_ms``
+    spacing so a large backlog cannot saturate a shared embedder. Per-fact
+    failures (e.g. embedder outage — store_memory fails closed) are counted
+    and skipped, never fatal to the run. Single-flight: a second invocation
+    while one is running returns 409. Progress is journaled every 100 facts.
+    """
+    if _facts_store is None:
+        raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    if _graph is None:
+        raise HTTPException(status_code=501, detail="Memory graph not initialized")
+    if _facts_backfill_state.get("running"):
+        raise HTTPException(status_code=409, detail="facts backfill already running")
+
+    # Collect candidates up-front (paged reads from SQLite; no awaits, so the
+    # single-flight check above cannot interleave with another request).
+    facts: list = []
+    offset = 0
+    cap = body.limit if body.limit and body.limit > 0 else None
+    while True:
+        page = _facts_store.list_facts(
+            min_confidence=body.min_confidence, limit=200, offset=offset)
+        rows = page.get("facts") or []
+        if not rows:
+            break
+        facts.extend(rows)
+        offset += len(rows)
+        if cap is not None and len(facts) >= cap:
+            facts = facts[:cap]
+            break
+
+    if body.dry_run:
+        return {"dry_run": True, "started": False, "total": len(facts)}
+
+    sleep_secs = max(0, body.sleep_ms) / 1000.0
+    _facts_backfill_state.update({
+        "running": True, "dry_run": False, "total": len(facts),
+        "processed": 0, "mirrored": 0, "failed": 0,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": None,
+    })
+
+    def _journal_progress(final: bool = False) -> None:
+        try:
+            from colony_sidecar.events.journal import append_event
+            append_event("memory.facts_backfill", {
+                "processed": _facts_backfill_state["processed"],
+                "mirrored": _facts_backfill_state["mirrored"],
+                "failed": _facts_backfill_state["failed"],
+                "total": _facts_backfill_state["total"],
+                "final": final,
+            })
+        except Exception:
+            logger.debug("facts backfill journal failed", exc_info=True)
+
+    async def _run() -> None:
+        try:
+            for fact_row in facts:
+                ok = await _mirror_fact_to_graph(
+                    fact_row.get("fact") or "",
+                    fact_row.get("contact_id"),
+                    fact_row.get("source") or "",
+                    fact_row.get("confidence"),
+                )
+                _facts_backfill_state["processed"] += 1
+                if ok:
+                    _facts_backfill_state["mirrored"] += 1
+                else:
+                    _facts_backfill_state["failed"] += 1
+                if _facts_backfill_state["processed"] % 100 == 0:
+                    _journal_progress()
+                if sleep_secs:
+                    await asyncio.sleep(sleep_secs)
+        finally:
+            _facts_backfill_state["running"] = False
+            _facts_backfill_state["finished_at"] = (
+                datetime.now(timezone.utc).isoformat())
+            _journal_progress(final=True)
+
+    _spawn_task(_run())
+    return {"dry_run": False, "started": True, "total": len(facts)}
+
+
+@router.get("/mind/facts/backfill")
+async def backfill_shared_facts_status() -> dict:
+    """Progress/status of the current (or last) shared-facts backfill."""
+    return dict(_facts_backfill_state)
 
 
 @router.get("/mind/facts", response_model=SharedFactListResponse)
@@ -6448,6 +11734,7 @@ async def list_shared_facts(
             memories = await _graph.recall(
                 query=f"facts about {contact_id}",
                 limit=limit - len(facts),
+                person_id=contact_id,
             )
             for mem in memories:
                 mem_type = mem.get("type", "")
@@ -6488,10 +11775,19 @@ async def get_shared_fact(fact_id: str) -> SharedFactResponse:
 
 
 @router.patch("/mind/facts/{fact_id}", response_model=SharedFactResponse)
-async def update_shared_fact(fact_id: str, body: SharedFactUpdateRequest) -> SharedFactResponse:
+async def update_shared_fact(
+    fact_id: str,
+    body: SharedFactUpdateRequest,
+    request: Request = None,
+) -> SharedFactResponse:
     """Update a shared fact."""
     if _facts_store is None:
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
+    existing = _facts_store.get_fact(fact_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Shared fact not found")
+    contact_id = resolve_request_person(
+        request, claimed_person_id=existing.get("contact_id"))
     result = _facts_store.update_fact(
         fact_id,
         confidence=body.confidence,
@@ -6501,16 +11797,31 @@ async def update_shared_fact(fact_id: str, body: SharedFactUpdateRequest) -> Sha
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Shared fact not found")
+    producer = None
+    if _p8_runtime is not None:
+        try:
+            producer = _p8_viewer_for_request(
+                request, str(contact_id or existing.get("contact_id") or ""))
+        except HTTPException:
+            logger.debug("P8 updated fact envelope omitted: producer unavailable")
+    _append_p8_fact_record(result, producer=producer, origin="body")
     return SharedFactResponse(**result)
 
 
 @router.delete("/mind/facts/{fact_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_shared_fact(fact_id: str):
-    """Delete a shared fact."""
+    """Delete a shared fact. Cascades to second-order inferences that
+    reference it (reversibility, docs/TOM2-LEVELS.md): a dangling ref could
+    never render anyway — H3.5 fails closed — this keeps the store honest."""
     if _facts_store is None:
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
     if not _facts_store.delete_fact(fact_id):
         raise HTTPException(status_code=404, detail="Shared fact not found")
+    if _tom2_store is not None:
+        try:
+            _tom2_store.delete_for_fact(fact_id)
+        except Exception:
+            logger.debug("tom2 delete_for_fact cascade failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -6746,6 +12057,7 @@ async def _run_tom_extraction(
     conversation_text: str,
     contact_id: str,
     session_id: Optional[str] = None,
+    p8_producer=None,
 ) -> None:
     """Background task: extract affect + facts from a conversation turn."""
     if _tom_extractor is None:
@@ -6777,12 +12089,14 @@ async def _run_tom_extraction(
         )
         if facts and _facts_store is not None:
             for f in facts:
-                _facts_store.create_fact(
+                record = _facts_store.create_fact(
                     contact_id=f["contact_id"],
                     fact=f["fact"],
                     source=f["source"],
                     confidence=f["confidence"],
                 )
+                _append_p8_fact_record(
+                    record, producer=p8_producer, origin="model")
                 await _mirror_fact_to_graph(f["fact"], f["contact_id"],
                                             f["source"], f["confidence"])
             try:
@@ -6811,14 +12125,26 @@ async def _run_tom_extraction(
 
 
 @router.post("/tom/extract", response_model=TomExtractResponse)
-async def extract_tom(body: TomExtractRequest) -> TomExtractResponse:
+async def extract_tom(
+    body: TomExtractRequest,
+    request: Request = None,
+) -> TomExtractResponse:
     """Manually trigger ToM extraction for a conversation snippet."""
     if _tom_extractor is None:
         raise HTTPException(status_code=501, detail="ToM extraction not available (no LLM router)")
     # A manual ToM write must target a real person, same as the affect/facts
     # POST paths: a stale group contact_id here would pollute the wrong
     # person's psyche (docs/RELATIONSHIPS.md #5).
+    body.contact_id = resolve_request_person(
+        request, claimed_person_id=body.contact_id) or body.contact_id
     await _require_person_contact(body.contact_id)
+    _manual_p8_producer = None
+    if _p8_runtime is not None:
+        try:
+            _manual_p8_producer = _p8_viewer_for_request(
+                request, body.contact_id)
+        except HTTPException:
+            logger.debug("P8 manual extraction envelope omitted: producer unavailable")
 
     affect_result = None
     facts_result = []
@@ -6846,12 +12172,14 @@ async def extract_tom(body: TomExtractRequest) -> TomExtractResponse:
         )
         if facts_result and _facts_store is not None:
             for f in facts_result:
-                _facts_store.create_fact(
+                record = _facts_store.create_fact(
                     contact_id=f["contact_id"],
                     fact=f["fact"],
                     source=f["source"],
                     confidence=f["confidence"],
                 )
+                _append_p8_fact_record(
+                    record, producer=_manual_p8_producer, origin="model")
                 await _mirror_fact_to_graph(f["fact"], f["contact_id"],
                                             f["source"], f["confidence"])
 
@@ -7184,6 +12512,50 @@ async def find_entity_path(
         )
     except Exception as exc:
         logger.warning("find_entity_path failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================================
+# World Model — Causal chain (read-only; the sanctioned causal-edge surface)
+# ============================================================================
+
+@router.get("/world/causal/chain")
+async def world_causal_chain(
+    entity_id: str,
+    direction: str = "downstream",
+    max_hops: int = 3,
+    min_confidence: float = 0.0,
+) -> dict:
+    """Walk causal edges only (WM_CAUSES/ENABLES/BLOCKS/INHIBITS) to answer
+    "why" / "what happens if" questions. Causal edges are query-only by
+    policy and excluded from generic graph reads; this endpoint (and
+    explicitly-typed relationship queries) are the only surfaces returning
+    them."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        from colony_sidecar.world_model.causal_query import causal_chain
+        return await causal_chain(
+            _world_store, entity_id, direction=direction,
+            max_hops=max_hops, min_confidence=min_confidence)
+    except Exception as exc:
+        logger.warning("world_causal_chain failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/world/causal/edges")
+async def world_causal_edges(min_confidence: float = 0.0,
+                             limit: int = 100) -> dict:
+    """Flat list of stored causal edges (read-only observability surface)."""
+    if _world_store is None:
+        raise HTTPException(status_code=501, detail="World model not initialized")
+    try:
+        from colony_sidecar.world_model.causal_query import causal_edges
+        edges = await causal_edges(_world_store, min_confidence=min_confidence,
+                                   limit=limit)
+        return {"edges": edges, "total": len(edges)}
+    except Exception as exc:
+        logger.warning("world_causal_edges failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -7973,13 +13345,83 @@ async def respond_to_initiative(
     initiative_id: str,
     action: str = Body(...),
     details: Optional[dict] = Body(None),
+    request: Request = None,
 ) -> Dict[str, Any]:
-    """Record LLM response to an initiative."""
+    """Record a response; approval authority still comes from transport.
+
+    Initiative text/action is feedback, not proof that a human approved an
+    external effect. A linked queue decision is therefore routed through the
+    same immutable ApprovalRequest gate as the dedicated queue endpoints.
+    """
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
     initiative = _initiative_store.get(initiative_id)
     if initiative is None:
         raise HTTPException(status_code=404, detail="Initiative not found")
+
+    # Validate and durably apply a linked approval decision before changing
+    # initiative status, feedback, delivery state, or history. A denied
+    # transport principal must leave no false evidence that the owner acted.
+    job_id = getattr(initiative, "job_id", None)
+    if job_id and action in {
+        "approve", "approved", "dismiss", "dismissed", "reject", "rejected",
+    }:
+        try:
+            from colony_sidecar.api.routers import task_queue as approval_router
+
+            decision_details = details if isinstance(details, dict) else {}
+            if action in {"approve", "approved"}:
+                grant_body = decision_details.get("grant")
+                grant = (
+                    approval_router.BoundedGrantRequest(**grant_body)
+                    if isinstance(grant_body, dict) else None
+                )
+                await approval_router.approve_job(
+                    job_id,
+                    approval_router.JobApproveRequest(
+                        approval_request_id=decision_details.get("approval_request_id"),
+                        expected_action_digest=decision_details.get("expected_action_digest"),
+                        decision_id=decision_details.get("decision_id"),
+                        grant=grant,
+                    ),
+                    request,
+                )
+            else:
+                await approval_router.reject_job(
+                    job_id,
+                    approval_router.JobRejectRequest(
+                        reason=str(
+                            decision_details.get("reason")
+                            or "owner_rejected_via_initiative"
+                        ),
+                        approval_request_id=decision_details.get("approval_request_id"),
+                        expected_action_digest=decision_details.get("expected_action_digest"),
+                        decision_id=decision_details.get("decision_id"),
+                    ),
+                    request,
+                )
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "approval_queue_unavailable",
+                    "message": "linked approval could not be validated",
+                },
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync initiative %s response to job %s: %s",
+                initiative_id, job_id, exc,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "approval_decision_unavailable",
+                    "message": "linked approval could not be validated",
+                },
+            ) from exc
 
     # Update status based on action
     status_map = {
@@ -7993,45 +13435,32 @@ async def respond_to_initiative(
     if new_status:
         _initiative_store.update(initiative_id, status=new_status)
 
+    # Close the loop into TypeFeedbackStore: the owner's response to an
+    # initiative is exactly the outcome signal the per-type priority
+    # multiplier learns from. Best-effort — feedback recording must never
+    # fail the respond itself.
+    _FEEDBACK_OUTCOME_MAP = {
+        "approved": "actioned",
+        "actioned": "actioned",
+        "dismissed": "dismissed",
+        "snoozed": "snoozed",
+        "acknowledged": "acknowledged",
+    }
+    try:
+        outcome = _FEEDBACK_OUTCOME_MAP.get(action)
+        itype = getattr(initiative, "type", None)
+        if _feedback_store is not None and outcome is not None and itype:
+            _feedback_store.record(itype, outcome)
+    except Exception as exc:
+        logger.warning(
+            "Failed to record type feedback for initiative %s (action=%s): %s",
+            initiative_id, action, exc,
+        )
+
     # If acknowledged, also clear from delivery bridge
     if action == "acknowledged" and _delivery_bridge is not None:
         if hasattr(_delivery_bridge, "acknowledge_delivery"):
             _delivery_bridge.acknowledge_delivery(initiative_id)
-
-    # v0.17.0: sync the owner's response to the approval-gated job, if any.
-    # The autonomy loop records job_id on the initiative after submission;
-    # approving/dismissing the initiative resolves the BLOCKED job too.
-    job_id = getattr(initiative, "job_id", None)
-    if job_id and action in {"approve", "approved", "dismiss", "dismissed", "reject", "rejected"}:
-        try:
-            from colony_sidecar.task_queue.models import JobStatus
-            from colony_sidecar.task_queue.queue_manager import TaskQueueManager
-
-            queue = TaskQueueManager.get_instance().queue
-            job = await queue.get_job(job_id)
-            if job is not None and job.status == JobStatus.BLOCKED:
-                now_iso = datetime.now(timezone.utc).isoformat()
-                if action in {"approve", "approved"}:
-                    await queue.update_job_status(
-                        job_id,
-                        JobStatus.QUEUED,
-                        reason="owner_approved_via_initiative",
-                        tags={"approved_by": "owner", "approved_at": now_iso},
-                    )
-                else:
-                    await queue.update_job_status(
-                        job_id,
-                        JobStatus.CANCELLED,
-                        reason="owner_rejected_via_initiative",
-                        tags={"rejected_by": "owner", "rejected_at": now_iso},
-                    )
-        except RuntimeError:
-            pass  # task queue not initialized — nothing to sync
-        except Exception as exc:
-            logger.warning(
-                "Failed to sync initiative %s response to job %s: %s",
-                initiative_id, job_id, exc,
-            )
 
     _initiative_store.log_history(
         initiative_id,

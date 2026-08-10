@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Colony ↔ Hermes Plugin Installer
-# Usage: ./install.sh [--autonomy] [--force] [--memory] [--poller]
-#
-# Deploys the Colony general plugin into ~/.hermes/plugins/colony/
-# and optionally enables the Autonomy Bridge cron job.
+# Install the governed Colony general plugin into a Hermes home.
+# Usage: ./install.sh [--force] [--memory]
 
 set -euo pipefail
 
@@ -11,118 +8,64 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PLUGIN_DIR="$HERMES_HOME/plugins/colony"
 FORCE=0
-ENABLE_AUTONOMY=0
 INSTALL_MEMORY=0
-INSTALL_POLLER=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --autonomy) ENABLE_AUTONOMY=1 ; shift ;;
-    --force)    FORCE=1 ; shift ;;
-    --memory)   INSTALL_MEMORY=1 ; shift ;;
-    --poller)   INSTALL_POLLER=1 ; shift ;;
-    *) echo "Unknown option: $1"; exit 1 ;;
+    --force)  FORCE=1; shift ;;
+    --memory) INSTALL_MEMORY=1; shift ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
 
-echo "🚀 Colony ↔ Hermes Plugin Installer"
-echo "   Target: $PLUGIN_DIR"
-
-# Check Hermes is installed
 if [[ ! -d "$HERMES_HOME" ]]; then
-  echo "❌ Hermes home not found at $HERMES_HOME"
-  echo "   Install Hermes first: https://github.com/nousresearch/hermes-agent"
+  echo "Hermes home not found at $HERMES_HOME" >&2
   exit 1
 fi
 
-# Backup existing plugin if present
+STAMP="$(date +%Y%m%d%H%M%S)"
 if [[ -d "$PLUGIN_DIR" && "$FORCE" -eq 0 ]]; then
-  BACKUP="$PLUGIN_DIR.backup.$(date +%Y%m%d%H%M%S)"
-  echo "   Backing up existing plugin to $BACKUP"
+  BACKUP="$PLUGIN_DIR.backup.$STAMP"
   cp -R "$PLUGIN_DIR" "$BACKUP"
+  echo "Backed up the existing plugin to $BACKUP"
 fi
 
-# Deploy plugin files
 mkdir -p "$PLUGIN_DIR"
-cp "$SCRIPT_DIR/__init__.py" "$PLUGIN_DIR/"
-cp "$SCRIPT_DIR/client.py" "$PLUGIN_DIR/"
-cp "$SCRIPT_DIR/slash.py" "$PLUGIN_DIR/"
-cp "$SCRIPT_DIR/events.py" "$PLUGIN_DIR/"
-cp "$SCRIPT_DIR/plugin.yaml" "$PLUGIN_DIR/"
+chmod 700 "$PLUGIN_DIR"
+for name in __init__.py client.py events.py slash.py plugin.yaml; do
+  cp "$SCRIPT_DIR/$name" "$PLUGIN_DIR/$name"
+  chmod 600 "$PLUGIN_DIR/$name"
+done
 
-echo "   Plugin files deployed."
-
-# Deploy memory provider (canonical source: plugins/colony-memory — the real
-# __init__.py matters: it registers the pre_llm_call contact/time hook)
 if [[ "$INSTALL_MEMORY" -eq 1 ]]; then
   MEMORY_DIR="$HERMES_HOME/plugins/colony-memory"
   MEMORY_SRC="$SCRIPT_DIR/../colony-memory"
   mkdir -p "$MEMORY_DIR"
-  cp "$MEMORY_SRC/provider.py" "$MEMORY_DIR/"
-  cp "$MEMORY_SRC/__init__.py" "$MEMORY_DIR/"
-  cp "$MEMORY_SRC/plugin.yaml" "$MEMORY_DIR/"
-  [[ -f "$MEMORY_SRC/SKILL.md" ]] && cp "$MEMORY_SRC/SKILL.md" "$MEMORY_DIR/"
-  echo "   Memory provider deployed to $MEMORY_DIR"
-fi
-
-# Deploy poller + queue worker
-if [[ "$INSTALL_POLLER" -eq 1 ]]; then
-  SCRIPTS_DIR="$HERMES_HOME/scripts"
-  mkdir -p "$SCRIPTS_DIR"
-  cp "$SCRIPT_DIR/poller/colony-initiative-poller.py" "$SCRIPTS_DIR/"
-  chmod +x "$SCRIPTS_DIR/colony-initiative-poller.py"
-  echo "   Initiative poller deployed to $SCRIPTS_DIR/colony-initiative-poller.py"
-  echo "   Schedule with: hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
-  cp "$SCRIPT_DIR/poller/colony-queue-worker.py" "$SCRIPTS_DIR/"
-  chmod +x "$SCRIPTS_DIR/colony-queue-worker.py"
-  echo "   Queue worker deployed to $SCRIPTS_DIR/colony-queue-worker.py (v0.16.0 agent-as-sensor)"
-  echo "   Schedule with: hermes cron create --name colony-queue-worker --schedule 'every 5m' --script colony-queue-worker.py --no-agent"
-  echo "   Add the colony-jobs webhook route from examples/webhook-config.yaml to ~/.hermes/config.yaml"
-fi
-
-# Check if plugin is enabled
-if command -v hermes &>/dev/null; then
-  echo ""
-  echo "📋 Next steps:"
-  echo "   1. Ensure Colony sidecar is running on port 7777"
-  echo "   2. Enable the plugin:   hermes plugins enable colony"
-  [[ "$INSTALL_MEMORY" -eq 1 ]] && echo "   3. Configure memory:    hermes memory setup colony"
-  [[ "$INSTALL_POLLER" -eq 1 ]] && echo "   4. Start the poller:    hermes cron create --name colony-initiative-poller --schedule 'every 1m' --script colony-initiative-poller.py --no-agent"
-  echo ""
-
-  # Autonomy wizard prompt
-  if [[ "$ENABLE_AUTONOMY" -eq 1 ]]; then
-    echo "✅ Autonomy flag set — enabling background initiative handling..."
-    echo "   (Run '/colony autonomy enable' in Hermes if this fails)"
-  else
-    echo "🤖 Autonomy Bridge:"
-    echo "   Colony can run autonomously on your behalf — checking for"
-    echo "   relationship reminders and tasks every 15 minutes."
-    echo ""
-    if [[ -t 0 ]]; then
-      read -rp "   Enable autonomous initiative handling now? [y/N] " response
-      if [[ "$response" =~ ^[Yy]$ ]]; then
-        ENABLE_AUTONOMY=1
-      fi
-    fi
+  chmod 700 "$MEMORY_DIR"
+  for name in provider.py __init__.py plugin.yaml; do
+    cp "$MEMORY_SRC/$name" "$MEMORY_DIR/$name"
+    chmod 600 "$MEMORY_DIR/$name"
+  done
+  if [[ -f "$MEMORY_SRC/SKILL.md" ]]; then
+    cp "$MEMORY_SRC/SKILL.md" "$MEMORY_DIR/"
+    chmod 600 "$MEMORY_DIR/SKILL.md"
   fi
-
-  if [[ "$ENABLE_AUTONOMY" -eq 1 ]]; then
-    echo "   Creating autonomy cron job..."
-    # We can't easily create the job from here because it requires the Hermes
-    # runtime context. Instead, we print the command the user should run.
-    echo ""
-    echo "   ⚡ Run this inside Hermes to activate:"
-    echo "      /colony autonomy enable"
-    echo ""
-    echo "   Or from CLI:"
-    echo "      hermes -c '/colony autonomy enable'"
-  fi
-else
-  echo "⚠️  'hermes' command not found in PATH."
-  echo "   Add Hermes to your PATH, then run:"
-  echo "      hermes plugins enable colony"
 fi
 
-echo ""
-echo "✅ Installation complete."
+# Always replace legacy effect-worker paths with inert compatibility targets.
+# Existing scheduled invocations then fail visibly without claiming work or
+# posting a webhook.  Preserve each previous script for explicit rollback.
+SCRIPTS_DIR="$HERMES_HOME/scripts"
+mkdir -p "$SCRIPTS_DIR"
+for name in colony-initiative-poller.py colony-queue-worker.py; do
+  target="$SCRIPTS_DIR/$name"
+  if [[ -f "$target" ]]; then
+    cp -p "$target" "$target.pre-governance.$STAMP"
+  fi
+  cp "$SCRIPT_DIR/poller/$name" "$target"
+  chmod +x "$target"
+done
+
+echo "Installed governed Colony plugin at $PLUGIN_DIR"
+echo "Legacy effect-worker paths are inert; remove their old scheduled entries."
+echo "Enable the Colony plugin and canonical Colony memory provider in Hermes config."

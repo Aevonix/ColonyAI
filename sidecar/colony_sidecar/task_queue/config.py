@@ -3,7 +3,37 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
+
+
+DEFAULT_WORKER_HEARTBEAT_TTL_SECS = 60.0
+MIN_WORKER_HEARTBEAT_TTL_SECS = 1.0
+MAX_WORKER_HEARTBEAT_TTL_SECS = 3600.0
+
+
+def validate_worker_heartbeat_ttl(value: object) -> float:
+    """Return the one bounded worker-liveness TTL used by queue consumers."""
+
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "worker_heartbeat_ttl_secs must be between "
+            f"{MIN_WORKER_HEARTBEAT_TTL_SECS:g} and "
+            f"{MAX_WORKER_HEARTBEAT_TTL_SECS:g}"
+        ) from exc
+    if (
+        not math.isfinite(parsed)
+        or parsed < MIN_WORKER_HEARTBEAT_TTL_SECS
+        or parsed > MAX_WORKER_HEARTBEAT_TTL_SECS
+    ):
+        raise ValueError(
+            "worker_heartbeat_ttl_secs must be between "
+            f"{MIN_WORKER_HEARTBEAT_TTL_SECS:g} and "
+            f"{MAX_WORKER_HEARTBEAT_TTL_SECS:g}"
+        )
+    return parsed
 
 
 @dataclass
@@ -24,7 +54,7 @@ class TaskQueueConfig:
     heartbeat_interval_secs: float = 15.0
     """How often workers send heartbeats."""
 
-    heartbeat_timeout_secs: float = 60.0
+    heartbeat_timeout_secs: float = DEFAULT_WORKER_HEARTBEAT_TTL_SECS
     """Time after which a silent worker's jobs are abandoned."""
 
     claim_timeout_secs: float = 30.0

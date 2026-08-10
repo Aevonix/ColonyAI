@@ -180,12 +180,20 @@ class WorldModelPopulator:
 
     def _boundary_ok(self, name: str) -> bool:
         if self._directives is None:
+            # No directive manager configured: nothing to check against
+            # (distinct from "checked and allowed" — see log line).
+            logger.debug("world populate boundary UNCHECKED for %r "
+                         "(no directive manager)", name)
             return True
         try:
             from colony_sidecar.directives import Action
             return self._directives.check(Action(kind="populate", text=name, target=name)).allowed
         except Exception:
-            return True
+            # Fail closed, matching directives.guard.boundary_fail_closed():
+            # an error while evaluating an owner boundary must refuse.
+            logger.warning("world populate boundary check errored for %r "
+                           "— failing closed", name, exc_info=True)
+            return False
 
     async def populate_from_text(self, text: str, source_id: str) -> PopulationReport:
         report = PopulationReport(source_id=source_id, mode=self._mode)
@@ -243,6 +251,15 @@ class WorldModelPopulator:
                     await self._store.add_entity_alias(matched, c.text)
                 except Exception:
                     pass
+                # Repeat mention (covers exact-match, external-id and alias
+                # resolves — they all arrive here as MERGE): the entity was
+                # just seen again, so touch last_seen / mention_count /
+                # confidence. Reinforcement only — a repeat-mention must never
+                # make an entity MORE prunable than a single mention.
+                try:
+                    await self._store.reinforce_entity(matched)
+                except Exception as exc:
+                    logger.debug("reinforce_entity failed for %r: %s", matched, exc)
             return
         if action == "propose":
             rec["near"] = matched

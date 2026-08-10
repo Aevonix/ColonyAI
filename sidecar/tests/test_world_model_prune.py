@@ -43,24 +43,27 @@ async def _seed(backend):
 async def test_backend_prune_deletes_stale_low_confidence(tmp_path):
     backend = SQLiteBackend(str(tmp_path / "wm.db"))
     await backend.connect()
-    await _seed(backend)
+    try:
+        await _seed(backend)
 
-    pruned = await backend.prune_entities(_iso(90), max_confidence=0.30)
-    assert pruned == 1
+        pruned = await backend.prune_entities(_iso(90), max_confidence=0.30)
+        assert pruned == 1
 
-    assert await backend.get_entity("we-stale-low") is None
-    assert (await backend.get_entity("we-stale-high")) is not None
-    assert (await backend.get_entity("we-fresh-low")) is not None
+        assert await backend.get_entity("we-stale-low") is None
+        assert (await backend.get_entity("we-stale-high")) is not None
+        assert (await backend.get_entity("we-fresh-low")) is not None
 
-    # relationship cascaded with its entity
-    assert await backend.get_relationship("wr-1") is None
+        # relationship cascaded with its entity
+        assert await backend.get_relationship("wr-1") is None
 
-    # FTS mirror no longer matches the pruned name
-    found = await backend.find_entities("Rumor", min_confidence=0.0)
-    assert not any(e.id == "we-stale-low" for e in found)
+        # FTS mirror no longer matches the pruned name
+        found = await backend.find_entities("Rumor", min_confidence=0.0)
+        assert not any(e.id == "we-stale-low" for e in found)
 
-    # idempotent
-    assert await backend.prune_entities(_iso(90), max_confidence=0.30) == 0
+        # idempotent
+        assert await backend.prune_entities(_iso(90), max_confidence=0.30) == 0
+    finally:
+        await backend.close()
 
 
 @pytest.mark.asyncio

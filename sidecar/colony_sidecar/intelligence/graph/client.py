@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Coroutine, Dict, List, Optional, TYPE_CHECKING
@@ -51,6 +52,34 @@ def _recency_factor(days_old: float) -> float:
         floor = 0.5
     floor = min(max(floor, 0.0), 1.0)
     return floor + (1.0 - floor) * (0.5 ** (max(days_old, 0.0) / half_life))
+
+
+def distill_turn_summary(summary: str) -> str:
+    """The distilled form of a turn summary (what COLONY_DISTILL_TURNS=1 stores).
+
+    PRESERVES BOTH speaker labels ("User:" and "Agent:", with "assistant"
+    normalized to "Agent:"). Attribution matters in both directions:
+    "User: my X is Y" says whose preference it is, and "Agent: ..." marks
+    the agent's own prose so downstream consumers (e.g. the belief claim
+    extractor) never mistake something the agent SAID for a fact a contact
+    ASSERTED. Lines are joined with "; " — this text is injected into
+    prompts, so it must never introduce an em dash.
+    """
+    _lines = []
+    for ln in (summary or "").splitlines():
+        if ":" in ln:
+            _speaker, _rest = ln.split(":", 1)
+            _rest = _rest.strip()
+            sp = _speaker.strip().lower()
+            if sp == "user" and _rest:
+                _lines.append(f"User: {_rest}")
+            elif sp in ("agent", "assistant") and _rest:
+                _lines.append(f"Agent: {_rest}")
+            else:
+                _lines.append(_rest)
+        else:
+            _lines.append(ln)
+    return "; ".join(x for x in _lines if x) or (summary or "")
 
 
 @dataclass
@@ -135,6 +164,37 @@ class ColonyGraph:
             Callable[[str], Coroutine[Any, Any, List[float]]]
         ] = None
         self._vector_store: Optional["VectorStore"] = None
+        self._rerank_fn: Optional[Callable[..., Coroutine[Any, Any, Any]]] = None
+        # Runtime-wide hard exclusions protect untyped recall consumers (for
+        # example model tools and background synthesis) that cannot safely
+        # render a governed source directly. Empty preserves legacy behavior.
+        self._recall_source_exclusions: tuple[str, ...] = ()
+        self._recall_metadata_exclusions: tuple[str, ...] = ()
+
+    @staticmethod
+    def _bounded_source_uris(source_uris) -> tuple[str, ...]:
+        """Normalize a small exact-match source-URI exclusion set."""
+        return tuple(sorted(dict.fromkeys(
+            str(value).strip() for value in (source_uris or ())
+            if 0 < len(str(value).strip()) <= 256
+        )))[:16]
+
+    def set_recall_source_exclusions(
+        self,
+        source_uris,
+        *,
+        legacy_metadata_markers=(),
+    ) -> None:
+        """Set graph-wide hard recall exclusions for runtime policy.
+
+        Per-call exclusions are additive and can never relax this boundary.
+        ``legacy_metadata_markers`` covers rows written before a governed
+        source URI existed. Both sets are bounded exact strings; passing empty
+        iterables restores the historical default behavior.
+        """
+        self._recall_source_exclusions = self._bounded_source_uris(source_uris)
+        self._recall_metadata_exclusions = self._bounded_source_uris(
+            legacy_metadata_markers)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -211,6 +271,21 @@ class ColonyGraph:
     def set_vector_store(self, store: "VectorStore") -> None:
         """Register a VectorStore for ANN search (replaces Neo4j vector index)."""
         self._vector_store = store
+
+    def set_rerank_fn(
+        self,
+        fn: Callable[..., Coroutine[Any, Any, Any]],
+    ) -> None:
+        """Register an async rerank function used by *recall* (mirrors
+        :meth:`set_embed_fn`).
+
+        Args:
+            fn: async callable ``fn(query, documents, top_k=N)`` returning a
+                list of objects with ``index`` and ``score`` attributes (the
+                RerankerProvider.rerank contract). Only consulted when
+                COLONY_RECALL_RERANK is ``shadow`` or ``on``.
+        """
+        self._rerank_fn = fn
 
     def set_adaptive_params(self, params: Any) -> None:
         """Register an AdaptiveParamStore consulted by *recall* for the
@@ -539,7 +614,11 @@ class ColonyGraph:
                         "type": memory_type,
                         "strength": importance,
                         "importance": importance,
-                        "person_id": metadata_dict.get("person_id") if metadata_dict else None,
+                        # Keep the vector candidate's scope aligned with the
+                        # authoritative graph ABOUT edge. Historically this
+                        # read only metadata["person_id"], so callers using the
+                        # explicit argument produced unscoped vector rows.
+                        "person_id": person_id,
                         "tags": metadata_dict.get("tags", []) if metadata_dict else [],
                         "created_at": metadata_dict.get("created_at") if metadata_dict else None,
                         "session_id": session_id,
@@ -556,6 +635,19 @@ class ColonyGraph:
                 logger.warning("Failed to write memory to vector store: %s", exc)
 
         return memory_id
+
+    def _distill_preview_ring(self) -> "deque":
+        """Bounded ring of shadow distill previews (created on first use so
+        alternate construction paths, e.g. tests, still work)."""
+        ring = getattr(self, "_distill_preview", None)
+        if ring is None:
+            ring = deque(maxlen=50)
+            self._distill_preview = ring
+        return ring
+
+    def distill_preview(self) -> List[Dict[str, Any]]:
+        """Newest-first shadow distill previews (empty once the flag is live)."""
+        return list(reversed(self._distill_preview_ring()))
 
     async def record_turn(
         self,
@@ -613,15 +705,26 @@ class ColonyGraph:
         importance = round(min(_score, 0.95), 3)
 
         # Optional distillation (shadow by default): store the salient content rather
-        # than the verbatim "User:/Agent:" wrapper. Off => log what it WOULD store so
-        # we can validate before flipping live. On => strip the wrapper prefix.
+        # than the verbatim "User:/Agent:" wrapper. The distilled form is ALWAYS
+        # computed; off => stored content is unchanged and the would-be result goes
+        # into a bounded in-memory preview ring (GET /v1/host/memory/distill-preview)
+        # so the flip can be validated on real traffic first. On => store it.
         content = summary
+        distilled = distill_turn_summary(summary)
         _distill = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
         if _distill:
-            _lines = [ln.split(":", 1)[1].strip() if ":" in ln else ln
-                      for ln in summary.splitlines()]
-            content = " — ".join(x for x in _lines if x) or summary
+            content = distilled
         else:
+            try:
+                self._distill_preview_ring().append({
+                    "session_id": session_id,
+                    "original": summary[:400],
+                    "distilled": distilled[:400],
+                    "importance": importance,
+                    "ts": time.time(),
+                })
+            except Exception:
+                logger.debug("distill preview append failed", exc_info=True)
             logger.debug("distill(shadow): would store salient content for session %s (imp=%.2f)",
                          session_id, importance)
 
@@ -649,12 +752,208 @@ class ColonyGraph:
             logger.warning("record_turn failed: %s", exc)
             return None
 
+    async def read_memories(
+        self,
+        *,
+        person_id: Optional[str] = None,
+        memory_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Read recent memories, preserving the same hard ABOUT boundary as recall.
+
+        ``person_id`` is intentionally a single exact lane. A scoped miss is
+        empty and never retries against the unscoped graph. Omitting the person
+        remains only for the deprecated legacy/internal authority path; the API
+        boundary always supplies a server-derived person for scoped callers.
+        """
+
+        person_scope = str(person_id).strip() if person_id else None
+        memory_scope = str(memory_id).strip() if memory_id else None
+        safe_limit = max(1, min(int(limit or 20), 100))
+        excluded_sources = getattr(self, "_recall_source_exclusions", ())
+        excluded_metadata_markers = getattr(
+            self, "_recall_metadata_exclusions", ())
+        policy_active = bool(
+            excluded_sources or excluded_metadata_markers)
+        async with self.driver.session(database=self.database) as session:
+            if person_scope:
+                if policy_active:
+                    result = await session.run(
+                        """
+                        MATCH (m:Memory)-[:ABOUT]->(:Person {id: $person_id})
+                        WHERE ($memory_id IS NULL OR m.id = $memory_id)
+                          AND (size($exclude_source_uris) = 0 OR NOT (
+                            coalesce(m.source_uri, "") IN
+                            $exclude_source_uris))
+                          AND (size($exclude_metadata_markers) = 0 OR
+                            NONE(marker IN $exclude_metadata_markers
+                              WHERE toLower(coalesce(m.metadata, ""))
+                                CONTAINS marker))
+                        OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                        WITH m, collect(DISTINCT e.name) AS entity_names
+                        RETURN m {.*, entities: entity_names,
+                                  person_id: $person_id} AS memory
+                        ORDER BY m.created_at DESC
+                        LIMIT $limit
+                        """,
+                        person_id=person_scope,
+                        memory_id=memory_scope,
+                        limit=safe_limit,
+                        exclude_source_uris=excluded_sources,
+                        exclude_metadata_markers=excluded_metadata_markers,
+                    )
+                else:
+                    result = await session.run(
+                        """
+                        MATCH (m:Memory)-[:ABOUT]->(:Person {id: $person_id})
+                        WHERE $memory_id IS NULL OR m.id = $memory_id
+                        OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                        WITH m, collect(DISTINCT e.name) AS entity_names
+                        RETURN m {.*, entities: entity_names,
+                                  person_id: $person_id} AS memory
+                        ORDER BY m.created_at DESC
+                        LIMIT $limit
+                        """,
+                        person_id=person_scope,
+                        memory_id=memory_scope,
+                        limit=safe_limit,
+                    )
+            else:
+                if policy_active:
+                    result = await session.run(
+                        """
+                        MATCH (m:Memory)
+                        WHERE ($memory_id IS NULL OR m.id = $memory_id)
+                          AND (size($exclude_source_uris) = 0 OR NOT (
+                            coalesce(m.source_uri, "") IN
+                            $exclude_source_uris))
+                          AND (size($exclude_metadata_markers) = 0 OR
+                            NONE(marker IN $exclude_metadata_markers
+                              WHERE toLower(coalesce(m.metadata, ""))
+                                CONTAINS marker))
+                        OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                        OPTIONAL MATCH (m)-[:ABOUT]->(p:Person)
+                        WITH m, collect(DISTINCT e.name) AS entity_names,
+                             collect(DISTINCT p.id) AS person_ids
+                        RETURN m {.*, entities: entity_names,
+                                  person_id: head(person_ids)} AS memory
+                        ORDER BY m.created_at DESC
+                        LIMIT $limit
+                        """,
+                        memory_id=memory_scope,
+                        limit=safe_limit,
+                        exclude_source_uris=excluded_sources,
+                        exclude_metadata_markers=excluded_metadata_markers,
+                    )
+                else:
+                    result = await session.run(
+                        """
+                        MATCH (m:Memory)
+                        WHERE $memory_id IS NULL OR m.id = $memory_id
+                        OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                        OPTIONAL MATCH (m)-[:ABOUT]->(p:Person)
+                        WITH m, collect(DISTINCT e.name) AS entity_names,
+                             collect(DISTINCT p.id) AS person_ids
+                        RETURN m {.*, entities: entity_names,
+                                  person_id: head(person_ids)} AS memory
+                        ORDER BY m.created_at DESC
+                        LIMIT $limit
+                        """,
+                        memory_id=memory_scope,
+                        limit=safe_limit,
+                    )
+            memories: List[Dict[str, Any]] = []
+            async for record in result:
+                memories.append(dict(record["memory"]))
+            return memories
+
+    def _memory_is_recall_excluded(self, memory: Dict[str, Any]) -> bool:
+        sources = set(getattr(self, "_recall_source_exclusions", ()))
+        if str(memory.get("source_uri") or "") in sources:
+            return True
+        metadata = memory.get("metadata")
+        raw_metadata = str(
+            memory if metadata is None else metadata).lower()
+        return any(
+            marker in raw_metadata
+            for marker in getattr(self, "_recall_metadata_exclusions", ())
+        )
+
+    async def filter_memory_vector_results(
+        self,
+        rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Apply the graph's hard content policy to raw vector result text.
+
+        Vector metadata catches current mirrors cheaply. Ambiguous/legacy rows
+        are hydrated by ID so their authoritative graph metadata is checked.
+        Non-graph vectors (for example image captions) remain available.
+        """
+        if not (
+            getattr(self, "_recall_source_exclusions", ())
+            or getattr(self, "_recall_metadata_exclusions", ())
+        ):
+            return rows
+
+        candidates = [row for row in rows[:512] if isinstance(row, dict)]
+        ids = tuple(dict.fromkeys(
+            str(row.get("id") or "").strip() for row in candidates
+            if str(row.get("id") or "").strip()
+        ))
+        graph_rows: Dict[str, Dict[str, Any]] = {}
+        if ids:
+            async with self.driver.session(database=self.database) as session:
+                result = await session.run(
+                    """
+                    MATCH (m:Memory) WHERE m.id IN $ids
+                    RETURN m {.*} AS memory
+                    """,
+                    ids=ids,
+                )
+                async for record in result:
+                    memory = dict(record["memory"])
+                    mid = str(memory.get("id") or "")
+                    if mid:
+                        graph_rows[mid] = memory
+
+        allowed: List[Dict[str, Any]] = []
+        for row in candidates:
+            mid = str(row.get("id") or "").strip()
+            if not mid:
+                continue
+            vector_metadata = row.get("metadata")
+            vector_view = dict(vector_metadata) if isinstance(
+                vector_metadata, dict) else {"metadata": vector_metadata}
+            if self._memory_is_recall_excluded(vector_view):
+                continue
+            graph_view = graph_rows.get(mid)
+            if graph_view is not None and self._memory_is_recall_excluded(
+                graph_view
+            ):
+                continue
+            if graph_view is None:
+                metadata = (
+                    vector_metadata
+                    if isinstance(vector_metadata, dict) else {}
+                )
+                modality = str(metadata.get("modality") or "").lower()
+                source_uri = str(metadata.get("source_uri") or "").strip()
+                # Missing graph hydration is not authority for ambiguous text.
+                # Preserve explicit non-graph media and text with an identified,
+                # non-excluded source; unknown text fails closed.
+                if modality != "image" and not source_uri:
+                    continue
+            allowed.append(row)
+        return allowed
+
     async def recall(
         self,
         query: str,
         limit: int = 10,
-        min_strength: float = 0.1,
+        min_strength: Optional[float] = None,
         min_confidence: float = 0.1,
+        person_id: Optional[str] = None,
+        exclude_source_uris: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Retrieve memories by semantic similarity with strength decay.
 
@@ -662,19 +961,86 @@ class ColonyGraph:
         Neo4j with entity mentions.  Falls back to graph-only keyword
         recall if no vector store or embedding function is configured.
 
+        ``min_strength`` is the hard exclusion floor for decayed memories.
+        An explicit caller value always wins; when omitted it comes from
+        COLONY_RECALL_MIN_STRENGTH (default 0.1, the historical floor).
+        The floor stays hard — decayed junk is excluded, not demoted — and
+        is only lowered stepwise as live pruning cleans the graph.
+
+        An explicit ``person_id`` is a hard candidate boundary: only memories
+        linked ``ABOUT`` that exact person may be hydrated or ranked. A scoped
+        miss stays empty and never falls back to global recall. Trusted owner
+        or internal callers that intentionally need global memory must omit
+        ``person_id`` after establishing that authority outside this method.
+
+        ``exclude_source_uris`` is a bounded hard hydration filter applied
+        before confidence/relevance ranking and reranking.  The ANN candidate
+        fetch is widened when this filter is present so excluded mirrors do
+        not ordinarily starve the requested result window.
+
         Returns:
             A list of memory dicts, each annotated with ``entities`` and
             sorted by relevance descending.
         """
+        if min_strength is None:
+            try:
+                min_strength = float(os.environ.get(
+                    "COLONY_RECALL_MIN_STRENGTH", "0.1"))
+            except (TypeError, ValueError):
+                min_strength = 0.1
+        # Strength-blended ranking (COLONY_RECALL_STRENGTH_RANKING, default
+        # off = legacy vector_score * effective_confidence). When on, decayed
+        # memories are demoted smoothly ABOVE the hard floor:
+        # relevance = vector_score * effective_confidence * (0.5 + 0.5*strength)
+        strength_ranking = os.environ.get(
+            "COLONY_RECALL_STRENGTH_RANKING", "off").strip().lower() in (
+            "on", "1", "true", "yes")
+        person_scope = str(person_id).strip() if person_id else None
+        excluded_sources = self._bounded_source_uris((
+            *getattr(self, "_recall_source_exclusions", ()),
+            *(exclude_source_uris or ()),
+        ))
+        excluded_metadata_markers = self._bounded_source_uris(
+            getattr(self, "_recall_metadata_exclusions", ()))
         # Vector search path: embed query (with instruction) → LanceDB ANN → Neo4j hydration
         if self._vector_store is not None and self._embed_fn is not None:
             try:
                 embedding = await self._embed_query(query)
                 from colony_sidecar.vector.collections import Collection
+                # Oversample the ANN fetch (COLONY_RECALL_OVERSAMPLE, default 1
+                # = legacy exact-limit fetch) so the post-hydration filters
+                # (strength floor, terminal epistemic states, low confidence)
+                # can't silently shrink the result set below the requested
+                # limit. Oversampled fetches are capped at 100 candidates and
+                # trimmed back to `limit` after filtering.
+                try:
+                    oversample = int(os.environ.get(
+                        "COLONY_RECALL_OVERSAMPLE", "1"))
+                except (TypeError, ValueError):
+                    oversample = 1
+                fetch_limit = (limit if oversample <= 1
+                               else min(limit * oversample, max(100, limit)))
+                # Existing vector rows predate structured recipient metadata,
+                # so the authoritative scope check happens during Neo4j
+                # hydration. Widen scoped ANN candidate generation to reduce
+                # false-empty results without ever relaxing that graph gate.
+                if person_scope:
+                    try:
+                        scope_oversample = max(1, int(os.environ.get(
+                            "COLONY_RECALL_SCOPE_OVERSAMPLE", "20")))
+                    except (TypeError, ValueError):
+                        scope_oversample = 20
+                    fetch_limit = max(
+                        fetch_limit,
+                        min(limit * scope_oversample, max(200, limit)),
+                    )
+                elif excluded_sources or excluded_metadata_markers:
+                    fetch_limit = max(
+                        fetch_limit, min(limit * 20, max(200, limit)))
                 results = await self._vector_store.search(
                     collection=Collection.MEMORIES,
                     query_vector=embedding,
-                    limit=limit,
+                    limit=fetch_limit,
                     # metadata is stored as a JSON string (pa.utf8()); LanceDB's
                     # filter dialect does not support json_extract on utf8 columns.
                     # Strength filtering is applied post-hydration from Neo4j below.
@@ -703,15 +1069,49 @@ class ColonyGraph:
 
                     # Hydrate from Neo4j
                     async with self.driver.session(database=self.database) as session:
-                        result = await session.run(
-                            """
-                            MATCH (m:Memory) WHERE m.id IN $ids
-                            OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
-                            WITH m, collect(e.name) AS entity_names
-                            RETURN m {.*, entities: entity_names} AS memory
-                            """,
-                            ids=memory_ids,
-                        )
+                        if person_scope:
+                            result = await session.run(
+                                """
+                                MATCH (m:Memory)-[:ABOUT]->(:Person {id: $person_id})
+                                WHERE m.id IN $ids
+                                  AND (size($exclude_source_uris) = 0 OR NOT (
+                                    coalesce(m.source_uri, "") IN
+                                    $exclude_source_uris))
+                                  AND (size($exclude_metadata_markers) = 0 OR
+                                    NONE(marker IN $exclude_metadata_markers
+                                      WHERE toLower(coalesce(m.metadata, ""))
+                                        CONTAINS marker))
+                                OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                                WITH m, collect(e.name) AS entity_names
+                                RETURN m {.*, entities: entity_names,
+                                          person_id: $person_id} AS memory
+                                """,
+                                ids=memory_ids,
+                                person_id=person_scope,
+                                exclude_source_uris=excluded_sources,
+                                exclude_metadata_markers=(
+                                    excluded_metadata_markers),
+                            )
+                        else:
+                            result = await session.run(
+                                """
+                                MATCH (m:Memory) WHERE m.id IN $ids
+                                  AND (size($exclude_source_uris) = 0 OR NOT (
+                                    coalesce(m.source_uri, "") IN
+                                    $exclude_source_uris))
+                                  AND (size($exclude_metadata_markers) = 0 OR
+                                    NONE(marker IN $exclude_metadata_markers
+                                      WHERE toLower(coalesce(m.metadata, ""))
+                                        CONTAINS marker))
+                                OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                                WITH m, collect(e.name) AS entity_names
+                                RETURN m {.*, entities: entity_names} AS memory
+                                """,
+                                ids=memory_ids,
+                                exclude_source_uris=excluded_sources,
+                                exclude_metadata_markers=(
+                                    excluded_metadata_markers),
+                            )
                         memories = []
                         async for record in result:
                             mem = record["memory"]
@@ -720,7 +1120,6 @@ class ColonyGraph:
                             strength = float(mem.get("strength", 1.0))
                             if strength < min_strength:
                                 continue
-                            mem["relevance"] = vector_score * strength
                             # Filter terminal epistemic states and low confidence
                             epistemic_state = mem.get("epistemic_state", "inferred")
                             if epistemic_state in ("stale", "superseded", "deprecated", "archived"):
@@ -728,10 +1127,19 @@ class ColonyGraph:
                             effective_confidence = float(mem.get("effective_confidence", mem.get("strength", 1.0)))
                             if effective_confidence < min_confidence:
                                 continue
-                            mem["relevance"] = vector_score * effective_confidence
+                            if strength_ranking:
+                                mem["relevance"] = (vector_score
+                                                    * effective_confidence
+                                                    * (0.5 + 0.5 * strength))
+                            else:
+                                mem["relevance"] = vector_score * effective_confidence
                             memories.append(mem)
 
+                    memories = await self._maybe_rerank(
+                        query, memories, limit,
+                        strength_ranking=strength_ranking)
                     memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)
+                    memories = memories[:limit]
                     # Fire-and-forget touch_memory for each recalled result
                     for mem in memories:
                         mid = mem.get("id")
@@ -743,23 +1151,62 @@ class ColonyGraph:
 
         # Fallback: graph-only keyword/entity recall
         async with self.driver.session(database=self.database) as session:
-            result = await session.run(
-                """
-                MATCH (m:Memory)
-                WHERE m.strength >= $min_strength
-                  AND toLower(m.content) CONTAINS toLower($search_text)
-                  AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
-                OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
-                WITH m, collect(e.name) AS entity_names
-                RETURN m {.*, entities: entity_names} AS memory,
-                       m.effective_confidence AS relevance
-                ORDER BY relevance DESC
-                LIMIT $limit
-                """,
-                search_text=query,
-                limit=limit,
-                min_strength=min_strength,
-            )
+            if person_scope:
+                result = await session.run(
+                    """
+                    MATCH (m:Memory)-[:ABOUT]->(:Person {id: $person_id})
+                    WHERE m.strength >= $min_strength
+                      AND (size($exclude_source_uris) = 0 OR NOT (
+                        coalesce(m.source_uri, "") IN
+                        $exclude_source_uris))
+                      AND (size($exclude_metadata_markers) = 0 OR
+                        NONE(marker IN $exclude_metadata_markers
+                          WHERE toLower(coalesce(m.metadata, ""))
+                            CONTAINS marker))
+                      AND toLower(m.content) CONTAINS toLower($search_text)
+                      AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
+                    OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                    WITH m, collect(e.name) AS entity_names
+                    RETURN m {.*, entities: entity_names,
+                              person_id: $person_id} AS memory,
+                           m.effective_confidence AS relevance
+                    ORDER BY relevance DESC
+                    LIMIT $limit
+                    """,
+                    search_text=query,
+                    limit=limit,
+                    min_strength=min_strength,
+                    person_id=person_scope,
+                    exclude_source_uris=excluded_sources,
+                    exclude_metadata_markers=excluded_metadata_markers,
+                )
+            else:
+                result = await session.run(
+                    """
+                    MATCH (m:Memory)
+                    WHERE m.strength >= $min_strength
+                      AND (size($exclude_source_uris) = 0 OR NOT (
+                        coalesce(m.source_uri, "") IN
+                        $exclude_source_uris))
+                      AND (size($exclude_metadata_markers) = 0 OR
+                        NONE(marker IN $exclude_metadata_markers
+                          WHERE toLower(coalesce(m.metadata, ""))
+                            CONTAINS marker))
+                      AND toLower(m.content) CONTAINS toLower($search_text)
+                      AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
+                    OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                    WITH m, collect(e.name) AS entity_names
+                    RETURN m {.*, entities: entity_names} AS memory,
+                           m.effective_confidence AS relevance
+                    ORDER BY relevance DESC
+                    LIMIT $limit
+                    """,
+                    search_text=query,
+                    limit=limit,
+                    min_strength=min_strength,
+                    exclude_source_uris=excluded_sources,
+                    exclude_metadata_markers=excluded_metadata_markers,
+                )
             memories = []
             async for record in result:
                 mem = record["memory"]
@@ -792,6 +1239,101 @@ class ColonyGraph:
         except Exception as exc:
             logger.debug("touch_memory failed for %s: %s", memory_id, exc)
 
+    async def _maybe_rerank(
+        self,
+        query: str,
+        memories: List[Dict[str, Any]],
+        limit: int,
+        *,
+        strength_ranking: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Cross-encoder rerank of filtered recall candidates, bounded and
+        fail-open.
+
+        COLONY_RECALL_RERANK gates it: ``off`` (default) never calls the
+        reranker; ``shadow`` scores and logs the rank delta but returns ANN
+        order untouched (measure p95 before flipping); ``on`` replaces the
+        vector score in the relevance blend with the rerank score. The call
+        is inline but hard-capped by COLONY_RECALL_RERANK_TIMEOUT_MS
+        (default 1200) — on timeout or any error, recall falls open to ANN
+        order (warn once per ~5 min, debug otherwise). Skipped entirely when
+        the candidate set already fits the limit: there is nothing for a
+        rerank to save then, only latency to add.
+        """
+        mode = os.environ.get("COLONY_RECALL_RERANK", "off").strip().lower()
+        if mode not in ("shadow", "on"):
+            return memories
+        rerank_fn = getattr(self, "_rerank_fn", None)
+        if rerank_fn is None or len(memories) <= limit:
+            return memories
+        try:
+            timeout_ms = float(os.environ.get(
+                "COLONY_RECALL_RERANK_TIMEOUT_MS", "1200"))
+        except (TypeError, ValueError):
+            timeout_ms = 1200.0
+
+        docs = [str(m.get("content", "")) for m in memories]
+        try:
+            results = await asyncio.wait_for(
+                rerank_fn(query, docs, top_k=len(docs)),
+                timeout=max(timeout_ms, 1.0) / 1000.0,
+            )
+        except Exception as exc:
+            self._warn_rerank_failure(exc)
+            return memories
+
+        scores: Dict[int, float] = {}
+        for r in results or []:
+            idx = r.get("index") if isinstance(r, dict) else getattr(r, "index", None)
+            score = r.get("score") if isinstance(r, dict) else getattr(r, "score", None)
+            if idx is not None and score is not None:
+                scores[int(idx)] = float(score)
+        if not scores:
+            self._warn_rerank_failure(RuntimeError("reranker returned no scores"))
+            return memories
+
+        if mode == "shadow":
+            ann_top = [m.get("id") for m in sorted(
+                memories, key=lambda m: m.get("relevance", 0),
+                reverse=True)][:limit]
+            rr_idx = sorted(range(len(memories)),
+                            key=lambda i: scores.get(i, float("-inf")),
+                            reverse=True)
+            rr_top = [memories[i].get("id") for i in rr_idx[:limit]]
+            moved = sum(1 for a, b in zip(ann_top, rr_top) if a != b)
+            logger.info(
+                "recall rerank shadow: candidates=%d limit=%d "
+                "top_overlap=%d/%d positions_changed=%d",
+                len(memories), limit, len(set(ann_top) & set(rr_top)),
+                limit, moved)
+            return memories
+
+        # mode == "on": rerank score replaces the vector score in the blend;
+        # a document the reranker didn't score keeps its ANN relevance.
+        for i, mem in enumerate(memories):
+            if i not in scores:
+                continue
+            effective_confidence = float(
+                mem.get("effective_confidence", mem.get("strength", 1.0)))
+            relevance = scores[i] * effective_confidence
+            if strength_ranking:
+                relevance *= 0.5 + 0.5 * float(mem.get("strength", 1.0))
+            mem["relevance"] = relevance
+        return memories
+
+    def _warn_rerank_failure(self, exc: BaseException) -> None:
+        """Warn on rerank failure at most once per ~5 minutes (fail-open is
+        by design; a dead reranker must not turn every recall into a WARNING
+        stream)."""
+        now = time.monotonic()
+        if now - getattr(self, "_rerank_warn_at", 0.0) >= 300:
+            self._rerank_warn_at = now
+            logger.warning(
+                "recall rerank failed (fail-open to ANN order): %s", exc)
+        else:
+            logger.debug(
+                "recall rerank failed (fail-open to ANN order): %s", exc)
+
     # ------------------------------------------------------------------
     # Decay & pruning
     # ------------------------------------------------------------------
@@ -803,20 +1345,26 @@ class ColonyGraph:
         recalls: int,
         half_life_days: float,
         memory_type: str = "episodic",
+        semantic_half_life_days: Optional[float] = None,
     ) -> float:
         """Compute Ebbinghaus decay for a memory.
 
         Formula: strength = importance * e^(-lambda * days) * (1 + recalls * 0.2)
 
         Where lambda = ln(2) / half_life_days.  Identity memories never decay;
-        procedural memories decay at half the normal rate.  Result is capped at 1.0.
+        procedural memories decay at half the normal rate; fact/semantic
+        memories use their own half-life when one is given (defaults to the
+        episodic value, i.e. no behavior change).  Result is capped at 1.0.
 
         Args:
             importance: Initial importance value (0-1)
             days_elapsed: Days since last access
             recalls: Number of times the memory has been recalled
             half_life_days: Days for strength to halve (default 7)
-            memory_type: One of "identity", "procedural", "episodic", "semantic"
+            memory_type: One of "identity", "procedural", "episodic",
+                "semantic", "fact"
+            semantic_half_life_days: Half-life for fact/semantic memories
+                (None = same as half_life_days)
 
         Returns:
             New strength value in [0, 1].
@@ -825,13 +1373,25 @@ class ColonyGraph:
             return float(importance)
 
         lambda_base = math.log(2) / max(half_life_days, 0.001)
-        # Procedural memories decay at half the normal rate
-        lambda_val = lambda_base / 2 if memory_type == "procedural" else lambda_base
+        if memory_type == "procedural":
+            # Procedural memories decay at half the normal rate
+            lambda_val = lambda_base / 2
+        elif memory_type in ("fact", "semantic"):
+            sem_half_life = (semantic_half_life_days
+                             if semantic_half_life_days is not None
+                             else half_life_days)
+            lambda_val = math.log(2) / max(sem_half_life, 0.001)
+        else:
+            lambda_val = lambda_base
 
         strength = importance * math.exp(-lambda_val * max(days_elapsed, 0)) * (1.0 + recalls * 0.2)
         return min(1.0, max(0.0, strength))
 
-    async def decay_memories(self, half_life_days: float = 7.0) -> None:
+    async def decay_memories(
+        self,
+        half_life_days: Optional[float] = None,
+        semantic_half_life_days: Optional[float] = None,
+    ) -> None:
         """Apply Ebbinghaus forgetting curve to all non-identity, non-protected memories.
 
         Formula: strength = importance * e^(-lambda * days) * (1 + recalls * 0.2)
@@ -840,13 +1400,39 @@ class ColonyGraph:
         - Identity memories are skipped (never decay).
         - Protected memories are skipped.
         - Procedural memories use lambda / 2 (half rate).
+        - Fact/semantic memories use their own half-life (defaults to the
+          episodic value — distilled knowledge can be made to outlive the
+          episodes it came from by raising COLONY_DECAY_HALF_LIFE_SEMANTIC_DAYS).
         - Result is capped at 1.0.
 
-        Args:
-            half_life_days: Number of days for strength to halve (default 7).
+        Half-lives resolve, in order: explicit argument, environment
+        (COLONY_DECAY_HALF_LIFE_DAYS / COLONY_DECAY_HALF_LIFE_SEMANTIC_DAYS),
+        then the historical default of 7 days. Strength is RECOMPUTED from
+        importance on every pass (not compounded), so raising a half-life
+        retroactively resurrects previously-decayed strength — which is why
+        half-life tuning must land before pruning goes live, never after.
+
+        This pass is the single writer for memory decay; nothing else may
+        call it as a side effect (see StrategyAdjuster._decay_signals,
+        retired for exactly that reason).
         """
+        if half_life_days is None:
+            try:
+                half_life_days = float(os.environ.get(
+                    "COLONY_DECAY_HALF_LIFE_DAYS", "7"))
+            except (TypeError, ValueError):
+                half_life_days = 7.0
+        if semantic_half_life_days is None:
+            _sem_env = os.environ.get("COLONY_DECAY_HALF_LIFE_SEMANTIC_DAYS", "")
+            try:
+                semantic_half_life_days = (
+                    float(_sem_env) if _sem_env.strip() else half_life_days)
+            except (TypeError, ValueError):
+                semantic_half_life_days = half_life_days
+
         lambda_normal = math.log(2) / max(half_life_days, 0.001)
         lambda_procedural = lambda_normal / 2
+        lambda_semantic = math.log(2) / max(semantic_half_life_days, 0.001)
 
         async with self.driver.session(database=self.database) as session:
             # First pass: update strength
@@ -858,6 +1444,8 @@ class ColonyGraph:
                      toFloat(duration.inDays(coalesce(m.accessed_at, m.created_at, datetime()), datetime()).days) AS days_since,
                      CASE WHEN m.type = 'procedural'
                           THEN $lambda_proc
+                          WHEN m.type IN ['fact', 'semantic']
+                          THEN $lambda_sem
                           ELSE $lambda_norm
                      END AS lam
                 WITH m,
@@ -872,6 +1460,7 @@ class ColonyGraph:
                 """,
                 lambda_norm=lambda_normal,
                 lambda_proc=lambda_procedural,
+                lambda_sem=lambda_semantic,
             )
 
         # Second pass: update effective_confidence in batches
@@ -880,7 +1469,10 @@ class ColonyGraph:
     async def prune_weak_memories(
         self,
         threshold: float = 0.05,
-    ) -> int:
+        *,
+        dry_run: bool = False,
+        max_delete: int = 500,
+    ) -> Dict[str, Any]:
         """Delete memories whose strength has decayed below *threshold*.
 
         Only targets memories in ``inferred``, ``observed``, or ``stale``
@@ -888,8 +1480,18 @@ class ColonyGraph:
         ``verified``, and fully terminal states (``superseded``,
         ``deprecated``, ``archived``).
 
+        A deleted memory's vector-store entry is removed too (same coupling
+        as :meth:`archive_memories`), so pruning does not accumulate orphan
+        vectors that keep matching in ANN search. Deletion is capped at
+        *max_delete* per call (weakest first); ``dry_run=True`` only counts.
+
+        Fails closed on Neo4j errors: exceptions propagate to the caller
+        and nothing further is deleted; a vector is only removed after its
+        graph node is gone.
+
         Returns:
-            The number of pruned Memory nodes.
+            Dict with ``matched`` (total below threshold), ``deleted``,
+            ``dry_run``, and the capped candidate ``ids``.
         """
         async with self.driver.session(database=self.database) as session:
             result = await session.run(
@@ -898,13 +1500,107 @@ class ColonyGraph:
                 WHERE m.strength < $threshold
                   AND coalesce(m.protected, false) = false
                   AND m.epistemic_state IN ["inferred", "observed", "stale"]
-                DETACH DELETE m
-                RETURN count(m) AS pruned
+                WITH m ORDER BY m.strength ASC
+                RETURN collect(m.id)[0..$max_delete] AS ids,
+                       count(m) AS matched
                 """,
                 threshold=threshold,
+                max_delete=max_delete,
             )
             record = await result.single()
-            return record["pruned"] if record else 0
+            ids = list(record["ids"]) if record else []
+            matched = int(record["matched"]) if record else 0
+
+        if dry_run:
+            return {"matched": matched, "deleted": 0, "dry_run": True,
+                    "ids": ids}
+
+        deleted = 0
+        for memory_id in ids:
+            async with self.driver.session(database=self.database) as session:
+                await session.run(
+                    "MATCH (m:Memory {id: $memory_id}) DETACH DELETE m",
+                    memory_id=memory_id,
+                )
+            deleted += 1
+            # Vector removal only after the graph node is gone; a failure
+            # here leaves an orphan vector (swept later), never a memory
+            # that recalls without a backing node.
+            if self._vector_store is not None:
+                try:
+                    from colony_sidecar.vector.collections import Collection
+                    await self._vector_store.delete(
+                        collection=Collection.MEMORIES,
+                        id=memory_id,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to remove pruned memory %s from vector "
+                        "store: %s", memory_id, exc)
+        return {"matched": matched, "deleted": deleted, "dry_run": False,
+                "ids": ids}
+
+    async def vacuum_orphan_vectors(
+        self,
+        *,
+        dry_run: bool = False,
+        max_delete: Optional[int] = None,
+        batch_size: int = 200,
+        batch_sleep_secs: float = 0.05,
+    ) -> Dict[str, Any]:
+        """Delete MEMORIES-collection vectors whose graph node no longer exists.
+
+        Orphan vectors (a node deleted without its vector — pre-coupling
+        prunes, or a vector removal that failed after node deletion) keep
+        matching in ANN search and then silently vanish at hydration,
+        stealing recall slots from real memories.
+
+        Fails closed: the graph-id read is NOT exception-wrapped — a Neo4j
+        failure aborts the vacuum before any deletion, because an empty or
+        partial graph-id set would classify every vector as an orphan and
+        wipe the store. Deletion runs in batches of *batch_size* with
+        *batch_sleep_secs* between batches; *max_delete* bounds one run.
+
+        Returns:
+            Dict with ``vectors`` (total scanned), ``orphans`` (total found),
+            ``deleted``, ``dry_run``, and a capped ``ids`` sample.
+        """
+        if self._vector_store is None:
+            return {"available": False, "vectors": 0, "orphans": 0,
+                    "deleted": 0, "dry_run": dry_run, "ids": []}
+
+        from colony_sidecar.vector.collections import Collection
+        vector_ids = await self._vector_store.list_ids(Collection.MEMORIES)
+
+        graph_ids: set = set()
+        async with self.driver.session(database=self.database) as session:
+            result = await session.run("MATCH (m:Memory) RETURN m.id AS id")
+            async for record in result:
+                if record["id"]:
+                    graph_ids.add(record["id"])
+
+        orphans = [vid for vid in vector_ids if vid not in graph_ids]
+        total_orphans = len(orphans)
+        if max_delete is not None:
+            orphans = orphans[:max_delete]
+
+        if dry_run:
+            return {"available": True, "vectors": len(vector_ids),
+                    "orphans": total_orphans, "deleted": 0, "dry_run": True,
+                    "ids": orphans[:20]}
+
+        deleted = 0
+        for start in range(0, len(orphans), batch_size):
+            for vid in orphans[start:start + batch_size]:
+                await self._vector_store.delete(
+                    collection=Collection.MEMORIES, id=vid)
+                deleted += 1
+            if start + batch_size < len(orphans) and batch_sleep_secs > 0:
+                await asyncio.sleep(batch_sleep_secs)
+
+        return {"available": True, "vectors": len(vector_ids),
+                "orphans": total_orphans, "deleted": deleted,
+                "dry_run": False, "ids": orphans[:20]}
 
     async def touch_memory(self, memory_id: str) -> None:
         """Record a memory recall, incrementing its recall counter and updating accessed_at.

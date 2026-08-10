@@ -64,6 +64,50 @@ def test_store_roundtrip(store):
     assert store.escalation_stats()["total"] == 1
 
 
+def _bank(store, n, *, age_days=0.0, session="s1"):
+    now = time.time()
+    for i in range(n):
+        store.add_turn(MinedTurn(
+            session_id=session, contact_id="c1", channel_id="ch",
+            user_text=f"u{i}", assistant_text=f"a{i}",
+            ts=now - age_days * 86400 - i))
+
+
+def test_prune_turns_defaults_keep_everything(store):
+    """Regression lock: the default posture (0/0) never deletes a turn."""
+    _bank(store, 5, age_days=400)
+    out = store.prune_turns()
+    assert out == {"deleted_by_age": 0, "deleted_by_count": 0,
+                   "remaining": 5}
+    assert store.turn_count() == 5
+
+
+def test_prune_turns_by_age(store):
+    _bank(store, 3, age_days=10)
+    _bank(store, 2, age_days=0, session="s2")
+    out = store.prune_turns(retention_days=7)
+    assert out["deleted_by_age"] == 3
+    assert out["remaining"] == 2
+    assert all(t.session_id == "s2" for t in store.list_turns())
+
+
+def test_prune_turns_by_count_keeps_newest(store):
+    _bank(store, 10)
+    out = store.prune_turns(max_turns=4)
+    assert out["deleted_by_count"] == 6
+    assert out["remaining"] == 4
+    kept = sorted(t.user_text for t in store.list_turns())
+    assert kept == ["u0", "u1", "u2", "u3"]  # newest ts kept
+
+
+def test_prune_turns_never_touches_escalations(store):
+    _bank(store, 6, age_days=10)
+    store.add_escalation(EscalationRecord(session_id="s1", kind="consult"))
+    out = store.prune_turns(retention_days=7, max_turns=2)
+    assert out["remaining"] == 0
+    assert len(store.list_escalations()) == 1
+
+
 def test_store_filters(store):
     now = time.time()
     for i, ch in enumerate(["whatsapp:a", "rcs:b", "whatsapp:a"]):

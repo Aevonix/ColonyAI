@@ -92,11 +92,16 @@ async def test_extractor_pulls_entities_from_response_text(store):
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_through_response_guard(store):
+async def test_end_to_end_through_response_guard(store, monkeypatch):
+    # Written against legacy all-checks enforcement; the per-check enforce
+    # allowlist (H6.3, default secret_leak) is covered in
+    # test_guard_enforce_policy.py.
+    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
     store.record(CONV_A, ["Project Falcon"], contact_id="alice")
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE,
                           cross_context=ProvenanceCrossContextGuard(store))
     r = await guard.evaluate(
+        surface="text_chat",
         response_text="re: Project Falcon", trust_tier=TrustTier.REGULAR,
         target_gateway="rcs", conversation_key=CONV_B,
         mentioned_entities=["Project Falcon"])
@@ -105,6 +110,7 @@ async def test_end_to_end_through_response_guard(store):
 
     # same content delivered back into conversation A is allowed
     r2 = await guard.evaluate(
+        surface="text_chat",
         response_text="re: Project Falcon", trust_tier=TrustTier.REGULAR,
         target_gateway="rcs", conversation_key=CONV_A,
         mentioned_entities=["Project Falcon"])

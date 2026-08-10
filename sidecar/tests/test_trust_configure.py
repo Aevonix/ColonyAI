@@ -125,6 +125,7 @@ async def test_configure_host_rebuilds_router(tmp_path, monkeypatch):
     class _FakeLoop:
         def __init__(self, model=None, tools=None):
             captured["loop_built"] = True
+            captured["tools"] = tools
 
     def _fake_build_tiers(cfg):
         captured["provider"] = cfg.get("provider")
@@ -136,7 +137,12 @@ async def test_configure_host_rebuilds_router(tmp_path, monkeypatch):
 
     # Pretend an existing reasoning loop is wired so the re-wire branch runs.
     prev_loop = host_mod._reasoning_loop
-    host_mod._reasoning_loop = _FakeLoop()
+    prev_executor = host_mod._tool_executor
+    from colony_sidecar.reasoning import ToolExecutor
+    preserved_executor = ToolExecutor()
+    preserved_executor.register("preserved_test_tool", lambda _args: None)
+    host_mod._tool_executor = preserved_executor
+    host_mod._reasoning_loop = _FakeLoop(tools=preserved_executor)
 
     app = FastAPI()
     app.include_router(host_mod.router)
@@ -163,11 +169,13 @@ async def test_configure_host_rebuilds_router(tmp_path, monkeypatch):
             assert body["models"] == {"medium": "gpt-4o-mini"}
     finally:
         host_mod._reasoning_loop = prev_loop
+        host_mod._tool_executor = prev_executor
 
     # Persisted config ended up in state dir.
     persisted = tmp_path / ".colony-llm-config.json"
     assert persisted.exists()
     assert captured["provider"] == "openai"
+    assert captured["tools"] is preserved_executor
 
 
 @pytest.mark.asyncio

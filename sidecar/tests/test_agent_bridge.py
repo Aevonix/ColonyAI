@@ -11,13 +11,39 @@ Covers:
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from colony_sidecar.workers import agent_bridge
+from colony_sidecar.workers import agent_bridge, queue_worker
+
+
+def _work_order_params():
+    return {
+        "schema": "WorkOrderV1",
+        "version": 1,
+        "source": "project_engine",
+        "work_order_id": "work-bridge",
+        "work_order_digest": "a" * 64,
+        "project_id": "project-1",
+        "step_id": "step-1",
+        "step_ordinal": 1,
+        "objective": "bounded task",
+        "success_criteria": ["return evidence"],
+        "context_refs": ["memory:one"],
+        "capability_allowlist": ["memory:read", "reasoning"],
+        "risk_class": "internal",
+        "recipient_scope": "owner",
+        "max_runtime_seconds": 60,
+        "max_attempts": 2,
+        "issued_at": "2026-07-12T00:00:00+00:00",
+        "deadline": "2026-07-13T00:00:00+00:00",
+        "action_hint": "agent_project_analyze",
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +55,8 @@ def _clean_env(monkeypatch):
         "COLONY_BRIDGE_POLL_SECS", "COLONY_BRIDGE_SKILLS_HOURS",
         "COLONY_BRIDGE_LOG_CHANNEL", "COLONY_BRIDGE_PLATFORM",
         "COLONY_BRIDGE_STATE_DIR", "HERMES_SKILLS_DIR",
+        "COLONY_AGENT_WORKER_ROUTES", "COLONY_AGENT_JOB_CLAIMS_ENABLED",
+        "COLONY_HERMES_WEBHOOK_SECRET", "COLONY_HERMES_WEBHOOK_V1_COMPAT",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -257,3 +285,207 @@ def test_cycle_runs_all_phases(tmp_path, monkeypatch):
     assert result["health_ok"] is True
     assert result["initiatives_fired"] == 0
     assert result["jobs_dispatched"] == 0
+
+
+def test_bridge_starts_claim_before_webhook_dispatch(tmp_path, monkeypatch):
+    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    cfg = agent_bridge._cfg()
+    cfg["max_jobs"] = 1
+    calls = []
+
+    def fake_post(_cfg, url, body, timeout=10):  # noqa: ARG001
+        calls.append(url.rsplit("/", 1)[-1])
+        if url.endswith("/jobs/claim"):
+            return {"job_id": "job-bridge", "payload": {}}
+        return {"success": True}
+
+    monkeypatch.setattr(agent_bridge, "_post", fake_post)
+    monkeypatch.setattr(
+        agent_bridge.urllib.request,
+        "urlopen",
+        lambda request, timeout=15: calls.append("webhook") or object(),
+    )
+    assert agent_bridge.QueueWorker().claim_and_dispatch(cfg) == 1
+    assert calls.index("start") < calls.index("webhook")
+
+
+def test_generic_worker_routes_are_exact_runtime_configuration(
+    monkeypatch,
+):
+    assert queue_worker.agent_action_capabilities("agent_sync")[-1:] == [
+        "agent_sync:v1",
+    ]
+    assert queue_worker.agent_action_capabilities("hermes_run")[-1:] == [
+        "hermes_run:v1",
+    ]
+    with pytest.raises(ValueError):
+        queue_worker.agent_action_capabilities("")
+    with pytest.raises(ValueError):
+        queue_worker.agent_action_capabilities("action_plane")
+
+    captured = []
+
+    def fake_post(_cfg, url, body, timeout=15):  # noqa: ARG001
+        captured.append((url, body))
+        return None
+
+    monkeypatch.setattr(queue_worker, "_post", fake_post)
+    cfg = {
+        "colony_url": "http://colony",
+        "node_id": "generic-node",
+    }
+    monkeypatch.setenv("COLONY_AGENT_WORKER_ROUTES", "agent_sync")
+    queue_worker.register_worker(cfg)
+    queue_worker.claim_job(cfg)
+    assert len(captured) == 2
+    for _url, body in captured:
+        assert "agent_sync:v1" in body["capabilities"]
+        assert "hermes_run:v1" not in body["capabilities"]
+        assert "action_plane:v1" not in body["capabilities"]
+        assert "work_order:v1" not in body["capabilities"]
+
+
+def test_external_bridge_register_and_claim_use_same_narrow_route(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("COLONY_AGENT_WORKER_ROUTES", "hermes_run")
+    cfg = agent_bridge._cfg()
+    bodies = []
+
+    def fake_post(_cfg, url, body, timeout=15):  # noqa: ARG001
+        bodies.append((url, body))
+        return None
+
+    monkeypatch.setattr(agent_bridge, "_post", fake_post)
+    assert agent_bridge.QueueWorker().claim_and_dispatch(cfg) == 0
+    assert len(bodies) == 2
+    for _url, body in bodies:
+        assert "hermes_run:v1" in body["capabilities"]
+        assert "agent_sync:v1" not in body["capabilities"]
+        assert "action_plane:v1" not in body["capabilities"]
+
+
+def test_global_claim_kill_switch_stops_external_workers_but_not_initiatives(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
+    cfg = agent_bridge._cfg()
+    bridge = agent_bridge.AgentBridge(cfg)
+    calls = []
+    monkeypatch.setattr(
+        bridge._health, "check", lambda _cfg: {"ok": True, "alerts": []},
+    )
+    monkeypatch.setattr(
+        bridge._poller, "poll",
+        lambda _cfg: calls.append("initiatives") or 2,
+    )
+    monkeypatch.setattr(
+        bridge._skills, "sync_if_due", lambda _cfg: 0,
+    )
+    monkeypatch.setattr(
+        agent_bridge, "_post",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("claim path must stay dark")
+        ),
+    )
+
+    result = bridge.cycle()
+    assert result["initiatives_fired"] == 2
+    assert result["jobs_dispatched"] == 0
+    assert calls == ["initiatives"]
+
+
+def test_health_alert_delivery_uses_exact_v2_signed_bytes(
+    monkeypatch,
+):
+    monkeypatch.setenv("COLONY_HERMES_WEBHOOK_SECRET", "alert-secret")
+    monkeypatch.setattr(queue_worker.time, "time", lambda: 1234567890)
+    captured = []
+
+    def fake_urlopen(request, timeout=10):
+        captured.append(request)
+        return object()
+
+    monkeypatch.setattr(agent_bridge.urllib.request, "urlopen", fake_urlopen)
+    agent_bridge.deliver_alerts(
+        {"initiative_webhook": "http://agent/alerts"},
+        [{
+            "type": "queue_stalled",
+            "severity": "warning",
+            "message": "queue has not advanced",
+            "at": "2026-07-12T00:00:00+00:00",
+        }],
+    )
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.headers["X-webhook-timestamp"] == "1234567890"
+    assert request.headers["X-webhook-signature-v2"] == hmac.new(
+        b"alert-secret",
+        b"1234567890." + request.data,
+        hashlib.sha256,
+    ).hexdigest()
+    assert json.loads(request.data)["type"] == "alert"
+
+
+def test_both_external_bridge_builders_forward_work_order_contract(
+    tmp_path, monkeypatch,
+):
+    params = _work_order_params()
+    cfg = {
+        "colony_url": "http://colony",
+        "webhook_url": "http://agent/jobs",
+        "jobs_webhook": "http://agent/jobs",
+        "node_id": "worker",
+        "max_jobs": 1,
+    }
+    pure = queue_worker.build_webhook_payload(cfg, {
+        "job_id": "job-1",
+        "claim_attempt_id": "attempt-1",
+        "payload": params,
+    })["payload"]
+    assert pure["work_order"]["source"] == "project_engine"
+    assert pure["result_contract"]["complete_body_shape"]["output"][
+        "execution_result"
+    ]["work_order_id"] == "work-bridge"
+
+    captured = []
+
+    def fake_post(_cfg, url, body, timeout=10):  # noqa: ARG001
+        if url.endswith("/jobs/claim"):
+            return {
+                "job_id": "job-1",
+                "claim_attempt_id": "attempt-1",
+                "payload": params,
+            }
+        return {"success": True}
+
+    monkeypatch.setattr(agent_bridge, "_post", fake_post)
+    monkeypatch.setattr(
+        agent_bridge.urllib.request,
+        "urlopen",
+        lambda request, timeout=15: captured.append(
+            json.loads(request.data)
+        ) or object(),
+    )
+    agent_bridge.QueueWorker().claim_and_dispatch(cfg)
+    external = captured[0]["payload"]
+    assert external["work_order"]["step_ordinal"] == 1
+    assert external["result_contract"]["effect_class"] == "none"
+
+
+def test_hermes_webhook_encoder_uses_pinned_v2_exact_body_hmac(monkeypatch):
+    monkeypatch.delenv("COLONY_HERMES_WEBHOOK_V1_COMPAT", raising=False)
+    body, headers = queue_worker.encode_hermes_webhook(
+        {"type": "agent_job", "payload": {"job_id": "j1"}},
+        secret="route-secret",
+        timestamp=1234567890,
+    )
+    assert headers["X-Webhook-Timestamp"] == "1234567890"
+    assert headers["X-Webhook-Signature-V2"] == hmac.new(
+        b"route-secret", b"1234567890." + body, hashlib.sha256,
+    ).hexdigest()
+    assert "X-Webhook-Signature" not in headers
+    assert headers["X-Request-ID"] == "j1"
+    assert json.loads(body)["payload"]["job_id"] == "j1"

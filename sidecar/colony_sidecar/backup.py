@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import tarfile
 import tempfile
 import time
@@ -37,10 +38,183 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 BACKUP_VERSION = 1
+_GOVERNED_ACTION_LEDGER = Path("governed-actions/ledger.db")
 
 _SECRET_KEY_PATTERN = re.compile(
     r"(_KEY|_SECRET|_PASSWORD|_TOKEN|_PASSPHRASE)$", re.IGNORECASE
 )
+
+
+def _attest_private_governed_ledger(
+    path: Path, *, normalize_archive_modes: bool = False
+) -> os.stat_result:
+    """Require the same stable owner-private posture as the live ledger."""
+
+    try:
+        parent = path.parent.lstat()
+        leaf = path.lstat()
+        euid = os.geteuid()
+    except (AttributeError, OSError):
+        raise ValueError("private governed action ledger posture is invalid") from None
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != euid
+        or not stat.S_ISREG(leaf.st_mode)
+        or leaf.st_uid != euid
+        or leaf.st_nlink != 1
+    ):
+        raise ValueError("private governed action ledger posture is invalid")
+    if normalize_archive_modes:
+        try:
+            os.chmod(path.parent, 0o700, follow_symlinks=False)
+            os.chmod(path, 0o600, follow_symlinks=False)
+            parent = path.parent.lstat()
+            leaf = path.lstat()
+        except OSError:
+            raise ValueError(
+                "private governed action ledger posture is invalid"
+            ) from None
+    if (
+        stat.S_IMODE(parent.st_mode) != 0o700
+        or stat.S_IMODE(leaf.st_mode) != 0o600
+    ):
+        raise ValueError("private governed action ledger posture is invalid")
+    return leaf
+
+
+def _restore_private_governed_ledger(source: Path, state_dir: Path) -> None:
+    """Restore the evidence ledger atomically without following aliases."""
+
+    source_stat = _attest_private_governed_ledger(
+        source, normalize_archive_modes=True
+    )
+    _preflight_private_governed_destination(state_dir)
+    destination = state_dir / _GOVERNED_ACTION_LEDGER
+    parent = destination.parent
+    try:
+        parent_stat = parent.lstat()
+    except FileNotFoundError:
+        try:
+            parent.mkdir(mode=0o700, parents=True)
+            parent_stat = parent.lstat()
+        except OSError:
+            raise ValueError(
+                "private governed action ledger destination is invalid"
+            ) from None
+    except OSError:
+        raise ValueError(
+            "private governed action ledger destination is invalid"
+        ) from None
+
+    euid = os.geteuid()
+    if not stat.S_ISDIR(parent_stat.st_mode) or parent_stat.st_uid != euid:
+        raise ValueError("private governed action ledger destination is invalid")
+    try:
+        os.chmod(parent, 0o700, follow_symlinks=False)
+        parent_stat = parent.lstat()
+    except OSError:
+        raise ValueError(
+            "private governed action ledger destination is invalid"
+        ) from None
+    if stat.S_IMODE(parent_stat.st_mode) != 0o700:
+        raise ValueError("private governed action ledger destination is invalid")
+
+    try:
+        destination.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise ValueError(
+            "private governed action ledger destination is invalid"
+        ) from None
+    else:
+        raise ValueError("private governed action ledger already exists")
+
+    source_fd: int | None = None
+    destination_fd: int | None = None
+    temporary_name: str | None = None
+    try:
+        source_fd = os.open(
+            source,
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+        )
+        opened_source = os.fstat(source_fd)
+        if (
+            (opened_source.st_dev, opened_source.st_ino)
+            != (source_stat.st_dev, source_stat.st_ino)
+        ):
+            raise ValueError("private governed action ledger source changed")
+        destination_fd, temporary_name = tempfile.mkstemp(
+            prefix=".ledger-restore-", dir=str(parent)
+        )
+        os.fchmod(destination_fd, 0o600)
+        with os.fdopen(source_fd, "rb") as source_file:
+            source_fd = None
+            with os.fdopen(destination_fd, "wb") as destination_file:
+                destination_fd = None
+                shutil.copyfileobj(source_file, destination_file)
+                destination_file.flush()
+                os.fsync(destination_file.fileno())
+        try:
+            os.link(temporary_name, destination, follow_symlinks=False)
+        except FileExistsError:
+            raise ValueError(
+                "private governed action ledger already exists"
+            ) from None
+        os.unlink(temporary_name)
+        temporary_name = None
+        os.chmod(destination, 0o600, follow_symlinks=False)
+        _attest_private_governed_ledger(destination)
+        directory_fd = os.open(
+            parent,
+            os.O_RDONLY
+            | os.O_DIRECTORY
+            | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except ValueError:
+        raise
+    except OSError:
+        raise ValueError("private governed action ledger restore failed") from None
+    finally:
+        if source_fd is not None:
+            os.close(source_fd)
+        if destination_fd is not None:
+            os.close(destination_fd)
+        if temporary_name is not None:
+            try:
+                Path(temporary_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _preflight_private_governed_destination(state_dir: Path) -> None:
+    """Refuse an evidence rewind before any full-restore state is written."""
+
+    destination = state_dir / _GOVERNED_ACTION_LEDGER
+    try:
+        parent = destination.parent.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise ValueError(
+            "private governed action ledger destination is invalid"
+        ) from None
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid():
+        raise ValueError("private governed action ledger destination is invalid")
+    try:
+        destination.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise ValueError(
+            "private governed action ledger destination is invalid"
+        ) from None
+    raise ValueError("private governed action ledger already exists")
 
 
 # ── Backup ───────────────────────────────────────────────────────────────
@@ -161,6 +335,17 @@ def restore_full_backup(
                 f"{existing_id}. Use --force-identity to override."
             )
 
+        governed_restore = root / "databases" / _GOVERNED_ACTION_LEDGER
+        try:
+            governed_restore.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            _attest_private_governed_ledger(
+                governed_restore, normalize_archive_modes=True
+            )
+            _preflight_private_governed_destination(state_dir)
+
         summary: dict[str, Any] = {"colony_id": backup_id, "databases": [], "errors": []}
 
         identity_dir = root / "identity"
@@ -170,11 +355,28 @@ def restore_full_backup(
 
         db_dir = root / "databases"
         if db_dir.is_dir():
-            for db_file in db_dir.glob("*.db"):
-                dest = state_dir / db_file.name
-                shutil.copy2(db_file, dest)
-                summary["databases"].append(db_file.name)
-                logger.info("Restored database: %s", db_file.name)
+            db_files = list(sorted(db_dir.glob("*.db")))
+            governed_ledger = db_dir / _GOVERNED_ACTION_LEDGER
+            try:
+                governed_ledger.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                _attest_private_governed_ledger(
+                    governed_ledger, normalize_archive_modes=True
+                )
+                db_files.append(governed_ledger)
+            for db_file in db_files:
+                relative = db_file.relative_to(db_dir)
+                dest = state_dir / relative
+                if relative == _GOVERNED_ACTION_LEDGER:
+                    _restore_private_governed_ledger(db_file, state_dir)
+                else:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(db_file, dest)
+                relative_name = relative.as_posix()
+                summary["databases"].append(relative_name)
+                logger.info("Restored database: %s", relative_name)
 
         config_dir = root / "config"
         if config_dir.is_dir():
@@ -205,35 +407,68 @@ def restore_full_backup(
 def _snapshot_databases(
     state_dir: Path, dest: Path,
 ) -> list[dict[str, str]]:
-    """Snapshot all .db files using VACUUM INTO for consistency."""
+    """Snapshot top-level databases and the private action ledger."""
     dest.mkdir(parents=True, exist_ok=True)
     manifest: list[dict[str, str]] = []
 
-    for db_path in sorted(state_dir.glob("*.db")):
-        snap_path = dest / db_path.name
+    db_paths = list(sorted(state_dir.glob("*.db")))
+    governed_ledger = state_dir / _GOVERNED_ACTION_LEDGER
+    try:
+        governed_ledger.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        _attest_private_governed_ledger(governed_ledger)
+        db_paths.append(governed_ledger)
+
+    for db_path in db_paths:
+        relative = db_path.relative_to(state_dir)
+        relative_name = relative.as_posix()
+        snap_path = dest / relative
+        snap_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             conn = sqlite3.connect(str(db_path))
-            conn.execute(f"VACUUM INTO '{snap_path}'")
-            conn.close()
+            try:
+                escaped_snap_path = str(snap_path).replace("'", "''")
+                conn.execute(f"VACUUM INTO '{escaped_snap_path}'")
+            finally:
+                conn.close()
+            if relative == _GOVERNED_ACTION_LEDGER:
+                snap_path.parent.chmod(0o700)
+                snap_path.chmod(0o600)
             manifest.append({
-                "filename": db_path.name,
+                "filename": relative_name,
                 "size_bytes": str(snap_path.stat().st_size),
             })
-            logger.info("Snapshotted database: %s", db_path.name)
+            logger.info("Snapshotted database: %s", relative_name)
         except Exception as exc:
+            if relative == _GOVERNED_ACTION_LEDGER:
+                try:
+                    snap_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.error(
+                        "Failed to remove incomplete governed action ledger snapshot",
+                        exc_info=True,
+                    )
+                raise RuntimeError(
+                    "governed action ledger could not be snapshotted consistently"
+                ) from exc
             logger.warning(
                 "Failed to snapshot %s, falling back to copy: %s",
-                db_path.name, exc,
+                relative_name, exc,
             )
             try:
                 shutil.copy2(db_path, snap_path)
+                if relative == _GOVERNED_ACTION_LEDGER:
+                    snap_path.parent.chmod(0o700)
+                    snap_path.chmod(0o600)
                 manifest.append({
-                    "filename": db_path.name,
+                    "filename": relative_name,
                     "size_bytes": str(snap_path.stat().st_size),
                     "method": "copy",
                 })
             except Exception as exc2:
-                logger.error("Failed to copy %s: %s", db_path.name, exc2)
+                logger.error("Failed to copy %s: %s", relative_name, exc2)
 
     return manifest
 

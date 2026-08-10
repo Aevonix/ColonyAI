@@ -39,6 +39,24 @@ RELATIONSHIP_TYPES = frozenset({
     "WM_PREDECESSOR_OF",
     "WM_SUCCESSOR_OF",
     "WM_DEPENDS_ON",
+    # Causal vocabulary (query-only; see world_model/causal_policy.py)
+    "WM_CAUSES",
+    "WM_ENABLES",
+    "WM_BLOCKS",
+    "WM_INHIBITS",
+})
+
+# ── Causal Relationship Types ─────────────────────────────────────────────────
+# The causal subset of RELATIONSHIP_TYPES. Causal edges are QUERY-ONLY by
+# policy: they may inform answers to "why"/"what happens if" questions but
+# must never trigger actions unless world_model.causal_policy explicitly
+# says otherwise (COLONY_CAUSAL_ACT, default off).
+
+CAUSAL_RELATIONSHIP_TYPES = frozenset({
+    "WM_CAUSES",     # A brings about B
+    "WM_ENABLES",    # A makes B possible (necessary-ish precondition)
+    "WM_BLOCKS",     # A prevents B outright
+    "WM_INHIBITS",   # A makes B less likely / weaker
 })
 
 # ── External ID Keys ──────────────────────────────────────────────────────────

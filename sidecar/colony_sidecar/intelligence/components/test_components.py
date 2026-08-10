@@ -66,8 +66,14 @@ from colony_sidecar.intelligence.components.initiative_engine import (
 
 @pytest.fixture
 def mock_graph():
-    """Mock graph client."""
-    return MagicMock()
+    """Mock graph client without advertising a live Neo4j driver."""
+
+    graph = MagicMock()
+    # MagicMock fabricates every attribute, which makes InitiativeEngine enter
+    # its live-driver loaders and leaves AsyncMock coroutines un-awaited. Unit
+    # component tests use in-memory context, so make that boundary explicit.
+    del graph.driver
+    return graph
 
 
 @pytest.fixture

@@ -25,6 +25,7 @@ def _fts_escape(q: str, max_len: int = 200) -> str:
     return re.sub(r'\s+', ' ', safe).strip()
 
 from ..constants import (
+    CAUSAL_RELATIONSHIP_TYPES,
     ENTITY_ID_PREFIX,
     RELATIONSHIP_ID_PREFIX,
     OBSERVATION_ID_PREFIX,
@@ -33,6 +34,10 @@ from ..constants import (
 )
 from ..entities import BaseEntity, ENTITY_CLASS_MAP, entity_from_dict
 from ..relationships import WorldRelationship
+
+# Query-only causal guard (H2.5): untyped (generic) reads NEVER return
+# causal edges; only /world/causal/* and explicitly typed queries do.
+_CAUSAL_EXCLUSION = tuple(sorted(CAUSAL_RELATIONSHIP_TYPES))
 
 
 def _generate_id(prefix: str) -> str:
@@ -161,6 +166,7 @@ class SQLiteBackend:
         ("wm-003", "Create observations table"),
         ("wm-004", "Create merge proposals and audit log"),
         ("wm-005", "Create schema migrations table"),
+        ("wm-006", "Add mention_count reinforcement column to wm_entities"),
     ]
 
     def __init__(self, db_path: str = ":memory:") -> None:
@@ -185,6 +191,17 @@ class SQLiteBackend:
         sql = schema_path.read_text()
         await self._db.executescript(sql)
         await self._db.commit()
+        # wm-006: additive column for repeat-mention reinforcement. Guarded so
+        # pre-existing databases migrate in place ("duplicate column name" on
+        # every later connect is the expected no-op). DEFAULT 1: every stored
+        # entity has, by definition, been mentioned at least once.
+        try:
+            await self._db.execute(
+                "ALTER TABLE wm_entities ADD COLUMN "
+                "mention_count INTEGER NOT NULL DEFAULT 1")
+            await self._db.commit()
+        except Exception:
+            pass  # column already exists
         await self._record_migrations()
 
     async def _record_migrations(self) -> None:
@@ -339,6 +356,29 @@ class SQLiteBackend:
             )
             await self._db.commit()
 
+    async def reinforce_entity(self, entity_id: str) -> None:
+        """Repeat mention of an existing entity: touch last_seen, bump
+        mention_count, and nudge confidence (+0.02, capped at 0.95).
+
+        Strictly anti-data-loss: last_seen moves FORWARD and confidence never
+        goes DOWN (an entity already above the cap keeps its confidence), so a
+        repeat-mention can never make an entity more prunable than a single
+        mention would have.
+        """
+        now = _now_iso()
+        await self._db.execute(
+            """
+            UPDATE wm_entities
+            SET last_seen     = ?,
+                updated_at    = ?,
+                mention_count = COALESCE(mention_count, 1) + 1,
+                confidence    = MAX(confidence, MIN(0.95, confidence + 0.02))
+            WHERE id = ?
+            """,
+            (now, now, entity_id),
+        )
+        await self._db.commit()
+
     async def delete_entity(self, entity_id: str) -> None:
         await self._db.execute("DELETE FROM wm_entities WHERE id = ?", (entity_id,))
         await self._db.commit()
@@ -439,6 +479,11 @@ class SQLiteBackend:
         if relationship_type:
             conditions.append("r.relationship_type = ?")
             params.append(relationship_type)
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            ph = ",".join("?" * len(_CAUSAL_EXCLUSION))
+            conditions.append(f"r.relationship_type NOT IN ({ph})")
+            params.extend(_CAUSAL_EXCLUSION)
         if active_only:
             conditions.append("r.valid_to IS NULL")
 
@@ -468,6 +513,11 @@ class SQLiteBackend:
             placeholders = ",".join("?" * len(relationship_types))
             sql += f" AND relationship_type IN ({placeholders})"
             params.extend(relationship_types)
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            ph = ",".join("?" * len(_CAUSAL_EXCLUSION))
+            sql += f" AND relationship_type NOT IN ({ph})"
+            params.extend(_CAUSAL_EXCLUSION)
         async with self._db.execute(sql, params) as cur:
             rows = await cur.fetchall()
         return [_row_to_relationship(r) for r in rows]
@@ -499,6 +549,11 @@ class SQLiteBackend:
             placeholders = ",".join("?" * len(relationship_types))
             sql += f" AND r.relationship_type IN ({placeholders})"
             params.extend(relationship_types)
+        else:
+            # Untyped read: causal edges are query-only, exclude them.
+            ph = ",".join("?" * len(_CAUSAL_EXCLUSION))
+            sql += f" AND r.relationship_type NOT IN ({ph})"
+            params.extend(_CAUSAL_EXCLUSION)
         async with self._db.execute(sql, params) as cur:
             rows = await cur.fetchall()
 

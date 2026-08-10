@@ -79,7 +79,7 @@ class GapDetector:
         # Check each component against threshold
         for component_name in ["retrieval", "prediction", "tool_efficiency", "initiative", "goal_progress", "response_quality"]:
             component = getattr(cpi, component_name, None)
-            if not component:
+            if not component or not getattr(component, "available", True):
                 continue
 
             threshold = self.THRESHOLDS.get(component_name, 60)

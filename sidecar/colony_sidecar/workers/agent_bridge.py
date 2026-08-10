@@ -50,6 +50,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from colony_sidecar.workers.queue_worker import (
+    agent_action_capabilities,
+    encode_hermes_webhook,
+    work_order_webhook_fields,
+)
+
 logger = logging.getLogger("colony.bridge")
 
 # ---------------------------------------------------------------------------
@@ -266,10 +272,6 @@ class InitiativePoller:
                 self._seen_ids.add(iid)
                 continue
 
-            self._seen_ids.add(iid)
-            if dedup_key:
-                self._seen_dedup.add(dedup_key)
-
             payload = {
                 "type": "initiative",
                 "payload": initiative,
@@ -281,13 +283,17 @@ class InitiativePoller:
                 },
             }
             try:
+                body, headers = encode_hermes_webhook(payload)
                 req = urllib.request.Request(
                     cfg["initiative_webhook"],
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    data=body,
+                    headers=headers,
                     method="POST",
                 )
                 urllib.request.urlopen(req, timeout=10)
+                self._seen_ids.add(iid)
+                if dedup_key:
+                    self._seen_dedup.add(dedup_key)
                 fired += 1
                 logger.info("Fired initiative %s (%s)", iid,
                             initiative.get("initiative_type", "?"))
@@ -316,10 +322,19 @@ class QueueWorker:
     """Claims agent_action jobs and dispatches them to the agent webhook."""
 
     def claim_and_dispatch(self, cfg: Dict[str, Any]) -> int:
+        if os.environ.get(
+            "COLONY_AGENT_JOB_CLAIMS_ENABLED", "true"
+        ).strip().lower() not in {"1", "true", "yes", "on"}:
+            return 0
+        try:
+            capabilities = agent_action_capabilities()
+        except ValueError as exc:
+            logger.error("Worker routes are invalid: %s", exc)
+            return 0
         try:
             _post(cfg, f"{cfg['colony_url']}/v1/host/queue/workers/register", {
                 "node_id": cfg["node_id"],
-                "capabilities": ["shell", "filesystem", "web_search", "git"],
+                "capabilities": capabilities,
                 "job_types": ["agent_action"],
                 "max_concurrent": 1,
                 "available": True,
@@ -333,38 +348,65 @@ class QueueWorker:
         for _ in range(cfg["max_jobs"]):
             job = _post(cfg, f"{cfg['colony_url']}/v1/host/queue/jobs/claim", {
                 "node_id": cfg["node_id"],
+                "capabilities": capabilities,
                 "job_types": ["agent_action"],
+                "max_concurrent": 1,
             })
             if not job:
                 break
 
             job_id = job.get("job_id") or job.get("id")
+            claim_attempt_id = job.get("claim_attempt_id")
             params = job.get("payload") or job.get("params") or {}
             colony_url = cfg["colony_url"]
+
+            try:
+                started = _post(
+                    cfg,
+                    f"{colony_url}/v1/host/queue/jobs/{job_id}/start",
+                    {"claim_attempt_id": claim_attempt_id},
+                )
+                if not isinstance(started, dict) or started.get("success") is not True:
+                    raise RuntimeError("start transition was not accepted")
+            except Exception as exc:
+                logger.warning("Job start failed for %s: %s", job_id, exc)
+                try:
+                    _post(
+                        cfg,
+                        f"{colony_url}/v1/host/queue/jobs/{job_id}/release",
+                        {"claim_attempt_id": claim_attempt_id},
+                    )
+                except Exception:
+                    pass
+                continue
 
             payload = {
                 "type": "agent_job",
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
                 "payload": {
                     "job_id": job_id,
+                    "claim_attempt_id": claim_attempt_id,
                     "action_hint": params.get("action_hint", ""),
                     "domain": params.get("domain", ""),
                     "risk": params.get("risk", ""),
                     "description": params.get("description", ""),
                     "context": params.get("context", {}),
                     "report_example": params.get("report_example", {}),
+                    **work_order_webhook_fields(params),
                     "colony_url": colony_url,
                     "observations_url": f"{colony_url}/v1/host/observations",
+                    "heartbeat_url": f"{colony_url}/v1/host/queue/jobs/{job_id}/heartbeat",
                     "complete_url": f"{colony_url}/v1/host/queue/jobs/{job_id}/complete",
                     "fail_url": f"{colony_url}/v1/host/queue/jobs/{job_id}/fail",
                     "api_key_header": "X-API-Key",
                 },
             }
             try:
+                body, headers = encode_hermes_webhook(payload)
                 req = urllib.request.Request(
                     cfg["jobs_webhook"],
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    data=body,
+                    headers=headers,
                     method="POST",
                 )
                 urllib.request.urlopen(req, timeout=15)
@@ -374,7 +416,11 @@ class QueueWorker:
             except Exception as exc:
                 logger.warning("Job webhook failed for %s: %s", job_id, exc)
                 try:
-                    _post(cfg, f"{colony_url}/v1/host/queue/jobs/{job_id}/release", {})
+                    _post(
+                        cfg,
+                        f"{colony_url}/v1/host/queue/jobs/{job_id}/release",
+                        {"claim_attempt_id": claim_attempt_id},
+                    )
                 except Exception:
                     pass
 
@@ -441,10 +487,11 @@ def deliver_alerts(cfg: Dict[str, Any], alerts: list) -> None:
             },
         }
         try:
+            body, headers = encode_hermes_webhook(payload)
             req = urllib.request.Request(
                 cfg["initiative_webhook"],
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                data=body,
+                headers=headers,
                 method="POST",
             )
             urllib.request.urlopen(req, timeout=10)

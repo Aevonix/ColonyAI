@@ -5,7 +5,7 @@ All internal LLM cognition roles share one composable prompt system:
 system prompts that had drifted into inconsistent identities, duplicated
 output rules, and no shared agency doctrine.
 
-Current version: **1.1.0** (`charter.PROMPT_VERSION`). Bump on any doctrine
+Current version: **1.2.1** (`charter.PROMPT_VERSION`). Bump on any doctrine
 or contract change and add a row to the changelog below.
 
 ## Why
@@ -58,7 +58,7 @@ Do not remove or default these fields.
 
 ## Roles
 
-`executor`, `thinker`, `planner`, `observer` (turn/event cognition),
+`thought_job` (bounded concern judgment), `executor`, `thinker`, `planner`, `observer` (turn/event cognition),
 `synthesis` (goal/fact inference), `worker` (queue workers),
 `directed_intake` (owner directive -> scoped task). Add new roles as slim
 mission/rules/output blocks; put shared behavior in the charter, never in
@@ -117,3 +117,5 @@ Doctrine changes go ONLY in the charter, never in role blocks.
 |---|---|
 | 1.0.0 | Initial charter: 8-point doctrine, 7 roles, budgeted sections, confidence-mandatory contracts. |
 | 1.1.0 | + narrator role; observer recomposed onto the charter (guide as context); secondary-prompt pass: extractor taxonomy unified + synonym normalization, honest no-tools subtask worker, skill genericization + grounded-steps rules, owner-relevance confidence weighting, gate L6 concrete flag criteria. |
+| 1.2.0 | + typed, read-only `thought_job` role for the P3 Concern -> GoalProposal -> Project spine; model output cannot resolve sources or confer authority. |
+| 1.2.1 | Bind the `ThoughtOutputV1` authority envelope in trusted worker code; the model emits only strictly validated semantic fields, with exact NoAction codes and flat JSON structure. |

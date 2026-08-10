@@ -154,6 +154,15 @@ class WebGatherer:
 class GraphGatherer:
     """Gather evidence from the Colony knowledge graph."""
 
+    def __init__(
+        self,
+        graph: Any = None,
+        *,
+        allow_fallback_graph: bool = True,
+    ) -> None:
+        self._graph = graph
+        self._allow_fallback_graph = bool(allow_fallback_graph)
+
     async def gather(
         self,
         query: str,
@@ -162,18 +171,24 @@ class GraphGatherer:
         """Traverse the knowledge graph for entities related to *query*."""
         results: List[EvidenceItem] = []
         try:
-            from colony_sidecar.intelligence.graph.client import ColonyGraph
-
-            graph = ColonyGraph()
+            graph = self._graph
+            owns_graph = graph is None
+            if graph is None:
+                if not self._allow_fallback_graph:
+                    return []
+                from colony_sidecar.intelligence.graph.client import ColonyGraph
+                graph = ColonyGraph()
             try:
                 memories = await graph.recall(query, limit=20)
             finally:
-                # Every gather() builds a fresh neo4j AsyncDriver; without a
-                # close it leaks a driver + connection pool per research run.
-                try:
-                    await graph.close()
-                except Exception:
-                    pass
+                if owns_graph:
+                    # A fallback gather owns its fresh driver. The server path
+                    # borrows the shared policy-configured graph and must not
+                    # close it.
+                    try:
+                        await graph.close()
+                    except Exception:
+                        pass
             for mem in memories:
                 content = mem.get("content", mem.get("text", ""))
                 if not content:
@@ -274,10 +289,17 @@ class EmailGatherer:
 class SourceGatherer:
     """Orchestrates parallel evidence gathering from all enabled sources."""
 
-    def __init__(self, config: Optional[GatherConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[GatherConfig] = None,
+        *,
+        graph: Any = None,
+        allow_fallback_graph: bool = True,
+    ) -> None:
         self.config = config or GatherConfig()
         self._web = WebGatherer()
-        self._graph = GraphGatherer()
+        self._graph = GraphGatherer(
+            graph=graph, allow_fallback_graph=allow_fallback_graph)
         self._document = DocumentGatherer()
         self._email = EmailGatherer()
 

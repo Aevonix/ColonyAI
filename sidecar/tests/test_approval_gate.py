@@ -19,7 +19,9 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
+from colony_sidecar.api.authority import legacy_authority
 from colony_sidecar.api.routers import task_queue as tq_router
 from colony_sidecar.autonomy.loop import AutonomyLoop
 from colony_sidecar.task_queue.models import (
@@ -35,6 +37,13 @@ from colony_sidecar.task_queue.queue_manager import TaskQueueManager
 # Helpers
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _isolated_approval_state(monkeypatch, tmp_path):
+    """Approval tests must never touch a developer/live Colony state dir."""
+
+    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("COLONY_APPROVAL_AUTHORITY_MODE", raising=False)
+
 async def _make_mgr(tmp_path) -> TaskQueueManager:
     """Fresh singleton TaskQueueManager backed by a tmp SQLite db."""
     TaskQueueManager._instance = None
@@ -42,7 +51,15 @@ async def _make_mgr(tmp_path) -> TaskQueueManager:
 
 
 def _worker_caps(node_id: str = "test-worker") -> WorkerCapabilities:
-    return WorkerCapabilities(node_id=node_id)
+    return WorkerCapabilities(
+        node_id=node_id,
+        capabilities={
+            "agent_action",
+            "agent_sync:v1",
+            "action_plane:v1",
+            "hermes_run:v1",
+        },
+    )
 
 
 def _loop_stub(mgr: TaskQueueManager) -> SimpleNamespace:
@@ -126,7 +143,8 @@ async def test_read_only_action_submission_is_queued(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auto_approve_env_bypasses_gate(tmp_path, monkeypatch):
+async def test_legacy_auto_approve_env_cannot_bypass_central_gate(
+        tmp_path, monkeypatch):
     monkeypatch.setenv("COLONY_AGENT_AUTO_APPROVE", "true")
     mgr = await _make_mgr(tmp_path)
     try:
@@ -134,9 +152,15 @@ async def test_auto_approve_env_bypasses_gate(tmp_path, monkeypatch):
         await AutonomyLoop._post_agent_action_to_queue(
             stub, _initiative(), "init-3", "commitment", "commitment_mark_complete",
         )
-        queued = await mgr.queue.get_jobs_by_status(JobStatus.QUEUED)
-        assert len(queued) == 1
-        assert await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED) == []
+        assert await mgr.queue.get_jobs_by_status(JobStatus.QUEUED) == []
+        blocked = await mgr.queue.get_jobs_by_status(JobStatus.BLOCKED)
+        assert len(blocked) == 1
+        assert blocked[0].tags["blocked_reason"] == (
+            "awaiting_owner_approval"
+        )
+        assert blocked[0].payload["auto_approve"] is False
+        assert stub.stats.actions_executed == 0
+        assert stub.stats.actions_this_hour == 0
     finally:
         await mgr.stop()
 
@@ -155,7 +179,10 @@ async def test_claim_excludes_blocked_jobs(tmp_path):
         assert await mgr.queue.claim_job("w1", _worker_caps("w1")) is None
 
         # A queued job alongside it is claimable; the blocked one is not
-        queued = await mgr.submit(task_type="agent_action", params={"x": 1})
+        queued = await mgr.submit(
+            task_type="agent_action",
+            params={"schema": "HermesRunV1", "description": "test"},
+        )
         claimed = await mgr.queue.claim_job("w1", _worker_caps("w1"))
         assert claimed is not None
         assert claimed.job_id == queued["id"]
@@ -173,19 +200,24 @@ async def test_claim_excludes_blocked_jobs(tmp_path):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_approve_transitions_to_queued_and_claimable(tmp_path):
+async def test_approve_transitions_to_queued_and_claimable(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
     mgr = await _make_mgr(tmp_path)
     try:
         job_id = await _submit_blocked(mgr)
         resp = await tq_router.approve_job(
-            job_id, tq_router.JobApproveRequest(approved_by="owner"),
+            job_id, tq_router.JobApproveRequest(approved_by="spoofed-model"),
         )
         assert resp["success"] is True
         assert resp["status"] == "queued"
 
         job = await mgr.queue.get_job(job_id)
         assert job.status == JobStatus.QUEUED
-        assert job.tags.get("approved_by") == "owner"
+        assert job.tags.get("approved_by") == "trusted-internal"
+        assert job.tags.get("approved_by") != "spoofed-model"
+        assert job.tags.get("approval_request_id")
+        assert job.tags.get("action_digest")
         assert job.tags.get("approved_at")
 
         # Approved job is claimable now
@@ -203,14 +235,17 @@ async def test_reject_transitions_to_cancelled(tmp_path):
         job_id = await _submit_blocked(mgr)
         resp = await tq_router.reject_job(
             job_id,
-            tq_router.JobRejectRequest(rejected_by="owner", reason="too risky"),
+            tq_router.JobRejectRequest(
+                rejected_by="spoofed-model", reason="too risky"
+            ),
         )
         assert resp["success"] is True
         assert resp["status"] == "cancelled"
 
         job = await mgr.queue.get_job(job_id)
         assert job.status == JobStatus.CANCELLED
-        assert job.tags.get("rejected_by") == "owner"
+        assert job.tags.get("rejected_by") == "trusted-internal"
+        assert job.tags.get("rejected_by") != "spoofed-model"
         assert job.tags.get("rejected_reason") == "too risky"
 
         # Rejected job is never claimable
@@ -227,7 +262,10 @@ async def test_reject_transitions_to_cancelled(tmp_path):
 async def test_approve_and_reject_409_when_not_blocked(tmp_path):
     mgr = await _make_mgr(tmp_path)
     try:
-        queued = await mgr.submit(task_type="agent_action", params={"x": 1})
+        queued = await mgr.submit(
+            task_type="agent_action",
+            params={"schema": "HermesRunV1", "description": "test"},
+        )
         job_id = queued["id"]
 
         with pytest.raises(HTTPException) as exc_info:
@@ -314,14 +352,16 @@ async def test_approval_timeout_fails_stale_blocked_jobs(tmp_path):
         await mgr.queue.post(dep_blocked)
 
         count = await mgr.queue.expire_blocked_approvals(now, timeout_hours=72.0)
-        assert count == 1
+        # Approval-at-birth uses the same canonical clock, so an already-stale
+        # effect is terminal before a bridge or scheduler can observe it.
+        assert count == 0
 
         assert (await mgr.queue.get_job(stale.job_id)).status == JobStatus.FAILED
         assert (await mgr.queue.get_job(fresh_id)).status == JobStatus.BLOCKED
         assert (await mgr.queue.get_job(dep_blocked.job_id)).status == JobStatus.BLOCKED
 
         entries = await mgr.queue.get_audit_log(job_id=stale.job_id)
-        assert any(e.reason == "owner_approval_timeout" for e in entries)
+        assert any(e.reason == "canonical_approval_expired" for e in entries)
     finally:
         await mgr.stop()
 
@@ -333,7 +373,10 @@ async def test_phase_approval_timeout_respects_env(tmp_path, monkeypatch):
     try:
         stale = Job(
             job_type=JobType.AGENT_ACTION,
-            payload={},
+            payload={
+                "action_hint": "commitment_mark_complete",
+                "risk": "mutating",
+            },
             posted_by="test",
             posted_at=datetime.now(timezone.utc) - timedelta(hours=2),
             status=JobStatus.BLOCKED,
@@ -367,6 +410,14 @@ class _FakeInitiativeStore:
         self.history.append((initiative_id, kwargs))
 
 
+class _RecordingFeedback:
+    def __init__(self):
+        self.records = []
+
+    def record(self, initiative_type, outcome):
+        self.records.append((initiative_type, outcome))
+
+
 @pytest.mark.asyncio
 async def test_initiative_approve_response_unblocks_job(tmp_path):
     from colony_sidecar.api.routers import host as host_router
@@ -385,8 +436,9 @@ async def test_initiative_approve_response_unblocks_job(tmp_path):
 
         job = await mgr.queue.get_job(job_id)
         assert job.status == JobStatus.QUEUED
-        assert job.tags.get("approved_by") == "owner"
+        assert job.tags.get("approved_by") == "trusted-internal"
         assert job.tags.get("approved_at")
+        assert job.tags.get("approval_request_id")
     finally:
         host_router.set_initiative_store(old_store)
         await mgr.stop()
@@ -410,7 +462,52 @@ async def test_initiative_dismiss_response_rejects_job(tmp_path):
 
         job = await mgr.queue.get_job(job_id)
         assert job.status == JobStatus.CANCELLED
-        assert job.tags.get("rejected_by") == "owner"
+        assert job.tags.get("rejected_by") == "trusted-internal"
     finally:
         host_router.set_initiative_store(old_store)
+        await mgr.stop()
+
+
+@pytest.mark.asyncio
+async def test_denied_initiative_approval_has_no_status_or_feedback_side_effects(
+        tmp_path, monkeypatch):
+    from colony_sidecar.api.routers import host as host_router
+
+    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    mgr = await _make_mgr(tmp_path)
+    old_store = host_router._initiative_store
+    old_feedback = host_router._feedback_store
+    initiative = SimpleNamespace(
+        id="init-denied", status="pending", job_id=None, type="proposal",
+    )
+    store = _FakeInitiativeStore(initiative)
+    feedback = _RecordingFeedback()
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/host/initiatives/init-denied/respond",
+        "headers": [],
+    })
+    request.state.colony_authority = legacy_authority()
+    try:
+        job_id = await _submit_blocked(mgr)
+        initiative.job_id = job_id
+        host_router.set_initiative_store(store)
+        host_router.set_feedback_store(feedback)
+
+        with pytest.raises(HTTPException) as denied:
+            await host_router.respond_to_initiative(
+                "init-denied",
+                action="approved",
+                details=None,
+                request=request,
+            )
+        assert denied.value.status_code == 403
+        assert initiative.status == "pending"
+        assert feedback.records == []
+        assert store.history == []
+        assert (await mgr.queue.get_job(job_id)).status is JobStatus.BLOCKED
+    finally:
+        host_router.set_initiative_store(old_store)
+        host_router.set_feedback_store(old_feedback)
         await mgr.stop()

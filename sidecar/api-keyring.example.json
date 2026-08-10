@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "principals": [
+    {
+      "principal": "primary-agent",
+      "status": "active",
+      "scopes": [
+        "auth:admin",
+        "api:access",
+        "memory:read",
+        "memory:search",
+        "memory:write",
+        "context:read",
+        "tom:read",
+        "cognition:read",
+        "cognition:manage",
+        "cognition:benchmark-read",
+        "cognition:benchmark-manage",
+        "cognition:experiment-read",
+        "cognition:experiment-manage",
+        "events:read",
+        "turns:write",
+        "work:read",
+        "work:control",
+        "workers:contract",
+        "workers:inspect"
+      ],
+      "viewer_person_id": "replace-with-owner-contact-id",
+      "person_ids": [],
+      "audiences": [
+        "viewer",
+        "owner",
+        "shared",
+        "global"
+      ],
+      "turn_ingress_platforms": [],
+      "credentials": [
+        {
+          "id": "current",
+          "secret": "REPLACE_WITH_A_RANDOM_SECRET",
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "principal": "channel-adapter",
+      "status": "active",
+      "scopes": [
+        "memory:read",
+        "memory:search",
+        "memory:write",
+        "context:read",
+        "turns:write",
+        "turns:resolve-sender"
+      ],
+      "viewer_person_id": "replace-with-channel-contact-id",
+      "person_ids": [],
+      "audiences": [
+        "viewer"
+      ],
+      "turn_ingress_platforms": [
+        "rcs",
+        "sms",
+        "voice",
+        "whatsapp"
+      ],
+      "attested_contact_grants": {
+        "platforms": [
+          "rcs",
+          "sms",
+          "voice",
+          "whatsapp"
+        ],
+        "max_person_ids": 512
+      },
+      "credentials": [
+        {
+          "id": "current",
+          "secret": "REPLACE_WITH_A_DIFFERENT_RANDOM_SECRET",
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "principal": "action-receipt-verifier",
+      "status": "active",
+      "scopes": [
+        "workers:attest",
+        "workers:inspect"
+      ],
+      "audiences": [],
+      "credentials": [
+        {
+          "id": "current",
+          "secret": "REPLACE_WITH_A_SEPARATE_VERIFIER_SECRET",
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "principal": "host-action-worker",
+      "status": "active",
+      "allow_unscoped_api": false,
+      "scopes": [
+        "actions:execute",
+        "actions:verify"
+      ],
+      "viewer_person_id": "replace-with-owner-contact-id",
+      "person_ids": [
+        "replace-with-owner-contact-id"
+      ],
+      "audiences": [
+        "owner"
+      ],
+      "credentials": [
+        {
+          "id": "current",
+          "secret": "REPLACE_WITH_A_DEDICATED_GOVERNED_ACTION_SECRET",
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "principal": "execution-worker",
+      "status": "active",
+      "scopes": [
+        "api:access",
+        "workers:register",
+        "workers:claim",
+        "workers:lifecycle"
+      ],
+      "audiences": [],
+      "worker_grants": [
+        {
+          "node_id": "replace-with-exact-worker-node-id",
+          "capabilities": [
+            "research"
+          ],
+          "capacity": {
+            "ram_gb": 16
+          },
+          "max_concurrent": 1,
+          "job_types": [
+            "research"
+          ]
+        }
+      ],
+      "credentials": [
+        {
+          "id": "current",
+          "secret": "REPLACE_WITH_A_THIRD_RANDOM_SECRET",
+          "status": "active"
+        }
+      ]
+    }
+  ]
+}

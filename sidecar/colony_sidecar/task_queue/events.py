@@ -45,6 +45,15 @@ class JobCompletedEvent(Event):
 
 
 @dataclass
+class JobNeutralEvent(Event):
+    """Emitted when work ends without verified success or explicit failure."""
+
+    job_id: str = ""
+    worker_node_id: str = ""
+    reason: str = ""
+
+
+@dataclass
 class JobFailedEvent(Event):
     """Emitted when a job transitions to FAILED."""
 

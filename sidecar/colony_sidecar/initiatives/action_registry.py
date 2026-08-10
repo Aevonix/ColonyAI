@@ -30,8 +30,9 @@ Approval policy (``COLONY_APPROVAL_POLICY``, default ``strict``):
   the owner's policy: no manual gate unless the action is potentially
   destructive or reaches an unauthorized individual.
 
-Standing approvals (``standing_approvals``) override the gate for an
-exact action name in BOTH modes — the owner has said "always allow this".
+Bounded grants are applied by the queue dispatch path after this pure policy
+classification. They bind an immutable job digest to an exact action scope,
+expiry, and use cap; classification itself never spends or invents authority.
 
 ``COLONY_AGENT_AUTO_APPROVE=true`` collapses the gate for trusted
 deployments (default false).
@@ -96,6 +97,33 @@ OBSERVATION_SYNC_ACTIONS: Dict[str, str] = {
 }
 
 _SPECS: List[ActionSpec] = [
+    # Deployment calibration only.  The queue recognizes the complete
+    # server-derived ApprovalRelayCanaryV1 object and terminalizes it as
+    # CANCELLED for either decision; no executor can ever claim it.
+    ActionSpec(
+        name="approval_relay_canary",
+        tool="colony",
+        command="record canonical approval relay calibration decision",
+        risk=RiskTier.MUTATING,
+        description="Calibrate owner approval relay without executing an effect",
+        initiative_type="agent_action",
+        required_params=["idempotency_digest"],
+    ),
+    # P4 controlled learning. The ExperimentEngine builds an immutable digest
+    # over these exact constraints and either matches a reversible pregrant or
+    # routes it through the bounded owner-approval ledger.
+    ActionSpec(
+        name="cognition_experiment_mutation",
+        tool="colony",
+        command="run controlled experiment $REF=$VARIANT judged by $METRIC",
+        risk=RiskTier.MUTATING,
+        description="Run one receipt-attributed adaptive-parameter experiment",
+        initiative_type="meta_learning",
+        required_params=[
+            "REF", "VARIANT", "METRIC", "METRIC_VERSION",
+            "MAX_REGRESSION", "WINDOW_DAYS", "ASSIGNMENT_MODE",
+        ],
+    ),
     # --- Observation sync (v0.16.0, agent-as-sensor) ---
     ActionSpec(
         name="agent_sync_coding",
@@ -367,10 +395,9 @@ def classify_agent_action(
             ``approval_policy.is_authorized_target``).
         policy: ``strict`` or ``graduated``; defaults to
             ``get_approval_policy()`` (env, default strict).
-        target_authorized: for OUTBOUND actions under the graduated
-            policy, the verdict of ``is_authorized_target`` — True means
-            the recipient resolved to a contact with
-            ``interaction_allowed=True``. None/False keep the gate.
+        target_authorized: retained compatibility input for caller
+            classification. Contact resolution is context, not execution
+            authority; all outbound effects remain canonically gated.
 
     Returns a dict with:
     - ``registered``: the hint names a known capability
@@ -392,30 +419,18 @@ def classify_agent_action(
     mode = policy if policy in (APPROVAL_POLICY_STRICT, APPROVAL_POLICY_GRADUATED) \
         else get_approval_policy()
 
-    # Standing approvals — the owner has said "always allow this exact
-    # action". Overrides the gate in BOTH modes. Best-effort: a broken
-    # approvals file must not break classification (gate stays closed).
-    standing = False
-    try:
-        from colony_sidecar.initiatives import standing_approvals
-        standing = standing_approvals.is_approved(spec.name)
-    except Exception:
-        standing = False
-
-    if standing:
-        requires_approval, reason = False, "standing_approval"
-    elif spec.risk == RiskTier.READ_ONLY:
+    if spec.risk == RiskTier.READ_ONLY:
         requires_approval, reason = False, "read_only_auto"
     elif mode == APPROVAL_POLICY_GRADUATED:
+        # Graduated policy may tune presentation/urgency, but it is no longer
+        # execution authority. Every effectful birth needs a durable direct
+        # decision or an exact bounded-grant use in the canonical ledger.
         if spec.risk == RiskTier.MUTATING:
-            requires_approval, reason = False, "graduated_auto_mutating"
+            requires_approval, reason = True, "mutating_requires_owner"
         elif spec.risk == RiskTier.DESTRUCTIVE:
             requires_approval, reason = True, "destructive_requires_owner"
-        else:  # OUTBOUND — gated unless the target is an authorized contact
-            if target_authorized is True:
-                requires_approval, reason = False, "outbound_authorized_contact"
-            else:
-                requires_approval, reason = True, "outbound_target_unverified"
+        else:
+            requires_approval, reason = True, "outbound_requires_owner"
     else:  # strict — v0.17 behavior: everything non-read-only is gated
         requires_approval, reason = True, "strict_policy_gate"
 

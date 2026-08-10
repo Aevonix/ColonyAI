@@ -211,7 +211,10 @@ def live_checks():
     except Exception as e:
         fail(f"temporal brief endpoint unreachable: {e}")
     try:
-        http_json("/v1/host/contacts/resolve", key, "gateway=whatsapp&address=__doctor_probe__")
+        http_json(
+            "/v1/host/contacts/resolve", key,
+            "gateway=whatsapp&address=__doctor_probe__&create=false",
+        )
         ok("contact-resolve endpoint answers")
     except urllib.error.HTTPError as e:
         (ok if e.code in (404, 200) else fail)(f"contact-resolve endpoint answers (HTTP {e.code})")
@@ -287,16 +290,7 @@ def config_checks():
 
 # --------------------------------------------------------------------------
 def patch_checks():
-    """Verify/heal the guarded host-side patch registry via the patch runner.
-
-    Deployment patches to the Hermes framework source are managed exclusively
-    by hermes-patch-runner.py over a registry directory (default
-    ~/.hermes/patches, override HERMES_PATCH_DIR). Each patch self-verifies
-    its anchors per the runner contract: the runner re-applies anything a
-    framework update reverted, and reports FUNDAMENTAL_CHANGE (never
-    blind-patching) when a patch must be re-authored for the installed
-    version. Deployments with no patch registry skip this section entirely.
-    """
+    """Inventory legacy Hermes patches without executing or healing them."""
     print("\n[framework patches]")
     import subprocess as _sp
     patch_dir = os.environ.get("HERMES_PATCH_DIR",
@@ -316,33 +310,24 @@ def patch_checks():
                           "hermes-patch-runner.py")
     if not os.path.exists(runner):
         fail(f"patch registry {patch_dir} exists but hermes-patch-runner.py "
-             "is missing next to the doctor (cannot verify/heal)")
+             "is missing next to the doctor (cannot inventory)")
         return
     try:
-        r = _sp.run([sys.executable, runner, "apply", "--dir", patch_dir, "--json"],
+        r = _sp.run([sys.executable, runner, "status", "--dir", patch_dir, "--json"],
                     capture_output=True, text=True, timeout=180)
         data = json.loads(r.stdout or "{}")
     except Exception as e:
         fail(f"patch runner failed to execute: {e}")
         return
-    for res in data.get("results", []):
-        name = res.get("name", "?")
-        state = res.get("state", "error")
-        detail = res.get("detail", "")
-        if state == "ok":
-            ok(f"patch {name}: applied")
-        elif state == "applied":
-            warn(f"patch {name}: was missing and has been RE-APPLIED")
-        elif state == "fundamental-change":
-            fail(f"patch {name}: FUNDAMENTAL_CHANGE, anchors no longer match the "
-                 f"installed Hermes; re-author the patch (target NOT modified). {detail}")
-        elif state == "rollback":
-            fail(f"patch {name}: apply failed validation and was rolled back. {detail}")
-        else:
-            fail(f"patch {name}: {detail}")
-    if data.get("restart_needed"):
-        warn("patches were re-applied this run: restart the gateway to load them "
-             "(launchctl kickstart -k gui/$(id -u)/ai.hermes.gateway)")
+    patches = data.get("patches", [])
+    if patches:
+        for result in patches:
+            fail(
+                f"legacy Hermes patch present: {result.get('name', '?')} "
+                f"sha256={result.get('sha256', 'unavailable')}"
+            )
+    else:
+        ok("zero-patch Hermes posture")
 
 
 def main():

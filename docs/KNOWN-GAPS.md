@@ -18,6 +18,15 @@ briefing aggregators, world-model pruning, self-referential-query grounding.
 - **Gate Layer 6 secondary review** — fails open (always passes) unless a
   review LLM client is injected; the pipeline logs a loud boot warning when
   enabled without one. Known configuration state, not hidden.
+- **ResponseGuard applied-output receipts** — guarded candidates now carry an
+  exact candidate digest, and the proactive send path honors enforce verdicts,
+  but the audit store records evaluations rather than durable proof of the
+  bytes a transport actually withheld or emitted. The Hermes plugin also
+  remains shadow-only on current Hermes because its post-LLM hook cannot mutate
+  replies. Consequently the server intentionally leaves the Tom2 enforcement
+  evidence probe unset and level 2 stays capped. A future transport-owned
+  mediator must persist policy-, candidate-, and applied-output-digest receipts
+  before this gap can close. Do not infer enforcement from verdict row counts.
 
 ## Deliberate no-builds (division of responsibility with the host agent)
 
@@ -43,9 +52,6 @@ unbuilt HERE by design:
 
 ## Unwired (feature code with zero callers)
 
-- `gate/rejection.py` — `RejectionFeedbackLoop` (retry-with-escalation when
-  the gate blocks) is never constructed. Pairs with the gate rebuild track;
-  wire it when the gate itself runs enforcing (it is shadow-first today).
 - `chain/consensus.py` — Raft-lite consensus scaffolding for multi-colony
   federation; single-colony deployments don't need it. The chain package
   docstring now labels it scaffolding.
@@ -68,9 +74,12 @@ unbuilt HERE by design:
   capped under the budget, per-recall touch tasks are strongly referenced,
   and the research gatherer closes its per-call graph driver. Residual noise
   right after a budget-exceeded tick is expected and harmless.
-- **ResponseGuard fails open (ALLOW) on internal error** — deliberate and
-  logged (`gate/response_guard.py`); the guard runs shadow-first in live
-  deployments. The L6 review layer inside the gate pipeline fails closed.
+- **ResponseGuard failure behavior is surface/mode specific** — exact
+  text/artifact surfaces fail open while observing in `shadow` and fail closed
+  on a configured-check outage in `enforce`; exact real-time speech surfaces
+  are excluded. The static contract is documented in
+  `docs/response-guard-surface-policy-v1.md`. The L6 review layer inside the
+  separate gate pipeline fails closed.
 
 ## Settlement semantics (by design, documented here so nobody "fixes" it)
 

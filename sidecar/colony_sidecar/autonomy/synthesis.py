@@ -183,6 +183,17 @@ class ConversationSynthesisTask:
         Returns:
             Dict with ``memories_scanned``, ``candidates_found``, ``goals_created``.
         """
+        try:
+            from colony_sidecar.cognition.goal_spine import cognition_spine_exclusive
+            if cognition_spine_exclusive():
+                return {
+                    "memories_scanned": 0,
+                    "candidates_found": 0,
+                    "goals_created": 0,
+                    "status": "legacy_goal_writer_read_only",
+                }
+        except Exception:
+            pass
         start = time.monotonic()
         graph = getattr(self.registry, "graph", None)
         goals = getattr(self.registry, "goals", None)

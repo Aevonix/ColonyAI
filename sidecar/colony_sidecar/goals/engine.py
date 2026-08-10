@@ -384,6 +384,12 @@ class GoalEngine:
 
         Returns a candidate if a new goal was inferred, else None.
         """
+        try:
+            from colony_sidecar.cognition.goal_spine import cognition_spine_exclusive
+            if cognition_spine_exclusive():
+                return None
+        except Exception:
+            pass
         if not self.config.inference_enabled:
             return None
 

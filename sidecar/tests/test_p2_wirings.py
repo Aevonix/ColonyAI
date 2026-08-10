@@ -23,9 +23,10 @@ class _FakeCalendarConnector:
 
 
 def _obs(hours_from_now, summary, attendees=(), end_offset_min=None,
-         location=""):
+         location="", base=None):
     # whole seconds only: ICS timestamps carry no sub-second precision
-    start = (datetime.now(timezone.utc) + timedelta(hours=hours_from_now)
+    start = ((base or datetime.now(timezone.utc))
+             + timedelta(hours=hours_from_now)
              ).replace(microsecond=0)
     payload = {"summary": summary, "location": location,
                "attendees": list(attendees), "organizer": "",
@@ -38,14 +39,20 @@ def _obs(hours_from_now, summary, attendees=(), end_offset_min=None,
 
 
 def test_calendar_aggregator_today_and_week():
+    # Keep the relative day assertions deterministic when the suite runs near
+    # UTC midnight: +3h from a live clock can otherwise be tomorrow.
+    base = datetime.now(timezone.utc).replace(
+        hour=8, minute=0, second=0, microsecond=0,
+    )
     conn = _FakeCalendarConnector([
-        _obs(2, "standup", attendees=["Ann", "Bob"], end_offset_min=45),
-        _obs(3, "solo focus block"),
-        _obs(24 * 3, "vendor review", attendees=["Ann"]),
-        _obs(24 * 30, "far future"),
+        _obs(2, "standup", attendees=["Ann", "Bob"], end_offset_min=45,
+             base=base),
+        _obs(3, "solo focus block", base=base),
+        _obs(24 * 3, "vendor review", attendees=["Ann"], base=base),
+        _obs(24 * 30, "far future", base=base),
     ])
     agg = ConnectorCalendarAggregator(conn)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = base.strftime("%Y-%m-%d")
 
     events = agg.get_today_events(today, "UTC")
     titles = [e.title for e in events]

@@ -1,4 +1,9 @@
-"""Cognitive Performance Index (CPI) computation."""
+"""Deprecated legacy CPI detector.
+
+The canonical performance surface is ``SelfhoodBenchmark``. This module is
+kept only to emit gap proposals during migration; it no longer invents
+flattering values when evidence is absent and it never authorizes a write.
+"""
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -14,11 +19,12 @@ class CPIComponent:
     score: float  # 0-100
     trend: str = "stable"  # "improving", "declining", "stable"
     metrics: Dict[str, float] = field(default_factory=dict)
+    available: bool = True
 
 
 @dataclass
 class CognitivePerformanceIndex:
-    """6-component cognitive performance index."""
+    """Deprecated compatibility shape; use SelfhoodBenchmark rollups."""
     retrieval: CPIComponent
     prediction: CPIComponent
     goal_progress: CPIComponent
@@ -27,6 +33,8 @@ class CognitivePerformanceIndex:
     response_quality: CPIComponent
     overall: float
     computed_at: datetime
+    deprecated: bool = True
+    available_components: List[str] = field(default_factory=list)
 
 
 class PerformanceIndexComputer:
@@ -77,11 +85,18 @@ class PerformanceIndexComputer:
         quality_metrics = await self._get_metrics(metrics_collector, "response_quality", days=7)
         components["response_quality"] = self._compute_response_quality(quality_metrics)
 
-        # Compute overall weighted score
-        overall = sum(
+        # Reweight only evidence-bearing dimensions. Missing dimensions are
+        # unavailable, not neutral, successful, or silently zero evidence.
+        available_weight = sum(
+            weight for name, weight in self.COMPONENT_WEIGHTS.items()
+            if components[name].available)
+        overall = (sum(
             components[name].score * weight
             for name, weight in self.COMPONENT_WEIGHTS.items()
-        )
+            if components[name].available
+        ) / available_weight) if available_weight else 0.0
+        available = [name for name, component in components.items()
+                     if component.available]
 
         return CognitivePerformanceIndex(
             retrieval=components["retrieval"],
@@ -92,7 +107,16 @@ class PerformanceIndexComputer:
             response_quality=components["response_quality"],
             overall=overall,
             computed_at=datetime.now(),
+            deprecated=True,
+            available_components=available,
         )
+
+    @staticmethod
+    def _unavailable(name: str) -> CPIComponent:
+        return CPIComponent(
+            name=name, score=0.0, trend="unavailable",
+            metrics={"available": False, "deprecated": True},
+            available=False)
 
     async def _get_metrics(
         self,
@@ -127,9 +151,10 @@ class PerformanceIndexComputer:
 
     def _compute_retrieval(self, metrics: Dict[str, float]) -> CPIComponent:
         """Compute retrieval component score."""
-        # Base score from metrics
-        relevance = metrics.get("relevance_score", 70.0)
-        latency = metrics.get("latency_ms", 500)
+        if "relevance_score" not in metrics or "latency_ms" not in metrics:
+            return self._unavailable("retrieval")
+        relevance = metrics["relevance_score"]
+        latency = metrics["latency_ms"]
 
         # Latency penalty (cap at 2s)
         latency_score = max(0, 100 - (latency / 20))
@@ -147,7 +172,9 @@ class PerformanceIndexComputer:
     def _compute_prediction(self, metrics: Dict[str, float]) -> CPIComponent:
         """Compute prediction component score."""
         correct = metrics.get("correct_count", 0)
-        total = metrics.get("total_predictions", 1)
+        total = metrics.get("total_predictions", 0)
+        if total <= 0:
+            return self._unavailable("prediction")
 
         accuracy = (correct / max(total, 1)) * 100
         trend = self._compute_trend("prediction", accuracy)
@@ -162,8 +189,10 @@ class PerformanceIndexComputer:
     def _compute_goal_progress(self, metrics: Dict[str, float]) -> CPIComponent:
         """Compute goal progress component score."""
         completed = metrics.get("completed_tasks", 0)
-        total = metrics.get("total_tasks", 1)
-        velocity = metrics.get("velocity", 1.0)  # tasks/day
+        total = metrics.get("total_tasks", 0)
+        if total <= 0 or "velocity" not in metrics:
+            return self._unavailable("goal_progress")
+        velocity = metrics["velocity"]
 
         completion_rate = (completed / max(total, 1)) * 100
         velocity_score = min(velocity * 20, 100)  # 5 tasks/day = 100
@@ -180,8 +209,10 @@ class PerformanceIndexComputer:
 
     def _compute_tool_efficiency(self, metrics: Dict[str, float]) -> CPIComponent:
         """Compute tool efficiency component score."""
-        success_rate = metrics.get("success_rate", 80.0)
-        avg_latency = metrics.get("avg_latency_ms", 1000)
+        if "success_rate" not in metrics or "avg_latency_ms" not in metrics:
+            return self._unavailable("tool_efficiency")
+        success_rate = metrics["success_rate"]
+        avg_latency = metrics["avg_latency_ms"]
 
         latency_score = max(0, 100 - (avg_latency / 50))
         score = success_rate * 0.7 + latency_score * 0.3
@@ -199,10 +230,9 @@ class PerformanceIndexComputer:
         suggestions = metrics.get("suggestions_made", 0)
         accepted = metrics.get("suggestions_accepted", 0)
 
-        if suggestions > 0:
-            hit_rate = (accepted / suggestions) * 100
-        else:
-            hit_rate = 50.0  # Neutral if no data
+        if suggestions <= 0:
+            return self._unavailable("initiative")
+        hit_rate = (accepted / suggestions) * 100
 
         volume_score = min(suggestions * 10, 100)  # 10 suggestions = 100
 
@@ -218,9 +248,13 @@ class PerformanceIndexComputer:
 
     def _compute_response_quality(self, metrics: Dict[str, float]) -> CPIComponent:
         """Compute response quality component score."""
-        relevance = metrics.get("relevance_score", 80.0)
-        conciseness = metrics.get("conciseness_score", 75.0)
-        actionability = metrics.get("actionability_score", 70.0)
+        required = {"relevance_score", "conciseness_score",
+                    "actionability_score"}
+        if not required <= set(metrics):
+            return self._unavailable("response_quality")
+        relevance = metrics["relevance_score"]
+        conciseness = metrics["conciseness_score"]
+        actionability = metrics["actionability_score"]
 
         score = relevance * 0.4 + conciseness * 0.3 + actionability * 0.3
         trend = self._compute_trend("response_quality", score)

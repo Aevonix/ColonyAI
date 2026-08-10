@@ -23,7 +23,13 @@ async def _complete(q, job_type):
                               job_types={job_type})
     claimed = await q.claim_job("w", caps)   # sets claimed_by, required by complete_job
     assert claimed is not None and claimed.job_id == jid
-    await q.complete_job(jid, "w", {"result": "ok"})
+    assert await q.start_job(jid, "w", claimed.claim_attempt_id)
+    await q.complete_job(
+        jid,
+        "w",
+        {"result": "ok"},
+        claim_attempt_id=claimed.claim_attempt_id,
+    )
     return jid
 
 

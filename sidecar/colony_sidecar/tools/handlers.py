@@ -47,10 +47,10 @@ async def handle_memory_search(
         # ColonyGraph exposes semantic memory retrieval as recall(); there is
         # no search() method (the old name was API drift). recall does its own
         # ANN + strength decay and returns dicts annotated with relevance.
-        # person_id is not a recall parameter, so it is advisory only here.
         results = await graph.recall(
             query=query,
             limit=limit,
+            person_id=person_id,
         )
 
         def _ts(v: Any) -> Any:

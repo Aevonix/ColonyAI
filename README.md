@@ -141,7 +141,10 @@ guide.
   (`COLONY_WORKSPACE`); an expectation engine turns due-dated commitments
   into predictions and scores its own calibration
   (`COLONY_EXPECTATIONS`); a toolsmith mines the action journal for repeated
-  procedures and drafts sandbox-verified tools (`COLONY_TOOLSMITH`).
+  procedures and drafts sandbox-verified pure tools (`COLONY_TOOLSMITH`). A
+  tool becomes live only after receipt-backed incumbent/candidate comparisons
+  on the same captured inputs and a one-shot owner-scoped grant; trust alone
+  cannot publish code.
 - **Initiatives and executor.** A background loop generates proactive
   initiatives (follow-ups, research, check-ins, owed deliverables); an
   optional in-process executor (`COLONY_EXECUTOR_ENABLED`) reasons about them
@@ -170,7 +173,11 @@ guide.
 - **Workers.** An installable worker daemon (`colony-worker`, with systemd and
   launchd templates under `sidecar/colony_sidecar/workers/deploy/`) executes
   queued jobs; a server-side governor re-verifies capabilities and audits
-  every report, because workers are untrusted (`COLONY_WORKERS_MODE`).
+  every report, because workers are untrusted (`COLONY_WORKERS_MODE`). HTTP
+  workers also enter the server-owned running lifecycle before execution; the
+  server, not the worker, supplies timing evidence. Exact per-claim attempt
+  IDs prevent stale same-node callbacks, and a durable idempotent outbox keeps
+  completion competence evidence recoverable across cancellation/restart.
 - **Sandbox.** Gated Docker exploration sandbox for code execution: no
   network, no credentials, capped resources, `off | dry_run | live`
   (`COLONY_SANDBOX_MODE`; live is explicit-only, never set by a preset).

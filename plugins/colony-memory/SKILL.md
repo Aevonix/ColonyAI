@@ -1,121 +1,60 @@
 ---
 name: colony
-version: 0.2.0
-description: Colony cognitive memory provider for Hermes. Injects commitments, affect, facts, patterns, and world model into Hermes conversations and syncs turns back for extraction. Exposes Colony tools (colony_check_commitments, colony_list_goals, colony_write_memory, etc.) and lifecycle hooks for session rotation, memory mirroring, and pre-compression.
+version: 0.3.0
+description: Colony context sidecar for Hermes with exact per-turn participant binding, scoped P8 guest projection, and read-only general-plugin coexistence.
 author: Aevonix
 ---
 
-# Colony Hermes Integration Suite
+# Colony memory provider
 
-Mounts Colony's cognitive infrastructure as three Hermes plugins:
+Use Colony as Hermes' intelligence/context sidecar without patching Hermes
+core. This integration does not own or replace the host's custom voice, phone, or
+intercom turn path.
 
-1. **Memory Provider** (`~/.hermes/plugins/memory/colony/`)
-2. **Context Engine** (`~/.hermes/plugins/context_engine/colony/`)
-3. **General Plugin** (`~/.hermes/plugins/colony/`)
-
-## Quick Start
+## Required posture
 
 ```bash
-cd ColonyAI/plugins/hermes-memory
-./install.sh
+COLONY_PREFETCH_QUERY_CHECK=1
+COLONY_PREFETCH_TURN_CONTACT=1
+COLONY_MCP_CONTACT_ID=replace-with-exact-owner-contact-id
+COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY=owner_system
 ```
 
-Then add to `~/.hermes/config.yaml`:
+The default contact is permitted only for explicit non-channel owner/system
+lanes. Every real channel resolves its sender independently; a miss yields no
+Colony context or write.
 
-```yaml
-memory:
-  provider: colony
-  config:
-    url: "http://127.0.0.1:7777"
-    api_key: "${COLONY_API_KEY}"
-    contact_id: "default"
+Guest context requires a `context:read` scoped channel principal, exact
+server-resolved contact grant, and P8 scoped projection. The provider preflights
+`/v1/host/context/projection-readiness`, sends
+`projection_policy=scoped_viewer_required`, and verifies the response viewer.
+If any step fails, use no Colony context. Never substitute owner context.
 
-context_engine: colony
+## Model tools
 
-plugins:
-  colony:
-    url: "http://127.0.0.1:7777"
-    api_key: "${COLONY_API_KEY}"
-    contact_id: "default"
-```
+When the general Colony plugin is active, the only model-visible provider tools
+are:
 
-Restart Hermes.
+- `colony_check_commitments`
+- `colony_get_affect`
+- `colony_get_facts`
+- `colony_timeline`
 
-## Memory Provider
+Their person selectors are server/provider-bound, not model arguments. Direct
+legacy tool endpoints are owner/system-only until scoped P8 tool projections
+exist; guest conversations rely on atomic assembled context. Do not advertise
+memory writes, goals, search, queue mutation, or approval tools from this
+provider.
 
-### prefetch()
-Before each turn, calls Colony's `/v1/host/context/assemble` and injects the returned sections (commitments, affect state, shared facts, patterns, surprises, world model entities) as a `<memory-context>` block.
+## Lifecycle
 
-### sync_turn()
-After each turn, POSTs the user message and assistant response to Colony's `/v1/host/turns/sync` for extraction of commitments, affect, and facts. **Non-blocking** (daemon thread per Hermes threading contract).
+In general-plugin coexistence, turn sync, built-in memory mirroring, and
+pre-compression signal writes are disabled because the general plugin owns
+ingestion. Standalone fallback writing is allowed only after resolving the
+exact current participant. Reply-window lookup against the global timeline is
+disabled pending a transport-attested scoped endpoint.
 
-### get_tool_schemas() / handle_tool_call()
-Exposes Colony tools to the LLM:
-
-- `colony_check_commitments` — Check active commitments for the current contact
-- `colony_get_affect` — Get current affect state (valence/arousal)
-- `colony_get_facts` — Retrieve shared facts about a contact
-- `colony_get_patterns` — Get detected behavioral patterns
-- `colony_write_memory` — Persist a fact/insight to Colony
-- `colony_list_goals` — List user goals with status and progress
-- `colony_record_affect` — Record an emotional state event
-- `colony_search_memory` — Search Colony's memory graph
-
-### Lifecycle Hooks
-
-- `on_session_switch()` — Handles session rotation, clears cache on reset
-- `on_turn_start()` — Called at the start of each turn
-- `on_memory_write()` — Mirrors built-in memory writes back to Colony
-- `on_pre_compress()` — Fires a signal ingest before context compression discards old messages
-- `on_session_end()` — Flushes pending context and fires a best-effort final sync
-
-### Config Schema
-Implements `get_config_schema()` and `save_config()` for the `hermes memory setup` wizard.
-
-## Context Engine
-
-Replaces Hermes's built-in compressor with Colony-aware summarization:
-
-- `should_compress()` — Checks token count against threshold
-- `compress()` — Calls Colony's reasoning loop to produce a cognitive summary, preserving commitments and facts while discarding noise. Falls back to local compression if Colony is unreachable.
-
-## General Plugin
-
-### Native Tools
-Registers additional Colony tools via `ctx.register_tool()`:
-
-- `colony_memory_search`
-- `colony_list_goals`
-- `colony_get_briefing`
-- `colony_record_insight`
-- `colony_query_entities`
-- `colony_task_complete`
-- `colony_task_snooze`
-- `colony_task_dismiss`
-- `colony_initiative_feedback`
-
-### WebSocket Event Subscriber
-Connects to Colony's `/v1/host/events` WebSocket, caches the most recent events per type, and injects them via the `pre_llm_call` hook.
-
-### Slash Commands
-- `/colony status` — Sidecar health + capabilities
-- `/colony goals` — Active goals list
-- `/colony context` — Fetch cognitive context
-- `/colony events` — Recent cached events
-- `/colony sync` — Force a turn sync
-
-### CLI Commands
-- `hermes colony status`
-- `hermes colony goals`
-- `hermes colony context`
-- `hermes colony sync`
-
-## Requirements
-
-- Colony sidecar running at the configured URL
-- `httpx` Python package
-- `websockets` Python package (general plugin only)
-
-## What It Does
-
-If the sidecar is unreachable, all calls degrade silently. No errors are raised for transient failures.
+Use `catalog_attestation()` for deployment admission. A true
+`provider_governance_ready` does not imply the broader general plugin is ready;
+`general_plugin_governance_ready` remains false until its named follow-on slice
+is complete.

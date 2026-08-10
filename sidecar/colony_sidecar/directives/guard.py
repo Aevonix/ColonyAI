@@ -37,8 +37,30 @@ logger = logging.getLogger(__name__)
 _READ_KINDS = frozenset({"repo_read", "read", "recall", "populate", "observe"})
 
 
+class DirectiveStoreUnavailable(RuntimeError):
+    """The active owner-boundary set could not be read safely.
+
+    An unavailable or malformed store is not equivalent to a healthy store
+    with zero active prohibitions.  Enforcement callers use this distinct
+    failure to apply their capability-specific fail-closed policy.
+    """
+
+
 def action_capability(kind: str) -> str:
     return "read" if (kind or "").lower() in _READ_KINDS else "act"
+
+
+def boundary_fail_closed() -> bool:
+    """Whether an ERROR inside a boundary check refuses the action.
+
+    Default TRUE: a boundary is an owner-set prohibition, so an exception
+    while evaluating it must refuse (fail closed) rather than silently
+    allow the very action the owner may have forbidden. Set
+    COLONY_BOUNDARY_FAIL_CLOSED=false to restore the legacy allow-on-error
+    behavior.
+    """
+    from colony_sidecar.util.autonomy_preset import resolve_bool
+    return resolve_bool("COLONY_BOUNDARY_FAIL_CLOSED", True)
 
 
 @dataclass
@@ -189,12 +211,25 @@ class DirectiveGuard:
 
     def _active_prohibitions(self) -> List[Directive]:
         if self._store is None:
-            return []
+            raise DirectiveStoreUnavailable("directive store is unavailable")
         try:
-            return self._store.active(polarity=Polarity.PROHIBIT)
-        except Exception as exc:  # a store failure must fail CLOSED for high risk
+            active = self._store.active(polarity=Polarity.PROHIBIT)
+        except Exception as exc:
             logger.warning("DirectiveGuard: store read failed: %s", exc)
-            return []
+            raise DirectiveStoreUnavailable(
+                "directive store active-boundary read failed"
+            ) from exc
+
+        if not isinstance(active, (list, tuple)) or any(
+            not isinstance(directive, Directive) for directive in active
+        ):
+            logger.warning(
+                "DirectiveGuard: store returned a malformed active-boundary set"
+            )
+            raise DirectiveStoreUnavailable(
+                "directive store returned a malformed active-boundary set"
+            )
+        return list(active)
 
     def check(self, action: Action) -> Verdict:
         """Return a Verdict. allowed=False means the action violates a boundary."""

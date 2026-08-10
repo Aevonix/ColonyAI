@@ -10,7 +10,14 @@ from __future__ import annotations
 import os
 
 import pytest
+from starlette.requests import Request
 
+import colony_sidecar.api.routers.host as host_mod
+from colony_sidecar.api.authority import (
+    RequestAuthority,
+    anonymous_authority,
+    required_scope,
+)
 from colony_sidecar.directives import Verdict
 from colony_sidecar.sandbox import SandboxManager, resolve_limits
 from colony_sidecar.sandbox.backend import (
@@ -24,6 +31,11 @@ class _FakeDirectives:
 
     def check(self, action):  # noqa: ARG002
         return self._v
+
+
+class _BrokenDirectives:
+    def check(self, action):  # noqa: ARG002
+        raise RuntimeError("directive store unavailable")
 
 
 class _MockBackend:
@@ -116,6 +128,14 @@ def test_owner_directed_is_auto(monkeypatch):
     assert out.get("tier") == "auto" and out["dry_run"] is True
 
 
+def test_contained_read_only_is_auto_without_owner_impersonation(monkeypatch):
+    monkeypatch.setenv("COLONY_SANDBOX_MODE", "dry_run")
+    mgr = SandboxManager()
+    out = mgr.run("print(1)", purpose="pure evaluation",
+                  owner_directed=False, read_only=True)
+    assert out.get("tier") == "auto" and out["read_only"] is True
+
+
 def test_non_owner_directed_is_flagged_and_held(monkeypatch):
     monkeypatch.setenv("COLONY_SANDBOX_MODE", "dry_run")
     mgr = SandboxManager()
@@ -143,6 +163,30 @@ def test_boundary_blocks_run(monkeypatch):
     out = mgr.run("import prod", purpose="poke prod", owner_directed=True)
     assert out["ran"] is False and out["reason"] == "boundary_blocked"
     assert backend.calls == []
+
+
+def test_boundary_exception_fails_closed(monkeypatch):
+    monkeypatch.setenv("COLONY_SANDBOX_MODE", "live")
+    mgr = SandboxManager(directive_manager=_BrokenDirectives())
+    backend = _MockBackend()
+    mgr._backend = backend
+    out = mgr.run("print(1)", purpose="boundary failure",
+                  owner_directed=True)
+    assert out == {
+        "ran": False,
+        "reason": "boundary_blocked",
+        "detail": "boundary_check_error",
+        "mode": "live",
+    }
+    assert backend.calls == []
+
+
+def test_boundary_without_directives_reports_unchecked():
+    """No directive manager => the verdict must say "boundary_unchecked",
+    never the fabricated "ok" of a real allow."""
+    verdict = SandboxManager()._boundary_ok("some purpose", "print(1)")
+    assert verdict["allowed"] is True
+    assert verdict["reason"] == "boundary_unchecked"
 
 
 # -- server-side limits (caller cannot widen) ----------------------------
@@ -190,3 +234,59 @@ def test_status_shape(monkeypatch):
     monkeypatch.setenv("COLONY_SANDBOX_MODE", "dry_run")
     st = SandboxManager().status()
     assert st["mode"] == "dry_run" and "backend" in st and "limits" in st
+
+
+class _CaptureManager:
+    def __init__(self):
+        self.kwargs = None
+
+    def run(self, script, **kwargs):
+        self.kwargs = {"script": script, **kwargs}
+        return {"ran": bool(kwargs.get("owner_directed"))}
+
+
+def _request_with(authority):
+    request = Request({"type": "http", "method": "POST", "path": "/"})
+    request.state.colony_authority = authority
+    return request
+
+
+async def test_sandbox_http_cannot_self_assert_owner_direction():
+    capture = _CaptureManager()
+    original = host_mod._sandbox
+    host_mod._sandbox = capture
+    try:
+        out = await host_mod.run_sandbox(
+            _request_with(anonymous_authority()),
+            {"script": "print(1)", "owner_directed": True, "approved": True},
+        )
+    finally:
+        host_mod._sandbox = original
+    assert not out["ran"]
+    assert capture.kwargs["owner_directed"] is False
+    assert capture.kwargs["approved"] is False
+
+
+async def test_sandbox_http_owner_scope_is_transport_attested():
+    authority = RequestAuthority(
+        principal_id="operator-deck",
+        credential_id="test",
+        scopes=frozenset({"sandbox:execute"}),
+        viewer_person_id="owner",
+        person_ids=frozenset({"owner"}),
+        audiences=frozenset({"owner"}),
+        authenticated=True,
+    )
+    capture = _CaptureManager()
+    original = host_mod._sandbox
+    host_mod._sandbox = capture
+    try:
+        out = await host_mod.run_sandbox(
+            _request_with(authority), {"script": "print(1)"})
+    finally:
+        host_mod._sandbox = original
+    assert out["ran"]
+    assert capture.kwargs["owner_directed"] is True
+    assert capture.kwargs["approved"] is True
+    assert required_scope(
+        "POST", "/v1/host/sandbox/run") == "sandbox:execute"

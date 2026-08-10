@@ -56,6 +56,7 @@ _HOME_CHANNEL_RE = re.compile(r"^(\w+)_HOME_CHANNEL$")
 SERVER_CHECK_NAMES = (
     "server-health",
     "server-auth",
+    "server-auth-migration",
     "server-owner-contact",
     "server-llm-router",
     "server-embedder",
@@ -407,16 +408,70 @@ def check_owner_contact_id() -> CheckResult:
     )
 
 
+def _effects_on_subsystems() -> List[str]:
+    """Subsystems currently configured to produce real (live) effects."""
+    found: List[str] = []
+    try:
+        from colony_sidecar.task_queue.governor import workers_mode
+        if workers_mode() == "live":
+            found.append("workers=live")
+    except Exception:
+        pass
+    try:
+        from colony_sidecar.sandbox.manager import sandbox_mode
+        if sandbox_mode() == "live":
+            found.append("sandbox=live")
+    except Exception:
+        pass
+    return found
+
+
+def _approval_result(detail: str, authority_mode: str) -> CheckResult:
+    """PASS, unless approval authority is shadow while effects run live —
+    then WARN: approvals are recorded but NOT enforced against real effects."""
+    if authority_mode == "shadow":
+        effects = _effects_on_subsystems()
+        if effects:
+            return CheckResult(
+                "approval-policy", WARN,
+                detail=(
+                    f"{detail}; approval authority mode=shadow while "
+                    f"effects-on subsystem(s) run: {', '.join(effects)} — "
+                    "approval decisions are observational, NOT enforced"
+                ),
+                remedy="set COLONY_APPROVAL_AUTHORITY_MODE=enforce (or take "
+                       "the effects-on subsystem out of live mode)",
+            )
+    return CheckResult("approval-policy", PASS, detail=detail)
+
+
 def check_approval_policy() -> CheckResult:
-    """5. COLONY_APPROVAL_POLICY must be strict|graduated|unset."""
+    """5. Validate action policy and approval-authority migration mode."""
+    authority_raw = os.environ.get("COLONY_APPROVAL_AUTHORITY_MODE")
+    if authority_raw and authority_raw.strip().lower() not in ("shadow", "enforce"):
+        return CheckResult(
+            "approval-policy", FAIL,
+            detail=(
+                f"COLONY_APPROVAL_AUTHORITY_MODE={authority_raw!r} is invalid; "
+                "approval control surfaces fail closed with invalid configuration"
+            ),
+            remedy="set COLONY_APPROVAL_AUTHORITY_MODE to 'shadow' or 'enforce'",
+        )
+    authority_mode = (authority_raw or "shadow").strip().lower()
     raw = os.environ.get("COLONY_APPROVAL_POLICY")
     if raw is None or not raw.strip():
-        return CheckResult(
-            "approval-policy", PASS, detail="COLONY_APPROVAL_POLICY unset — defaults to strict",
+        return _approval_result(
+            "COLONY_APPROVAL_POLICY unset — defaults to strict; approval "
+            f"authority mode={authority_mode}",
+            authority_mode,
         )
     value = raw.strip().lower()
     if value in ("strict", "graduated"):
-        return CheckResult("approval-policy", PASS, detail=f"COLONY_APPROVAL_POLICY={value}")
+        return _approval_result(
+            f"COLONY_APPROVAL_POLICY={value}; approval authority "
+            f"mode={authority_mode}",
+            authority_mode,
+        )
     return CheckResult(
         "approval-policy", FAIL,
         detail=f"COLONY_APPROVAL_POLICY={raw!r} is not a valid mode — the gate fails closed "
@@ -426,7 +481,7 @@ def check_approval_policy() -> CheckResult:
 
 
 def check_standing_approvals() -> CheckResult:
-    """6. standing_approvals.json must be parseable when present."""
+    """6. Legacy standing JSON must be parseable and bounded when present."""
     from colony_sidecar.initiatives import standing_approvals
 
     path = _state_dir() / standing_approvals._FILENAME
@@ -446,8 +501,27 @@ def check_standing_approvals() -> CheckResult:
             remedy=f"fix or delete {path}; re-grant via POST /v1/host/queue/jobs/{{id}}/approve "
                    'with {"always": true}',
         )
+    unbounded = [
+        name for name, entry in data.items()
+        if not isinstance(entry, dict)
+        or not entry.get("expires_at")
+        or not isinstance(entry.get("max_uses"), int)
+    ]
+    if unbounded:
+        return CheckResult(
+            "standing-approvals", WARN,
+            detail=(
+                f"{len(unbounded)} legacy unbounded approval(s) will be treated "
+                "as one-use/24-hour migration grants"
+            ),
+            remedy=(
+                "replace queue standing approvals with durable bounded grants; "
+                "see docs/BOUNDED-APPROVAL-AUTHORITY.md"
+            ),
+        )
     return CheckResult(
-        "standing-approvals", PASS, detail=f"{len(data)} standing approval(s) parseable",
+        "standing-approvals", PASS,
+        detail=f"{len(data)} bounded compatibility approval(s) parseable",
     )
 
 
@@ -502,6 +576,134 @@ def check_feature_gates() -> CheckResult:
                or "gates unset (features off; set COLONY_AUTONOMY_PRESET or "
                   "individual flags in this shell/service env)",
     )
+
+
+def check_tom2_cross_context() -> CheckResult:
+    """Cross-contact tom2 rendering (H3.5) must never run ahead of chat
+    enforcement. Configuration intent is not applied capability: current
+    Hermes cannot mutate a post-LLM reply and the Colony plugin honestly
+    downgrades requested enforce to shadow. Until a transport-owned mediator
+    exposes real applied-enforcement truth, any enabled cross-context posture
+    is incoherent — 'X hasn't heard this' carries implication-leak risk only
+    an enforcing outbound guard can backstop."""
+    on = os.environ.get("COLONY_TOM2_CROSS_CONTEXT", "0").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if not on:
+        return CheckResult(
+            "tom2-cross-context", PASS,
+            detail="COLONY_TOM2_CROSS_CONTEXT off (default; the "
+                   "cross-contact render path ships dark)")
+    chat_mode = os.environ.get("COLONY_GUARD_CHAT_MODE", "").strip().lower()
+    if chat_mode != "enforce":
+        return CheckResult(
+            "tom2-cross-context", WARN,
+            detail="COLONY_TOM2_CROSS_CONTEXT is ON while the chat guard is "
+                   f"not enforcing (COLONY_GUARD_CHAT_MODE={chat_mode or '(unset)'}) — "
+                   "cross-contact epistemic rendering without an enforcing "
+                   "outbound guard risks implication leaks",
+            remedy="set COLONY_TOM2_CROSS_CONTEXT=0 (recommended; this path "
+                   "is built but deliberately unwired) or finish a "
+                   "transport-owned applied-enforcement mediator; setting "
+                   "COLONY_GUARD_CHAT_MODE=enforce alone does not qualify")
+    return CheckResult(
+        "tom2-cross-context", WARN,
+        detail="COLONY_TOM2_CROSS_CONTEXT is ON and chat enforce was "
+               "requested, but no applied-enforcement capability truth "
+               "exists: current Hermes cannot apply post-LLM reply "
+               "mutations, so the Colony plugin runs the chat guard in "
+               "SHADOW",
+        remedy="set COLONY_TOM2_CROSS_CONTEXT=0; do not treat "
+               "COLONY_GUARD_CHAT_MODE=enforce as applied enforcement. "
+               "Graduate only after a transport-owned mediator both applies "
+               "the verdict and exposes receipt-backed capability truth")
+
+
+def check_tom2_risk_caps() -> CheckResult:
+    """Leveled tom2 (L1.3): COLONY_TOM2_RISK_CAPS must parse. A malformed
+    value fails closed at runtime (all environments cap at level 0), which
+    is SAFE but silently ignores whatever caps the owner intended — a
+    posture mismatch the doctor must surface."""
+    from colony_sidecar.tom.levels import DEFAULT_RISK_CAPS, risk_caps_valid
+    raw = os.environ.get("COLONY_TOM2_RISK_CAPS", "").strip()
+    if risk_caps_valid():
+        return CheckResult(
+            "tom2-risk-caps", PASS,
+            detail=f"COLONY_TOM2_RISK_CAPS={raw or f'(default {DEFAULT_RISK_CAPS})'}")
+    return CheckResult(
+        "tom2-risk-caps", WARN,
+        detail=f"COLONY_TOM2_RISK_CAPS={raw!r} is malformed — the level "
+               "resolver fails closed to all-0 caps (every environment "
+               "renders level 0), NOT the caps you configured",
+        remedy="set COLONY_TOM2_RISK_CAPS to four 'risk:cap' pairs covering "
+               f"risks 0-3 with caps 0-2, e.g. {DEFAULT_RISK_CAPS}, or unset "
+               "it for the default")
+
+
+def check_tom2_level_coherence() -> CheckResult:
+    """Leveled cross-contact tom2 (L4.3): a raised COLONY_TOM2_LEVEL must
+    be COHERENT — reachable under the other brakes and backed by live
+    enforcement evidence. The min-chain silently degrades an incoherent
+    posture every turn (which is SAFE); what the doctor surfaces is the
+    owner believing a level is live when it can never actually render."""
+    from colony_sidecar.gate.response_guard import enforce_allowlist
+    from colony_sidecar.tom.levels import (
+        configured_level, configured_max_level, risk_caps_valid)
+    from colony_sidecar.tom.tom2 import tom2_cross_context_enabled
+
+    lvl = configured_level()
+    if lvl == 0:
+        return CheckResult(
+            "tom2-level-coherence", PASS,
+            detail="COLONY_TOM2_LEVEL=0 (default; leveled rendering off — "
+                   "this variable is also the single-var kill switch)")
+
+    problems: List[str] = []
+    if not risk_caps_valid():
+        problems.append("COLONY_TOM2_RISK_CAPS is malformed — every "
+                        "environment caps at level 0")
+    if lvl >= 2:
+        if configured_max_level() < 2:
+            problems.append("level 2 unreachable: COLONY_TOM2_MAX_LEVEL "
+                            f"caps at {configured_max_level()}")
+        if not tom2_cross_context_enabled():
+            problems.append("level 2 unreachable: "
+                            "COLONY_TOM2_CROSS_CONTEXT is off")
+        allowed = enforce_allowlist()
+        if allowed is not None and "tom2_epistemic" not in allowed:
+            problems.append("level 2 unreachable: tom2_epistemic is not on "
+                            "COLONY_GUARD_ENFORCE_CHECKS, so enforce "
+                            "evidence can never accrue")
+        else:
+            problems.extend(_tom2_enforce_evidence_problem())
+    if problems:
+        return CheckResult(
+            "tom2-level-coherence", WARN,
+            detail=f"COLONY_TOM2_LEVEL={lvl} but " + "; ".join(problems),
+            remedy="either lower COLONY_TOM2_LEVEL to the level you can "
+                   "actually reach, or complete the graduation ladder "
+                   "(docs/TOM2-LEVELS.md): MAX_LEVEL=2 + CROSS_CONTEXT=1 + "
+                   "tom2_epistemic allowlisted + a receipt-backed egress "
+                   "mediator proving the exact applied output")
+    return CheckResult(
+        "tom2-level-coherence", PASS,
+        detail=f"COLONY_TOM2_LEVEL={lvl} with a coherent brake posture")
+
+
+def _tom2_enforce_evidence_problem() -> List[str]:
+    """Report the intentionally missing receipt-backed egress authority.
+
+    GuardAuditStore rows attest candidate evaluation only.  Row count,
+    recency, enforce mode, and decision cannot prove which bytes a transport
+    withheld or emitted, so they must never make the doctor claim level 2 is
+    reachable.  The runtime resolver likewise leaves its evidence probe unset
+    until a transport-owned applied-output mediator exists.
+    """
+
+    return [
+        "no receipt-backed applied-output egress mediator is wired; "
+        "GuardAuditStore evaluation rows never qualify as enforce evidence "
+        "and level 2 caps at 1"
+    ]
 
 
 def check_home_channel() -> CheckResult:
@@ -597,6 +799,9 @@ def run_local_checks() -> List[CheckResult]:
     results += _run("approval-policy", check_approval_policy)
     results += _run("standing-approvals", check_standing_approvals)
     results += _run("feature-gates", check_feature_gates)
+    results += _run("tom2-cross-context", check_tom2_cross_context)
+    results += _run("tom2-risk-caps", check_tom2_risk_caps)
+    results += _run("tom2-level-coherence", check_tom2_level_coherence)
     results += _run("home-channel", check_home_channel)
     results += _run("hermes-skills-dir", check_hermes_skills_dir)
     results += _run("relationship-attribution", check_relationship_attribution)
@@ -622,6 +827,97 @@ def check_server_auth(base_url: str, api_key: str, timeout: float) -> CheckResul
         "server-auth", PASS,
         detail=f"authenticated request accepted (HTTP {status}){note}",
     )
+
+
+def check_server_auth_migration(
+    base_url: str, api_key: str, timeout: float,
+) -> CheckResult:
+    """Scoped/legacy usage and exact-contact grant readiness."""
+
+    status, body = _http_get(
+        f"{base_url}/v1/host/admin/auth/status", api_key, timeout,
+    )
+    if status == 404:
+        return CheckResult(
+            "server-auth-migration", SKIP,
+            detail="auth migration status is not available on this sidecar",
+        )
+    if status in (401, 403):
+        return CheckResult(
+            "server-auth-migration", WARN,
+            detail=f"auth migration status requires auth:admin (HTTP {status})",
+            remedy="run doctor with the legacy migration credential or a scoped auth:admin principal",
+        )
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult(
+            "server-auth-migration", WARN,
+            detail=f"unexpected auth migration status response (HTTP {status})",
+        )
+
+    auth = body.get("auth") if isinstance(body.get("auth"), dict) else {}
+    telemetry = body.get("telemetry") if isinstance(body.get("telemetry"), dict) else {}
+    keyring = body.get("keyring") if isinstance(body.get("keyring"), dict) else {}
+    grants = body.get("contact_grants") if isinstance(body.get("contact_grants"), dict) else {}
+    totals = telemetry.get("totals") if isinstance(telemetry.get("totals"), dict) else {}
+    principals = (
+        telemetry.get("principals")
+        if isinstance(telemetry.get("principals"), dict)
+        else {}
+    )
+    legacy = int(totals.get("legacy_allow") or 0)
+    scoped = int(totals.get("scoped_allow") or 0)
+    denied = int(totals.get("deny") or 0)
+
+    problems: list[str] = []
+    if not telemetry.get("persistent") or telemetry.get("error"):
+        problems.append("auth telemetry is not durably healthy")
+    if auth.get("scoped_configured") and (
+        not keyring.get("available") or keyring.get("error")
+    ):
+        problems.append("scoped keyring is unavailable")
+    if grants.get("error"):
+        problems.append("exact-contact grant projection is unhealthy")
+    legacy_last_seen = str((principals.get("legacy") or {}).get("last_seen_at") or "")
+    if auth.get("dual_accept") and legacy:
+        try:
+            parsed = legacy_last_seen
+            if parsed.endswith("Z"):
+                parsed = parsed[:-1] + "+00:00"
+            last_seen = datetime.fromisoformat(parsed).astimezone(timezone.utc)
+            quiet_hours = max(
+                0.0, float(os.environ.get("COLONY_AUTH_LEGACY_QUIET_HOURS", "24")),
+            )
+            age_hours = max(
+                0.0,
+                (datetime.now(timezone.utc) - last_seen).total_seconds() / 3600,
+            )
+            if age_hours < quiet_hours:
+                problems.append(
+                    f"legacy bearer was used {age_hours:.1f}h ago "
+                    f"(quiet window {quiet_hours:g}h)"
+                )
+        except (TypeError, ValueError, OverflowError):
+            problems.append("legacy last-seen evidence is missing or invalid")
+    if auth.get("scoped_configured") and not scoped:
+        problems.append("no scoped principal traffic has been observed")
+    if auth.get("legacy_configured") and not auth.get("scoped_configured"):
+        problems.append("scoped principals are not configured")
+
+    detail = (
+        f"legacy_allow={legacy}, scoped_allow={scoped}, denied={denied}, "
+        f"exact_contacts={int(grants.get('total_exact_person_ids') or 0)}, "
+        f"legacy_last_seen={legacy_last_seen or 'never'}"
+    )
+    if problems:
+        return CheckResult(
+            "server-auth-migration", WARN,
+            detail=detail + "; " + "; ".join(problems),
+            remedy=(
+                "keep dual acceptance, migrate one role at a time, repair telemetry/grants, "
+                "and revoke the legacy bearer only after a complete zero-legacy window"
+            ),
+        )
+    return CheckResult("server-auth-migration", PASS, detail=detail)
 
 
 def check_server_owner_contact(base_url: str, api_key: str, timeout: float) -> CheckResult:
@@ -748,7 +1044,8 @@ def check_server_blocked_approvals(base_url: str, api_key: str, timeout: float) 
         "server-blocked-approvals", WARN,
         detail=f"{len(body)} job(s) pending owner approval ({hints})",
         remedy="review them and POST /v1/host/queue/jobs/{id}/approve (or .../reject); "
-               'approve with {"always": true} to grant a standing approval',
+               "use the request ID and action digest; an optional grant must have "
+               "an expiry and use cap",
     )
 
 
@@ -895,26 +1192,116 @@ def check_server_autonomy_posture(base_url: str, api_key: str, timeout: float) -
             "server-autonomy-posture", WARN, detail=f"HTTP {status}: {body}")
     posture = body.get("posture") or {}
     preset = posture.get("preset", "(none)")
+
+    # Posture coherence: the presets exist to make subsystems run on loop
+    # ticks; a reactive loop never ticks, so a calibration/autonomous preset
+    # with a reactive loop is a Colony that never thinks, calibrates, or
+    # earns trust — the worst kind of misconfiguration because everything
+    # LOOKS enabled. Since preset-loop coupling (default on), the preset
+    # supplies the mode itself, so a reactive loop under such a preset can
+    # only mean an explicit COLONY_AUTONOMY_MODE=reactive pin, coupling
+    # switched off, or an older server without coupling — those FAIL; a
+    # reactive loop the coupling machinery failed to raise only WARNs
+    # (fail-safe worked as designed). Older servers that do not report the
+    # loop mode are not failed on a missing key.
+    autonomy_mode = str(posture.get("COLONY_AUTONOMY_MODE", "") or "").lower()
+    mode_source = str(posture.get("COLONY_AUTONOMY_MODE_SOURCE", "") or "").lower()
+    coupling = str(posture.get("COLONY_PRESET_LOOP_COUPLING", "") or "").lower()
+    if preset in ("calibration", "autonomous") and autonomy_mode == "reactive":
+        base = (f"preset={preset} but the autonomy loop is REACTIVE — "
+                "preset-enabled subsystems only run on loop ticks, so "
+                "nothing thinks, calibrates, or earns trust on its own")
+        if mode_source == "env":
+            return CheckResult(
+                "server-autonomy-posture", FAIL,
+                detail=base + " (COLONY_AUTONOMY_MODE=reactive is explicitly "
+                       "pinned below the preset)",
+                remedy="unset COLONY_AUTONOMY_MODE and restart (the preset "
+                       "supplies proactive via COLONY_PRESET_LOOP_COUPLING), "
+                       "or leave the pin if the rollback is deliberate — "
+                       "then this FAIL is the reminder")
+        if coupling == "off":
+            return CheckResult(
+                "server-autonomy-posture", FAIL,
+                detail=base + " (COLONY_PRESET_LOOP_COUPLING=off disabled "
+                       "the preset's mode default)",
+                remedy="unset COLONY_PRESET_LOOP_COUPLING (it defaults on) "
+                       "or set COLONY_AUTONOMY_MODE=proactive and restart")
+        if not mode_source:
+            # Older server: no coupling, no source reporting — the original
+            # misconfiguration, still a FAIL.
+            return CheckResult(
+                "server-autonomy-posture", FAIL, detail=base,
+                remedy="set COLONY_AUTONOMY_MODE=proactive and restart (or "
+                       "upgrade to a server with preset-loop coupling)")
+        # Coupling on, mode not pinned, yet still reactive: the coupling
+        # machinery failed safe toward reactive. Honest but degraded.
+        return CheckResult(
+            "server-autonomy-posture", WARN,
+            detail=base + f" (mode_source={mode_source}; coupling is on but "
+                   "did not resolve — it fails toward reactive by design)",
+            remedy="set COLONY_AUTONOMY_MODE=proactive explicitly and "
+                   "check server logs for preset resolution errors")
+
     live = sorted(k.replace("COLONY_", "").replace("_MODE", "").lower()
                   for k, v in posture.items() if v == "live")
     shadow = sorted(k.replace("COLONY_", "").replace("_MODE", "").lower()
                     for k, v in posture.items() if v in ("shadow", "dry_run"))
     on = sorted(k.replace("COLONY_", "").replace("_ENABLED", "").lower()
-                for k, v in posture.items() if v == "true")
+                for k, v in posture.items() if v in ("true", "on"))
     parts = [f"preset={preset}"]
     if on:
         parts.append("on: " + ",".join(on))
     if live:
         parts.append("live: " + ",".join(live))
     if shadow:
-        parts.append("calibrating: " + ",".join(shadow))
+        # Under the calibration preset, shadow IS the design: subsystems are
+        # trust-gated and graduate via the trust engine. Label it expected
+        # so an owner reading the doctor does not "fix" a healthy posture.
+        label = ("calibrating (expected: trust-gated shadow under the "
+                 "calibration preset): "
+                 if preset == "calibration" else "calibrating: ")
+        parts.append(label + ",".join(shadow))
     if not (on or live or shadow):
         return CheckResult(
             "server-autonomy-posture", WARN,
             detail="everything is off — this Colony observes but never thinks or acts",
             remedy="set COLONY_AUTONOMY_PRESET=calibration (shadow everything, earn "
                    "autonomy via the trust engine) or flip individual COLONY_*_MODE flags")
+
+    # Flags explicitly overridden BELOW the preset's default (env always
+    # wins over the preset, so this only happens by explicit override).
+    downgraded = _preset_downgrades(preset, posture)
+    if downgraded:
+        return CheckResult(
+            "server-autonomy-posture", WARN,
+            detail="; ".join(parts) + " — below preset default (explicit env "
+                   "override): " + ",".join(downgraded),
+            remedy="unset the overriding COLONY_* env var(s) to inherit the "
+                   "preset default, or leave them if the downgrade is "
+                   "deliberate")
     return CheckResult("server-autonomy-posture", PASS, detail="; ".join(parts))
+
+
+def _preset_downgrades(preset: str, posture: dict) -> List[str]:
+    """Flags whose effective value sits below the active preset's default."""
+    try:
+        from colony_sidecar.util.autonomy_preset import PRESETS
+    except Exception:
+        return []
+    # "on" ranks with shadow/dry_run: for a binary flag (expectations)
+    # anything but "off" is fully enabled, so only an explicit "off"
+    # counts as a downgrade from an "on" preset default.
+    rank = {"off": 0, "false": 0, "shadow": 1, "dry_run": 1, "on": 1,
+            "true": 2, "live": 2}
+    out = []
+    for flag, want in PRESETS.get(preset, {}).items():
+        have = str(posture.get(flag, "") or "").lower()
+        if have and rank.get(have, 99) < rank.get(want, 0):
+            out.append(
+                flag.replace("COLONY_", "").replace("_MODE", "").lower()
+                + f"={have}")
+    return sorted(out)
 
 
 def check_server_self_model(base_url: str, api_key: str, timeout: float) -> CheckResult:
@@ -1074,12 +1461,25 @@ def check_server_toolsmith(base_url: str, api_key: str, timeout: float) -> Check
     failing = [t.get("name") for t in tools
                if t.get("status") in ("shadow", "live")
                and (t.get("failures") or 0) >= 3]
+    unreceipted_live = [
+        t.get("name") for t in live
+        if not (t.get("graduation_receipts") or 0)
+    ]
     if failing:
         return CheckResult(
             "server-toolsmith", WARN,
             detail=f"{len(live)} live, {len(shadow)} shadow; failing: "
                    + ", ".join(str(f) for f in failing),
             remedy="retire the failing tool(s) via POST /v1/host/self/tools/{id}/retire")
+    if unreceipted_live:
+        return CheckResult(
+            "server-toolsmith", WARN,
+            detail=(f"{len(unreceipted_live)} live tool(s) predate bounded "
+                    "graduation receipts: "
+                    + ", ".join(str(name) for name in unreceipted_live)),
+            remedy=("retire, compare, and re-graduate each legacy tool under "
+                    "the P5 canary runbook"),
+        )
     return CheckResult(
         "server-toolsmith", PASS,
         detail=f"mode={body.get('mode')}, trust={body.get('trust_stage')}, "
@@ -1358,6 +1758,10 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
         ))
 
     results += _run("server-auth", check_server_auth, base_url, api_key, timeout)
+    results += _run(
+        "server-auth-migration", check_server_auth_migration,
+        base_url, api_key, timeout,
+    )
     results += _run("server-owner-contact", check_server_owner_contact, base_url, api_key, timeout)
     results += _run("server-llm-router", check_server_llm, base_url, api_key, timeout)
     results += _run("server-embedder", check_server_embedder, base_url, api_key, timeout)

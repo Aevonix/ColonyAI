@@ -5,6 +5,8 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from enum import Enum
 
+from colony_sidecar.self_model.benchmark import cognition_p4_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +32,12 @@ class Adjustment:
 
 
 class StrategyAdjuster:
-    """Generate and apply strategy adjustments for performance gaps."""
+    """Generate experiment proposals from legacy CPI gaps.
+
+    This component is retained as a detector adapter. It deliberately never
+    writes an adaptive parameter or graph policy; ExperimentEngine is the one
+    controlled writer and requires exposure/outcome evidence.
+    """
 
     # Gap type to adjustment strategies mapping
     STRATEGIES = {
@@ -111,7 +118,13 @@ class StrategyAdjuster:
         # Without it, threshold adjustments have nowhere consumers look and
         # are refused rather than written into the void.
         self._params = params
+        self._experiment_proposer: Any = None
         self._applied_adjustments: list = []
+
+    def set_experiment_proposer(self, proposer: Any) -> None:
+        """Wire ExperimentEngine after boot without creating another writer."""
+
+        self._experiment_proposer = proposer
 
     async def generate(self, gap: "Gap") -> Adjustment:
         """Generate adjustment strategy for a gap."""
@@ -129,61 +142,78 @@ class StrategyAdjuster:
         return adjustment
 
     async def apply(self, adjustment: Adjustment) -> bool:
-        """Apply an adjustment and track result."""
+        """Record typed proposals without executing legacy adjustment actions."""
         results = []
-
         for action in adjustment.actions:
-            result = await self._execute_action(action)
+            result = {
+                "success": False,
+                "action": action.get("type"),
+                "params": dict(action.get("params") or {}),
+                "proposal_required": True,
+                "reason": "legacy CPI detectors may propose; ExperimentEngine writes",
+            }
+            spec = self._experiment_spec(adjustment, action)
+            if spec is not None:
+                result["experiment_proposal"] = spec
+                if (self._experiment_proposer is not None
+                        and cognition_p4_mode() in {"shadow", "live"}):
+                    try:
+                        saved = self._experiment_proposer.propose(**spec)
+                        result["proposal_id"] = saved.get("id")
+                    except ValueError as exc:
+                        # An already-open proposal is the expected dedupe path.
+                        result["proposal_error"] = str(exc)
             results.append(result)
-
         adjustment.result = {
             "actions_taken": len(results),
-            "successful": sum(1 for r in results if r.get("success", False)),
+            "successful": 0,
+            "proposals": len(results),
             "details": results,
         }
+        adjustment.status = AdjustmentStatus.PROPOSED
+        logger.info(
+            "legacy cognition gap %s emitted %d controlled-learning proposal(s)",
+            adjustment.adjustment_type, len(results))
+        return False
 
-        if adjustment.result["successful"] > 0:
-            adjustment.status = AdjustmentStatus.APPLIED
-            adjustment.applied_at = datetime.now()
-            self._applied_adjustments.append(adjustment)
-            if adjustment.adjustment_type == "low_memory_quality":
-                logger.info(
-                    "low_memory_quality adjustment applied: memory consolidation should run "
-                    "to improve retrieval quality"
-                )
-            elif adjustment.adjustment_type == "initiative_mismatch":
-                logger.info(
-                    "initiative_mismatch adjustment applied: suggestion frequency/threshold "
-                    "adjusted to better match user needs"
-                )
-            return True
+    @staticmethod
+    def _experiment_spec(adjustment: Adjustment,
+                         action: dict) -> Optional[Dict[str, Any]]:
+        """Map the two real legacy knobs into typed, non-started proposals."""
+
+        action_type = action.get("type")
+        raw = dict(action.get("params") or {})
+        if action_type == "adjust_similarity_threshold":
+            ref = "recall.min_relevance"
+        elif action_type == "adjust_consolidation_threshold":
+            ref = "consolidation.similarity_threshold"
         else:
-            adjustment.status = AdjustmentStatus.FAILED
-            return False
+            return None
+        if "threshold" not in raw:
+            return None
+        return {
+            "hypothesis": adjustment.hypothesis,
+            "ref": ref,
+            "variant": float(raw["threshold"]),
+            "metric": "recall.fact_coverage",
+            "metric_version": "v2",
+            "assignment_mode": "cohort",
+            "max_regression": 0.05,
+            "window_days": 7,
+            "source": f"legacy-cpi-gap:{adjustment.adjustment_type}",
+        }
 
     async def _execute_action(self, action: dict) -> dict:
-        """Execute a single adjustment action."""
+        """Compatibility hook: convert every legacy action into a proposal."""
         action_type = action.get("type")
         params = action.get("params", {})
-
-        # Map action types to implementations
-        try:
-            if action_type == "reindex_memories":
-                # Vector index is now managed by LanceDB — reindex is a no-op
-                logger.info("reindex_memories is a no-op: vector index managed by LanceDB")
-                return {"success": True, "action": "reindex_memories", "note": "managed by LanceDB"}
-            elif action_type == "adjust_similarity_threshold":
-                return await self._adjust_threshold(**params)
-            elif action_type == "adjust_consolidation_threshold":
-                return await self._adjust_consolidation_threshold(**params)
-            elif action_type == "decay_old_signals":
-                return await self._decay_signals(**params)
-            elif action_type == "recalibrate_baselines":
-                return await self._recalibrate_baselines(**params)
-            else:
-                return {"success": False, "action": action_type, "note": "unknown action type"}
-        except (TypeError, RuntimeError, AttributeError, NotImplementedError) as e:
-            return {"success": False, "action": action_type, "error": str(e)}
+        return {
+            "success": False,
+            "action": action_type,
+            "params": params,
+            "proposal_required": True,
+            "writer": "ExperimentEngine",
+        }
 
     async def _adjust_threshold(self, threshold: float) -> dict:
         """Raise/lower the recall relevance floor via the AdaptiveParamStore.
@@ -206,51 +236,42 @@ class StrategyAdjuster:
 
     def _set_param(self, name: str, value: float, *, action: str,
                    reason: str) -> dict:
-        if self._params is None:
-            logger.warning("No AdaptiveParamStore wired; %s not applied", action)
-            return {"success": False, "action": action,
-                    "error": "adaptive param store not wired"}
-        try:
-            applied = self._params.set(name, float(value), reason=reason,
-                                       source="strategy_adjuster")
-            if applied is None:
-                return {"success": False, "action": action,
-                        "error": f"param {name} not registered"}
-            return {"success": True, "action": action, "param": name,
-                    "requested": float(value), "applied": applied}
-        except (OSError, RuntimeError, TypeError, ValueError) as e:
-            logger.error("Failed %s: %s", action, e)
-            return {"success": False, "action": action, "error": str(e)}
+        return {
+            "success": False,
+            "action": action,
+            "param": name,
+            "requested": float(value),
+            "hypothesis": reason,
+            "proposal_required": True,
+            "writer": "ExperimentEngine",
+        }
 
     async def _decay_signals(self, factor: float) -> dict:
-        """Apply decay to old signals."""
-        try:
-            await self.graph.decay_memories(half_life_days=7.0 / factor)
-            return {"success": True, "action": "decay_signals", "factor": factor}
-        except (OSError, RuntimeError, AttributeError) as e:
-            return {"success": False, "error": str(e)}
+        """RETIRED — this action never decayed signals.
+
+        Despite its name it called graph.decay_memories(half_life_days=7/factor),
+        silently compressing the half-life of EVERY memory whenever a
+        'stale_data' gap fired — a second, hidden writer racing the autonomy
+        loop's memory_decay phase. Memory decay has exactly one writer (the
+        loop phase, tuned via COLONY_DECAY_HALF_LIFE_DAYS); this action now
+        refuses and never touches the graph.
+        """
+        return {
+            "success": False,
+            "action": "decay_signals",
+            "error": ("retired: decayed memories, not signals; memory decay "
+                      "is owned solely by the autonomy loop's memory_decay "
+                      "phase"),
+        }
 
     async def _recalibrate_baselines(self) -> dict:
-        """Recalculate baseline signal values for all persons over the last 30 days."""
-        if not hasattr(self.graph, 'run_query'):
-            logger.warning("Graph client does not support run_query; baselines not recalibrated")
-            return {"success": False, "action": "recalibrate_baselines", "error": "run_query not available"}
-        try:
-            records = await self.graph.run_query(
-                """MATCH (p:Person)-[:EXHIBITED]->(s:Signal)
-                   WHERE s.timestamp >= datetime() - duration({days: 30})
-                   WITH p.id AS pid, s.signal_type AS stype, avg(s.normalized_value) AS baseline_val
-                   MERGE (b:Baseline {person_id: pid, signal_type: stype})
-                   SET b.value = baseline_val, b.updated_at = datetime()
-                   RETURN count(b) AS updated_baselines""",
-                {}
-            )
-            count = records[0].get("updated_baselines", 0) if records else 0
-            logger.info("Recalibrated %d baselines", count)
-            return {"success": True, "action": "recalibrate_baselines", "updated_baselines": int(count)}
-        except (OSError, RuntimeError) as e:
-            logger.error("Failed to recalibrate baselines: %s", e)
-            return {"success": False, "action": "recalibrate_baselines", "error": str(e)}
+        """Retired writer: calibration changes must be controlled experiments."""
+        return {
+            "success": False,
+            "action": "recalibrate_baselines",
+            "proposal_required": True,
+            "writer": "ExperimentEngine",
+        }
 
     def _default_strategy(self) -> dict:
         """Default strategy for unknown gap types."""

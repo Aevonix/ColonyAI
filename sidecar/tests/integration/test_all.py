@@ -900,10 +900,11 @@ class TestCognition:
         assert "cpi" in data
 
     def test_cpi(self, client):
-        """CPI endpoint returns a numeric value."""
+        """Deprecated CPI endpoint returns the canonical benchmark payload."""
         data = _get(client, "/cognition/cpi")
-        assert "overall" in data
-        assert isinstance(data["overall"], (int, float))
+        assert data["deprecated"] is True
+        assert data["canonical_endpoint"] == "/v1/host/self/benchmark"
+        assert "memory" not in data
 
     def test_learning_weights(self, client):
         """Learning weights endpoint returns a dict."""

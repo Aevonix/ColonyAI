@@ -1,152 +1,189 @@
-# Colony ↔ Hermes Autonomy Bridge — Implementation Spec
+# Colony Hermes general-plugin governance specification
 
-**Goal:** Enable Hermes to act on Colony initiatives autonomously via a cron job, with wizard setup and manual fallback.
+## Scope
 
----
+This plugin is a generic Colony sidecar adapter for Hermes 0.18.2-compatible
+hosts. It does not own persona, deployment identity, voice, meetings, or direct
+execution. The host deployment supplies those layers externally.
 
-## 1. ARCHITECTURE
+The runtime contract is:
 
+1. `pre_llm_call` binds the exact Hermes session/task/turn to transport and
+   sender metadata supplied by the host.
+2. Real channels resolve the sender with `create=false`. No missing/failed
+   lookup becomes an owner or shared default contact.
+3. Private legacy read tools require an owner/system authority lane. Guest
+   context comes from the canonical Colony memory provider.
+4. Every enabled model-visible effect tool emits an immutable intent. Generic
+   actions use `HermesToolActionIntentV1`; owner-directed contact messages use
+   a separately credentialed deployment producer that cannot call a provider
+   from the plugin process.
+5. `tool_execution` middleware preserves `api_request_id`, `turn_id`, and
+   `tool_call_id` that Hermes does not pass to registry handlers.
+6. `post_llm_call` synchronously commits one stable participant-bound turn to
+   a durable local outbox before a small bounded network drain. The memory
+   provider and old worker tool writers must be disabled.
+7. `transform_llm_output` applies ResponseGuard only to text. Voice, phone,
+   intercom, and Meet surfaces are explicitly excluded.
+
+## Model catalog
+
+`_TOOL_SCHEMAS` is an explicit sorted catalog. Names are partitioned between
+`read_tool_names` and `action_intent_tool_names`; there are no direct-effect
+handlers. `colony_autonomy_status` is a bounded owner/system-only GET projection
+that omits the endpoint's private configuration. `governance_attestation()`
+hashes the exact schema and empty event catalog for source preflight, but never
+claims runtime or live readiness.
+
+The source read catalog is an upper bound. If `enabled_read_tools` is omitted,
+runtime registers that full read catalog unchanged for backward compatibility.
+An explicit configuration registers only its validated exact subset, including
+the useful empty subset for message-only profiles. Blank, duplicate, unknown,
+or malformed entries fail before registration. Registration filtering is the
+model-visibility boundary; dispatcher enforcement of the same subset is an
+independent fail-closed layer. Action and message subset semantics are
+orthogonal and unchanged.
+
+`runtime_governance_attestation(config)` is the separate local runtime proof.
+It requires a safe mediator origin, resolved bounded credential, valid
+principal, nonempty exact enabled-action subset, and an initialized private
+outbox with attested SQLite/filesystem configuration. It exposes only component
+booleans, normalized read/action/message names and digests, read-selection
+source, and a path digest—never a credential or filesystem path. No network
+reachability is claimed or tested by this local
+proof. Configuration readiness is explicitly separate from physical media
+verification: `physical_power_loss_verified=false` is invariant here.
+Consequently its `live_ready` field is always false, even when every local
+runtime component is ready. Operational liveness belongs to a separate
+deployment-owned network/canary proof.
+
+Intent identity is derived from the host call identity, not model arguments.
+Changing arguments while replaying the same tool call produces a deterministic
+conflict. `intent_id` and `intent_digest` bind the client submission; the
+canonical UUID `action_id` and lowercase SHA-256 `action_digest` are assigned
+by the server. The exact version-1 admission response is pending-only, always
+has `effect_performed=false`, requires an `approval_id`, and cannot forward
+extra mediator fields. An unavailable mediator performs no fallback sidecar
+call.
+
+The static schema is the governed upper-bound catalog, not an executability
+claim. Runtime registers an effect schema only when it appears in the explicit
+`enabled_action_tools` subset and the mediator has an allowed loopback/approved
+origin, resolved credential, and safe principal. Unknown configured tool names
+fail registration. Deployments must enable only actions backed by exact
+idempotent execution and verification; unsupported actions remain invisible.
+
+`colony_send_message` is registered only when its exact message mediator and
+explicit enabled subset are ready. It requires either a resolved owner on a
+text transport or an explicitly attested local system turn; guests,
+unresolved senders, and speech surfaces are denied before admission. Retry
+identity comes from Hermes session/turn/tool-call metadata. The model may
+supply only a recipient display name, message content, and an optional channel
+bounded to WhatsApp/RCS/SMS. Omitting channel preserves the exact legacy V1
+WhatsApp wire request; choosing one uses V2. Standing, authority-free contact
+scope, verified-handle, ResponseGuard, exact active fixed-route, and provider
+lifecycle evidence remain the deployment Action Plane's responsibilities. A
+missing route is held and never becomes `proactive_new_target` or a fresh
+owner prompt. Attested local-system initiation is emitted as V3 with a
+server-derived origin and explicit channel, keeping autonomous cadence/policy
+truth distinct from a genuine owner instruction.
+
+## State
+
+The only cross-callback state is bounded and keyed by exact session/turn or
+idempotency key. It is lock-protected and contains no process-global “last
+sender,” “last contact,” or shared event cache. Rebinding the same host turn to
+a different participant poisons that scope.
+
+`GOVERNED_EVENT_TYPES` is empty until Colony can provide an exact
+viewer-attested event projection. Event context must not be injected from a
+process-wide subscriber.
+
+The canonical turn writer is a SQLite outbox whose immediate parent is an
+exact mode-`0700`, current-effective-user directory. Every path component is
+opened with POSIX directory descriptors and no-follow semantics. The leaf is
+created atomically as mode `0600`, or accepted only when it is already a
+regular, current-user, mode-`0600`, single-link file. Existing files are never
+chmodded. The held descriptor and no-follow pathname identity must agree before
+and after SQLite reopens the file. These checks assume a POSIX filesystem with
+`O_DIRECTORY` and `O_NOFOLLOW`; a process already running as the same uid is
+outside this local boundary.
+
+The dedicated schema is accepted only when its columns, types, null/default/PK
+posture, canonical state CHECK source and behavior, non-unique pending-index
+order, object set, application/user versions, and `quick_check` all agree.
+Foreign keys, triggers, unknown indexes/tables, partial schemas, and unknown
+versions fail without repair. Initialization and the sole exact pre-lease
+schema migration are transactional and preserve rows; unknown databases are
+never rebuilt or deleted.
+
+Enqueue uses SQLite configured with `synchronous=FULL`, `fullfsync=ON`, and
+`checkpoint_fullfsync=ON`, bounded canonical JSON, and a stable envelope digest.
+Those read-back settings plus local `fsync` prove configuration readiness only;
+they do not simulate sudden power loss or verify physical persistence.
+
+A short committed lease claims work; network I/O occurs after releasing the
+database lock, and finalization requires the exact lease. Crashed leases expire
+and recover. The post-turn path drains a bounded row count within one cooperative
+wall budget covering SQLite busy waits, claim, callback, and finalization, so
+recovered backlog can shrink without a two-second lock tail. The delivery
+callback executes synchronously on the caller thread, receives the remaining
+`timeout_seconds`, and is required to honor it. No delivery thread or daemon is
+created. Internal schema-lock acquisition is deadline-bounded as well as SQLite
+busy waiting. The bundled client applies one monotonic deadline across connect,
+TLS, write, and read operations; its deadline-bound turn URL accepts only an IP
+literal or exact `localhost`, avoiding unbounded synchronous DNS. Explicit
+recovery performs local preparation first, then uses that same bounded drain
+contract. Remote timeouts retain an outcome-ambiguous lease and rely on the
+exact idempotent turn `PUT` for safe retry. Stored error values are fixed
+redacted codes. A failed enqueue or drain never withholds the already-safe reply.
+
+## Required runtime latches
+
+Registration initializes and validates the private outbox, then fails before
+exposing any middleware, tool, hook, or command unless all three values are
+exact:
+
+```text
+COLONY_GENERAL_PLUGIN_ACTIVE=1
+COLONY_MEMORY_WORKER_TOOLS=0
+COLONY_MEMORY_TURN_WRITER=disabled
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────────┐
-│  Colony     │────▶│  Cron Job    │────▶│  Hermes Agent       │
-│  Sidecar    │     │  (every 15m) │     │  (autonomous run)   │
-│  :7777      │     │              │     │                     │
-└─────────────┘     └──────────────┘     └─────────────────────┘
-       │                                           │
-       │                                           │
-       ▼                                           ▼
-  Initiatives DB                            WhatsApp / SMS
-  (7 relationship)                          (draft or send)
-```
 
-The cron job is an **LLM-driven agent** (not script-only) so it can reason about context, check briefings, and make judgment calls.
+These values make the general plugin the only Hermes turn writer and prevent
+the memory provider's legacy model tools from coexisting.
 
----
+## ResponseGuard
 
-## 2. COMPONENTS TO BUILD
+Pinned Hermes tag `v2026.7.7.2` at commit
+`9de9c25f620ff7f1ce0fd5457d596052d5159596` invokes
+`transform_llm_output(response_text, session_id, model, platform)` before
+`post_llm_call`, and passes the transformed final response to the post hook.
+Enforce mode validates policy identity, candidate digest, surface,
+mode, applicability, decision, and status before releasing an allow verdict.
+Any transport/protocol failure withholds the text. Shadow mode is asynchronous
+and observational.
 
-### 2.1 Plugin Tool: `colony_list_initiatives`
+Hermes persistence occurs before/around host finalization differently across
+versions, and Colony alone cannot prove correction of already-streamed tokens.
+Enable enforce only on the stateless non-streaming `hermes -z -t` deployment
+path until the deployment preflight proves session persistence and streaming
+are disabled. This limitation is not included in the tool/context governance
+`ready` claim.
 
-- **New tool** in `~/.hermes/plugins/colony/__init__.py`
-- Calls `GET /v1/host/initiatives` (no `status=all` — no filter = all)
-- Returns: `{initiatives: [...], total: N}`
-- Also add `colony_get_initiative(id)` for fetching a single initiative with full context
+## Legacy paths
 
-### 2.2 Plugin Tools: `colony_send_message` (relationship action)
+Slash commands lack sufficient call attestation and return a disabled notice.
+The initiative poller, queue worker, direct activity notifier, gateway restart
+runner, and webhook example are inert. The installer overwrites the two old
+poller script paths with inert targets while preserving backups, so surviving
+scheduled invocations cannot perform effects. The old patch runner is read-only
+and a clean deployment has no Hermes core patches.
 
-- **New tool** that wraps the existing send_message capability
-- Allows the agent to send a drafted message to a contact
-- Requires explicit contact resolution from the initiative's `entity_id`
+## Rollback
 
-### 2.3 Slash Commands
-
-Add to `slash.py`:
-- `/colony autonomy enable` — creates the cron job, triggers first cycle
-- `/colony autonomy disable` — pauses/removes the cron job
-- `/colony autonomy status` — shows last run, pending initiatives count, actions taken
-
-### 2.4 Cron Job
-
-**Job spec:**
-```yaml
-name: "Colony Autonomy Bridge"
-schedule: "every 15m"
-deliver: origin  # Report back to user only when action taken
-enabled_toolsets: ["web", "terminal", "send_message", "file"]
-```
-
-**Prompt (self-contained):**
-```
-You are the Colony Autonomy Bridge — an agent that acts on behalf of the owner
-by consuming initiatives from his Colony sidecar.
-
-Your job each cycle:
-1. Query Colony for pending initiatives via colony_list_initiatives
-2. For each initiative, classify its type:
-   - RELATIONSHIP: The owner hasn't contacted someone in a while.
-     → Fetch their briefing via colony_get_briefing
-     → Draft a warm, context-aware message IN THE OWNER'S VOICE
-     → SEND IT DIRECTLY TO THE CONTACT via send_message
-     → Only skip if contact channel is unknown or content feels wrong
-   - FOLLOW_UP / TASK: A goal needs action.
-     → Attempt to complete it with available tools
-     → If blocked, report why
-   - SCHEDULING: A commitment is due.
-     → Draft a scheduling suggestion
-     → Deliver to user
-3. After handling all initiatives, report ONLY:
-   - Actions taken autonomously (messages sent, tasks completed, etc.)
-   - Items that need human judgment (with your reasoning)
-   - Any errors
-
-Stay silent ([SILENT]) if there are no initiatives and nothing to report.
-NEVER send reminders TO the owner. Either act for them, or report that you couldn't.
-```
-
-### 2.5 Setup / Wizard Integration
-
-**Path A (Wizard):**
-During `colony setup` or plugin enablement, prompt:
-> "Enable autonomous initiative handling? Colony will check for relationship
-> reminders and tasks every 15 minutes, acting on your behalf when confident. [Y/n]"
-
-If yes:
-1. Call `cron.jobs.create_job()` programmatically
-2. Trigger first cycle via `POST /v1/host/autonomy/cycle`
-3. Print confirmation
-
-**Path B (Manual):**
-Always print post-setup:
-> "Colony is ready. Run `/colony autonomy enable` to activate background
-> initiative handling, or `hermes colony autonomy enable` from CLI."
-
----
-
-## 3. FILE CHANGES
-
-### `~/.hermes/plugins/colony/__init__.py`
-- Add `colony_list_initiatives` and `colony_get_initiative` to `_TOOL_SCHEMAS`
-- Add handlers `_handle_colony_list_initiatives`, `_handle_colony_get_initiative`
-- Add `colony_autonomy_enable`, `colony_autonomy_disable`, `colony_autonomy_status` tools
-- Add `_create_autonomy_job()` helper using `cron.jobs.create_job`
-
-### `~/.hermes/plugins/colony/client.py`
-- Add `list_initiatives()` method
-- Add `get_initiative(id)` method
-- Add `trigger_autonomy_cycle()` method
-
-### `~/.hermes/plugins/colony/slash.py`
-- Add `_handle_autonomy_enable`, `_handle_autonomy_disable`, `_handle_autonomy_status`
-- Add to `SLASH_COMMANDS` dict
-
-### `~/.hermes/plugins/colony/plugin.yaml`
-- Update description to mention autonomy features
-
-### Colony install script (`install.sh` or equivalent)
-- Detect if Hermes is installed
-- Prompt for autonomy enablement
-- Call the plugin's enable method if user agrees
-
----
-
-## 4. EDGE CASES
-
-- **No Colony running:** Cron job gracefully fails, logs error, stays silent
-- **No initiatives:** Agent outputs `[SILENT]`, no delivery
-- **Quiet hours:** Agent respects Colony's quiet hours config; drafts but queues for later
-- **Duplicate cron job:** `enable` checks for existing job by name, updates rather than duplicates
-- **Contact not on WhatsApp:** Note it for the owner's review
-- **Rate limits:** Respects platform rate limits via send_message tool
-
----
-
-## 5. VERIFICATION CHECKLIST
-
-- [ ] `colony_list_initiatives` tool returns initiatives
-- [ ] `/colony autonomy enable` creates cron job in `jobs.json`
-- [ ] `/colony autonomy status` shows correct state
-- [ ] `/colony autonomy disable` pauses/removes job
-- [ ] Cron job runs every 15m, stays silent when idle
-- [ ] When initiatives exist, agent drafts messages or takes action
-- [ ] Install script prompts for autonomy enablement
-- [ ] Wizard path works end-to-end
+Install without `--force` to back up the existing plugin directory. Existing
+legacy poller scripts are copied to timestamped `.pre-governance.*` files before
+their paths are made inert. Reverting the Colony repository and restoring those
+backups is mechanically possible, but re-enabling direct legacy workers should
+be treated as a deliberate governance rollback.

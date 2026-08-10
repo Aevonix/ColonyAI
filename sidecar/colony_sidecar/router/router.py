@@ -25,11 +25,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+# Colony loads its own explicit configuration.  LiteLLM otherwise asks
+# python-dotenv to search parent directories during import, which can pull an
+# unrelated operator .env into embedded processes and test collection.
+os.environ.setdefault("PYTHON_DOTENV_DISABLED", "1")
 import litellm  # type: ignore[import]
 
 from colony_sidecar.router.complexity_scorer import ComplexityScorer
@@ -124,6 +129,10 @@ class LLMRouter:
             tools=tools,
             stream=stream,
             prompt=prompt,
+            max_output_tokens=(
+                int(ctx["max_output_tokens"])
+                if ctx.get("max_output_tokens") is not None else None
+            ),
         )
 
     def route(self, prompt: str, context: dict | None = None) -> tuple[ModelTier, str]:
@@ -204,6 +213,7 @@ class LLMRouter:
         tools: list[dict] | None,
         stream: bool,
         prompt: str,
+        max_output_tokens: int | None = None,
     ) -> LLMResponse:
         current_tier = tier
         last_exc: Exception | None = None
@@ -220,6 +230,7 @@ class LLMRouter:
                     messages=messages,
                     tools=tools,
                     stream=stream,
+                    max_output_tokens=max_output_tokens,
                 )
                 self._emit_cost_event(response)
                 return response
@@ -252,11 +263,15 @@ class LLMRouter:
         messages: list[dict],
         tools: list[dict] | None,
         stream: bool,
+        max_output_tokens: int | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": config.model_id,
             "messages": messages,
-            "max_tokens": config.max_tokens,
+            "max_tokens": (
+                min(config.max_tokens, max(1, max_output_tokens))
+                if max_output_tokens is not None else config.max_tokens
+            ),
         }
         if tools:
             kwargs["tools"] = tools

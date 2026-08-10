@@ -63,6 +63,41 @@ async def test_completed_job_writes_memory_and_closes_initiative():
 
 
 @pytest.mark.asyncio
+async def test_effect_completion_waits_for_attestation_before_side_effects():
+    graph = MagicMock()
+    graph.store_memory = AsyncMock(return_value="mem-pending")
+    store = MagicMock()
+    goals = MagicMock()
+    job = _job(
+        action="agent_deliver_message",
+        tags={
+            "operational_completion_only": "true",
+            "success_attested": "false",
+        },
+        output={
+            "summary": "worker claims it sent",
+            "goal_id": "g1",
+            "subtask_id": "s1",
+        },
+    )
+    job.payload.update({
+        "risk": "disclosure",
+        "entity_id": "commitment-1",
+    })
+    loop, _qm = _loop([job], graph=graph, goals=goals, store=store)
+
+    await loop._phase_job_writeback()
+
+    memory = graph.store_memory.await_args.kwargs
+    assert "verification pending" in memory["content"]
+    assert memory["metadata"]["verification_pending"] is True
+    goals.on_job_completed.assert_not_called()
+    store.complete.assert_not_called()
+    store.update.assert_not_called()
+    loop._registry.commitment_store.update.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_failed_job_records_failure():
     graph = MagicMock()
     graph.store_memory = AsyncMock(return_value="mem-2")
@@ -191,15 +226,20 @@ async def test_writeback_phase_is_idempotent_across_runs(tmp_path):
 
         # Drive it to COMPLETED through the real claim → complete path.
         now = datetime.now(timezone.utc)
-        caps = WorkerCapabilities(node_id="w1", capabilities=set(), capacity={},
+        caps = WorkerCapabilities(node_id="w1",
+                                  capabilities={"agent_sync:v1"}, capacity={},
                                   max_concurrent=5, job_types=set(),
                                   available=True, load=0.0,
                                   registered_at=now, last_seen=now)
         await mgr.queue.register_worker(caps)
         claimed = await mgr.queue.claim_job("w1", caps)
         assert claimed is not None and claimed.job_id == job_id
+        assert await mgr.queue.start_job(
+            job_id, "w1", claimed.claim_attempt_id,
+        )
         await mgr.queue.complete_job(job_id=job_id, worker_id="w1",
-                                     output={"summary": "green"})
+                                     output={"summary": "green"},
+                                     claim_attempt_id=claimed.claim_attempt_id)
 
         registry = MagicMock()
         registry.task_queue = mgr  # _phase_job_writeback reads `.queue` off this

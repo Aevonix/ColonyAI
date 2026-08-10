@@ -5,6 +5,14 @@ Commitments are created by the cognition substrate (automatic extraction),
 the autonomy loop, or manual API calls.
 """
 
-from colony_sidecar.commitments.store import CommitmentStore
+from colony_sidecar.commitments.store import (
+    CommitmentResolutionSchemaError,
+    CommitmentStore,
+    RESOLUTION_RECOVERY_CAPABILITY,
+)
 
-__all__ = ["CommitmentStore"]
+__all__ = [
+    "CommitmentResolutionSchemaError",
+    "CommitmentStore",
+    "RESOLUTION_RECOVERY_CAPABILITY",
+]

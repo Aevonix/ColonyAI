@@ -1,56 +1,28 @@
 #!/usr/bin/env python3
-"""Back-compat wrapper (v0.20.0) — logic lives in the installed package.
+"""Inert compatibility target for the retired Hermes queue effect worker.
 
-The queue-worker logic moved to ``colony_sidecar.workers.queue_worker``
-so pip installs ship it as the ``colony-queue-worker`` console script
-(see sidecar/pyproject.toml [project.scripts]). This file remains so
-existing cron / hermes-cron entries that invoke it by path keep working.
-
-Resolution order:
-  1. import colony_sidecar (installed in this interpreter's environment)
-  2. sys.path fallback to the repo-relative ``sidecar/`` tree, for the
-     common case where this script still runs from a ColonyAI checkout
-     without the package installed
-
-If both fail (e.g. this file was copied standalone to ~/.hermes/scripts/
-on a machine without the package), install it: ``pip install colonyai``
-— the worker module is stdlib-only, so no heavy deps are pulled at run
-time. The pre-v0.20 standalone logic is preserved in git history
-(tag/branch v0.19) if you truly need a single-file copy.
-
-Same env vars and behavior as before: COLONY_URL, COLONY_API_KEY,
-COLONY_JOBS_WEBHOOK_URL, COLONY_WORKER_NODE_ID / COLONY_AGENT_NAME,
-COLONY_WORKER_MAX_JOBS.
+The former wrapper could claim and close lifecycle work outside the action
+mediator.  Keeping an inert file at the legacy path makes surviving scheduled
+entries harmless while operators remove them.
 """
 
+from __future__ import annotations
+
 import sys
-from pathlib import Path
 
 
-def _resolve_main():
-    try:
-        from colony_sidecar.workers.queue_worker import main
-        return main
-    except ImportError:
-        # Repo-relative fallback: this file lives at
-        # <repo>/plugins/hermes-plugin/poller/, the package at <repo>/sidecar/.
-        sidecar = Path(__file__).resolve().parents[3] / "sidecar"
-        if sidecar.is_dir():
-            sys.path.insert(0, str(sidecar))
-            try:
-                from colony_sidecar.workers.queue_worker import main
-                return main
-            except ImportError:
-                pass
-        sys.stderr.write(
-            "colony-queue-worker: colony_sidecar is not importable from this "
-            "interpreter and no repo-relative sidecar/ tree was found.\n"
-            "Install the package (pip install colonyai) and either re-run this "
-            "script or switch your cron entry to the `colony-queue-worker` "
-            "console command.\n"
-        )
-        raise
+LEGACY_EFFECT_WORKER_DISABLED = True
+_EXIT_DISABLED = 78
+
+
+def main() -> int:
+    print(
+        "colony-queue-worker: disabled; remove the legacy scheduled entry and "
+        "use the governed action plane",
+        file=sys.stderr,
+    )
+    return _EXIT_DISABLED
 
 
 if __name__ == "__main__":
-    raise SystemExit(_resolve_main()())
+    raise SystemExit(main())

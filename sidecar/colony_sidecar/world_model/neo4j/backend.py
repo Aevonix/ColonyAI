@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..constants import (
+    CAUSAL_RELATIONSHIP_TYPES,
     ENTITY_ID_PREFIX,
     RELATIONSHIP_ID_PREFIX,
     OBSERVATION_ID_PREFIX,
@@ -28,6 +29,10 @@ from ..entities import BaseEntity, ENTITY_CLASS_MAP, entity_from_dict
 from ..relationships import WorldRelationship
 
 logger = logging.getLogger(__name__)
+
+# Query-only causal guard (H2.5): untyped (generic) reads NEVER return
+# causal edges; only /world/causal/* and explicitly typed queries do.
+_CAUSAL_EXCLUSION = sorted(CAUSAL_RELATIONSHIP_TYPES)
 
 
 def _generate_id(prefix: str) -> str:
@@ -339,6 +344,10 @@ class Neo4jBackend:
         if target_types:
             where_parts.append("t.entity_type IN $tgt_types")
             params["tgt_types"] = target_types
+        if not relationship_type:
+            # Untyped read: causal edges are query-only, exclude them.
+            where_parts.append("NOT type(r) IN $causal_excl")
+            params["causal_excl"] = _CAUSAL_EXCLUSION
 
         match_clause = clauses[0] if not relationship_type else \
             clauses[0].replace("-[r]->", f"-[r:{_sanitize_rel_type(relationship_type)}]->")
@@ -367,6 +376,10 @@ class Neo4jBackend:
             "(r.valid_to IS NULL OR r.valid_to > $as_of)",
         ]
         params = {"id": entity_id, "as_of": as_of}
+        if not relationship_types:
+            # Untyped read: causal edges are query-only, exclude them.
+            clauses.append("NOT type(r) IN $causal_excl")
+            params["causal_excl"] = _CAUSAL_EXCLUSION
 
         rel_match = "-[r]->" if not relationship_types else \
             "-[r:" + "|".join(_sanitize_rel_type(t) for t in relationship_types) + "]->"
@@ -393,21 +406,26 @@ class Neo4jBackend:
         relationship_types: Optional[List[str]] = None,
     ) -> List[Tuple[BaseEntity, WorldRelationship]]:
         # Bidirectional: both outgoing and incoming relationships
+        causal_where = ""
         if not relationship_types:
             rel_type_filter = ""
+            # Untyped read: causal edges are query-only, exclude them.
+            causal_where = " AND NOT type(r) IN $causal_excl"
         else:
             rel_type_filter = ":" + "|".join(_sanitize_rel_type(t) for t in relationship_types)
 
         # Outgoing: (center)-[r]->(other)
         cypher_out = (
             f"MATCH (s:Entity {{id: $id}})-[r{rel_type_filter}]->(t:Entity) "
-            "WHERE r.confidence >= $min_conf RETURN s.id AS source_id, t.id AS target_id, "
+            f"WHERE r.confidence >= $min_conf{causal_where} "
+            "RETURN s.id AS source_id, t.id AS target_id, "
             "type(r) AS rel_type, properties(r) AS rel_props, t"
         )
         # Incoming: (other)-[r]->(center)
         cypher_in = (
             f"MATCH (t:Entity)-[r{rel_type_filter}]->(s:Entity {{id: $id}}) "
-            "WHERE r.confidence >= $min_conf RETURN t.id AS source_id, s.id AS target_id, "
+            f"WHERE r.confidence >= $min_conf{causal_where} "
+            "RETURN t.id AS source_id, s.id AS target_id, "
             "type(r) AS rel_type, properties(r) AS rel_props, t"
         )
 
@@ -415,7 +433,8 @@ class Neo4jBackend:
         seen_ids = set()
         async with self._driver.session(database=self._database) as session:
             for cypher in [cypher_out, cypher_in]:
-                result = await session.run(cypher, id=entity_id, min_conf=min_confidence)
+                result = await session.run(cypher, id=entity_id, min_conf=min_confidence,
+                                           causal_excl=_CAUSAL_EXCLUSION)
                 records = await result.data()
                 for rec in records:
                     nid = rec["target_id"] if rec["source_id"] == entity_id else rec["source_id"]

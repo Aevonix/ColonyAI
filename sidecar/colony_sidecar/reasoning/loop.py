@@ -31,7 +31,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from colony_sidecar.reasoning.executor import ToolExecutor
+from colony_sidecar.reasoning.executor import ToolExecutor, ToolRegistryError
+from colony_sidecar.reasoning.tool_policy import ToolActorPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ class ReasoningLoop:
         model_override: str | None = None,
         system_prompt: str | None = None,
         context: dict[str, Any] | None = None,
+        actor_policy: ToolActorPolicy | None = None,
     ) -> ReasoningResult:
         """Run a single reasoning turn with tool iteration.
 
@@ -140,7 +142,22 @@ class ReasoningLoop:
         working.extend(_messages_to_dicts(messages))
 
         # Build tool definitions for the LLM call
-        tool_defs = self._tools.get_definitions(available_tools)
+        try:
+            tool_defs = self._tools.get_definitions(available_tools)
+        except ToolRegistryError as exc:
+            logger.error(
+                "%s tool registry failed closed: %s: %s",
+                log_prefix,
+                exc.code,
+                exc,
+            )
+            return ReasoningResult(
+                status="error",
+                error=f"{exc.code}: {exc}",
+            )
+        allowed_tool_names = (
+            None if available_tools is None else frozenset(available_tools)
+        )
 
         iterations = 0
         last_usage: dict[str, Any] = {}
@@ -223,6 +240,8 @@ class ReasoningLoop:
                 tool_results = await self._tools.execute_batch(
                     tool_calls_raw,
                     session_id=session_id,
+                    allowed_tools=allowed_tool_names,
+                    actor_policy=actor_policy,
                 )
             except Exception as exc:
                 logger.error("%s tool execution failed: %s", log_prefix, exc)

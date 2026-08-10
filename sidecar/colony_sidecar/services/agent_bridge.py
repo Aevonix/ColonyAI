@@ -43,6 +43,13 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from colony_sidecar.task_queue.models import JobType, WorkerCapabilities
+from colony_sidecar.workers.queue_worker import (
+    agent_action_capabilities,
+    encode_hermes_webhook,
+    work_order_webhook_fields,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,10 +177,6 @@ class AgentBridgeService:
                 self._seen_ids.add(iid)
                 continue
 
-            self._seen_ids.add(iid)
-            if dedup_key:
-                self._seen_dedup.add(dedup_key)
-
             payload = {
                 "type": "initiative",
                 "payload": {
@@ -193,6 +196,9 @@ class AgentBridgeService:
 
             ok = await self._post_webhook(self._webhook, payload)
             if ok:
+                self._seen_ids.add(iid)
+                if dedup_key:
+                    self._seen_dedup.add(dedup_key)
                 self._stats["initiatives_forwarded"] += 1
                 logger.info(
                     "Forwarded initiative %s (%s)",
@@ -206,16 +212,37 @@ class AgentBridgeService:
     # ------------------------------------------------------------------
 
     async def _dispatch_jobs(self) -> None:
+        if os.environ.get(
+            "COLONY_AGENT_JOB_CLAIMS_ENABLED", "true"
+        ).strip().lower() not in {"1", "true", "yes", "on"}:
+            return
         if self._queue is None:
             return
 
         try:
-            loop = asyncio.get_event_loop()
-            job = await loop.run_in_executor(
-                None,
-                lambda: self._queue.claim(
-                    node_id=self._node_id, job_types=["agent_action"]
-                ) if hasattr(self._queue, "claim") else None,
+            capabilities = set(agent_action_capabilities())
+        except ValueError as exc:
+            logger.error("Agent bridge worker routes are invalid: %s", exc)
+            return
+
+        queue = getattr(self._queue, "queue", self._queue)
+        if not all(
+            hasattr(queue, method)
+            for method in ("claim_job", "start_job", "release_job")
+        ):
+            logger.warning(
+                "Agent bridge task queue lacks governed async lifecycle"
+            )
+            return
+        try:
+            job = await queue.claim_job(
+                self._node_id,
+                WorkerCapabilities(
+                    node_id=self._node_id,
+                    capabilities=capabilities,
+                    max_concurrent=1,
+                    job_types={JobType.AGENT_ACTION},
+                ),
             )
         except Exception as exc:
             logger.debug("Job claim failed: %s", exc)
@@ -224,8 +251,31 @@ class AgentBridgeService:
         if not job:
             return
 
-        job_id = job.get("job_id") or job.get("id", "")
-        params = job.get("payload") or job.get("params") or {}
+        job_id = str(getattr(job, "job_id", "") or "")
+        claim_attempt_id = getattr(job, "claim_attempt_id", None)
+        params = getattr(job, "payload", {}) or {}
+        if not job_id or not claim_attempt_id:
+            logger.warning("Agent bridge received an invalid governed claim")
+            return
+        try:
+            started = await queue.start_job(
+                job_id,
+                self._node_id,
+                claim_attempt_id=claim_attempt_id,
+            )
+        except Exception as exc:
+            logger.warning("Agent bridge job start failed for %s: %s", job_id, exc)
+            started = False
+        if not started:
+            try:
+                await queue.release_job(
+                    job_id,
+                    self._node_id,
+                    claim_attempt_id=claim_attempt_id,
+                )
+            except Exception:
+                pass
+            return
 
         colony_url = os.environ.get("COLONY_URL", "http://127.0.0.1:7777")
         payload = {
@@ -233,6 +283,7 @@ class AgentBridgeService:
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "job_id": job_id,
+                "claim_attempt_id": claim_attempt_id,
                 "action_hint": params.get("action_hint", ""),
                 "domain": params.get("domain", ""),
                 "risk": params.get("risk", ""),
@@ -240,9 +291,11 @@ class AgentBridgeService:
                 "context": params.get("context", {}),
                 "colony_url": colony_url,
                 "observations_url": f"{colony_url}/v1/host/observations",
+                "heartbeat_url": f"{colony_url}/v1/host/queue/jobs/{job_id}/heartbeat",
                 "complete_url": f"{colony_url}/v1/host/queue/jobs/{job_id}/complete",
                 "fail_url": f"{colony_url}/v1/host/queue/jobs/{job_id}/fail",
                 "api_key_header": "X-API-Key",
+                **work_order_webhook_fields(params),
             },
         }
 
@@ -250,6 +303,19 @@ class AgentBridgeService:
         if ok:
             self._stats["jobs_dispatched"] += 1
             logger.info("Dispatched job %s (%s)", job_id, params.get("action_hint", "?"))
+        else:
+            try:
+                await queue.release_job(
+                    job_id,
+                    self._node_id,
+                    claim_attempt_id=claim_attempt_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Agent bridge could not release failed dispatch %s",
+                    job_id,
+                    exc_info=True,
+                )
 
     # ------------------------------------------------------------------
     # Circuit health monitoring
@@ -338,10 +404,11 @@ class AgentBridgeService:
         loop = asyncio.get_event_loop()
         try:
             def _do_post():
+                body, headers = encode_hermes_webhook(payload)
                 req = urllib.request.Request(
                     url,
-                    data=json.dumps(payload, default=str).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    data=body,
+                    headers=headers,
                     method="POST",
                 )
                 urllib.request.urlopen(req, timeout=10)

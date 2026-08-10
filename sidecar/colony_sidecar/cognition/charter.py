@@ -40,7 +40,7 @@ from __future__ import annotations
 import os
 from typing import Dict, Iterable, List, Optional
 
-PROMPT_VERSION = "1.1.0"
+PROMPT_VERSION = "1.2.1"
 
 # --------------------------------------------------------------------------
 # The shared charter: identity + agency doctrine.
@@ -89,6 +89,40 @@ empty form rather than inventing content.\
 """
 
 ROLE_BLOCKS: Dict[str, Dict[str, str]] = {
+    "thought_job": {
+        "mission": (
+            "Examine one durable, scoped concern and return one bounded "
+            "judgment. You propose; policy code decides whether anything "
+            "becomes work."
+        ),
+        "rules": (
+            "- Use only the supplied concern and source references; never "
+            "invent a source or imply you performed an action.\n"
+            "- Choose exactly one of {allowed}. A GoalProposal is a proposed "
+            "objective, not permission to execute it.\n"
+            "- Never request that the concern or its upstream source be "
+            "resolved. Only a receipt-backed project outcome or a validated "
+            "NoAction record can settle the cognitive concern.\n"
+            "- Evidence references must be copied exactly from the supplied "
+            "source list. Required capabilities must be exact, with no "
+            "wildcards.\n"
+            "- NoAction requires a reviewable reason and evidence; uncertainty "
+            "normally stays a Note rather than pretending the concern is done."
+        ),
+        "output": (
+            _SHARED_JSON_RULES
+            + " Schema: one semantic object with kind one of {allowed}, "
+            "evidence_refs [str], and confidence 0.0-1.0. The worker binds "
+            "schema, version, thought_job_id, and thought_job_digest; omit "
+            "those server-owned fields. All kind-specific fields are top-level, "
+            "never nested under the kind name. Kind fields: "
+            "Note {{note}}; MemoryWriteProposal {{content}}; GoalProposal "
+            "{{title, objective, rationale, required_capabilities:[str]}}; "
+            "ExperimentProposal {{hypothesis, metric, variant}}; NoAction "
+            "{{reason_code, reason}}, where reason_code is exactly one of "
+            "{no_action_reasons}. No extra fields."
+        ),
+    },
     "executor": {
         "mission": (
             "You execute one initiative: understand what it asks, use the "

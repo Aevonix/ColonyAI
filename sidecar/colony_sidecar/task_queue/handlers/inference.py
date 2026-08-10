@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import secrets
 import time
 import uuid as _uuid_mod
@@ -11,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from colony_sidecar.task_queue.handlers.base import JobHandler, Job
+from colony_sidecar.task_queue.models import JobType
 
 if TYPE_CHECKING:
     from colony_sidecar.router.router import LLMRouter
@@ -237,6 +240,56 @@ class InferenceHandler(JobHandler):
             logger.warning("Could not connect world model store", exc_info=True)
             self._wm = None
 
+    async def _execute_thought(self, job: Job) -> Dict[str, Any]:
+        """Execute exactly the digest-bound ThoughtJobV1 prompt contract."""
+
+        from colony_sidecar.cognition.goal_spine import (
+            ThoughtJobV1,
+            bind_thought_output,
+        )
+        from colony_sidecar.router.tiers import ModelTier
+
+        thought = ThoughtJobV1.from_payload(job.payload)
+        if job.job_id != thought.thought_job_id:
+            raise ValueError("thought queue job ID does not match authority digest")
+        messages = [
+            {"role": "system", "content": thought.system_prompt},
+            {"role": "user", "content": thought.prompt},
+        ]
+        response = await self._router.complete(
+            messages,
+            force_tier=ModelTier.SMALL,
+            context={
+                "task": "thought_job",
+                "max_output_tokens": thought.max_output_tokens,
+            },
+        )
+        usage = response.usage or {}
+        tokens_used = int(usage.get("total_tokens", 0) or 0)
+        completion_tokens = int(
+            usage.get("completion_tokens", 0) or 0
+        )
+        if completion_tokens > thought.max_output_tokens:
+            raise ValueError("thought output exceeded its token budget")
+        bound_output = bind_thought_output(response.content, thought)
+        canonical_output = json.dumps(
+            bound_output.payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        return {
+            "status": "completed",
+            "summary": canonical_output,
+            "action_plane": {"state": "completed"},
+            "result": canonical_output,
+            "thought_output": canonical_output,
+            "tokens_used": tokens_used,
+            "completion_tokens": completion_tokens,
+            "model": response.model_id,
+        }
+
     async def _gate_context(
         self,
         messages: list[dict],
@@ -325,6 +378,26 @@ class InferenceHandler(JobHandler):
 
     async def execute(self, job: Job) -> Dict[str, Any]:
         payload = job.payload
+        if (
+            job.job_type is JobType.THOUGHT
+            or payload.get("schema") == "ThoughtJobV1"
+        ):
+            if job.job_type is not JobType.THOUGHT:
+                raise ValueError("ThoughtJobV1 requires the thought job type")
+            return await self._execute_thought(job)
+        cognition_read_only = payload.get("cognition_read_only") is True
+        read_capabilities = set(payload.get("allowed_read_capabilities") or ())
+        if cognition_read_only:
+            invalid = [
+                capability for capability in read_capabilities
+                if capability not in {
+                    "concerns:read", "directives:read", "memory:read",
+                    "projects:read", "reasoning", "situation:read",
+                    "web:read", "world_model:read",
+                }
+            ]
+            if invalid:
+                raise ValueError("read-only cognition job contains invalid capabilities")
         model_tier = payload.get("model_tier")
         contact_id: Optional[str] = payload.get("contact_id")
         explicit_system = payload.get("system_prompt")
@@ -349,11 +422,12 @@ class InferenceHandler(JobHandler):
             messages_in = None
 
         # ── Ensure world model is connected ────────────────────────────────
-        await self._ensure_wm_connected()
+        if not cognition_read_only or "world_model:read" in read_capabilities:
+            await self._ensure_wm_connected()
 
         # ── Contact lookup ─────────────────────────────────────────────────
         contact: Optional["Contact"] = None
-        if contact_id and self._cs:
+        if contact_id and self._cs and not cognition_read_only:
             try:
                 contact = await self._cs.get(contact_id)
             except Exception:
@@ -364,7 +438,9 @@ class InferenceHandler(JobHandler):
         # individually. Passing the full message as an FTS query fails because
         # stop words prevent name matching.
         wm_entities: List["BaseEntity"] = []
-        if self._wm and user_text:
+        if self._wm and user_text and (
+            not cognition_read_only or "world_model:read" in read_capabilities
+        ):
             try:
                 from colony_sidecar.world_model.extraction.conversation_extractor import (
                     ConversationExtractor,
@@ -405,8 +481,23 @@ class InferenceHandler(JobHandler):
         messages = await self._gate_context(messages, user_text, force_tier, payload)
 
         # ── LLM call ──────────────────────────────────────────────────────
-        response = await self._router.complete(messages, force_tier=force_tier)
+        router_context: Dict[str, Any] = {}
+        if cognition_read_only:
+            router_context = {
+                "task": "thought_job",
+                "max_output_tokens": int(payload.get("max_output_tokens") or 768),
+            }
+        response = await self._router.complete(
+            messages, force_tier=force_tier, context=router_context,
+        )
         tokens_used = response.usage.get("total_tokens", 0) if response.usage else 0
+        completion_tokens = (
+            response.usage.get("completion_tokens", 0) if response.usage else 0
+        )
+        if cognition_read_only and completion_tokens > int(
+            payload.get("max_output_tokens") or 768
+        ):
+            raise ValueError("thought output exceeded its token budget")
 
         # ── GAP-14: Log tier selection + feed RouterSelfLearner ────────────
         # Logging lets ops trace routing decisions; record_outcome lets the
@@ -420,31 +511,18 @@ class InferenceHandler(JobHandler):
             response.latency_ms,
             getattr(job, "job_id", "?"),
         )
-        try:
-            self._router.record_outcome(
-                request_id=response.request_id,
-                tier_used=response.tier_used,
-                quality_rating=1.0,  # No feedback yet; assume success
-                tokens_used=tokens_used,
-                latency_ms=response.latency_ms,
-                prompt=user_text,
-            )
-        except Exception:
-            logger.debug("RouterSelfLearner record_outcome failed", exc_info=True)
+        # Latency/tokens above are telemetry.  Do not self-award a perfect
+        # quality label merely because the model returned; RouterSelfLearner
+        # must wait for downstream or owner evidence.
 
-        # ── Fire-and-forget world model update ─────────────────────────────
-        # Retained until done: the loop only weak-refs a bare task, so an
-        # unreferenced one can be GC-cancelled and the update silently lost.
+        # Queue inference is an observation path.  It must not hide a world-
+        # model mutation behind a read-looking completion.  Entity ingestion
+        # remains owned by the explicit conversation/memory ingestion paths.
         job_id_str = str(getattr(job, "job_id", None) or getattr(job, "id", _uuid_mod.uuid4()))
-        if self._wm and user_text:
-            _t = asyncio.ensure_future(
-                _update_world_model_async(self._wm, user_text, response.content, job_id_str)
-            )
-            self._background_tasks.add(_t)
-            _t.add_done_callback(self._background_tasks.discard)
 
         # ── Response Gate evaluation ────────────────────────────────────────
-        if self._gate is not None and self._gate_sessions is not None:
+        if (not cognition_read_only
+                and self._gate is not None and self._gate_sessions is not None):
             from colony_sidecar.gate.models import GatePayload
             from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
 
@@ -481,6 +559,9 @@ class InferenceHandler(JobHandler):
                         job_id_str,
                     )
                     return {
+                        "status": "skipped",
+                        "summary": "response blocked by the configured response gate",
+                        "action_plane": {"state": "skipped"},
                         "result": f"[Response blocked by gate layer {gate_decision.blocking_layer}: {gate_decision.block_reason}]",
                         "tokens_used": tokens_used,
                         "model": response.model_id,
@@ -494,13 +575,54 @@ class InferenceHandler(JobHandler):
                 )
             except Exception:
                 logger.warning(
-                    "Gate evaluation failed; passing response through: turn_id=%s",
+                    "Gate evaluation failed; applying recipient fallback: turn_id=%s",
                     job_id_str,
                     exc_info=True,
                 )
+                owner_id = os.environ.get(
+                    "COLONY_OWNER_PERSON_ID",
+                    os.environ.get("COLONY_OWNER_CONTACT_ID", "owner"),
+                ).strip() or "owner"
+                if contact_id and contact_id not in {"internal", owner_id}:
+                    return {
+                        "status": "skipped",
+                        "summary": (
+                            "response held because the recipient gate was "
+                            "unavailable"
+                        ),
+                        "action_plane": {"state": "skipped"},
+                        "result": "[Response held for recipient review]",
+                        "tokens_used": tokens_used,
+                        "model": response.model_id,
+                        "gate_blocked": True,
+                        "gate_reason": "recipient_gate_unavailable",
+                    }
 
         return {
+            "status": "completed",
+            "summary": response.content,
+            "action_plane": {"state": "completed"},
             "result": response.content,
             "tokens_used": tokens_used,
+            "completion_tokens": completion_tokens,
             "model": response.model_id,
         }
+
+
+class ThoughtOnlyInferenceHandler(InferenceHandler):
+    """P3 handler that refuses every non-ThoughtJobV1 lane.
+
+    This is a deployment boundary, not merely a branch in the generic
+    inference handler. A worker carrying only this handler can advertise only
+    ``thought`` and cannot race general workers for other queue lanes.
+    """
+
+    thought_only = True
+    handler_contract = "thought_only:v1"
+
+    async def execute(self, job: Job) -> Dict[str, Any]:
+        if job.job_type is not JobType.THOUGHT:
+            raise ValueError("thought-only handler refuses non-thought job type")
+        if (job.payload or {}).get("schema") != "ThoughtJobV1":
+            raise ValueError("thought-only handler requires ThoughtJobV1")
+        return await self._execute_thought(job)

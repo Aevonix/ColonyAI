@@ -24,6 +24,11 @@ class FakeRouter:
         return SimpleNamespace(content=self.content)
 
 
+class FailingDirectiveManager:
+    def check(self, _action):
+        raise RuntimeError("directive store unavailable")
+
+
 def _plan_json():
     return json.dumps([
         {"ordinal": 1, "description": "Gather existing notes on the topic",
@@ -120,7 +125,7 @@ def test_due_for_review_filters():
 
 
 # ---------------------------------------------------------------------------
-# Engine behavior (shadow mode = calibration)
+# Engine behavior (shadow mode = truthful no-effect simulation)
 # ---------------------------------------------------------------------------
 
 def _engine(monkeypatch, router=None, dm=None, deliver=None,
@@ -153,7 +158,7 @@ async def test_shadow_plans_and_simulates_full_sequence(monkeypatch):
     await engine.tick()          # plans (planning -> active) + first step
     steps = engine.store.steps_for(project.id)
     assert len(steps) == 3
-    assert steps[0].status == "done" and steps[0].result.startswith("SHADOW")
+    assert steps[0].status == "skipped" and "SHADOW" in steps[0].result
 
     # advance the remaining steps (review timer respected via monkeypatched 0)
     monkeypatch.setenv("COLONY_PROJECTS_REVIEW_SECS", "30")
@@ -164,11 +169,12 @@ async def test_shadow_plans_and_simulates_full_sequence(monkeypatch):
         await engine.tick()
         p = engine.store.get_project(project.id)
     assert p.status == "completed"
+    assert p.reason == "all_steps_skipped"
 
     # milestone proposal stored in SHADOW, delivery router NEVER called
     assert sent == []
     stored = proposals.list()
-    assert any("Project completed" in x.title for x in stored)
+    assert any("Project skipped" in x.title for x in stored)
     assert all(x.status == "shadow" for x in stored)
 
 
@@ -183,8 +189,50 @@ async def test_dependency_ordering_selects_ready_step(monkeypatch):
                                 action_kind="analyze", depends_on=[1]))
     await engine.tick()
     steps = {s.ordinal: s for s in engine.store.steps_for(p.id)}
-    assert steps[1].status == "done"       # step 1 ran first
+    assert steps[1].status == "skipped"    # step 1 was simulated first
     assert steps[2].status == "pending"    # step 2 waited for its dep
+
+
+@pytest.mark.asyncio
+async def test_skipped_work_order_never_records_competence_success(monkeypatch):
+    class SkipAdapter:
+        async def execute(self, project, step, *, context_refs=()):
+            return True, "SKIPPED: owner denied this exact action"
+
+    class RecordingSelfModel:
+        def __init__(self):
+            self.outcomes = []
+
+        def load(self):
+            return {"total": 0}
+
+        def brief(self):
+            return ""
+
+        def record(self, domain, outcome, **kwargs):
+            self.outcomes.append((domain, outcome, kwargs))
+
+    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    store = ProjectStore()
+    model = RecordingSelfModel()
+    engine = ProjectEngine(store, work_order_adapter=SkipAdapter(), self_model=model)
+    project = Project(title="optional", objective="try an optional action", status="active")
+    store.save_project(project)
+    store.save_step(Step(
+        project_id=project.id,
+        ordinal=1,
+        description="perform optional action",
+        action_kind="directed",
+    ))
+
+    await engine.tick()
+
+    step = store.steps_for(project.id)[0]
+    finished = store.get_project(project.id)
+    assert step.status == "skipped"
+    assert finished.status == "completed"
+    assert finished.reason == "all_steps_skipped"
+    assert model.outcomes == []
 
 
 @pytest.mark.asyncio
@@ -207,6 +255,131 @@ async def test_boundary_blocked_step_blocks_project(monkeypatch):
     assert any("blocked" in x.title for x in proposals.list())
 
 
+@pytest.mark.asyncio
+async def test_owner_goal_negated_boundary_constraint_does_not_self_block(
+    monkeypatch,
+):
+    from colony_sidecar.directives import Directive, Polarity
+    from colony_sidecar.directives.models import Level
+
+    class RecordingAdapter:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, project, step, *, context_refs=()):
+            self.calls.append((project.id, step.id, tuple(context_refs)))
+            return True, "internal analysis complete"
+
+    directives = DirectiveStore()
+    directives.add(Directive(
+        subject="contact anyone or change external systems",
+        polarity=Polarity.PROHIBIT,
+        raw_text=(
+            "Goal: verify Colony cognition is live with a read-only internal "
+            "plan; do not contact anyone or change external systems"
+        ),
+        # Reproduce the already-persisted live row.  New extraction is tested
+        # separately and no longer misclassifies ``read-only`` as a blackout.
+        level=Level.OBSERVE,
+    ))
+    dm = DirectiveManager(directives)
+    objective = (
+        "verify Colony cognition is live with a read-only internal plan; "
+        "do not contact anyone or change external systems"
+    )
+    adapter = RecordingAdapter()
+    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    store = ProjectStore()
+    engine = ProjectEngine(
+        store,
+        directive_manager=dm,
+        work_order_adapter=adapter,
+    )
+    project = Project(
+        title=objective,
+        objective=objective,
+        source="owner",
+        status="active",
+        subject_person_id="person-owner",
+    )
+    engine.store.save_project(project)
+    engine.store.save_step(Step(
+        project_id=project.id,
+        ordinal=1,
+        description=(
+            "Analyze and advance the owner-authored goal, returning a "
+            f"receipt-backed result: {objective}"
+        ),
+        action_kind="analyze",
+        boundary_subject="person-owner",
+    ))
+
+    await engine.tick()
+
+    stored = engine.store.get_project(project.id)
+    step = engine.store.steps_for(project.id)[0]
+    assert stored.status != "blocked"
+    assert step.status == "done"
+    assert len(adapter.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_owner_goal_affirmative_boundary_still_blocks(monkeypatch):
+    dm = DirectiveManager(DirectiveStore())
+    dm.add_explicit(
+        "contact anyone or change external systems",
+        polarity="prohibit",
+    )
+    engine = _engine(monkeypatch, dm=dm)
+    project = Project(
+        title="contact anyone",
+        objective="contact anyone and change external systems",
+        source="owner",
+        status="active",
+    )
+    engine.store.save_project(project)
+    engine.store.save_step(Step(
+        project_id=project.id,
+        ordinal=1,
+        description="contact anyone and change external systems",
+        action_kind="analyze",
+    ))
+
+    await engine.tick()
+
+    assert engine.store.get_project(project.id).status == "blocked"
+    assert engine.store.steps_for(project.id)[0].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_owner_goal_double_negation_remains_fail_closed(monkeypatch):
+    dm = DirectiveManager(DirectiveStore())
+    dm.add_explicit(
+        "contact anyone or change external systems",
+        polarity="prohibit",
+    )
+    engine = _engine(monkeypatch, dm=dm)
+    objective = "do not avoid contacting anyone or changing external systems"
+    project = Project(
+        title=objective,
+        objective=objective,
+        source="owner",
+        status="active",
+    )
+    engine.store.save_project(project)
+    engine.store.save_step(Step(
+        project_id=project.id,
+        ordinal=1,
+        description=objective,
+        action_kind="analyze",
+    ))
+
+    await engine.tick()
+
+    assert engine.store.get_project(project.id).status == "blocked"
+    assert engine.store.steps_for(project.id)[0].status == "pending"
+
+
 def test_create_project_refused_by_boundary(monkeypatch):
     dm = DirectiveManager(DirectiveStore())
     dm.add_explicit("the acme migration", polarity="prohibit",
@@ -214,6 +387,63 @@ def test_create_project_refused_by_boundary(monkeypatch):
     engine = _engine(monkeypatch, dm=dm)
     project, reason = engine.create_project("plan the acme migration rollout")
     assert project is None and "boundary" in reason
+
+
+def test_create_project_boundary_outage_fails_closed(monkeypatch):
+    engine = _engine(monkeypatch, dm=FailingDirectiveManager())
+
+    project, reason = engine.create_project("prepare a routine project")
+
+    assert project is None
+    assert reason == "boundary_check_failed_closed"
+    assert engine.store.list_projects() == []
+
+
+@pytest.mark.asyncio
+async def test_step_boundary_outage_blocks_without_dispatch(monkeypatch):
+    class RecordingAdapter:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, project, step, *, context_refs=()):
+            self.calls.append((project.id, step.id))
+            return True, "should not execute"
+
+    adapter = RecordingAdapter()
+    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    store = ProjectStore()
+    engine = ProjectEngine(
+        store,
+        directive_manager=FailingDirectiveManager(),
+        work_order_adapter=adapter,
+    )
+    project = Project(
+        title="routine", objective="prepare a routine project", status="active",
+    )
+    store.save_project(project)
+    store.save_step(Step(
+        project_id=project.id,
+        ordinal=1,
+        description="inspect the current state",
+        action_kind="analyze",
+    ))
+
+    await engine.tick()
+
+    assert store.get_project(project.id).status == "blocked"
+    assert store.get_project(project.id).reason == "boundary_check_failed_closed"
+    assert store.steps_for(project.id)[0].status == "pending"
+    assert adapter.calls == []
+
+
+def test_project_tool_boundary_outage_filters_every_call(monkeypatch):
+    engine = _engine(monkeypatch, dm=FailingDirectiveManager())
+    calls = [
+        {"name": "memory_search", "arguments": {"query": "safe"}},
+        {"name": "write_file", "arguments": {"path": "/tmp/x"}},
+    ]
+
+    assert engine._boundary_filter_tools(calls) == []
 
 
 @pytest.mark.asyncio

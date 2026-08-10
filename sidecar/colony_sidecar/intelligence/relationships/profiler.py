@@ -22,6 +22,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ class RelationshipBrief:
     psyche_guidance: List[str] = field(default_factory=list)
     psyche_motivators: List[str] = field(default_factory=list)
     rapport_topics: List[str] = field(default_factory=list)
+    rapport_projection_digest: str = ""
     cautions: List[str] = field(default_factory=list)
     profiled_at: float = 0.0
     interactions_at_profile: int = 0
@@ -103,12 +105,14 @@ class RelationshipProfiler:
     def __init__(self, *, contacts_store: Any, comms_log: Any = None,
                  affect_store: Any = None, facts_store: Any = None,
                  engagement_store: Any = None,
+                 p8_runtime: Any = None,
                  db_path: Optional[str] = None) -> None:
         self._contacts = contacts_store
         self._comms = comms_log
         self._affect = affect_store
         self._facts = facts_store
         self._engagement = engagement_store
+        self._p8 = p8_runtime
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(db_path) if db_path else ":memory:",
                                      check_same_thread=False)
@@ -124,7 +128,12 @@ class RelationshipProfiler:
             self._conn.commit()
 
     # -- cache --------------------------------------------------------------
-    def cached(self, contact_id: str) -> Optional[RelationshipBrief]:
+    def cached(
+        self,
+        contact_id: str,
+        *,
+        viewer: Any = None,
+    ) -> Optional[RelationshipBrief]:
         with self._lock:
             row = self._conn.execute(
                 "SELECT brief_json FROM relationship_briefs WHERE contact_id=?",
@@ -132,11 +141,32 @@ class RelationshipProfiler:
         if row is None:
             return None
         try:
-            return RelationshipBrief(**json.loads(row["brief_json"]))
+            brief = RelationshipBrief(**json.loads(row["brief_json"]))
+            # Rapport topics are content-derived. Cached/autonomy reads carry
+            # no authority and therefore stay contentless. A request boundary
+            # may supply its server-sealed viewer; re-project on every such read
+            # to honor deletion, expiry, update, scope, and confidence changes.
+            if self._p8 is not None:
+                topics, digest = [], ""
+                if viewer is not None:
+                    try:
+                        topics, digest = self._projected_rapport(
+                            brief.contact_id, viewer=viewer)
+                    except Exception:
+                        pass
+                brief.rapport_topics = topics
+                brief.rapport_projection_digest = digest
+            return brief
         except Exception:
             return None
 
     def _save(self, brief: RelationshipBrief) -> None:
+        payload = brief.to_dict()
+        if self._p8 is not None:
+            # The cache is an availability optimization, never an authority
+            # receipt. Persist only non-P8 profile fields.
+            payload["rapport_topics"] = []
+            payload["rapport_projection_digest"] = ""
         with self._lock:
             self._conn.execute(
                 """INSERT INTO relationship_briefs
@@ -146,7 +176,7 @@ class RelationshipProfiler:
                      brief_json=excluded.brief_json,
                      profiled_at=excluded.profiled_at,
                      interactions_at_profile=excluded.interactions_at_profile""",
-                (brief.contact_id, json.dumps(brief.to_dict()),
+                (brief.contact_id, json.dumps(payload),
                  brief.profiled_at, brief.interactions_at_profile))
             self._conn.commit()
 
@@ -157,8 +187,44 @@ class RelationshipProfiler:
                 "FROM relationship_briefs ORDER BY profiled_at DESC").fetchall()
         return [dict(r) for r in rows]
 
+    @staticmethod
+    def _rapport_topics(rows: Any) -> List[str]:
+        topics: Dict[str, int] = {}
+        for row in rows or []:
+            text = str((row or {}).get("fact", ""))
+            for word in text.split():
+                word = word.strip(".,!?;:\"'()").lower()
+                if len(word) >= 5 and word.isalpha():
+                    topics[word] = topics.get(word, 0) + 1
+        return [word for word, count in sorted(
+            topics.items(), key=lambda item: -item[1]
+        ) if count >= 2][:6]
+
+    def _projected_rapport(
+        self,
+        contact_id: str,
+        *,
+        viewer: Any,
+    ) -> tuple[List[str], str]:
+        if viewer is None:
+            return [], ""
+        projection = self._p8.project_shared_facts(
+            viewer,
+            now=datetime.now(timezone.utc),
+            subject_person_id=contact_id,
+            max_facts=50,
+            max_total_chars=24_000,
+        )
+        rows = ({"fact": fact.content} for fact in projection.facts)
+        return self._rapport_topics(rows), projection.audit_digest
+
     # -- profiling ------------------------------------------------------------
-    async def profile(self, contact_id: str) -> Optional[RelationshipBrief]:
+    async def profile(
+        self,
+        contact_id: str,
+        *,
+        viewer: Any = None,
+    ) -> Optional[RelationshipBrief]:
         """Compose a fresh brief for one contact (None for non-persons)."""
         if not contact_id or contact_id in _EXCLUDED_IDS:
             return None
@@ -214,20 +280,25 @@ class RelationshipProfiler:
             except Exception:
                 pass
 
-        # Rapport topics from shared facts.
-        if self._facts is not None:
+        # Rapport topics from shared facts. Once P8 is attached, raw rows are
+        # never a fallback and autonomy has no implicit recipient authority.
+        # Only a caller-supplied, server-sealed viewer may project content.
+        if self._p8 is not None or self._facts is not None:
             try:
-                facts = self._facts.list_facts(contact_id=contact_id, limit=50)
-                rows = facts.get("facts", facts) if isinstance(facts, dict) else facts
-                topics: Dict[str, int] = {}
-                for f in rows or []:
-                    text = str((f or {}).get("fact", ""))
-                    for w in text.split():
-                        w = w.strip(".,!?;:\"'()").lower()
-                        if len(w) >= 5 and w.isalpha():
-                            topics[w] = topics.get(w, 0) + 1
-                brief.rapport_topics = [w for w, n in sorted(
-                    topics.items(), key=lambda kv: -kv[1]) if n >= 2][:6]
+                if self._p8 is not None:
+                    if viewer is not None:
+                        topics, digest = self._projected_rapport(
+                            contact_id, viewer=viewer)
+                        brief.rapport_topics = topics
+                        brief.rapport_projection_digest = digest
+                else:
+                    facts = self._facts.list_facts(
+                        contact_id=contact_id, limit=50)
+                    rows = (
+                        facts.get("facts", facts)
+                        if isinstance(facts, dict) else facts
+                    )
+                    brief.rapport_topics = self._rapport_topics(rows)
             except Exception:
                 pass
 
@@ -249,12 +320,11 @@ class RelationshipProfiler:
         # Cadence caution: silent for much longer than their usual gap.
         try:
             if brief.interaction_count >= 5 and brief.last_interaction_at:
-                from datetime import datetime, timezone as _tz
                 last = datetime.fromisoformat(
                     brief.last_interaction_at.replace("Z", "+00:00"))
                 if last.tzinfo is None:
-                    last = last.replace(tzinfo=_tz.utc)
-                silent_days = (datetime.now(_tz.utc) - last).days
+                    last = last.replace(tzinfo=timezone.utc)
+                silent_days = (datetime.now(timezone.utc) - last).days
                 if silent_days >= 30:
                     brief.cautions.append(
                         f"no contact in {silent_days} days")

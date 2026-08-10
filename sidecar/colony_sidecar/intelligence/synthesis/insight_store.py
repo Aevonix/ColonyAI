@@ -7,11 +7,12 @@ user has dismissed so ``list_insights`` can filter them out.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Set
+from typing import Iterable, Iterator, Set
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,14 @@ class InsightStore:
                 """
             )
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._db_path)
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self._db_path)
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def dismiss(self, insight_id: str) -> None:
         """Mark the given insight as dismissed. Idempotent."""

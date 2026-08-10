@@ -6,11 +6,22 @@ for the Colony hardware-aware distributed job scheduler.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+
+CANONICAL_JOB_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,191}$"
+_CANONICAL_JOB_ID_RE = re.compile(CANONICAL_JOB_ID_PATTERN)
+
+
+def is_canonical_job_id(value: Any) -> bool:
+    """Return whether *value* is safe across queue/API/router runtimes."""
+
+    return isinstance(value, str) and bool(_CANONICAL_JOB_ID_RE.fullmatch(value))
 
 
 class JobPriority(int, Enum):
@@ -30,10 +41,11 @@ class JobStatus(str, Enum):
     CLAIMED = "claimed"         # Reserved by a worker, not yet started
     RUNNING = "running"         # Actively executing
     COMPLETED = "completed"     # Finished successfully
+    NEUTRAL = "neutral"         # Finished without verified success/failure
     FAILED = "failed"           # Finished with error, may be retried
     ABANDONED = "abandoned"     # Worker died; eligible for redistribution
     CANCELLED = "cancelled"     # Explicitly cancelled
-    BLOCKED = "blocked"         # Waiting on dependency jobs
+    BLOCKED = "blocked"         # Typed dependency/approval/boundary/governor hold
 
 
 class JobType(str, Enum):
@@ -46,6 +58,7 @@ class JobType(str, Enum):
     RESEARCH = "research"
     MONITORING = "monitoring"
     SYNTHESIS = "synthesis"
+    THOUGHT = "thought"          # bounded, read-only ThoughtJobV1 inference
     DESKTOP = "desktop"
     BROWSER = "browser"
     CUSTOM = "custom"
@@ -80,6 +93,7 @@ class JobResult:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     duration_seconds: Optional[float] = None
+    claim_attempt_id: Optional[str] = None
 
     @property
     def succeeded(self) -> bool:
@@ -112,6 +126,8 @@ class Job:
         status:         Current job lifecycle state.
         claimed_by:     node_id of the worker that has claimed this job.
         claimed_at:     Timestamp of the most recent claim.
+        claim_attempt_id: Server-minted identity of the current/last claim.
+        claim_expires_at: Latest time the claim may enter RUNNING.
         last_heartbeat: Timestamp of the worker's most recent heartbeat.
         result:         Final result (populated on completion or failure).
         tags:           Arbitrary key-value metadata for filtering.
@@ -132,6 +148,8 @@ class Job:
     status: JobStatus = JobStatus.QUEUED
     claimed_by: Optional[str] = None
     claimed_at: Optional[datetime] = None
+    claim_attempt_id: Optional[str] = None
+    claim_expires_at: Optional[datetime] = None
     last_heartbeat: Optional[datetime] = None
     result: Optional[JobResult] = None
     tags: Dict[str, str] = field(default_factory=dict)
@@ -139,6 +157,7 @@ class Job:
     def is_terminal(self) -> bool:
         return self.status in {
             JobStatus.COMPLETED,
+            JobStatus.NEUTRAL,
             JobStatus.FAILED,
             JobStatus.CANCELLED,
         }
@@ -248,8 +267,15 @@ class QueueStats:
 
     by_status: Dict[str, int] = field(default_factory=dict)
     by_type: Dict[str, int] = field(default_factory=dict)
+    # ``total_workers`` is retained as the compatibility spelling for every
+    # durable registry row. The additive fields separate registration from
+    # heartbeat truth without a data migration.
     total_workers: int = 0
     available_workers: int = 0
+    registered_workers: int = 0
+    active_workers: int = 0
+    stale_workers: int = 0
+    worker_heartbeat_ttl_secs: float = 60.0
 
 
 @dataclass
