@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.34.0
+## v0.34.0 — governed actions, cognition spine, fail-closed hardening
 
 **Preset-loop coupling — default flip + migration note**
 (`util.autonomy_preset`, `autonomy.config`): an active
