@@ -1431,6 +1431,25 @@ def _wire_controlled_learning_pipeline(
             experiments)
 
 
+def _scheduler_health_check(autonomy_loop) -> dict:
+    """Periodic health_check task body (module-level so it is testable).
+
+    Reports the actual wiring state instead of an unconditional
+    ``{"status": "ok"}``. No blanket try/except: an exception here must
+    surface as a scheduler failure receipt, never be swallowed into green.
+    """
+    import colony_sidecar.api.routers.host as _h
+    wired = 0
+    for _n in ("_commitment_store", "_goals_store", "_affect_store",
+               "_contacts_store", "_delivery_bridge", "_workspace",
+               "_metalearner"):
+        if getattr(_h, _n, None) is not None:
+            wired += 1
+    return {"status": "ok" if wired else "degraded",
+            "subsystems_wired": wired,
+            "autonomy_running": bool(getattr(autonomy_loop, "_running", False))}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize subsystems on startup, tear down on shutdown."""
@@ -3089,18 +3108,7 @@ async def lifespan(app: FastAPI):
         # the BriefingScheduler wired in section 13b — neither needs a task
         # here, so neither gets a fake one).
         def _run_health_check():
-            wired = 0
-            try:
-                import colony_sidecar.api.routers.host as _h
-                for _n in ("_commitment_store", "_goals_store", "_affect_store",
-                           "_contacts_store", "_delivery_bridge", "_workspace",
-                           "_metalearner"):
-                    if getattr(_h, _n, None) is not None:
-                        wired += 1
-            except Exception:
-                pass
-            return {"status": "ok", "subsystems_wired": wired,
-                    "autonomy_running": bool(getattr(autonomy_loop, "_running", False))}
+            return _scheduler_health_check(autonomy_loop)
 
         scheduler.register("health_check", _run_health_check, interval_seconds=300, metadata={"description": "Subsystem health check (reports wired count)"})
 
