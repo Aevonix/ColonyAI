@@ -169,6 +169,22 @@ def _http_get(url: str, api_key: str = "", timeout: float = 10.0) -> Tuple[int, 
         return exc.code, _maybe_json(raw)
 
 
+def _reported_error(name: str, body: Any) -> Optional[CheckResult]:
+    """WARN when a status body carries an ``error`` field.
+
+    Several status endpoints return ``{"available": true, "error": ...}``
+    when the subsystem crashed while reporting. Ignoring that field scored a
+    hard-crashing subsystem as healthy-but-idle; it is a degradation.
+    """
+    if isinstance(body, dict) and body.get("error"):
+        return CheckResult(
+            name, WARN,
+            detail=f"status endpoint reported an internal error: {body['error']}",
+            remedy="check the sidecar log for the traceback behind this error",
+        )
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Local checks (filesystem/env — no server needed)
 # ---------------------------------------------------------------------------
@@ -813,14 +829,22 @@ def run_local_checks() -> List[CheckResult]:
 # ---------------------------------------------------------------------------
 
 def check_server_auth(base_url: str, api_key: str, timeout: float) -> CheckResult:
-    """11. Auth round-trip: an authed endpoint must not 401."""
+    """11. Auth round-trip: only a genuine 2xx success may PASS."""
     status, _ = _http_get(f"{base_url}/v1/host/queue/stats", api_key, timeout)
-    if status == 401:
+    if status in (401, 403):
         return CheckResult(
             "server-auth", FAIL,
-            detail="API key rejected (401) by /v1/host/queue/stats",
+            detail=f"API key rejected ({status}) by /v1/host/queue/stats",
             remedy="set COLONY_API_KEY (CLI side) to the key in the sidecar's environment "
                    "(~/.colony/.env), or pass --api-key. " + PLIST_ENV_REMEDY,
+        )
+    if not 200 <= status < 300:
+        return CheckResult(
+            "server-auth", WARN,
+            detail=f"auth round-trip inconclusive — /v1/host/queue/stats "
+                   f"returned HTTP {status}, not a success",
+            remedy="check the sidecar log; an authenticated request to the "
+                   "queue stats endpoint should return 200",
         )
     note = "" if api_key else " (no API key configured — sidecar is in dev mode)"
     return CheckResult(
@@ -1316,6 +1340,9 @@ def check_server_self_model(base_url: str, api_key: str, timeout: float) -> Chec
             "server-self-model", WARN,
             detail="self-model not wired — no earned-autonomy gating, no action journal",
             remedy="unset COLONY_SELF_MODEL_ENABLED=false (it defaults on) and restart")
+    err = _reported_error("server-self-model", body)
+    if err:
+        return err
     domains = body.get("domains") or []
     trust = body.get("trust") or []
     demoted = [t["domain"] for t in trust if t.get("demotions", 0) > 0
@@ -1565,6 +1592,9 @@ def check_server_beliefs(base_url: str, api_key: str, timeout: float) -> CheckRe
         return CheckResult("server-beliefs", FAIL, detail=f"HTTP {status}: {body}")
     if not body.get("available"):
         return CheckResult("server-beliefs", SKIP, detail="belief engine not wired")
+    err = _reported_error("server-beliefs", body)
+    if err:
+        return err
     mode = body.get("mode", "?")
     open_conflicts = int(body.get("open_conflicts") or 0)
     review = int(body.get("review_conflicts") or 0)
@@ -1588,6 +1618,9 @@ def check_server_workers_governor(base_url: str, api_key: str, timeout: float) -
         return CheckResult("server-workers-governor", FAIL, detail=f"HTTP {status}: {body}")
     if not body.get("available"):
         return CheckResult("server-workers-governor", SKIP, detail="governor not wired")
+    err = _reported_error("server-workers-governor", body)
+    if err:
+        return err
     mode = body.get("mode", "?")
     domains = body.get("worker_domains") or []
     if mode == "off" and domains:
@@ -1611,6 +1644,9 @@ def check_server_sandbox(base_url: str, api_key: str, timeout: float) -> CheckRe
         return CheckResult("server-sandbox", FAIL, detail=f"HTTP {status}: {body}")
     if not body.get("available"):
         return CheckResult("server-sandbox", SKIP, detail="sandbox not wired")
+    err = _reported_error("server-sandbox", body)
+    if err:
+        return err
     mode = body.get("mode", "off")
     backend_ok = bool(body.get("backend_available"))
     if mode != "off" and not backend_ok:
@@ -1634,6 +1670,9 @@ def check_server_connectors(base_url: str, api_key: str, timeout: float) -> Chec
         return CheckResult("server-connectors", FAIL, detail=f"HTTP {status}: {body}")
     if not body.get("available"):
         return CheckResult("server-connectors", SKIP, detail="connector manager not wired")
+    err = _reported_error("server-connectors", body)
+    if err:
+        return err
     mode = body.get("mode", "off")
     connectors = body.get("connectors") or []
     if mode != "off" and not connectors:
@@ -1845,12 +1884,19 @@ def exit_code(results: List[CheckResult]) -> int:
     return 1 if any(r.status == FAIL for r in results) else 0
 
 
+def skip_dominated(results: List[CheckResult]) -> bool:
+    """True when more checks skipped than passed — the run verified almost
+    nothing, so it must not claim health."""
+    counts = summarize(results)
+    return counts[SKIP] > counts[PASS]
+
+
 def results_to_json(results: List[CheckResult]) -> dict:
     counts = summarize(results)
     return {
         "results": [r.to_dict() for r in results],
         "summary": counts,
-        "ok": exit_code(results) == 0,
+        "ok": exit_code(results) == 0 and not skip_dominated(results),
     }
 
 
@@ -1887,6 +1933,11 @@ def format_report(results: List[CheckResult], colony_url: str = "", color: bool 
     )
     if counts[FAIL]:
         verdict = f"  🔴 {counts[FAIL]} check(s) failing — fix the remedies above"
+    elif skip_dominated(results):
+        verdict = (
+            f"  ⚪ inconclusive — {counts[SKIP]} check(s) skipped, only "
+            f"{counts[PASS]} verified; not claiming health"
+        )
     elif counts[WARN]:
         verdict = f"  🟡 healthy with {counts[WARN]} warning(s)"
     else:

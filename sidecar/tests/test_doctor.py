@@ -527,6 +527,43 @@ def test_server_auth_401_fails(clean_env, monkeypatch):
     assert "COLONY_API_KEY" in result.remedy
 
 
+def test_server_auth_only_genuine_success_passes(clean_env, monkeypatch):
+    """A 403/404/500 from the auth round-trip must not PASS as
+    'authenticated request accepted'."""
+    responses = _happy_responses()
+    responses["/v1/host/queue/stats"] = (403, {"detail": "forbidden"})
+    monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
+    result = _by_name(run_server_checks(URL, "key"))["server-auth"]
+    assert result.status == FAIL
+    assert "403" in result.detail
+
+    responses["/v1/host/queue/stats"] = (500, {"detail": "exploded"})
+    monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
+    result = _by_name(run_server_checks(URL, "key"))["server-auth"]
+    assert result.status == WARN
+    assert "500" in result.detail
+
+
+@pytest.mark.parametrize("suffix,check_name", [
+    ("/v1/host/self", "server-self-model"),
+    ("/v1/host/beliefs", "server-beliefs"),
+    ("/v1/host/queue/governor", "server-workers-governor"),
+    ("/v1/host/sandbox/status", "server-sandbox"),
+    ("/v1/host/connectors/status", "server-connectors"),
+])
+def test_available_true_with_error_is_not_healthy(
+    clean_env, monkeypatch, suffix, check_name,
+):
+    """{"available": true, "error": ...} means the subsystem crashed while
+    reporting — the doctor must not score it as healthy-but-idle."""
+    responses = _happy_responses()
+    responses[suffix] = (200, {"available": True, "error": "subsystem crashed"})
+    monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
+    result = _by_name(run_server_checks(URL, "key"))[check_name]
+    assert result.status == WARN
+    assert "subsystem crashed" in result.detail
+
+
 def test_server_owner_unset_skips(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http(_happy_responses()))
     result = _by_name(run_server_checks(URL, "key"))["server-owner-contact"]
@@ -785,6 +822,21 @@ def test_format_report_includes_remedies_and_summary():
     assert "PASS" in report and "FAIL" in report
     assert "turn it off and on" in report
     assert "1 pass, 0 warn, 1 fail, 0 skip" in report
+
+
+def test_skip_dominated_run_is_not_healthy():
+    """A run where nearly everything SKIPped verified nothing — it must not
+    claim health, and the verdict must surface the skip count."""
+    results = [CheckResult("verified", PASS, "fine")] + [
+        CheckResult(f"skipped-{i}", SKIP, "endpoint absent") for i in range(10)
+    ]
+    payload = results_to_json(results)
+    assert payload["ok"] is False  # nothing failed, but nothing was verified
+
+    report = format_report(results, color=False)
+    assert "all checks healthy" not in report
+    assert "inconclusive" in report
+    assert "10" in report.split("\n")[-1]  # skip count surfaced in verdict
 
 
 def test_cmd_doctor_json_output_and_exit_code(clean_env, monkeypatch, capsys):
