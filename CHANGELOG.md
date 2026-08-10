@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.34.0
 
 **Preset-loop coupling — default flip + migration note**
 (`util.autonomy_preset`, `autonomy.config`): an active
