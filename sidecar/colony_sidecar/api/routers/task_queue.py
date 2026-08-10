@@ -1580,7 +1580,14 @@ async def create_job(body: JobPostRequest) -> Dict[str, Any]:
             ),
             "capabilities": caller_route_capabilities,
         })
-    job_type = JobType(body.job_type) if body.job_type else JobType.AGENT_ACTION
+    try:
+        job_type = JobType(body.job_type) if body.job_type else JobType.AGENT_ACTION
+    except ValueError:
+        raise HTTPException(status_code=400, detail={
+            "code": "invalid_job_type",
+            "message": f"unknown job_type {body.job_type!r}",
+            "valid_job_types": sorted(t.value for t in JobType),
+        })
     payload = dict(body.payload)
     public_effect = False
     if job_type is JobType.AGENT_ACTION:
