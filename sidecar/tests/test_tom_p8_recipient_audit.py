@@ -273,7 +273,7 @@ def test_result_adapter_recomputes_digest_and_rejects_topology_codes():
     forged = replace(
         valid,
         risks=(SimulationRiskV1(
-            code="host:spark8:10.0.0.8", severity="critical"),),
+            code="host:node-b:10.0.0.8", severity="critical"),),
         audit_digest="0" * 64,
     )
     forged_payload = forged.public()
@@ -305,7 +305,7 @@ def test_result_adapter_recomputes_digest_and_rejects_topology_codes():
     with pytest.raises(ValueError, match="risk code"):
         replace(
             valid_event,
-            risk_codes=("critical:host:spark8:10.0.0.8",),
+            risk_codes=("critical:host:node-b:10.0.0.8",),
         )
 
     impossible = replace(
@@ -334,7 +334,7 @@ def test_result_adapter_recomputes_digest_and_rejects_topology_codes():
             evaluated_at=NOW,
         )
 
-    topology_request = replace(request, surface="host:spark8")
+    topology_request = replace(request, surface="host:node-b")
     with pytest.raises(ValueError, match="surface"):
         evaluation_event_from_result(
             event_id="audit:evaluation:surface",
