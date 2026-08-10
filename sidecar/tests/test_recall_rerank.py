@@ -182,3 +182,25 @@ def test_set_rerank_fn_mirrors_set_embed_fn():
 
     fx.graph.set_rerank_fn(fn)
     assert fx.graph._rerank_fn is fn
+
+
+@pytest.mark.asyncio
+async def test_first_failure_warns_on_a_freshly_booted_host(monkeypatch, caplog):
+    """The first rerank failure must warn even when uptime is under 300s.
+
+    time.monotonic() counts from an arbitrary origin (system boot on Linux),
+    so a 0.0 "never warned" sentinel makes `now - 0.0 >= 300` false on a fresh
+    host and swallows the very first warning. This reproduces that host state
+    on a long-uptime machine, where the bug is invisible.
+    """
+    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
+    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setattr(client_mod.time, "monotonic", lambda: 12.0)
+    fx = _fixture_three()
+    rr = _RecordingReranker(exc=RuntimeError("reranker down"))
+    fx.graph.set_rerank_fn(rr.rerank)
+    with caplog.at_level(logging.WARNING, logger=client_mod.__name__):
+        await fx.recall("q", limit=2)
+    warns = [r for r in caplog.records
+             if r.levelno == logging.WARNING and "rerank failed" in r.message]
+    assert len(warns) == 1

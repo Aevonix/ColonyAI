@@ -1326,7 +1326,11 @@ class ColonyGraph:
         by design; a dead reranker must not turn every recall into a WARNING
         stream)."""
         now = time.monotonic()
-        if now - getattr(self, "_rerank_warn_at", 0.0) >= 300:
+        # Sentinel must be None, not 0.0: time.monotonic() is measured from an
+        # arbitrary origin (system boot on Linux), so a 0.0 default suppresses
+        # the FIRST warning entirely for the first 300s of uptime.
+        last = getattr(self, "_rerank_warn_at", None)
+        if last is None or now - last >= 300:
             self._rerank_warn_at = now
             logger.warning(
                 "recall rerank failed (fail-open to ANN order): %s", exc)
