@@ -5,6 +5,7 @@ internal schedule, so the /health endpoint must not read a normal quiet period a
 `degraded`. These tests pin the threshold profile the endpoint uses.
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -97,6 +98,63 @@ async def test_advisory_policy_preserves_stale_flags_without_degrading_health(
     assert result.status == "ok"
     assert result.temporal is not None
     assert result.temporal.stale_flags == ["sync", "prefetch"]
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_paths_degrade_health(monkeypatch):
+    """A crashing embedder probe or staleness computation must degrade
+    /health — never be swallowed into an unconditional 'ok'."""
+    from colony_sidecar.api.routers import host
+    from colony_sidecar import vector
+
+    class BrokenEmbedder:
+        async def health_check(self):
+            raise RuntimeError("embed backend gone")
+
+    # Remove every other degradation source so only the probe failure decides.
+    monkeypatch.setattr(host, "_telemetry", None)
+    monkeypatch.setattr(host, "_commitment_store", None)
+    monkeypatch.setattr(vector, "_store", None)
+
+    monkeypatch.setattr(host, "_embedder", BrokenEmbedder())
+    result = await host.health()
+    assert result.status == "degraded"
+    assert "health probe failed" in (result.notes or {}).get("embed", "")
+
+    class BrokenTelemetry:
+        async def to_dict(self, thresholds):
+            raise RuntimeError("telemetry store corrupt")
+
+    monkeypatch.setattr(host, "_embedder", None)
+    monkeypatch.setattr(host, "_telemetry", BrokenTelemetry())
+    result = await host.health()
+    assert result.status == "degraded"
+    assert "staleness computation failed" in (result.notes or {}).get("temporal", "")
+
+
+@pytest.mark.asyncio
+async def test_corrupt_telemetry_reset_is_visible_and_flaggable(
+    tmp_path, monkeypatch, caplog,
+):
+    """A corrupt telemetry file must not silently reset to a permanently
+    unflaggable 'fresh' store: the reset is logged, state reads 'unknown',
+    and a subsystem that never ran past its threshold flags."""
+    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    (tmp_path / "telemetry.json").write_text("{not json")
+
+    s = TelemetryStore()
+    with caplog.at_level(logging.WARNING, logger="colony_sidecar.telemetry"):
+        s.load()
+    assert s.state == "unknown"
+    assert any("unreadable" in r.getMessage() for r in caplog.records)
+
+    # 30h of uptime with last_tick_at never set: "never ran" must flag.
+    s.started_at = datetime.now(timezone.utc) - timedelta(hours=30)
+    flags = await s.stale_flags(HEALTH_THRESHOLDS)
+    assert "tick:never_ran" in flags
+
+    d = await s.to_dict(HEALTH_THRESHOLDS)
+    assert d["state"] == "unknown"
 
 
 @pytest.mark.asyncio

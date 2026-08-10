@@ -60,6 +60,8 @@ class TemporalMetrics(BaseModel):
     last_prefetch_at: Optional[str] = None
     silence_hours: Dict[str, Optional[float]] = Field(default_factory=dict)
     stale_flags: List[str] = Field(default_factory=list)
+    #: "ok" normally; "unknown" when persisted telemetry could not be restored
+    state: Optional[str] = None
 
 
 class HostHealthResponse(BaseModel):
