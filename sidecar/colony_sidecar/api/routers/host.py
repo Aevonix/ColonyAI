@@ -671,8 +671,20 @@ async def health() -> HostHealthResponse:
     except Exception:
         pass
 
+    memory_backend_down = False
     if _graph is not None:
-        notes["memory"] = "ColonyGraph wired"
+        # "Wired" alone only means the client object was constructed. Probe
+        # the backend (same determination as /memory/status) so health never
+        # advertises a memory capability whose store is unreachable.
+        if await _graph_backend_reachable():
+            notes["memory"] = "ColonyGraph wired (backend reachable)"
+        else:
+            memory_backend_down = True
+            caps = [c for c in caps if c != "memory"]
+            notes["memory"] = (
+                "ColonyGraph wired but backend UNREACHABLE — "
+                "memory reads/writes are failing"
+            )
     else:
         notes["memory"] = "ColonyGraph not wired — memory endpoints return stubs"
     if _response_gate is not None:
@@ -806,7 +818,7 @@ async def health() -> HostHealthResponse:
         notes["neo4j"] = "Neo4j backend selected"
 
     health_status = "ok"
-    if model_mismatch or embed_degraded:
+    if model_mismatch or embed_degraded or memory_backend_down:
         health_status = "degraded"
     if (
         _commitment_store is not None
@@ -1249,6 +1261,36 @@ def _validate_skill_id(skill_id: str) -> None:
         raise HTTPException(status_code=400, detail="invalid skill_id")
 
 
+async def _graph_backend_reachable() -> bool:
+    """Whether the wired graph's backend actually answers.
+
+    The single availability determination for memory honesty — the same
+    probe /memory/status reports as ``neo4j_connected``. False when no
+    graph is wired at all.
+    """
+    if _graph is None:
+        return False
+    try:
+        await _graph.driver.verify_connectivity()
+        return True
+    except Exception:
+        return False
+
+
+async def _raise_if_graph_unreachable(op: str) -> None:
+    """503 when a wired graph backend is down.
+
+    Called from memory endpoints' failure paths so a dead backend becomes an
+    explicit error instead of an empty-success that is indistinguishable
+    from "no data".
+    """
+    if _graph is not None and not await _graph_backend_reachable():
+        raise HTTPException(status_code=503, detail={
+            "code": "memory_backend_unavailable",
+            "message": f"{op} failed: the graph backend is unreachable",
+        })
+
+
 @router.post("/memory/read", response_model=MemoryReadResponse)
 async def memory_read(
     body: MemoryReadRequest,
@@ -1285,6 +1327,7 @@ async def memory_read(
         return MemoryReadResponse(entries=entries)
     except Exception as exc:
         logger.warning("memory_read failed: %s", exc)
+        await _raise_if_graph_unreachable("memory_read")
         return MemoryReadResponse(entries=[])
 
 
@@ -1307,6 +1350,8 @@ async def memory_status():
     wired = neo4j_connected and embeddings_ready and vector_store_ready
     return {
         "wired": wired,
+        # distinguishes "no graph configured" from "configured but down"
+        "graph_wired": _graph is not None,
         "neo4j_connected": neo4j_connected,
         "embeddings_ready": embeddings_ready,
         "vector_store_ready": vector_store_ready,
@@ -1369,6 +1414,7 @@ async def memory_write(
         )
     except Exception as exc:
         logger.warning("memory_write failed: %s", exc)
+        await _raise_if_graph_unreachable("memory_write")
         return MemoryWriteResponse(id="error", accepted=False)
 
 
@@ -1409,6 +1455,7 @@ async def memory_search(
         return MemorySearchResponse(entries=entries)
     except Exception as exc:
         logger.warning("memory_search failed: %s", exc)
+        await _raise_if_graph_unreachable("memory_search")
         return MemorySearchResponse(entries=[])
 
 
@@ -3666,8 +3713,11 @@ async def _process_turn_sync(
                 break
         _turn_entities = _merged
 
-    # Best-effort: store turn metadata in the graph if available
+    # Store turn metadata in the graph if available. A wired graph that FAILS
+    # to record is a failed ingestion — the error is carried to the response
+    # below, never swallowed into a green-lit turn.
     graph_ok = False
+    graph_error: Optional[str] = None
     if _graph is not None:
         try:
             await _graph.record_turn(
@@ -3680,6 +3730,7 @@ async def _process_turn_sync(
             )
             graph_ok = True
         except Exception as exc:
+            graph_error = f"record_turn failed: {type(exc).__name__}: {exc}"
             logger.warning("turns_sync failed: %s", exc)
 
     # Context provenance: record this turn's entities under its conversation context, so a
@@ -3977,6 +4028,16 @@ async def _process_turn_sync(
     except Exception:
         logger.debug("record_interaction failed", exc_info=True)
 
+    if graph_error is not None:
+        # The primary ingestion effect did not happen: the turn was NOT
+        # recorded. accepted=False + the error string, so the host can never
+        # mistake a dead graph backend for a successfully ingested turn.
+        return TurnSyncResponse(
+            accepted=False,
+            continuity_updated=False,
+            skipped_reason="graph_record_failed",
+            errors=[graph_error],
+        )
     return TurnSyncResponse(accepted=True, continuity_updated=graph_ok, skipped_reason=None if graph_ok else "no_graph_store")
 
 
@@ -4009,15 +4070,20 @@ async def safety_check(body: SafetyCheckRequest) -> SafetyCheckResponse:
     try:
         from colony_sidecar.gate.models import GatePayload
         from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
+        # session_id/contact_id/turn_id live on body.context (HostTurnContext),
+        # not on the request root — the old getattr(body, ...) lookups always
+        # returned their defaults, so context-dependent gate layers never saw
+        # a session and could not fire.
         payload = GatePayload(
             response_text=body.response_text,
-            incoming_message_text=getattr(body, "incoming_message_text", ""),
-            target_gateway=getattr(body, "target_gateway", ""),
-            target_contact_id=getattr(body, "contact_id", ""),
-            session_id=getattr(body, "session_id", ""),
-            turn_id=getattr(body, "turn_id", ""),
-            trust_tier=getattr(body, "trust_tier", TrustTier.REGULAR),
-            mentioned_entities=frozenset(getattr(body, "mentioned_entities", []) or []),
+            incoming_message_text=body.incoming_message_text or "",
+            target_gateway=body.target_gateway or "",
+            target_contact_id=body.context.contact_id or "",
+            session_id=body.context.session_id or "",
+            turn_id=body.context.turn_id or "",
+            trust_tier=TrustTier(body.trust_tier.strip().lower())
+                       if body.trust_tier else TrustTier.REGULAR,
+            mentioned_entities=frozenset(body.mentioned_entities or []),
         )
         result = await _response_gate.evaluate(payload)
         return SafetyCheckResponse(
@@ -6174,16 +6240,51 @@ def set_briefings_engine(engine) -> None:
     _briefings_engine = engine
 
 
+def _briefing_to_response(b) -> BriefingResponse:
+    """Map a stored briefing onto the API schema.
+
+    The engine returns ``briefings.models.Briefing`` dataclasses, not dicts —
+    unpacking them with ``**`` was the failure that silently emptied this
+    endpoint. Plain dicts are still accepted for forward compatibility.
+    """
+    if isinstance(b, dict):
+        return BriefingResponse(**b)
+    sections = [
+        s for s in (getattr(b, "sections", None) or [])
+        if not getattr(s, "suppressed", False)
+    ]
+    body = "\n\n".join(
+        n for n in (getattr(s, "narrative", "") for s in sections) if n
+    )
+    btype = getattr(b, "briefing_type", None)
+    btype_str = getattr(btype, "value", btype) if btype is not None else None
+    created = getattr(b, "created_at", None)
+    return BriefingResponse(
+        id=str(getattr(b, "briefing_id", "") or ""),
+        title=f"{btype_str} briefing" if btype_str else None,
+        body=body,
+        briefing_type=btype_str,
+        created_at=created.isoformat() if hasattr(created, "isoformat")
+                   else (str(created) if created else None),
+    )
+
+
 @router.get("/briefings", response_model=BriefingListResponse)
 async def list_briefings(limit: int = 10) -> BriefingListResponse:
     if _briefings_engine is None:
         return BriefingListResponse(briefings=[])
     try:
         briefings = _briefings_engine.get_recent(limit=limit)
-        return BriefingListResponse(briefings=[BriefingResponse(**b) for b in briefings])
+        return BriefingListResponse(
+            briefings=[_briefing_to_response(b) for b in briefings])
     except Exception as exc:
+        # A store/mapping failure must surface, never masquerade as an empty
+        # briefing list (200 [] is indistinguishable from "no briefings").
         logger.warning("list_briefings failed: %s", exc)
-        return BriefingListResponse(briefings=[])
+        raise HTTPException(
+            status_code=500,
+            detail=f"list_briefings failed: {type(exc).__name__}: {exc}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -6239,9 +6340,23 @@ def set_extraction_pipeline(pipeline) -> None:
 async def extract_entities(body: ExtractionRequest) -> ExtractionResponse:
     if _extraction_pipeline is None:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    import base64
+    import binascii
+    # ``content`` is contractually base64 (see ExtractionRequest). Decode it
+    # BEFORE the generic handler below so plain text yields a clear 400, not
+    # an opaque 500 "Incorrect padding".
     try:
-        import base64
         content = base64.b64decode(body.content)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "invalid_content_encoding",
+            "message": (
+                "content must be base64-encoded document bytes "
+                f"(decode failed: {exc}); base64-encode plain text "
+                "before sending"
+            ),
+        })
+    try:
         entities = await _extraction_pipeline.extract(
             content=content,
             filename=body.filename or "",
