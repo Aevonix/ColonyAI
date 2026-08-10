@@ -64,6 +64,39 @@ async def test_events_error_isolated():
     assert loop.stats.events_processed == 0
 
 
+async def test_tick_liveness_stamp_requires_a_completed_tick(monkeypatch):
+    """last_tick_at is stamped at the END of _tick: a tick that dies in a
+    phase (or is cancelled on budget) must not report fresh liveness."""
+    import pytest
+    import colony_sidecar.api.routers.host as host_mod
+    from colony_sidecar.telemetry import TelemetryStore
+
+    telemetry = TelemetryStore()
+    monkeypatch.setattr(host_mod, "_telemetry", telemetry)
+
+    class _NoneRegistry:
+        def __getattr__(self, name):
+            return None
+
+    loop = AutonomyLoop(_NoneRegistry())
+
+    async def boom(_event_text=None):
+        raise RuntimeError("phase exploded")
+
+    loop._phase_skill_triggers = boom
+    with pytest.raises(RuntimeError):
+        await loop._tick()
+    assert telemetry.last_tick_at is None  # dead tick must not look alive
+
+    # A tick that completes all phases does stamp liveness.
+    async def fine(_event_text=None):
+        return None
+
+    loop._phase_skill_triggers = fine
+    await loop._tick()
+    assert telemetry.last_tick_at is not None
+
+
 def test_registry_queue_is_task_queue(monkeypatch):
     import colony_sidecar.api.routers.host as host_mod
 

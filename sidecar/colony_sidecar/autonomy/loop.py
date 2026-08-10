@@ -507,14 +507,6 @@ class AutonomyLoop:
         self._reset_hour_bucket()
         tick_start = datetime.now(timezone.utc)
 
-        # Telemetry touch
-        try:
-            from colony_sidecar.api.routers.host import _telemetry
-            if _telemetry is not None:
-                await _telemetry.touch("last_tick_at")
-        except Exception:
-            logger.warning("Telemetry touch failed (non-critical)")
-
         logger.debug("Tick #%d starting", self.stats.ticks)
 
         # Phase -1: reconcile terminal WorkOrder truth before any phase that
@@ -668,6 +660,17 @@ class AutonomyLoop:
         # Phase 23: database backup (every 100 ticks)
         if self.stats.ticks % 100 == 0:
             await self._phase_database_backup()
+
+        # Telemetry liveness stamp — at the END of the tick, so last_tick_at
+        # means "a tick actually completed". Stamping at the top made a tick
+        # whose phases all threw (or that was cancelled on its budget) report
+        # fresh forever.
+        try:
+            from colony_sidecar.api.routers.host import _telemetry
+            if _telemetry is not None:
+                await _telemetry.touch("last_tick_at")
+        except Exception:
+            logger.warning("Telemetry touch failed (non-critical)")
 
         elapsed = (datetime.now(timezone.utc) - tick_start).total_seconds()
         logger.debug("Tick #%d complete in %.2fs", self.stats.ticks, elapsed)
@@ -824,12 +827,14 @@ class AutonomyLoop:
             results = await scheduler.tick()
             if results:
                 ok = sum(1 for r in results if r.get("status") == "ok")
+                skipped = sum(
+                    1 for r in results if r.get("status") == "skipped")
                 self.stats.scheduled_runs += ok
-                errs = len(results) - ok
+                errs = len(results) - ok - skipped
                 if errs:
                     self.stats.errors += errs
                     for r in results:
-                        if r.get("status") != "ok":
+                        if r.get("status") not in ("ok", "skipped"):
                             logger.warning(
                                 "Scheduled task failed: %s — %s",
                                 r.get("task"), r.get("error"),
