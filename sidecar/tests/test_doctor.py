@@ -435,6 +435,10 @@ def _happy_responses(owner="cid-owner-1"):
         "/v1/host/health/llm": (200, {"ok": True, "tier": "small",
                                       "latency_ms": 40, "error": None}),
         "/v1/host/embed/health": (200, {"status": "ok", "dims": 384, "latency_ms": 4}),
+        "/v1/host/memory/status": (200, {
+            "wired": True, "graph_wired": True, "neo4j_connected": True,
+            "embeddings_ready": True, "vector_store_ready": True,
+        }),
         "/v1/host/queue/jobs/blocked": (200, []),
         "/v1/host/queue/jobs/pending?task_type=agent_action&limit=200": (200, []),
         "/v1/host/observations/skills": (200, {

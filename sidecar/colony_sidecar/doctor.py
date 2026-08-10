@@ -60,6 +60,7 @@ SERVER_CHECK_NAMES = (
     "server-owner-contact",
     "server-llm-router",
     "server-embedder",
+    "server-memory-graph",
     "server-fd-limit",
     "server-blocked-approvals",
     "server-worker-liveness",
@@ -1046,6 +1047,54 @@ def check_server_embedder(base_url: str, api_key: str, timeout: float) -> CheckR
     return CheckResult("server-embedder", WARN, detail=f"unexpected HTTP {status}: {body}")
 
 
+def check_server_memory_graph(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """14b. Graph/memory backend reachability.
+
+    A dead Neo4j means every memory read/write fails while the API keeps
+    answering — the one degradation the doctor previously never looked at
+    (it reported ok:true with the graph completely down).
+    """
+    status, body = _http_get(f"{base_url}/v1/host/memory/status", api_key, timeout)
+    if status in (404, 501):
+        return CheckResult(
+            "server-memory-graph", SKIP,
+            detail=f"memory status not exposed (HTTP {status})",
+        )
+    if status != 200 or not isinstance(body, dict):
+        return CheckResult(
+            "server-memory-graph", FAIL,
+            detail=f"/v1/host/memory/status returned HTTP {status}: {body}",
+        )
+    if body.get("graph_wired") is False:
+        return CheckResult(
+            "server-memory-graph", WARN,
+            detail="no graph backend wired — memory endpoints return stubs",
+            remedy="configure the graph backend (Neo4j) if this deployment "
+                   "is supposed to have persistent memory",
+        )
+    if not body.get("neo4j_connected"):
+        return CheckResult(
+            "server-memory-graph", FAIL,
+            detail="graph backend is wired but UNREACHABLE — every memory "
+                   "read/write is failing",
+            remedy="start/repair Neo4j (or fix its credentials/URI), then "
+                   "re-run 'colony doctor'",
+        )
+    if not body.get("wired"):
+        missing = [k for k in ("embeddings_ready", "vector_store_ready")
+                   if not body.get(k)]
+        return CheckResult(
+            "server-memory-graph", WARN,
+            detail="graph reachable but memory pipeline incomplete: "
+                   + (", ".join(missing) or "unknown component"),
+            remedy="check embedder/vector-store wiring in the sidecar log",
+        )
+    return CheckResult(
+        "server-memory-graph", PASS,
+        detail="graph backend reachable; memory pipeline fully wired",
+    )
+
+
 def check_server_blocked_approvals(base_url: str, api_key: str, timeout: float) -> CheckResult:
     """15. Surface jobs stuck waiting for owner approval."""
     status, body = _http_get(f"{base_url}/v1/host/queue/jobs/blocked", api_key, timeout)
@@ -1804,6 +1853,8 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-owner-contact", check_server_owner_contact, base_url, api_key, timeout)
     results += _run("server-llm-router", check_server_llm, base_url, api_key, timeout)
     results += _run("server-embedder", check_server_embedder, base_url, api_key, timeout)
+    results += _run("server-memory-graph", check_server_memory_graph,
+                    base_url, api_key, timeout)
     results += _run("server-fd-limit", check_server_fd_limit, base_url, api_key, timeout)
     results += _run("server-blocked-approvals", check_server_blocked_approvals,
                     base_url, api_key, timeout)
