@@ -157,6 +157,36 @@ def test_health_initiatives_never_executed(tmp_path, monkeypatch):
     assert any(a["type"] == "initiatives_never_executed" for a in result["alerts"])
 
 
+def test_health_reads_status_and_does_not_pass_skipped_probe(tmp_path, monkeypatch):
+    """A degraded sidecar must not report ok, an empty 200 health body is a
+    failure, and an unreachable autonomy endpoint is a skipped probe, not a
+    passed one."""
+    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    cfg = agent_bridge._cfg()
+    monitor = agent_bridge.HealthMonitor(tmp_path)
+
+    def fake_get(c, path, timeout=10):
+        if "health" in path:
+            return {"status": "degraded"}
+        return None  # autonomy status endpoint down
+
+    with patch.object(agent_bridge, "_get", side_effect=fake_get):
+        result = monitor.check(cfg)
+
+    assert result["ok"] is False
+    assert result["autonomy_probe"] == "skipped"
+    assert any(a["type"] == "sidecar_degraded" for a in result["alerts"])
+    assert any(a["type"] == "autonomy_status_unavailable" for a in result["alerts"])
+
+    # An empty 200 body is a failure, not a pass.
+    monitor2 = agent_bridge.HealthMonitor(tmp_path / "m2")
+    (tmp_path / "m2").mkdir(exist_ok=True)
+    with patch.object(agent_bridge, "_get", return_value={}):
+        result2 = monitor2.check(cfg)
+    assert result2["ok"] is False
+    assert any(a["type"] == "sidecar_unreachable" for a in result2["alerts"])
+
+
 def test_health_alert_cooldown(tmp_path, monkeypatch):
     monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()

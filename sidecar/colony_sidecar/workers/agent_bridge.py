@@ -168,12 +168,13 @@ class HealthMonitor:
         now = datetime.now(timezone.utc).isoformat()
 
         health = _get(cfg, "/v1/host/health")
-        if health is None:
+        if not health:  # unreachable OR an empty 200 body — both are failures
             consecutive = self._state.get("consecutive_failures", 0) + 1
             self._state["consecutive_failures"] = consecutive
             self._state["last_failure"] = now
             self._alert("sidecar_unreachable",
                         f"Colony sidecar at {cfg['colony_url']} is unreachable "
+                        "or returned an empty health body "
                         f"({consecutive} consecutive failure(s))",
                         severity="critical" if consecutive >= 3 else "warning")
             self._save()
@@ -182,13 +183,28 @@ class HealthMonitor:
         self._state["consecutive_failures"] = 0
         self._state["last_success"] = now
 
+        status = health.get("status")
+        ok = status == "ok"
+        if not ok:
+            self._alert("sidecar_degraded",
+                        f"Sidecar reports health status {status!r} (not 'ok')",
+                        severity="warning")
+
         autonomy = _get(cfg, "/v1/host/autonomy/status")
-        if autonomy:
+        if autonomy is None:
+            # The probe did not run — a skipped check is not a passed check.
+            self._alert("autonomy_status_unavailable",
+                        "Autonomy status endpoint is unreachable — the "
+                        "autonomy probe was skipped, not passed",
+                        severity="warning")
+        else:
             self._check_autonomy(autonomy)
             self._state["last_autonomy"] = autonomy
 
         self._save()
-        return {"ok": True, "health": health, "autonomy": autonomy, "alerts": self._alerts}
+        return {"ok": ok, "health": health, "autonomy": autonomy,
+                "autonomy_probe": "skipped" if autonomy is None else "checked",
+                "alerts": self._alerts}
 
     def _check_autonomy(self, status: dict) -> None:
         if not status.get("running"):
