@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import importlib
+import inspect
 import json
 import logging
 import os
@@ -17,6 +18,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from colony_sidecar.skills.base import (
+    InitiativeExecutionContext,
+    InitiativeExecutorSkill,
+)
 from colony_sidecar.skills.models import SkillManifest, SkillStatus
 from colony_sidecar.skills.registry import SkillRegistry
 from colony_sidecar.skills.security.scanner import ASTScanner
@@ -94,7 +99,14 @@ class SkillExecutor:
         execution_id = f"exec-{uuid.uuid4().hex[:12]}"
         start = datetime.now(timezone.utc)
 
-        manifest = await self._registry.get(skill_id)
+        # The wired registry may be the async manifest store OR the built-in
+        # runtime SkillRegistry, whose get() is synchronous and returns the
+        # executor skill object itself. Awaiting that object was the bug that
+        # made every built-in skill 500 ("object ... can't be used in 'await'
+        # expression") while the registry still advertised them as active.
+        manifest = self._registry.get(skill_id)
+        if inspect.isawaitable(manifest):
+            manifest = await manifest
         if not manifest:
             return ExecutionResult(
                 execution_id=execution_id,
@@ -104,6 +116,13 @@ class SkillExecutor:
                 error=f"Skill '{skill_id}' not found in registry.",
                 duration_ms=0,
                 peak_memory_mb=None,
+            )
+
+        if isinstance(manifest, InitiativeExecutorSkill):
+            # Built-in runtime executor: trusted in-process code with no
+            # on-disk manifest/source — run its own execute() directly.
+            return await self._invoke_builtin(
+                skill_id, manifest, inputs, execution_id, start,
             )
 
         if manifest.status != SkillStatus.ACTIVE:
@@ -211,6 +230,85 @@ class SkillExecutor:
                 duration_ms=duration_ms,
                 peak_memory_mb=None,
             )
+
+    # ------------------------------------------------------------------
+    # Built-in runtime executor skills
+    # ------------------------------------------------------------------
+
+    async def _invoke_builtin(
+        self,
+        skill_id: str,
+        skill: InitiativeExecutorSkill,
+        inputs: Dict[str, Any],
+        execution_id: str,
+        start: datetime,
+    ) -> ExecutionResult:
+        """Execute a built-in InitiativeExecutorSkill registered in the
+        runtime SkillRegistry.
+
+        These are trusted in-process objects (no manifest, checksum, or
+        sandbox source file); the InitiativeExecutionContext is built from
+        the caller's inputs. The skill's own outcome enum maps onto the
+        ExecutionResult status so a FAILED initiative is never reported as
+        a successful execution.
+        """
+        def _elapsed_ms() -> int:
+            return int(
+                (datetime.now(timezone.utc) - start).total_seconds() * 1000
+            )
+
+        try:
+            context = InitiativeExecutionContext(
+                initiative_id=str(inputs.get("initiative_id") or execution_id),
+                category_id=str(inputs.get("category_id") or "api"),
+                category_name=str(
+                    inputs.get("category_name")
+                    or getattr(skill, "skill_name", skill_id)
+                ),
+                entity_id=inputs.get("entity_id"),
+                entity_type=inputs.get("entity_type"),
+                trigger_data=dict(inputs.get("trigger_data") or {}),
+            )
+            outcome = await asyncio.wait_for(
+                skill.execute(context), timeout=self._timeout,
+            )
+        except asyncio.TimeoutError:
+            return ExecutionResult(
+                execution_id=execution_id,
+                skill_id=skill_id,
+                status="timeout",
+                output=None,
+                error="Execution exceeded maximum duration.",
+                duration_ms=_elapsed_ms(),
+                peak_memory_mb=None,
+                violations=["timeout"],
+            )
+        except Exception as exc:
+            logger.debug(
+                "Built-in skill '%s' execution error (%s)",
+                skill_id, exc, exc_info=True,
+            )
+            return ExecutionResult(
+                execution_id=execution_id,
+                skill_id=skill_id,
+                status="failed",
+                output=None,
+                error=f"Skill '{skill_id}' execution failed: {type(exc).__name__}",
+                duration_ms=_elapsed_ms(),
+                peak_memory_mb=None,
+            )
+
+        outcome_value = getattr(outcome, "value", outcome)
+        failed = str(outcome_value) == "failed"
+        return ExecutionResult(
+            execution_id=execution_id,
+            skill_id=skill_id,
+            status="failed" if failed else "success",
+            output={"result": outcome_value},
+            error="skill reported failure" if failed else None,
+            duration_ms=_elapsed_ms(),
+            peak_memory_mb=None,
+        )
 
     # ------------------------------------------------------------------
     # Integrity
