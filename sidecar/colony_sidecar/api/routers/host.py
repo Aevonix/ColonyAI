@@ -695,13 +695,16 @@ async def health() -> HostHealthResponse:
         notes["cognition"] = "MetaLearner wired"
     if _signal_collector is not None:
         notes["signals"] = "SignalCollector wired"
+    embed_degraded = False
     if _embedder is not None:
         # Get embed model info
         if hasattr(_embedder, "_provider") and hasattr(_embedder._provider, "_config"):
             embed_model = _embedder._provider._config.model_id
         embed_note = f"EmbeddingPipeline wired (model={embed_model})"
 
-        # Check for model mismatch
+        # Check for model mismatch. A probe that itself crashes is a
+        # degradation, never a silent pass — health must not report green
+        # because the check that would have caught the problem threw.
         try:
             from colony_sidecar.vector import get_store
             store = get_store()
@@ -713,19 +716,24 @@ async def health() -> HostHealthResponse:
                 elif len(stored_models) > 1:
                     model_mismatch = True
                     embed_note += f" [WARNING: multiple stored models: {stored_models}]"
-        except Exception:
-            pass
+        except Exception as exc:
+            embed_degraded = True
+            embed_note += f" [model-check failed: {exc}]"
+            logger.warning("embed model mismatch probe failed: %s", exc)
 
         # Check embedder health
         try:
             hc = await _embedder.health_check()
             if hc.get("status") != "ok":
+                embed_degraded = True
                 embed_note += f" [health: {hc.get('status', 'unknown')}"
                 if hc.get("error"):
                     embed_note += f": {hc['error']}"
                 embed_note += "]"
-        except Exception:
-            pass
+        except Exception as exc:
+            embed_degraded = True
+            embed_note += f" [health probe failed: {exc}]"
+            logger.warning("embedder health probe failed: %s", exc)
 
         notes["embed"] = embed_note
     if _skills_registry is not None:
@@ -798,7 +806,7 @@ async def health() -> HostHealthResponse:
         notes["neo4j"] = "Neo4j backend selected"
 
     health_status = "ok"
-    if model_mismatch:
+    if model_mismatch or embed_degraded:
         health_status = "degraded"
     if (
         _commitment_store is not None
@@ -832,8 +840,12 @@ async def health() -> HostHealthResponse:
                 health_status = "degraded"
             from colony_sidecar.api.schemas.host import TemporalMetrics
             temporal = TemporalMetrics(**temporal_data)
-    except Exception:
-        pass
+    except Exception as exc:
+        # If staleness cannot even be computed, the one probe that catches a
+        # dead loop is gone — that is degradation, not silent health.
+        health_status = "degraded"
+        notes["temporal"] = f"staleness computation failed: {exc}"
+        logger.warning("temporal staleness computation failed: %s", exc)
 
     return HostHealthResponse(
         status=health_status,

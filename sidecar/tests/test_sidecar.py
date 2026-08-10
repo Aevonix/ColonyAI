@@ -852,3 +852,90 @@ async def test_phase_scheduled_failing_task_counts_errors(tmp_path):
     schedule = scheduler.list_schedules()[0]
     assert schedule.last_run is None
     assert schedule.failure_count == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduler_sustained_failures_flip_healthy_false(tmp_path):
+    """A schedule failing every run forever must not report healthy: True."""
+    from datetime import datetime, timedelta, timezone
+    from colony_sidecar.autonomy.scheduler import (
+        SUSTAINED_FAILURE_THRESHOLD, AutonomyScheduler,
+    )
+
+    now = [datetime.now(timezone.utc)]
+    scheduler = AutonomyScheduler(
+        db_path=str(tmp_path / "sched.db"), clock=lambda: now[0],
+    )
+
+    def _always_fails():
+        raise RuntimeError("permanently broken")
+
+    scheduler.register("doomed_task", _always_fails, interval_seconds=1)
+
+    for _ in range(SUSTAINED_FAILURE_THRESHOLD):
+        results = await scheduler.tick()
+        assert results and results[0]["status"] == "error"
+        now[0] += timedelta(hours=1)  # clear failure backoff, keep it due
+
+    health = scheduler.health
+    assert health["failing_schedules"] == 1
+    assert health["healthy"] is False
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skip_is_not_a_success(tmp_path):
+    """A callback returning {"status": "skipped"} is receipted as a skip:
+    it neither counts as success nor resets the failure track record."""
+    from datetime import datetime, timedelta, timezone
+    from colony_sidecar.autonomy.scheduler import AutonomyScheduler
+
+    now = [datetime.now(timezone.utc)]
+    scheduler = AutonomyScheduler(
+        db_path=str(tmp_path / "sched.db"), clock=lambda: now[0],
+    )
+
+    behavior = {"fail": True}
+
+    def _cb():
+        if behavior["fail"]:
+            raise RuntimeError("boom")
+        return {"status": "skipped", "reason": "subsystem_not_wired"}
+
+    scheduler.register("skippy_task", _cb, interval_seconds=1)
+
+    results = await scheduler.tick()
+    assert results[0]["status"] == "error"
+    now[0] += timedelta(hours=1)
+
+    behavior["fail"] = False
+    results = await scheduler.tick()
+    assert results[0]["status"] == "skipped"
+
+    receipts = scheduler.list_run_receipts()  # oldest first
+    assert [r["status"] for r in receipts] == ["error", "skipped"]
+    schedule = scheduler.list_schedules()[0]
+    assert schedule.failure_count == 1  # a skip does not launder failures
+
+
+def test_scheduler_health_check_task_reports_wiring(monkeypatch):
+    """The registered health_check task must reflect real wiring, not an
+    unconditional {"status": "ok"} behind a swallowed exception."""
+    from types import SimpleNamespace
+    import colony_sidecar.api.routers.host as host_mod
+    from colony_sidecar.server import _scheduler_health_check
+
+    names = ("_commitment_store", "_goals_store", "_affect_store",
+             "_contacts_store", "_delivery_bridge", "_workspace",
+             "_metalearner")
+    for name in names:
+        monkeypatch.setattr(host_mod, name, None, raising=False)
+
+    dead = _scheduler_health_check(SimpleNamespace(_running=False))
+    assert dead["status"] == "degraded"
+    assert dead["subsystems_wired"] == 0
+
+    monkeypatch.setattr(host_mod, "_goals_store", object(), raising=False)
+    alive = _scheduler_health_check(SimpleNamespace(_running=True))
+    assert alive["status"] == "ok"
+    assert alive["subsystems_wired"] == 1
+    assert alive["autonomy_running"] is True

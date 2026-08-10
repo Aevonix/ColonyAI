@@ -26,6 +26,10 @@ from typing import Any, Callable, Coroutine, Dict, Iterator, List, Mapping, Opti
 
 logger = logging.getLogger(__name__)
 
+#: Consecutive failures at which a schedule counts against the scheduler's
+#: `healthy` verdict (failure_count resets to 0 on any real success).
+SUSTAINED_FAILURE_THRESHOLD = 3
+
 _TASK_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _METADATA_KEY = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _MAX_INTERVAL_SECONDS = 31_536_000
@@ -1217,7 +1221,17 @@ class ScheduleStore:
         result: Any,
         *,
         now: datetime,
+        outcome: str = "success",
     ) -> tuple[bool, Any]:
+        """Complete a claim whose callback returned normally.
+
+        ``outcome="skipped"`` records that the callback declined to do work:
+        the schedule still advances and the lease is released, but the run is
+        receipted as ``skipped`` and neither resets ``failure_count`` nor
+        clears ``degraded_reason`` — a skip is not a success.
+        """
+        if outcome not in ("success", "skipped"):
+            raise ValueError("outcome must be 'success' or 'skipped'")
         observed = _utc(now)
         # Projection is deliberately outside the SQLite writer transaction.
         # Even an unexpectedly expensive diagnostic value cannot hold the
@@ -1240,26 +1254,38 @@ class ScheduleStore:
                     return False, projected_result
                 interval = int(schedule["interval_seconds"])
                 next_run = observed + timedelta(seconds=interval)
+                failure_count = int(schedule["failure_count"] or 0)
+                failure_count_after = failure_count if outcome == "skipped" else 0
                 self._insert_receipt(
                     conn,
                     attempt=attempt,
-                    status="success",
+                    status=outcome,
                     now=observed,
                     result_json=result_json,
                     error_type=None,
                     error_message=None,
-                    failure_count_after=0,
+                    failure_count_after=failure_count_after,
                     next_run=next_run,
                 )
-                updated = conn.execute("""
-                    UPDATE schedules SET last_run=?,next_run=?,failure_count=0,
-                        lease_token=NULL,lease_expires_at=NULL,
-                        degraded_reason=NULL,updated_at=?
-                    WHERE id=? AND lease_token=? AND lease_expires_at > ?
-                """, (
-                    _iso(observed), _iso(next_run), _iso(observed),
-                    claim.schedule.id, claim.lease_token, _iso(observed),
-                ))
+                if outcome == "skipped":
+                    updated = conn.execute("""
+                        UPDATE schedules SET last_run=?,next_run=?,
+                            lease_token=NULL,lease_expires_at=NULL,updated_at=?
+                        WHERE id=? AND lease_token=? AND lease_expires_at > ?
+                    """, (
+                        _iso(observed), _iso(next_run), _iso(observed),
+                        claim.schedule.id, claim.lease_token, _iso(observed),
+                    ))
+                else:
+                    updated = conn.execute("""
+                        UPDATE schedules SET last_run=?,next_run=?,failure_count=0,
+                            lease_token=NULL,lease_expires_at=NULL,
+                            degraded_reason=NULL,updated_at=?
+                        WHERE id=? AND lease_token=? AND lease_expires_at > ?
+                    """, (
+                        _iso(observed), _iso(next_run), _iso(observed),
+                        claim.schedule.id, claim.lease_token, _iso(observed),
+                    ))
                 if updated.rowcount != 1:
                     raise RuntimeError("lease ownership changed during success commit")
                 conn.commit()
@@ -1517,6 +1543,9 @@ class ScheduleStore:
                        SUM(CASE WHEN enabled=1 THEN 1 ELSE 0 END) AS enabled,
                        SUM(CASE WHEN degraded_reason IS NOT NULL THEN 1 ELSE 0 END)
                            AS degraded,
+                       SUM(CASE WHEN enabled=1 AND failure_count >= ? THEN 1
+                                ELSE 0 END)
+                           AS failing,
                        SUM(CASE WHEN lease_token IS NOT NULL
                                       AND lease_expires_at > ? THEN 1 ELSE 0 END)
                            AS leased,
@@ -1529,7 +1558,7 @@ class ScheduleStore:
                                 THEN 1 ELSE 0 END)
                            AS due
                 FROM schedules
-            """, (stamp, stamp, stamp, stamp)).fetchone()
+            """, (SUSTAINED_FAILURE_THRESHOLD, stamp, stamp, stamp, stamp)).fetchone()
             attempts = conn.execute(
                 "SELECT COUNT(*) FROM schedule_run_attempts"
             ).fetchone()[0]
@@ -1544,6 +1573,7 @@ class ScheduleStore:
             "total_schedules": int(counts["total"] or 0),
             "enabled_schedules": int(counts["enabled"] or 0),
             "degraded_schedules": int(counts["degraded"] or 0),
+            "failing_schedules": int(counts["failing"] or 0),
             "active_leases": int(counts["leased"] or 0),
             "expired_leases": int(counts["expired"] or 0),
             "due_schedules": int(counts["due"] or 0),
@@ -1709,14 +1739,25 @@ class AutonomyScheduler:
                         task.name, error_type, error_message,
                     )
                     continue
+                # A callback that declined to run ({"status": "skipped"}) is
+                # receipted as a skip, never counted as a success.
+                skipped = (
+                    isinstance(result, dict)
+                    and result.get("status") == "skipped"
+                )
                 accepted, projected_result = (
                     self._store._complete_success_with_projection(
                         claim, result, now=self._now(),
+                        outcome="skipped" if skipped else "success",
                     )
                 )
+                if not accepted:
+                    status = "ambiguous"
+                else:
+                    status = "skipped" if skipped else "ok"
                 results.append({
                     "task": task.name,
-                    "status": "ok" if accepted else "ambiguous",
+                    "status": status,
                     **(
                         {"result": projected_result}
                         if accepted
@@ -1724,7 +1765,10 @@ class AutonomyScheduler:
                     ),
                 })
                 if accepted:
-                    logger.debug("Scheduled task completed: %s", task.name)
+                    logger.debug(
+                        "Scheduled task %s: %s",
+                        "skipped" if skipped else "completed", task.name,
+                    )
             self._last_tick_at = _iso(self._now())
             self._last_error = None
             self._tick_count += 1
@@ -1757,6 +1801,8 @@ class AutonomyScheduler:
                 self._last_error is None
                 and snapshot["degraded_schedules"] == 0
                 and snapshot["expired_leases"] == 0
+                # A schedule failing every run forever must not read healthy.
+                and snapshot["failing_schedules"] == 0
             ),
             "last_tick_at": self._last_tick_at,
             "last_error": self._last_error,

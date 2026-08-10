@@ -33,13 +33,28 @@ class TelemetryStore:
     last_initiative_at: Optional[datetime] = None
     last_prefetch_at: Optional[datetime] = None
     last_agent_outreach_at: Optional[datetime] = None
+    #: "ok" normally; "unknown" when persisted state could not be restored
+    #: (corrupt/unreadable file) — the reset must be visible, never a
+    #: silently fresh-looking store.
+    state: str = "ok"
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def load(self) -> None:
         """Restore persisted timestamps (except started_at) across restart."""
+        path = _telemetry_path()
+        if not path.exists():
+            return  # first boot — nothing persisted yet
         try:
-            data = json.loads(_telemetry_path().read_text())
-        except Exception:
+            data = json.loads(path.read_text())
+        except Exception as exc:
+            # A corrupt file silently resetting every timestamp to None used
+            # to produce a permanently unflaggable "ok". Make the reset loud.
+            logger.warning(
+                "telemetry state at %s is unreadable (%s) — timestamps reset; "
+                "temporal state is UNKNOWN until subsystems report again",
+                path, exc,
+            )
+            self.state = "unknown"
             return
         for key in _PERSIST_KEYS:
             if key == "started_at":
@@ -89,7 +104,20 @@ class TelemetryStore:
         flags = []
         for key, threshold in thresholds.items():
             silence = await self.silence_hours(key)
-            if silence is not None and silence > threshold:
+            if silence is None:
+                # Never recorded. A subsystem that has not run once since
+                # process start, past its own staleness threshold, is stale —
+                # "never ran" must flag, not read as silence/ok.
+                async with self._lock:
+                    started = self.started_at
+                if started is not None:
+                    uptime_h = (
+                        datetime.now(timezone.utc) - started
+                    ).total_seconds() / 3600
+                    if uptime_h > threshold:
+                        flags.append(f"{key}:never_ran")
+                continue
+            if silence > threshold:
                 flags.append(key)
         return flags
 
@@ -113,4 +141,5 @@ class TelemetryStore:
             "last_agent_outreach_at": outreach_at,
             "silence_hours": silence,
             "stale_flags": flags,
+            "state": self.state,
         }
