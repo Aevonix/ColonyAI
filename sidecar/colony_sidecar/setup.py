@@ -993,6 +993,15 @@ def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool =
             src = gen_src / f
             if src.exists():
                 shutil.copy2(src, gen_dst / f)
+        catalog_dst = gen_dst / "colony_hostworker"
+        catalog_dst.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(
+            gen_src / "colony_hostworker" / "__init__.py",
+            catalog_dst / "__init__.py",
+        )
+        hostworker_src = colony_repo / "hostworker" / "colony_hostworker"
+        for f in ["catalog.py", "contract.py"]:
+            shutil.copy2(hostworker_src / f, catalog_dst / f)
         print(f"    ✅ General plugin   →  {gen_dst}")
 
     # Generic host-side ops add-ons + scheduled doctor (any agent).

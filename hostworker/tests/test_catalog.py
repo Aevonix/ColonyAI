@@ -3,6 +3,7 @@
 import pytest
 
 from colony_hostworker.catalog import (
+    ACTION_MODEL_TOOL_SCHEMAS,
     ACTION_TOOL_NAMES,
     GRANT_AUTHORIZABLE_TOOL_NAMES,
     NON_GRANTABLE_TOOL_NAMES,
@@ -27,6 +28,15 @@ def test_catalog_contains_exactly_the_governed_tools():
             "colony_task_dismiss",
             "colony_task_snooze",
         }
+    )
+
+
+def test_model_action_schema_catalog_is_complete():
+    assert tuple(schema["name"] for schema in ACTION_MODEL_TOOL_SCHEMAS) == tuple(
+        sorted(ACTION_TOOL_NAMES)
+    )
+    assert ACTION_MODEL_TOOL_SCHEMAS == tuple(
+        TOOL_CATALOG[name].model_schema for name in sorted(ACTION_TOOL_NAMES)
     )
 
 

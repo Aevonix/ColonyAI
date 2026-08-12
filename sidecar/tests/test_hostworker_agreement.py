@@ -18,11 +18,14 @@ It also enforces the independence itself: the sidecar package must not import
 """
 
 import ast
+import importlib.util
 import json
 import pathlib
+import re
 import sys
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from colony_sidecar import governed_actions as endpoint
 
@@ -45,6 +48,21 @@ def vectors() -> dict:
         data = json.load(handle)
     assert data["schema"] == "ColonyHostWorkerGoldenVectorsV1"
     return data
+
+
+@pytest.fixture(scope="module")
+def plugin_module():
+    name = "colony_hermes_hostworker_agreement_test"
+    spec = importlib.util.spec_from_file_location(
+        name,
+        _PLUGIN_INIT,
+        submodule_search_locations=[str(_PLUGIN_INIT.parent)],
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_hostworker_package_is_present():
@@ -89,26 +107,22 @@ def test_catalogs_enumerate_the_same_tools(vectors):
     assert sorted(endpoint.ACTION_TOOL_NAMES) == vectors["action_tool_names"]
 
 
-def test_plugin_action_intent_tool_names_match():
-    """The Hermes plugin's governed-intent tool list is the third copy of the
-    catalog's name set; extract it from source (the plugin package imports
-    httpx at module scope) and pin it to the other two."""
+def test_plugin_action_intent_tool_names_match(plugin_module):
+    """The plugin consumes the catalog name set instead of reauthoring it."""
 
-    tree = ast.parse(_PLUGIN_INIT.read_text(encoding="utf-8"))
-    names = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AnnAssign) and getattr(
-            node.target, "id", ""
-        ) == "_ACTION_INTENT_TOOL_NAMES":
-            names = ast.literal_eval(node.value)
-        elif isinstance(node, ast.Assign) and any(
-            getattr(target, "id", "") == "_ACTION_INTENT_TOOL_NAMES"
-            for target in node.targets
-        ):
-            names = ast.literal_eval(node.value)
-    assert names is not None, "_ACTION_INTENT_TOOL_NAMES not found in plugin"
+    names = plugin_module._ACTION_INTENT_TOOL_NAMES
     assert set(names) == set(endpoint.ACTION_TOOL_NAMES)
     assert set(names) == set(hw_catalog.ACTION_TOOL_NAMES)
+
+
+def test_plugin_action_schemas_match_hostworker_catalog(plugin_module):
+    advertised = tuple(
+        schema for schema in plugin_module._TOOL_SCHEMAS
+        if schema["name"] in hw_catalog.ACTION_TOOL_NAMES
+    )
+    assert advertised == hw_catalog.ACTION_MODEL_TOOL_SCHEMAS
+    for schema in advertised:
+        Draft202012Validator.check_schema(schema["parameters"])
 
 
 def test_valid_args_accepted_identically(vectors):
@@ -130,6 +144,303 @@ def test_invalid_args_rejected_identically(vectors):
             endpoint._validate_args(vector["tool_name"], vector["args"])
         with pytest.raises(hw_contract.GovernedContractError):
             hw_catalog.validate_tool_args(vector["tool_name"], vector["args"])
+
+
+def _assert_boundary(schema, tool, accepted, rejected):
+    advertised = Draft202012Validator(schema)
+    assert not list(advertised.iter_errors(accepted))
+    assert list(advertised.iter_errors(rejected))
+    assert endpoint._validate_args(tool, accepted) == accepted
+    assert hw_catalog.validate_tool_args(tool, accepted) == accepted
+    with pytest.raises(endpoint.GovernedActionValidationError):
+        endpoint._validate_args(tool, rejected)
+    with pytest.raises(hw_contract.GovernedContractError):
+        hw_catalog.validate_tool_args(tool, rejected)
+
+
+def test_advertised_bounds_match_both_independent_validators(plugin_module):
+    schemas = {schema["name"]: schema for schema in plugin_module._TOOL_SCHEMAS}
+    properties = {
+        name: schema["parameters"]["properties"]
+        for name, schema in schemas.items()
+    }
+    constant_pairs = (
+        (
+            "GOVERNED_COMMITMENT_DESCRIPTION_MAX_CHARS",
+            "COMMITMENT_DESCRIPTION_MAX_CHARS",
+        ),
+        (
+            "GOVERNED_COMMITMENT_DUE_AT_MAX_CHARS",
+            "COMMITMENT_DUE_AT_MAX_CHARS",
+        ),
+        ("GOVERNED_INSIGHT_CONTENT_MAX_CHARS", "INSIGHT_CONTENT_MAX_CHARS"),
+        ("GOVERNED_RESEARCH_TOPIC_MAX_CHARS", "RESEARCH_TOPIC_MAX_CHARS"),
+        ("GOVERNED_FREEFORM_REASON_MAX_CHARS", "FREEFORM_REASON_MAX_CHARS"),
+        ("GOVERNED_IDENTIFIER_MAX_CHARS", "IDENTIFIER_MAX_CHARS"),
+        ("GOVERNED_DETAILS_MAX_NODES", "BOUNDED_JSON_MAX_NODES"),
+        ("GOVERNED_DETAILS_MAX_DEPTH", "BOUNDED_JSON_MAX_DEPTH"),
+        (
+            "GOVERNED_DETAILS_STRING_MAX_CHARS",
+            "BOUNDED_JSON_STRING_MAX_CHARS",
+        ),
+        (
+            "GOVERNED_DETAILS_KEY_MAX_CHARS",
+            "BOUNDED_JSON_KEY_MAX_CHARS",
+        ),
+        ("GOVERNED_DETAILS_INTEGER_MAX", "BOUNDED_JSON_INTEGER_MAX"),
+    )
+    for endpoint_name, catalog_name in constant_pairs:
+        assert getattr(endpoint, endpoint_name) == getattr(hw_catalog, catalog_name)
+
+    text_specs = (
+        (
+            "colony_create_commitment", {}, "description", "d",
+            hw_catalog.COMMITMENT_DESCRIPTION_MAX_CHARS,
+        ),
+        (
+            "colony_create_commitment", {"description": "d"}, "due_at", "t",
+            hw_catalog.COMMITMENT_DUE_AT_MAX_CHARS,
+        ),
+        (
+            "colony_record_insight", {"insight_type": "fact"}, "content", "c",
+            hw_catalog.INSIGHT_CONTENT_MAX_CHARS,
+        ),
+        (
+            "colony_research", {}, "topic", "r",
+            hw_catalog.RESEARCH_TOPIC_MAX_CHARS,
+        ),
+        (
+            "colony_resolve_commitment", {"commitment_id": "c"}, "reason", "r",
+            hw_catalog.FREEFORM_REASON_MAX_CHARS,
+        ),
+        (
+            "colony_task_snooze", {"task_id": "t"}, "reason", "r",
+            hw_catalog.FREEFORM_REASON_MAX_CHARS,
+        ),
+    )
+    cases = []
+    for tool, base, field, character, maximum in text_specs:
+        field_schema = properties[tool][field]
+        assert field_schema["maxLength"] == maximum
+        cases.append((
+            tool,
+            {**base, field: character * maximum},
+            {**base, field: character * (maximum + 1)},
+        ))
+        cases.append((
+            tool,
+            {**base, field: "" if "minLength" not in field_schema else character},
+            {**base, field: character + "\x00"},
+        ))
+        if "minLength" in field_schema:
+            cases.append((
+                tool,
+                {**base, field: character},
+                {**base, field: " \n"},
+            ))
+
+    identifier_fields = (
+        ("colony_get_initiative", {}, "initiative_id"),
+        ("colony_initiative_feedback", {"action": "actioned"}, "initiative_id"),
+        ("colony_resolve_commitment", {}, "commitment_id"),
+        ("colony_task_complete", {}, "task_id"),
+        ("colony_task_dismiss", {}, "task_id"),
+        ("colony_task_snooze", {}, "task_id"),
+    )
+    identifier_schema = hw_catalog.identifier_model_schema()
+    assert endpoint.GOVERNED_IDENTIFIER_PATTERN == identifier_schema["pattern"]
+    # JSON Schema applies ``pattern`` as a search.  The exact-end assertion
+    # must still reject the final-newline case that a terminal ``$`` admits.
+    assert re.search(identifier_schema["pattern"], "identifier\n") is None
+    for tool, base, field in identifier_fields:
+        assert properties[tool][field] == identifier_schema
+        if tool == "colony_get_initiative":
+            continue  # Read tool: it does not cross the two governed validators.
+        accepted = {**base, field: "i" * hw_catalog.IDENTIFIER_MAX_CHARS}
+        cases.extend((
+            (
+                tool, accepted,
+                {**base, field: "i" * (hw_catalog.IDENTIFIER_MAX_CHARS + 1)},
+            ),
+            (tool, accepted, {**base, field: "bad id"}),
+            (tool, accepted, {**base, field: "identifier\n"}),
+        ))
+
+    parameters = schemas["colony_initiative_feedback"]["parameters"]
+    details_schema = parameters["properties"]["details"]
+    assert details_schema["type"] == "object"
+    assert "$ref" not in details_schema
+    assert details_schema["maxProperties"] == hw_catalog.BOUNDED_JSON_MAX_NODES - 1
+    definitions = parameters["$defs"]
+    assert details_schema["propertyNames"] == {
+        "type": "string",
+        "maxLength": hw_catalog.BOUNDED_JSON_KEY_MAX_CHARS,
+        "pattern": hw_catalog.IDENTIFIER_RE.pattern,
+    }
+    assert re.search(
+        details_schema["propertyNames"]["pattern"], "key\n",
+    ) is None
+    description = details_schema["description"]
+    for bound in (
+        hw_catalog.BOUNDED_JSON_MAX_NODES,
+        hw_catalog.BOUNDED_JSON_MAX_DEPTH,
+        hw_catalog.BOUNDED_JSON_STRING_MAX_CHARS,
+        hw_catalog.BOUNDED_JSON_KEY_MAX_CHARS,
+    ):
+        assert str(bound) in description
+    for depth in range(1, hw_catalog.BOUNDED_JSON_MAX_DEPTH + 1):
+        variants = definitions[f"detailsValue{depth}"]["anyOf"]
+        text = next(item for item in variants if item["type"] == "string")
+        assert text["maxLength"] == hw_catalog.BOUNDED_JSON_STRING_MAX_CHARS
+        number = next(item for item in variants if item["type"] == "number")
+        assert number["minimum"] == -hw_catalog.BOUNDED_JSON_INTEGER_MAX
+        assert number["maximum"] == hw_catalog.BOUNDED_JSON_INTEGER_MAX
+        if depth < hw_catalog.BOUNDED_JSON_MAX_DEPTH:
+            local_maximum = hw_catalog.BOUNDED_JSON_MAX_NODES - depth - 1
+            assert next(
+                item for item in variants if item["type"] == "array"
+            )["maxItems"] == local_maximum
+            assert next(
+                item for item in variants if item["type"] == "object"
+            )["maxProperties"] == local_maximum
+    terminal = definitions[f"detailsValue{hw_catalog.BOUNDED_JSON_MAX_DEPTH}"]["anyOf"]
+    assert next(item for item in terminal if item["type"] == "array")["maxItems"] == 0
+    assert next(item for item in terminal if item["type"] == "object")["maxProperties"] == 0
+
+    base = {"initiative_id": "i", "action": "actioned"}
+    feedback = lambda value: {**base, "details": value}
+    string_max = hw_catalog.BOUNDED_JSON_STRING_MAX_CHARS
+    key_max = hw_catalog.BOUNDED_JSON_KEY_MAX_CHARS
+    children = hw_catalog.BOUNDED_JSON_MAX_NODES - 2
+    integer_max = hw_catalog.BOUNDED_JSON_INTEGER_MAX
+
+    def nested_lists(levels):
+        value = None
+        for _ in range(levels):
+            value = [value]
+        return value
+
+    cases.extend((
+        (
+            "colony_initiative_feedback",
+            feedback({"v": "s" * string_max}),
+            feedback({"v": "s" * (string_max + 1)}),
+        ),
+        (
+            "colony_initiative_feedback",
+            feedback({"v": ""}),
+            feedback({"v": "s\x00"}),
+        ),
+        (
+            "colony_initiative_feedback",
+            feedback({"k" * key_max: None}),
+            feedback({"k" * (key_max + 1): None}),
+        ),
+        (
+            "colony_initiative_feedback",
+            feedback({"valid": None}),
+            feedback({"bad key": None}),
+        ),
+        (
+            "colony_initiative_feedback",
+            feedback({"valid": None}),
+            feedback({"bad\n": None}),
+        ),
+        (
+            "colony_initiative_feedback",
+            feedback({"items": [None] * children}),
+            feedback({"items": [None] * (children + 1)}),
+        ),
+        (
+            "colony_initiative_feedback",
+            feedback({"number": integer_max}),
+            feedback({"number": integer_max + 1}),
+        ),
+        (
+            "colony_initiative_feedback",
+            feedback({
+                "nested": nested_lists(hw_catalog.BOUNDED_JSON_MAX_DEPTH - 1),
+            }),
+            feedback({
+                "nested": nested_lists(hw_catalog.BOUNDED_JSON_MAX_DEPTH),
+            }),
+        ),
+    ))
+    for tool, accepted, rejected in cases:
+        _assert_boundary(schemas[tool]["parameters"], tool, accepted, rejected)
+
+
+def test_aggregate_details_limit_is_advertised_and_prevalidated(plugin_module):
+    schema = next(
+        item for item in plugin_module._TOOL_SCHEMAS
+        if item["name"] == "colony_initiative_feedback"
+    )["parameters"]
+    details = schema["properties"]["details"]
+    assert (
+        f"at most {hw_catalog.BOUNDED_JSON_MAX_NODES} total values"
+        in details["description"]
+    )
+    accepted = {
+        "initiative_id": "initiative-1",
+        "action": "actioned",
+        "details": {"a": [None] * 254, "b": [None] * 255},
+    }
+    invalid = {
+        "initiative_id": "initiative-1",
+        "action": "actioned",
+        "details": {"a": [None] * 300, "b": [None] * 300},
+    }
+    assert endpoint._validate_args("colony_initiative_feedback", accepted) == accepted
+    assert hw_catalog.validate_tool_args(
+        "colony_initiative_feedback", accepted,
+    ) == accepted
+    with pytest.raises(endpoint.GovernedActionValidationError, match="too complex"):
+        endpoint._validate_args("colony_initiative_feedback", invalid)
+    with pytest.raises(hw_contract.GovernedContractError, match="too complex"):
+        hw_catalog.validate_tool_args("colony_initiative_feedback", invalid)
+    # Standard JSON Schema has no aggregate descendant-node counter.  The
+    # plugin closes that portable-schema limitation by invoking the catalog's
+    # exact validator before it constructs or submits an intent.
+    with pytest.raises(ValueError, match="too complex"):
+        plugin_module.HermesToolActionIntentV1.build(
+            tool_name="colony_initiative_feedback",
+            args=invalid,
+            context={},
+        )
+
+
+@pytest.mark.parametrize(("tool", "args"), (
+    (
+        "colony_initiative_feedback",
+        {
+            "initiative_id": "initiative-1",
+            "action": "actioned",
+            "details": {"number": float("nan")},
+        },
+    ),
+    (
+        "colony_record_insight",
+        {
+            "content": "fact",
+            "insight_type": "fact",
+            "confidence": float("nan"),
+        },
+    ),
+))
+def test_non_json_numbers_fail_before_intent_serialization(
+    plugin_module, tool, args,
+):
+    # NaN is outside the JSON data model, so JSON Schema has no portable
+    # keyword for it.  Both independent validators and the plugin's catalog
+    # prevalidation must reject it before canonical JSON is constructed.
+    with pytest.raises(endpoint.GovernedActionValidationError):
+        endpoint._validate_args(tool, args)
+    with pytest.raises(hw_contract.GovernedContractError):
+        hw_catalog.validate_tool_args(tool, args)
+    with pytest.raises(ValueError):
+        plugin_module.HermesToolActionIntentV1.build(
+            tool_name=tool, args=args, context={},
+        )
 
 
 def _mutations(args):
@@ -184,6 +495,38 @@ def test_mutation_battery_verdicts_agree(vectors):
 
 
 # ---------------------------------------------------------------- execution
+
+
+@pytest.mark.asyncio
+async def test_create_commitment_default_matches_advertised_execution(
+    plugin_module,
+):
+    class CapturingCommitments:
+        def __init__(self):
+            self.created = None
+
+        def create(self, **kwargs):
+            self.created = kwargs
+            return {"id": "commitment-1", "status": "pending"}
+
+    advertised = next(
+        schema for schema in plugin_module._TOOL_SCHEMAS
+        if schema["name"] == "colony_create_commitment"
+    )["parameters"]["properties"]["priority"]["default"]
+    assert advertised == hw_catalog.COMMITMENT_PRIORITY_DEFAULT
+    assert advertised == endpoint.GOVERNED_COMMITMENT_PRIORITY_DEFAULT
+
+    commitments = CapturingCommitments()
+    executor = endpoint.ColonySubsystemActionExecutor(commitments=commitments)
+    args = endpoint._validate_args(
+        "colony_create_commitment", {"description": "Follow up"},
+    )
+    assert "priority" not in args
+    await executor.perform(
+        {"tool_name": "colony_create_commitment", "args": args},
+        "owner",
+    )
+    assert commitments.created["priority"] == advertised
 
 
 def test_golden_execution_request_agrees_end_to_end(vectors):

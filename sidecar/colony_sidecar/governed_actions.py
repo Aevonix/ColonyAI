@@ -90,11 +90,25 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _INTENT_ID_RE = re.compile(r"^hti_[0-9a-f]{32}$")
 _APPROVAL_ID_RE = re.compile(r"^APR-[A-Z0-9]{12}$")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$")
-_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
+GOVERNED_IDENTIFIER_PATTERN = (
+    r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}(?![\s\S])"
+)
+_REQUEST_ID_RE = re.compile(GOVERNED_IDENTIFIER_PATTERN)
 _STATES = frozenset(
     {"prepared", "executing", "completed", "failed", "ambiguous"}
 )
 GOVERNED_RESEARCH_TOPIC_MAX_CHARS = 1400
+GOVERNED_COMMITMENT_PRIORITY_DEFAULT = 60
+GOVERNED_COMMITMENT_DESCRIPTION_MAX_CHARS = 8000
+GOVERNED_COMMITMENT_DUE_AT_MAX_CHARS = 256
+GOVERNED_INSIGHT_CONTENT_MAX_CHARS = 16000
+GOVERNED_FREEFORM_REASON_MAX_CHARS = 8000
+GOVERNED_IDENTIFIER_MAX_CHARS = 256
+GOVERNED_DETAILS_MAX_NODES = 512
+GOVERNED_DETAILS_MAX_DEPTH = 8
+GOVERNED_DETAILS_STRING_MAX_CHARS = 4096
+GOVERNED_DETAILS_KEY_MAX_CHARS = 128
+GOVERNED_DETAILS_INTEGER_MAX = (1 << 63) - 1
 
 
 class GovernedActionValidationError(ValueError):
@@ -301,12 +315,15 @@ def _bounded_json(value: Any, name: str, *, depth=0, counter=None) -> Any:
     if counter is None:
         counter = [0]
     counter[0] += 1
-    if counter[0] > 512 or depth > 8:
+    if (
+        counter[0] > GOVERNED_DETAILS_MAX_NODES
+        or depth > GOVERNED_DETAILS_MAX_DEPTH
+    ):
         raise GovernedActionValidationError(f"{name} is too complex")
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int):
-        if abs(value) > (1 << 63) - 1:
+        if abs(value) > GOVERNED_DETAILS_INTEGER_MAX:
             raise GovernedActionValidationError(f"{name} integer is too large")
         return value
     if isinstance(value, float):
@@ -314,7 +331,9 @@ def _bounded_json(value: Any, name: str, *, depth=0, counter=None) -> Any:
             raise GovernedActionValidationError(f"{name} number must be finite")
         return value
     if isinstance(value, str):
-        return _text(value, name, 4096, allow_empty=True)
+        return _text(
+            value, name, GOVERNED_DETAILS_STRING_MAX_CHARS, allow_empty=True,
+        )
     if isinstance(value, list):
         return [
             _bounded_json(item, name, depth=depth + 1, counter=counter)
@@ -323,7 +342,10 @@ def _bounded_json(value: Any, name: str, *, depth=0, counter=None) -> Any:
     if isinstance(value, Mapping):
         result = {}
         for key, item in value.items():
-            key = _text(key, f"{name} key", 128, identifier=True)
+            key = _text(
+                key, f"{name} key", GOVERNED_DETAILS_KEY_MAX_CHARS,
+                identifier=True,
+            )
             result[key] = _bounded_json(
                 item, name, depth=depth + 1, counter=counter
             )
@@ -384,9 +406,15 @@ def _validate_args(tool_name: str, raw: Any) -> dict[str, Any]:
         )
         if set(args) - {"description", "due_at", "priority"} or "description" not in args:
             raise GovernedActionValidationError("args fields are invalid")
-        _text(args["description"], "description", 8000)
+        _text(
+            args["description"], "description",
+            GOVERNED_COMMITMENT_DESCRIPTION_MAX_CHARS,
+        )
         if "due_at" in args:
-            _text(args["due_at"], "due_at", 256, allow_empty=True)
+            _text(
+                args["due_at"], "due_at", GOVERNED_COMMITMENT_DUE_AT_MAX_CHARS,
+                allow_empty=True,
+            )
         if "priority" in args:
             _integer(args["priority"], "priority", 0, 100)
         return args
@@ -399,7 +427,10 @@ def _validate_args(tool_name: str, raw: Any) -> dict[str, Any]:
             or not {"initiative_id", "action"} <= set(args)
         ):
             raise GovernedActionValidationError("args fields are invalid")
-        _text(args["initiative_id"], "initiative_id", 256, identifier=True)
+        _text(
+            args["initiative_id"], "initiative_id", GOVERNED_IDENTIFIER_MAX_CHARS,
+            identifier=True,
+        )
         _enum(
             args["action"],
             "action",
@@ -419,7 +450,9 @@ def _validate_args(tool_name: str, raw: Any) -> dict[str, Any]:
             or not {"content", "insight_type"} <= set(args)
         ):
             raise GovernedActionValidationError("args fields are invalid")
-        _text(args["content"], "content", 16000)
+        _text(
+            args["content"], "content", GOVERNED_INSIGHT_CONTENT_MAX_CHARS,
+        )
         _enum(
             args["insight_type"],
             "insight_type",
@@ -454,7 +487,10 @@ def _validate_args(tool_name: str, raw: Any) -> dict[str, Any]:
         args = dict(raw)
         if set(args) - {"commitment_id", "outcome", "reason"} or "commitment_id" not in args:
             raise GovernedActionValidationError("args fields are invalid")
-        _text(args["commitment_id"], "commitment_id", 256, identifier=True)
+        _text(
+            args["commitment_id"], "commitment_id", GOVERNED_IDENTIFIER_MAX_CHARS,
+            identifier=True,
+        )
         if "outcome" in args:
             _enum(
                 args["outcome"],
@@ -462,11 +498,17 @@ def _validate_args(tool_name: str, raw: Any) -> dict[str, Any]:
                 frozenset({"done", "invalid", "duplicate", "wont_do", "obsolete"}),
             )
         if "reason" in args:
-            _text(args["reason"], "reason", 8000, allow_empty=True)
+            _text(
+                args["reason"], "reason", GOVERNED_FREEFORM_REASON_MAX_CHARS,
+                allow_empty=True,
+            )
         return args
     if tool_name == "colony_task_complete":
         args = _exact_mapping(raw, {"task_id"}, name="args")
-        _text(args["task_id"], "task_id", 256, identifier=True)
+        _text(
+            args["task_id"], "task_id", GOVERNED_IDENTIFIER_MAX_CHARS,
+            identifier=True,
+        )
         return args
     if tool_name == "colony_task_dismiss":
         if not isinstance(raw, Mapping):
@@ -474,7 +516,10 @@ def _validate_args(tool_name: str, raw: Any) -> dict[str, Any]:
         args = dict(raw)
         if set(args) - {"task_id", "reason"} or "task_id" not in args:
             raise GovernedActionValidationError("args fields are invalid")
-        _text(args["task_id"], "task_id", 256, identifier=True)
+        _text(
+            args["task_id"], "task_id", GOVERNED_IDENTIFIER_MAX_CHARS,
+            identifier=True,
+        )
         if "reason" in args:
             _enum(
                 args["reason"],
@@ -488,11 +533,17 @@ def _validate_args(tool_name: str, raw: Any) -> dict[str, Any]:
         args = dict(raw)
         if set(args) - {"task_id", "hours", "reason"} or "task_id" not in args:
             raise GovernedActionValidationError("args fields are invalid")
-        _text(args["task_id"], "task_id", 256, identifier=True)
+        _text(
+            args["task_id"], "task_id", GOVERNED_IDENTIFIER_MAX_CHARS,
+            identifier=True,
+        )
         if "hours" in args:
             _integer(args["hours"], "hours", 1, 168)
         if "reason" in args:
-            _text(args["reason"], "reason", 8000, allow_empty=True)
+            _text(
+                args["reason"], "reason", GOVERNED_FREEFORM_REASON_MAX_CHARS,
+                allow_empty=True,
+            )
         return args
     raise GovernedActionValidationError("tool is not a governed Colony action")
 
@@ -1473,7 +1524,9 @@ class ColonySubsystemActionExecutor:
                 person_id=owner_person_id,
                 description=args["description"],
                 due_at=args.get("due_at") or None,
-                priority=args.get("priority", 50),
+                priority=args.get(
+                    "priority", GOVERNED_COMMITMENT_PRIORITY_DEFAULT,
+                ),
                 source_type="governed_action",
                 source_context="owner_authorized",
                 metadata={"governed": True},
@@ -1629,8 +1682,20 @@ __all__ = (
     "ColonySubsystemActionExecutor",
     "GOVERNED_ACTION_PRINCIPAL",
     "GOVERNED_ACTION_REQUEST_MAX_BYTES",
-    "GOVERNED_RESEARCH_TOPIC_MAX_CHARS",
     "GOVERNED_ACTION_SCOPES",
+    "GOVERNED_COMMITMENT_DESCRIPTION_MAX_CHARS",
+    "GOVERNED_COMMITMENT_DUE_AT_MAX_CHARS",
+    "GOVERNED_COMMITMENT_PRIORITY_DEFAULT",
+    "GOVERNED_DETAILS_INTEGER_MAX",
+    "GOVERNED_DETAILS_KEY_MAX_CHARS",
+    "GOVERNED_DETAILS_MAX_DEPTH",
+    "GOVERNED_DETAILS_MAX_NODES",
+    "GOVERNED_DETAILS_STRING_MAX_CHARS",
+    "GOVERNED_FREEFORM_REASON_MAX_CHARS",
+    "GOVERNED_IDENTIFIER_MAX_CHARS",
+    "GOVERNED_IDENTIFIER_PATTERN",
+    "GOVERNED_INSIGHT_CONTENT_MAX_CHARS",
+    "GOVERNED_RESEARCH_TOPIC_MAX_CHARS",
     "GovernedActionConflict",
     "GovernedActionLedger",
     "GovernedActionNotFound",

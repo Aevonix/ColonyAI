@@ -14,6 +14,7 @@ Hermes configuration, or mutate process environment.
 
 from __future__ import annotations
 
+import copy
 from collections import OrderedDict
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -31,6 +32,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from .colony_hostworker.catalog import (
+    ACTION_MODEL_TOOL_SCHEMAS as _CATALOG_ACTION_MODEL_TOOL_SCHEMAS,
+    ACTION_TOOL_NAMES as _CATALOG_ACTION_TOOL_NAMES,
+    identifier_model_schema as _identifier_model_schema,
+    validate_tool_args as _validate_action_tool_args,
+)
 from .client import (
     ColonyClient,
     PrivateSQLitePathError,
@@ -82,52 +89,22 @@ def _parameters(
     }
 
 
-# Keep this catalog explicitly authored and alphabetically sorted.  The host
-# deployment preflight hashes the exact JSON shape and independently verifies
-# that every model-visible name is classified below.
-_TOOL_SCHEMAS: list[dict[str, Any]] = [
-    {
-        "name": "colony_autonomy_disable",
-        "description": "Submit a governed intent to disable autonomous work scheduling.",
-        "parameters": _parameters({}),
-    },
-    {
-        "name": "colony_autonomy_enable",
-        "description": "Submit a governed intent to enable autonomous work scheduling.",
-        "parameters": _parameters({}),
-    },
+# Governed action schemas come directly from colony_hostworker.catalog, the
+# authoritative catalog.  Reads and owner-message intents remain local because
+# they are not part of that governed-action execution boundary.  The merged
+# model catalog is sorted before its exact JSON shape is hashed for preflight.
+_LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "colony_autonomy_status",
         "description": "Read bounded Colony autonomy status in an attested private scope.",
         "parameters": _parameters({}),
     },
     {
-        "name": "colony_create_commitment",
-        "description": "Submit a governed intent to create a commitment for this participant.",
-        "parameters": _parameters({
-            "description": {"type": "string"},
-            "due_at": {"type": "string"},
-            "priority": {"type": "integer", "minimum": 0, "maximum": 100, "default": 60},
-        }, ("description",)),
-    },
-    {
         "name": "colony_get_initiative",
         "description": "Read one Colony initiative in an attested private viewer scope.",
         "parameters": _parameters({
-            "initiative_id": {"type": "string"},
+            "initiative_id": _identifier_model_schema(),
         }, ("initiative_id",)),
-    },
-    {
-        "name": "colony_initiative_feedback",
-        "description": "Submit a governed intent describing an initiative outcome.",
-        "parameters": _parameters({
-            "action": {
-                "type": "string",
-                "enum": ["acknowledged", "actioned", "dismissed", "snoozed"],
-            },
-            "details": {"type": "object"},
-            "initiative_id": {"type": "string"},
-        }, ("initiative_id", "action")),
     },
     {
         "name": "colony_list_commitments",
@@ -189,42 +166,6 @@ _TOOL_SCHEMAS: list[dict[str, Any]] = [
         "parameters": _parameters({}),
     },
     {
-        "name": "colony_record_insight",
-        "description": "Submit a governed intent to record a conversational insight.",
-        "parameters": _parameters({
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.7},
-            "content": {"type": "string"},
-            "insight_type": {
-                "type": "string",
-                "enum": [
-                    "preference", "connection", "fact", "goal_hint",
-                    "relationship_update",
-                ],
-            },
-        }, ("insight_type", "content")),
-    },
-    {
-        "name": "colony_research",
-        "description": "Submit a governed intent to queue durable Colony research.",
-        "parameters": _parameters({
-            "depth": {"type": "string", "enum": ["quick", "standard", "deep"], "default": "quick"},
-            "topic": {"type": "string", "maxLength": 1400},
-        }, ("topic",)),
-    },
-    {
-        "name": "colony_resolve_commitment",
-        "description": "Submit a governed intent to resolve a commitment.",
-        "parameters": _parameters({
-            "commitment_id": {"type": "string"},
-            "outcome": {
-                "type": "string",
-                "enum": ["done", "invalid", "duplicate", "wont_do", "obsolete"],
-                "default": "done",
-            },
-            "reason": {"type": "string"},
-        }, ("commitment_id",)),
-    },
-    {
         "name": "colony_send_message",
         "description": (
             "Submit a governed text message to one existing owner-approved "
@@ -240,33 +181,15 @@ _TOOL_SCHEMAS: list[dict[str, Any]] = [
             "recipient": {"type": "string", "minLength": 1, "maxLength": 160},
         }, ("recipient", "message")),
     },
-    {
-        "name": "colony_task_complete",
-        "description": "Submit a governed intent to complete a task or initiative.",
-        "parameters": _parameters({"task_id": {"type": "string"}}, ("task_id",)),
-    },
-    {
-        "name": "colony_task_dismiss",
-        "description": "Submit a governed intent to dismiss a task or initiative.",
-        "parameters": _parameters({
-            "reason": {
-                "type": "string",
-                "enum": ["stale", "completed", "abandoned", "not_applicable"],
-                "default": "stale",
-            },
-            "task_id": {"type": "string"},
-        }, ("task_id",)),
-    },
-    {
-        "name": "colony_task_snooze",
-        "description": "Submit a governed intent to snooze a task or initiative.",
-        "parameters": _parameters({
-            "hours": {"type": "integer", "minimum": 1, "maximum": 168, "default": 24},
-            "reason": {"type": "string", "default": ""},
-            "task_id": {"type": "string"},
-        }, ("task_id",)),
-    },
 ]
+
+_TOOL_SCHEMAS: list[dict[str, Any]] = sorted(
+    [
+        *copy.deepcopy(_CATALOG_ACTION_MODEL_TOOL_SCHEMAS),
+        *_LOCAL_TOOL_SCHEMAS,
+    ],
+    key=lambda item: item["name"],
+)
 
 
 _READ_TOOL_NAMES: tuple[str, ...] = (
@@ -280,17 +203,8 @@ _READ_TOOL_NAMES: tuple[str, ...] = (
     "colony_queue_stats",
 )
 
-_ACTION_INTENT_TOOL_NAMES: tuple[str, ...] = (
-    "colony_autonomy_disable",
-    "colony_autonomy_enable",
-    "colony_create_commitment",
-    "colony_initiative_feedback",
-    "colony_record_insight",
-    "colony_research",
-    "colony_resolve_commitment",
-    "colony_task_complete",
-    "colony_task_dismiss",
-    "colony_task_snooze",
+_ACTION_INTENT_TOOL_NAMES: tuple[str, ...] = tuple(
+    sorted(_CATALOG_ACTION_TOOL_NAMES)
 )
 
 _OWNER_MESSAGE_TOOL_NAMES: tuple[str, ...] = ("colony_send_message",)
@@ -578,7 +492,7 @@ class HermesToolActionIntentV1:
     def build(
         cls, *, tool_name: str, args: Mapping[str, Any], context: Mapping[str, str],
     ) -> "HermesToolActionIntentV1":
-        args_json = _canonical_json(dict(args))
+        args_json = _canonical_json(_validate_action_tool_args(tool_name, args))
         context_json = _canonical_json(dict(context))
         args_sha = hashlib.sha256(args_json.encode("utf-8")).hexdigest()
         context_sha = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
@@ -1393,10 +1307,10 @@ class _ToolDispatcher:
             intent = HermesToolActionIntentV1.build(
                 tool_name=name, args=args, context=context,
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as error:
             return _canonical_json({
                 "effect_performed": False,
-                "reason": "tool arguments are not canonical JSON",
+                "reason": f"tool arguments are invalid: {error}",
                 "status": "denied",
             })
         if not self._intent_ledger.accept(intent):

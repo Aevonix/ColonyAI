@@ -37,6 +37,17 @@ for name in __init__.py client.py events.py slash.py plugin.yaml; do
   chmod 600 "$PLUGIN_DIR/$name"
 done
 
+# The general plugin reads governed action schemas from the authoritative,
+# stdlib-only host-worker catalog.  Install the exact catalog snapshot inside
+# the plugin package so Hermes does not depend on a sidecar installation.
+HOSTWORKER_PACKAGE="$PLUGIN_DIR/colony_hostworker"
+mkdir -p "$HOSTWORKER_PACKAGE"
+cp "$SCRIPT_DIR/colony_hostworker/__init__.py" "$HOSTWORKER_PACKAGE/__init__.py"
+for name in catalog.py contract.py; do
+  cp "$SCRIPT_DIR/../../hostworker/colony_hostworker/$name" "$HOSTWORKER_PACKAGE/$name"
+done
+chmod 600 "$HOSTWORKER_PACKAGE"/*.py
+
 if [[ "$INSTALL_MEMORY" -eq 1 ]]; then
   MEMORY_DIR="$HERMES_HOME/plugins/colony-memory"
   MEMORY_SRC="$SCRIPT_DIR/../colony-memory"

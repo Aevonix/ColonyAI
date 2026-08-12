@@ -1503,6 +1503,58 @@ def test_legacy_effect_pollers_are_inert_and_installer_cannot_enable_them():
     assert "colony-queue-worker.py" in installer
 
 
+def test_installed_plugin_carries_authoritative_catalog(tmp_path, monkeypatch):
+    hermes_home = tmp_path / "hermes"
+    hermes_home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    result = subprocess.run(
+        ["bash", str(PLUGIN_DIR / "install.sh"), "--force"],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    installed = hermes_home / "plugins" / "colony"
+    for relative in (
+        "colony_hostworker/__init__.py",
+        "colony_hostworker/catalog.py",
+        "colony_hostworker/contract.py",
+    ):
+        assert (installed / relative).is_file()
+    script = """
+import importlib.util
+import pathlib
+import sys
+
+plugin = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "isolated_colony_plugin",
+    plugin / "__init__.py",
+    submodule_search_locations=[str(plugin)],
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+commitment = next(
+    item for item in module._TOOL_SCHEMAS
+    if item["name"] == "colony_create_commitment"
+)
+print(commitment["parameters"]["properties"]["priority"]["default"])
+"""
+    imported = subprocess.run(
+        [sys.executable, "-c", script, str(installed)],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert imported.returncode == 0, imported.stdout + imported.stderr
+    assert imported.stdout.strip() == "60"
+
+
 def test_slash_surface_has_no_dynamic_import_or_mutation_helper_bypass():
     source = (PLUGIN_DIR / "slash.py").read_text(encoding="utf-8")
     assert "from colony import" not in source

@@ -155,7 +155,12 @@ INTENT_ID_RE = re.compile(r"^hti_[0-9a-f]{32}$")
 # The approval-id form ColonyAI's endpoint already enforces on the wire.
 APPROVAL_ID_RE = re.compile(r"^APR-[A-Z0-9]{12}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$")
-IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
+# ``(?![\s\S])`` is an exact end-of-string assertion in both Python and the
+# ECMAScript regex dialect used by JSON Schema.  A terminal ``$`` is not exact
+# there: it may also match immediately before a final newline.
+IDENTIFIER_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}(?![\s\S])"
+)
 ACTION_ID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
@@ -168,6 +173,12 @@ EXECUTION_REQUEST_MAX_BYTES = 32 * 1024
 EXECUTION_RESULT_MAX_BYTES = 16 * 1024
 EFFECT_MAX_BYTES = 8 * 1024
 RESEARCH_TOPIC_MAX_CHARS = 1400
+IDENTIFIER_MAX_CHARS = 256
+BOUNDED_JSON_MAX_NODES = 512
+BOUNDED_JSON_MAX_DEPTH = 8
+BOUNDED_JSON_STRING_MAX_CHARS = 4096
+BOUNDED_JSON_KEY_MAX_CHARS = 128
+BOUNDED_JSON_INTEGER_MAX = (1 << 63) - 1
 APPROVAL_MAX_LIFETIME_SECONDS = 86_400
 # The one skew allowance shared by every "decided in the future?" sanity
 # check on both sides of the boundary today.
@@ -310,12 +321,12 @@ def bounded_json_value(
     if counter is None:
         counter = [0]
     counter[0] += 1
-    if counter[0] > 512 or depth > 8:
+    if counter[0] > BOUNDED_JSON_MAX_NODES or depth > BOUNDED_JSON_MAX_DEPTH:
         raise GovernedContractError("%s is too complex" % name)
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int):
-        if abs(value) > (1 << 63) - 1:
+        if abs(value) > BOUNDED_JSON_INTEGER_MAX:
             raise GovernedContractError("%s integer is too large" % name)
         return value
     if isinstance(value, float):
@@ -323,7 +334,9 @@ def bounded_json_value(
             raise GovernedContractError("%s number must be finite" % name)
         return value
     if isinstance(value, str):
-        return bounded_text(value, name, 4096, allow_empty=True)
+        return bounded_text(
+            value, name, BOUNDED_JSON_STRING_MAX_CHARS, allow_empty=True,
+        )
     if isinstance(value, list):
         return [
             bounded_json_value(item, name, depth=depth + 1, counter=counter)
@@ -332,7 +345,10 @@ def bounded_json_value(
     if isinstance(value, Mapping):
         result = {}
         for key, item in value.items():
-            key = bounded_text(key, "%s key" % name, 128, identifier=True)
+            key = bounded_text(
+                key, "%s key" % name, BOUNDED_JSON_KEY_MAX_CHARS,
+                identifier=True,
+            )
             result[key] = bounded_json_value(
                 item, name, depth=depth + 1, counter=counter
             )
@@ -346,6 +362,11 @@ __all__ = (
     "APPROVAL_BINDING_SCHEMA",
     "APPROVAL_ID_RE",
     "APPROVAL_MAX_LIFETIME_SECONDS",
+    "BOUNDED_JSON_INTEGER_MAX",
+    "BOUNDED_JSON_KEY_MAX_CHARS",
+    "BOUNDED_JSON_MAX_DEPTH",
+    "BOUNDED_JSON_MAX_NODES",
+    "BOUNDED_JSON_STRING_MAX_CHARS",
     "CALL_IDENTITY_SCHEMA",
     "CONTEXT_FIELDS",
     "EFFECT_FIELDS",
@@ -359,6 +380,7 @@ __all__ = (
     "EXECUTION_RESULT_SCHEMA",
     "GATE_CLOCK_SKEW_SECONDS",
     "GovernedContractError",
+    "IDENTIFIER_MAX_CHARS",
     "IDENTIFIER_RE",
     "INTENT_ENVELOPE_SCHEMA",
     "INTENT_FIELDS",
