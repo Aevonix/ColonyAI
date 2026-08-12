@@ -49,6 +49,14 @@ unbuilt HERE by design:
   unimplementable (the real MetaLearner has no pattern API; the
   AutonomyScheduler is interval-based, not a cron store) and mutating host
   cron jobs would cross into the host framework's domain.
+- **Built-in initiative executor is the no-host-agent path** — the one
+  deliberate exception to the division above:
+  `services/initiative_executor.py` exists specifically for same-machine
+  deployments that have NO host agent, closing the autonomy loop in-process
+  (ReasoningLoop + Colony tools against pending initiatives). Deployments
+  that DO run a host agent with its own execution plane should leave
+  `COLONY_EXECUTOR_ENABLED=false` (the default): enabling both means two
+  executors competing to claim the same initiatives.
 
 ## Unwired (feature code with zero callers)
 

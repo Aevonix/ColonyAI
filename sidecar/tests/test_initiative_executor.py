@@ -404,6 +404,33 @@ async def test_execute_one_refuses_boundary_violation():
 
 
 @pytest.mark.asyncio
+async def test_execute_one_fails_closed_when_boundary_check_raises(monkeypatch):
+    """An owner boundary the executor cannot evaluate must refuse, not allow."""
+    monkeypatch.delenv("COLONY_BOUNDARY_FAIL_CLOSED", raising=False)
+    monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
+
+    class ExplodingDirectives:
+        def check(self, action):
+            raise RuntimeError("directive store unavailable")
+
+    store = FakeStore([FakeInitiative()])
+    reasoning = FakeReasoningLoop()
+    svc = InitiativeExecutorService(
+        initiative_store=store,
+        reasoning_loop=reasoning,
+        allowed_types={"follow_up"},
+        directive_manager=ExplodingDirectives(),
+    )
+    await svc._execute_one(FakeInitiative())
+    # never reasoned or executed
+    assert len(reasoning.calls) == 0
+    assert svc._stats["initiatives_failed"] == 1
+    assert svc._stats["boundary_check_errors"] == 1
+    assert store._failed and "boundary_check_error" in store._failed[0][1]
+    assert store._failed[0][2] is True  # retryable: a healthy store can re-evaluate
+
+
+@pytest.mark.asyncio
 async def test_execute_one_allows_when_no_boundary_matches():
     from colony_sidecar.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore(db_path=None))

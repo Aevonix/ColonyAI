@@ -208,6 +208,7 @@ class InitiativeExecutorService:
             "initiatives_failed": 0,
             "total_tool_calls": 0,
             "total_tokens": 0,
+            "boundary_check_errors": 0,
         }
 
     @property
@@ -351,6 +352,25 @@ class InitiativeExecutorService:
                     self._stats["initiatives_processed"] += 1
                     return
             except Exception:
+                # An owner boundary we cannot evaluate must not be assumed
+                # permissive: fail CLOSED by default (a delayed initiative is
+                # recoverable; acting on a forbidden subject is not). Retryable:
+                # a healthy store on a later cycle evaluates it properly.
+                self._stats["boundary_check_errors"] += 1
+                from colony_sidecar.directives.guard import boundary_fail_closed
+                if boundary_fail_closed():
+                    logger.warning(
+                        "Initiative %s (%s) REFUSED: boundary_check_error "
+                        "(boundary check raised; failing closed)",
+                        iid, itype, exc_info=True,
+                    )
+                    await self._fail_initiative(
+                        iid, "boundary_check_error: boundary check raised; "
+                        "failing closed", retry=True,
+                    )
+                    self._stats["initiatives_failed"] += 1
+                    self._stats["initiatives_processed"] += 1
+                    return
                 logger.debug("boundary pre-check failed (allowing)", exc_info=True)
 
         # Repeat-work suppression: if a recent completion already covers this
@@ -689,8 +709,15 @@ class InitiativeExecutorService:
             return pending
         try:
             from colony_sidecar.directives import Action
+            from colony_sidecar.directives.guard import boundary_fail_closed
         except Exception:
-            return pending
+            # Cannot even construct a check: never assume permissive.
+            logger.warning(
+                "Tool boundary gate unavailable (directives import failed); "
+                "dropping %d pending tool call(s) (failing closed)",
+                len(pending), exc_info=True,
+            )
+            return []
         survivors = []
         for tc in pending:
             name = tc.get("name", "")
@@ -701,8 +728,21 @@ class InitiativeExecutorService:
                     text=name, high_risk=True,
                 ))
             except Exception:
-                verdict = None
-            if verdict is not None and not verdict.allowed:
+                # An owner boundary we cannot evaluate must not be assumed
+                # permissive: fail CLOSED by default and drop the call.
+                self._stats["boundary_check_errors"] += 1
+                if boundary_fail_closed():
+                    logger.warning(
+                        "Tool call %s REFUSED: boundary_check_error "
+                        "(boundary check raised; failing closed)",
+                        name, exc_info=True,
+                    )
+                    continue
+                logger.debug("tool boundary check failed (allowing)",
+                             exc_info=True)
+                survivors.append(tc)
+                continue
+            if not verdict.allowed:
                 logger.warning(
                     "Tool call %s REFUSED by boundary: %s", name, verdict.reason,
                 )
