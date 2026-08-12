@@ -1,0 +1,1847 @@
+{
+ "action_tool_names": [
+  "colony_autonomy_disable",
+  "colony_autonomy_enable",
+  "colony_create_commitment",
+  "colony_initiative_feedback",
+  "colony_record_insight",
+  "colony_research",
+  "colony_resolve_commitment",
+  "colony_task_complete",
+  "colony_task_dismiss",
+  "colony_task_snooze"
+ ],
+ "digests": [
+  {
+   "canonical_ascii": "{}",
+   "canonical_utf8": "{}",
+   "sha256_ascii": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "sha256_utf8": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "value": {}
+  },
+  {
+   "canonical_ascii": "[]",
+   "canonical_utf8": "[]",
+   "sha256_ascii": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "sha256_utf8": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "value": []
+  },
+  {
+   "canonical_ascii": "\"\"",
+   "canonical_utf8": "\"\"",
+   "sha256_ascii": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+   "sha256_utf8": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+   "value": ""
+  },
+  {
+   "canonical_ascii": "\"plain ascii\"",
+   "canonical_utf8": "\"plain ascii\"",
+   "sha256_ascii": "4274df7aca57f5d7fea57a2411e8525202fc6396cf9163a80c015c11fea0621c",
+   "sha256_utf8": "4274df7aca57f5d7fea57a2411e8525202fc6396cf9163a80c015c11fea0621c",
+   "value": "plain ascii"
+  },
+  {
+   "canonical_ascii": "\"\\u00e9\"",
+   "canonical_utf8": "\"é\"",
+   "sha256_ascii": "abc3932c9ec58f042750738c49034e7ee67cf556d6be86832ac3dda38decb703",
+   "sha256_utf8": "f2886017e9c7abacf804b54d64787dce2b611c9544ba21f3affdd126a6e50086",
+   "value": "é"
+  },
+  {
+   "canonical_ascii": "\"\\u2615 emoji \\ud83c\\udf1e\"",
+   "canonical_utf8": "\"☕ emoji 🌞\"",
+   "sha256_ascii": "81d57fe91a40bd4cea5145deb06534361f612d1c5e13fa4a6690c4bd5d40dcf6",
+   "sha256_utf8": "c55fe1e12fe119ead5c9ead10a085d84ac4492f253e04452cb083b79efc0e585",
+   "value": "☕ emoji 🌞"
+  },
+  {
+   "canonical_ascii": "\"\\ud834\\udd1e astral clef\"",
+   "canonical_utf8": "\"𝄞 astral clef\"",
+   "sha256_ascii": "a52550ab9f331df760a8a6a202ae2701f647ea4ad146da00cd8bae65fbd83f02",
+   "sha256_utf8": "5828bbdd8985fcd6311fa35ae9261eb5c6541926db06fcf4c2d0310c2b5383ce",
+   "value": "𝄞 astral clef"
+  },
+  {
+   "canonical_ascii": "\"control\\n\\t chars \\\" \\\\ /\"",
+   "canonical_utf8": "\"control\\n\\t chars \\\" \\\\ /\"",
+   "sha256_ascii": "0986a2a9a9444d762808210f79517b3e1da4b02b10755d5704a04622e53e3ee2",
+   "sha256_utf8": "0986a2a9a9444d762808210f79517b3e1da4b02b10755d5704a04622e53e3ee2",
+   "value": "control\n\t chars \" \\ /"
+  },
+  {
+   "canonical_ascii": "{\"a\":[true,false,null],\"z\":2,\"\\u00e9\":1}",
+   "canonical_utf8": "{\"a\":[true,false,null],\"z\":2,\"é\":1}",
+   "sha256_ascii": "e89d2e8740212d2383a80fad4ef41313f53d607c1b7248c7dae713aba2d66fae",
+   "sha256_utf8": "d7ad6d4b8639963ed4cf065d7910011f0267e74402414333698ba7d8ade97335",
+   "value": {
+    "a": [
+     true,
+     false,
+     null
+    ],
+    "z": 2,
+    "é": 1
+   }
+  },
+  {
+   "canonical_ascii": "{\"nested\":{\"deep\":{\"list\":[1,2.5,\"\\u4e09\"]}}}",
+   "canonical_utf8": "{\"nested\":{\"deep\":{\"list\":[1,2.5,\"三\"]}}}",
+   "sha256_ascii": "debe261ce65b6dc32b0d3b40f9be25419d3ee7850b4973224f50570be855cec1",
+   "sha256_utf8": "b3185acbf83cf65b99d07f9cad345a97745d2427e958dc1c6d185d6300780d51",
+   "value": {
+    "nested": {
+     "deep": {
+      "list": [
+       1,
+       2.5,
+       "三"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "canonical_ascii": "{\"mixed\":[\"ascii\",\"\\u00fcn\\u00efcode\",{\"\\u043a\\u043b\\u044e\\u0447\":\"\\u0437\\u043d\\u0430\\u0447\\u0435\\u043d\\u0438\\u0435\"}],\"num\":[0,-1,3.14]}",
+   "canonical_utf8": "{\"mixed\":[\"ascii\",\"ünïcode\",{\"ключ\":\"значение\"}],\"num\":[0,-1,3.14]}",
+   "sha256_ascii": "8d156bd79258da0530fcbb3d917fb087431bdfe759b10fd90725bb0bfd7a0a2c",
+   "sha256_utf8": "d186cb18985d1174ec5ea86149a1ba78aba7122bd682704b787d9a06b56418d7",
+   "value": {
+    "mixed": [
+     "ascii",
+     "ünïcode",
+     {
+      "ключ": "значение"
+     }
+    ],
+    "num": [
+     0,
+     -1,
+     3.14
+    ]
+   }
+  },
+  {
+   "canonical_ascii": "0.1",
+   "canonical_utf8": "0.1",
+   "sha256_ascii": "14be4b45f18e0d8c67b4f719b5144eee88497e413709d11d85b096d8e2346310",
+   "sha256_utf8": "14be4b45f18e0d8c67b4f719b5144eee88497e413709d11d85b096d8e2346310",
+   "value": 0.1
+  },
+  {
+   "canonical_ascii": "-0.0",
+   "canonical_utf8": "-0.0",
+   "sha256_ascii": "c26617c7ccbcaa6631b45d851b8cf56e21d2ca624bdb1193afdbd4b560702cec",
+   "sha256_utf8": "c26617c7ccbcaa6631b45d851b8cf56e21d2ca624bdb1193afdbd4b560702cec",
+   "value": -0.0
+  },
+  {
+   "canonical_ascii": "123456789012345678",
+   "canonical_utf8": "123456789012345678",
+   "sha256_ascii": "37f96542b663971bfdf6b7785174b7255d9aa320fa3455a5b4fa7b079427cf97",
+   "sha256_utf8": "37f96542b663971bfdf6b7785174b7255d9aa320fa3455a5b4fa7b079427cf97",
+   "value": 123456789012345678
+  },
+  {
+   "canonical_ascii": "{\"schema\":\"HermesToolActionIntentV1\",\"version\":1}",
+   "canonical_utf8": "{\"schema\":\"HermesToolActionIntentV1\",\"version\":1}",
+   "sha256_ascii": "523308c2b5dfe66e011ad1a5c5bda3ee98b89c9b6f19d08a01f410f52ac15666",
+   "sha256_utf8": "523308c2b5dfe66e011ad1a5c5bda3ee98b89c9b6f19d08a01f410f52ac15666",
+   "value": {
+    "schema": "HermesToolActionIntentV1",
+    "version": 1
+   }
+  }
+ ],
+ "execution_request": {
+  "args_sha256_ascii": "b45e69dc067f5274c9418d6d2ccd8c85fcb0c47c1da9ce40c4a9cd35d75c3373",
+  "document": {
+   "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+   "action_id": "6f1d0a9e-4b2c-4f6e-9a3d-2b1c0d9e8f7a",
+   "approval": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "authorization_receipt_sha256": "01a0652472e5e0c0d176b8a72c3e49011bc764695f0570b1dfb4005f93eee328",
+    "decided_at": 1754900000.0,
+    "decision_id": "dec-approval-1",
+    "expires_at": 1754900600.0,
+    "revision": 1,
+    "schema": "ColonyOwnerApprovalExecutionBindingV1",
+    "version": 1
+   },
+   "args": {
+    "description": "Review café ☕ notes",
+    "priority": 60
+   },
+   "args_sha256": "b45e69dc067f5274c9418d6d2ccd8c85fcb0c47c1da9ce40c4a9cd35d75c3373",
+   "execution_digest": "8cc8a300cd96bce47ddcd723d79cd8d5859ba8449fde4087611c816d302c9bcc",
+   "intent_digest": "8d6d6f1088518e59820e09a637967927ea45c8009f08215a44c0ffc6868c04a5",
+   "intent_id": "hti_30e31effd7669ebcd27e53f10a334337",
+   "schema": "ColonyGovernedActionExecutionV1",
+   "tool_name": "colony_create_commitment",
+   "version": 1
+  },
+  "execution_digest_utf8": "8cc8a300cd96bce47ddcd723d79cd8d5859ba8449fde4087611c816d302c9bcc",
+  "intent_digest_ascii": "8d6d6f1088518e59820e09a637967927ea45c8009f08215a44c0ffc6868c04a5",
+  "path_action_id": "6f1d0a9e-4b2c-4f6e-9a3d-2b1c0d9e8f7a",
+  "payload_sha256_utf8": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+  "raw_utf8": "{\"action_digest\":\"73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9\",\"action_id\":\"6f1d0a9e-4b2c-4f6e-9a3d-2b1c0d9e8f7a\",\"approval\":{\"approval_id\":\"APR-7K2M9QX4TR1B\",\"authorization_receipt_sha256\":\"01a0652472e5e0c0d176b8a72c3e49011bc764695f0570b1dfb4005f93eee328\",\"decided_at\":1754900000.0,\"decision_id\":\"dec-approval-1\",\"expires_at\":1754900600.0,\"revision\":1,\"schema\":\"ColonyOwnerApprovalExecutionBindingV1\",\"version\":1},\"args\":{\"description\":\"Review café ☕ notes\",\"priority\":60},\"args_sha256\":\"b45e69dc067f5274c9418d6d2ccd8c85fcb0c47c1da9ce40c4a9cd35d75c3373\",\"execution_digest\":\"8cc8a300cd96bce47ddcd723d79cd8d5859ba8449fde4087611c816d302c9bcc\",\"intent_digest\":\"8d6d6f1088518e59820e09a637967927ea45c8009f08215a44c0ffc6868c04a5\",\"intent_id\":\"hti_30e31effd7669ebcd27e53f10a334337\",\"schema\":\"ColonyGovernedActionExecutionV1\",\"tool_name\":\"colony_create_commitment\",\"version\":1}"
+ },
+ "gate_cases": [
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "expected": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "decided_at": 1754900495.0,
+    "decision_id": "dec-approval-1",
+    "evidence_sha256": "1481c679212503610142244b38218a50e20b27a079f90bb5346370ce0df48161",
+    "expired": false,
+    "expires_at": 1754901100.0,
+    "receipt_key": "gate-1",
+    "revision": 1
+   },
+   "name": "delivery_valid",
+   "now": 1754900500.0,
+   "outcome": "accepted",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "1481c679212503610142244b38218a50e20b27a079f90bb5346370ce0df48161",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "expected": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "decided_at": 1754900495.0,
+    "decision_id": "dec-approval-1",
+    "evidence_sha256": "851de8213a379378567d383c7b18e759e3cc74f041a29b16b432f745d151f197",
+    "expired": false,
+    "expires_at": 1754901100.0,
+    "receipt_key": "gate-1",
+    "revision": 1
+   },
+   "name": "delivery_bound_reply",
+   "now": 1754900500.0,
+   "outcome": "accepted",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "bound_reply",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "851de8213a379378567d383c7b18e759e3cc74f041a29b16b432f745d151f197",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "expected": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "decided_at": 1754900495.0,
+    "decision_id": "dec-approval-1",
+    "evidence_sha256": "7f36b801d1df5d213696da040de34c498959ca82187a491ece302b3ffc64deaa",
+    "expired": false,
+    "expires_at": 1754901100.0,
+    "receipt_key": "gate-1",
+    "revision": 1
+   },
+   "name": "delivery_nonascii_principal",
+   "now": 1754900500.0,
+   "outcome": "accepted",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker-é",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "7f36b801d1df5d213696da040de34c498959ca82187a491ece302b3ffc64deaa",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "expected": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "decided_at": 1754900495.0,
+    "decision_id": "dec-approval-1",
+    "evidence_sha256": "470727be93cdf84db16064f0a582dc0b59939b317aced78fb6ed02133b41db8c",
+    "expired": false,
+    "expires_at": 1754901100.0,
+    "receipt_key": "gate-1",
+    "revision": 1
+   },
+   "name": "grant_valid",
+   "now": 1754900500.0,
+   "outcome": "accepted",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "approval_source_request_id": "grant-req-1",
+      "authority": "owner",
+      "binding_method": "bounded_grant",
+      "bounded_grant_expires_at_epoch": 1754900800.0,
+      "bounded_grant_id": "grant-1",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1
+     },
+     "evidence_sha256": "470727be93cdf84db16064f0a582dc0b59939b317aced78fb6ed02133b41db8c",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "expected": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "decided_at": 1754900529.0,
+    "decision_id": "dec-approval-1",
+    "evidence_sha256": "c912a769c924cf9200c97b2942883be9c4ac42b74d55dd797c9b6235be8284bd",
+    "expired": false,
+    "expires_at": 1754901100.0,
+    "receipt_key": "gate-1",
+    "revision": 1
+   },
+   "name": "delivery_skew_within_allowance",
+   "now": 1754900500.0,
+   "outcome": "accepted",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900529.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "c912a769c924cf9200c97b2942883be9c4ac42b74d55dd797c9b6235be8284bd",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "expected": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "decided_at": 1754900495.0,
+    "decision_id": "dec-approval-1",
+    "evidence_sha256": "1481c679212503610142244b38218a50e20b27a079f90bb5346370ce0df48161",
+    "expired": false,
+    "expires_at": 1754901100.0,
+    "receipt_key": "gate-1",
+    "revision": 1
+   },
+   "name": "delivery_autonomy_per_message_ok",
+   "now": 1754900500.0,
+   "outcome": "accepted",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "1481c679212503610142244b38218a50e20b27a079f90bb5346370ce0df48161",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_autonomy_enable"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "expected": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "decided_at": 1754900495.0,
+    "decision_id": "dec-approval-1",
+    "evidence_sha256": "d6c968812a35a0fca9d56ed671126cc710e24cf0612642498ff2c605bb0bd144",
+    "expired": true,
+    "expires_at": 1754901100.0,
+    "receipt_key": "gate-1",
+    "revision": 1
+   },
+   "name": "grant_expired_at_point_of_use",
+   "now": 1754900500.0,
+   "outcome": "accepted",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "approval_source_request_id": "grant-req-1",
+      "authority": "owner",
+      "binding_method": "bounded_grant",
+      "bounded_grant_expires_at_epoch": 1754900490.0,
+      "bounded_grant_id": "grant-1",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1
+     },
+     "evidence_sha256": "d6c968812a35a0fca9d56ed671126cc710e24cf0612642498ff2c605bb0bd144",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "expected": {
+    "approval_id": "APR-7K2M9QX4TR1B",
+    "decided_at": 1754900000.0,
+    "decision_id": "dec-approval-1",
+    "evidence_sha256": "098c0cc5121faa06f2d002b9058ddbe2ec25a7f2d66752e1ac47a5dbdc019b81",
+    "expired": true,
+    "expires_at": 1754900499.0,
+    "receipt_key": "gate-1",
+    "revision": 1
+   },
+   "name": "gate_expired_at_point_of_use",
+   "now": 1754900500.0,
+   "outcome": "accepted",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900000.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754900499.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "098c0cc5121faa06f2d002b9058ddbe2ec25a7f2d66752e1ac47a5dbdc019b81",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "grant_for_non_grantable_tool",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "approval_source_request_id": "grant-req-1",
+      "authority": "owner",
+      "binding_method": "bounded_grant",
+      "bounded_grant_expires_at_epoch": 1754900800.0,
+      "bounded_grant_id": "grant-1",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1
+     },
+     "evidence_sha256": "470727be93cdf84db16064f0a582dc0b59939b317aced78fb6ed02133b41db8c",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_autonomy_enable"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "grant_for_non_grantable_disable",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "approval_source_request_id": "grant-req-1",
+      "authority": "owner",
+      "binding_method": "bounded_grant",
+      "bounded_grant_expires_at_epoch": 1754900800.0,
+      "bounded_grant_id": "grant-1",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1
+     },
+     "evidence_sha256": "470727be93cdf84db16064f0a582dc0b59939b317aced78fb6ed02133b41db8c",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_autonomy_disable"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "grant_for_unknown_tool",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "approval_source_request_id": "grant-req-1",
+      "authority": "owner",
+      "binding_method": "bounded_grant",
+      "bounded_grant_expires_at_epoch": 1754900800.0,
+      "bounded_grant_id": "grant-1",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1
+     },
+     "evidence_sha256": "470727be93cdf84db16064f0a582dc0b59939b317aced78fb6ed02133b41db8c",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_send_message"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "mixed_shape_delivery_plus_grant_field",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "bounded_grant_id": "grant-1",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "9fb0298ba5819b3c60f992dc3ca8c87cc6c73b518f6835407415b41d1864c470",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "partial_shape_missing_event_key",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "8189b3650c96bad8f6702449ce94acd578bcd082004f6f48f300e593821ed4c9",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "delivery_claiming_grant_binding",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "bounded_grant",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "8923c4b973ce91b394f3d3928338e032a6b33aaec3e6e5a730e6bfc632e6173a",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "grant_claiming_delivery_binding",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "approval_source_request_id": "grant-req-1",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "bounded_grant_expires_at_epoch": 1754900800.0,
+      "bounded_grant_id": "grant-1",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1
+     },
+     "evidence_sha256": "f7db7fedb52e34e9589ab981245b87222e2edcd4d82efa6875f4d0e7338bd74a",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "tampered_action_digest",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "5d84cbd1bf5bebf215b1c25b0b0eed0c1742836975a0539581b33cdf7632660e",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "revision_two",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 2,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "352b933444f238609ab52625ee5beccfe49884c2e112b0d90d58d9e1b6d09109",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "revision_bool",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": true,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "9fa19a575e0441791de2c550f693c9329c3d952406676fde2186ce6319dcbab4",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "decision_denied",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "denied",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "24cd4bb574c4cce6eaf03457e743c4e939f190d3da7ae221c8b6647bf757b1bd",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "authority_not_owner",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "system",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "fe266cd4a6f3b6f4595096e3cfb0d27247acfc2cf2958e4c4df8057a589497c0",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "action_id_mismatch",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-other",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "ae6cbcdbc957916a18721cd98c0442a8735624b1947f605aedd258a8cd1d1616",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "approval_id_not_canonical",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-lowercase12",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "34a815a638941404b170320a2e0f7f1009345c26e486c7665f6ac3eae114ba77",
+     "external_id": "APR-lowercase12",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "external_id_mismatch",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "1481c679212503610142244b38218a50e20b27a079f90bb5346370ce0df48161",
+     "external_id": "APR-000000000000",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "receipt_not_passed",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "1481c679212503610142244b38218a50e20b27a079f90bb5346370ce0df48161",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "failed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "evidence_sha_ascii_convention",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker-é",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "b8040a9c5848660b04632a2686ad388eedf99ecffa4de1a0fa16a7a162aa901f",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "evidence_sha_tampered",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "decided_beyond_skew",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900531.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "2cd0a419254b7b082b8cd74682b750f1213f24ca16e56cbcdf2b3dc5c4a44a73",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "expires_before_decided",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754900494.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "9e832cb79459da04b96ab451a50c41dfd47d3080966827d9e4bcd0c5f082cfa0",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "empty_principal",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "",
+      "revision": 1,
+      "thread_id": "thread-1"
+     },
+     "evidence_sha256": "b3548c759e3896c4d096ee17a4b1c72b58028734bd3d90df06a2049a4b7b2380",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "oversize_thread_id",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "authority": "owner",
+      "binding_method": "single_use_code",
+      "channel": "rcs",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "delivery_id": "delivery-1",
+      "delivery_message_id": "delivery-msg-1",
+      "event_id": "event-1",
+      "event_key": "event-key-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1,
+      "thread_id": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+     },
+     "evidence_sha256": "2d665b28a32b981aac9b287252e347bb94232b9285ebc54122af8c1c5a52816a",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "action": {
+    "action_id": "act-hermes-1",
+    "payload_sha256": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9"
+   },
+   "name": "grant_time_not_a_number",
+   "now": 1754900500.0,
+   "outcome": "refused",
+   "receipts": [
+    {
+     "evidence": {
+      "action_digest": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
+      "action_id": "act-hermes-1",
+      "approval_id": "APR-7K2M9QX4TR1B",
+      "approval_source_request_id": "grant-req-1",
+      "authority": "owner",
+      "binding_method": "bounded_grant",
+      "bounded_grant_expires_at_epoch": "soon",
+      "bounded_grant_id": "grant-1",
+      "decided_at_epoch": 1754900495.0,
+      "decision": "approved",
+      "decision_id": "dec-approval-1",
+      "expires_at_epoch": 1754901100.0,
+      "principal": "host-action-worker",
+      "revision": 1
+     },
+     "evidence_sha256": "c20c96432da447c160f027e5a397692882865f656f827c6878f6af4097ae9bd4",
+     "external_id": "APR-7K2M9QX4TR1B",
+     "kind": "gate",
+     "receipt_key": "gate-1",
+     "status": "passed"
+    }
+   ],
+   "tool_name": "colony_record_insight"
+  }
+ ],
+ "generated_from": "colony_sidecar.governed_actions and the deployed host action worker at ColonyAI commit d301e8e (2026-08-11); regenerate only by running both current implementations side by side",
+ "invalid_args": [
+  {
+   "args": {
+    "message": "y",
+    "recipient": "x"
+   },
+   "tool_name": "colony_send_message"
+  },
+  {
+   "args": {},
+   "tool_name": "not_a_tool"
+  },
+  {
+   "args": {
+    "extra": 1
+   },
+   "tool_name": "colony_autonomy_enable"
+  },
+  {
+   "args": [],
+   "tool_name": "colony_autonomy_disable"
+  },
+  {
+   "args": {},
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "description": ""
+   },
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "description": "   "
+   },
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "description": "x",
+    "priority": 101
+   },
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "description": "x",
+    "priority": true
+   },
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "description": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "description": "x",
+    "unknown": 1
+   },
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "initiative_id": "init-1"
+   },
+   "tool_name": "colony_initiative_feedback"
+  },
+  {
+   "args": {
+    "action": "bogus",
+    "initiative_id": "init-1"
+   },
+   "tool_name": "colony_initiative_feedback"
+  },
+  {
+   "args": {
+    "action": "actioned",
+    "initiative_id": "bad id"
+   },
+   "tool_name": "colony_initiative_feedback"
+  },
+  {
+   "args": {
+    "action": "actioned",
+    "details": [
+     1,
+     2
+    ],
+    "initiative_id": "init-1"
+   },
+   "tool_name": "colony_initiative_feedback"
+  },
+  {
+   "args": {
+    "content": "x",
+    "insight_type": "opinion"
+   },
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "args": {
+    "confidence": 1.5,
+    "content": "x",
+    "insight_type": "fact"
+   },
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "args": {
+    "confidence": true,
+    "content": "x",
+    "insight_type": "fact"
+   },
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "args": {
+    "insight_type": "fact"
+   },
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "args": {
+    "topic": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+   },
+   "tool_name": "colony_research"
+  },
+  {
+   "args": {
+    "depth": "max",
+    "topic": "x"
+   },
+   "tool_name": "colony_research"
+  },
+  {
+   "args": {
+    "extra": 1,
+    "topic": "x"
+   },
+   "tool_name": "colony_research"
+  },
+  {
+   "args": {
+    "commitment_id": "c-1",
+    "outcome": "later"
+   },
+   "tool_name": "colony_resolve_commitment"
+  },
+  {
+   "args": {
+    "commitment_id": ""
+   },
+   "tool_name": "colony_resolve_commitment"
+  },
+  {
+   "args": {
+    "task_id": "t",
+    "x": 1
+   },
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "args": {},
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "args": {
+    "reason": "later",
+    "task_id": "t"
+   },
+   "tool_name": "colony_task_dismiss"
+  },
+  {
+   "args": {
+    "hours": 0,
+    "task_id": "t"
+   },
+   "tool_name": "colony_task_snooze"
+  },
+  {
+   "args": {
+    "hours": 169,
+    "task_id": "t"
+   },
+   "tool_name": "colony_task_snooze"
+  },
+  {
+   "args": {
+    "hours": true,
+    "task_id": "t"
+   },
+   "tool_name": "colony_task_snooze"
+  },
+  {
+   "args": {
+    "reason": "bad\u0000nul",
+    "task_id": "t"
+   },
+   "tool_name": "colony_task_snooze"
+  }
+ ],
+ "schema": "ColonyHostWorkerGoldenVectorsV1",
+ "valid_args": [
+  {
+   "args": {},
+   "args_sha256_ascii": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "normalized": {},
+   "tool_name": "colony_autonomy_disable"
+  },
+  {
+   "args": {},
+   "args_sha256_ascii": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "normalized": {},
+   "tool_name": "colony_autonomy_enable"
+  },
+  {
+   "args": {
+    "description": "Review café ☕ notes",
+    "due_at": "2026-08-12T10:00:00Z",
+    "priority": 60
+   },
+   "args_sha256_ascii": "0ac480e476457a58ff6612ece7191167faced3c8bb09a8b4568dd9e011c59156",
+   "normalized": {
+    "description": "Review café ☕ notes",
+    "due_at": "2026-08-12T10:00:00Z",
+    "priority": 60
+   },
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "description": "x"
+   },
+   "args_sha256_ascii": "b4ce80166bd657658386b68af3498254ba962db6fb40de906667ecde15c71d34",
+   "normalized": {
+    "description": "x"
+   },
+   "tool_name": "colony_create_commitment"
+  },
+  {
+   "args": {
+    "action": "acknowledged",
+    "details": {
+     "n": 3,
+     "nested": {
+      "a": [
+       1,
+       2,
+       "é"
+      ]
+     },
+     "note": "ok"
+    },
+    "initiative_id": "init-1"
+   },
+   "args_sha256_ascii": "30532759d50b91d97ac757365ee78ad4a96bf23ecddb78c9c97ac2aaf0c86592",
+   "normalized": {
+    "action": "acknowledged",
+    "details": {
+     "n": 3,
+     "nested": {
+      "a": [
+       1,
+       2,
+       "é"
+      ]
+     },
+     "note": "ok"
+    },
+    "initiative_id": "init-1"
+   },
+   "tool_name": "colony_initiative_feedback"
+  },
+  {
+   "args": {
+    "action": "dismissed",
+    "initiative_id": "init-2"
+   },
+   "args_sha256_ascii": "bfb344f8e81af7e9f8de3199c11ff9cc1eb8e80b0b64309b5be34b73aaf4bc66",
+   "normalized": {
+    "action": "dismissed",
+    "initiative_id": "init-2"
+   },
+   "tool_name": "colony_initiative_feedback"
+  },
+  {
+   "args": {
+    "confidence": 0.7,
+    "content": "Prefers café ristretto ☕",
+    "insight_type": "preference"
+   },
+   "args_sha256_ascii": "62049b73fd6798af71516a212d62a0f0f29053487ccd36712560628278fd87ec",
+   "normalized": {
+    "confidence": 0.7,
+    "content": "Prefers café ristretto ☕",
+    "insight_type": "preference"
+   },
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "args": {
+    "content": "fact body",
+    "insight_type": "fact"
+   },
+   "args_sha256_ascii": "b76878d43cae43b59408efceada8d2f59fd851875f5aa677a7fdb5c27b4c0e57",
+   "normalized": {
+    "content": "fact body",
+    "insight_type": "fact"
+   },
+   "tool_name": "colony_record_insight"
+  },
+  {
+   "args": {
+    "depth": "deep",
+    "topic": "solar 🌞 panel economics"
+   },
+   "args_sha256_ascii": "0cf7238f5f26d6d7ccd2b94a67cf7271f3ced5d67009a1a556785b0145871244",
+   "normalized": {
+    "depth": "deep",
+    "topic": "solar 🌞 panel economics"
+   },
+   "tool_name": "colony_research"
+  },
+  {
+   "args": {
+    "topic": "minimal"
+   },
+   "args_sha256_ascii": "43013d8eabb96e6be2c81ed6432cea4fdb114869fe5e4bcdb18820ccdb8b3fcf",
+   "normalized": {
+    "topic": "minimal"
+   },
+   "tool_name": "colony_research"
+  },
+  {
+   "args": {
+    "commitment_id": "c-1",
+    "outcome": "done",
+    "reason": ""
+   },
+   "args_sha256_ascii": "8c9ef9d45f636280e4fb18c1222ae515fa0b5e60a051a77ea1d0c1412655e65d",
+   "normalized": {
+    "commitment_id": "c-1",
+    "outcome": "done",
+    "reason": ""
+   },
+   "tool_name": "colony_resolve_commitment"
+  },
+  {
+   "args": {
+    "commitment_id": "c-2"
+   },
+   "args_sha256_ascii": "1e6971bdcd922d9edbf7d36670a4b9f3f2cfa94083f933f09ee8fdb8baf15f21",
+   "normalized": {
+    "commitment_id": "c-2"
+   },
+   "tool_name": "colony_resolve_commitment"
+  },
+  {
+   "args": {
+    "task_id": "task-1"
+   },
+   "args_sha256_ascii": "8076f8fc7f4e66be2f5b3ebd07dba6328ab7043e838b3d7b50037ec25021c811",
+   "normalized": {
+    "task_id": "task-1"
+   },
+   "tool_name": "colony_task_complete"
+  },
+  {
+   "args": {
+    "reason": "stale",
+    "task_id": "task-1"
+   },
+   "args_sha256_ascii": "c7f5506b60b957b3a5df5e5f64f72f7d49f9d47c952d9d20c66830a70c48b2d6",
+   "normalized": {
+    "reason": "stale",
+    "task_id": "task-1"
+   },
+   "tool_name": "colony_task_dismiss"
+  },
+  {
+   "args": {
+    "task_id": "task-2"
+   },
+   "args_sha256_ascii": "70f89eb4aeae1a2c58a66166f8fd6abb714b935ec179b095a128ff1b042cc4ed",
+   "normalized": {
+    "task_id": "task-2"
+   },
+   "tool_name": "colony_task_dismiss"
+  },
+  {
+   "args": {
+    "hours": 24,
+    "reason": "later",
+    "task_id": "task-1"
+   },
+   "args_sha256_ascii": "1b4385a98ad8ccd2767daca9b03ef6ab750d2c38d41b211b8b4a5dfc4e51920a",
+   "normalized": {
+    "hours": 24,
+    "reason": "later",
+    "task_id": "task-1"
+   },
+   "tool_name": "colony_task_snooze"
+  },
+  {
+   "args": {
+    "task_id": "task-3"
+   },
+   "args_sha256_ascii": "89637db3de87798fec90d94ed1e135f59f49e747f0b0b13bee321671ad552be2",
+   "normalized": {
+    "task_id": "task-3"
+   },
+   "tool_name": "colony_task_snooze"
+  }
+ ],
+ "version": 1
+}

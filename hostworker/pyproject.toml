@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "colony-hostworker"
+version = "0.1.0"
+description = "Stateless, stdlib-only core for governed Colony host workers"
+requires-python = ">=3.11"
+# Deliberately empty: this distribution is stdlib-only and must never grow a
+# dependency on FastAPI or colony_sidecar (see colony_hostworker/contract.py).
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["colony_hostworker*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
