@@ -73,7 +73,14 @@ from .worker import (
     validate_execution_result,
 )
 
-__version__ = "0.2.0"
+try:  # single source of truth: the installed distribution metadata
+    from importlib.metadata import PackageNotFoundError, version as _dist_version
+    try:
+        __version__ = _dist_version("colony-hostworker")
+    except PackageNotFoundError:  # running from a source tree, not installed
+        __version__ = "0.1.0"
+except ImportError:  # pragma: no cover
+    __version__ = "0.1.0"
 
 __all__ = (
     "ACTION_TOOL_NAMES",
