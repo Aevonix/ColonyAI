@@ -44,10 +44,41 @@ The first valid decision is final. An exact retry of the same `decision_id` is
 idempotent; reusing a decision ID elsewhere, changing the action digest, or
 deciding an expired/superseded request fails closed.
 
-An approval may optionally mint a bounded grant. The grant scope must exactly
-equal the request scope and always has both an expiry and a use cap. Each
-future job consumes one use transactionally before it can move from `BLOCKED`
-to `QUEUED`. A retry of the same immutable action does not spend a second use.
+An approval may optionally mint an exact-scope grant. By default every grant
+has both an expiry and a use cap. The scope must exactly equal the request
+scope. Each future job consumes one use transactionally before it can move
+from `BLOCKED` to `QUEUED`; a retry of the same immutable action does not spend
+a second use.
+
+The deployment-wide envelope is configured with
+`COLONY_GRANT_MAX_TTL_SECONDS` (default `2592000`) and
+`COLONY_GRANT_MAX_USES` (default `100`). A TTL integer >= 60 seconds and a use
+integer >= 1 set finite ceilings and preserve validation-time rejection above
+those limits. The exact, case-insensitive literal `unlimited` is the only
+standing sentinel: it removes expiry or the use cap for grants issued while
+that envelope is active. An empty, unrecognized, zero, negative, or otherwise
+unparseable value refuses sidecar startup.
+Standing selection is logged at warning level, exposed by
+`GET /v1/host/autonomy/posture`, and reported as a distinct WARN by
+`colony doctor`.
+
+Changing a standing setting back to finite affects future issuance only; it
+does not rewrite an existing owner decision. The posture includes active
+standing-grant counts, and `colony doctor` continues to WARN until those
+persisted grants terminate through a remaining finite expiry/use cap or are
+explicitly revoked.
+
+Standing changes only duration/count. The durable grant still binds job type,
+action name, risk, and hashes of required parameters; every use still writes a
+receipt tied to the originating owner decision. Revocation is checked at the
+same atomic point of use. Autonomy enable/disable remain non-grantable in both
+the worker allowlist and the action-plane backstop.
+
+At the hostworker boundary, a standing source grant is represented only by the
+literal `unlimited` in `bounded_grant_expires_at_epoch`. The per-action gate's
+own `expires_at_epoch` remains finite, so each consumed execution authorization
+still has a bounded dispatch window. Null, zero, and malformed grant-expiry
+values fail closed.
 
 ## API migration
 
@@ -64,6 +95,11 @@ The preferred flow is:
    `/v1/host/queue/approvals/requests/{request_id}/decision`.
 4. To authorize a few matching future actions, include `grant` with
    `expires_in_seconds`, `max_uses`, and optionally the exact displayed scope.
+
+Finite envelope settings reject a requested value above the configured
+ceiling. When a configured dimension is `unlimited`, a newly minted grant
+records that dimension as standing regardless of the request's finite default;
+the explicit server setting is therefore the standing-authority decision.
 
 All approval reads require `approvals:read`. Exact decisions
 require `approvals:decide`; the bridge principal does not need worker claim,
@@ -152,8 +188,10 @@ exact scoped decision evidence.
 The historical `/queue/jobs/{id}/approve` and `/reject` endpoints remain as
 wrappers. In the default `COLONY_APPROVAL_AUTHORITY_MODE=shadow` they accept
 legacy traffic, derive the actor from its credential, and record whether that
-credential would pass enforcement. `{"always": true}` now creates a
-seven-day, five-use exact-scope grant; it never creates permanent authority.
+credential would pass enforcement. Under the default envelope,
+`{"always": true}` creates a seven-day, five-use exact-scope grant. It becomes
+standing only when the deployment has explicitly selected `unlimited` for the
+corresponding envelope dimension.
 
 Provision decision adapters as restricted scoped keyring principals with
 `allow_unscoped_api: false`, `api:access`, and `approvals:decide`. Read-only

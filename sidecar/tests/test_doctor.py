@@ -33,6 +33,8 @@ _ENV_VARS = (
     "COLONY_HOST_CONTACT_ID",
     "COLONY_APPROVAL_POLICY",
     "COLONY_APPROVAL_AUTHORITY_MODE",
+    "COLONY_GRANT_MAX_TTL_SECONDS",
+    "COLONY_GRANT_MAX_USES",
     "COLONY_ENABLE_INTERNAL_THINKING",
     "COLONY_ENABLE_SKILL_SYNTHESIS",
     "COLONY_EMIT_HERMES_SKILLS",
@@ -332,6 +334,60 @@ def test_standing_approvals_non_object_fails(clean_env):
     assert doctor.check_standing_approvals().status == FAIL
 
 
+def test_server_grant_envelope_reports_standing_authority_visibly(
+    clean_env, monkeypatch,
+):
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {
+            "available": True,
+            "posture": {
+                "grant_envelope": {
+                    "max_ttl_seconds": None,
+                    "max_ttl_state": "unbounded",
+                    "max_uses": None,
+                    "max_uses_state": "unbounded",
+                    "standing": True,
+                    "sentinel": "unlimited",
+                    "active_standing_grants": 0,
+                    "active_no_expiry_grants": 0,
+                    "active_no_use_cap_grants": 0,
+                },
+            },
+        }),
+    }))
+
+    result = doctor.check_server_grant_envelope("http://x", "", 1.0)
+
+    assert result.status == WARN
+    assert "STANDING AUTHORITY" in result.detail
+    assert "COLONY_GRANT_MAX_TTL_SECONDS" in result.detail
+    assert "no expiry" in result.detail
+    assert "COLONY_GRANT_MAX_USES" in result.detail
+    assert "no use cap" in result.detail
+
+    monkeypatch.setattr(doctor, "_http_get", _fake_http({
+        "/v1/host/autonomy/posture": (200, {
+            "available": True,
+            "posture": {
+                "grant_envelope": {
+                    "max_ttl_seconds": 2592000,
+                    "max_ttl_state": "bounded",
+                    "max_uses": 100,
+                    "max_uses_state": "bounded",
+                    "standing": False,
+                    "sentinel": "unlimited",
+                    "active_standing_grants": 1,
+                    "active_no_expiry_grants": 1,
+                    "active_no_use_cap_grants": 1,
+                },
+            },
+        }),
+    }))
+    persisted = doctor.check_server_grant_envelope("http://x", "", 1.0)
+    assert persisted.status == WARN
+    assert "1 active standing grant(s) remain" in persisted.detail
+
+
 # ---------------------------------------------------------------------------
 # 7. feature gates
 # ---------------------------------------------------------------------------
@@ -452,6 +508,17 @@ def _happy_responses(owner="cid-owner-1"):
             "COLONY_EXECUTOR_ENABLED": "true",
             "COLONY_PROJECTS_MODE": "shadow",
             "COLONY_THINKING_MODE": "shadow",
+            "grant_envelope": {
+                "max_ttl_seconds": 2592000,
+                "max_ttl_state": "bounded",
+                "max_uses": 100,
+                "max_uses_state": "bounded",
+                "standing": False,
+                "sentinel": "unlimited",
+                "active_standing_grants": 0,
+                "active_no_expiry_grants": 0,
+                "active_no_use_cap_grants": 0,
+            },
         }}),
         "/v1/host/self": (200, {"available": True, "domains": [
             {"domain": "research", "n": 3}], "trust": []}),

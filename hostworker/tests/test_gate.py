@@ -9,6 +9,7 @@ from colony_hostworker.gate import (
     BOUNDED_GRANT_SHAPE,
     GATE_COMMON_FIELDS,
     GRANT_BINDING_METHOD,
+    GRANT_UNLIMITED_SENTINEL,
     MESSAGE_DELIVERY_SHAPE,
     OwnerGateError,
     ProvenanceShape,
@@ -76,6 +77,23 @@ def test_valid_grant_proof_accepted(golden_vectors):
     assert authorization.shape == "bounded_grant"
     assert authorization.granted is True
     assert authorization.expired is False
+    assert_dispatchable(authorization)
+
+
+def test_valid_standing_grant_proof_keeps_action_gate_bounded(golden_vectors):
+    case = case_by_name(golden_vectors, "grant_valid")
+    evidence = case["receipts"][0]["evidence"]
+    evidence["bounded_grant_expires_at_epoch"] = GRANT_UNLIMITED_SENTINEL
+    from colony_hostworker.contract import sha256_json_utf8
+
+    case["receipts"][0]["evidence_sha256"] = sha256_json_utf8(evidence)
+
+    authorization = replay(case)
+
+    assert authorization.shape == "bounded_grant"
+    assert authorization.granted is True
+    assert authorization.expired is False
+    assert authorization.expires_at == evidence["expires_at_epoch"]
     assert_dispatchable(authorization)
 
 

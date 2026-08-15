@@ -9618,7 +9618,7 @@ async def get_adaptive_params() -> dict:
 
 
 @router.get("/autonomy/posture")
-async def get_autonomy_posture() -> dict:
+async def get_autonomy_posture(request: Request) -> dict:
     """Effective autonomy posture: the active COLONY_AUTONOMY_PRESET (if any)
     and the resolved value of every preset-managed mode flag, as the RUNNING
     process sees them. This is what `colony doctor` reads so plist/unit-pinned
@@ -9626,6 +9626,12 @@ async def get_autonomy_posture() -> dict:
     try:
         from colony_sidecar.util.autonomy_preset import snapshot
         posture = snapshot()
+        from colony_sidecar.initiatives.approval_authority import (
+            ApprovalAuthorityStore,
+        )
+        posture["grant_envelope"] = ApprovalAuthorityStore(
+            grant_envelope=getattr(request.app.state, "grant_envelope", None),
+        ).grant_posture()
         # The loop mode decides whether preset-enabled subsystems ever get a
         # tick at all; report it so the doctor can flag an incoherent posture
         # (e.g. calibration preset with a reactive loop = nothing calibrates).

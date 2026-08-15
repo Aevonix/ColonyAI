@@ -96,6 +96,28 @@ def test_unrecognised_guard_mode_refuses():
         _resolve_guard_mode("enforec")   # the typo that used to silently shadow
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_value", ["forever", "", "   "])
+async def test_unrecognised_grant_envelope_refuses_before_startup(
+    monkeypatch, invalid_value,
+):
+    """A typo must abort before any subsystem can begin initialization."""
+
+    from colony_sidecar import server
+
+    monkeypatch.setenv("COLONY_GRANT_MAX_TTL_SECONDS", invalid_value)
+    monkeypatch.delenv("COLONY_GRANT_MAX_USES", raising=False)
+    monkeypatch.setattr(
+        server,
+        "_state_dir",
+        lambda: (_ for _ in ()).throw(AssertionError("startup continued")),
+    )
+
+    with pytest.raises(RuntimeError, match="COLONY_GRANT_MAX_TTL_SECONDS"):
+        async with server.lifespan(object()):
+            pytest.fail("invalid grant envelope reached a running lifespan")
+
+
 # ---------------------------------------------------------------------------
 # Health endpoint
 # ---------------------------------------------------------------------------

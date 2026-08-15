@@ -1453,6 +1453,41 @@ def _scheduler_health_check(autonomy_loop) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize subsystems on startup, tear down on shutdown."""
+    from colony_sidecar.initiatives.approval_authority import (
+        GRANT_MAX_TTL_ENV,
+        GRANT_MAX_USES_ENV,
+        GRANT_UNLIMITED_SENTINEL,
+        resolve_grant_envelope,
+    )
+
+    try:
+        grant_envelope = resolve_grant_envelope()
+    except RuntimeError as exc:
+        logger.error(
+            "INVALID APPROVAL GRANT ENVELOPE — refusing startup: %s", exc,
+        )
+        raise
+    app.state.grant_envelope = grant_envelope
+    if grant_envelope.standing_dimensions:
+        descriptions = []
+        if grant_envelope.max_ttl_seconds is None:
+            descriptions.append(f"{GRANT_MAX_TTL_ENV} (no expiry)")
+        if grant_envelope.max_uses is None:
+            descriptions.append(f"{GRANT_MAX_USES_ENV} (no use cap)")
+        logger.warning(
+            "STANDING APPROVAL AUTHORITY ENABLED — %s configured as %r; "
+            "exact-scope grants persist in those dimensions until revoked",
+            "; ".join(descriptions),
+            GRANT_UNLIMITED_SENTINEL,
+        )
+    else:
+        logger.info(
+            "Approval grant envelope bounded: %s=%s, %s=%s",
+            GRANT_MAX_TTL_ENV,
+            grant_envelope.max_ttl_seconds,
+            GRANT_MAX_USES_ENV,
+            grant_envelope.max_uses,
+        )
     state_dir = _state_dir()
     _p8_wiring = None
     # Clear stale process authority before any queue/worker can be constructed.

@@ -98,8 +98,8 @@ Agency in Colony is *earned, not configured*. Two mechanisms work together:
   the delivery domain's own track record.
 
 `GET /v1/host/autonomy/posture` returns the resolved posture of the running
-process, so you always see what is actually in effect rather than what you
-think you configured.
+process, including the effective approval-grant envelope, so you always see
+what is actually in effect rather than what you think you configured.
 
 ## Operational posture — what is actually enforced
 
@@ -114,6 +114,7 @@ below is the truth of the shipped defaults:
 | --- | --- | --- | --- |
 | `COLONY_GUARD_MODE` (outbound ResponseGuard) | `shadow` | Evaluates and audits every guarded reply; never changes the outcome | `enforce` — and note `COLONY_GUARD_ENFORCE_CHECKS` (default `secret_leak,tom2_epistemic`) is a per-check block allowlist, so even in enforce only those checks may block until you set it to `all` |
 | `COLONY_APPROVAL_AUTHORITY_MODE` | `shadow` | Approval requests, decisions, and bounded grants are durably recorded but **not** enforced against real effects | `enforce` |
+| `COLONY_GRANT_MAX_TTL_SECONDS` / `COLONY_GRANT_MAX_USES` | `2592000` / `100` | Newly issued exact-scope grants retain the historical 30-day and 100-use ceilings | Set a TTL integer >= 60 and a uses integer >= 1, or the explicit literal `unlimited` for no expiry and/or no use cap; standing authority is logged and WARNed by `colony doctor` |
 | `COLONY_WORKERS_MODE` (worker governor) | `shadow` | Every worker claim is re-evaluated server-side and journaled, then allowed anyway (`would_refuse` is recorded, not acted on) | `live` |
 | `COLONY_WORKER_AUTHORITY_MODE` (HTTP worker identity) | `shadow` | Legacy/global-bearer workers stay usable; their future denial posture is recorded | `enforce` (requires scoped worker principals plus an exact keyring `worker_grant`) |
 | `COLONY_DIRECTED_MODE` (directed delegation) | `dry_run` | Prepares directed tasks and dispatches nothing | `live` |
@@ -140,8 +141,11 @@ Three things to hold onto:
 - **Invalid enforcement configuration fails closed, loudly.** An
   unrecognised `COLONY_GUARD_MODE` refuses to start the server. An invalid
   `COLONY_APPROVAL_AUTHORITY_MODE` makes approval-scoped API requests return
-  503 and fails the doctor. A typo can cost you availability; it can never
-  silently cost you the enforcement you asked for.
+  503 and fails the doctor. Invalid grant-envelope values also refuse startup;
+  TTL accepts only an integer >= 60 seconds, uses accepts only an integer >= 1,
+  and both accept the documented literal `unlimited`.
+  A typo can cost you availability; it can never silently cost you the
+  enforcement you asked for.
 
 ## Fail-closed guarantees
 
@@ -460,6 +464,8 @@ above. The essentials:
 | `COLONY_AUTONOMY_PRESET` | `passive` / `calibration` / `autonomous`; defaults for the whole autonomy posture, including the loop mode |
 | `COLONY_APPROVAL_POLICY` | `strict` (default) or `graduated` |
 | `COLONY_APPROVAL_AUTHORITY_MODE` | `shadow` (default; approvals recorded, not enforced) or `enforce` |
+| `COLONY_GRANT_MAX_TTL_SECONDS` | Maximum lifetime for newly issued exact-scope grants; integer >= 60; default `2592000`; `unlimited` explicitly selects no expiry |
+| `COLONY_GRANT_MAX_USES` | Maximum use count for newly issued exact-scope grants; integer >= 1; default `100`; `unlimited` explicitly selects no use cap |
 | `COLONY_GUARD_MODE` | ResponseGuard `shadow` (default) or `enforce`; any other value refuses startup |
 | `COLONY_SEARCH_PROVIDER` | Web search provider for research (`tavily`, `brave`, `serpapi`); unset uses the keyless DuckDuckGo fallback |
 

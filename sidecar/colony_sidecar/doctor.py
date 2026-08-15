@@ -66,6 +66,7 @@ SERVER_CHECK_NAMES = (
     "server-worker-liveness",
     "server-skills-observations",
     "server-autonomy-posture",
+    "server-grant-envelope",
     "server-self-model",
     "server-adaptive-params",
     "server-executor",
@@ -1253,6 +1254,116 @@ def check_server_skills_observations(base_url: str, api_key: str, timeout: float
 # so mode flags pinned in a service unit/plist are never invisible here.
 # ---------------------------------------------------------------------------
 
+def check_server_grant_envelope(
+    base_url: str,
+    api_key: str,
+    timeout: float,
+) -> CheckResult:
+    """Report the running process's effective approval-grant envelope."""
+
+    status, body = _http_get(
+        f"{base_url}/v1/host/autonomy/posture", api_key, timeout,
+    )
+    if status == 404:
+        return CheckResult(
+            "server-grant-envelope", SKIP,
+            detail="server predates grant-envelope posture reporting",
+        )
+    if status != 200 or not isinstance(body, dict) or not body.get("available"):
+        return CheckResult(
+            "server-grant-envelope", WARN,
+            detail=f"grant envelope could not be verified (HTTP {status}: {body})",
+        )
+    posture = body.get("posture")
+    envelope = posture.get("grant_envelope") if isinstance(posture, dict) else None
+    if envelope is None:
+        return CheckResult(
+            "server-grant-envelope", SKIP,
+            detail="running server does not report its effective grant envelope",
+        )
+    if not isinstance(envelope, dict):
+        return CheckResult(
+            "server-grant-envelope", FAIL,
+            detail="running server reported an invalid grant envelope posture",
+        )
+
+    ttl_state = envelope.get("max_ttl_state")
+    uses_state = envelope.get("max_uses_state")
+    ttl = envelope.get("max_ttl_seconds")
+    uses = envelope.get("max_uses")
+    standing = envelope.get("standing")
+    active_standing = envelope.get("active_standing_grants")
+    active_no_expiry = envelope.get("active_no_expiry_grants")
+    active_no_use_cap = envelope.get("active_no_use_cap_grants")
+    ttl_valid = (
+        (ttl_state == "unbounded" and ttl is None)
+        or (
+            ttl_state == "bounded"
+            and isinstance(ttl, int) and not isinstance(ttl, bool) and ttl >= 60
+        )
+    )
+    uses_valid = (
+        (uses_state == "unbounded" and uses is None)
+        or (
+            uses_state == "bounded"
+            and isinstance(uses, int) and not isinstance(uses, bool) and uses >= 1
+        )
+    )
+    expected_standing = "unbounded" in {ttl_state, uses_state}
+    counts_valid = all(
+        isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        for value in (active_standing, active_no_expiry, active_no_use_cap)
+    )
+    if (
+        not ttl_valid
+        or not uses_valid
+        or not isinstance(standing, bool)
+        or standing != expected_standing
+        or envelope.get("sentinel") != "unlimited"
+        or not counts_valid
+        or active_no_expiry > active_standing
+        or active_no_use_cap > active_standing
+        or active_standing > active_no_expiry + active_no_use_cap
+    ):
+        return CheckResult(
+            "server-grant-envelope", FAIL,
+            detail="running server reported an inconsistent grant envelope posture",
+            remedy="check the sidecar log and restart with valid COLONY_GRANT_MAX_* settings",
+        )
+
+    if expected_standing or active_standing:
+        dimensions = []
+        if ttl_state == "unbounded":
+            dimensions.append("COLONY_GRANT_MAX_TTL_SECONDS=unlimited (no expiry)")
+        if uses_state == "unbounded":
+            dimensions.append("COLONY_GRANT_MAX_USES=unlimited (no use cap)")
+        if active_standing:
+            dimensions.append(
+                f"{active_standing} active standing grant(s) remain "
+                f"({active_no_expiry} no-expiry; "
+                f"{active_no_use_cap} no-use-cap)"
+            )
+        return CheckResult(
+            "server-grant-envelope", WARN,
+            detail=(
+                "STANDING AUTHORITY — " + "; ".join(dimensions)
+                + "; exact-scope standing dimensions persist until revoked"
+            ),
+            remedy=(
+                "keep revocation and receipt monitoring operational; setting finite "
+                "limits affects new grants, so revoke any active standing grants "
+                "that should no longer persist"
+            ),
+        )
+    return CheckResult(
+        "server-grant-envelope", PASS,
+        detail=(
+            "bounded grant envelope: "
+            f"COLONY_GRANT_MAX_TTL_SECONDS={ttl}, "
+            f"COLONY_GRANT_MAX_USES={uses}"
+        ),
+    )
+
 def check_server_autonomy_posture(base_url: str, api_key: str, timeout: float) -> CheckResult:
     """18. The effective autonomy posture as the running process resolves it."""
     status, body = _http_get(f"{base_url}/v1/host/autonomy/posture", api_key, timeout)
@@ -1864,6 +1975,8 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
                     base_url, api_key, timeout)
     # Cognition / autonomy visibility (v0.22.0)
     results += _run("server-autonomy-posture", check_server_autonomy_posture,
+                    base_url, api_key, timeout)
+    results += _run("server-grant-envelope", check_server_grant_envelope,
                     base_url, api_key, timeout)
     results += _run("server-self-model", check_server_self_model,
                     base_url, api_key, timeout)

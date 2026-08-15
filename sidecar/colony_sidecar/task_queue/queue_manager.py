@@ -994,7 +994,9 @@ class QueueManager:
     def _hold_for_missing_approval(job: Job) -> None:
         for key in (
             "approved_by", "approved_at", "auto_approved_by_policy",
-            "bounded_grant_id", "approval_decision_id",
+            "bounded_grant_id", "bounded_grant_expires_at",
+            "bounded_grant_ttl_state", "bounded_grant_uses_state",
+            "approval_source_request_id", "approval_decision_id",
             "approval_provenance",
             "outbound_target",
         ):
@@ -1070,6 +1072,7 @@ class QueueManager:
             for key in (
                 "auto_approved_by_policy", "bounded_grant_id",
                 "bounded_grant_expires_at", "approval_source_request_id",
+                "bounded_grant_ttl_state", "bounded_grant_uses_state",
             ):
                 job.tags.pop(key, None)
             if state == "pending":

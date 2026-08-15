@@ -33,6 +33,7 @@ from colony_sidecar.initiatives.approval_authority import (
     approval_presentation_digest,
     build_action_binding,
     build_approval_presentation,
+    resolve_grant_envelope,
 )
 from colony_sidecar.task_queue.models import (
     Job,
@@ -58,7 +59,9 @@ router = APIRouter(prefix="/v1/host/queue", tags=["task_queue"])
 
 _RESERVED_JOB_TAGS = frozenset({
     "approved_by", "approved_at", "auto_approved_by_policy",
-    "action_digest", "bounded_grant_id", "rejected_by", "rejected_at",
+    "action_digest", "bounded_grant_id", "bounded_grant_expires_at",
+    "bounded_grant_ttl_state", "bounded_grant_uses_state",
+    "rejected_by", "rejected_at",
     "rejected_reason", "hold_kind", "blocked_reason",
     "agent_action_route", "agent_action_route_node",
     "thought_route", "thought_route_node",
@@ -274,24 +277,60 @@ class WorkEffectReconciliationRequest(BaseModel):
     summary: str = Field("", max_length=1000)
 
 
+def _grant_request_ttl_default() -> int:
+    maximum = resolve_grant_envelope().max_ttl_seconds
+    return (
+        DEFAULT_GRANT_TTL_SECONDS
+        if maximum is None else min(DEFAULT_GRANT_TTL_SECONDS, maximum)
+    )
+
+
+def _grant_request_uses_default() -> int:
+    maximum = resolve_grant_envelope().max_uses
+    return (
+        DEFAULT_GRANT_MAX_USES
+        if maximum is None else min(DEFAULT_GRANT_MAX_USES, maximum)
+    )
+
+
 class BoundedGrantRequest(BaseModel):
-    """An exact-scope, time/use-bounded replacement for ``always``."""
+    """An exact-scope grant constrained by the server's grant envelope."""
 
     expires_in_seconds: int = Field(
-        DEFAULT_GRANT_TTL_SECONDS, ge=60, le=30 * 24 * 60 * 60,
+        default_factory=_grant_request_ttl_default, ge=60,
     )
-    max_uses: int = Field(DEFAULT_GRANT_MAX_USES, ge=1, le=100)
+    max_uses: int = Field(default_factory=_grant_request_uses_default, ge=1)
     # Optional only so clients can echo the scope they displayed. The server
     # rejects any difference; omitting it means "the exact displayed scope".
     exact_scope: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def within_configured_envelope(self):
+        """Keep over-limit API requests at validation-time HTTP 422."""
+
+        envelope = resolve_grant_envelope()
+        if (
+            envelope.max_ttl_seconds is not None
+            and self.expires_in_seconds > envelope.max_ttl_seconds
+        ):
+            raise ValueError(
+                "expires_in_seconds exceeds COLONY_GRANT_MAX_TTL_SECONDS"
+            )
+        if (
+            envelope.max_uses is not None
+            and self.max_uses > envelope.max_uses
+        ):
+            raise ValueError("max_uses exceeds COLONY_GRANT_MAX_USES")
+        return self
 
 
 class JobApproveRequest(BaseModel):
     # Deprecated compatibility input. It is intentionally ignored: authority
     # comes from the authenticated request principal, never caller prose.
     approved_by: Optional[str] = None
-    # Deprecated spelling. In shadow migration mode it maps to a bounded grant
-    # with safe defaults; it never creates a permanent standing approval.
+    # Deprecated spelling. In shadow migration mode it maps to an exact-scope
+    # grant with safe request defaults and the deployment's configured envelope;
+    # it never creates action-name-only authority.
     always: bool = False
     approval_request_id: Optional[str] = None
     expected_action_digest: Optional[str] = None
@@ -2115,8 +2154,8 @@ async def approve_job(
 
     ``approved_by`` is accepted only so existing clients keep parsing; it is
     ignored. The decision actor is derived from the authenticated principal.
-    ``always`` now means a seven-day/five-use exact-scope grant, never a
-    permanent action-name bypass.
+    ``always`` requests the safe grant defaults under the deployment's
+    configured exact-scope envelope; it never creates an action-name bypass.
     """
     queue = _get_queue()
     job = await queue.queue.get_job(job_id)
@@ -2135,7 +2174,7 @@ async def approve_job(
         request=request,
     )
     # Response aliases keep old integrations operational while exposing the
-    # new durable model. Both aliases contain the same bounded grant.
+    # new durable model. Both aliases contain the same exact-scope grant.
     result["approved_by"] = result["decided_by"]
     result["approved_at"] = result["decided_at"]
     result["standing_approval"] = result["bounded_grant"]
@@ -2171,7 +2210,7 @@ async def reject_job(
 
 
 # ---------------------------------------------------------------------------
-# Durable approval requests and bounded grants
+# Durable approval requests and exact-scope grants
 # ---------------------------------------------------------------------------
 
 @router.get("/approvals/requests")
@@ -2392,9 +2431,17 @@ async def get_job_approval_projection(job_id: str) -> Dict[str, Any]:
             "consumed_at": grant_use["consumed_at"],
             "grant_created_at": grant_use["grant_created_at"],
             "expires_at": grant_use["grant_expires_at"],
+            "ttl_unbounded": grant_use["grant_ttl_unbounded"],
+            "ttl_state": (
+                "unbounded" if grant_use["grant_ttl_unbounded"] else "bounded"
+            ),
             "grant_status": grant_use["grant_status"],
             "uses": grant_use["uses"],
             "max_uses": grant_use["max_uses"],
+            "uses_unbounded": grant_use["grant_uses_unbounded"],
+            "uses_state": (
+                "unbounded" if grant_use["grant_uses_unbounded"] else "bounded"
+            ),
             "source_request_matches": source_request_matches,
         }
         expires_at = grant_use["grant_expires_at"]
@@ -2477,8 +2524,8 @@ async def revoke_bounded_grant(grant_id: str) -> Dict[str, Any]:
     return {"success": True, "grant_id": grant_id}
 
 
-# Legacy read/revoke paths remain during migration. They return bounded grants
-# and never mint permanent action-name authority.
+# Legacy read/revoke paths remain during migration. They return exact-scope
+# grants and never mint action-name-only authority.
 @router.get("/approvals/standing")
 async def list_standing_approvals() -> List[Dict[str, Any]]:
     return _approval_store().list_grants()
@@ -2486,7 +2533,7 @@ async def list_standing_approvals() -> List[Dict[str, Any]]:
 
 @router.delete("/approvals/standing/{action_name}")
 async def revoke_standing_approval(action_name: str) -> Dict[str, Any]:
-    """Revoke all active bounded grants for an exact legacy action name."""
+    """Revoke all active grants for an exact legacy action name."""
     store = _approval_store()
     matching = [
         item for item in store.list_grants(status="active")

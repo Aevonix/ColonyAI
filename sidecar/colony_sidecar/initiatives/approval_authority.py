@@ -10,8 +10,9 @@ The store provides two related primitives:
 * An ``ApprovalRequest`` binds one queued job to an immutable action digest.
   The first valid decision wins; expired or superseded requests cannot be
   revived.
-* A bounded grant is an exact action scope with both an expiry and a use cap.
-  It replaces the historical permanent, action-name-only standing approval.
+* A grant is an exact action scope with a configurable duration/use envelope.
+  Historical bounded behavior remains the default; an explicit deployment
+  setting can select standing duration and/or count without broadening scope.
 
 SQLite transactions make decision and grant consumption atomic across Colony
 workers.  The database lives in ``COLONY_STATE_DIR`` and is safe to copy with
@@ -39,8 +40,16 @@ DB_FILENAME = "approval_authority.db"
 DEFAULT_REQUEST_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_GRANT_TTL_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_GRANT_MAX_USES = 5
-MAX_GRANT_TTL_SECONDS = 30 * 24 * 60 * 60
-MAX_GRANT_USES = 100
+MAX_APPROVAL_REQUEST_TTL_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_GRANT_ENVELOPE_TTL_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_GRANT_ENVELOPE_MAX_USES = 100
+# Backward-compatible names for callers that imported the historical static
+# caps. Runtime grant validation uses GrantEnvelope instead.
+MAX_GRANT_TTL_SECONDS = DEFAULT_GRANT_ENVELOPE_TTL_SECONDS
+MAX_GRANT_USES = DEFAULT_GRANT_ENVELOPE_MAX_USES
+GRANT_MAX_TTL_ENV = "COLONY_GRANT_MAX_TTL_SECONDS"
+GRANT_MAX_USES_ENV = "COLONY_GRANT_MAX_USES"
+GRANT_UNLIMITED_SENTINEL = "unlimited"
 PRESENTATION_SCHEMA = "ColonyApprovalPresentationV1"
 AUTHORIZATION_PROJECTION_SCHEMA = "ColonyApprovalAuthorizationProjectionV1"
 TYPED_APPROVAL_SUBJECT_SCHEMA = "ColonyApprovalSubjectBindingV1"
@@ -67,6 +76,91 @@ class ApprovalAuthorityError(ValueError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+@dataclass(frozen=True)
+class GrantEnvelope:
+    """Effective duration/count limits for newly issued exact-scope grants.
+
+    ``None`` is the normalized form of the explicit ``unlimited`` sentinel.
+    It never applies to pending approval requests, which retain their fixed
+    request lifetime.
+    """
+
+    max_ttl_seconds: Optional[int]
+    max_uses: Optional[int]
+
+    @property
+    def standing_dimensions(self) -> tuple[str, ...]:
+        dimensions = []
+        if self.max_ttl_seconds is None:
+            dimensions.append(GRANT_MAX_TTL_ENV)
+        if self.max_uses is None:
+            dimensions.append(GRANT_MAX_USES_ENV)
+        return tuple(dimensions)
+
+
+def _grant_envelope_value(
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+) -> Optional[int]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    if value.lower() == GRANT_UNLIMITED_SENTINEL:
+        return None
+    if not re.fullmatch(r"[0-9]+", value):
+        raise RuntimeError(
+            f"{name} must be a positive integer or "
+            f"{GRANT_UNLIMITED_SENTINEL!r}, got {raw!r}"
+        )
+    parsed = int(value)
+    if parsed < minimum:
+        raise RuntimeError(
+            f"{name} must be at least {minimum} or "
+            f"{GRANT_UNLIMITED_SENTINEL!r}, got {raw!r}"
+        )
+    return parsed
+
+
+def resolve_grant_envelope() -> GrantEnvelope:
+    """Strictly resolve the grant envelope from the loaded environment."""
+
+    return GrantEnvelope(
+        max_ttl_seconds=_grant_envelope_value(
+            GRANT_MAX_TTL_ENV,
+            default=DEFAULT_GRANT_ENVELOPE_TTL_SECONDS,
+            minimum=60,
+        ),
+        max_uses=_grant_envelope_value(
+            GRANT_MAX_USES_ENV,
+            default=DEFAULT_GRANT_ENVELOPE_MAX_USES,
+            minimum=1,
+        ),
+    )
+
+
+def grant_envelope_posture(
+    envelope: Optional[GrantEnvelope] = None,
+) -> Dict[str, Any]:
+    """Return a typed, audit-safe view of the effective grant envelope."""
+
+    resolved = envelope or resolve_grant_envelope()
+    return {
+        "max_ttl_seconds": resolved.max_ttl_seconds,
+        "max_ttl_state": (
+            "unbounded" if resolved.max_ttl_seconds is None else "bounded"
+        ),
+        "max_uses": resolved.max_uses,
+        "max_uses_state": (
+            "unbounded" if resolved.max_uses is None else "bounded"
+        ),
+        "standing": bool(resolved.standing_dimensions),
+        "sentinel": GRANT_UNLIMITED_SENTINEL,
+    }
 
 
 @dataclass(frozen=True)
@@ -502,7 +596,7 @@ def canonical_approval_timeout_seconds() -> int:
         seconds = int(float(raw) * 60 * 60)
     except (TypeError, ValueError):
         return DEFAULT_REQUEST_TTL_SECONDS
-    return max(60, min(seconds, MAX_GRANT_TTL_SECONDS))
+    return max(60, min(seconds, MAX_APPROVAL_REQUEST_TTL_SECONDS))
 
 
 def prepare_action_approval(
@@ -634,6 +728,8 @@ def prepare_action_approval(
             "grant_provenance_missing",
             "bounded grant consumption has no durable use record",
         )
+    ttl_unbounded = bool(use.get("grant_ttl_unbounded"))
+    uses_unbounded = bool(use.get("grant_uses_unbounded"))
     return {
         "state": "authorized_grant",
         "binding": binding,
@@ -649,7 +745,16 @@ def prepare_action_approval(
             "approval_decision_id": use["decision_id"],
             "approved_by": use["granted_by"],
             "approved_at": use["consumed_at"],
-            "bounded_grant_expires_at": use["grant_expires_at"],
+            "bounded_grant_expires_at": (
+                GRANT_UNLIMITED_SENTINEL
+                if ttl_unbounded else use["grant_expires_at"]
+            ),
+            "bounded_grant_ttl_state": (
+                "unbounded" if ttl_unbounded else "bounded"
+            ),
+            "bounded_grant_uses_state": (
+                "unbounded" if uses_unbounded else "bounded"
+            ),
         },
     }
 
@@ -751,7 +856,13 @@ def legacy_action_binding(
 class ApprovalAuthorityStore:
     """Transactional approval and bounded-grant ledger."""
 
-    def __init__(self, db_path: str | os.PathLike[str] | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | os.PathLike[str] | None = None,
+        *,
+        grant_envelope: Optional[GrantEnvelope] = None,
+    ) -> None:
+        self.grant_envelope = grant_envelope or resolve_grant_envelope()
         self.path = Path(db_path) if db_path is not None else get_state_dir() / DB_FILENAME
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists():
@@ -818,7 +929,11 @@ class ApprovalAuthorityStore:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
+                    ttl_unbounded INTEGER NOT NULL DEFAULT 0
+                        CHECK (ttl_unbounded IN (0, 1)),
                     max_uses INTEGER NOT NULL,
+                    uses_unbounded INTEGER NOT NULL DEFAULT 0
+                        CHECK (uses_unbounded IN (0, 1)),
                     uses INTEGER NOT NULL DEFAULT 0,
                     granted_by TEXT NOT NULL,
                     decision_id TEXT NOT NULL,
@@ -865,6 +980,24 @@ class ApprovalAuthorityStore:
                         f"ALTER TABLE approval_requests ADD COLUMN {name} "
                         f"{column_type}"
                     )
+            grant_columns = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(bounded_grants)"
+                ).fetchall()
+            }
+            if "ttl_unbounded" not in grant_columns:
+                conn.execute(
+                    "ALTER TABLE bounded_grants ADD COLUMN ttl_unbounded "
+                    "INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK (ttl_unbounded IN (0, 1))"
+                )
+            if "uses_unbounded" not in grant_columns:
+                conn.execute(
+                    "ALTER TABLE bounded_grants ADD COLUMN uses_unbounded "
+                    "INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK (uses_unbounded IN (0, 1))"
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS approval_requests_subject_idx "
                 "ON approval_requests(subject_kind, status, created_at DESC)"
@@ -978,6 +1111,27 @@ class ApprovalAuthorityStore:
     def _grant_dict(row: sqlite3.Row) -> Dict[str, Any]:
         result = dict(row)
         result["scope"] = json.loads(result.pop("scope_json"))
+        result["ttl_unbounded"] = bool(result.get("ttl_unbounded", 0))
+        if result["ttl_unbounded"]:
+            result["expires_at"] = None
+        result["uses_unbounded"] = bool(result.get("uses_unbounded", 0))
+        if result["uses_unbounded"]:
+            result["max_uses"] = None
+        return result
+
+    @staticmethod
+    def _grant_use_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        result = dict(row)
+        result["grant_ttl_unbounded"] = bool(
+            result.get("grant_ttl_unbounded", 0)
+        )
+        if result["grant_ttl_unbounded"]:
+            result["grant_expires_at"] = None
+        result["grant_uses_unbounded"] = bool(
+            result.get("grant_uses_unbounded", 0)
+        )
+        if result["grant_uses_unbounded"]:
+            result["max_uses"] = None
         return result
 
     @classmethod
@@ -1006,12 +1160,12 @@ class ApprovalAuthorityStore:
         )
         conn.execute(
             "UPDATE bounded_grants SET status='expired' "
-            "WHERE status='active' AND expires_at<=?",
+            "WHERE status='active' AND ttl_unbounded=0 AND expires_at<=?",
             (stamp,),
         )
         conn.execute(
             "UPDATE bounded_grants SET status='exhausted' "
-            "WHERE status='active' AND uses>=max_uses",
+            "WHERE status='active' AND uses_unbounded=0 AND uses>=max_uses",
         )
 
     def resolve_action_gate(
@@ -1034,7 +1188,7 @@ class ApprovalAuthorityStore:
         The queue transition remains a separately reconciled operation.
         """
 
-        if ttl_seconds < 0 or ttl_seconds > MAX_GRANT_TTL_SECONDS:
+        if ttl_seconds < 0 or ttl_seconds > MAX_APPROVAL_REQUEST_TTL_SECONDS:
             raise ApprovalAuthorityError(
                 "invalid_expiry", "request TTL is out of bounds"
             )
@@ -1123,6 +1277,8 @@ class ApprovalAuthorityStore:
                           g.granted_by, g.decision_id, g.status AS grant_status,
                           g.created_at AS grant_created_at,
                           g.expires_at AS grant_expires_at,
+                          g.ttl_unbounded AS grant_ttl_unbounded,
+                          g.uses_unbounded AS grant_uses_unbounded,
                           g.max_uses, g.uses
                    FROM bounded_grant_uses AS u
                    JOIN bounded_grants AS g ON g.grant_id = u.grant_id
@@ -1141,13 +1297,16 @@ class ApprovalAuthorityStore:
                     "kind": "grant",
                     "request": None,
                     "grant": None,
-                    "grant_use": dict(use_row),
+                    "grant_use": self._grant_use_dict(use_row),
                 }
 
             grant_row = conn.execute(
                 "SELECT * FROM bounded_grants WHERE scope_digest=? "
-                "AND status='active' AND expires_at>? AND uses<max_uses "
-                "ORDER BY expires_at ASC, created_at ASC LIMIT 1",
+                "AND status='active' "
+                "AND (ttl_unbounded=1 OR expires_at>?) "
+                "AND (uses_unbounded=1 OR uses<max_uses) "
+                "ORDER BY ttl_unbounded ASC, expires_at ASC, created_at ASC "
+                "LIMIT 1",
                 (binding.scope_digest, _iso(observed)),
             ).fetchone()
             if grant_row is not None:
@@ -1171,7 +1330,7 @@ class ApprovalAuthorityStore:
                 )
                 conn.execute(
                     "UPDATE bounded_grants SET uses=uses+1, "
-                    "status=CASE WHEN uses+1>=max_uses "
+                    "status=CASE WHEN uses_unbounded=0 AND uses+1>=max_uses "
                     "THEN 'exhausted' ELSE status END WHERE grant_id=?",
                     (grant_row["grant_id"],),
                 )
@@ -1182,6 +1341,8 @@ class ApprovalAuthorityStore:
                               g.status AS grant_status,
                               g.created_at AS grant_created_at,
                               g.expires_at AS grant_expires_at,
+                              g.ttl_unbounded AS grant_ttl_unbounded,
+                              g.uses_unbounded AS grant_uses_unbounded,
                               g.max_uses, g.uses
                        FROM bounded_grant_uses AS u
                        JOIN bounded_grants AS g ON g.grant_id = u.grant_id
@@ -1194,7 +1355,7 @@ class ApprovalAuthorityStore:
                     "kind": "grant",
                     "request": None,
                     "grant": self._grant_dict(grant_row),
-                    "grant_use": dict(use_row),
+                    "grant_use": self._grant_use_dict(use_row),
                 }
 
             conn.execute(
@@ -1248,7 +1409,7 @@ class ApprovalAuthorityStore:
         decision surface after the fact.
         """
 
-        if ttl_seconds < 60 or ttl_seconds > MAX_GRANT_TTL_SECONDS:
+        if ttl_seconds < 60 or ttl_seconds > MAX_APPROVAL_REQUEST_TTL_SECONDS:
             raise ApprovalAuthorityError("invalid_expiry", "request TTL is out of bounds")
         observed = _as_utc(now)
         presentation_supplied = presentation is not None
@@ -1598,15 +1759,32 @@ class ApprovalAuthorityStore:
                 "invalid_authority_evidence",
                 "decision authority evidence is invalid or exceeds 512 characters",
             )
+        ttl_unbounded = self.grant_envelope.max_ttl_seconds is None
+        uses_unbounded = self.grant_envelope.max_uses is None
         if grant_scope is not None:
             if normalized != "approve":
                 raise ApprovalAuthorityError("invalid_grant", "a rejection cannot create a grant")
-            if grant_ttl_seconds < 60 or grant_ttl_seconds > MAX_GRANT_TTL_SECONDS:
+            if grant_ttl_seconds < 60 or (
+                self.grant_envelope.max_ttl_seconds is not None
+                and grant_ttl_seconds > self.grant_envelope.max_ttl_seconds
+            ):
                 raise ApprovalAuthorityError("invalid_grant_expiry", "grant expiry is out of bounds")
-            if grant_max_uses < 1 or grant_max_uses > MAX_GRANT_USES:
+            if grant_max_uses < 1 or (
+                self.grant_envelope.max_uses is not None
+                and grant_max_uses > self.grant_envelope.max_uses
+            ):
                 raise ApprovalAuthorityError("invalid_grant_uses", "grant use bound is out of bounds")
 
         observed = _as_utc(now)
+        grant_expires_at = observed
+        if grant_scope is not None and not ttl_unbounded:
+            try:
+                grant_expires_at = observed + timedelta(seconds=grant_ttl_seconds)
+            except OverflowError as exc:
+                raise ApprovalAuthorityError(
+                    "invalid_grant_expiry", "grant expiry is out of bounds"
+                ) from exc
+        effective_max_uses = 0 if uses_unbounded else int(grant_max_uses)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             self._expire(conn, observed)
@@ -1680,16 +1858,19 @@ class ApprovalAuthorityStore:
                 conn.execute(
                     "INSERT INTO bounded_grants "
                     "(grant_id, source_request_id, scope_json, scope_digest, status, "
-                    "created_at, expires_at, max_uses, uses, granted_by, decision_id) "
-                    "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?)",
+                    "created_at, expires_at, ttl_unbounded, max_uses, "
+                    "uses_unbounded, uses, granted_by, decision_id) "
+                    "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 0, ?, ?)",
                     (
                         grant_id,
                         request_id,
                         row["scope_json"],
                         row["scope_digest"],
                         _iso(observed),
-                        _iso(observed + timedelta(seconds=grant_ttl_seconds)),
-                        int(grant_max_uses),
+                        _iso(grant_expires_at),
+                        int(ttl_unbounded),
+                        effective_max_uses,
+                        int(uses_unbounded),
                         actor,
                         decision_id,
                     ),
@@ -1788,8 +1969,11 @@ class ApprovalAuthorityStore:
 
             row = conn.execute(
                 "SELECT * FROM bounded_grants WHERE scope_digest=? "
-                "AND status='active' AND expires_at>? AND uses<max_uses "
-                "ORDER BY expires_at ASC, created_at ASC LIMIT 1",
+                "AND status='active' "
+                "AND (ttl_unbounded=1 OR expires_at>?) "
+                "AND (uses_unbounded=1 OR uses<max_uses) "
+                "ORDER BY ttl_unbounded ASC, expires_at ASC, created_at ASC "
+                "LIMIT 1",
                 (binding.scope_digest, _iso(observed)),
             ).fetchone()
             if row is None:
@@ -1808,7 +1992,8 @@ class ApprovalAuthorityStore:
             )
             conn.execute(
                 "UPDATE bounded_grants SET uses=uses+1, "
-                "status=CASE WHEN uses+1>=max_uses THEN 'exhausted' ELSE status END "
+                "status=CASE WHEN uses_unbounded=0 AND uses+1>=max_uses "
+                "THEN 'exhausted' ELSE status END "
                 "WHERE grant_id=?",
                 (row["grant_id"],),
             )
@@ -1842,6 +2027,41 @@ class ApprovalAuthorityStore:
             conn.commit()
         return [self._grant_dict(row) for row in rows]
 
+    def grant_posture(self, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+        """Return the issuance envelope plus active persisted standing state.
+
+        Changing the deployment envelope affects newly issued grants; it does
+        not silently narrow authority already granted by an owner decision.
+        Report that durable inventory so a bounded restart can never make
+        active standing authority disappear from operator diagnostics.
+        """
+
+        observed = _as_utc(now)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._expire(conn, observed)
+            row = conn.execute(
+                "SELECT COUNT(*) AS active_standing_grants, "
+                "SUM(CASE WHEN ttl_unbounded=1 THEN 1 ELSE 0 END) "
+                "AS active_no_expiry_grants, "
+                "SUM(CASE WHEN uses_unbounded=1 THEN 1 ELSE 0 END) "
+                "AS active_no_use_cap_grants "
+                "FROM bounded_grants WHERE status='active' "
+                "AND (ttl_unbounded=1 OR uses_unbounded=1)"
+            ).fetchone()
+            conn.commit()
+        posture = grant_envelope_posture(self.grant_envelope)
+        posture.update({
+            "active_standing_grants": int(row["active_standing_grants"] or 0),
+            "active_no_expiry_grants": int(
+                row["active_no_expiry_grants"] or 0
+            ),
+            "active_no_use_cap_grants": int(
+                row["active_no_use_cap_grants"] or 0
+            ),
+        })
+        return posture
+
     def get_grant_use(self, action_digest: str) -> Optional[Dict[str, Any]]:
         """Return durable bounded-grant consumption evidence for one action."""
 
@@ -1855,13 +2075,15 @@ class ApprovalAuthorityStore:
                           g.granted_by, g.decision_id, g.status AS grant_status,
                           g.created_at AS grant_created_at,
                           g.expires_at AS grant_expires_at,
+                          g.ttl_unbounded AS grant_ttl_unbounded,
+                          g.uses_unbounded AS grant_uses_unbounded,
                           g.max_uses, g.uses
                    FROM bounded_grant_uses AS u
                    JOIN bounded_grants AS g ON g.grant_id = u.grant_id
                    WHERE u.action_digest = ?""",
                 (digest,),
             ).fetchone()
-        return dict(row) if row is not None else None
+        return self._grant_use_dict(row) if row is not None else None
 
     def revoke_grant(self, grant_id: str, *, now: Optional[datetime] = None) -> bool:
         with self._connect() as conn:

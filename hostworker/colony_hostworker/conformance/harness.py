@@ -24,7 +24,7 @@ import uuid
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
 from ..contract import INTENT_ENVELOPE_SCHEMA
-from ..gate import GRANT_BINDING_METHOD
+from ..gate import GRANT_BINDING_METHOD, GRANT_UNLIMITED_SENTINEL
 from ..intent import HermesToolActionIntentV1
 from ..sqlite_store import SqliteActionStore
 
@@ -235,7 +235,7 @@ def grant_gate_evidence(
     *,
     decided_at: float,
     expires_at: float,
-    grant_expires_at: float,
+    grant_expires_at: float | str,
     approval: str | None = None,
     decision_id: str | None = None,
 ) -> dict[str, Any]:
@@ -253,7 +253,11 @@ def grant_gate_evidence(
         "principal": "owner:conformance",
         "bounded_grant_id": "grant-%s" % seed,
         "approval_source_request_id": "request-%s" % seed,
-        "bounded_grant_expires_at_epoch": float(grant_expires_at),
+        "bounded_grant_expires_at_epoch": (
+            GRANT_UNLIMITED_SENTINEL
+            if grant_expires_at == GRANT_UNLIMITED_SENTINEL
+            else float(grant_expires_at)
+        ),
         "binding_method": GRANT_BINDING_METHOD,
         "decided_at_epoch": float(decided_at),
         "expires_at_epoch": float(expires_at),

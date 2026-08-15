@@ -8,10 +8,11 @@ Two shapes are built in:
   delivered approval request (``channel``, ``thread_id``, ``event_id``,
   ``event_key``, ``delivery_id``, ``delivery_message_id``,
   ``binding_method``);
-* bounded-grant provenance — a standing owner-issued grant consumed at
+* bounded-grant provenance — an owner-issued grant consumed at
   approval time (``bounded_grant_id``, ``approval_source_request_id``,
   ``bounded_grant_expires_at_epoch``, ``binding_method`` exactly
-  ``"bounded_grant"``).
+  ``"bounded_grant"``). The grant expiry is either a finite epoch or the
+  explicit literal ``"unlimited"``; every per-action gate expiry stays finite.
 
 Invariants enforced here, in one place, for every shape:
 
@@ -77,6 +78,7 @@ GATE_COMMON_FIELDS = frozenset(
 
 # ``binding_method`` value reserved exclusively for the bounded-grant shape.
 GRANT_BINDING_METHOD = "bounded_grant"
+GRANT_UNLIMITED_SENTINEL = "unlimited"
 
 _GATE_STRING_MAX = 512
 
@@ -335,8 +337,19 @@ def validate_owner_gate(
 
     decided_at = _epoch(evidence, "decided_at_epoch")
     expires_at = _epoch(evidence, "expires_at_epoch")
+    standing_grant = bool(
+        shape.grants
+        and shape.binding_method == GRANT_BINDING_METHOD
+        and evidence.get("bounded_grant_expires_at_epoch")
+        == GRANT_UNLIMITED_SENTINEL
+    )
     extra_expiries = tuple(
-        _epoch(evidence, field_name) for field_name in shape.expiry_fields
+        _epoch(evidence, field_name)
+        for field_name in shape.expiry_fields
+        if not (
+            standing_grant
+            and field_name == "bounded_grant_expires_at_epoch"
+        )
     )
 
     receipt_key = receipt.get("receipt_key")
@@ -420,6 +433,7 @@ __all__ = (
     "DEFAULT_REGISTRY",
     "GATE_COMMON_FIELDS",
     "GRANT_BINDING_METHOD",
+    "GRANT_UNLIMITED_SENTINEL",
     "GateAuthorization",
     "MESSAGE_DELIVERY_SHAPE",
     "OwnerGateError",

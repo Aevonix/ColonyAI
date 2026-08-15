@@ -25,7 +25,12 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from ..gate import GateAuthorization, validate_owner_gate, assert_dispatchable
+from ..gate import (
+    GRANT_UNLIMITED_SENTINEL,
+    GateAuthorization,
+    assert_dispatchable,
+    validate_owner_gate,
+)
 from ..store import (
     ActionStoreError,
     GATE_RECEIPT_KIND,
@@ -89,6 +94,7 @@ def _gated(
     tool_name: str = "colony_create_commitment",
     args: Mapping[str, Any] | None = None,
     grant: bool = False,
+    standing_grant: bool = False,
     expires_in: float = 3600.0,
     grant_expires_in: float = 3600.0,
 ) -> Scenario:
@@ -107,7 +113,10 @@ def _gated(
             action,
             decided_at=now,
             expires_at=now + expires_in,
-            grant_expires_at=now + grant_expires_in,
+            grant_expires_at=(
+                GRANT_UNLIMITED_SENTINEL
+                if standing_grant else now + grant_expires_in
+            ),
         )
     else:
         evidence = delivery_gate_evidence(
@@ -756,8 +765,8 @@ def check_expired_grant_at_point_of_use(factory: HarnessFactory) -> None:
 
 
 def check_non_grantable_tool_with_grant_proof(factory: HarnessFactory) -> None:
-    """ADVERSARIAL: a syntactically perfect, unexpired bounded-grant receipt
-    presented for a ``non_grantable`` tool (autonomy posture) must never
+    """ADVERSARIAL: a syntactically perfect standing-grant receipt presented
+    for either ``non_grantable`` autonomy tool must never
     dispatch — under the real validator AND under a permissive one (the
     store's grant backstop must hold on its own).
 
@@ -765,39 +774,42 @@ def check_non_grantable_tool_with_grant_proof(factory: HarnessFactory) -> None:
     reach tools the catalog reserves for per-message owner approval."""
 
     case = "non_grantable_tool_with_grant_proof"
-    harness = factory()
-    try:
-        scenario = _gated(
-            harness,
-            tool_name="colony_autonomy_enable",
-            args={},
-            grant=True,
-        )
-        _lease_gated(harness)
-        _expect_refusal(
-            case,
-            "a grant dispatched a non-grantable tool under the real validator",
-            lambda: _dispatch(
+    for tool_name in ("colony_autonomy_enable", "colony_autonomy_disable"):
+        harness = factory()
+        try:
+            scenario = _gated(
                 harness,
-                scenario,
-                validator=_real_validator(scenario.intent.tool_name),
-            ),
-        )
-        _expect_refusal(
-            case,
-            "a grant dispatched a non-grantable tool under a permissive "
-            "validator",
-            lambda: _dispatch(
-                harness,
-                scenario,
-                validator=lambda *_: _permissive_authorization(
-                    scenario, granted=True
+                tool_name=tool_name,
+                args={},
+                grant=True,
+                standing_grant=True,
+            )
+            _lease_gated(harness)
+            _expect_refusal(
+                case,
+                "%s dispatched under a standing grant and the real validator"
+                % tool_name,
+                lambda: _dispatch(
+                    harness,
+                    scenario,
+                    validator=_real_validator(scenario.intent.tool_name),
                 ),
-            ),
-        )
-        _require_unconsumed(harness, scenario, case)
-    finally:
-        harness.close()
+            )
+            _expect_refusal(
+                case,
+                "%s dispatched under a standing grant and a permissive validator"
+                % tool_name,
+                lambda: _dispatch(
+                    harness,
+                    scenario,
+                    validator=lambda *_: _permissive_authorization(
+                        scenario, granted=True
+                    ),
+                ),
+            )
+            _require_unconsumed(harness, scenario, case)
+        finally:
+            harness.close()
 
 
 def check_observation_budget_exhaustion(factory: HarnessFactory) -> None:
