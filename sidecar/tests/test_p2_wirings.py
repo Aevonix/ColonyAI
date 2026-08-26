@@ -179,14 +179,14 @@ def test_manager_expands_accounts(monkeypatch):
     for var in list(__import__("os").environ):
         if var.startswith("COLONY_CONNECTOR_"):
             monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("COLONY_CONNECTOR_IMAP_ACCOUNTS", "aevonix, marcseal20")
-    monkeypatch.setenv("COLONY_CONNECTOR_IMAP_MARCSEAL20_ENABLED", "false")
+    monkeypatch.setenv("COLONY_CONNECTOR_IMAP_ACCOUNTS", "aevonix, secondary")
+    monkeypatch.setenv("COLONY_CONNECTOR_IMAP_SECONDARY_ENABLED", "false")
 
     m = ConnectorManager()
     m.register_default_connectors()
     names = [c.name for c in m._connectors]
     assert "imap_aevonix" in names          # listed -> enabled by default
-    assert "imap_marcseal20" not in names   # explicit off wins
+    assert "imap_secondary" not in names   # explicit off wins
     assert "imap" not in names              # base instance replaced by accounts
 
 

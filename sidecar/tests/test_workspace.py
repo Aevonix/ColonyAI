@@ -173,7 +173,7 @@ def test_thinker_parse():
 
 class _FakeCommitments:
     def get_overdue(self):
-        return [{"id": "cm1", "description": "send Marc the audit"}]
+        return [{"id": "cm1", "description": "send Alex the audit"}]
 
 class _Anom:
     def __init__(self, i, d, s): self.id, self.description, self.severity = i, d, s
