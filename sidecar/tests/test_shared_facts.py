@@ -202,11 +202,11 @@ class TestFactGraphMirror:
 
         monkeypatch.setattr(host_mod, "_graph", FakeGraph())
         await host_mod._mirror_fact_to_graph(
-            "Marc prefers plain prose", "cid-1", "inferred", 0.9)
+            "Alex prefers plain prose", "cid-1", "inferred", 0.9)
         assert len(calls) == 1
         kw = calls[0]
         assert kw["memory_type"] == "fact"
-        assert kw["content"] == "Marc prefers plain prose"
+        assert kw["content"] == "Alex prefers plain prose"
         assert kw["person_id"] == "cid-1"
         assert kw["importance"] == 0.9
         assert kw["content_hash"]          # dedup key present -> idempotent

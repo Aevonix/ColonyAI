@@ -35,14 +35,14 @@ class TestEntitySerialization:
             entity_type="person",
             confidence=0.9,
             email="sam@example.com",
-            aliases=["marcus"],
+            aliases=["sam"],
         )
         props = _entity_to_props(person)
         assert props["id"] == "we-123-abc"
         assert props["name"] == "User"
         assert props["entity_type"] == "person"
         assert props["email"] == "sam@example.com"
-        assert props["aliases"] == json.dumps(["marcus"])
+        assert props["aliases"] == json.dumps(["sam"])
 
     def test_props_to_person(self):
         props = {
@@ -51,14 +51,14 @@ class TestEntitySerialization:
             "entity_type": "person",
             "confidence": 0.9,
             "email": "sam@example.com",
-            "aliases": json.dumps(["marcus"]),
+            "aliases": json.dumps(["sam"]),
             "external_ids": json.dumps({"email": "sam@example.com"}),
             "properties": json.dumps({"key": "val"}),
         }
         entity = _props_to_entity(props)
         assert isinstance(entity, PersonEntity)
         assert entity.name == "User"
-        assert entity.aliases == ["marcus"]
+        assert entity.aliases == ["sam"]
         assert entity.external_ids == {"email": "sam@example.com"}
         assert entity.properties == {"key": "val"}
 
