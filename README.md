@@ -436,6 +436,7 @@ then save the URL's output to `docs/architecture.svg`.
 | Component | Role |
 | --- | --- |
 | Sidecar (`colony_sidecar`) | FastAPI service; the only thing the host talks to |
+| Host worker (`colony_hostworker`) | Stdlib-only governed-action core: the wire contract, governed tool catalog, action-intent validation, approval-gate invariants, the `ActionStore` protocol with a reference SQLite store, and the one-mutation worker. Imports neither FastAPI nor `colony_sidecar`, so a host can vendor it directly |
 | Graph store (Neo4j) | Entities, people, memories, world model, and their relationships |
 | Vector store (LanceDB) | Embeddings for semantic recall |
 | Record stores (SQLite) | Contacts, commitments, goals, affect, facts, initiatives, action journal, approval authority, governed-action ledger, guard audit, adaptive params |
