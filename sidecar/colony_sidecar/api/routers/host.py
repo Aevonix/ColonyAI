@@ -1312,15 +1312,17 @@ async def memory_read(
         )
         entries = [
             MemoryEntry(
-                id=e.get("id", str(uuid.uuid4())),
-                content=e.get("content", ""),
+                id=str(e.get("id") or uuid.uuid4()),
+                content=str(e.get("content", "")),
                 type=e.get("type"),
-                strength=e.get("strength"),
+                strength=float(e["strength"]) if e.get("strength") is not None else None,
                 person_id=e.get("person_id"),
                 entities=e.get("entities"),
                 tags=e.get("tags"),
-                created_at=e.get("created_at"),
-                score=e.get("score"),
+                # Neo4j hydrates created_at as neo4j.time.DateTime; the wire
+                # schema is a string, so normalise like memory_search does.
+                created_at=str(e["created_at"]) if e.get("created_at") is not None else None,
+                score=float(e["score"]) if e.get("score") is not None else None,
             )
             for e in entries_raw
         ]
