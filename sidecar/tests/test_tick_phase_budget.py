@@ -230,8 +230,10 @@ async def test_budget_cancel_names_the_running_phase(caplog):
         await asyncio.Event().wait()
 
     loop._phase_memory_decay = stuck
+    # generous timeout: the cancel must land in stuck(), the first real
+    # suspension point, not in a slow synchronous phase before it
     with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(loop._tick(), timeout=0.1)
+        await asyncio.wait_for(loop._tick(), timeout=2.0)
     assert started.is_set()
     assert loop._current_phase == "memory_decay"
     # phases before the stuck one completed and were timed
@@ -263,6 +265,110 @@ async def test_completed_tick_clears_the_phase_marker():
     assert timings["current"] is None
     assert "memory_decay" in timings["seconds_last"]
     assert "agent_heartbeat" in timings["seconds_last"]
+    # the closing telemetry stamp is a timed phase too, so a cancel landing
+    # there is not blamed on whichever phase ran before it
+    assert "telemetry" in timings["seconds_last"]
+
+
+async def test_crashed_phase_does_not_leave_the_marker_set():
+    loop = AutonomyLoop(_NoneRegistry())
+
+    async def boom():
+        raise RuntimeError("boom")
+
+    loop._phase_memory_decay = boom
+    with pytest.raises(RuntimeError):
+        await loop._tick()
+    # the manual tick endpoint swallows this exception; status must not keep
+    # reporting the crashed phase as running
+    assert loop._current_phase is None
+    assert loop.phase_timings()["current"] is None
+
+
+# --- inline periodic phases use the same marker --------------------------------
+
+class _Engine:
+    def __init__(self, hang):
+        self.hang = hang
+        self.calls = 0
+        self.started = asyncio.Event()
+
+    async def run(self):
+        self.calls += 1
+        self.started.set()
+        if self.hang:
+            await asyncio.Event().wait()
+
+
+async def test_inline_daily_phase_cancelled_counts_as_attempted():
+    loop = _bare_loop()
+    engine = _Engine(hang=True)
+    loop._registry.belief_engine = engine
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(loop._phase_belief_maintenance(), timeout=0.05)
+    assert engine.started.is_set()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    assert loop._periodic_last["belief_maintenance"] == today
+
+    engine.hang = False
+    await loop._phase_belief_maintenance()
+    assert engine.calls == 1  # not re-run today
+
+
+async def test_inline_daily_phase_error_still_retries():
+    loop = _bare_loop()
+
+    class _Boom:
+        async def run(self):
+            raise RuntimeError("boom")
+
+    loop._registry.belief_engine = _Boom()
+    await loop._phase_belief_maintenance()
+    assert loop.stats.errors == 1
+    assert "belief_maintenance" not in loop._periodic_last
+
+
+async def test_selfhood_benchmark_timeout_marks_the_week():
+    loop = _bare_loop()
+    loop._phase_budget_secs = lambda: 0.02
+
+    class _Bench:
+        def __init__(self):
+            self.calls = 0
+
+        async def compute_week(self):
+            self.calls += 1
+            await asyncio.Event().wait()
+
+    bench = _Bench()
+    loop._registry.benchmark = bench
+    await loop._phase_selfhood_benchmark()
+    assert bench.calls == 1
+    week = datetime.now(timezone.utc).strftime("%Y-W%W")
+    assert loop._periodic_last["selfhood_benchmark"] == week
+    await loop._phase_selfhood_benchmark()
+    assert bench.calls == 1  # one stall costs one phase budget per week
+
+
+async def test_self_reflection_cancelled_counts_as_attempted():
+    loop = _bare_loop()
+    loop.config = type("Cfg", (), {"self_reflection_interval_days": 7})()
+    started = asyncio.Event()
+    calls = []
+
+    class _Cog:
+        async def self_reflect(self):
+            calls.append(1)
+            started.set()
+            await asyncio.Event().wait()
+
+    loop._registry.cognition = _Cog()
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(loop._phase_self_reflection(), timeout=0.05)
+    assert started.is_set()
+    assert isinstance(loop._periodic_last["self_reflection"], datetime)
+    await loop._phase_self_reflection()
+    assert calls == [1]
 
 
 def test_stats_dict_exposes_cancellations():

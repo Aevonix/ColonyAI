@@ -14,6 +14,7 @@ Kill it at any point and it picks up cleanly on restart.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import functools
 import hashlib
@@ -335,8 +336,6 @@ class AutonomyLoop:
         # a slow agent isn't spammed with duplicate sync jobs every tick.
         self._last_sync_request: dict = {}
         self._periodic_last: dict = {}
-        self._last_bootstrap_check: Optional[datetime] = None
-        self._last_self_reflection: Optional[datetime] = None
         self._last_task_completion_check: Optional[datetime] = None
         # Phases already warned about skipping (warn once, count always).
         self._phase_skip_warned: set = set()
@@ -510,6 +509,19 @@ class AutonomyLoop:
     # ------------------------------------------------------------------
 
     async def _tick(self) -> None:
+        """One autonomy tick. The running-phase marker is cleared on every
+        exit except cancellation, where _note_tick_cancelled reads it."""
+        try:
+            await self._tick_phases()
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            self._current_phase = None
+            raise
+        else:
+            self._current_phase = None
+
+    async def _tick_phases(self) -> None:
         self.stats.ticks += 1
         self._reset_hour_bucket()
         tick_start = datetime.now(timezone.utc)
@@ -672,16 +684,18 @@ class AutonomyLoop:
         # means "a tick actually completed". Stamping at the top made a tick
         # whose phases all threw (or that was cancelled on its budget) report
         # fresh forever.
+        await self._run_phase("telemetry", self._phase_telemetry())
+
+        elapsed = (datetime.now(timezone.utc) - tick_start).total_seconds()
+        logger.debug("Tick #%d complete in %.2fs", self.stats.ticks, elapsed)
+
+    async def _phase_telemetry(self) -> None:
         try:
             from colony_sidecar.api.routers.host import _telemetry
             if _telemetry is not None:
                 await _telemetry.touch("last_tick_at")
         except Exception:
             logger.warning("Telemetry touch failed (non-critical)")
-
-        self._current_phase = None
-        elapsed = (datetime.now(timezone.utc) - tick_start).total_seconds()
-        logger.debug("Tick #%d complete in %.2fs", self.stats.ticks, elapsed)
 
     # ------------------------------------------------------------------
     # Phase implementations
@@ -3002,11 +3016,15 @@ class AutonomyLoop:
         try:
             # compute_week runs recall probes against the graph; bound it so a
             # wedged graph connection can't stall the tick.
-            result = await asyncio.wait_for(
-                bench.compute_week(), timeout=self._phase_budget_secs())
-            self._periodic_last["selfhood_benchmark"] = key
+            with self._periodic_attempt("selfhood_benchmark", key):
+                result = await asyncio.wait_for(
+                    bench.compute_week(), timeout=self._phase_budget_secs())
         except asyncio.TimeoutError:
-            logger.warning("selfhood_benchmark exceeded budget; skipping")
+            # counted as this week's attempt: retrying every tick for the rest
+            # of the week would spend a phase budget per tick on the same stall
+            self._periodic_last["selfhood_benchmark"] = key
+            logger.warning("selfhood_benchmark exceeded budget; skipping "
+                           "until next week")
             return
         except Exception as exc:
             self.stats.errors += 1
@@ -3386,8 +3404,8 @@ class AutonomyLoop:
         if self._periodic_last.get("belief_maintenance") == key:
             return
         try:
-            await engine.run()
-            self._periodic_last["belief_maintenance"] = key
+            with self._periodic_attempt("belief_maintenance", key):
+                await engine.run()
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase belief_maintenance error: %s", exc,
@@ -3415,8 +3433,8 @@ class AutonomyLoop:
         if now - float(last or 0.0) < refresh_secs:
             return
         try:
-            report = await _relationship_profiler.refresh_due()
-            self._periodic_last["relationship_profiling"] = now
+            with self._periodic_attempt("relationship_profiling", now):
+                report = await _relationship_profiler.refresh_due()
             if report.get("profiled"):
                 logger.info("relationship profiling: %s", report)
         except Exception as exc:
@@ -3440,8 +3458,8 @@ class AutonomyLoop:
         if self._periodic_last.get("world_llm_extract") == key:
             return
         try:
-            await extractor.run()
-            self._periodic_last["world_llm_extract"] = key
+            with self._periodic_attempt("world_llm_extract", key):
+                await extractor.run()
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase world_llm_extract error: %s", exc,
@@ -3527,15 +3545,34 @@ class AutonomyLoop:
             "seconds_max": {k: round(v, 3) for k, v in self._phase_seconds_max.items()},
         }
 
+    @contextlib.contextmanager
+    def _periodic_attempt(self, name: str, key):
+        """Mark a periodic phase attempted for its period.
+
+        The body is the phase's work. On normal exit the period key is stored;
+        on cancellation (the tick overran its budget) the key is stored too,
+        because otherwise the key never advances and the slow phase runs again
+        on the very next tick, eating every tick and starving every phase
+        after it until the period rolls over. An ordinary exception leaves the
+        key alone so the phase retries next tick, as before.
+        """
+        try:
+            yield
+        except asyncio.CancelledError:
+            self._periodic_last[name] = key
+            logger.error(
+                "Phase %s was cancelled before it finished; counted as "
+                "attempted for this period (%s), next attempt when the "
+                "period rolls", name, key)
+            raise
+        else:
+            self._periodic_last[name] = key
+
     async def _run_periodic_phase(self, name: str, period: str, work) -> None:
         """Run a memory-lifecycle phase at most once per period ("hour"|"day"|"week").
         work(graph) does the phase-specific work; the dedup key is cached per name.
         Replaces six near-identical _phase_memory_* skeletons (behavior preserved).
-
-        A phase cancelled by the tick budget still counts as attempted for its
-        period: otherwise the key never advances and the slow phase runs again
-        on the very next tick, eating every tick (and starving every phase
-        after it) until the period rolls over."""
+        See _periodic_attempt for why a cancelled run still counts."""
         graph = self._registry.graph
         if graph is None:
             return
@@ -3545,15 +3582,8 @@ class AutonomyLoop:
         if self._periodic_last.get(name) == key:
             return
         try:
-            await work(graph)
-            self._periodic_last[name] = key
-        except asyncio.CancelledError:
-            self._periodic_last[name] = key
-            logger.error(
-                "Phase %s was cancelled before it finished; counted as "
-                "attempted for this %s, next attempt when the period rolls",
-                name, period)
-            raise
+            with self._periodic_attempt(name, key):
+                await work(graph)
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase %s error: %s", name, exc, exc_info=True)
@@ -3939,14 +3969,15 @@ class AutonomyLoop:
             return
         now = datetime.now(timezone.utc)
         interval_hours = self.config.bootstrap_check_interval_hours
-        if self._last_bootstrap_check is not None:
-            elapsed = (now - self._last_bootstrap_check).total_seconds() / 3600
+        last = self._periodic_last.get("bootstrap_check")
+        if isinstance(last, datetime):
+            elapsed = (now - last).total_seconds() / 3600
             if elapsed < interval_hours:
                 return
         try:
             if hasattr(chain, "health_check"):
-                healthy = await chain.health_check()
-                self._last_bootstrap_check = now
+                with self._periodic_attempt("bootstrap_check", now):
+                    healthy = await chain.health_check()
                 if not healthy:
                     logger.warning("Phase bootstrap_check: chain health degraded")
         except Exception as exc:
@@ -3957,15 +3988,16 @@ class AutonomyLoop:
         """Run self-reflection component weekly."""
         now = datetime.now(timezone.utc)
         interval_days = self.config.self_reflection_interval_days
-        if self._last_self_reflection is not None:
-            elapsed = (now - self._last_self_reflection).total_seconds() / 86400
+        last = self._periodic_last.get("self_reflection")
+        if isinstance(last, datetime):
+            elapsed = (now - last).total_seconds() / 86400
             if elapsed < interval_days:
                 return
         try:
             cognition = self._registry.cognition
             if cognition is not None and hasattr(cognition, "self_reflect"):
-                await cognition.self_reflect()
-                self._last_self_reflection = now
+                with self._periodic_attempt("self_reflection", now):
+                    await cognition.self_reflect()
                 logger.info("Phase self_reflection: complete")
         except Exception as exc:
             self.stats.errors += 1
