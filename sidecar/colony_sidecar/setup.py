@@ -907,6 +907,7 @@ def _prepare_hermes_config(
     This prepares configuration only: it does not qualify or activate Hermes.
     """
     import copy
+    import json
     from urllib.parse import urlsplit
     import yaml
 
@@ -940,26 +941,35 @@ def _prepare_hermes_config(
     memory_config = mapping(memory, "config")
     plugins = mapping(config, "plugins")
     plugin_config = mapping(plugins, "colony")
+    native_path = config_path.with_name("colony-memory.json")
+    try:
+        native_config = json.loads(native_path.read_text()) if native_path.exists() else {}
+    except (OSError, ValueError):
+        raise ValueError("Native Colony memory configuration is invalid") from None
+    if not isinstance(native_config, dict):
+        raise ValueError("Native Colony memory configuration must be an object")
 
     # Do not redirect an existing private instance or replace its contact just
     # because the init wizard supplies defaults for a fresh installation.
-    for settings in (memory_config, plugin_config):
+    for settings in (memory_config, plugin_config, native_config):
         if settings.get("url") not in (None, "", sidecar_url):
             raise ValueError("Existing Colony endpoint differs; use a reviewed instance migration")
         if contact_id and settings.get("contact_id") not in (None, "", contact_id):
             raise ValueError("Existing Colony contact differs; preserve its identity or migrate explicitly")
-    selected_contact = contact_id or memory_config.get("contact_id") or plugin_config.get("contact_id")
+    bindings = [plugin_config.get("owner_contact_id"), native_config.get("contact_id"),
+                memory_config.get("contact_id"), plugin_config.get("contact_id")]
+    selected_contact = contact_id or next((value for value in bindings if value), None)
     if not isinstance(selected_contact, str) or not selected_contact.strip():
         raise ValueError("Provide --contact-name or retain an existing Colony contact binding")
-    if any(settings.get("contact_id") not in (None, "", selected_contact)
-           for settings in (memory_config, plugin_config)):
+    if any(value not in (None, "", selected_contact) for value in bindings):
         raise ValueError("Existing Colony contact bindings disagree; reconcile them before staging")
 
     memory["provider"] = "colony-memory"
     for settings in (memory_config, plugin_config):
         if settings.get("url") in (None, ""):
             settings["url"] = sidecar_url
-        settings.setdefault("api_key", "${COLONY_API_KEY}")
+        if settings.get("api_key") in (None, ""):
+            settings["api_key"] = "${COLONY_API_KEY}"
         if settings.get("contact_id") in (None, ""):
             settings["contact_id"] = selected_contact
     # Do not install/select a custom context engine, enable the general plugin,

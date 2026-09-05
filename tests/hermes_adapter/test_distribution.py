@@ -7,38 +7,11 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import subprocess
-import sys
 import tarfile
 import zipfile
 
 import pytest
-
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def run(*args, cwd, env=None):
-    result = subprocess.run(
-        [sys.executable, *map(str, args)], cwd=cwd, env=env,
-        text=True, capture_output=True, timeout=120,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    return result
-
-
-@pytest.fixture(scope="session")
-def artifacts(tmp_path_factory):
-    output = tmp_path_factory.mktemp("adapter-artifacts")
-    run("-m", "build", "--no-isolation", "--outdir", output, cwd=ROOT)
-    wheel = next(output.glob("*.whl"))
-    source = next(output.glob("*.tar.gz"))
-    installed = output / "installed"
-    run(
-        "-m", "pip", "install", "--no-deps", "--no-index", "--target",
-        installed, wheel, cwd=output,
-    )
-    return output, wheel, source, installed
+from conftest import ROOT, run_python as run
 
 
 def test_artifacts_contain_canonical_adapters_without_sidecar_or_worker(artifacts):

@@ -119,6 +119,42 @@ def test_idempotent_staging_does_not_rewrite_or_backup_again(tmp_path):
     assert (home / "config.yaml").stat().st_mtime_ns == mtime
 
 
+def test_canonical_owner_binding_is_preserved_or_conflict_rejected(tmp_path):
+    home = tmp_path / "hermes"
+    home.mkdir()
+    config_path = home / "config.yaml"
+    config_path.write_text("plugins:\n  colony:\n    owner_contact_id: existing-owner\n")
+    before = snapshot(home)
+    assert not setup._setup_hermes_plugin("key", URL, contact_id="other-owner", hermes_home=home)
+    assert snapshot(home) == before
+    assert setup._setup_hermes_plugin("key", URL, hermes_home=home)
+    config = yaml.safe_load(config_path.read_text())
+    assert config["plugins"]["colony"]["owner_contact_id"] == "existing-owner"
+    assert config["memory"]["config"]["contact_id"] == "existing-owner"
+
+
+def test_native_memory_binding_is_not_silently_redirected(tmp_path):
+    home = tmp_path / "hermes"
+    home.mkdir()
+    (home / "colony-memory.json").write_text('{"url":"http://other-instance.test","contact_id":"other-owner"}')
+    before = snapshot(home)
+    assert not setup._setup_hermes_plugin("key", URL, contact_id="owner", hermes_home=home)
+    assert snapshot(home) == before
+
+
+@pytest.mark.parametrize("blank", [None, ""])
+def test_blank_key_uses_private_environment_reference(blank, tmp_path):
+    home = tmp_path / "hermes"
+    home.mkdir()
+    path = home / "config.yaml"
+    path.write_text(yaml.safe_dump({"memory": {"config": {"api_key": blank}},
+                                    "plugins": {"colony": {"api_key": blank}}}))
+    assert setup._setup_hermes_plugin("never-persist", URL, contact_id="owner", hermes_home=home)
+    config = yaml.safe_load(path.read_text())
+    assert config["memory"]["config"]["api_key"] == "${COLONY_API_KEY}"
+    assert config["plugins"]["colony"]["api_key"] == "${COLONY_API_KEY}"
+
+
 @pytest.mark.parametrize("raw", [
     "memory:\n  provider: honcho\n", "memory:\n  provider: mem0\n",
     "[one, two]\n", "memory: scalar\n", "plugins: []\n",

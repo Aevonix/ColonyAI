@@ -40,8 +40,10 @@ COLONY_MEMORY_WORKER_TOOLS=0
 COLONY_MEMORY_TURN_WRITER=disabled
 ```
 
-Configure the sidecar URL and contact through the current `memory.config`
-and `plugins.colony` configuration, and supply `COLONY_API_KEY` privately. The
+Configure the sidecar URL and contact through native `hermes memory setup`
+and matching `plugins.colony` configuration, and supply `COLONY_API_KEY` privately.
+Native setup stores non-secret fields in the selected profile's
+`colony-memory.json`, which overrides legacy `memory.config`. The
 general adapter needs a private writable turn outbox and verified participant
 bindings. Consequential tools retain their existing mediator requirements.
 This packaging change does not provision those dependencies.
@@ -54,17 +56,22 @@ directories only as part of an intentional profile migration.
 
 When the memory provider is selected, native CLI discovery exposes
 `hermes colony-memory status`, `goals`, `context`, and `sync`. These commands
-retain their existing environment and explicit-argument configuration behavior.
-The Typer app remains available to existing callers.
+resolve the same selected profile settings and credentials as the provider;
+explicit URL/contact arguments remain available. The Typer app remains available
+to existing callers.
 
-Known follow-up work includes unifying provider setup/configuration, selected
-profile paths, startup recovery, and durable compression callbacks. Packaging
-does not establish production readiness or a lossless memory contract.
+Profile settings and handoff files stay scoped to the selected Hermes home.
+The provider remains attached through a sidecar startup outage and retries on
+later requests. Durable compression callbacks and automatic profile activation
+remain follow-up work; packaging alone does not establish production readiness
+or a lossless memory contract.
 
 ## Qualification
 
 The qualification target is Hermes v0.21.0, tag `v2026.8.31`, commit
-`29112bef099274229cadff79cdff7bf7b99c4b77`, Python 3.11 through 3.13. Other Hermes
+`29112bef099274229cadff79cdff7bf7b99c4b77`, tested on Python 3.12. The package
+allows Python 3.11 through 3.13; those other interpreters are not yet qualified.
+Other Hermes
 releases are unqualified until the native-loader checks pass against them.
 Hermes is installed separately; this package does not select or upgrade it.
 

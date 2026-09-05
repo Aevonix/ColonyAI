@@ -10,7 +10,6 @@ Exposes:
 from __future__ import annotations
 
 import json
-import os
 from typing import Optional
 
 import httpx
@@ -70,24 +69,13 @@ def register_cli(subparser) -> None:
     )
 
 
-def _sidecar_url() -> str:
-    return os.environ.get("COLONY_URL", "http://127.0.0.1:7777")
-
-
-def _api_key() -> str:
-    return os.environ.get("COLONY_API_KEY", "")
-
-
-def _headers() -> dict[str, str]:
-    h = {}
-    key = _api_key()
-    if key:
-        h["Authorization"] = f"Bearer {key}"
-    return h
-
-
-def _contact_id() -> str:
-    return os.environ.get("COLONY_MCP_CONTACT_ID", "default")
+def _connection(url=None, contact_id=None):
+    # Native CLI discovery imports only this module. Resolve the same selected
+    # profile configuration as the provider when a command actually runs.
+    from .provider import ColonyMemoryProvider
+    provider = ColonyMemoryProvider()
+    return (url or provider.sidecar_url, contact_id or provider._contact_id,
+            provider._headers())
 
 
 @app.command()
@@ -95,9 +83,9 @@ def status(
     url: Optional[str] = typer.Option(None, "--url", "-u", help="Colony sidecar URL"),
 ) -> None:
     """Check Colony sidecar health and capabilities."""
-    sidecar = url or _sidecar_url()
+    sidecar, _, headers = _connection(url)
     try:
-        resp = httpx.get(f"{sidecar}/v1/host/health", headers=_headers(), timeout=5)
+        resp = httpx.get(f"{sidecar}/v1/host/health", headers=headers, timeout=5)
         resp.raise_for_status()
         data = resp.json()
         typer.echo(json.dumps(data, indent=2))
@@ -112,11 +100,11 @@ def goals(
     url: Optional[str] = typer.Option(None, "--url", "-u"),
 ) -> None:
     """List Colony goals."""
-    sidecar = url or _sidecar_url()
+    sidecar, _, headers = _connection(url)
     try:
         resp = httpx.get(
             f"{sidecar}/v1/host/goals",
-            headers=_headers(),
+            headers=headers,
             params={"status_filter": status_filter},
             timeout=5,
         )
@@ -135,12 +123,11 @@ def context(
     url: Optional[str] = typer.Option(None, "--url", "-u"),
 ) -> None:
     """Fetch Colony cognitive context for a contact."""
-    sidecar = url or _sidecar_url()
-    cid = contact_id or _contact_id()
+    sidecar, cid, headers = _connection(url, contact_id)
     try:
         resp = httpx.post(
             f"{sidecar}/v1/host/context/assemble",
-            headers=_headers(),
+            headers=headers,
             json={
                 "identity": {"host_id": "hermes"},
                 "context": {
@@ -167,15 +154,14 @@ def sync(
     url: Optional[str] = typer.Option(None, "--url"),
 ) -> None:
     """Force a turn sync to Colony."""
-    sidecar = url or _sidecar_url()
-    cid = contact_id or _contact_id()
+    sidecar, cid, headers = _connection(url, contact_id)
     if not user or not assistant:
         typer.echo("--user and --assistant are required", err=True)
         raise typer.Exit(code=1)
     try:
         resp = httpx.post(
             f"{sidecar}/v1/host/turns/sync",
-            headers=_headers(),
+            headers=headers,
             json={
                 "identity": {"host_id": "hermes"},
                 "context": {
