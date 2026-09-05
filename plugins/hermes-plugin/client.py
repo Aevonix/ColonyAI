@@ -664,12 +664,12 @@ class TurnOutbox:
         self,
         path: str | os.PathLike[str],
         *,
-        max_payload_bytes: int = 64 * 1024,
+        max_payload_bytes: int = 8 * 1024 * 1024,
         max_pending: int = 10_000,
         max_delivered: int = 8_192,
     ):
         self.path = Path(os.path.expanduser(str(path)))
-        self.max_payload_bytes = max(4096, min(int(max_payload_bytes), 256 * 1024))
+        self.max_payload_bytes = max(4096, min(int(max_payload_bytes), 8 * 1024 * 1024))
         self.max_pending = max(128, min(int(max_pending), 100_000))
         self.max_delivered = max(128, min(int(max_delivered), 100_000))
         self._schema_lock = threading.RLock()
@@ -1505,6 +1505,8 @@ class ColonyClient:
         model: str = "",
         turn_id: str = "",
         sender: Mapping[str, str] | None = None,
+        checkpoint_messages: Sequence[Mapping[str, Any]] | None = None,
+        require_source_receipt: bool = False,
         timeout_seconds: float = 0.25,
     ) -> bool:
         """Persist one participant-bound observation through Colony's ledger."""
@@ -1545,6 +1547,8 @@ class ColonyClient:
                 payload["summary"] = str(summary)
             if model:
                 payload["model"] = str(model)
+            if checkpoint_messages is not None:
+                payload["checkpoint_messages"] = list(checkpoint_messages)
 
             if turn_id:
                 response = self.put(
@@ -1568,7 +1572,13 @@ class ColonyClient:
                 raise TurnDeliveryOutcomeUnknown(
                     "participant-bound turn outcome is unknown"
                 )
-            return bool(isinstance(value, Mapping) and value.get("accepted"))
+            return bool(
+                isinstance(value, Mapping) and value.get("accepted")
+                and (
+                    not (require_source_receipt or checkpoint_messages is not None)
+                    or value.get("source_recorded") is True
+                )
+            )
         except TurnDeliveryOutcomeUnknown:
             raise
         except httpx.TimeoutException:

@@ -462,6 +462,19 @@ class SignalIngestResponse(BaseModel):
 
 # --- Turns ------------------------------------------------------------------
 
+class CheckpointMessage(BaseModel):
+    """Direct source content; injected API context is not part of this schema."""
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["user", "assistant"]
+    content: Union[str, List[Dict[str, Any]]]
+
+    @model_validator(mode="after")
+    def nonempty_content(self):
+        if not self.content or isinstance(self.content, str) and not self.content.strip():
+            raise ValueError("checkpoint messages must contain source content")
+        return self
+
+
 class TurnSyncRequest(BaseModel):
     identity: HostIdentity
     context: HostTurnContext
@@ -480,6 +493,21 @@ class TurnSyncRequest(BaseModel):
     # Lets the mining layer detect provider escalations / cloud failovers from
     # real per-turn metadata instead of guessing from text.
     model: Optional[str] = None
+    # Evidence-only checkpoints never trigger ordinary turn/relationship effects.
+    checkpoint_messages: Optional[List[CheckpointMessage]] = Field(
+        default=None, min_length=1, max_length=20_000,
+    )
+
+    @model_validator(mode="after")
+    def bounded_checkpoint(self):
+        if self.checkpoint_messages is not None:
+            if self.sender is not None or self.user_message is not None or self.assistant_message is not None:
+                raise ValueError("checkpoint cannot also represent an ordinary turn")
+            if not self.context.turn_id:
+                raise ValueError("checkpoint requires an idempotent turn id")
+            if len(self.model_dump_json().encode("utf-8")) > 8 * 1024 * 1024:
+                raise ValueError("checkpoint exceeds the 8 MiB source limit")
+        return self
 
 
 class TurnSyncResponse(BaseModel):
@@ -487,6 +515,7 @@ class TurnSyncResponse(BaseModel):
     continuity_updated: bool
     skipped_reason: Optional[str] = None
     errors: Optional[List[str]] = None
+    source_recorded: bool = False
 
 
 # --- Safety -----------------------------------------------------------------

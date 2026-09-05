@@ -62,9 +62,44 @@ to existing callers.
 
 Profile settings and handoff files stay scoped to the selected Hermes home.
 The provider remains attached through a sidecar startup outage and retries on
-later requests. Durable compression callbacks and automatic profile activation
-remain follow-up work; packaging alone does not establish production readiness
-or a lossless memory contract.
+later requests. Automatic profile activation remains follow-up work; packaging
+alone does not establish production readiness.
+
+## Durable source capture
+
+The native memory provider implements compression checkpoint API v2. Set
+`compression.checkpoint_required: true` to make Hermes retain its transcript
+when local checkpoint persistence fails. A successful checkpoint commits the
+normalized direct source messages into the same private SQLite outbox used by
+the general adapter. The callback then attempts delivery within 250 ms.
+Sidecar downtime leaves a pending durable record and permits compression;
+pending does not mean centrally recallable. Diagnostics expose checkpoint
+state. The ordinary turn writer and subsequent checkpoints drain that outbox.
+
+The outbox accepts at most 8 MiB of serialized data per record. Oversized or
+unserializable evidence fails explicitly without clipping it. System rows,
+tool wrappers, compression summaries and injected `api_content` are excluded.
+Direct message content, including media references, is retained. The general
+turn writer also retains complete messages instead of cutting at 2,000
+characters. New records require a `source_recorded` receipt before delivery is
+acknowledged, so an older sidecar cannot silently discard an unfamiliar
+checkpoint payload during an upgrade.
+
+The existing `/v2/host/turns/{turn_id}` endpoint stores direct source JSON and a
+lexical index transactionally in `turn-idempotency.db`. Checkpoints bypass
+ordinary interaction, affect, graph and initiative effects. Replays do not
+create another source. `occurred_at` is retained when supplied explicitly in
+context metadata; otherwise it is unknown. Server `ingested_at` is separate
+and is never treated as the date asserted by the conversation.
+
+`/v1/host/context/assemble` reads the source index after the existing exact
+viewer check. Ordinary attributed turns can be recalled across that person's
+sessions. Full-history checkpoints additionally require their original session,
+because the native history does not guarantee old per-message speaker
+attribution. Media references remain source data; only text is indexed. This
+is direct evidence recall, not an embedding migration or a belief contradiction
+engine. Semantic forgetting and pending-source tombstones are the next required
+integration before production activation.
 
 ## Qualification
 
