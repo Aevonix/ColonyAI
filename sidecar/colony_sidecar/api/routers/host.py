@@ -2424,10 +2424,8 @@ async def context_assemble(
             results = await _graph.recall(**recall_kwargs)
             results = _p8_filter_graph_recall(results)
             if results:
-                body_text = "\n".join(
-                    f"- [{r.get('relevance', r.get('score', 0)):.2f}] {r.get('content', '')}"
-                    for r in results
-                )
+                from colony_sidecar.intelligence.graph.recall import render_memory_context
+                body_text = render_memory_context(results)
                 sections.append(ContextSection(
                     id="colony-memory",
                     title="Relevant Memories",

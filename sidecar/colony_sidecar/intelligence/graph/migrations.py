@@ -51,6 +51,9 @@ SCHEMA_V1: List[str] = [
     "CREATE INDEX memory_strength IF NOT EXISTS FOR (m:Memory) ON (m.strength)",
     "CREATE INDEX memory_accessed_at IF NOT EXISTS FOR (m:Memory) ON (m.accessed_at)",
     "CREATE INDEX memory_created_at IF NOT EXISTS FOR (m:Memory) ON (m.created_at)",
+    # Synchronous full-text updates keep new/corrected source memories
+    # searchable while their independently maintained vectors catch up.
+    "CREATE FULLTEXT INDEX memory_content_fulltext IF NOT EXISTS FOR (m:Memory) ON EACH [m.content]",
     "CREATE INDEX person_tier IF NOT EXISTS FOR (p:Person) ON (p.tier)",
     "CREATE INDEX person_score IF NOT EXISTS FOR (p:Person) ON (p.score)",
     "CREATE INDEX person_last_interaction IF NOT EXISTS FOR (p:Person) ON (p.lastInteraction)",

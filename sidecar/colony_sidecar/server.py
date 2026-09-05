@@ -1864,7 +1864,17 @@ async def lifespan(app: FastAPI):
             # set_embed_fn wiring above). Registration alone changes
             # nothing: use is gated by COLONY_RECALL_RERANK (default off).
             if graph is not None and hasattr(graph, "set_rerank_fn"):
-                graph.set_rerank_fn(reranker_provider.rerank)
+                def recall_calibration_metadata():
+                    return {
+                        **reranker_provider.calibration_metadata(),
+                        "weights_revision": os.environ.get("COLONY_RERANKER_REVISION", "unverified"),
+                        "embedding_model": os.environ.get("COLONY_EMBED_MODEL", ""),
+                        "embedding_dimensions": os.environ.get("COLONY_EMBED_DIMS", ""),
+                        "index_generation": os.environ.get("COLONY_RECALL_INDEX_GENERATION", "unverified"),
+                    }
+                graph.set_rerank_fn(
+                    reranker_provider.rerank,
+                    calibration_metadata=recall_calibration_metadata)
                 logger.info(
                     "ColonyGraph wired to reranker for recall "
                     "(gated by COLONY_RECALL_RERANK)")
