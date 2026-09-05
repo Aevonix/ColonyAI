@@ -21,7 +21,7 @@ gateway, a coding tool, or anything that can call an HTTP API), assembles
 relevant context before each turn, learns from each turn afterward, and can
 pursue goals between turns.
 
-The agent stays stateless; Colony holds the state. Memories, facts,
+The host manages conversations and execution; Colony holds cross-session state. Memories, facts,
 commitments, relationships, beliefs, projects, skills, and time all persist
 across sessions and outlive any single conversation. Everything runs locally
 against your own stores and your own model endpoints.
@@ -40,6 +40,10 @@ section below states plainly which subsystems enforce by default (few) and
 which observe (most); read it before assuming anything is blocking.
 
 ## Quick start
+
+For the target architecture, public/private ownership and incremental cleanup
+rules, see [Architecture and ownership](docs/ARCHITECTURE.md). Its planned
+boundaries are not a claim that every migration is already shipped.
 
 Requirements: Python 3.11+, Neo4j 5.x reachable over Bolt, and an
 OpenAI-compatible LLM and embedding endpoint.
@@ -68,6 +72,31 @@ curl -s -H "Authorization: Bearer $COLONY_API_KEY" \
 To run the sidecar and Neo4j together under Docker, clone this repo and use
 the provided `docker-compose.yml` (it builds the sidecar image from
 `./sidecar`, so compose needs the repo checkout; the pip path above does not).
+
+Hermes plugin staging currently requires an editable source checkout so the
+plugin resources are available:
+
+```bash
+python -m pip install -e ./sidecar
+colony init --agent-harness hermes --hermes-home /path/to/hermes-profile
+```
+
+`--hermes-home` takes precedence over `HERMES_HOME`, then the default
+`~/.hermes`. The staging step preserves unrelated configuration values and
+existing contact/secret bindings. An actual YAML change can normalize formatting
+and comments; the original configuration is retained in a private
+`.config.yaml.colony-backup-*` file beside it.
+
+Staging refuses a different memory provider, conflicting instance settings or
+different installed plugin files. It does not select a custom compressor,
+provision user-global Hermes services, enable the general plugin or restart
+Hermes. The surrounding `colony init` wizard still configures Colony itself.
+
+Runtime compatibility, private credentials, general-plugin coexistence,
+activation and an observed recall test remain required. A successful staging
+result is not a connected-agent claim. Wheel-based attachment and guided
+private-agent creation are follow-up work described in
+[the architecture](docs/ARCHITECTURE.md).
 
 ## The autonomy model
 

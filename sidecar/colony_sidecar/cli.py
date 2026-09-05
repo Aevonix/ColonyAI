@@ -32,6 +32,7 @@ def main() -> None:
     # Harness configuration (new approach)
     init_p.add_argument("--mcp-harnesses", help="Connect coding harnesses via MCP (comma-separated: claude-code,codex,crush,opencode)")
     init_p.add_argument("--agent-harness", choices=["hermes"], help="Connect agent harness via plugin (OpenClaw support was removed in v0.21.14)")
+    init_p.add_argument("--hermes-home", default=None, help="Hermes profile/home to stage into (default: HERMES_HOME or ~/.hermes; no activation)")
     init_p.add_argument("--no-harness", action="store_true", help="Skip all harness setup (standalone mode)")
     # Backward compatibility
     init_p.add_argument("--host-framework", choices=["openclaw", "hermes", "claude-code", "codex", "crush", "standalone"], help="Host framework (deprecated: use --agent-harness or --mcp-harnesses)")

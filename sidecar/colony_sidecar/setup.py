@@ -860,349 +860,243 @@ def _setup_mcp_harness(harness: str, api_key: str, sidecar_url: str, non_interac
         return False
 
 
-def _install_hermes_addons(hermes_home: Path, ops_src: Path) -> None:
-    """Install the GENERIC host-side Colony<->Hermes ops add-ons — doctor, restart
-    runner, pre-restart summary — and schedule the doctor. Not specific to any
-    agent; these make any Hermes+Colony integration self-validating and resilient.
-    Idempotent."""
-    if not ops_src.exists():
-        print("    ⚠️  Ops add-ons not found (skipping doctor / restart add-ons)")
-        return
-    scripts_dst = hermes_home / "scripts"
-    scripts_dst.mkdir(parents=True, exist_ok=True)
-    for f in ("colony-doctor.py", "colony-doctor-cron.sh",
-              "hermes-gateway-restart-runner.sh", "pre-restart-summary.py",
-              "colony-activity-monitor.py"):
-        src = ops_src / f
-        if src.exists():
-            shutil.copy2(src, scripts_dst / f)
-            try:
-                os.chmod(scripts_dst / f, 0o755)
-            except OSError:
-                pass
-    print(f"    ✅ Ops add-ons      →  {scripts_dst}")
-
-    if sys.platform != "darwin":
-        print("    ℹ️  On non-macOS, schedule the doctor via cron:")
-        print("       0 */6 * * * ~/.hermes/scripts/colony-doctor-cron.sh")
-        return
-    la = Path.home() / "Library" / "LaunchAgents"
-    if not la.exists():
-        return
-    import plistlib
-    venv_py = str(hermes_home / "hermes-agent" / "venv" / "bin" / "python3")
-    logs = hermes_home / "logs"
-    # Generate launchd plists with THIS host's paths (portable; not copied hardcoded).
-    plists = {
-        "ai.aevonix.colony-doctor": {
-            "ProgramArguments": ["/bin/bash", str(scripts_dst / "colony-doctor-cron.sh")],
-            "RunAtLoad": True, "StartInterval": 21600,
-            "StandardOutPath": str(logs / "colony-doctor.out"),
-            "StandardErrorPath": str(logs / "colony-doctor.err"),
-        },
-        "ai.hermes.activity-monitor": {
-            "ProgramArguments": [venv_py, str(scripts_dst / "colony-activity-monitor.py")],
-            "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 10,
-            "StandardOutPath": str(logs / "activity-monitor.out.log"),
-            "StandardErrorPath": str(logs / "activity-monitor.err.log"),
-        },
-    }
-    for label, body in plists.items():
-        body["Label"] = label
-        dst = la / f"{label}.plist"
-        try:
-            with open(dst, "wb") as fh:
-                plistlib.dump(body, fh)
-            print(f"    ✅ launchd          →  {dst.name}")
-            print(f"       enable: launchctl bootstrap gui/$(id -u) {dst}")
-        except Exception as exc:
-            print(f"    ⚠️  launchd {label} skipped: {exc}")
+def _resolve_hermes_home(hermes_home: str | Path | None = None) -> Path:
+    """Resolve the selected Hermes home without guessing profile layouts."""
+    selected = hermes_home or os.environ.get("HERMES_HOME")
+    return Path(selected or Path.home() / ".hermes").expanduser().resolve()
 
 
-def _run_colony_doctor(hermes_home: Path) -> None:
-    """Run the integration doctor as a post-setup validation gate."""
-    doctor = hermes_home / "scripts" / "colony-doctor.py"
-    if not doctor.exists():
-        return
-    hermes_py = hermes_home / "hermes-agent" / "venv" / "bin" / "python"
-    py = str(hermes_py) if hermes_py.exists() else sys.executable
-    print("  Validating integration (colony-doctor)...")
+def _read_hermes_config(config_path: Path) -> tuple[bytes | None, dict]:
+    """Parse configuration without exposing YAML values in error messages."""
+    import yaml
+
+    class UniqueKeyLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            # Reject ambiguous duplicate/merge keys rather than silently losing
+            # configuration. Only the chosen host's configuration is inspected.
+            self.flatten_mapping(node)
+            result = {}
+            for key_node, value_node in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                if key in result:
+                    raise ValueError("Duplicate YAML mapping key")
+                result[key] = self.construct_object(value_node, deep=deep)
+            return result
+
+    if config_path.is_symlink():
+        raise ValueError("Symlinked Hermes config requires a reviewed migration")
+    original = config_path.read_bytes() if config_path.exists() else None
     try:
-        r = subprocess.run([py, str(doctor)], capture_output=True, text=True, timeout=40)
-        result = [l for l in r.stdout.splitlines() if l.startswith("RESULT")]
-        fails = [l for l in r.stdout.splitlines() if l.strip().startswith("❌")]
-        print("    " + (result[-1] if result else f"doctor exit {r.returncode}"))
-        for l in fails[:6]:
-            print("    " + l.strip())
-    except Exception as exc:
-        print(f"    ⚠️  doctor run skipped: {exc}")
+        config = yaml.load(original.decode("utf-8"), Loader=UniqueKeyLoader) if original else {}
+    except (UnicodeError, yaml.YAMLError, TypeError, ValueError):
+        raise ValueError("Hermes config is invalid or has ambiguous YAML keys") from None
+    if config is None:
+        config = {}
+    if not isinstance(config, dict):
+        raise ValueError("Hermes config must be a YAML mapping")
+    return original, config
 
 
-def _setup_hermes_plugin(api_key: str, sidecar_url: str, non_interactive: bool = False, contact_id: str = "") -> bool:
-    """Configure Colony as a Hermes MemoryProvider plugin.
+def _prepare_hermes_config(
+    config_path: Path, sidecar_url: str, contact_id: str,
+) -> tuple[bytes | None, bytes]:
+    """Prepare a narrow semantic update; preserve existing secrets and identity.
 
-    Installs plugin files from the Colony repo into ~/.hermes/plugins/
-    and updates ~/.hermes/config.yaml. Works on Linux, macOS, and WSL.
+    PyYAML preserves values, not comments/formatting. The original bytes are
+    retained in a private backup when an actual configuration change is made.
+    This prepares configuration only: it does not qualify or activate Hermes.
     """
-    hermes_home = Path.home() / ".hermes"
-    hermes_config = hermes_home / "config.yaml"
+    import copy
+    from urllib.parse import urlsplit
+    import yaml
 
-    # Find plugin source files relative to this module (in the repo).
-    # plugins/colony-memory is the SINGLE canonical memory provider (the
-    # former hermes-memory and hermes-plugin/memory_provider copies were
-    # consolidated into it).
-    colony_repo = Path(__file__).resolve().parents[2]  # colony_sidecar/ -> sidecar/ -> repo-root/
-    mem_src = colony_repo / "plugins" / "colony-memory"
-    ctx_src = colony_repo / "plugins" / "hermes-context"
-    gen_src = colony_repo / "plugins" / "hermes-plugin"
-
-    # Check if source files exist
-    if not mem_src.exists():
-        print("  ⚠️ Colony plugin source files not found")
-        print(f"     Expected: {mem_src}")
-        print("     Install manually: git clone https://github.com/Aevonix/ColonyAI.git")
-        return False
-
-    print("  Installing Colony Hermes plugins...")
-
-    # Install memory provider (same target install.sh uses; this is the
-    # layout Hermes loads for memory.provider = "colony")
-    mem_dst = hermes_home / "plugins" / "colony-memory"
-    mem_dst.mkdir(parents=True, exist_ok=True)
-    for f in ["__init__.py", "provider.py", "cli.py", "plugin.yaml", "SKILL.md"]:
-        src = mem_src / f
-        if src.exists():
-            shutil.copy2(src, mem_dst / f)
-    print(f"    ✅ Memory provider  →  {mem_dst}")
-
-    # Install context engine
-    if ctx_src.exists():
-        ctx_dst = hermes_home / "plugins" / "context_engine" / "colony"
-        ctx_dst.mkdir(parents=True, exist_ok=True)
-        for f in ["__init__.py", "plugin.yaml"]:
-            src = ctx_src / f
-            if src.exists():
-                shutil.copy2(src, ctx_dst / f)
-        print(f"    ✅ Context engine   →  {ctx_dst}")
-
-    # Install general plugin
-    if gen_src.exists():
-        gen_dst = hermes_home / "plugins" / "colony"
-        gen_dst.mkdir(parents=True, exist_ok=True)
-        for f in ["__init__.py", "client.py", "events.py", "slash.py", "plugin.yaml"]:
-            src = gen_src / f
-            if src.exists():
-                shutil.copy2(src, gen_dst / f)
-        catalog_dst = gen_dst / "colony_hostworker"
-        catalog_dst.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(
-            gen_src / "colony_hostworker" / "__init__.py",
-            catalog_dst / "__init__.py",
-        )
-        hostworker_src = colony_repo / "hostworker" / "colony_hostworker"
-        for f in ["catalog.py", "contract.py"]:
-            shutil.copy2(hostworker_src / f, catalog_dst / f)
-        print(f"    ✅ General plugin   →  {gen_dst}")
-
-    # Generic host-side ops add-ons + scheduled doctor (any agent).
-    _install_hermes_addons(hermes_home, gen_src / "ops")
-
-    # Write/update Hermes config.yaml
-    print("  Configuring Hermes config...")
-    _write_hermes_config(hermes_config, api_key, sidecar_url, contact_id)
-    print(f"    ✅ Config written   →  {hermes_config}")
-
-    # Verify sidecar is reachable
     try:
-        import httpx
-        resp = httpx.get(f"{sidecar_url}/v1/host/health", timeout=3)
-        if resp.status_code == 200:
-            caps = resp.json().get("capabilities", [])
-            print(f"    ✅ Sidecar healthy  —  {len(caps)} capabilities")
-        else:
-            print(f"    ⚠️  Sidecar returned HTTP {resp.status_code}")
-    except Exception as exc:
-        print(f"    ⚠️  Sidecar not reachable: {exc}")
-        print("       Start it with: colony start")
+        url = urlsplit(sidecar_url)
+        port = url.port  # Access validates numeric syntax and the 0..65535 range.
+        valid_url = (url.scheme in {"http", "https"} and url.hostname
+                     and not url.username and not url.password
+                     and not url.query and not url.fragment
+                     and (port is None or port > 0))
+    except ValueError:
+        valid_url = False
+    if not valid_url:
+        raise ValueError("Sidecar URL must be HTTP(S), with a valid port and no embedded credentials or query parameters")
 
-    _run_colony_doctor(hermes_home)
+    original, config = _read_hermes_config(config_path)
+    before = copy.deepcopy(config)
 
-    print()
-    print("  Hermes integration complete!")
-    print()
-    print("  Restart Hermes to load the Colony plugin:")
-    print("    hermes restart")
-    print()
-    print("  Then verify:")
-    print("    hermes colony status")
-    print()
-    print("  Plugin docs:")
-    print("    https://github.com/Aevonix/ColonyAI/blob/main/plugins/colony-memory/SKILL.md")
-    return True
+    def mapping(parent: dict, key: str) -> dict:
+        if key not in parent:
+            parent[key] = {}
+        if not isinstance(parent[key], dict):
+            raise ValueError("Hermes memory/plugin settings must be YAML mappings")
+        parent[key] = dict(parent[key])  # Do not mutate unrelated YAML alias users.
+        return parent[key]
+
+    memory = mapping(config, "memory")
+    provider = memory.get("provider")
+    if provider not in (None, "", "colony", "colony-memory"):
+        raise ValueError("Another memory provider is configured; migrate it explicitly before staging Colony")
+    memory_config = mapping(memory, "config")
+    plugins = mapping(config, "plugins")
+    plugin_config = mapping(plugins, "colony")
+
+    # Do not redirect an existing private instance or replace its contact just
+    # because the init wizard supplies defaults for a fresh installation.
+    for settings in (memory_config, plugin_config):
+        if settings.get("url") not in (None, "", sidecar_url):
+            raise ValueError("Existing Colony endpoint differs; use a reviewed instance migration")
+        if contact_id and settings.get("contact_id") not in (None, "", contact_id):
+            raise ValueError("Existing Colony contact differs; preserve its identity or migrate explicitly")
+    selected_contact = contact_id or memory_config.get("contact_id") or plugin_config.get("contact_id")
+    if not isinstance(selected_contact, str) or not selected_contact.strip():
+        raise ValueError("Provide --contact-name or retain an existing Colony contact binding")
+    if any(settings.get("contact_id") not in (None, "", selected_contact)
+           for settings in (memory_config, plugin_config)):
+        raise ValueError("Existing Colony contact bindings disagree; reconcile them before staging")
+
+    memory["provider"] = "colony-memory"
+    for settings in (memory_config, plugin_config):
+        if settings.get("url") in (None, ""):
+            settings["url"] = sidecar_url
+        settings.setdefault("api_key", "${COLONY_API_KEY}")
+        if settings.get("contact_id") in (None, ""):
+            settings["contact_id"] = selected_contact
+    # Do not install/select a custom context engine, enable the general plugin,
+    # alter coexistence latches, or rewrite any other existing host setting.
+    if original is not None and config == before:
+        return original, original
+    return original, yaml.safe_dump(config, sort_keys=False, allow_unicode=True).encode("utf-8")
+
+
+def _atomic_hermes_config_write(config_path: Path, original: bytes | None, updated: bytes) -> None:
+    """Replace config atomically, preserving the previous bytes privately."""
+    import stat
+    import tempfile
+
+    current = config_path.read_bytes() if config_path.exists() else None
+    if config_path.is_symlink() or current != original:
+        raise ValueError("Hermes config changed during staging; retry after reconciling it")
+    if current == updated:
+        return
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(config_path.stat().st_mode) if current is not None else 0o600
+    if original is not None:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{config_path.name}.colony-backup-", dir=config_path.parent, delete=False,
+        ) as backup:
+            backup.write(original)
+            backup.flush()
+            os.fsync(backup.fileno())
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{config_path.name}.colony-stage-", dir=config_path.parent, delete=False,
+        ) as staged:
+            temporary = Path(staged.name)
+            os.fchmod(staged.fileno(), mode)
+            staged.write(updated)
+            staged.flush()
+            os.fsync(staged.fileno())
+        if config_path.is_symlink() or (config_path.read_bytes() if config_path.exists() else None) != original:
+            raise ValueError("Hermes config changed during staging; retry after reconciling it")
+        os.replace(temporary, config_path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _write_hermes_config(config_path: Path, api_key: str, sidecar_url: str, contact_id: str) -> None:
-    """Write or update ~/.hermes/config.yaml with Colony settings.
+    # Retain the existing call signature; raw credentials never enter config.
+    original, updated = _prepare_hermes_config(config_path, sidecar_url, contact_id)
+    _atomic_hermes_config_write(config_path, original, updated)
 
-    Uses safe string manipulation — no pyyaml required. Preserves
-    existing user config and only updates Colony-related sections.
+
+def _hermes_plugin_files(colony_repo: Path, hermes_home: Path) -> list[tuple[bytes, Path]]:
+    """The existing source-checkout layout, with every required file checked."""
+    files = []
+    for source, target, names in (
+        ("plugins/colony-memory", "plugins/colony-memory",
+         ("__init__.py", "provider.py", "cli.py", "plugin.yaml", "SKILL.md")),
+        ("plugins/hermes-plugin", "plugins/colony",
+         ("__init__.py", "client.py", "events.py", "slash.py", "plugin.yaml")),
+        ("plugins/hermes-plugin/colony_hostworker", "plugins/colony/colony_hostworker", ("__init__.py",)),
+        ("hostworker/colony_hostworker", "plugins/colony/colony_hostworker", ("catalog.py", "contract.py")),
+    ):
+        files.extend((colony_repo / source / name, hermes_home / target / name) for name in names)
+    prepared = []
+    for source, target in files:
+        if not source.is_file():
+            raise ValueError("Required source-checkout plugin resources are missing; packaged attachment is not supported yet")
+        content = source.read_bytes()
+        for parent in (target, *target.parents):
+            if parent == hermes_home:
+                break
+            if parent.is_symlink():
+                raise ValueError("Symlinked plugin destinations require a reviewed upgrade")
+            if parent.exists() and parent != target and not parent.is_dir():
+                raise ValueError("A plugin destination parent is not a directory")
+        if target.exists() and (not target.is_file() or target.read_bytes() != content):
+            raise ValueError("Existing plugin files differ; use a reviewed upgrade instead of overwriting them")
+        prepared.append((content, target))
+    return prepared
+
+
+def _setup_hermes_plugin(
+    api_key: str, sidecar_url: str, non_interactive: bool = False,
+    contact_id: str = "", *, hermes_home: str | Path | None = None,
+) -> bool:
+    """Stage source-checkout plugins/config in one explicitly selected home.
+
+    This is not runtime activation or private-agent creation. No live probes,
+    restarts, custom compressor, global launchd add-ons or credentials are
+    installed. Existing different plugin files require an explicit upgrade.
     """
-    # Default config if file doesn't exist
-    default_lines = [
-        "# Hermes Configuration",
-        "# Generated by Colony setup wizard",
-        "",
-    ]
+    import tempfile
 
-    existing_lines = []
-    if config_path.exists():
-        existing_lines = config_path.read_text().splitlines()
+    try:
+        selected_home = _resolve_hermes_home(hermes_home)
+        if selected_home.exists() and not selected_home.is_dir():
+            raise ValueError("Selected Hermes home is not a directory")
+        config_path = selected_home / "config.yaml"
+        original, updated = _prepare_hermes_config(config_path, sidecar_url, contact_id)
+        colony_repo = Path(__file__).resolve().parents[2]
+        files = _hermes_plugin_files(colony_repo, selected_home)
+        # All configuration, resources and destinations are checked before the
+        # first mkdir/copy. New files are linked into place atomically; existing
+        # files are never overwritten by this staging-only path.
+        for content, target in files:
+            if target.exists():
+                if not target.is_file() or target.is_symlink() or target.read_bytes() != content:
+                    raise ValueError("Plugin destination changed during staging; reconcile it before retrying")
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as staged:
+                temporary = Path(staged.name)
+                try:
+                    staged.write(content)
+                    staged.flush()
+                    os.fchmod(staged.fileno(), 0o644)
+                    os.fsync(staged.fileno())
+                    os.link(temporary, target)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        _atomic_hermes_config_write(config_path, original, updated)
+    except (OSError, ValueError) as exc:
+        # Parser errors and URL/contact conflicts above deliberately omit
+        # configuration values, which can contain private information.
+        detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+        print(f"  Hermes staging failed: {detail}")
+        print("  Hermes was not restarted. Inspect any staged files before retrying.")
+        return False
 
-    if not existing_lines:
-        existing_lines = default_lines
-
-    # Parse existing lines to find sections
-    in_memory = False
-    in_plugins = False
-    in_context_engine = False
-    memory_start = -1
-    memory_end = -1
-    plugins_start = -1
-    plugins_end = -1
-    context_engine_start = -1
-    context_engine_end = -1
-
-    for i, line in enumerate(existing_lines):
-        stripped = line.strip()
-        if stripped.startswith("memory:"):
-            in_memory = True
-            memory_start = i
-            continue
-        if stripped.startswith("plugins:"):
-            in_plugins = True
-            plugins_start = i
-            in_memory = False
-            if memory_start >= 0 and memory_end < 0:
-                memory_end = i
-            continue
-        if stripped.startswith("context_engine:"):
-            in_context_engine = True
-            context_engine_start = i
-            in_memory = False
-            in_plugins = False
-            if memory_start >= 0 and memory_end < 0:
-                memory_end = i
-            if plugins_start >= 0 and plugins_end < 0:
-                plugins_end = i
-            continue
-        if in_memory and stripped and not stripped.startswith("#") and not line.startswith(" ") and not line.startswith("  "):
-            memory_end = i
-            in_memory = False
-        if in_plugins and stripped and not stripped.startswith("#") and not line.startswith(" ") and not line.startswith("  "):
-            plugins_end = i
-            in_plugins = False
-        if in_context_engine and stripped and not stripped.startswith("#") and not line.startswith(" ") and not line.startswith("  "):
-            context_engine_end = i
-            in_context_engine = False
-
-    # Close any open sections at EOF
-    if memory_start >= 0 and memory_end < 0:
-        memory_end = len(existing_lines)
-    if plugins_start >= 0 and plugins_end < 0:
-        plugins_end = len(existing_lines)
-    if context_engine_start >= 0 and context_engine_end < 0:
-        context_engine_end = len(existing_lines)
-
-    # Extract non-Colony plugins from existing plugins section
-    other_plugins: list[str] = []
-    if plugins_start >= 0:
-        for line in existing_lines[plugins_start + 1:plugins_end]:
-            stripped = line.strip()
-            # Keep lines that aren't the colony plugin
-            if stripped and not stripped.startswith("colony:") and not stripped.startswith("#"):
-                # Only keep top-level plugin keys (2-space indent)
-                if line.startswith("  ") and not line.startswith("    "):
-                    other_plugins.append(line)
-
-    # Build new lines
-    new_lines = []
-
-    contact_id_str = contact_id or "default"
-    # Memory section
-    memory_lines = [
-        "memory:",
-        "  provider: colony",
-        "  config:",
-        f'    url: "{sidecar_url}"',
-        '    api_key: "${COLONY_API_KEY}"',
-        f'    contact_id: "{contact_id_str}"',
-    ]
-
-    # Plugins section
-    plugins_lines = [
-        "plugins:",
-        "  colony:",
-        f'    url: "{sidecar_url}"',
-        '    api_key: "${COLONY_API_KEY}"',
-        f'    contact_id: "{contact_id_str}"',
-    ]
-    plugins_lines.extend(other_plugins)
-
-    # Context engine section
-    context_engine_lines = [
-        "context_engine: colony",
-    ]
-
-    # Assemble output preserving non-conflicting sections
-    added_memory = False
-    added_plugins = False
-    added_context_engine = False
-
-    i = 0
-    while i < len(existing_lines):
-        line = existing_lines[i]
-        stripped = line.strip()
-
-        # Skip old memory section
-        if memory_start >= 0 and memory_start <= i < memory_end:
-            if not added_memory:
-                new_lines.extend(memory_lines)
-                added_memory = True
-            i = memory_end
-            continue
-
-        # Skip old plugins section
-        if plugins_start >= 0 and plugins_start <= i < plugins_end:
-            if not added_plugins:
-                new_lines.extend(plugins_lines)
-                added_plugins = True
-            i = plugins_end
-            continue
-
-        # Skip old context_engine line
-        if context_engine_start >= 0 and context_engine_start <= i < context_engine_end:
-            if not added_context_engine:
-                new_lines.extend(context_engine_lines)
-                added_context_engine = True
-            i = context_engine_end
-            continue
-
-        new_lines.append(line)
-        i += 1
-
-    # Add any missing sections at the end
-    if not added_memory:
-        if new_lines and new_lines[-1].strip():
-            new_lines.append("")
-        new_lines.extend(memory_lines)
-    if not added_plugins:
-        new_lines.append("")
-        new_lines.extend(plugins_lines)
-    if not added_context_engine:
-        new_lines.append("")
-        new_lines.extend(context_engine_lines)
-
-    config_path.write_text("\n".join(new_lines) + "\n")
+    print(f"  Colony plugin files and config staged in {selected_home}")
+    print("  Staging only: Hermes activation and live memory behaviour were not verified.")
+    print("  Existing settings and secret references were retained; changed YAML formatting may be normalized.")
+    print("  Before activating, qualify the runtime, make COLONY_API_KEY available through its private environment,")
+    print("  and configure general-plugin activation/coexistence for that runtime.")
+    print("  No restart, custom compressor, global services or hardware adapters were installed.")
+    return True
 
 
 def _write_env(env_path: Path, values: dict[str, str]) -> None:
@@ -2088,8 +1982,8 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         
         # Offer agent harness setup
         print("  Configure an agent harness?")
-        print("    [1] Hermes — persistent agent framework (plugins installed")
-        print("        to ~/.hermes/plugins/)")
+        print("    [1] Hermes: persistent agent framework (plugins staged")
+        print("        to the selected Hermes home)")
         print("    [2] Skip — run standalone (coding tools can still connect")
         print("        via 'colony mcp setup')")
         print()
@@ -2104,7 +1998,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                 if not hermes_detected:
                     print()
                     print("  ⚠️ Hermes not detected on this system.")
-                    print("     Plugin files will be installed to ~/.hermes/plugins/")
+                    print("     Plugin files will be staged in the selected Hermes home")
                     print("     Install Hermes later: "
                           "https://github.com/NousResearch/hermes-agent")
                     print()
@@ -2409,7 +2303,11 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     # Configure agent harness plugin now that we have the API key
     if agent_harness == "hermes":
         print()
-        _setup_hermes_plugin(values["COLONY_API_KEY"], sidecar_url, non_interactive, contact_id or "default")
+        if not _setup_hermes_plugin(
+            values["COLONY_API_KEY"], sidecar_url, non_interactive, contact_id or "",
+            hermes_home=getattr(args, "hermes_home", None),
+        ):
+            return 1
     
     # Configure MCP harnesses
     if mcp_harnesses:
@@ -2719,8 +2617,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     # ── Step 10c: Restart gateway ───────────────────────────────────────
 
-    # (Step 10c removed with OpenClaw support: Hermes plugin activation is a
-    # 'hermes restart' the user runs when convenient; the summary prints it.)
+    # Hermes activation is deliberately separate from source-checkout staging.
 
     # ── Step 10d: Run colony doctor ─────────────────────────────────────
 
@@ -2794,21 +2691,10 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     # ── Step 11: Summary ─────────────────────────────────────────────────
 
     print()
-    print(_bold("Step 11: Setup complete!"))
+    print(_bold("Step 11: Initialization finished"))
     print()
-
-    print("  Capability status:")
-    print(f"    ✅ Safety (ResponseGate)")
-    print(f"    ✅ Reasoning (from host at runtime)")
-    print(f"    {'✅' if neo4j_password else '⚪'} Memory (ColonyGraph{' — Neo4j connected' if neo4j_password else ' — Neo4j not configured'})")
-    print(f"    ✅ Goals")
-    print(f"    ✅ Contacts")
-    print(f"    ✅ World Model ({'Neo4j' if neo4j_password else 'SQLite'} backend)")
-    print(f"    ✅ Commitment Tracking")
-    print(f"    ✅ Affect Tracking (Theory of Mind)")
-    print(f"    ✅ Shared Facts (Theory of Mind)")
-    print(f"    ✅ Pattern Extraction + Surprise Engine")
-    print(f"    ✅ Event Journal + Context Compression")
+    print("  Configuration has been written; runtime capabilities remain unverified.")
+    print("  Verify memory, tools and governance through observed end-to-end results.")
     print()
 
     if not sidecar_started:
@@ -2821,7 +2707,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     # Show harness-specific instructions
     if not agent_harness and not mcp_harnesses:
-        print("  Colony is running in standalone mode.")
+        print("  Standalone mode is configured.")
         print(f"  API endpoint: http://{values['COLONY_SIDECAR_HOST']}:{values['COLONY_SIDECAR_PORT']}")
         print("  API docs: http://localhost:7777/docs")
         print()
@@ -2830,23 +2716,14 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print("    colony init --agent-harness hermes")
         print()
     elif agent_harness == "hermes":
-        print("  Colony is connected to Hermes.")
-        print()
-        print("  Hermes plugins installed:")
-        print(f"    ~/.hermes/plugins/colony-memory/")
-        print(f"    ~/.hermes/plugins/context_engine/colony/")
-        print(f"    ~/.hermes/plugins/colony/")
-        print()
-        print("  Restart Hermes to activate:")
-        print("    hermes restart")
-        print()
-        print("  Verify the connection:")
-        print("    hermes colony status")
+        selected_home = _resolve_hermes_home(getattr(args, "hermes_home", None))
+        print(f"  Hermes plugin files/config are staged in {selected_home}.")
+        print("  Runtime compatibility, credentials and general-plugin coexistence still need qualification.")
+        print("  Hermes was not activated; live recall and tool behaviour remain unverified.")
         print()
 
     if not neo4j_password:
-        print(_yellow("  ⚠️ Graph memory is degraded (no Neo4j)."))
-        print("  Install Docker and re-run 'colony init'")
+        print("  No new Neo4j password was supplied. Verify graph connectivity separately.")
         print()
     elif neo4j_generated:
         print(_yellow(
@@ -2880,7 +2757,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     if sidecar_started and (mcp_harnesses or agent_harness == "hermes"):
         print()
         if agent_harness == "hermes":
-            print("  The sidecar is running and Hermes is configured.")
+            print("  The sidecar is running; Hermes integration is staged, not verified.")
         elif mcp_harnesses:
             print("  The sidecar is running with MCP harnesses configured.")
         print("  You can validate the full pipeline (sidecar + context + LLM) with:")
