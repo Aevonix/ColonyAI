@@ -105,7 +105,11 @@ class _Client:
         if path == "/v1/host/memory/search":
             return _Response({"memories": [{"id": "memory-owner"}]})
         if path == "/v1/host/world/entities/query":
-            return _Response({"entities": []})
+            body = kwargs.get("json") or {}
+            if not isinstance(body.get("identity"), dict) or not body["identity"].get("host_id"):
+                # The sidecar's EntityQueryRequest requires the host identity.
+                return _Response({"detail": "identity required"}, 422)
+            return _Response({"entities": [{"id": "entity-owner", "name": "Owner Org"}]})
         return _Response({})
 
     def sync_turn(self, **kwargs):
@@ -599,6 +603,25 @@ def test_legacy_private_reads_require_exact_owner_and_never_fallback(runtime):
     assert allowed["memories"][0]["id"] == "memory-owner"
     reads = [call for call in client.calls if call["path"] == "/v1/host/memory/search"]
     assert len(reads) == 1
+
+
+def test_entity_query_carries_the_host_identity_the_sidecar_requires(runtime):
+    _module, context, client, _mediator = runtime
+    _pre(context, session="s-owner", task="t-owner", turn="turn-owner",
+         platform="sms", sender="+15550001")
+    result = _json(_tool(
+        context, "colony_query_entities", {"query": "owner org", "entity_type": "organization"},
+        session="s-owner", task="t-owner", turn="turn-owner", call="entities-owner",
+    ))
+    assert result["entities"][0]["id"] == "entity-owner"
+    reads = [call for call in client.calls if call["path"] == "/v1/host/world/entities/query"]
+    assert len(reads) == 1
+    assert reads[0]["json"] == {
+        "identity": {"host_id": "hermes"},
+        "query": "owner org",
+        "entity_type": "organization",
+        "limit": 10,
+    }
 
 
 def test_autonomy_status_is_bounded_owner_system_read_only(runtime):

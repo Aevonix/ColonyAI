@@ -352,6 +352,37 @@ async def test_query_entities_empty(client):
     assert resp.json()["entities"] == []
 
 
+@pytest.mark.asyncio
+async def test_query_entities_requires_identity(client):
+    resp = await client.post("/v1/host/world/entities/query", json={
+        "query": "python",
+    })
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_query_entities_forwards_the_type_filter(client, monkeypatch):
+    from colony_sidecar.api.routers import host as host_router
+
+    class _Store:
+        def __init__(self):
+            self.calls = []
+
+        async def find_entities(self, **kwargs):
+            self.calls.append(kwargs)
+            return []
+
+    store = _Store()
+    monkeypatch.setattr(host_router, "_world_store", store)
+    for entity_type, expected in (("person", "person"), ("all", None), (None, None)):
+        body = {"identity": {"host_id": "test"}, "query": "python", "limit": 3}
+        if entity_type is not None:
+            body["entity_type"] = entity_type
+        resp = await client.post("/v1/host/world/entities/query", json=body)
+        assert resp.status_code == 200
+        assert store.calls[-1] == {"query": "python", "entity_type": expected, "limit": 3}
+
+
 # ---------------------------------------------------------------------------
 # Cognition
 # ---------------------------------------------------------------------------

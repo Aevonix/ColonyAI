@@ -1379,8 +1379,9 @@ class _ToolDispatcher:
                 response = self._client.post(
                     "/v1/host/world/entities/query",
                     json={
+                        "identity": {"host_id": "hermes"},
                         "query": str(args.get("query", "")),
-                        "entity_type": args.get("entity_type", "all"),
+                        "entity_type": str(args.get("entity_type") or "all"),
                         "limit": int(args.get("limit", 10) or 10),
                     },
                     timeout=5,

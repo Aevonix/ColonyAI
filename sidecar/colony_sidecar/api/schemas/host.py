@@ -734,6 +734,7 @@ class EntityListResponse(BaseModel):
 class EntityQueryRequest(BaseModel):
     identity: HostIdentity
     query: str
+    entity_type: Optional[str] = None  # None or "all" = every type
     limit: Optional[int] = 10
 
 

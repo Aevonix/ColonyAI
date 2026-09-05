@@ -6305,8 +6305,11 @@ def set_world_store(store) -> None:
 async def query_entities(body: EntityQueryRequest) -> EntityListResponse:
     if _world_store is None:
         return EntityListResponse(entities=[])
+    entity_type = body.entity_type if body.entity_type and body.entity_type != "all" else None
     try:
-        entities = await _world_store.find_entities(query=body.query, limit=body.limit or 10)
+        entities = await _world_store.find_entities(
+            query=body.query, entity_type=entity_type, limit=body.limit or 10,
+        )
         return EntityListResponse(entities=[EntityResponse(**_to_dict(e)) for e in entities])
     except Exception as exc:
         logger.warning("query_entities failed: %s", exc)
