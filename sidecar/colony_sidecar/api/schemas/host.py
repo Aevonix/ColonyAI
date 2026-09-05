@@ -1023,6 +1023,11 @@ class AutonomyStatusResponse(BaseModel):
     initiatives_generated: int = 0
     actions_executed: int = 0
     errors: int = 0
+    phases_cancelled: int = 0
+    last_cancelled_phase: Optional[str] = None
+    # Per-phase wall-clock seconds (last run / worst run) and the phase
+    # running right now, so a tick that overruns its budget is attributable.
+    phases: Optional[Dict[str, Any]] = None
     config: Optional[Dict[str, Any]] = None
 
 

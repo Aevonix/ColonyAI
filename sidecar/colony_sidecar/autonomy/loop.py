@@ -254,6 +254,8 @@ class LoopStats:
     scheduled_runs: int = 0
     phases_skipped: int = 0
     boundary_check_errors: int = 0
+    phases_cancelled: int = 0
+    last_cancelled_phase: Optional[str] = None
 
     def as_dict(self) -> dict:
         return {
@@ -275,6 +277,8 @@ class LoopStats:
             "scheduled_runs": self.scheduled_runs,
             "phases_skipped": self.phases_skipped,
             "boundary_check_errors": self.boundary_check_errors,
+            "phases_cancelled": self.phases_cancelled,
+            "last_cancelled_phase": self.last_cancelled_phase,
         }
 
 
@@ -336,6 +340,13 @@ class AutonomyLoop:
         self._last_task_completion_check: Optional[datetime] = None
         # Phases already warned about skipping (warn once, count always).
         self._phase_skip_warned: set = set()
+        # Which tick phase is running right now (None between ticks), and how
+        # long each phase took on its last run and at its worst. A tick that
+        # blows its budget is cancelled as a whole, so without this the log
+        # could not say which phase ate the budget.
+        self._current_phase: Optional[str] = None
+        self._phase_seconds: dict[str, float] = {}
+        self._phase_seconds_max: dict[str, float] = {}
         # High-water mark for _phase_events so each event is counted once.
         self._last_event_seen_id: Optional[str] = None
         # Exact already-admitted requests awaiting a terminal gateway outcome.
@@ -415,11 +426,7 @@ class AutonomyLoop:
                     await asyncio.wait_for(
                         self._tick(), timeout=self._tick_budget_secs())
                 except asyncio.TimeoutError:
-                    self.stats.errors += 1
-                    logger.error(
-                        "Tick #%d exceeded budget (%.0fs) and was cancelled; "
-                        "loop continues", self.stats.ticks,
-                        self._tick_budget_secs())
+                    self._note_tick_cancelled()
                 await self._sleep_until_next_tick()
         finally:
             await self._stop_governed_delivery_reconciler()
@@ -513,53 +520,53 @@ class AutonomyLoop:
         # may invoke an LLM.  This is bounded separately and never dispatches
         # work, so a slow thinking/planning phase (or whole-tick cancellation)
         # cannot starve durable queue-result projection.
-        await self._phase_project_result_reconciliation()
+        await self._run_phase("project_result_reconciliation", self._phase_project_result_reconciliation())
 
         # Phase 0: evaluate skill triggers
         event_text = self._gather_event_text()
-        await self._phase_skill_triggers(event_text)
+        await self._run_phase("skill_triggers", self._phase_skill_triggers(event_text))
 
         # Phase 1: drain pending events
-        await self._phase_events()
+        await self._run_phase("events", self._phase_events())
 
         # Phase 2: check goals needing attention
-        await self._phase_goals()
+        await self._run_phase("goals", self._phase_goals())
 
         # Phase 2b: system-condition sweep (hourly) — commitment overdue flip,
         # affect decline, surprise accumulation
-        await self._phase_condition_checks()
+        await self._run_phase("condition_checks", self._phase_condition_checks())
 
         # Phase 3: check anomalies
-        await self._phase_anomalies()
+        await self._run_phase("anomalies", self._phase_anomalies())
 
         # Phase 4: scheduled periodic tasks (memory consolidate, briefing, etc.)
-        await self._phase_scheduled()
+        await self._run_phase("scheduled", self._phase_scheduled())
 
         # Phase 5: run initiative engine
-        await self._phase_initiative()
+        await self._run_phase("initiative", self._phase_initiative())
 
         # Phase 5b: self-directed thinking (v0.17.0) — novel work the
         # data-reactive generators can't see. Appends to the same
         # pending-initiative batch Phase 6 consumes.
-        await self._phase_thinking()
+        await self._run_phase("thinking", self._phase_thinking())
 
         # Phase 6: execute approved actions
-        await self._phase_execute()
+        await self._run_phase("execute", self._phase_execute())
 
         # Phase 6a: sustained project pursuit (cognition item 1)
-        await self._phase_projects()
+        await self._run_phase("projects", self._phase_projects())
 
         # Phase 6a2: trust-engine graduation/demotion notices (Amendment 1)
-        await self._phase_trust_notices()
+        await self._run_phase("trust_notices", self._phase_trust_notices())
 
         # Phase 6b: request fresh observations for stale domains (v0.16.0)
-        await self._phase_observation_sync()
+        await self._run_phase("observation_sync", self._phase_observation_sync())
 
         # Phase 6c: feed completed agent work back into memory (v0.17.0)
-        await self._phase_job_writeback()
+        await self._run_phase("job_writeback", self._phase_job_writeback())
 
         # Phase 7: cognition pipeline tick
-        await self._phase_cognition()
+        await self._run_phase("cognition", self._phase_cognition())
 
         # (memory consolidation is NOT a tick phase: the consolidator runs
         # hourly via the memory_consolidate scheduler task. The old phase
@@ -567,99 +574,99 @@ class AutonomyLoop:
         # existed — deleted rather than repointed to avoid a double-run.)
 
         # Phase 9: memory decay (daily)
-        await self._phase_memory_decay()
+        await self._run_phase("memory_decay", self._phase_memory_decay())
 
         # Phase 10: memory reconciliation (daily)
-        await self._phase_memory_reconciliation()
+        await self._run_phase("memory_reconciliation", self._phase_memory_reconciliation())
 
         # Phase 11: memory pruning (weekly)
-        await self._phase_memory_pruning()
+        await self._run_phase("memory_pruning", self._phase_memory_pruning())
 
         # Phase 11b: memory distillation — promote recalled episodics into semantic facts (daily)
-        await self._phase_memory_distillation()
+        await self._run_phase("memory_distillation", self._phase_memory_distillation())
 
         # Phase 12: memory archive (weekly)
-        await self._phase_memory_archive()
+        await self._run_phase("memory_archive", self._phase_memory_archive())
 
         # Phase 11c: belief maintenance (daily, cognition item 7)
-        await self._phase_belief_maintenance()
+        await self._run_phase("belief_maintenance", self._phase_belief_maintenance())
 
         # Phase 11d: LLM-assisted world-model extraction (daily, batch)
-        await self._phase_world_llm_extract()
+        await self._run_phase("world_llm_extract", self._phase_world_llm_extract())
 
         # Phase 11d2: tom2 knowledge asymmetry (daily; COLONY_TOM2, default off)
-        await self._phase_tom2_asymmetry()
+        await self._run_phase("tom2_asymmetry", self._phase_tom2_asymmetry())
 
         # Phase 11e: connector ingest (read-only pull senses, cognition item 2)
-        await self._phase_connectors()
+        await self._run_phase("connectors", self._phase_connectors())
 
         # Phase 11f: relationship profiling (standing/psyche/approach briefs)
-        await self._phase_relationship_profiling()
+        await self._run_phase("relationship_profiling", self._phase_relationship_profiling())
 
         # Phase 12: task completion follow-ups
         # (memory distillation already ran as Phase 11b — it was called twice)
-        await self._phase_task_completion()
+        await self._run_phase("task_completion", self._phase_task_completion())
 
         # Phase 13: frustration back-off
-        await self._phase_frustration_update()
+        await self._run_phase("frustration_update", self._phase_frustration_update())
 
         # Phase 14: relationship scoring
-        await self._phase_relationships()
+        await self._run_phase("relationships", self._phase_relationships())
 
         # Phase 15: synthesis
-        await self._phase_synthesis()
+        await self._run_phase("synthesis", self._phase_synthesis())
 
         # Phase 16: bootstrap self-check (daily)
-        await self._phase_bootstrap_check()
+        await self._run_phase("bootstrap_check", self._phase_bootstrap_check())
 
         # Phase 17: self-reflection (weekly)
-        await self._phase_self_reflection()
+        await self._run_phase("self_reflection", self._phase_self_reflection())
 
         # Phase 17b: selfhood benchmark (weekly, Mind M0a)
-        await self._phase_selfhood_benchmark()
+        await self._run_phase("selfhood_benchmark", self._phase_selfhood_benchmark())
 
         # Phase 17c: experiment decisions (daily, Mind M0b)
-        await self._phase_experiments()
+        await self._run_phase("experiments", self._phase_experiments())
 
         # Phase 17d: toolsmith (daily, Mind M1)
-        await self._phase_toolsmith()
+        await self._run_phase("toolsmith", self._phase_toolsmith())
 
         # Phase 18: skill eviction
-        await self._phase_skill_evict()
+        await self._run_phase("skill_evict", self._phase_skill_evict())
 
         # === Multi-Agent Phases (v0.7.0) ===
 
         # Phase 19: startup re-push (first tick only)
-        await self._phase_startup_repush()
+        await self._run_phase("startup_repush", self._phase_startup_repush())
 
         # Phase 20: agent heartbeat (every tick)
-        await self._phase_agent_heartbeat()
+        await self._run_phase("agent_heartbeat", self._phase_agent_heartbeat())
 
         # Phase 21: initiative timeout (every tick)
-        await self._phase_initiative_timeout()
+        await self._run_phase("initiative_timeout", self._phase_initiative_timeout())
 
         # Phase 21b: owner-approval timeout for blocked jobs (every tick)
-        await self._phase_approval_timeout()
+        await self._run_phase("approval_timeout", self._phase_approval_timeout())
 
         # Phase 21: stale initiative cleanup (every 5 ticks)
         if self.stats.ticks % 5 == 0:
-            await self._phase_stale_initiative_cleanup()
+            await self._run_phase("stale_initiative_cleanup", self._phase_stale_initiative_cleanup())
 
         # Phase 22: ghost agent cleanup (every 10 ticks)
         if self.stats.ticks % 10 == 0:
-            await self._phase_ghost_cleanup()
+            await self._run_phase("ghost_cleanup", self._phase_ghost_cleanup())
 
         # Phase 22b: cognitive workspace (every 3 ticks, Mind M2)
         if self.stats.ticks % 3 == 0:
-            await self._phase_workspace()
+            await self._run_phase("workspace", self._phase_workspace())
 
         # Phase 22c: expectations — predict + check (every 2 ticks, Mind M3a)
         if self.stats.ticks % 2 == 0:
-            await self._phase_expectations()
+            await self._run_phase("expectations", self._phase_expectations())
 
         # Phase 23: database backup (every 100 ticks)
         if self.stats.ticks % 100 == 0:
-            await self._phase_database_backup()
+            await self._run_phase("database_backup", self._phase_database_backup())
 
         # Telemetry liveness stamp — at the END of the tick, so last_tick_at
         # means "a tick actually completed". Stamping at the top made a tick
@@ -672,6 +679,7 @@ class AutonomyLoop:
         except Exception:
             logger.warning("Telemetry touch failed (non-critical)")
 
+        self._current_phase = None
         elapsed = (datetime.now(timezone.utc) - tick_start).total_seconds()
         logger.debug("Tick #%d complete in %.2fs", self.stats.ticks, elapsed)
 
@@ -3483,10 +3491,51 @@ class AutonomyLoop:
             self.stats.errors += 1
             logger.error("Phase connectors error: %s", exc, exc_info=True)
 
+    async def _run_phase(self, name: str, awaitable) -> None:
+        """Await one tick phase, recording its name while it runs and its
+        wall-clock duration (last and worst) afterwards. The marker is left in
+        place on cancellation so the budget-cancel path can name the phase."""
+        self._current_phase = name
+        started = time.monotonic()
+        try:
+            await awaitable
+        finally:
+            elapsed = time.monotonic() - started
+            self._phase_seconds[name] = elapsed
+            if elapsed > self._phase_seconds_max.get(name, 0.0):
+                self._phase_seconds_max[name] = elapsed
+
+    def _note_tick_cancelled(self) -> None:
+        """The whole tick overran its budget and was cancelled mid-phase."""
+        phase = self._current_phase or "unknown"
+        self._current_phase = None
+        self.stats.errors += 1
+        self.stats.phases_cancelled += 1
+        self.stats.last_cancelled_phase = phase
+        logger.error(
+            "Tick #%d exceeded budget (%.0fs) in phase %s (%.1fs so far) and "
+            "was cancelled; loop continues", self.stats.ticks,
+            self._tick_budget_secs(), phase,
+            self._phase_seconds.get(phase, 0.0))
+
+    def phase_timings(self) -> dict:
+        """Per-phase wall-clock seconds: last run and worst run, plus the
+        phase running right now (None between ticks)."""
+        return {
+            "current": self._current_phase,
+            "seconds_last": {k: round(v, 3) for k, v in self._phase_seconds.items()},
+            "seconds_max": {k: round(v, 3) for k, v in self._phase_seconds_max.items()},
+        }
+
     async def _run_periodic_phase(self, name: str, period: str, work) -> None:
         """Run a memory-lifecycle phase at most once per period ("hour"|"day"|"week").
         work(graph) does the phase-specific work; the dedup key is cached per name.
-        Replaces six near-identical _phase_memory_* skeletons (behavior preserved)."""
+        Replaces six near-identical _phase_memory_* skeletons (behavior preserved).
+
+        A phase cancelled by the tick budget still counts as attempted for its
+        period: otherwise the key never advances and the slow phase runs again
+        on the very next tick, eating every tick (and starving every phase
+        after it) until the period rolls over."""
         graph = self._registry.graph
         if graph is None:
             return
@@ -3498,6 +3547,13 @@ class AutonomyLoop:
         try:
             await work(graph)
             self._periodic_last[name] = key
+        except asyncio.CancelledError:
+            self._periodic_last[name] = key
+            logger.error(
+                "Phase %s was cancelled before it finished; counted as "
+                "attempted for this %s, next attempt when the period rolls",
+                name, period)
+            raise
         except Exception as exc:
             self.stats.errors += 1
             logger.error("Phase %s error: %s", name, exc, exc_info=True)
@@ -4255,4 +4311,5 @@ class AutonomyLoop:
                 "quiet_hours_end": self.config.quiet_hours_end,
             },
             "stats": self.stats.as_dict(),
+            "phases": self.phase_timings(),
         }

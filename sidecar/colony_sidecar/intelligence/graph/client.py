@@ -1626,7 +1626,15 @@ class ColonyGraph:
             )
 
     async def _update_effective_confidence_batch(self, batch_size: int = 1000) -> None:
-        """Update effective_confidence for all memories in batches."""
+        """Update effective_confidence for all memories in batches.
+
+        Each batch is one read and one write round trip: the confidences are
+        computed in Python, then written back with a single UNWIND. Writing
+        one auto-commit statement per memory made this pass scale with the
+        memory count (thousands of round trips), which overran the autonomy
+        tick budget and cancelled the whole tick every time it ran. The read
+        is ordered by id so SKIP/LIMIT paging is stable while we write.
+        """
         from datetime import datetime as _dt, timezone as _tz
         now = _dt.now(_tz.utc)
         offset = 0
@@ -1641,6 +1649,7 @@ class ColonyGraph:
                         .recalls, .last_verified_at, .created_at,
                         .epistemic_state
                     } AS mem
+                    ORDER BY m.id
                     SKIP $offset LIMIT $limit
                     """,
                     offset=offset,
@@ -1649,7 +1658,10 @@ class ColonyGraph:
                 rows = [dict(r["mem"]) async for r in result]
                 if not rows:
                     break
+                updates = []
                 for row in rows:
+                    if row.get("id") is None:
+                        continue
                     new_confidence = self.compute_effective_confidence(
                         base_confidence=row.get("base_confidence") or 1.0,
                         source_reliability=row.get("source_reliability") or 0.5,
@@ -1661,14 +1673,18 @@ class ColonyGraph:
                         epistemic_state=row.get("epistemic_state") or "inferred",
                         now=now,
                     )
+                    updates.append({"id": row["id"], "effective_confidence": new_confidence})
+                if updates:
                     await session.run(
                         """
-                        MATCH (m:Memory {id: $memory_id})
-                        SET m.effective_confidence = $effective_confidence
+                        UNWIND $updates AS u
+                        MATCH (m:Memory {id: u.id})
+                        SET m.effective_confidence = u.effective_confidence
                         """,
-                        memory_id=row["id"],
-                        effective_confidence=new_confidence,
+                        updates=updates,
                     )
+                if len(rows) < batch_size:
+                    break
                 offset += batch_size
 
     async def verify_memory(self, memory_id: str) -> None:

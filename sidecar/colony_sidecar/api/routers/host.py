@@ -11152,6 +11152,9 @@ async def autonomy_status() -> AutonomyStatusResponse:
             initiatives_generated=s.get("stats", {}).get("initiatives_generated", 0),
             actions_executed=s.get("stats", {}).get("actions_executed", 0),
             errors=s.get("stats", {}).get("errors", 0),
+            phases_cancelled=s.get("stats", {}).get("phases_cancelled", 0),
+            last_cancelled_phase=s.get("stats", {}).get("last_cancelled_phase"),
+            phases=s.get("phases"),
             config=s.get("config"),
         )
     except Exception as exc:
