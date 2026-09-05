@@ -91,7 +91,12 @@ def accepted(self, route, **kwargs):
     wire.append((route, kwargs["json"]))
     return httpx.Response(201, json={"accepted": True, "source_recorded": True}, request=httpx.Request("PUT", "http://test" + route))
 client = evidence.ColonyClient(url="http://127.0.0.1:7777", api_key="")
-deliver = lambda payload, *, timeout_seconds: client.sync_turn(**payload, timeout_seconds=timeout_seconds)
+erasure_checks = []
+def erasure_feed(self, route, **kwargs):
+    erasure_checks.append(kwargs["params"])
+    return httpx.Response(200, json={"contact_id": "test-owner", "head": 0, "through": 0, "events": [], "complete": True}, request=httpx.Request("GET", "http://test" + route))
+evidence.ColonyClient.get = erasure_feed
+deliver = lambda payload, *, timeout_seconds: client.sync_turn(**payload, outbox=outbox, timeout_seconds=timeout_seconds)
 # An old sidecar can ignore additive fields and say accepted; that response
 # must not discard the only source copy during a rolling upgrade.
 evidence.ColonyClient.put = lambda *a, **k: httpx.Response(200, json={"accepted": True}, request=httpx.Request("PUT", "http://test"))
@@ -102,6 +107,19 @@ assert TurnOutbox(path).drain(deliver, timeout_seconds=1) == 2
 assert TurnOutbox(path).drain(deliver, timeout_seconds=1) == 0
 assert any(body.get("checkpoint_messages", [{}])[0].get("content") == fact for _, body in wire)
 assert any(body.get("user_message", {}).get("content") == fact for _, body in wire)
+
+assert erasure_checks and all(item["contact_id"] == "test-owner" for item in erasure_checks)
+
+# The real manager forwards an exact committed remove even in coexistence mode.
+removed = []
+def removed_source(self, route, **kwargs):
+    removed.append((route, kwargs["json"]))
+    return httpx.Response(200, json={"source_erased": True, "watermark": 1}, request=httpx.Request("POST", route))
+httpx.Client.post = removed_source
+manager.notify_memory_tool_write({"success": True}, {"action": "remove", "old_text": fact})
+assert len(removed) == 1 and removed[0][1]["old_text"] == fact
+assert removed[0][1]["contact_id"] == "test-owner"
+assert provider.get_diagnostics()["source_erasure"]["state"] == "source_erased"
 
 # Empty evidence produces no new source record.
 manager.on_pre_compress([], evidence_messages=[], require_checkpoint=True)

@@ -406,6 +406,42 @@ class ColonyGraph:
     # Core operations
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _source_projection_erased(source_uri: str | None) -> bool:
+        if not source_uri or not source_uri.startswith("turn:"):
+            return False
+        from colony_sidecar import get_state_dir
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        return get_turn_idempotency_ledger(get_state_dir()).is_projection_erased(source_uri[5:])
+
+    async def _filter_erased_source_memories(self, memories: list[dict]) -> list[dict]:
+        """A durable erase fence remains effective during projection outages."""
+        return [memory for memory in memories
+                if not self._source_projection_erased(memory.get("source_uri"))]
+
+    async def delete_source_memories(self, turn_ids: list[str]) -> int:
+        """Remove graph and vector copies after the source fence commits."""
+        uris = ["turn:" + item for item in dict.fromkeys(turn_ids)]
+        if not uris:
+            return 0
+        # Keep IDs until both stores have been addressed. The graph's source
+        # tombstone filter blocks recall even if vector deletion must be retried.
+        async with self.driver.session(database=self.database) as session:
+            result = await session.run("MATCH (m:Memory) WHERE m.source_uri IN $uris RETURN m.id AS id", uris=uris)
+            ids = [record["id"] async for record in result]
+        for memory_id in ids:
+            if self._vector_store is not None:
+                from colony_sidecar.vector.collections import Collection
+                await self._vector_store.delete(collection=Collection.MEMORIES, id=memory_id)
+            async with self.driver.session(database=self.database) as session:
+                await session.run("MATCH (m:Memory {id: $id}) DETACH DELETE m", id=memory_id)
+        ring = getattr(self, "_distill_preview", None)
+        if ring is not None:
+            retained = [item for item in ring if item.get("source_turn_id") not in turn_ids]
+            ring.clear()
+            ring.extend(retained)
+        return len(ids)
+
     async def store_memory(
         self,
         content: str,
@@ -442,6 +478,8 @@ class ColonyGraph:
             The UUID of the newly created Memory node.
         """
         metadata = metadata or {}
+        if self._source_projection_erased(source_uri):
+            return ""
         # Guard (v0.21.1): never store empty/whitespace memories — they were
         # accumulating as duplicate junk nodes.
         if not content or not content.strip():
@@ -505,6 +543,7 @@ class ColonyGraph:
                     """
                     MATCH (m:Memory {content_hash: $content_hash})
                     WHERE m.superseded_by IS NULL
+                      AND ($source_uri IS NULL OR m.source_uri = $source_uri)
                     SET m.accessed_at = datetime(),
                         m.corroboration_count = coalesce(m.corroboration_count, 0) + 1,
                         m.strength = CASE WHEN coalesce(m.strength, 0.0) < 1.0
@@ -514,6 +553,7 @@ class ColonyGraph:
                     LIMIT 1
                     """,
                     content_hash=content_hash,
+                    source_uri=source_uri,
                 )
                 existing = await dq.single()
                 if existing is not None:
@@ -640,6 +680,10 @@ class ColonyGraph:
             except Exception as exc:
                 logger.warning("Failed to write memory to vector store: %s", exc)
 
+        # A deletion may have committed while embedding or graph I/O awaited.
+        if self._source_projection_erased(source_uri):
+            await self.delete_source_memories([source_uri[5:]])
+            return ""
         return memory_id
 
     def _distill_preview_ring(self) -> "deque":
@@ -663,6 +707,7 @@ class ColonyGraph:
         entities: List[str],
         tools_used: List[str],
         summary: Optional[str],
+        turn_id: Optional[str] = None,
     ) -> Optional[str]:
         """Store a conversation turn as an episodic memory.
 
@@ -681,7 +726,7 @@ class ColonyGraph:
         Returns:
             The UUID of the created Memory node, or None if storage fails.
         """
-        if not summary:
+        if not summary or self._source_projection_erased("turn:" + turn_id if turn_id else None):
             return None
         # Salience gate: don't memorialize internal-plumbing turns (context-compaction references and
         # host-specific system-prompt wrappers / self-checks). Generic markers are built in; a
@@ -724,6 +769,7 @@ class ColonyGraph:
             try:
                 self._distill_preview_ring().append({
                     "session_id": session_id,
+                    "source_turn_id": turn_id,
                     "original": summary[:400],
                     "distilled": distilled[:400],
                     "importance": importance,
@@ -736,6 +782,7 @@ class ColonyGraph:
 
         metadata: Dict[str, Any] = {
             "turn": True,
+            "source_turn_id": turn_id,
             "topics": topics,
             "tools_used": tools_used,
             "salience": importance,
@@ -751,7 +798,8 @@ class ColonyGraph:
                 importance=importance,
                 person_id=contact_id,
                 source_type=MemorySourceType.CONVERSATION.value,
-                source_uri=f"session:{session_id}",
+                source_uri=f"turn:{turn_id}" if turn_id else f"session:{session_id}",
+                session_id=session_id,
                 content_hash=content_hash,
             )
         except Exception as exc:
@@ -871,9 +919,11 @@ class ColonyGraph:
             memories: List[Dict[str, Any]] = []
             async for record in result:
                 memories.append(dict(record["memory"]))
-            return memories
+            return await self._filter_erased_source_memories(memories)
 
     def _memory_is_recall_excluded(self, memory: Dict[str, Any]) -> bool:
+        if self._source_projection_erased(memory.get("source_uri")):
+            return True
         sources = set(getattr(self, "_recall_source_exclusions", ()))
         if str(memory.get("source_uri") or "") in sources:
             return True
@@ -895,6 +945,8 @@ class ColonyGraph:
         are hydrated by ID so their authoritative graph metadata is checked.
         Non-graph vectors (for example image captions) remain available.
         """
+        rows = [row for row in rows if not self._source_projection_erased(
+            row.get("source_uri") or (row.get("metadata") or {}).get("source_uri"))]
         if not (
             getattr(self, "_recall_source_exclusions", ())
             or getattr(self, "_recall_metadata_exclusions", ())

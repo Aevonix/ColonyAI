@@ -3479,6 +3479,51 @@ def _conversation_turn_concern_metadata(
         "boundary_attested": False,
     }
 
+class SourceForgetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contact_id: str = Field(min_length=1, max_length=256)
+    source_ids: list[str] = Field(default_factory=list, max_length=100)
+    old_text: str | None = Field(default=None, min_length=1, max_length=131072)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = Field(default=None, max_length=256)
+
+
+@router.get("/memory/sources/erasures")
+async def source_erasure_feed(contact_id: str, after: int = Query(0, ge=0), request: Request = None):
+    person = resolve_request_person(request, claimed_person_id=contact_id) or contact_id
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    try:
+        return get_turn_idempotency_ledger(get_state_dir()).erasure_feed(person, after)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "erasure_history_mismatch"}) from exc
+
+
+@router.post("/memory/sources/forget")
+async def forget_turn_sources(body: SourceForgetRequest, request: Request = None):
+    person = resolve_request_person(request, claimed_person_id=body.contact_id) or body.contact_id
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    try:
+        result = get_turn_idempotency_ledger(get_state_dir()).erase_sources(
+            contact_id=person, turn_ids=body.source_ids,
+            old_text=body.old_text, session_id=body.session_id,
+        )
+    except ValueError as exc:
+        code = str(exc) if str(exc) in {"ambiguous_source", "source_not_found"} else "invalid_source_selection"
+        raise HTTPException(status_code=409 if code == "ambiguous_source" else 422, detail={"code": code}) from exc
+    # The durable tombstone precedes external projection deletion. A failed
+    # cleanup remains a truthful pending result, and recall stays fenced.
+    graph_cleanup = "unavailable" if _graph is None else "pending"
+    if _graph is not None:
+        try:
+            await _graph.delete_source_memories(list(dict.fromkeys(result["source_ids"] + result["affected_source_ids"])))
+            graph_cleanup = "complete"
+        except Exception:
+            logger.warning("source erasure graph cleanup is pending", exc_info=True)
+    return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
+            "scope": "canonical_turn_sources_and_linked_graph_projections",
+            "host_reconciliation": "pending_until_each_host_connects"}
+
+
 async def _ingest_turn_idempotently(
     body: TurnSyncRequest,
     request: Request | None = None,
@@ -3508,6 +3553,8 @@ async def _ingest_turn_idempotently(
 
     digest = canonical_turn_digest(body)
     ledger = get_turn_idempotency_ledger(get_state_dir())
+    if ledger.is_source_erased(turn_id, body.context.contact_id):
+        return TurnSyncResponse(accepted=False, source_recorded=False, continuity_updated=False, skipped_reason="source_erased"), "erased"
     if body.checkpoint_messages is not None:
         # One atomic source+index commit, no ordinary conversation effects.
         # A retry after an interrupted response can safely repeat this write.
@@ -3519,6 +3566,9 @@ async def _ingest_turn_idempotently(
                 occurred_at=(body.context.metadata or {}).get("occurred_at"),
             )
         except ValueError as exc:
+            from colony_sidecar.turns.idempotency import SourceErased
+            if isinstance(exc, SourceErased):
+                return TurnSyncResponse(accepted=False, source_recorded=False, continuity_updated=False, skipped_reason="source_erased"), "erased"
             raise HTTPException(status_code=409, detail={"code": "checkpoint_source_conflict"}) from exc
         return TurnSyncResponse(
             accepted=True, continuity_updated=False, source_recorded=True,
@@ -3706,12 +3756,26 @@ async def _process_turn_sync(
     if source_messages:
         from colony_sidecar.turns import canonical_turn_digest, get_turn_idempotency_ledger
         source_id = body.context.turn_id or "unkeyed:" + canonical_turn_digest(body)
-        get_turn_idempotency_ledger(get_state_dir()).record_source(
-            source_id, contact_id=body.context.contact_id,
-            session_id=body.context.session_id, messages=source_messages,
-            occurred_at=(body.context.metadata or {}).get("occurred_at"),
-        )
+        ledger = get_turn_idempotency_ledger(get_state_dir())
+        if ledger.is_source_erased(source_id, body.context.contact_id):
+            return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")
+        retained = ledger.retained_messages(contact_id=body.context.contact_id, session_id=body.context.session_id, messages=source_messages)
+        if not retained:
+            return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")
+        from colony_sidecar.turns.idempotency import SourceErased
+        try:
+            ledger.record_source(
+                source_id, contact_id=body.context.contact_id,
+                session_id=body.context.session_id, messages=source_messages,
+                occurred_at=(body.context.metadata or {}).get("occurred_at"),
+            )
+        except SourceErased:
+            return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")
         source_recorded = True
+        if retained != source_messages or ledger.is_projection_erased(source_id):
+            # Preserve unrelated evidence, but never run extractors on an
+            # envelope whose summary or tools may repeat erased content.
+            return TurnSyncResponse(accepted=False, source_recorded=True, continuity_updated=False, skipped_reason="source_erased")
 
     # Conversation presence (L1.1, passive): now that WHO is settled, record
     # the sighting so the environment-risk classifier has a real census. The
@@ -3789,6 +3853,7 @@ async def _process_turn_sync(
                 entities=_turn_entities,
                 tools_used=body.tools_used,
                 summary=body.summary,
+                turn_id=source_id if source_messages else body.context.turn_id,
             )
             graph_ok = True
         except Exception as exc:

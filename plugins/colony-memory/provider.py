@@ -621,8 +621,8 @@ def catalog_attestation() -> Dict[str, Any]:
             "reply_thread_projection": (
                 "disabled_pending_transport_attested_endpoint"
             ),
-            "memory_write_hook": "disabled_in_general_plugin_mode",
-            "pre_compress_write_hook": "disabled_in_general_plugin_mode",
+            "memory_write_hook": "source_erasure_enabled_other_writes_disabled_in_general_plugin_mode",
+            "pre_compress_write_hook": "durable_source_checkpoint_v2",
         },
         "provider_governance_ready": True,
         "general_plugin_governance_ready": False,
@@ -712,6 +712,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._last_sync_attempt: Optional[str] = None
         self._last_sync_error: Optional[str] = None
         self._last_checkpoint: dict[str, Any] = {"state": "unverified"}
+        self._last_erasure: dict[str, Any] = {"state": "unverified"}
         self._turn_writer_skip_logged = False
         for binding_flag in (
             "COLONY_PREFETCH_TURN_CONTACT",
@@ -770,6 +771,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             "stale_cache_misses": self._stale_cache_misses,
             "turn_writer": "enabled" if self._turn_writer_enabled() else "read-only",
             "checkpoint": dict(self._last_checkpoint),
+            "source_erasure": dict(self._last_erasure),
         }
 
     def _turn_writer_enabled(self) -> bool:
@@ -2285,7 +2287,30 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         logger.debug("Colony: turn %d started (session=%s)", turn_number, self._session_id)
 
     def on_memory_write(self, action: str, target: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Mirror built-in memory writes back to Colony."""
+        """Mirror writes; source removal remains active in coexistence mode."""
+        if action == "remove":
+            contact = self._prefetch_contact()
+            old_text = (metadata or {}).get("old_text")
+            self._last_erasure = {"state": "unmapped", "scope": "canonical_turn_sources"}
+            if not contact or not old_text or not self._session_id:
+                return
+            try:
+                with httpx.Client(timeout=3) as client:
+                    response = client.post(
+                        f"{self.sidecar_url}/v1/host/memory/sources/forget",
+                        headers=self._headers(),
+                        json={"contact_id": contact, "session_id": self._session_id, "old_text": old_text},
+                    )
+                if response.is_success and response.json().get("source_erased") is True:
+                    self._last_erasure = {"state": "source_erased", "scope": "canonical_turn_sources", "watermark": response.json()["watermark"], "host_reconciliation": "pending"}
+                    with self._cache_lock:
+                        self._cached_context = ""
+                    self._temporal_cache = (0.0, "")
+                else:
+                    self._last_erasure = {"state": "unmapped_or_ambiguous", "scope": "canonical_turn_sources"}
+            except Exception:
+                self._last_erasure = {"state": "failed", "scope": "canonical_turn_sources"}
+            return
         if not self._turn_writer_enabled():
             return
         contact_id = self._prefetch_contact()

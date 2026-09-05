@@ -64,7 +64,7 @@ def checkpoint(
         try:
             outbox.drain(
                 lambda stored, *, timeout_seconds: client.sync_turn(
-                    **stored, timeout_seconds=timeout_seconds,
+                    **stored, outbox=outbox, timeout_seconds=timeout_seconds,
                 ),
                 limit=16, timeout_seconds=0.25,
             )

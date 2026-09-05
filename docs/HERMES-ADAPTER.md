@@ -98,8 +98,42 @@ sessions. Full-history checkpoints additionally require their original session,
 because the native history does not guarantee old per-message speaker
 attribution. Media references remain source data; only text is indexed. This
 is direct evidence recall, not an embedding migration or a belief contradiction
-engine. Semantic forgetting and pending-source tombstones are the next required
-integration before production activation.
+engine.
+
+## Source erasure and replay
+
+`POST /v1/host/memory/sources/forget` accepts an authenticated contact and 1 to
+100 canonical source IDs. The existing MCP server exposes `colony_forget_sources`.
+Native Hermes committed memory removes also attempt an exact, session-bound
+`old_text` match, including when the general plugin owns ordinary turn writes.
+No match or multiple matches produces an explicit unmapped/ambiguous diagnostic;
+it never broadens a text search into deletion. IDs unknown to the central source
+store are rejected. Pending-only local evidence needs to be identified at its host.
+
+Erasure commits source-ID and exact-message hashes before cleaning linked graph
+summaries. Checkpoint copies are redacted within the same contact and session;
+unrelated messages remain. New graph summaries carry `source_uri=turn:<id>` and
+`source_turn_id`. Projection markers block late writes and reads while deletion
+is pending. The response separates source erasure from graph cleanup and host
+reconciliation. A repeated request retries the same derived cleanup targets.
+
+The host outbox migrates its existing v1 database transactionally to v2 with a
+separate contact-bound erasure watermark. Canonical turn/checkpoint delivery
+fetches `/v1/host/memory/sources/erasures` before PUT. A missing endpoint, outage,
+incomplete page or server history behind the host cursor holds replay. The host
+purges both pending payloads and delivered receipts, preserving unrelated pending
+messages as evidence-only checkpoints. Erased IDs cannot be enqueued again after
+reconciliation. This is not a model-generation counter. Generic caller-provided
+outbox delivery callbacks must use `ColonyClient.sync_turn(..., outbox=outbox)`
+to participate in reconciliation.
+
+This is scoped source erasure, not a claim of global forgetting. Native Hermes
+transcripts/API context, backups, prior graph records without source lineage,
+legacy shared facts, ToM, commitments, and other old derivative stores need their
+own erasure adapters. Offline hosts retain bytes until reconnecting; filesystem
+snapshots and physical-media remnants are outside this logical-delete contract.
+Erasure history must survive backup restores; replay detects an older watermark
+but cannot prove that a replaced server with reused sequence numbers is equivalent.
 
 ## Qualification
 

@@ -2114,7 +2114,7 @@ def register(ctx: Any) -> None:
                     stored: Mapping[str, Any], *, timeout_seconds: float,
                 ) -> bool:
                     return client.sync_turn(
-                        **stored, timeout_seconds=timeout_seconds,
+                        **stored, outbox=turn_outbox, timeout_seconds=timeout_seconds,
                     )
 
                 turn_outbox.drain(
