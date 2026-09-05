@@ -60,16 +60,21 @@ invalidating its old cutoff. Existing consent and tool authority remain with
 their execution owners.
 
 The development benchmark used actual LAN embedding and reranker models and a
-disposable Lance store, but fixture-backed graph hydration. Its results do not
-qualify the live Neo4j query, production corpus, correction writer or host memory
-callback. Those are explicit deployment checks before promotion.
+disposable Lance store with fixture-backed graph hydration. A subsequent isolated
+Neo4j Community 2026.01.4 run applied all 50 migration statements, reached an
+ONLINE full-text index and passed six real-query checks: person scopes, a scoped
+miss, global union, source/metadata exclusion, supersession/confidence/strength
+filtering and immediate recall before vector creation. Production stores were
+not used. The production corpus and correction writer still require qualification.
 
-The implementation replay retrieved every expected source but passed only
-15 of 24 complete held-out behavior cases: six retained older dated evidence,
-and three lacked explicit contradiction markers. A reranker cutoff does not
-replace occurrence-time filtering or canonical contradiction state. This patch
-preserves recorded timestamps and existing contradiction counts; it does not
-implement those remaining memory semantics.
+The initial implementation replay retrieved the expected sources but scored
+15 of 24 complete behavior cases against its original fixture. Review then found
+that the fixture conflated a request for today's footage with a window beginning
+the previous day. That aggregate is not a reliable acceptance score. Explicit
+calendar, validity and contradiction cases are required. A reranker cutoff does
+not replace occurrence-time filtering or canonical contradiction state. This
+patch preserves recorded timestamps and existing contradiction counts; it does
+not implement those remaining memory semantics.
 
 ## One selection path for turn context
 

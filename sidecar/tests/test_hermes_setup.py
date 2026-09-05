@@ -58,6 +58,7 @@ def test_stage_targets_only_selected_home(selection, tmp_path, monkeypatch, isol
     assert "context_engine" not in config and "context" not in config
     for relative in (
         "colony-memory/provider.py", "colony-memory/plugin.yaml", "colony/__init__.py",
+        "colony/evidence.py",
         "colony/colony_hostworker/catalog.py", "colony/colony_hostworker/contract.py",
     ):
         assert (target / "plugins" / relative).is_file()
