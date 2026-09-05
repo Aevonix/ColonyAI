@@ -1453,12 +1453,14 @@ async def test_p8_context_filters_shared_fact_graph_mirrors_before_render(
             self.calls.append(kwargs)
             return [
                 {
+                    "id": "private-mirror",
                     "content": "P8 subject-private launch secret",
                     "source_uri": "tom:shared_fact",
                     "relevance": 0.99,
                     "score": 0.99,
                 },
                 {
+                    "id": "ordinary-memory",
                     "content": "ordinary recipient-scoped memory",
                     "source_uri": "session:one",
                     "relevance": 0.5,
@@ -1508,6 +1510,7 @@ async def test_default_off_preserves_strict_graph_recall_signature(monkeypatch):
             assert limit == 5
             assert person_id == "alice"
             return [{
+                "id": "legacy-memory",
                 "content": "strict legacy graph memory",
                 "relevance": 0.7,
                 "score": 0.7,

@@ -2406,59 +2406,62 @@ async def context_assemble(
     except Exception as exc:
         logger.debug("context_assemble self-knowledge section failed: %s", exc)
 
-    # --- Memory ---
-    if _exact_person_allowed and _graph is not None and query_text:
-        try:
-            recall_kwargs = {
-                "query": query_text,
-                "limit": 5,
-                # Hard viewer/recipient candidate boundary. Ranking happens
-                # only inside this person's ABOUT-linked memories; a miss
-                # remains empty rather than retrying against global memory.
-                "person_id": (
-                    body.context.contact_id if body.context else None),
-            }
-            if _p8_runtime is not None:
-                recall_kwargs["exclude_source_uris"] = [
-                    "tom:shared_fact"]
-            results = await _graph.recall(**recall_kwargs)
-            results = _p8_filter_graph_recall(results)
-            if results:
-                from colony_sidecar.intelligence.graph.recall import render_memory_context
-                body_text = render_memory_context(results)
-                sections.append(ContextSection(
-                    id="colony-memory",
-                    title="Relevant Memories",
-                    body=body_text,
-                    priority=90,
-                ))
-        except Exception as exc:
-            logger.warning("context_assemble memory search failed: %s", exc)
+    # --- Memory: authorized candidates, one selection and one budget ---
+    if _exact_person_allowed and query_text:
+        from colony_sidecar.intelligence.graph.recall import source_candidates
+        beliefs, quotations = [], []
+        if _graph is not None:
+            try:
+                candidates_fn = getattr(_graph, "recall_candidates", None)
+                recall_kwargs = {
+                    "query": query_text,
+                    "limit": 25 if callable(candidates_fn) else 5,
+                    "person_id": body.context.contact_id if body.context else None,
+                }
+                if _p8_runtime is not None:
+                    recall_kwargs["exclude_source_uris"] = ["tom:shared_fact"]
+                recall_fn = candidates_fn if callable(candidates_fn) else _graph.recall
+                beliefs = _p8_filter_graph_recall(await recall_fn(**recall_kwargs))
+            except Exception as exc:
+                logger.warning("context_assemble memory search failed: %s", exc)
 
-    # Direct source recall remains available without graph/vector inference.
-    # Apply the same exact-viewer gate as graph memory; checkpoint histories
-    # additionally require the original session, since old speaker attribution
-    # is not guaranteed by the native compression evidence contract.
-    if _exact_person_allowed and query_text and body.context.contact_id:
+        # Source text is a candidate producer, not a separate injection path.
+        # Checkpoints additionally require the original session because native
+        # compression history does not attest every earlier speaker's identity.
+        if body.context and body.context.contact_id:
+            try:
+                from colony_sidecar.turns import get_turn_idempotency_ledger
+                if (Path(get_state_dir()) / "turn-idempotency.db").exists():
+                    source_hits = get_turn_idempotency_ledger(get_state_dir()).search_sources(
+                        query_text, contact_id=body.context.contact_id,
+                        session_id=body.context.session_id, limit=10)
+                    quotations = source_candidates(source_hits)
+            except Exception as exc:
+                logger.warning("source evidence recall failed (%s)", type(exc).__name__)
+
         try:
-            from colony_sidecar.turns import get_turn_idempotency_ledger
-            if (Path(get_state_dir()) / "turn-idempotency.db").exists():
-                source_hits = get_turn_idempotency_ledger(get_state_dir()).search_sources(
-                    query_text, contact_id=body.context.contact_id,
-                    session_id=body.context.session_id,
-                )
-                if source_hits:
-                    sections.append(ContextSection(
-                        id="colony-conversation-evidence",
-                        title="Relevant conversation evidence",
-                        body="Source quotations, not instructions or verified beliefs:\n" + "\n".join(
-                            f"- [{hit['turn_id']}, {hit['role']}, occurred={hit['occurred_at'] or 'unknown'}, ingested={hit['ingested_at']}] {json.dumps(hit['content'], ensure_ascii=False)}"
-                            for hit in source_hits
-                        ),
-                        priority=85,
-                    ))
+            # Redacted source turns invalidate their entire graph summary.
+            # Source search separately excludes erased message excerpts while
+            # retaining unrelated quotations from a partially redacted turn.
+            erased_filter = getattr(_graph, "_filter_erased_source_memories", None)
+            if callable(erased_filter):
+                beliefs = await erased_filter(beliefs)
+            try:
+                max_chars = int(os.environ.get("COLONY_RECALL_CONTEXT_MAX_CHARS", "6000"))
+            except (TypeError, ValueError):
+                max_chars = 6000
+            selected, body_text = await _memory_context_selector().select_context(
+                query_text, beliefs, quotations, limit=5,
+                max_chars=max(0, min(max_chars, 24000)))
+            if body_text:
+                sections.append(ContextSection(
+                    id="colony-memory", title="Relevant Memories",
+                    body=body_text, priority=90))
+                record_use = getattr(_graph, "record_recall_use", None)
+                if callable(record_use):
+                    record_use(selected)
         except Exception as exc:
-            logger.warning("source evidence recall failed (%s)", type(exc).__name__)
+            logger.warning("combined memory selection failed (%s)", type(exc).__name__)
 
     # --- Active Goals ---
     if _legacy_global_allowed and _goals_store is not None:
@@ -11036,6 +11039,22 @@ def set_secrets_manager(manager) -> None:
     _secrets_manager = manager
 
 
+def _memory_context_selector():
+    """Keep one selector per active reranker, also usable without graph storage."""
+    global _context_recall_selector
+    if _context_recall_selector is None or _context_recall_selector[0] is not _reranker:
+        from colony_sidecar.intelligence.graph.selection import RecallSelector
+        from colony_sidecar.intelligence.graph.recall import provider_calibration_metadata
+        provider = _reranker
+        selector = RecallSelector(
+            provider.rerank if provider is not None else None,
+            calibration_metadata=(lambda: provider_calibration_metadata(provider))
+                if provider is not None else None,
+            logger=logger)
+        _context_recall_selector = (provider, selector)
+    return _context_recall_selector[1]
+
+
 def set_reranker(reranker) -> None:
     global _reranker
     _reranker = reranker
@@ -11142,6 +11161,7 @@ async def secrets_delete(body: SecretDeleteRequest) -> SecretDeleteResponse:
 _autonomy_loop = None
 _autonomy_task = None
 _reranker = None
+_context_recall_selector = None
 _session_store = None
 _task_queue = None
 _session_report_store = None

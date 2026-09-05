@@ -1,11 +1,10 @@
 """Colony Graph Schema Migrations.
 
 Applies Neo4j constraints and indexes required by the Colony graph memory
-system.  Designed to be idempotent — safe to re-run.
+system. Designed to be idempotent and safe to re-run.
 
-Note: Vector index creation has been removed.  Vector search is now handled
-by a local LanceDB store (see colony/vector/).  The Neo4j Community Edition
-does not support ``db.index.vector.*`` procedures.
+Vectors are maintained in a local LanceDB store in this implementation
+(see colony_sidecar/vector/), so these migrations create no vector index.
 """
 
 from __future__ import annotations
