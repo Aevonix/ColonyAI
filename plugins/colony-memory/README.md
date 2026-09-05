@@ -8,13 +8,21 @@ keeps the host's custom voice/phone/intercom path independent.
 
 ```yaml
 memory:
-  provider: colony
+  provider: colony-memory
   config:
     url: http://127.0.0.1:7777
     api_key: ${COLONY_API_KEY}
     contact_id: replace-with-exact-owner-contact-id
     turn_writer: auto # auto | enabled | disabled
 ```
+
+Native `hermes memory setup` saves non-secret fields in the selected profile's
+`colony-memory.json` and credentials through Hermes's private environment.
+Those fields override legacy `memory.config` values. Explicit constructor
+configuration is supported for embedded callers. Handoff files are read only
+from that same profile. Set `timezone` in provider configuration or
+`COLONY_AGENT_TIMEZONE` in its environment; absent either, local clock context
+uses UTC and does not inspect another Colony instance's state directory.
 
 Required environment posture:
 
@@ -77,6 +85,11 @@ Hermes-session-governance slice removes global proactive injection, shared
 fallback, dropped handler context, and startup LLM mutation.
 
 ## Cache and outage behavior
+
+Startup availability means the provider can be loaded, not that the sidecar is
+healthy. A temporary sidecar outage keeps the provider attached so later turns
+can reconnect. Diagnostics report connectivity separately as `unverified`,
+`connected` or `degraded`.
 
 Prefetch cache entries bind query, effective session, platform, sender, chat,
 and resolved contact and are consumed once. Concurrent senders cannot consume

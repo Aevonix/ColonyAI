@@ -131,6 +131,79 @@ def _make_provider(provider_mod, fake_httpx, monkeypatch):
     return p
 
 
+def test_native_setup_settings_survive_restart_and_profiles_stay_separate(
+        provider_mod, monkeypatch, tmp_path):
+    homes = [tmp_path / "profile-one", tmp_path / "profile-two"]
+    active = homes[0]
+    monkeypatch.setattr(provider_mod, "_active_hermes_home", lambda: active)
+    monkeypatch.setattr(provider_mod, "_profile_env", lambda name, home:
+                        f"test-key-{home.name}" if name == "COLONY_API_KEY" else "")
+    fake = _FakeHttpx(routes={
+        ("POST", "/v1/host/context/assemble"): lambda request: {
+            "sections": [{"id": "memory", "body": request["json"]["context"]["contact_id"]}],
+        },
+    })
+    monkeypatch.setattr(provider_mod, "httpx", fake)
+    writer = provider_mod.ColonyMemoryProvider(config={})
+    providers = []
+    for index, home in enumerate(homes):
+        home.mkdir()
+        (home / "config.yaml").write_text(
+            "memory:\n  config:\n    url: http://legacy.test\n    turn_writer: disabled\n")
+        (home / ".handoff_brief.md").write_text(f"Private thread {index}")
+        writer.save_config({"url": f"http://profile-{index}.test", "contact_id": f"person-{index}",
+                            "api_key": "must-not-be-saved"}, str(home))
+        assert "must-not-be-saved" not in (home / "colony-memory.json").read_text()
+        assert (home / "colony-memory.json").stat().st_mode & 0o777 == 0o600
+        active = home
+        provider = provider_mod.ColonyMemoryProvider()
+        provider.initialize(f"session-{index}", hermes_home=str(home))
+        providers.append(provider)
+    # The currently selected profile changes; existing instances retain theirs.
+    for index, provider in enumerate(providers):
+        assert provider.sidecar_url == f"http://profile-{index}.test"
+        assert provider._api_key == f"test-key-{homes[index].name}"
+        assert provider._turn_writer_mode == "disabled"
+        block = provider._prefetch_sync("recall", internal_owner_lane=True,
+                                        contact_id=f"person-{index}")
+        assert f"person-{index}" in block
+        assert f"Private thread {index}" in provider._last_session_block()
+        assert f"Private thread {1-index}" not in provider._last_session_block()
+    assert [request["url"] for request in fake.requests] == [
+        "http://profile-0.test/v1/host/context/assemble",
+        "http://profile-1.test/v1/host/context/assemble",
+    ]
+
+
+def test_offline_start_does_not_detach_provider_and_same_instance_recovers(
+        provider_mod, monkeypatch):
+    attempts = 0
+    def assemble(request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise _FakeHttpx.HTTPError("sidecar offline")
+        return {"sections": [{"id": "memory", "body": "remembered after recovery"}]}
+    fake = _FakeHttpx(routes={("POST", "/v1/host/context/assemble"): assemble})
+    provider = _make_provider(provider_mod, fake, monkeypatch)
+    assert provider.is_available() is True
+    assert fake.requests == []
+    assert provider.get_diagnostics()["connection_status"] == "unverified"
+    assert provider._prefetch_sync("recall", internal_owner_lane=True) == ""
+    assert provider.get_diagnostics()["connection_status"] == "degraded"
+    assert "remembered after recovery" in provider._prefetch_sync("recall", internal_owner_lane=True)
+    assert provider.get_diagnostics()["connection_status"] == "connected"
+
+
+def test_invalid_saved_profile_does_not_fall_back_to_another_instance(
+        provider_mod, monkeypatch, tmp_path):
+    monkeypatch.setattr(provider_mod, "_active_hermes_home", lambda: tmp_path)
+    (tmp_path / "colony-memory.json").write_text('{"url": "private-broken-value"')
+    with pytest.raises(ValueError, match="invalid Colony memory configuration") as error:
+        provider_mod.ColonyMemoryProvider()
+    assert "private-broken-value" not in str(error.value)
+
+
 _ASSEMBLE = ("POST", "/v1/host/context/assemble")
 _TEMPORAL = ("GET", "/v1/host/context/temporal")
 _READINESS = ("GET", "/v1/host/context/projection-readiness")

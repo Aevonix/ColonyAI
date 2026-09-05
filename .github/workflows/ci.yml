@@ -7,6 +7,26 @@ on:
     branches: [main]
 
 jobs:
+  hermes-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 29112bef099274229cadff79cdff7bf7b99c4b77
+          path: .qualification/hermes
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install adapter and pinned native runtime
+        run: |
+          python -m pip install -e ".[test]"
+          python -m pip install -e ./.qualification/hermes
+      - name: Qualify built artifacts and profile isolation
+        run: python -m pytest tests/hermes_adapter -q
+
   python:
     runs-on: ubuntu-latest
     defaults:

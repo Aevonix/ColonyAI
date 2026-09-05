@@ -99,6 +99,11 @@ former `@aevonix/colonyai` npm package no longer exists.)
 
 ## Architecture notes
 
+The target ownership boundaries and migration rules are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Keep deployment-specific hardware
+and identity in private integrations. The notes below describe the existing
+implementation, not a completed migration to that target.
+
 - **The sidecar owns all state** — Neo4j for the graph, LanceDB for vectors,
   SQLite for records (contacts, commitments, initiatives, action journal, ...)
 - **Plugins are thin** — HTTP client + type mappings, no business logic
