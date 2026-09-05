@@ -1,10 +1,10 @@
 """CLI commands for the Colony memory provider.
 
 Exposes:
-  hermes colony status     → Health + capabilities
-  hermes colony goals      → List active goals
-  hermes colony context    → Fetch current context assembly
-  hermes colony sync       → Force a turn sync
+  hermes colony-memory status     → Health + capabilities
+  hermes colony-memory goals      → List active goals
+  hermes colony-memory context    → Fetch current context assembly
+  hermes colony-memory sync       → Force a turn sync
 """
 
 from __future__ import annotations
@@ -17,6 +17,57 @@ import httpx
 import typer
 
 app = typer.Typer(help="Colony cognitive infrastructure commands")
+
+
+def _native_call(command, **kwargs) -> None:
+    try:
+        command(**kwargs)
+    except typer.Exit as exc:
+        # Typer normally translates this exception; Hermes dispatches the
+        # argparse handler directly and expects a process exit code instead.
+        raise SystemExit(exc.exit_code) from None
+
+
+def register_cli(subparser) -> None:
+    """Expose the existing handlers through Hermes's native argparse contract.
+
+    Hermes discovers this function only for the selected memory provider.
+    Keep the Typer app available to existing callers; both entry paths call
+    the same handlers with explicit values, not Typer's option descriptors.
+    """
+    commands = subparser.add_subparsers(dest="colony_command", required=True)
+    health = commands.add_parser("status", help="Check Colony sidecar health")
+    health.add_argument("--url", "-u")
+    health.set_defaults(func=lambda args: _native_call(status, url=args.url))
+
+    goal_list = commands.add_parser("goals", help="List Colony goals")
+    goal_list.add_argument("--url", "-u")
+    goal_list.add_argument("--status", "-s", default="active")
+    goal_list.set_defaults(
+        func=lambda args: _native_call(goals, status_filter=args.status, url=args.url)
+    )
+
+    recall = commands.add_parser("context", help="Fetch Colony context")
+    recall.add_argument("--url", "-u")
+    recall.add_argument("--query", "-q", default="")
+    recall.add_argument("--contact", "-c")
+    recall.set_defaults(
+        func=lambda args: _native_call(context,
+            query=args.query, contact_id=args.contact, url=args.url
+        )
+    )
+
+    turn = commands.add_parser("sync", help="Sync one turn to Colony")
+    turn.add_argument("--url")
+    turn.add_argument("--user", "-u", required=True)
+    turn.add_argument("--assistant", "-a", required=True)
+    turn.add_argument("--contact", "-c")
+    turn.set_defaults(
+        func=lambda args: _native_call(sync,
+            user=args.user, assistant=args.assistant,
+            contact_id=args.contact, url=args.url,
+        )
+    )
 
 
 def _sidecar_url() -> str:
