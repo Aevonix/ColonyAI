@@ -1049,6 +1049,85 @@ def _bounded_autonomy_status(value: Any) -> dict[str, Any]:
     }
 
 
+_QUEUE_STATS_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def _queue_stats_counts(value: Any, *, prefix: str) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        raise RuntimeError("queue stats counts are invalid")
+    counts: dict[str, int] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not _QUEUE_STATS_KEY_RE.fullmatch(key):
+            raise RuntimeError("queue stats count key is invalid")
+        if (
+            isinstance(item, bool)
+            or not isinstance(item, int)
+            or not 0 <= item <= _AUTONOMY_STATUS_COUNTER_LIMIT
+        ):
+            raise RuntimeError("queue stats counter is invalid")
+        counts[prefix + key] = item
+    return dict(sorted(counts.items()))
+
+
+def _bounded_queue_stats(value: Any) -> dict[str, Any]:
+    """Project the sidecar queue statistics onto one exact count-only schema.
+
+    Free text from the sidecar (hold reasons, delivery errors) stays on the
+    host. Status and type counters are keyed ``status_<name>`` and
+    ``type_<name>``: a raw ``by_status`` map carries a literal ``"failed"``
+    key, which the host's tool-result failure heuristic reads as a failed
+    call and logs every healthy read as an error.
+    """
+
+    if not isinstance(value, Mapping):
+        raise RuntimeError("queue stats response is invalid")
+    workers: dict[str, int] = {}
+    for key in (
+        "total_workers", "available_workers", "registered_workers",
+        "active_workers", "stale_workers", "worker_heartbeat_ttl_secs",
+    ):
+        item = value.get(key)
+        if (
+            isinstance(item, bool)
+            or not isinstance(item, int)
+            or not 0 <= item <= _AUTONOMY_STATUS_COUNTER_LIMIT
+        ):
+            raise RuntimeError("queue stats worker counter is invalid")
+        workers[key] = item
+    governance = value.get("governance")
+    if not isinstance(governance, Mapping):
+        raise RuntimeError("queue stats governance is invalid")
+    held_total = governance.get("held_total", 0)
+    if (
+        isinstance(held_total, bool)
+        or not isinstance(held_total, int)
+        or not 0 <= held_total <= _AUTONOMY_STATUS_COUNTER_LIMIT
+    ):
+        raise RuntimeError("queue stats held total is invalid")
+    scheduler = value.get("scheduler")
+    if not isinstance(scheduler, Mapping):
+        raise RuntimeError("queue stats scheduler is invalid")
+    scheduler_flags: dict[str, bool] = {}
+    for key in ("running", "healthy"):
+        item = scheduler.get(key)
+        if not isinstance(item, bool):
+            raise RuntimeError("queue stats scheduler flag is invalid")
+        scheduler_flags[key] = item
+    return {
+        "schema": "ColonyQueueStatsProjectionV1",
+        "version": 1,
+        "tasks_by_status": _queue_stats_counts(
+            value.get("by_status"), prefix="status_"),
+        "tasks_by_type": _queue_stats_counts(
+            value.get("by_type"), prefix="type_"),
+        "workers": workers,
+        "held_total": held_total,
+        "holds": _queue_stats_counts(
+            governance.get("holds", {}), prefix="hold_"),
+        "scheduler": scheduler_flags,
+    }
+
+
 class _ToolDispatcher:
     def __init__(
         self,
@@ -1394,6 +1473,8 @@ class _ToolDispatcher:
             value = response.json()
             if name == "colony_autonomy_status":
                 value = _bounded_autonomy_status(value)
+            elif name == "colony_queue_stats":
+                value = _bounded_queue_stats(value)
             return _canonical_json(value)
         except BaseException:
             return _canonical_json({

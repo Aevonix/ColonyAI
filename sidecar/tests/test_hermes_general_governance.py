@@ -93,7 +93,21 @@ class _Client:
         if path == "/v1/host/autonomy/status":
             return _Response(self.autonomy_status)
         if path == "/v1/host/queue/stats":
-            return _Response({"pending": 0})
+            return _Response({
+                "by_status": {"completed": 3, "failed": 1},
+                "by_type": {"agent_action": 4},
+                "total_workers": 2, "available_workers": 1,
+                "registered_workers": 2, "active_workers": 1,
+                "stale_workers": 0, "worker_heartbeat_ttl_secs": 90,
+                "last_user_message_at": None,
+                "governance": {
+                    "holds": {}, "held_total": 0,
+                    "governance_held_jobs": [
+                        {"job_id": "j", "reason": "private_runtime_detail"}],
+                },
+                "scheduler": {"running": True, "healthy": True,
+                              "last_error": "private_runtime_detail"},
+            })
         return _Response({})
 
     def post(self, path, **kwargs):
@@ -622,6 +636,37 @@ def test_entity_query_carries_the_host_identity_the_sidecar_requires(runtime):
         "entity_type": "organization",
         "limit": 10,
     }
+
+
+def test_queue_stats_is_a_count_only_projection(runtime):
+    _module, context, client, mediator = runtime
+    _pre(context, session="s-owner", task="t-owner", turn="turn-owner",
+         platform="sms", sender="+15550001")
+    raw = _tool(
+        context, "colony_queue_stats", {}, session="s-owner",
+        task="t-owner", turn="turn-owner", call="queue-owner",
+    )
+    result = _json(raw)
+    assert result == {
+        "schema": "ColonyQueueStatsProjectionV1",
+        "version": 1,
+        "tasks_by_status": {"status_completed": 3, "status_failed": 1},
+        "tasks_by_type": {"type_agent_action": 4},
+        "workers": {
+            "total_workers": 2, "available_workers": 1,
+            "registered_workers": 2, "active_workers": 1,
+            "stale_workers": 0, "worker_heartbeat_ttl_secs": 90,
+        },
+        "held_total": 0,
+        "holds": {},
+        "scheduler": {"running": True, "healthy": True},
+    }
+    # the host failure heuristic scans the result text for these two tokens
+    assert '"failed"' not in raw and '"error"' not in raw
+    assert "private_runtime_detail" not in raw
+    calls = [call for call in client.calls if call["path"] == "/v1/host/queue/stats"]
+    assert len(calls) == 1 and calls[0]["method"] == "GET"
+    assert mediator.intents == []
 
 
 def test_autonomy_status_is_bounded_owner_system_read_only(runtime):
