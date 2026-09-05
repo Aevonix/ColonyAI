@@ -4,8 +4,7 @@ Implements Hermes's MemoryProvider ABC to inject Colony's cognitive context
 (commitments, affect, facts, patterns, world model) into Hermes conversations
 and sync turns back for extraction.
 
-Plugin directory: ~/.hermes/plugins/memory/colony/
-Config key: memory.provider = "colony"
+Config key: memory.provider = "colony-memory"
 """
 
 from __future__ import annotations
@@ -16,9 +15,10 @@ import json
 import logging
 import os
 import threading
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 import re as _tre
@@ -37,6 +37,57 @@ def _humanize_secs(secs):
     return f"{secs // 86400}d {(secs % 86400) // 3600}h"
 
 logger = logging.getLogger(__name__)
+
+
+def _active_hermes_home() -> Path:
+    try:
+        from hermes_constants import get_hermes_home
+    except ImportError:
+        return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").expanduser().resolve()
+    return get_hermes_home().expanduser().resolve()
+
+
+def _profile_config(hermes_home: Path) -> dict[str, Any]:
+    """Read only the selected profile; native setup values override legacy YAML."""
+    import yaml
+
+    try:
+        legacy_path = hermes_home / "config.yaml"
+        legacy = yaml.safe_load(legacy_path.read_text(encoding="utf-8")) if legacy_path.exists() else {}
+        legacy = legacy or {}
+        if not isinstance(legacy, dict):
+            raise ValueError
+        memory = legacy.get("memory") or {}
+        if not isinstance(memory, dict):
+            raise ValueError
+        config = memory.get("config") or {}
+        if not isinstance(config, dict):
+            raise ValueError
+        config = dict(config)
+        native_path = hermes_home / "colony-memory.json"
+        if native_path.exists():
+            native = json.loads(native_path.read_text(encoding="utf-8"))
+            if not isinstance(native, dict):
+                raise ValueError
+            config.update(native)
+        return config
+    except (OSError, UnicodeError, ValueError, yaml.YAMLError):
+        raise ValueError("Selected profile has invalid Colony memory configuration") from None
+
+
+def _profile_env(name: str, hermes_home: Path) -> str:
+    """Use Hermes's profile-aware credential reader without mutating process env."""
+    try:
+        from hermes_cli.config import get_env_value_prefer_dotenv
+        from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+    except ImportError:
+        # Standalone adapters and older runtimes have one process-level profile.
+        return os.environ.get(name, "")
+    token = set_hermes_home_override(hermes_home)
+    try:
+        return get_env_value_prefer_dotenv(name) or ""
+    finally:
+        reset_hermes_home_override(token)
 
 # Import the ABC if available (Hermes SDK installed).
 try:
@@ -610,29 +661,19 @@ class ColonyMemoryProvider(_MemoryProviderABC):
     and injects it as prefetched memory. Syncs turns back to Colony for
     extraction of commitments, affect, and facts.
 
-    Config (from ~/.hermes/config.yaml memory.config):
+    Config: selected profile's colony-memory.json, with legacy memory.config
+    supplying values not yet written by native setup. Explicit constructor
+    configuration overrides both for embedded callers.
         url: Colony sidecar URL (default http://127.0.0.1:7777)
         api_key: Colony API key (or set COLONY_API_KEY env var)
         contact_id: Contact ID for context assembly (or set COLONY_MCP_CONTACT_ID)
     """
 
     def __init__(self, config: dict[str, Any] | None = None):
-        if config is None:
-            # Load from Hermes config.yaml if no config passed
-            try:
-                from hermes_cli.config import load_config, cfg_get
-                hermes_config = load_config()
-                config = cfg_get(hermes_config, "memory", "config", default={}) or {}
-            except Exception:
-                config = {}
-        self.sidecar_url = config.get("url", os.environ.get("COLONY_URL", "http://127.0.0.1:7777"))
-        raw_key = config.get("api_key", os.environ.get("COLONY_API_KEY", ""))
-        # Resolve unexpanded env-var placeholders like ${COLONY_API_KEY}
-        if raw_key and raw_key.startswith("${") and raw_key.endswith("}"):
-            env_name = raw_key[2:-1]
-            raw_key = os.environ.get(env_name, "")
-        self._api_key = raw_key
-        self._contact_id = config.get("contact_id", os.environ.get("COLONY_MCP_CONTACT_ID", "default"))
+        self._hermes_home = str(_active_hermes_home())
+        self._explicit_config = dict(config) if config is not None else None
+        config = self._explicit_config if config is not None else _profile_config(Path(self._hermes_home))
+        self._configure(config)
         self._session_id = ""
         self._cached_context: str = ""
         # Prefetch-cache bookkeeping (COLONY_PREFETCH_QUERY_CHECK=1): remember
@@ -662,16 +703,12 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._prefetch_ready.set()
         self._platform = "cli"
         self._async_client: Optional[httpx.AsyncClient] = None
-        self._hermes_home = ""
         self._sync_thread: Optional[threading.Thread] = None
-        # Phase 4: circuit breaker and diagnostics
         self._circuit_open_until: Optional[float] = None
         self._connection_failures = 0
+        self._connection_status = "unverified"
         self._last_sync_attempt: Optional[str] = None
         self._last_sync_error: Optional[str] = None
-        self._turn_writer_mode = str(config.get(
-            "turn_writer", os.environ.get("COLONY_MEMORY_TURN_WRITER", "auto")
-        ) or "auto").strip().lower()
         self._turn_writer_skip_logged = False
         for binding_flag in (
             "COLONY_PREFETCH_TURN_CONTACT",
@@ -682,6 +719,32 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 raise RuntimeError(
                     f"{binding_flag} is mandatory and cannot be disabled"
                 )
+
+    def _configure(self, config: dict[str, Any]) -> None:
+        home = Path(self._hermes_home)
+        self.sidecar_url = config.get("url") or _profile_env("COLONY_URL", home) or "http://127.0.0.1:7777"
+        try:
+            url = urlsplit(self.sidecar_url)
+            valid = (url.scheme in {"http", "https"} and url.hostname
+                     and not url.username and not url.password
+                     and not url.query and not url.fragment
+                     and (url.port is None or url.port > 0))
+        except (TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise ValueError("Colony URL must be HTTP(S) with a valid port and no embedded credentials or query")
+        self.sidecar_url = self.sidecar_url.rstrip("/")
+        raw_key = config.get("api_key") or _profile_env("COLONY_API_KEY", home)
+        # Resolve unexpanded env-var placeholders like ${COLONY_API_KEY}
+        if raw_key and raw_key.startswith("${") and raw_key.endswith("}"):
+            env_name = raw_key[2:-1]
+            raw_key = _profile_env(env_name, home)
+        self._api_key = raw_key
+        self._contact_id = config.get("contact_id") or _profile_env("COLONY_MCP_CONTACT_ID", home) or "default"
+        self._timezone = config.get("timezone") or _profile_env("COLONY_AGENT_TIMEZONE", home)
+        self._turn_writer_mode = str(config.get(
+            "turn_writer", _profile_env("COLONY_MEMORY_TURN_WRITER", home) or "auto"
+        ) or "auto").strip().lower()
 
     @property
     def name(self) -> str:
@@ -700,6 +763,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             "last_sync_error": self._last_sync_error,
             "circuit_open": self._is_circuit_open(),
             "connection_failures": self._connection_failures,
+            "connection_status": self._connection_status,
             "stale_cache_misses": self._stale_cache_misses,
             "turn_writer": "enabled" if self._turn_writer_enabled() else "read-only",
         }
@@ -727,12 +791,14 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         return True
 
     def _record_connection_failure(self) -> None:
+        self._connection_status = "degraded"
         self._connection_failures += 1
         if self._connection_failures >= 3:
             self._circuit_open_until = (datetime.now(timezone.utc) + timedelta(seconds=60)).timestamp()
             logger.warning("Colony: circuit breaker opened for 60s after %d failures", self._connection_failures)
 
     def _record_connection_success(self) -> None:
+        self._connection_status = "connected"
         if self._connection_failures > 0:
             logger.info("Colony: connection recovered, resetting failure count")
             self._connection_failures = 0
@@ -763,28 +829,48 @@ class ColonyMemoryProvider(_MemoryProviderABC):
 
     def save_config(self, values: dict, hermes_home: str) -> None:
         """Write non-secret config to the plugin's native location."""
-        import json
-        from pathlib import Path
+        import tempfile
         config_path = Path(hermes_home) / "colony-memory.json"
-        config_path.write_text(json.dumps(values, indent=2))
+        allowed = {"url", "contact_id", "timezone", "turn_writer"}
+        # Native Hermes saves secrets separately. Never persist a raw API key
+        # even if an embedded caller supplies one with the non-secret values.
+        saved = {key: value for key, value in _profile_config(Path(hermes_home)).items()
+                 if key in allowed}
+        saved.update({key: value for key, value in values.items() if key in allowed})
+        config_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with tempfile.NamedTemporaryFile(dir=config_path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                stream.write((json.dumps(saved, indent=2) + "\n").encode("utf-8"))
+                stream.flush()
+                os.fsync(stream.fileno())
+                os.replace(temporary, config_path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     # -- Core lifecycle --------------------------------------------------------
 
     def is_available(self) -> bool:
-        """Check if the Colony sidecar is reachable (sync, for startup checks)."""
-        try:
-            headers = self._headers()
-            resp = httpx.get(f"{self.sidecar_url}/v1/host/health", headers=headers, timeout=3)
-            return resp.status_code == 200
-        except (httpx.HTTPError, OSError):
-            return False
+        """Stay installed through sidecar outages; requests report connectivity.
+
+        Hermes omits an unavailable provider for the entire agent instance.
+        A network probe here would prevent automatic recovery after startup.
+        Construction validates local configuration, independently of health.
+        """
+        return True
 
     def initialize(self, session_id: str, **kwargs) -> None:
         """Initialize for a session."""
+        home = str(Path(kwargs.get("hermes_home") or self._hermes_home).expanduser().resolve())
+        if home != self._hermes_home:
+            if self._session_id:
+                raise ValueError("Create a new Colony memory provider for another Hermes profile")
+            self._hermes_home = home
+            self._configure(self._explicit_config if self._explicit_config is not None
+                            else _profile_config(Path(home)))
         self._session_id = session_id
         self._rw_touch_session(session_id)
         self._platform = kwargs.get("platform", "cli")
-        self._hermes_home = kwargs.get("hermes_home", "")
         if not self._api_key:
             logger.warning("Colony: COLONY_API_KEY not set — requests will fail if sidecar requires auth")
         logger.info("Colony memory provider initialized (session=%s, platform=%s, home=%s)",
@@ -798,7 +884,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         """Inject the rotating last-session handoff brief (where she left off before the overnight
         reset) so a daily session reset keeps continuity instead of amnesia. Fresh-only, fail-soft."""
         import time as _t
-        p = os.path.expanduser("~/.hermes/.handoff_brief.md")
+        p = str(Path(self._hermes_home) / ".handoff_brief.md")
         try:
             if not os.path.exists(p) or _t.time() - os.path.getmtime(p) > 30 * 3600:
                 return ""
@@ -831,33 +917,12 @@ class ColonyMemoryProvider(_MemoryProviderABC):
 
     def _current_time_line(self) -> str:
         """Local, no-network current date/time in the agent's home timezone."""
-        import json as _json
         from datetime import datetime, timezone as _tz
         try:
             from zoneinfo import ZoneInfo
         except Exception:
             ZoneInfo = None
-        tz = os.environ.get("COLONY_AGENT_TIMEZONE", "")
-        if not tz:
-            # Read the agent timezone from the SAME file the sidecar writes. The
-            # sidecar stores it at $COLONY_STATE_DIR/temporal.json (default
-            # ~/.colony/data/temporal.json); the gateway process does not export
-            # COLONY_STATE_DIR, so probe the known locations in order.
-            _candidates = []
-            _sd = os.environ.get("COLONY_STATE_DIR")
-            if _sd:
-                _candidates.append(os.path.join(_sd, "temporal.json"))
-            _candidates += [
-                os.path.expanduser("~/.colony/data/temporal.json"),
-                os.path.expanduser("~/.colony/temporal.json"),
-            ]
-            for _c in _candidates:
-                try:
-                    tz = (_json.load(open(_c)).get("agent_timezone") or "")
-                    if tz:
-                        break
-                except Exception:
-                    continue
+        tz = self._timezone
         now = datetime.now(_tz.utc)
         if tz and ZoneInfo is not None:
             try:
@@ -1376,6 +1441,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
+            self._record_connection_failure()
             code = exc.response.status_code
             if code in (401, 403):
                 logger.warning("Colony prefetch auth failed (HTTP %d) — check COLONY_API_KEY", code)
@@ -1383,8 +1449,10 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 logger.debug("Colony prefetch failed: %s", exc)
             return ""
         except (httpx.HTTPError, OSError) as exc:
+            self._record_connection_failure()
             logger.debug("Colony prefetch failed: %s", exc)
             return ""
+        self._record_connection_success()
         attestation = data.get("projection_attestation")
         if guest:
             attested = self._projection_attestation_valid(
