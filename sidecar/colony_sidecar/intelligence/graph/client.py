@@ -1222,11 +1222,13 @@ class ColonyGraph:
                         memories, lexical, limit=candidate_limit,
                         strength_ranking=strength_ranking)
                 if results or memories:
+                    memories = await self._filter_erased_source_memories(memories)
                     if candidates_only:
                         return sorted(memories, key=lambda m: m.get("relevance", 0), reverse=True)[:limit]
                     memories = await self._maybe_rerank(
                         query, memories, limit,
                         strength_ranking=strength_ranking)
+                    memories = await self._filter_erased_source_memories(memories)
                     memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)
                     memories = memories[:limit]
                     # Fire-and-forget touch_memory for each recalled result
@@ -1245,10 +1247,12 @@ class ColonyGraph:
                 min_strength, min_confidence, person_scope,
                 excluded_sources, excluded_metadata_markers)
             if memories:
+                memories = await self._filter_erased_source_memories(memories)
                 if candidates_only:
                     return memories[:limit]
                 memories = await self._maybe_rerank(
                     query, memories, limit, strength_ranking=strength_ranking)
+                memories = await self._filter_erased_source_memories(memories)
                 memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)
                 memories = memories[:limit]
                 for mem in memories:
@@ -1322,6 +1326,7 @@ class ColonyGraph:
                 if effective_confidence < min_confidence:
                     continue
                 memories.append(mem)
+        memories = await self._filter_erased_source_memories(memories)
         if candidates_only:
             return memories[:limit]
         # Fire-and-forget touch_memory for each recalled result

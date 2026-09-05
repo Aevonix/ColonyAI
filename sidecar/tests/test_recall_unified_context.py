@@ -141,6 +141,27 @@ async def test_candidate_retrieval_does_not_reinforce_or_rerank(monkeypatch):
     fixture.graph._touch_memory_safe.assert_awaited_once_with("a")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("candidates_only", [False, True])
+@pytest.mark.parametrize("hybrid", [False, True])
+async def test_erased_projection_is_excluded_before_selection(monkeypatch, candidates_only, hybrid):
+    monkeypatch.setenv("COLONY_RECALL_HYBRID", "on" if hybrid else "off")
+    fixture = RecallFixture([_Hit("erased", .99), _Hit("retained", .8)], [
+        _node("erased", source_uri="turn:erased"),
+        _node("retained", source_uri="turn:retained"),
+    ])
+    fixture.graph._source_projection_erased = lambda uri: uri == "turn:erased"
+    fixture.graph._recall_lexical = AsyncMock(return_value=[_node("erased", source_uri="turn:erased")])
+    observed = []
+    async def rank(query, memories, limit, **kwargs):
+        observed.extend(row["id"] for row in memories)
+        return memories
+    fixture.graph._maybe_rerank = rank
+    rows = await fixture.recall("q", limit=5, candidates_only=candidates_only)
+    assert [row["id"] for row in rows] == ["retained"]
+    assert "erased" not in observed
+
+
 def quotes():
     return source_candidates([{"turn_id": "turn-1", "role": "assistant", "content": "Quoted claim.",
                                "occurred_at": "2026-01-02", "ingested_at": "2026-01-03"}])
