@@ -2915,17 +2915,20 @@ async def lifespan(app: FastAPI):
 
     # --- 17. Chain / Identity ---
     try:
-        from colony_sidecar.chain.identity import get_or_create_colony_id, load_genesis_manifest
+        from colony_sidecar.chain.identity import (
+            get_or_create_colony_id,
+            load_genesis_manifest,
+            resolve_genesis_manifest_path,
+        )
         colony_id = get_or_create_colony_id(state_dir)
 
-        # Load Genesis manifest
-        genesis_path = Path(state_dir) / "genesis.json"
-        if not genesis_path.exists():
-            # Also check package directory (bundled manifest)
-            pkg_genesis = Path(__file__).parent / "genesis.json"
-            if pkg_genesis.exists():
-                genesis_path = pkg_genesis
-        load_genesis_manifest(genesis_path)
+        # Load the Genesis manifest: this colony's own if it claimed Genesis,
+        # otherwise the bundled network trust anchor.
+        genesis_path = resolve_genesis_manifest_path(state_dir)
+        if genesis_path is None:
+            logger.warning("No Genesis manifest found; trust anchor stays unverified")
+        else:
+            load_genesis_manifest(genesis_path)
 
         from colony_sidecar.chain.manager import ChainManager
         chain = ChainManager(

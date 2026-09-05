@@ -88,6 +88,38 @@ def get_genesis_manifest() -> Optional[dict]:
     return _GENESIS_MANIFEST
 
 
+GENESIS_MANIFEST_FILE = "genesis.json"
+
+
+def bundled_genesis_manifest_path() -> Optional[Path]:
+    """Locate the Genesis manifest shipped with the source code.
+
+    The manifest lives inside the package (``colony_sidecar/genesis.json``)
+    so pip installs and source checkouts both carry it. The sidecar root is
+    still checked for checkouts that keep the older layout.
+    """
+    package_dir = Path(__file__).resolve().parent.parent
+    for candidate in (package_dir / GENESIS_MANIFEST_FILE,
+                      package_dir.parent / GENESIS_MANIFEST_FILE):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def resolve_genesis_manifest_path(state_dir: str | Path) -> Optional[Path]:
+    """Pick the manifest to load: the state directory wins, else the bundled copy.
+
+    A colony that claimed Genesis has its own signed manifest in its state
+    directory. Every other colony verifies the network trust anchor from the
+    bundled manifest; without it the trust anchor stays unverified and the
+    colony never reaches the REGULAR tier.
+    """
+    local = Path(state_dir) / GENESIS_MANIFEST_FILE
+    if local.is_file():
+        return local
+    return bundled_genesis_manifest_path()
+
+
 def is_genesis(colony_id: str, public_key_hex: str) -> bool:
     """Check if a colony_id + public_key combination matches the verified Genesis manifest.
 
