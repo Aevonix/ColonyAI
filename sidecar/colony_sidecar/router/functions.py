@@ -66,6 +66,8 @@ class RoutingSnapshot:
     roles: dict[str, FunctionRole]
     networks: tuple
     declared_hosts: frozenset[str]
+    provider: str = ''
+    base_url: str = ''
 
     def status(self):
         return {'config_revision': self.revision, 'capability_basis': 'deployment declarations, not measured by this router',
@@ -176,7 +178,8 @@ def build_snapshot(host: dict, tiers: dict) -> RoutingSnapshot:
     if not isinstance(hosts, list) or any(not isinstance(h, str) or len(h) > 253 for h in hosts):
         raise ValueError('localHosts must list deployment hostnames')
     revision = hashlib.sha256(json.dumps(host, sort_keys=True, separators=(',', ':')).encode()).hexdigest()[:20]
-    return RoutingSnapshot(revision, materialized, bindings, roles, networks, frozenset(h.casefold() for h in hosts))
+    return RoutingSnapshot(revision, materialized, bindings, roles, networks, frozenset(h.casefold() for h in hosts),
+                           provider=str(host.get('provider') or ''), base_url=str(host.get('baseUrl') or ''))
 
 
 def endpoint_host(binding, snapshot):
