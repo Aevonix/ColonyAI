@@ -68,11 +68,3 @@ class ISkillExecutor(Protocol):
         inputs: Dict[str, Any],
         caller_context: Optional[str] = None,
     ) -> ExecutionResult: ...
-
-
-@runtime_checkable
-class ISkillMarketplace(Protocol):
-    """Publishes and receives skills over the federation layer."""
-
-    async def publish_skill(self, skill_id: str) -> int: ...
-    async def receive_skill_offer(self, msg: Any) -> Optional[str]: ...

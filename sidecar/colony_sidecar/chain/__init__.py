@@ -4,7 +4,6 @@ Provides:
 - Block model with SHA-256 hash chain and Ed25519 signatures
 - Transaction types for colony lifecycle and governance
 - SQLite-backed persistent chain storage
-- Raft-lite consensus scaffolding (consensus.py — NOT wired; see docs/KNOWN-GAPS.md)
 - Genesis admin capabilities
 - Chain sync protocol messages
 """
