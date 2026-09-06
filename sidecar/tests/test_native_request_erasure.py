@@ -139,6 +139,14 @@ def test_observed_retelling_keeps_new_input_but_not_its_stale_packet_or_history(
     result = middleware(request, scope)['request']['messages']
     assert rt.fact not in result[0]['content']
     assert result[1]['content'] == rt.fact and 'stale-evidence' not in json.dumps(result)
+    # A literal fence written by the person belongs to the direct input, not
+    # to the native appended packet, even if it resembles old recall markup.
+    literal = 'Explain this literal format: <memory-context>user example</memory-context>'
+    current = {'role': 'user', 'content': literal}
+    middleware.observe(scope, [current], user_message=literal)
+    current['api_content'] = literal + '\n\n' + packet('owner', 0, 'stale-evidence')
+    result = middleware({'messages': [{'role': 'user', 'content': current['api_content']}]}, scope)
+    assert result['request']['messages'][0]['content'] == literal
     # A last historical user row is insufficient without the actual matching
     # direct input carried by this authenticated native turn observation.
     middleware.observe(scope, [earlier], user_message='A different current input')

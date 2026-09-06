@@ -6,6 +6,7 @@ The built-in compressor and clean transcript remain owned by Hermes.
 from __future__ import annotations
 
 import json
+import copy
 import hashlib
 import logging
 import re
@@ -28,7 +29,7 @@ def _content_key(content):
                                     separators=(',', ':')).encode()).hexdigest()
 
 
-def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None):
+def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None):
     """Keep fresh packets and remove exact evidence, preserving tool structure.
 
     Hashes include original session and speaker. Trying those retained origins
@@ -68,6 +69,15 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
         return _PACKET.sub(packet, _MEMORY.sub(packet, text))
 
     def content(value, *, current=False):
+        if current:
+            # Preserve the observed input bytes, including any literal markers
+            # the person typed. Only native-appended context is recalled data.
+            if isinstance(value, str) and isinstance(current_input, str) and value.startswith(current_input):
+                return current_input + text_content(value[len(current_input):])
+            if isinstance(value, list) and isinstance(current_input, list) and value[:len(current_input)] == current_input:
+                suffix = content(value[len(current_input):])
+                return current_input + (suffix if isinstance(suffix, list) else [])
+            current = False
         original = aliases.get(_content_key(value), value) if origins and aliases else value
         if not current and erased(original):
             return _ERASED
@@ -147,7 +157,7 @@ class RequestMemory:
             and scope.valid_participant) else None
         key = (scope.contact_id, scope.task_id, scope.turn_id)
         with self._lock:
-            self._aliases[key] = (aliases, current)
+            self._aliases[key] = (aliases, current, copy.deepcopy(user_message) if current else None)
             self._aliases.move_to_end(key)
             while len(self._aliases) > 32:
                 self._aliases.popitem(last=False)
@@ -162,7 +172,7 @@ class RequestMemory:
         contact = scope.contact_id if scope is not None and scope.valid_participant else ''
         with self._lock:
             observed_key = (contact, scope.task_id, scope.turn_id) if scope else None
-            aliases, current = self._aliases.get(observed_key, ({}, None))
+            aliases, current, current_input = self._aliases.get(observed_key, ({}, None, None))
             observed = observed_key in self._aliases
         current_content = current.get('api_content', current.get('content')) if current else None
         deadline = time.monotonic() + .25
@@ -195,7 +205,8 @@ class RequestMemory:
         # Failure returns an explicit reduced request instead of stale history.
         try:
             filtered = filter_request(request, contact_id=contact, watermark=watermark,
-                                      rules=rules, fresh=fresh, aliases=aliases, current_content=current_content)
+                                      rules=rules, fresh=fresh, aliases=aliases,
+                                      current_content=current_content, current_input=current_input)
         except Exception:
             filtered = filter_request(request, contact_id=contact, watermark=0, rules=[], fresh=False)
             fresh = False
