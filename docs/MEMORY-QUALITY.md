@@ -54,3 +54,7 @@ separate exact duplicates from distinct supporting evidence, and label model
 triage as tentative. Backups, native runtime transcripts and unlinked historical
 derivations have their own retention limits; canonical source erasure does not
 claim to erase unsupported descendants.
+
+Original source images also require a recoverable backup, not only retained
+captions. See [source memory recovery](SOURCE-MEMORY-RECOVERY.md) for the existing
+backup command's source-image coverage and its remaining recovery limits.

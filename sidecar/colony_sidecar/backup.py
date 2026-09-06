@@ -2,6 +2,7 @@
 
 Creates a compressed, optionally encrypted archive of all Colony state:
 - All SQLite databases in COLONY_STATE_DIR (auto-discovered)
+- Original source images referenced by the canonical ledger snapshot
 - Identity files (colony-id, keys, genesis)
 - Config files (scrubbed of secrets)
 - LanceDB vector store
@@ -18,6 +19,7 @@ Usage::
 
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 import hmac
 import json
@@ -37,7 +39,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
 _GOVERNED_ACTION_LEDGER = Path("governed-actions/ledger.db")
 
 _SECRET_KEY_PATTERN = re.compile(
@@ -246,6 +248,7 @@ def create_full_backup(
         staging.mkdir()
 
         db_manifest = _snapshot_databases(state_dir, staging / "databases")
+        source_images = _snapshot_source_images(state_dir, staging)
         _snapshot_identity(state_dir, staging / "identity")
         _snapshot_config(state_dir, staging / "config")
 
@@ -266,6 +269,7 @@ def create_full_backup(
             "colony_id": colony_id,
             "colony_id_hmac": _compute_identity_hmac(colony_id),
             "database_manifest": db_manifest,
+            "source_images": source_images,
             "graph_status": graph_status,
             "encrypted": passphrase is not None,
         }
@@ -335,6 +339,9 @@ def restore_full_backup(
                 f"{existing_id}. Use --force-identity to override."
             )
 
+        # Validate every referenced original before writing any restored state.
+        # A caption or an embedding cannot reconstruct the original evidence.
+        source_images = _verified_source_images(root)
         governed_restore = root / "databases" / _GOVERNED_ACTION_LEDGER
         try:
             governed_restore.lstat()
@@ -373,10 +380,25 @@ def restore_full_backup(
                     _restore_private_governed_ledger(db_file, state_dir)
                 else:
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(db_file, dest)
+                    # A crashed destination can still have committed WAL.
+                    # SQLite replaces its logical database consistently;
+                    # copying the main file alone can replay the old WAL over it.
+                    with closing(sqlite3.connect(db_file.resolve().as_uri() + '?mode=ro', uri=True)) as source:
+                        with closing(sqlite3.connect(dest)) as target:
+                            source.backup(target)
                 relative_name = relative.as_posix()
                 summary["databases"].append(relative_name)
                 logger.info("Restored database: %s", relative_name)
+
+        if source_images:
+            from colony_sidecar.vector.image_store import LocalImageStore
+            images = LocalImageStore(str(state_dir), source_evidence=True)
+            images._ensure_dirs()
+            for record, source in source_images:
+                destination = images._original_path(record['asset_hash'], record['mime_type'])
+                shutil.copyfile(source, destination)
+                destination.chmod(0o600)
+            summary['source_images'] = len(source_images)
 
         config_dir = root / "config"
         if config_dir.is_dir():
@@ -453,24 +475,78 @@ def _snapshot_databases(
                 raise RuntimeError(
                     "governed action ledger could not be snapshotted consistently"
                 ) from exc
-            logger.warning(
-                "Failed to snapshot %s, falling back to copy: %s",
-                relative_name, exc,
-            )
+            logger.warning("VACUUM snapshot failed for %s; trying SQLite backup", relative_name)
             try:
-                shutil.copy2(db_path, snap_path)
-                if relative == _GOVERNED_ACTION_LEDGER:
-                    snap_path.parent.chmod(0o700)
-                    snap_path.chmod(0o600)
+                # Copying only the main file can lose committed WAL records.
+                snap_path.unlink(missing_ok=True)
+                with closing(sqlite3.connect(db_path.resolve().as_uri() + '?mode=ro', uri=True)) as source:
+                    with closing(sqlite3.connect(snap_path)) as target:
+                        source.backup(target)
                 manifest.append({
                     "filename": relative_name,
                     "size_bytes": str(snap_path.stat().st_size),
-                    "method": "copy",
+                    "method": "sqlite_backup",
                 })
             except Exception as exc2:
-                logger.error("Failed to copy %s: %s", relative_name, exc2)
+                raise RuntimeError(f"Database could not be snapshotted consistently: {relative_name}") from exc2
 
     return manifest
+
+
+def _source_image_records(root: Path) -> list[dict]:
+    """Read asset ownership from the captured database, never a later live view."""
+    ledger = root / 'databases' / 'turn-idempotency.db'
+    if not ledger.is_file():
+        return []
+    conn = sqlite3.connect(ledger.resolve().as_uri() + '?mode=ro', uri=True)
+    try:
+        conn.row_factory = sqlite3.Row
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='source_media'").fetchone():
+            return []
+        rows = conn.execute('''SELECT DISTINCT m.asset_hash,m.mime_type,m.size_bytes
+            FROM source_media m JOIN source_media_links l ON l.asset_hash=m.asset_hash
+            JOIN turn_sources s ON s.turn_id=l.turn_id WHERE m.status != 'orphan' ''').fetchall()
+        records = [dict(row) for row in rows]
+        for row in records:
+            if not re.fullmatch('[0-9a-f]{64}', row['asset_hash']):
+                raise ValueError('Invalid original source image identifier')
+        return records
+    finally:
+        conn.close()
+
+
+def _verified_source_images(root: Path) -> list[tuple[dict, Path]]:
+    from colony_sidecar.vector.image_store import LocalImageStore
+    images = LocalImageStore(str(root), source_evidence=True)
+    result = []
+    for record in _source_image_records(root):
+        path = images._original_path(record['asset_hash'], record['mime_type'])
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ValueError('Backup is missing an original source image') from exc
+        if len(data) != record['size_bytes'] or hashlib.sha256(data).hexdigest() != record['asset_hash']:
+            raise ValueError('Backup original source image does not match its evidence hash')
+        result.append((record, path))
+    return result
+
+
+def _snapshot_source_images(state_dir: Path, staging: Path) -> int:
+    from colony_sidecar.vector.image_store import LocalImageStore
+    source = LocalImageStore(str(state_dir), source_evidence=True)
+    target = LocalImageStore(str(staging), source_evidence=True)
+    records = _source_image_records(staging)
+    if records:
+        target._ensure_dirs()
+    for record in records:
+        try:
+            shutil.copyfile(source._original_path(record['asset_hash'], record['mime_type']),
+                            target._original_path(record['asset_hash'], record['mime_type']))
+        except OSError as exc:
+            # Concurrent erasure can remove an original after the DB snapshot.
+            # Retry the backup later instead of publishing a broken archive.
+            raise RuntimeError('Original source image changed during backup; retry') from exc
+    return len(_verified_source_images(staging))
 
 
 # ── Identity snapshot ────────────────────────────────────────────────────
