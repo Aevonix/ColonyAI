@@ -122,11 +122,19 @@ with a 40-second total deadline. Reasoning/planning/judging/coding default to
 120 seconds per candidate and 180 seconds total. Operators may adjust these
 bounded limits per role. The existing source assertion and image workers also
 have their own 40-second outer bounds. A timeout, connection failure, rate limit,
-context-window exception or transient server error can try the next eligible
+context-window exception, completion 404 or transient server error can try the next eligible
 candidate. Authentication, validation and redirects do not trigger blind
 retry. The same endpoint/model/weight generation is not retried under another
 legacy alias. `allow_fallback: false` restricts a call to its first candidate.
 Explicit legacy `force_tier` remains exact and cannot bypass eligibility.
+
+A failed endpoint/model binding now cools down for 15 seconds, so subsequent
+requests can use an eligible fallback immediately. After that interval, one
+request attempts recovery while concurrent requests keep using their eligible
+fallbacks. A successful completion restores the primary. Cancellation releases
+the recovery slot. If no eligible fallback is available, the request reports
+that fact. Updating the endpoint or model configuration starts new observations
+without a restart; an in-flight call still retains its original snapshot.
 
 A fallback must retain the request's modality and configured capability
 constraints. The existing text token estimator also excludes obviously
@@ -146,6 +154,22 @@ services. A prompt or `allow_cloud` hint cannot authorize cloud fallback; a
 separate explicit authorization policy would be needed for that behavior.
 
 ## Observable behavior and provenance
+
+`GET /v1/host/models` observes the explicitly configured pool through each
+endpoint's OpenAI-compatible `/v1/models` route. Both a server root and an
+existing `/v1` base are normalized correctly. Reads reuse observations for 30
+seconds and probe at most four endpoints concurrently, with a two-second bound
+per read. Additional reads cover larger pools, starting with unobserved or
+oldest endpoints. No timer, scanner or background service is added.
+
+Routing status separates model advertisements from actual completion outcomes.
+It includes advertised model IDs and context limits, observation timestamps and
+ages, stale flags, inventory completeness, completion latency, served model ID
+and cooldown/recovery state. An advertisement never grants tool or vision
+support or changes declared context and performance constraints. A configured
+request alias can work even when absent from the server's listing. Only an
+actual failed completion affects availability. A missing listing therefore
+remains an observation failure without disabling working inference.
 
 Source assertions now request `extraction`, image descriptions request `vision`,
 and project plans request `planning`. Existing named task hints map compression
@@ -172,3 +196,6 @@ configuration change; the second recovered from a closed local endpoint and
 selected the new binding. This is functional qualification, not an intelligence,
 latency population or extraction-quality benchmark. Production adoption still
 requires a real deployment config change and observed downstream behavior.
+The endpoint observation extension also exercises URL normalization, working
+unlisted aliases, completion 404/503 fallback, concurrent recovery, cancellation,
+cache expiry, pool coverage and an endpoint move through atomic config reload.
