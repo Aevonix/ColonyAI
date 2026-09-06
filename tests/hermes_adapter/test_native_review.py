@@ -9,12 +9,13 @@ from test_native_current_work import environment
 
 
 PROBE = r'''
-import json,os,socket,sys,threading,time
+import hashlib,json,os,socket,sys,threading,time
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock,patch
 sys.path.insert(0,sys.argv[1])
 guest=sys.argv[2]=='guest'
+failed_read=sys.argv[2]=='owner_failed_read'
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 (home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
@@ -54,7 +55,8 @@ content='---\nname: '+skill_name+'\ndescription: Read a supplied neutral fixture
 defs=[{'type':'function','function':{'name':name,'description':name,'parameters':{'type':'object','properties':{}}}}
     for name in ('read_file','skills_list','skill_view','skill_manage')]
 parent_client=MagicMock(); review_client=MagicMock()
-parent_client.chat.completions.create.side_effect=[reply('',tool('read_file',{'path':str(fixture)})),reply('PARENT_FINISHED')]
+selected=fixture.with_name('absent-neutral.txt') if failed_read else fixture
+parent_client.chat.completions.create.side_effect=[reply('',tool('read_file',{'path':str(selected)})),reply('PARENT_FINISHED')]
 review_client.chat.completions.create.side_effect=[reply('',tool('skill_manage',{'action':'create','name':skill_name,'content':content})),reply('REVIEW_FINISHED')]
 entered=threading.Event(); release=threading.Event()
 errors=[]
@@ -74,6 +76,11 @@ with patch('run_agent.OpenAI',side_effect=[parent_client,review_client]), patch(
     parent._emit_auxiliary_failure=lambda *args:errors.append([str(arg) for arg in args])
     result=parent.run_conversation('Read the neutral fixture.',task_id='fixture-parent')
     assert result['final_response']=='PARENT_FINISHED',result
+    parent_results=[message for message in parent_client.chat.completions.create.call_args_list[-1].kwargs['messages']
+                    if message.get('role')=='tool' and message.get('tool_call_id')=='call-read_file']
+    assert len(parent_results)==1
+    if not guest:
+        assert bool(json.loads(parent_results[0]['content']).get('error'))==failed_read
     assert entered.wait(10), 'Native post-turn review never spawned'
     if guest:
         # A new attested owner turn takes over this same session after the
@@ -104,6 +111,18 @@ with patch('run_agent.OpenAI',side_effect=[parent_client,review_client]), patch(
         pending=write_approval.list_pending(write_approval.SKILLS)
         assert len(pending)==1 and pending[0]['origin']=='background_review',pending
         assert pending[0]['payload']['name']==skill_name and pending[0]['payload']['content']==content
+        evidence=pending[0]['payload']['_colony_review_evidence']
+        if failed_read:
+            assert evidence['session_id']==parent.session_id
+            parent_observation=next(row for row in observations if row['platform']=='cli')
+            assert evidence['turn_id']==parent_observation['turn_id']
+            assert evidence['source']=='native_request_tool_results'
+            assert evidence['failures']==[{'tool_call_id':'call-read_file','tool_name':'read_file',
+                'request_visible_result_sha256':hashlib.sha256(parent_results[0]['content'].encode()).hexdigest(),
+                'error_class':'tool_returned_error'}],evidence
+            assert str(selected) not in json.dumps(evidence)
+        else:
+            assert evidence is None
         # This explicit operator step qualifies native apply/rollback plumbing;
         # model self-reported completion does not authorize activation.
         token=skill_provenance.set_current_write_origin('background_review')
@@ -127,11 +146,12 @@ with patch('run_agent.OpenAI',side_effect=[parent_client,review_client]), patch(
     assert rows[0]['payload']['user_message']=='Read the neutral fixture.'
     assert rows[0]['payload']['contact_id']==expected
     parent.close()
-print(json.dumps({'native_automatic_review':True,'guest':guest,'review_harness_not_ingested':True,'native_ledger_rollback':not guest}))
+print(json.dumps({'native_automatic_review':True,'guest':guest,'failed_read':failed_read,
+    'review_harness_not_ingested':True,'native_ledger_rollback':not guest}))
 '''
 
 
-@pytest.mark.parametrize('participant',['owner','guest'])
+@pytest.mark.parametrize('participant',['owner','owner_failed_read','guest'])
 def test_native_post_turn_review_keeps_exact_scope_and_native_skill_history(artifacts,tmp_path,participant):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual post-turn review')

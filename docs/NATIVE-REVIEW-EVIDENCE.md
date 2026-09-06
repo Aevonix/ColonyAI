@@ -23,8 +23,8 @@ ledger, including non-improvements. Its comparison, apply and rollback rules
 remain unchanged. A link to a failure is evidence for investigating a proposal;
 it does not prove the proposal fixes that failure or was used afterward.
 
-The integration call belongs in the existing foreground
-`capture_review_parent` request middleware, after participant resolution:
+The existing foreground `capture_review_parent` request middleware calls the
+capture function after participant resolution:
 
 ```python
 from .review_evidence import capture
@@ -35,7 +35,12 @@ Its existing early return for background review must remain: Hermes inherits
 the foreground references into the review fork. This also preserves references
 when native routing reduces the review's input to a conversation digest.
 
-Focused packaged tests cover linked Chat Completions and Responses results,
+An actual native post-turn review fixture executes a failed neutral `read_file`,
+then verifies that Hermes' real review fork stages the matching call/result hash
+under the inherited owner's session and turn. Successful reads retain no failure
+evidence; the guest control cannot stage an owner skill change.
+
+Focused packaged tests also cover linked Chat Completions and Responses results,
 missing authority/evidence, user-content rejection, independent review-context
 snapshots, duplicate result references, model-provenance replacement, and the
 unchanged native proposal/evaluation/recovery path. Controlled oracle outcomes
