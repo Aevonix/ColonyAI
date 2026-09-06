@@ -1,5 +1,28 @@
 """Keep autonomous skill changes in Hermes' existing proposal mechanism."""
 import json
+import hashlib
+
+
+def editable_operation(arguments):
+    """One native main-file edit, including its current single-op batch form."""
+    operations = arguments.get('operations')
+    if operations is not None:
+        if not isinstance(operations, list) or len(operations) != 1 or not isinstance(operations[0], dict):
+            return None
+        operation = dict(operations[0])
+        operation['name'] = operation.get('name') or arguments.get('name')
+    else:
+        operation = arguments
+    if operation.get('action') not in {'edit', 'patch'} or operation.get('file_path') not in {None, '', 'SKILL.md'}:
+        return None
+    if operation.get('content'):
+        if not isinstance(operation['content'], str) or operation.get('old_string') or operation.get('new_string') is not None:
+            return None
+    elif (operation.get('action') != 'patch' or not isinstance(operation.get('old_string'), str)
+            or not operation['old_string'] or not isinstance(operation.get('new_string'), str)
+            or type(operation.get('replace_all', False)) is not bool):
+        return None
+    return operation
 
 
 def stage_skill_change(arguments):
@@ -22,7 +45,13 @@ def stage_skill_change(arguments):
                approval.skill_gist(arguments.get('action', ''), arguments.get('name', ''),
                    content=arguments.get('content') or '', file_path=arguments.get('file_path') or '',
                    old_string=arguments.get('old_string') or '', new_string=arguments.get('new_string') or ''))
-    record = approval.stage_write(approval.SKILLS, dict(arguments), summary=summary, origin='background_review')
+    payload = dict(arguments)
+    operation = editable_operation(arguments)
+    if operation is not None:
+        current = manager._find_skill(operation.get('name', ''))
+        if current:
+            payload['_colony_review_base_sha256'] = hashlib.sha256((current['path'] / 'SKILL.md').read_bytes()).hexdigest()
+    record = approval.stage_write(approval.SKILLS, payload, summary=summary, origin='background_review')
     # Native staging is best-effort. Never report a stored proposal when its
     # writer failed; the later evaluator also reads this same pending record.
     if approval.get_pending(approval.SKILLS, record['id']) != record:
