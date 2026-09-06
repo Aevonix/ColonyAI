@@ -583,11 +583,12 @@ async def list_models() -> ModelListResponse:
 
     if _llm_router is not None and _llm_router.supports_function_routing:
         observed = await _llm_router.discover_models()
-        models = observed['models']
-        return ModelListResponse(provider=provider, base_url=base_url or None,
-            models=[ModelInfo(id=row['id'], provider=provider, owned_by=row.get('owned_by')) for row in models],
-            discovered=bool(models), routing=observed['routing'],
-            error=None if models else 'No fresh model advertisements are available; configured completion aliases remain unchanged.')
+        if observed is not None:
+            models = observed['models']
+            return ModelListResponse(provider=provider, base_url=base_url or None,
+                models=[ModelInfo(id=row['id'], provider=provider, owned_by=row.get('owned_by')) for row in models],
+                discovered=bool(models), routing=observed['routing'],
+                error=None if models else 'No fresh model advertisements are available; configured completion aliases remain unchanged.')
 
     if not provider:
         return ModelListResponse(

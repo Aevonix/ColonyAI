@@ -112,7 +112,13 @@ class EndpointRuntime:
             with self._lock:
                 self._put(self._listings, key, value)
 
-        await asyncio.gather(*(observe(key, binding) for key, binding in selected))
+        try:
+            await asyncio.gather(*(observe(key, binding) for key, binding in selected))
+        finally:
+            # Cancellation can precede a child's first instruction and its
+            # own finally block. Release every slot reserved by this request.
+            with self._lock:
+                self._probing.difference_update(key for key, _ in selected)
 
     def status(self, snapshot):
         now, wall = self.clock(), self.wall()
