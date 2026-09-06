@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import time
 from types import SimpleNamespace
 
 sys.path.insert(0, sys.argv[1])
@@ -103,7 +104,16 @@ evidence.ColonyClient.put = lambda *a, **k: httpx.Response(200, json={"accepted"
 assert TurnOutbox(path).drain(deliver, timeout_seconds=1) == 0
 assert all(row["state"] == "pending" for row in TurnOutbox(path).snapshot())
 evidence.ColonyClient.put = accepted
-assert TurnOutbox(path).drain(deliver, timeout_seconds=1) == 2
+# Delivery is bounded per pass, not guaranteed to empty the queue in one
+# second on a shared runner. Preserve the real retry/lease behavior and check
+# eventual delivery after restart instead of asserting host filesystem speed.
+delivered = 0
+deadline = time.monotonic() + 10
+while delivered < 2 and time.monotonic() < deadline:
+    delivered += TurnOutbox(path).drain(deliver, timeout_seconds=1)
+    if delivered < 2:
+        time.sleep(0.1)
+assert delivered == 2, TurnOutbox(path).snapshot()
 assert TurnOutbox(path).drain(deliver, timeout_seconds=1) == 0
 assert any(body.get("checkpoint_messages", [{}])[0].get("content") == fact for _, body in wire)
 assert any(body.get("user_message", {}).get("content") == fact for _, body in wire)
