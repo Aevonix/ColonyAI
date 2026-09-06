@@ -1029,7 +1029,7 @@ def _hermes_plugin_files(colony_repo: Path, hermes_home: Path) -> list[tuple[byt
         ("plugins/colony-memory", "plugins/colony-memory",
          ("__init__.py", "provider.py", "cli.py", "plugin.yaml", "SKILL.md")),
         ("plugins/hermes-plugin", "plugins/colony",
-         ("__init__.py", "client.py", "events.py", "evidence.py", "executions.py", "commitment_work.py", "slash.py", "plugin.yaml")),
+         ("__init__.py", "client.py", "events.py", "evidence.py", "executions.py", "commitment_work.py", "local_work.py", "local_work_runner.py", "slash.py", "plugin.yaml")),
         ("plugins/hermes-plugin/colony_hostworker", "plugins/colony/colony_hostworker", ("__init__.py",)),
         ("hostworker/colony_hostworker", "plugins/colony/colony_hostworker", ("catalog.py", "contract.py")),
     ):

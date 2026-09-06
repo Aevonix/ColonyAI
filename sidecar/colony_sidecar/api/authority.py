@@ -969,6 +969,11 @@ def required_scope(method: str, path: str) -> str:
     key = (method.upper(), path)
     if method.upper() == "POST" and path.startswith("/v1/host/commitments/") and path.endswith("/work"):
         return "turns:write"
+    if (method.upper() == 'POST'
+            and re.fullmatch(r'/v1/host/commitments/(?:[^/]+/local-draft|local-work/next|local-work/[^/]+/finish)', path)):
+        return 'turns:write'
+    if method.upper() == 'GET' and re.fullmatch(r'/v1/host/commitments/local-work/[^/]+', path):
+        return 'turns:write'
     if key in WORK_READ_SURFACE_V1:
         return "work:read"
     if method.upper() == "GET" and path.startswith("/v1/host/memory/sources/assets/"):

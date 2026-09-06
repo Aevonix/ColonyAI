@@ -1,5 +1,5 @@
 name: colony
-version: 1.0.2
+version: 1.0.3
 description: |
   Native Hermes adapter for participant-scoped tools, durable turn capture,
   shared execution observations and native post-turn review. Preserves scope

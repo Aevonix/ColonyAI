@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.3 - accepted native local work
+
+- Explicit owner acceptance can associate a local source comparison or summary
+  with an open commitment. One selected native Hermes job executes it using
+  existing initiative, undertaking, session and execution records.
+- Selected reads and final result acceptance honor cancellation. Synced local
+  draft receipts reconcile after interrupted delivery without duplicate inference.
+  Current work exposes pending tasks and unverified reports; a draft does not
+  automatically fulfil its broader commitment or authorize an external effect.
+- Goals remain durably accepted when no execution queue is configured instead of
+  claiming dispatch into a process-local in-memory queue. Explicit queue backends
+  retain their existing behavior.
+
 ## v1.0.2 - scoped self evidence
 
 - Default native per-turn context assembly uses query-dependent contact-knowledge
