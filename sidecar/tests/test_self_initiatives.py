@@ -61,11 +61,53 @@ class TestSelfInitiativeGenerators:
     @pytest.mark.asyncio
     async def test_generate_data_quality_initiatives(self, engine):
         engine.add_context("data_quality_issues", [
-            {"entity_id": "orphan_memories", "entity_type": "orphan_nodes", "count": 5, "description": "5 orphans"},
+            {"entity_id": "dangling_source_links", "entity_type": "orphan_nodes", "count": 5,
+             "description": "5 links reference missing source records"},
         ])
         initiatives = await engine._generate_data_quality_initiatives()
         assert len(initiatives) == 1
         assert initiatives[0].type == InitiativeType.DATA_QUALITY
+        assert initiatives[0].entity_id == "dangling_source_links"
+
+    @pytest.mark.asyncio
+    async def test_retired_unattributed_classifier_cannot_generate_either_repair(self, engine):
+        retired = {"entity_id": "orphan_memories", "entity_type": "orphan_nodes", "count": 27}
+        other = {"entity_id": "dangling_source_links", "entity_type": "orphan_nodes", "count": 5}
+        engine.add_context("data_quality_issues", [retired, dict(retired), other])
+        # Cached retired entries must not consume the agent-action issue limit.
+        engine._last_self_initiative_at["repo_status"] = datetime.now(timezone.utc)
+        quality = await engine._generate_data_quality_initiatives()
+        actions = await engine._generate_agent_action_initiatives()
+        assert [item.entity_id for item in quality] == ["dangling_source_links"]
+        assert [item.entity_id for item in actions] == ["dangling_source_links"]
+        assert actions[0].action_hint == "agent_cleanup_orphans"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("schema_drift", [False, True])
+    async def test_unattributed_memory_is_allowed_while_schema_drift_generates_work(self, engine, schema_drift):
+        # The same graph contains a valid unattributed memory in both cases.
+        # This response also makes the old no-ABOUT query reproduce the false task.
+        async def query(statement):
+            if "orphan_count" in statement:
+                record = {"orphan_count": 1}
+            elif "db.schema.visualization" in statement:
+                record = {"rel_types": ["BELONGS_TO"] if schema_drift else []}
+            else:
+                raise AssertionError(statement)
+            return type("Result", (), {"single": AsyncMock(return_value=record)})()
+
+        session = AsyncMock()
+        session.run.side_effect = query
+        context = AsyncMock()
+        context.__aenter__.return_value = session
+        engine.graph.driver.session.return_value = context
+        await engine._load_data_quality_issues()
+        generated = await engine._generate_data_quality_initiatives()
+        assert [item.entity_id for item in generated] == (["belongs_to_drift"] if schema_drift else [])
+        if generated:
+            assert generated[0].action_hint == "Review schema migration"
+        assert session.run.await_count == 1
+        assert "db.schema.visualization" in session.run.call_args.args[0]
 
     @pytest.mark.asyncio
     async def test_generate_operational_initiatives(self, engine):

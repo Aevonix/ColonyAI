@@ -867,30 +867,11 @@ class InitiativeEngine:
             self._context.setdefault("subsystem_health", [])
 
     async def _load_data_quality_issues(self) -> None:
-        """Query graph for schema drift and orphan detection."""
+        """Query graph for schema drift; unattributed memories are permitted."""
         if self.graph is None or not hasattr(self.graph, 'driver'):
             return
 
         issues = []
-
-        # Check for Memory nodes without :ABOUT edges
-        try:
-            async with self.graph.driver.session(database=self.graph.database) as session:
-                result = await session.run("""
-                    MATCH (m:Memory)
-                    WHERE NOT (m)-[:ABOUT]->(:Person)
-                    RETURN count(m) as orphan_count
-                """)
-                record = await result.single()
-                if record and record.get("orphan_count", 0) > 0:
-                    issues.append({
-                        "entity_id": "orphan_memories",
-                        "entity_type": "orphan_nodes",
-                        "count": record.get("orphan_count"),
-                        "description": f"{record.get('orphan_count')} Memory nodes without :ABOUT edges",
-                    })
-        except Exception as e:
-            logger.debug("Orphan detection query failed: %s", e)
 
         # Check for schema drift: queries referencing non-existent relationships
         try:
@@ -2342,10 +2323,17 @@ class InitiativeEngine:
             )
         return initiatives
 
+    def _data_quality_issues(self) -> List[Dict[str, Any]]:
+        # The retired no-ABOUT classifier can remain in cached/external context.
+        # Do not turn that permitted graph shape into either kind of repair task.
+        return [issue for issue in self._context.get("data_quality_issues", [])
+                if (issue.get("entity_id"), issue.get("entity_type"))
+                != ("orphan_memories", "orphan_nodes")]
+
     async def _generate_data_quality_initiatives(self) -> List[Initiative]:
         """Generate self-initiatives for data quality issues."""
         initiatives: List[Initiative] = []
-        for issue in self._context.get("data_quality_issues", []):
+        for issue in self._data_quality_issues():
             entity_id = issue.get("entity_id", "unknown")
             entity_type = issue.get("entity_type", "unknown")
             description = issue.get("description", "Data quality issue")
@@ -2596,7 +2584,7 @@ class InitiativeEngine:
                 )
 
         # 3. Data quality — auto-fixable issues
-        for issue in self._context.get("data_quality_issues", [])[:2]:
+        for issue in self._data_quality_issues()[:2]:
             entity_id = issue.get("entity_id", "unknown")
             entity_type = issue.get("entity_type", "unknown")
             if entity_type == "orphan_nodes":
