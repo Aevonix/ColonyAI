@@ -59,7 +59,7 @@ def render_memory_context(memories: list[dict[str, Any]]) -> str:
                   "kind": memory.get("kind", "belief"),
                   "source": str(memory.get("source_uri") or ""),
                   "state": str(memory.get("epistemic_state") or "inferred")}
-        for name in ("source_turn_id", "source_message_hash", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version"):
+        for name in ("source_turn_id", "source_message_hash", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source"):
             if memory.get(name) is not None:
                 source[name] = memory[name]
         if memory.get("effective_confidence") is not None:
@@ -120,11 +120,40 @@ def pack_memory_context(
     return selected, (header + "\n".join(lines)) if lines else ""
 
 
-def lexical_query(text: str, max_terms: int = 16) -> str:
-    """Literal words/identifiers, not caller-supplied Lucene operators."""
+def lexical_terms(text: str, max_terms: int = 16) -> list[str]:
+    """The bounded literal terms shared by existing lexical candidate paths."""
     words = dict.fromkeys(word.casefold() for word in _WORDS.findall(text[:4000])
                           if word.casefold() not in _STOP)
-    return " OR ".join(f'"{word}"' for word in list(words)[:max_terms])
+    return list(words)[:max_terms]
+
+
+def lexical_query(text: str, max_terms: int = 16) -> str:
+    """Literal words/identifiers, not caller-supplied Lucene operators."""
+    return " OR ".join(f'"{word}"' for word in lexical_terms(text, max_terms))
+
+
+def contact_fact_candidates(query: str, facts: list[dict[str, Any]], *, limit: int = 25) -> list[dict[str, Any]]:
+    """Lexical candidates from an already authorized current contact-fact view.
+
+    This small scan reuses the existing tokenizer, not a new index or model.
+    Stored knowledge estimates are not canonical quotations or verified beliefs.
+    Explicit listing remains available for records outside this bounded window.
+    """
+    terms = set(lexical_terms(query))
+    if not terms:
+        return []
+    matches = []
+    for fact in facts[:512]:
+        content = str(fact.get('fact') or '')
+        overlap = len(terms.intersection(word.casefold() for word in _WORDS.findall(content[:4000])))
+        if overlap and fact.get('id'):
+            matches.append((overlap, fact, content))
+    matches.sort(key=lambda row: (-row[0], str(row[1]['id'])))
+    return [{'id': 'shared-fact:' + str(fact['id']), 'source_uri': 'shared-fact:' + str(fact['id']),
+             'kind': 'contact_knowledge_estimate', 'epistemic_state': 'unverified',
+             'content': content, 'recorded_source': str(fact.get('source') or 'unknown'),
+             'created_at': fact.get('created_at'), 'relevance': 1 / (60 + rank), 'retrieval_method': 'lexical'}
+            for rank, (_, fact, content) in enumerate(matches[:max(0, min(limit, 25))], 1)]
 
 
 def fuse_candidates(

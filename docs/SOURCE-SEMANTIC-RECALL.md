@@ -5,6 +5,11 @@ candidates as well as lexical candidates. Both enter the existing temporal
 claim handling, reranker and context budget. There is one memory packet per
 turn. A vector ranks potentially relevant evidence; it never determines truth.
 
+Authorized retained contact-knowledge estimates also enter this shared selection
+and budget, using bounded lexical candidates from their existing scoped view.
+They are labeled unverified estimates, not canonical source quotations. See
+[memory quality](MEMORY-QUALITY.md) for candidate limits and fallback behavior.
+
 The normal source transaction queues projection in the existing turn ledger.
 The existing source worker embeds at most 16 chunks per pass, persists its
 cursor and retries failures with backoff. A restart resumes those jobs. Caption
