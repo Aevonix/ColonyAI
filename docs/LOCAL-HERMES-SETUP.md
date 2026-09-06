@@ -14,6 +14,10 @@ python -m pip install . ./sidecar
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
+A separate Hermes environment needs its own native core dependencies. It does
+not need Colony's CLI dependency `typer` or a preinstalled Colony adapter; setup
+can attach the private adapter directly from the Colony environment.
+
 The wizard asks for your name, the agent's name, the model API root and model,
 then whether to start Colony. An API key is prompted without echo. For unattended
 setup use `COLONY_MODEL_API_KEY` in the process environment, never a command-line

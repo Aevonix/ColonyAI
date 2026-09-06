@@ -74,7 +74,7 @@ def _interpreter(candidate):
             candidate = sys.executable
     python = Path(candidate).expanduser().absolute()
     probe = subprocess.run([str(python), '-I', '-c',
-        'import importlib.metadata,json; import httpx,httpcore,typer,yaml; '
+        'import importlib.metadata,json; import httpx,httpcore,yaml; '
         'from agent.memory_manager import MemoryManager; '
         'from hermes_cli.plugins import get_plugin_manager; '
         'print(json.dumps({"version":importlib.metadata.version("hermes-agent")}))'],

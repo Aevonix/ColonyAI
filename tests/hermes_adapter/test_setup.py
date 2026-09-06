@@ -87,6 +87,8 @@ def _native_interpreter(tmp_path, wheel, adapter_installation):
     for source in Path(sysconfig.get_path('purelib')).iterdir():
         if 'colony_hermes' in source.name or source.name in {'colony_memory', '__pycache__'}:
             continue
+        if adapter_installation == 'absent' and source.name.startswith('typer'):
+            continue  # Hermes core does not require Colony's legacy CLI dependency.
         (site/source.name).symlink_to(source, target_is_directory=source.is_dir())
     if adapter_installation == 'wheel':
         run_python('-m', 'pip', 'install', '--no-index', '--no-deps', '--target', site, wheel, cwd=tmp_path)
@@ -107,6 +109,9 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
         result = subprocess.run([str(native_python), *map(str, args)], text=True, capture_output=True, timeout=120, **kwargs)
         assert result.returncode == 0, result.stdout + result.stderr
         return result
+    if not installed_adapter:
+        run_native('-I', '-c', "import importlib.util; assert importlib.util.find_spec('typer') is None",
+                   cwd=tmp_path)
     # Wheel-install Colony separately from the source tree; dependencies must be
     # installed by the qualification job. Optional local reuse is never shipped.
     sidecar_output = output/'sidecar'
