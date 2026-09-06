@@ -2,6 +2,11 @@
 
 ## v1.0.2 - scoped self evidence
 
+- Default native per-turn context assembly uses query-dependent contact-knowledge
+  candidates and the common memory selector/budget instead of an unconditional
+  extra context section. The explicit legacy enriched-context API is unchanged.
+  Existing visibility, expiry, source erasure and explicit listing remain intact;
+  selected estimates are labeled unverified.
 - Runtime completions, failures and timeouts no longer produce automatic
   research-priority weights or claims of task quality and current-model ability.
   The self brief labels their historical, potentially unverified evidence before

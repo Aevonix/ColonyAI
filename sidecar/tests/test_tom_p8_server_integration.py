@@ -1424,20 +1424,20 @@ async def test_context_renders_only_authenticated_enveloped_facts(
     bob = host._p8_viewer_for_request(_request(_authority("bob")), "bob")
     runtime.append_shared_fact(bob_row, producer=bob, origin="server")
 
-    response = await host.context_assemble(
-        _context("alice"), request=alice_request)
+    query = _context("alice")
+    query.incoming_message.content = "allowed alice context"
+    response = await host.context_assemble(query, request=alice_request)
     section = next(
-        part for part in response.sections if part.id == "colony-shared-facts")
+        part for part in response.sections if part.id == "colony-memory")
     assert "allowed alice context" in section.body
     assert "legacy row must not render" not in section.body
     assert "Bob private context" not in section.body
 
     legacy_response = await host.context_assemble(
-        _context("alice"), request=_request(legacy_authority()))
-    assert all(
-        part.id != "colony-shared-facts"
-        for part in legacy_response.sections
-    )
+        query, request=_request(legacy_authority()))
+    legacy_text = '\n'.join(part.body for part in legacy_response.sections)
+    assert all(text not in legacy_text for text in (
+        "allowed alice context", "legacy row must not render", "Bob private context"))
 
 
 @pytest.mark.asyncio

@@ -2553,6 +2553,19 @@ async def context_assemble(
                 quotations.extend(filter_unstructured(list(media_by_id.values()), time_query))
             else:
                 beliefs = filter_unstructured(beliefs, time_query)
+            if not _canonical_only and _tom_context_facts is not None:
+                try:
+                    # The projected view preserves envelope and current-source
+                    # checks. A fact needs query overlap before any fail-open
+                    # reranker path; confidence alone never makes it relevant.
+                    from colony_sidecar.intelligence.graph.recall import contact_fact_candidates
+                    fact_result = _tom_context_facts.list_facts(
+                        contact_id=body.context.contact_id, limit=512)
+                    facts = fact_result if isinstance(fact_result, list) else fact_result.get('facts', [])
+                    quotations.extend(filter_unstructured(
+                        contact_fact_candidates(query_text, facts), time_query))
+                except Exception as exc:
+                    logger.warning('context_assemble contact fact candidates failed (%s)', type(exc).__name__)
             try:
                 max_chars = int(os.environ.get("COLONY_RECALL_CONTEXT_MAX_CHARS", "6000"))
             except (TypeError, ValueError):
@@ -3020,44 +3033,6 @@ async def context_assemble(
                     ))
         except Exception as exc:
             logger.debug("context_assemble comms landscape failed: %s", exc)
-
-    # --- Shared Facts ---
-    if not _canonical_only and _facts_store is not None and contact_id:
-        try:
-            if _p8_runtime is not None:
-                facts = (
-                    _p8_runtime.project_shared_facts(
-                        _p8_viewer,
-                        now=datetime.now(timezone.utc),
-                        subject_person_id=contact_id,
-                        max_facts=5,
-                    ).facts
-                    if _p8_viewer is not None else ()
-                )
-                lines = [
-                    f"- [{fact.confidence:.0%}] {fact.content}"
-                    for fact in facts
-                ]
-            else:
-                facts_result = _facts_store.list_facts(
-                    contact_id=contact_id, limit=5)
-                facts = (
-                    facts_result if isinstance(facts_result, list)
-                    else facts_result.get("facts", [])
-                )
-                lines = [
-                    f"- [{fact.get('confidence', 0):.0%}] {fact['fact']}"
-                    for fact in facts
-                ]
-            if lines:
-                sections.append(ContextSection(
-                    id="colony-shared-facts",
-                    title="Known Facts About Contact",
-                    body="\n".join(lines),
-                    priority=70,
-                ))
-        except Exception as exc:
-            logger.warning("context_assemble shared facts failed: %s", exc)
 
     # --- Unresolved Surprises ---
     if _legacy_global_allowed and _surprise_store is not None:
