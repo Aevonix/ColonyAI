@@ -649,6 +649,7 @@ def catalog_attestation() -> Dict[str, Any]:
             "response_version": 1,
             "viewer_person_id_must_match_turn_contact": True,
             "p8_modes": ["shadow", "live"],
+            "projection_backends": ["p8", "canonical_sources"],
             "assemble_response_attestation_required": True,
         },
     }
@@ -1156,12 +1157,19 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             return False
         if require_owner and value.get("viewer_is_owner") is not True:
             return False
-        if require_scoped and (
-            value.get("scoped_projection_ready") is not True
-            or value.get("p8_mode") not in {"shadow", "live"}
-            or value.get("legacy_global_allowed") is not False
-        ):
-            return False
+        if require_scoped:
+            # Older P8 servers predate the explicit backend field. Accept
+            # their existing attestation, never an implicit P8-off fallback.
+            backend = value.get("projection_backend", "p8")
+            supported = (
+                backend == "p8" and value.get("p8_mode") in {"shadow", "live"}
+            ) or (
+                backend == "canonical_sources" and value.get("p8_mode") == "off"
+                and value.get("viewer_is_owner") is False
+            )
+            if (not supported or value.get("scoped_projection_ready") is not True
+                    or value.get("legacy_global_allowed") is not False):
+                return False
         return True
 
     def _projection_readiness_sync(self, contact_id: str) -> bool:
@@ -1423,7 +1431,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         guest = bound_contact != self._contact_id
         if guest and not self._projection_readiness_sync(bound_contact):
             logger.warning(
-                "Colony guest context withheld: scoped P8 projection is not ready"
+                "Colony guest context withheld: scoped projection is not ready"
             )
             return ""
         try:

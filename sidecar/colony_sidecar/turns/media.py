@@ -226,6 +226,9 @@ class SourceMedia:
                              (description, model, DESCRIPTION_VERSION, json.dumps(model_provenance or {}), job['asset_hash']))
                 conn.execute('DELETE FROM source_media_search WHERE asset_hash=?', (job['asset_hash'],))
                 conn.execute('INSERT INTO source_media_search(asset_hash,description) VALUES (?,?)', (job['asset_hash'], description))
+                from colony_sidecar.turns.source_vectors import enqueue
+                for source in conn.execute('SELECT DISTINCT turn_id FROM source_media_links WHERE asset_hash=?', (job['asset_hash'],)):
+                    enqueue(conn, source['turn_id'])
             return True
 
     async def process_one(self, router):

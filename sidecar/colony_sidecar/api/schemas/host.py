@@ -241,6 +241,7 @@ class ContextProjectionAttestation(BaseModel):
     viewer_attested: bool = False
     viewer_is_owner: bool = False
     p8_mode: Literal["off", "shadow", "live"] = "off"
+    projection_backend: Literal["unavailable", "p8", "canonical_sources"] = "unavailable"
     scoped_projection_ready: bool = False
     legacy_global_allowed: bool = False
 
@@ -315,6 +316,8 @@ class MigrateResponse(BaseModel):
     vectors_failed: int = 0
     duration_s: float = 0.0
     errors: List[str] = []
+    generation_id: str = ""
+    fingerprint: str = ""
 
 
 class IndexRequest(BaseModel):

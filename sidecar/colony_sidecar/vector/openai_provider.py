@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import Any
 
 from colony_sidecar.vector.config import EmbeddingConfig
@@ -28,6 +29,7 @@ class OpenAIAPIEmbeddingProvider(EmbeddingProvider):
         super().__init__(config)
         self._base_url: str = ""
         self._api_key: str = ""
+        self._served_model: str = ""
 
     def configure(
         self,
@@ -35,6 +37,8 @@ class OpenAIAPIEmbeddingProvider(EmbeddingProvider):
         api_key: str,
     ) -> None:
         """Set the API endpoint and key (called by the host plugin)."""
+        if self._served_model and (base_url.rstrip('/') != self._base_url or api_key != self._api_key):
+            raise ValueError('Create a new embedding provider before changing an active endpoint')
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
 
@@ -44,8 +48,8 @@ class OpenAIAPIEmbeddingProvider(EmbeddingProvider):
 
     async def warmup(self) -> None:
         """Verify connectivity with a test embedding."""
-        if not self._base_url or not self._api_key:
-            logger.warning("OpenAI API embedder not configured — set base_url and api_key")
+        if not self._base_url:
+            logger.warning("OpenAI API embedder not configured — set base_url")
             return
         result = await self.embed("warmup")
         logger.info(
@@ -68,11 +72,12 @@ class OpenAIAPIEmbeddingProvider(EmbeddingProvider):
 
         import httpx
 
-        url = f"{self._base_url}/v1/embeddings"
+        url = self._base_url + ('/embeddings' if self._base_url.endswith('/v1') else '/v1/embeddings')
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+        if self._api_key:
+            headers['Authorization'] = f'Bearer {self._api_key}'
         payload: dict[str, Any] = {
             "model": self._config.model_id,
             "input": texts,
@@ -86,11 +91,26 @@ class OpenAIAPIEmbeddingProvider(EmbeddingProvider):
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient(timeout=30) as client:
+                async with httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=False) as client:
                     response = await client.post(url, json=payload, headers=headers)
                     response.raise_for_status()
                     data = response.json()
-                return [item["embedding"] for item in data.get("data", [])]
+                rows = data.get('data', [])
+                if not isinstance(rows, list) or len(rows) != len(texts):
+                    raise ValueError('Embedding response count does not match its inputs')
+                if any('index' in row for row in rows):
+                    if sorted(row.get('index', -1) for row in rows) != list(range(len(texts))):
+                        raise ValueError('Embedding response indexes do not match its inputs')
+                    rows = sorted(rows, key=lambda row: row['index'])
+                vectors = [row['embedding'] for row in rows]
+                if any(len(vector) != self.dimensions or not all(math.isfinite(value) for value in vector)
+                       or not any(vector) for vector in vectors):
+                    raise ValueError('Embedding response contains an invalid vector or dimension')
+                served = str(data.get('model') or 'unknown')
+                if self._served_model and self._served_model != served:
+                    raise ValueError('Embedding endpoint changed its reported model; rebuild with a new provider snapshot')
+                self._served_model = served
+                return vectors
             except (httpx.HTTPError, OSError) as exc:
                 last_exc = exc
                 if attempt < 2:

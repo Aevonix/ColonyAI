@@ -148,6 +148,8 @@ class TurnIdempotencyLedger:
                 initialize(conn)
                 from colony_sidecar.turns.media import initialize as initialize_media
                 initialize_media(conn)
+                from colony_sidecar.turns.source_vectors import initialize as initialize_vectors
+                initialize_vectors(conn)
             self._initialized = True
 
     def record_source(
@@ -212,6 +214,8 @@ class TurnIdempotencyLedger:
             self._index_messages(conn, turn_id, messages)
             from colony_sidecar.beliefs.source_projection import enqueue
             enqueue(conn, turn_id, messages, scope=scope, timezone_name=timezone_name)
+            from colony_sidecar.turns.source_vectors import enqueue as enqueue_vectors
+            enqueue_vectors(conn, turn_id)
         return True
 
     @staticmethod
@@ -333,8 +337,11 @@ class TurnIdempotencyLedger:
                 if retained:
                     conn.execute("UPDATE turn_sources SET messages_json=? WHERE turn_id=?", (json.dumps(retained, ensure_ascii=True, sort_keys=True, separators=(",", ":")), row["turn_id"]))
                     self._index_messages(conn, row["turn_id"], retained)
+                    from colony_sidecar.turns.source_vectors import enqueue as enqueue_vectors
+                    enqueue_vectors(conn, row['turn_id'])
                 else:
                     conn.execute("DELETE FROM turn_sources WHERE turn_id=?", (row["turn_id"],))
+                    conn.execute('DELETE FROM source_vector_jobs WHERE turn_id=?', (row['turn_id'],))
                 # An ordinary response can carry derived excerpts. Preserve its
                 # digest/state fence, but remove cached content after erasure.
                 conn.execute("UPDATE turn_ingestion SET response_json=NULL, error=NULL WHERE turn_id=?", (row["turn_id"],))

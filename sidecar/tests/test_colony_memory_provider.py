@@ -10,8 +10,8 @@ Regression locks:
     one-shot prefetch cache entry;
   * a real-channel resolution miss yields no context and never falls back to
     the provider-wide owner/default contact.
-  * guest context requires a server-attested exact viewer plus a live scoped
-    P8 projection before any context producer is queried;
+  * guest context requires a server-attested exact viewer plus a supported scoped
+    projection before any context producer is queried;
   * temporal and reply-thread fallbacks never query owner-global data for a
     guest, and lifecycle write hooks exact-bind or stay dark.
 """
@@ -675,12 +675,14 @@ def test_guest_preflight_failure_never_calls_assemble(
     assert _assemble_calls(fake) == []
 
 
-@pytest.mark.parametrize("mode", ["shadow", "live"])
+@pytest.mark.parametrize("mode", ["shadow", "live", "canonical_sources"])
 def test_guest_context_requires_preflight_atomic_policy_and_response_attestation(
         provider_mod, monkeypatch, mode):
     set_turn = _install_session_context(monkeypatch)
     set_turn(platform="sms", sender="+15550003", chat="thread-3")
     projection = _projection("cid-guest", mode=mode)
+    if mode == "canonical_sources":
+        projection.update(p8_mode="off", projection_backend=mode, scoped_projection_ready=True)
     fake = _FakeHttpx(routes={
         _RESOLVE: {"contact_id": "cid-guest"},
         _READINESS: projection,
@@ -941,6 +943,7 @@ def test_catalog_attests_read_only_prompt_and_provider_privacy(
         "response_version": 1,
         "viewer_person_id_must_match_turn_contact": True,
         "p8_modes": ["shadow", "live"],
+        "projection_backends": ["p8", "canonical_sources"],
         "assemble_response_attestation_required": True,
     }
     import hashlib
@@ -954,3 +957,18 @@ def test_catalog_attests_read_only_prompt_and_provider_privacy(
     assert all(name in prompt for name in catalog["model_visible_tool_names"])
     assert "colony_write_memory" not in prompt
     assert "handoff" not in prompt.lower()
+
+
+@pytest.mark.parametrize("change", [
+    {"projection_backend": "unknown"}, {"projection_backend": None},
+    {"p8_mode": "shadow"}, {"viewer_is_owner": True},
+    {"legacy_global_allowed": True}, {"viewer_person_id": "another-guest"},
+    {"viewer_attested": False}, {"scoped_projection_ready": False},
+])
+def test_canonical_projection_never_weakens_exact_guest_boundary(provider_mod, change):
+    projection = _projection("cid-guest", mode="off")
+    projection.update(projection_backend="canonical_sources", scoped_projection_ready=True)
+    assert provider_mod.ColonyMemoryProvider._projection_attestation_valid(
+        projection, contact_id="cid-guest", require_scoped=True)
+    assert not provider_mod.ColonyMemoryProvider._projection_attestation_valid(
+        {**projection, **change}, contact_id="cid-guest", require_scoped=True)

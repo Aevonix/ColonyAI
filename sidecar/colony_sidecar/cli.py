@@ -106,6 +106,8 @@ def main() -> None:
     migrate_p = sub.add_parser("migrate-tier", help="Migrate vectors from old model to current")
     migrate_p.add_argument("--old-model", default=None, help="Old model ID to migrate from (default: all)")
     migrate_p.add_argument("--batch-size", type=int, default=64, help="Batch size for embedding")
+    migrate_p.add_argument("--wait-seconds", type=float, default=600,
+                           help="Maximum time to wait for completion; the server job continues (default: 600)")
 
     # --- activate-multimodal ---
     mm_p = sub.add_parser("activate-multimodal", help="Enable multimodal embeddings and rerank")
@@ -507,6 +509,8 @@ def main() -> None:
             print(f"Could not connect to sidecar: {e}")
 
     elif args.command == "migrate-tier":
+        if not 0 < args.wait_seconds < float("inf"):
+            parser.error("--wait-seconds must be finite and greater than zero")
         _load_dotenv()
         import httpx
         host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
@@ -524,10 +528,12 @@ def main() -> None:
                 task_id = data.get("task_id", "")
                 print(f"Migration started (task_id={task_id})")
                 import time
-                while True:
-                    time.sleep(2)
+                deadline = time.monotonic() + args.wait_seconds
+                status_url = f"http://{host}:{port}/v1/host/memory/migrate/{task_id}"
+                while time.monotonic() < deadline:
+                    time.sleep(min(2, max(0, deadline - time.monotonic())))
                     status_resp = httpx.get(
-                        f"http://{host}:{port}/v1/host/memory/migrate/{task_id}",
+                        status_url,
                         headers={"Authorization": f"Bearer {api_key}"},
                         timeout=10,
                     )
@@ -538,13 +544,28 @@ def main() -> None:
                             break
                         elif sd.get("status") == "failed":
                             print(f"Migration failed: {sd.get('errors', [])}")
-                            break
+                            print("Re-run colony migrate-tier with the same settings to resume staged work.")
+                            raise SystemExit(1)
+                        elif sd.get("status") == "resumable":
+                            print("Migration is interrupted, not complete. Re-run colony migrate-tier with the same settings to resume staged work.")
+                            raise SystemExit(2)
                         else:
                             print(f"  ... {sd.get('vectors_migrated', 0)} vectors migrated so far")
+                    else:
+                        print(f"Migration status unavailable (HTTP {status_resp.status_code}); completion is not confirmed.")
+                        print("After checking the sidecar, re-run colony migrate-tier with the same settings to resume staged work.")
+                        raise SystemExit(2)
+                else:
+                    print(f"Stopped waiting; the server migration may still be running. Check GET {status_url}.")
+                    print("After an interruption, re-run colony migrate-tier with the same settings to resume staged work.")
+                    raise SystemExit(2)
             else:
                 print(f"Migration failed: {resp.status_code} {resp.text}")
+                raise SystemExit(1)
         except Exception as e:
             print(f"Could not connect to sidecar: {e}")
+            print("Completion is not confirmed. Check the sidecar before resuming colony migrate-tier.")
+            raise SystemExit(1)
 
     elif args.command == "activate-multimodal":
         _load_dotenv()

@@ -27,6 +27,8 @@ class MigrationResult:
     vectors_failed: int = 0
     duration_s: float = 0.0
     errors: list[str] = field(default_factory=list)
+    generation_id: str = ""
+    fingerprint: str = ""
 
 
 @dataclass
@@ -96,6 +98,7 @@ async def migrate_tier(
     pipeline,
     old_model_id: Optional[str] = None,
     batch_size: int = 64,
+    graph=None,
 ) -> MigrationResult:
     """Migrate all vectors to the current embedding model.
 
@@ -115,6 +118,9 @@ async def migrate_tier(
     -------
     MigrationResult
     """
+    if getattr(store, 'catalog', None) is not None:
+        return await _migrate_generation(store, pipeline, graph=graph,
+                                         old_model_id=old_model_id, batch_size=batch_size)
     from colony_sidecar.vector.collections import Collection
     from colony_sidecar.vector.backfill import _backfill_collection
 
@@ -198,6 +204,98 @@ async def migrate_tier(
         _update_env(current_model_id, pipeline)
 
     result.duration_s = time.monotonic() - start
+    return result
+
+
+async def _migrate_generation(store, pipeline, *, graph, old_model_id, batch_size):
+    """Rebuild from retained evidence; the selected generation is never rewritten."""
+    from colony_sidecar.vector.collections import Collection
+    from colony_sidecar.vector.indexes import IncompatibleIndex
+    if store.identity != pipeline.index_identity:
+        raise IncompatibleIndex('The embedding pipeline and index identity do not match')
+    if old_model_id:
+        raise ValueError('A generation rebuild must include all retained rows, not one model subset')
+    if not 1 <= batch_size <= 128:
+        raise ValueError('Rebuild batch size must be between 1 and 128')
+    started = time.monotonic()
+    generation = store.catalog.begin(store.identity)
+    result = MigrationResult(generation_id=generation['id'], fingerprint=store.identity.fingerprint)
+    source_generation = store.catalog.active()
+
+    async def source_rows(collection):
+        if collection == Collection.MEMORIES and graph is not None:
+            # The graph is authoritative for memories, including rows missed by
+            # the old index during embedding outages. This is not a restore.
+            async for row in graph.iter_indexable_memories():
+                yield row
+        else:
+            db = await store._generation_db(source_generation)
+            if collection.value in await db.table_names():
+                table = await db.open_table(collection.value)
+                for row in (await table.query().select(['id', 'text', 'metadata']).to_pandas()).to_dict('records'):
+                    yield row
+
+    async def write_batch(collection, rows):
+        vectors = await pipeline.embed_batch([row['text'] for row in rows])
+        if len(vectors) != len(rows):
+            raise ValueError('Embedding batch response does not match retained inputs')
+        for vector in vectors:
+            store._validate_vector(vector)
+        table = await store._table(collection, write=True, generation=generation)
+        for row, vector in zip(rows, vectors):
+            meta = row['metadata']
+            if not store._eligible(collection, row['id'], meta):
+                continue
+            now = time.time()
+            meta = {**meta, 'embedding_fingerprint': store.identity.fingerprint,
+                    'model_id': store.identity.requested_model, 'served_model': store.identity.served_model,
+                    'declared_revision': store.identity.declared_revision, 'embedded_at': now}
+            projected = {'id': row['id'], 'text': row['text'], 'vector': vector,
+                         'metadata': json.dumps(meta, default=str),
+                         'scope_key': meta.get('scope_key'),
+                         'modality': meta.get('modality', 'text'), 'image_hash': meta.get('image_hash', ''),
+                         'image_ref': meta.get('image_ref', ''), 'thumbnail_ref': meta.get('thumbnail_ref', ''),
+                         'caption': meta.get('caption', ''), 'created_at': now, 'updated_at': now}
+            # Existing staged rows include concurrent live writes. Resume does
+            # not overwrite them with an earlier source snapshot.
+            await table.merge_insert('id').when_not_matched_insert_all().execute([projected])
+            if not store._eligible(collection, row['id'], meta):
+                await table.delete('id = ' + store._quoted(row['id']))
+            else:
+                result.vectors_migrated += 1
+
+    try:
+        for collection in Collection:
+            table = await store._table(collection, write=True, generation=generation)
+            present = {str(row['id']) for row in await table.query().select(['id']).to_list()}
+            batch = []
+            async for row in source_rows(collection):
+                meta = row.get('metadata') or {}
+                if isinstance(meta, str):
+                    meta = json.loads(meta)
+                if row['id'] in present or not row.get('text') or not store._eligible(collection, row['id'], meta):
+                    continue
+                # Text re-embedding cannot recreate an image vector space.
+                # Preserve the old generation; require a qualified multimodal
+                # rebuild rather than silently encoding an empty/caption text.
+                if meta.get('modality') == 'image':
+                    raise ValueError('Retained image vectors require a qualified multimodal reindex')
+                batch.append({**row, 'metadata': meta})
+                if len(batch) >= batch_size:
+                    await write_batch(collection, batch)
+                    batch = []
+            if batch:
+                await write_batch(collection, batch)
+            result.collections_migrated += 1
+        store.catalog.promote(generation['id'], store.identity)
+    except Exception as exc:
+        # A retry resumes this generation. No deleted row is restored, and the
+        # active pointer has not moved on a partial rebuild.
+        message = f'{type(exc).__name__}: {exc}'
+        result.errors.append(message)
+        result.vectors_failed += len(locals().get('batch', []))
+        store.catalog.finish(generation['id'], error=message)
+    result.duration_s = time.monotonic() - started
     return result
 
 

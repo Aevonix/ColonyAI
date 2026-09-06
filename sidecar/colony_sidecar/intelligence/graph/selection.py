@@ -97,7 +97,7 @@ class RecallSelector:
         except (TypeError, ValueError):
             timeout_ms = 1200.0
 
-        docs = [str(m.get("content", "")) for m in memories]
+        docs = [str(m.get("ranking_text", m.get("content", ""))) for m in memories]
         try:
             results = await asyncio.wait_for(
                 rerank_fn(query, docs, top_k=len(docs)),

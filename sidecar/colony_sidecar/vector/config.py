@@ -52,6 +52,9 @@ class EmbeddingConfig:
     device: Optional[str] = None  # auto-detected if None
     quantization: Optional[str] = None  # "int8" | "fp8" | None
     cache_dir: Optional[str] = None  # local model weights directory
+    revision: Optional[str] = None  # operator-declared weights/deployment revision; not verification
+    base_url: Optional[str] = field(default=None, repr=False)
+    api_key: Optional[str] = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls) -> Optional[EmbeddingConfig]:
@@ -71,6 +74,7 @@ class EmbeddingConfig:
             device=os.environ.get("COLONY_EMBED_DEVICE") or None,
             quantization=os.environ.get("COLONY_EMBED_QUANTIZATION") or None,
             cache_dir=os.environ.get("COLONY_EMBED_CACHE_DIR") or None,
+            revision=os.environ.get("COLONY_EMBED_REVISION") or None,
         )
 
 

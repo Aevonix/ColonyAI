@@ -321,10 +321,23 @@ default. The provider first calls
 `GET /v1/host/context/projection-readiness` (`context:read`) and then sends
 `projection_policy=scoped_viewer_required` atomically with guest assembly. A
 guest response is accepted only when the server attests the exact turn contact,
-P8 scoped projection is attached, and legacy-global context is excluded.
-Without P8, scoped guests receive 503 before any global producer runs; the
-exact scoped owner and temporary legacy migration bearer retain their explicit
-carve-outs. Guest temporal context is local-clock-only, and legacy global
+a supported scoped projection is ready, and legacy-global context is excluded.
+`projection_backend=p8` retains the existing shadow/live visibility projection.
+When P8 is absent, `projection_backend=canonical_sources` provides the guest's
+own canonical source quotations, source-backed claims and image captions through
+the existing single recall selector and character budget, plus proven shared
+commitments and the current UTC clock. A commitment's `person_id` is only a
+subject selector. Guest visibility additionally requires metadata
+`source_turn_id` naming their current person-scoped source, with the displayed
+description present in that source. Unclassified legacy tasks and owner notes
+about a guest are omitted; reservation session IDs are not exposed. This rule
+does not backfill provenance or assume that introspection already supplies it. Checkpoint evidence retains its original
+session restriction. This backend does not query legacy graph, contact profiles,
+relationship/affect, shared-fact mirrors, deployment identity, skills, or global
+producers. Its response notices describe these omitted capabilities; it does not
+claim that P8 is running. The exact scoped owner and temporary legacy migration
+bearer retain their existing context behavior. Older providers which require P8
+will keep withholding guest context until their adapter is upgraded. Guest temporal context is local-clock-only, and legacy global
 reply-window lookup is disabled pending a transport-attested endpoint. The
 provider's direct commitments/affect/facts/timeline tools are likewise
 owner/system-only until those endpoints emit scoped P8 projections; guest
