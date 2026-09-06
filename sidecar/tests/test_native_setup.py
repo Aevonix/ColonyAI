@@ -61,7 +61,6 @@ def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args
     assert principal['credentials'][0]['secret'] not in (home/'config.yaml').read_text()
     assert (home/'SOUL.md').read_text().startswith('# Orion')
     assert (state/'adapter/colony_hermes/evidence.py').is_file()
-    assert not (home/'skills').exists()  # Packaged guidance is opt-in.
     assert (state/'api-keyring.json').stat().st_mode & 0o777 == 0o600
     # Same selected home finds this instance without a separate global pointer.
     monkeypatch.delenv('COLONY_STATE_DIR', raising=False)
@@ -73,40 +72,6 @@ def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args
     before = (home/'config.yaml').read_bytes(), (state/'api-keyring.json').read_bytes()
     assert setup.run_init(None, args) == 0
     assert before == ((home/'config.yaml').read_bytes(), (state/'api-keyring.json').read_bytes())
-
-
-def test_optional_task_skills_preserve_existing_copies_on_repeated_init(args, capsys):
-    args.task_skills = True
-    home = Path(args.hermes_home)
-    existing = home/'skills'/'colony-evidence-recall'/'SKILL.md'
-    existing.parent.mkdir(parents=True)
-    original = b'Owner-edited recall procedure\n'
-    existing.write_bytes(original)
-    assert setup.run_init(None, args) == 0
-    assert existing.read_bytes() == original
-    installed = home/'skills'/'colony-work-handoff'/'SKILL.md'
-    expected = setup_hermes._adapter_resources(args.adapter_wheel)['colony_hermes/skills/colony-work-handoff/SKILL.md']
-    assert installed.read_bytes() == expected
-    before = installed.stat().st_mtime_ns
-    assert setup.run_init(None, args) == 0
-    assert installed.stat().st_mtime_ns == before
-    assert existing.read_bytes() == original
-    output = capsys.readouterr().out
-    assert 'Existing task skill preserved: colony-evidence-recall' in output
-    assert 'Task skill unchanged: colony-work-handoff' in output
-
-
-def test_existing_instance_can_add_task_skills_without_model_setup(args, monkeypatch):
-    assert setup.run_init(None, args) == 0
-    home = Path(args.hermes_home)
-    before = (home/'config.yaml').read_bytes(), (home/'colony/instance.json').read_bytes()
-    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Task skill installation probed a model'))
-    monkeypatch.setattr(setup_hermes, '_interpreter', lambda *a: pytest.fail('Task skill installation changed the runtime'))
-    args.task_skills = True
-    assert setup.run_init(None, args) == 0
-    for name in ('colony-evidence-recall', 'colony-work-handoff'):
-        assert (home/'skills'/name/'SKILL.md').is_file()
-    assert before == ((home/'config.yaml').read_bytes(), (home/'colony/instance.json').read_bytes())
 
 
 def test_attach_preserves_existing_identity_channels_model_and_unrelated_env(args):

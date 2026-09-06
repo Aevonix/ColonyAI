@@ -106,29 +106,6 @@ def _adapter_resources(wheel=None):
     return resources
 
 
-def _task_skill_resources(resources):
-    names = ('colony-evidence-recall', 'colony-work-handoff')
-    paths = {name: f'colony_hermes/skills/{name}/SKILL.md' for name in names}
-    if any(path not in resources for path in paths.values()):
-        raise ValueError('Selected adapter does not contain the optional task skills; supply a current --adapter-wheel')
-    return {name: resources[path] for name, path in paths.items()}
-
-
-def _install_task_skills(home, skills):
-    for name, content in skills.items():
-        directory = home/'skills'/name
-        path = directory/'SKILL.md'
-        if directory.exists() or directory.is_symlink():
-            if not directory.is_symlink() and not path.is_symlink() and path.is_file() and path.read_bytes() == content:
-                print(f'Task skill unchanged: {name}')
-            else:
-                print(f'Existing task skill preserved: {name}. Compare it with the packaged skill before replacing it manually.')
-            continue
-        directory.mkdir(parents=True, mode=0o700)
-        _private_write(path, content)
-        print(f'Optional task skill installed: {name}')
-
-
 def _adapter_binding(python, resources):
     """Respect native entry-point precedence, verifying the selected code first."""
     expected = {name: hashlib.sha256(value).hexdigest() for name, value in resources.items()}
@@ -239,9 +216,6 @@ def run(root_dir=None, args=None):
             raise ValueError('Colony is explicitly disabled in this home; resolve that setting before attachment')
         if (home/'colony-memory.json').exists():
             raise ValueError('Existing native Colony settings need an explicit migration; select a new home')
-        task_skills = bool(getattr(args, 'task_skills', False))
-        if not noninteractive and not task_skills:
-            task_skills = ask('Install optional recall and work-handoff task skills? [y/N]', 'N').lower() in {'y', 'yes'}
         if (state/'instance.json').exists():
             manifest = json.loads((state/'instance.json').read_text())
             if manifest.get('hermes_home') != str(home):
@@ -259,8 +233,6 @@ def run(root_dir=None, args=None):
                 verify_tools(options['base_url'], options['model'], options['api_key'])
                 install(state)
                 print('Accepted local drafts are registered. Restart this Colony instance to load its new job binding.')
-            if task_skills:
-                _install_task_skills(home, _task_skill_resources(_adapter_resources(getattr(args, 'adapter_wheel', None))))
             os.environ['COLONY_STATE_DIR'] = str(state)
             print(f'Existing private instance retained: {state}')
             print(f'Use colony --instance {str(state)!r} start, then status.')
@@ -280,7 +252,6 @@ def run(root_dir=None, args=None):
             replace_provider = True
         python = _interpreter(getattr(args, 'hermes_python', None))
         resources = _adapter_resources(getattr(args, 'adapter_wheel', None))
-        skills = _task_skill_resources(resources) if task_skills else {}
         binding = _adapter_binding(python, resources)
         owner_name = ask('Your name', getattr(args, 'contact_name', None) or os.environ.get('USER', 'Owner'), True)
         agent_name = ask('Agent name', getattr(args, 'agent_name', None) or 'Assistant', True)
@@ -452,7 +423,6 @@ def run(root_dir=None, args=None):
         if local_work:
             from .setup_local_work import install
             install(state)
-        _install_task_skills(home, skills)
         print(f'Private agent configured in {home}; state in {state}.')
         print('Adapter loading: ' + binding['mode'] + ' (canonical artifact bytes verified).')
         print('Canonical memory capture and recollection are enabled for new Hermes sessions.')

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Removed the experimental evidence-recall and work-handoff task skills and
+  the setup wizard's `--task-skills` option. Sixteen runs across four synthetic
+  tasks and two local processors compared skills present versus absent and
+  showed no consistent benefit.
+  Existing private skill copies are left untouched. Memory and work tools
+  continue to operate through the native Hermes adapter.
+
 ## v1.0.4 - bounded memory selection
 
 - Combined recall submits at most four times the requested packet count to the
