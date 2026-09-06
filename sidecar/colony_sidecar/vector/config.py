@@ -53,6 +53,8 @@ class EmbeddingConfig:
     quantization: Optional[str] = None  # "int8" | "fp8" | None
     cache_dir: Optional[str] = None  # local model weights directory
     revision: Optional[str] = None  # operator-declared weights/deployment revision; not verification
+    base_url: Optional[str] = field(default=None, repr=False)
+    api_key: Optional[str] = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls) -> Optional[EmbeddingConfig]:

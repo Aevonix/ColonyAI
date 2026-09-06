@@ -286,7 +286,6 @@ async def _migrate_generation(store, pipeline, *, graph, old_model_id, batch_siz
             if batch:
                 await write_batch(collection, batch)
             result.collections_migrated += 1
-        store.catalog.finish(generation['id'])
         store.catalog.promote(generation['id'], store.identity)
     except Exception as exc:
         # A retry resumes this generation. No deleted row is restored, and the

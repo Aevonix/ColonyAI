@@ -127,17 +127,21 @@ class IndexCatalog:
             raise IncompatibleIndex('Active embedding index is unverified or incompatible; lexical recall remains available')
         return active
 
-    def finish(self, generation_id: str, *, error: str | None = None):
+    def finish(self, generation_id: str, *, error: str):
         with self.ledger._connect() as conn:
-            conn.execute("UPDATE vector_generations SET status=?,error=? WHERE id=? AND status='building'",
-                         ('building' if error else 'ready', error, generation_id))
+            conn.execute("UPDATE vector_generations SET error=? WHERE id=? AND status='building'",
+                         (error, generation_id))
 
     def promote(self, generation_id: str, identity: EmbeddingIdentity):
         with self.ledger._connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
             row = conn.execute('SELECT * FROM vector_generations WHERE id=?', (generation_id,)).fetchone()
-            if row is None or row['status'] != 'ready' or row['fingerprint'] != identity.fingerprint:
+            if row is None or row['status'] != 'building' or row['fingerprint'] != identity.fingerprint:
                 raise IncompatibleIndex('Only a complete generation matching the selected embedding identity can be promoted')
+            # The caller has finished writing all collections. Completion and
+            # pointer movement are one commit: interruption cannot strand a
+            # ready generation containing arrivals absent from the old index.
+            conn.execute("UPDATE vector_generations SET status='ready',error=NULL WHERE id=?", (generation_id,))
             conn.execute("UPDATE vector_generations SET status='retained' WHERE id=(SELECT generation_id FROM vector_active WHERE slot=1) AND id<>?", (generation_id,))
             conn.execute('UPDATE vector_active SET generation_id=? WHERE slot=1', (generation_id,))
 

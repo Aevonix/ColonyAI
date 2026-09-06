@@ -45,6 +45,9 @@ one SQLite transaction. Old generations remain available for inspection or a
 separately qualified recovery. This packet provides no unattended old-generation
 rollback command and does not restore authoritative memory or authority state.
 The ordinary migration API rejects concurrent rebuilds in one server process.
+The CLI stops on interrupted/resumable or unavailable status and explains how
+to resume without claiming completion. `--wait-seconds` bounds waiting (600
+seconds by default); reaching that limit does not cancel the server job.
 
 All managed vector deletes create an exact-ID tombstone first and remove that
 ID from active, staged and retained generations. Canonical-source erasure also

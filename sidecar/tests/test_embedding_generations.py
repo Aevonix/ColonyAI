@@ -124,6 +124,88 @@ async def test_canonical_source_tombstone_blocks_old_rows_without_cleanup(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_interrupted_completion_keeps_new_arrivals_in_resumable_generation(tmp_path):
+    await legacy(tmp_path)
+    identity = EmbeddingIdentity('new', 'served-new', 'r2', 2)
+    store = await managed(tmp_path, identity)
+    generation = store.catalog.begin(identity)
+    await store.add(Collection.CONVERSATIONS, 'arrival', 'A new ordinary turn.', [1., 0.])
+    # Fail after the completion status update but before pointer commit. SQLite
+    # must roll both back, including on a fresh catalog/process view.
+    with store.catalog.ledger._connect() as conn:
+        conn.execute("""CREATE TRIGGER interrupt_promotion BEFORE UPDATE ON vector_active
+                        BEGIN SELECT RAISE(ABORT, 'interrupted commit'); END""")
+    result = await migrate_tier(store, Pipeline(identity))
+    assert result.errors and store.catalog.active()['id'] == 'legacy'
+    fresh = await managed(tmp_path, identity)
+    assert fresh.catalog.begin(identity)['id'] == generation['id']
+    assert fresh.catalog.write_generation(identity)['id'] == generation['id']
+    await fresh.add(Collection.CONVERSATIONS, 'after-restart', 'Another ordinary turn.', [1., 0.])
+    with fresh.catalog.ledger._connect() as conn:
+        conn.execute('DROP TRIGGER interrupt_promotion')
+    resumed = await migrate_tier(fresh, Pipeline(identity))
+    assert not resumed.errors and resumed.generation_id == generation['id']
+    assert {hit.id for hit in await fresh.search(Collection.CONVERSATIONS, [1., 0.])} == {'arrival', 'after-restart'}
+
+
+@pytest.mark.parametrize('status_code,status,wait,expected', [
+    (200, 'resumable', 10, 'interrupted, not complete'),
+    (404, '', 10, 'completion is not confirmed'),
+    (200, 'running', 1, 'server migration may still be running'),
+])
+def test_cli_migration_stops_truthfully(monkeypatch, capsys, status_code, status, wait, expected):
+    import httpx
+    import sys
+    import time
+    from colony_sidecar import cli
+    monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
+    monkeypatch.setattr(sys, 'argv', ['colony', 'migrate-tier', '--wait-seconds', str(wait)])
+    clock = [0.]
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(httpx, 'post', lambda *a, **kw: httpx.Response(200, json={'task_id':'neutral-task'}))
+    polls = []
+    def get(*args, **kwargs):
+        polls.append(args)
+        return httpx.Response(status_code, json={'status':status})
+    monkeypatch.setattr(httpx, 'get', get)
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 2 and len(polls) == 1
+    assert expected in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_multimodal_api_has_explicit_endpoint_without_losing_text_provider(monkeypatch):
+    import httpx
+    from colony_sidecar.vector.config import EmbeddingConfig
+    from colony_sidecar.vector.embedder import EmbeddingPipeline
+    from colony_sidecar.vector.openai_provider import OpenAIAPIEmbeddingProvider
+    from colony_sidecar.vector.multimodal_provider import make_multimodal_provider
+    config = EmbeddingConfig(provider='openai_api', model_id='neutral', dimensions=2)
+    with pytest.raises(ValueError, match='explicit endpoint'):
+        make_multimodal_provider(config)
+    config.base_url, config.api_key = 'http://fixture/v1/', 'private-test-key'
+    assert config.api_key not in repr(config)
+    text_provider = OpenAIAPIEmbeddingProvider(config)
+    text_provider.configure(config.base_url, config.api_key)
+    requests = []
+    def response(request):
+        requests.append(request)
+        return httpx.Response(200, json={'model':'neutral', 'data':[{'index':0, 'embedding':[1., 0.]}]})
+    client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: client(transport=httpx.MockTransport(response), **kw))
+    mm_provider = make_multimodal_provider(config)
+    pipeline = EmbeddingPipeline(provider=text_provider, multimodal_provider=mm_provider)
+    await pipeline.warmup()
+    assert await pipeline.embed('neutral ordinary text') == [1., 0.]
+    assert await mm_provider.embed_text('neutral image description') == [1., 0.]
+    assert len(requests) == 3
+    assert all(str(request.url) == 'http://fixture/v1/embeddings' for request in requests)
+    assert all(request.headers['Authorization'] == 'Bearer private-test-key' for request in requests)
+
+
+@pytest.mark.asyncio
 async def test_provider_order_identity_and_query_format_are_bound(monkeypatch):
     import httpx
     from colony_sidecar.vector.config import EmbeddingConfig

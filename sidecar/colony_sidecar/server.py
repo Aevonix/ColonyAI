@@ -1750,7 +1750,7 @@ async def lifespan(app: FastAPI):
                         state_dir=os.environ.get("COLONY_STATE_DIR", "."),
                     )
                     pipeline = EmbeddingPipeline(
-                        provider=make_provider(embed_config),
+                        provider=provider,
                         multimodal_provider=mm_provider,
                         image_store=img_store,
                     )

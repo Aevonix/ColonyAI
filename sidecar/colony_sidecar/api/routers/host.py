@@ -12710,8 +12710,10 @@ async def seed_self_knowledge_endpoint(force: bool = Query(False, description="F
     )
 
 
-# =====================================================================# World Model — Entity CRUD
-# =====================================================================
+# ============================================================================
+# World Model — Entity CRUD
+# ============================================================================
+
 @router.post("/world/entities", response_model=WorldEntityDetailResponse)
 async def create_world_entity(body: WorldEntityCreateRequest) -> WorldEntityDetailResponse:
     """Create a new entity in the world model."""
@@ -12801,8 +12803,10 @@ async def delete_world_entity(entity_id: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# =====================================================================# World Model — Relationship CRUD
-# =====================================================================
+# ============================================================================
+# World Model — Relationship CRUD
+# ============================================================================
+
 @router.post("/world/relationships", response_model=WorldRelationshipResponse)
 async def create_world_relationship(body: WorldRelationshipCreateRequest) -> WorldRelationshipResponse:
     """Create a new relationship between two entities."""
@@ -12922,8 +12926,10 @@ async def delete_world_relationship(rel_id: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# =====================================================================# World Model — Graph Traversal
-# =====================================================================
+# ============================================================================
+# World Model — Graph Traversal
+# ============================================================================
+
 @router.get("/world/entities/{entity_id}/neighborhood", response_model=WorldNeighborhoodResponse)
 async def get_entity_neighborhood(
     entity_id: str,
@@ -12982,8 +12988,10 @@ async def find_entity_path(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# =====================================================================# World Model — Causal chain (read-only; the sanctioned causal-edge surface)
-# =====================================================================
+# ============================================================================
+# World Model — Causal chain (read-only; the sanctioned causal-edge surface)
+# ============================================================================
+
 @router.get("/world/causal/chain")
 async def world_causal_chain(
     entity_id: str,
@@ -13037,8 +13045,10 @@ async def get_world_stats() -> WorldStatsResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# =====================================================================# World Model — Helpers
-# =====================================================================
+# ============================================================================
+# World Model — Helpers
+# ============================================================================
+
 def _wm_entity_to_response(entity) -> WorldEntityDetailResponse:
     """Convert a BaseEntity subclass to WorldEntityDetailResponse."""
     return WorldEntityDetailResponse(
@@ -13072,8 +13082,10 @@ def _wm_rel_to_response(rel) -> WorldRelationshipResponse:
     )
 
 
-# =====================================================================# Multi-Agent — Agent Management (v0.7.0)
-# =====================================================================
+# ============================================================================
+# Multi-Agent — Agent Management (v0.7.0)
+# ============================================================================
+
 _agent_store = None
 _invite_store = None
 _initiative_store = None

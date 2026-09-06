@@ -354,13 +354,17 @@ class APIMultimodalProvider(MultimodalEmbeddingProvider):
 
     def __init__(self, config: EmbeddingConfig) -> None:
         super().__init__(config)
-        self._base_url = config.base_url or "https://api.jina.ai/v1"
+        if not config.base_url:
+            raise ValueError("Multimodal API embeddings require an explicit endpoint")
+        self._base_url = config.base_url.rstrip("/")
+        if not self._base_url.endswith("/v1"):
+            self._base_url += "/v1"
         self._api_key = config.api_key or ""
 
     async def embed_text(self, text: str) -> list[float]:
         import httpx
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60, trust_env=False, follow_redirects=False) as client:
             resp = await client.post(
                 f"{self._base_url}/embeddings",
                 headers={"Authorization": f"Bearer {self._api_key}"},
@@ -379,7 +383,7 @@ class APIMultimodalProvider(MultimodalEmbeddingProvider):
 
         b64 = base64.b64encode(image.data).decode()
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60, trust_env=False, follow_redirects=False) as client:
             resp = await client.post(
                 f"{self._base_url}/embeddings",
                 headers={"Authorization": f"Bearer {self._api_key}"},
