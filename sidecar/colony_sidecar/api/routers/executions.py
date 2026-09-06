@@ -55,6 +55,9 @@ async def active(request: Request, contact_id: str, session_id: str = "", limit:
 async def with_queue_work(view, *, owner, limit=8):
     if not owner:
         return view
+    import asyncio
+    from colony_sidecar.turns.hermes_work import cron_view
+    view['native_cron'] = await asyncio.to_thread(cron_view, limit=limit)
     from colony_sidecar.api.routers import host
     queue = getattr(host._task_queue, 'queue', host._task_queue)
     if queue is not None and callable(getattr(queue, 'current_work', None)):
