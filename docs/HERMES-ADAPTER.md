@@ -326,3 +326,9 @@ mutation/rollback and ledger recovery with controlled task outcomes. A selected
 oracle only establishes performance on its declared task cases. No evaluator
 or automatic rollout is enabled by default, and this contract does not qualify
 arbitrary code changes or prove general self-improvement.
+
+A disposable local-inference qualification also exercised an actual native
+review and exact text patch: its declared task scored 0/2 before, 2/2 with the
+candidate, and 2/2 after activation. An injected evaluator outage restored the
+original bytes through native rollback. This was a neutral fixture, not a live
+recurring skill or an observed spontaneous model regression.
