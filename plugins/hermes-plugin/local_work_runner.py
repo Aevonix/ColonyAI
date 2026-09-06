@@ -10,6 +10,7 @@ import subprocess
 
 from .client import ColonyClient
 from .local_work import Undertaking, request, selected
+from .model_response import decode_json_response
 
 
 def digest(path):
@@ -143,7 +144,7 @@ def run_once(*, home, job_id, destination, provider=None, model=None, client=Non
                 or native_result.get('interrupted') or native_result.get('error')
                 or work.read != set(range(len(assignment['context']['sources'])))):
             raise ValueError('native_local_draft_incomplete')
-        interpretation = json.loads(raw)
+        interpretation = decode_json_response(raw)
         if (not isinstance(interpretation, dict) or set(interpretation) != {'draft', 'sources'}
                 or not isinstance(interpretation['draft'], str) or not interpretation['draft'].strip()
                 or len(interpretation['draft']) > 32000
