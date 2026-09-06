@@ -281,3 +281,36 @@ async def test_migration_api_and_forget_cover_retained_files_without_graph(tmp_p
         for generation in store.catalog.generations():
             table = await store._table(Collection.MEMORIES, generation=generation)
             assert await table.count_rows() == 0
+
+
+@pytest.mark.parametrize('command,request_type,summary', [
+    ('migrate-tier', 'MigrateRequest', 'Migration complete: 3 vectors migrated'),
+    ('backfill', 'BackfillRequest', 'Backfill complete: 3 processed'),
+])
+def test_vector_cli_request_matches_current_host_contract(monkeypatch, capsys, command, request_type, summary):
+    import httpx
+    import sys
+    import time
+    from colony_sidecar import cli
+    from colony_sidecar.api.schemas import host
+    monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
+    monkeypatch.setattr(sys, 'argv', ['colony', command, '--batch-size', '32'])
+    monkeypatch.setattr(time, 'sleep', lambda _: None)
+    accepted, polls = [], []
+    def post(url, *, json, **kwargs):
+        # Validate the actual CLI body against the API's own request schema.
+        # A hand-written successful HTTP response alone masked the live 422.
+        request = getattr(host, request_type).model_validate(json)
+        assert request.identity.host_id == 'cli' and request.batch_size == 32
+        accepted.append(url)
+        return httpx.Response(200, json={'task_id': 'neutral-contract-task'})
+    def get(url, **kwargs):
+        polls.append(url)
+        return httpx.Response(200, json={'status': 'completed', 'vectors_migrated': 3,
+            'collections_migrated': 1, 'processed': 3})
+    monkeypatch.setattr(httpx, 'post', post)
+    monkeypatch.setattr(httpx, 'get', get)
+    cli.main()
+    assert len(accepted) == len(polls) == 1
+    assert polls[0] == accepted[0] + '/neutral-contract-task'
+    assert summary in capsys.readouterr().out
