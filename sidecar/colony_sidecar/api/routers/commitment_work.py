@@ -119,6 +119,15 @@ def native_run(body, *, finishing=False):
 
 @router.post('/{commitment_id}/local-draft')
 def accept_local_draft(commitment_id: str, body: LocalDraftAcceptance, request: Request):
+    return _accept_local_draft(commitment_id, body, request)
+
+
+@router.post('/local-draft')
+def accept_standalone_local_draft(body: LocalDraftAcceptance, request: Request):
+    return _accept_local_draft(None, body, request)
+
+
+def _accept_local_draft(commitment_id, body, request):
     store, person = local_store(request, body.contact_id, enabled=True)
     try:
         return store.accept(commitment_id, **body.model_dump(exclude={'contact_id'}),

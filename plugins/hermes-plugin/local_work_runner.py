@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 
 from .client import ColonyClient
 from .local_work import Undertaking, request, selected
@@ -184,16 +185,63 @@ def run_once(*, home, job_id, destination, provider=None, model=None, client=Non
             session_db.close()
 
 
+def run_instance(state):
+    """Use the wizard's explicit instance and current sidecar planning policy."""
+    state = state.expanduser().resolve()
+    manifest = json.loads((state/'instance.json').read_text())
+    if manifest.get('version') != 1 or manifest.get('profile') != 'local':
+        raise ValueError('selected_local_instance_required')
+    home = Path(manifest['hermes_home']).resolve()
+    if home != Path(os.environ['HERMES_HOME']).resolve():
+        raise ValueError('selected_native_profile_required')
+    binding = manifest['local_work']
+    child = subprocess.run([manifest['sidecar_python'], '-B', '-m',
+        'colony_sidecar.router.native_policy', '--config', str(state/'.colony-llm-config.json')],
+        capture_output=True, text=True, timeout=10,
+        env=dict(os.environ, COLONY_SKIP_DOTENV='1', COLONY_STATE_DIR=str(state),
+                 PYTHONPATH=os.pathsep.join(filter(None, (manifest['sidecar_module_root'], os.environ.get('PYTHONPATH', ''))))))
+    if child.returncode:
+        raise RuntimeError('Native planning policy resolution failed')
+    try:
+        options, policy = json.loads(child.stdout)
+        if not isinstance(options, dict) or not isinstance(policy, dict):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise RuntimeError('Native planning policy output is invalid') from None
+    from hermes_cli.timeouts import get_provider_request_timeout
+    policy['native_provider_timeout_overrides'] = [
+        get_provider_request_timeout('openai', item['model'].removeprefix('openai/'))
+        for item in policy['candidates']]
+    previous = os.environ.get('HERMES_API_TIMEOUT')
+    os.environ['HERMES_API_TIMEOUT'] = str(policy['request_timeout_seconds'])
+    try:
+        return run_once(home=home, job_id=binding['job_id'], destination=state/'drafts',
+            runtime_options=options, routing_policy=policy, budget_seconds=policy['run_deadline_seconds'])
+    finally:
+        if previous is None:
+            os.environ.pop('HERMES_API_TIMEOUT', None)
+        else:
+            os.environ['HERMES_API_TIMEOUT'] = previous
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--job-id', required=True)
-    parser.add_argument('--destination', type=Path, required=True)
+    parser.add_argument('--instance', type=Path)
+    parser.add_argument('--job-id')
+    parser.add_argument('--destination', type=Path)
     parser.add_argument('--provider')
     parser.add_argument('--model')
     args = parser.parse_args(argv)
     os.umask(0o077)
-    result = run_once(home=Path(os.environ['HERMES_HOME']), job_id=args.job_id,
-                      destination=args.destination, provider=args.provider, model=args.model)
+    if args.instance:
+        if args.job_id or args.destination or args.provider or args.model:
+            parser.error('--instance cannot be combined with explicit runtime arguments')
+        result = run_instance(args.instance)
+    else:
+        if not args.job_id or not args.destination:
+            parser.error('Provide --instance or both --job-id and --destination')
+        result = run_once(home=Path(os.environ['HERMES_HOME']), job_id=args.job_id,
+                          destination=args.destination, provider=args.provider, model=args.model)
     print(json.dumps(result, sort_keys=True))
     return 1 if result['status'] == 'unavailable' else 0
 

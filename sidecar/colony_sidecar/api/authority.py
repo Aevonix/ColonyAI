@@ -970,7 +970,7 @@ def required_scope(method: str, path: str) -> str:
     if method.upper() == "POST" and path.startswith("/v1/host/commitments/") and path.endswith("/work"):
         return "turns:write"
     if (method.upper() == 'POST'
-            and re.fullmatch(r'/v1/host/commitments/(?:[^/]+/local-draft|local-work/next|local-work/[^/]+/finish)', path)):
+            and re.fullmatch(r'/v1/host/commitments/(?:local-draft|[^/]+/local-draft|local-work/next|local-work/[^/]+/finish)', path)):
         return 'turns:write'
     if method.upper() == 'GET' and re.fullmatch(r'/v1/host/commitments/local-work/[^/]+', path):
         return 'turns:write'

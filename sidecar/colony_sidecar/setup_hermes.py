@@ -222,6 +222,17 @@ def run(root_dir=None, args=None):
                 raise ValueError('This instance belongs to another Hermes home')
             if config.get('plugins', {}).get('colony', {}).get('instance_dir') != str(state):
                 raise ValueError('The Hermes binding changed; restore its saved config or select another instance')
+            if getattr(args, 'local_work', False) and not manifest.get('local_work'):
+                # A native registration failure can follow successful attachment.
+                # Retry that missing step with the retained role and interpreter.
+                if not manifest.get('sidecar_python') or not manifest.get('sidecar_module_root'):
+                    raise ValueError('This older instance requires an adapter upgrade before local drafts can be installed')
+                from .router.native_policy import planning
+                from .setup_local_work import install, verify_tools
+                options, _ = asyncio.run(planning(json.loads((state/'.colony-llm-config.json').read_text())))
+                verify_tools(options['base_url'], options['model'], options['api_key'])
+                install(state)
+                print('Accepted local drafts are registered. Restart this Colony instance to load its new job binding.')
             os.environ['COLONY_STATE_DIR'] = str(state)
             print(f'Existing private instance retained: {state}')
             print(f'Use colony --instance {str(state)!r} start, then status.')
@@ -268,6 +279,12 @@ def run(root_dir=None, args=None):
         probe.raise_for_status()
         if not probe.json().get('choices'):
             raise ValueError('The selected endpoint did not return an OpenAI-compatible chat response')
+        local_work = bool(getattr(args, 'local_work', False))
+        if not noninteractive and not local_work:
+            local_work = ask('Run explicitly accepted local summaries in the background? [Y/n]', 'Y').lower() in {'y','yes'}
+        if local_work:
+            from .setup_local_work import verify_tools
+            verify_tools(endpoint, model, model_key)
         port = int(getattr(args, 'port', 7777))
         if getattr(args, 'bind', '127.0.0.1') != '127.0.0.1':
             raise ValueError('The local Hermes profile listens on 127.0.0.1; configure remote access separately')
@@ -314,12 +331,17 @@ def run(root_dir=None, args=None):
                 'scopes': ['context:read', 'memory:read', 'memory:search', 'memory:write', 'turns:write'],
                 'credentials': [{'id': 'initial', 'secret': key, 'status': 'active'}]}
             _private_write(staged/'api-keyring.json', _json({'version': 1, 'principals': [principal]}))
-            _private_write(staged/'.colony-llm-config.json', _json({'provider': 'local', 'baseUrl': endpoint,
+            model_configuration = {'provider': 'local', 'baseUrl': endpoint,
                 'apiKey': model_key, 'localHosts': local_hosts,
-                'models': {name: model for name in ('small', 'medium', 'large')}}))
+                'models': {name: model for name in ('small', 'medium', 'large')}}
+            if local_work:
+                from .setup_local_work import planning_configuration
+                planning_configuration(model_configuration)
+            _private_write(staged/'.colony-llm-config.json', _json(model_configuration))
             for name, content in resources.items():
                 _private_write(staged/'adapter'/name, content)
             manifest = {'version': 1, 'hermes_home': str(home), 'hermes_python': str(python),
+                'sidecar_python': sys.executable, 'sidecar_module_root': str(Path(__file__).resolve().parents[1]),
                 'owner_id': owner_id, 'agent_name': agent_name, 'endpoint': endpoint, 'model': model,
                 'adapter_sha256': hashlib.sha256(b''.join(name.encode()+resources[name] for name in sorted(resources))).hexdigest(),
                 'adapter_binding': binding,
@@ -398,11 +420,17 @@ def run(root_dir=None, args=None):
             print(f'Attachment failed; prepared state and original files remain in {state}.')
             raise
         os.environ['COLONY_STATE_DIR'] = str(state)
+        if local_work:
+            from .setup_local_work import install
+            install(state)
         print(f'Private agent configured in {home}; state in {state}.')
         print('Adapter loading: ' + binding['mode'] + ' (canonical artifact bytes verified).')
         print('Canonical memory capture and recollection are enabled for new Hermes sessions.')
         print('Source memory, temporal claims, contacts, commitments and self state persist without a graph.')
         print('Graph/vector recall and consequential background work are optional and currently disabled.')
+        if local_work:
+            print('Accepted local drafts are enabled. Keep the selected Hermes gateway running to fire its scheduler.')
+            print('Planning uses the local function binding in .colony-llm-config.json, read again on every task fire.')
         print(f'Start: colony --instance {str(state)!r} start --detach')
         print(f'Status: colony --instance {str(state)!r} status')
         print('No existing Hermes process was restarted. Begin a new session to load the adapter.')

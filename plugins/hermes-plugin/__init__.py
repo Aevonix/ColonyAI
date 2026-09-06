@@ -101,13 +101,13 @@ def _parameters(
 _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "colony_accept_local_draft",
-        "description": "Accept an explicitly requested owner local comparison or summary for an existing commitment. Read only the selected local UTF-8 source files and save an unverified local draft; no sending or input changes. Do not schedule inferred work or a report's suggestions.",
+        "description": "Accept an explicitly requested owner local comparison or summary. Optionally associate it with an existing commitment. Read only the selected local UTF-8 source files and save an unverified local draft; no sending or input changes. Do not schedule inferred work or a report's suggestions.",
         "parameters": _parameters({
             "commitment_id": _identifier_model_schema(),
             "question": {"type": "string", "minLength": 1, "maxLength": 2000},
             "sources": {"type": "array", "minItems": 1, "maxItems": 8,
                         "items": {"type": "string", "description": "Explicit absolute local source path"}},
-        }, ("commitment_id", "question", "sources")),
+        }, ("question", "sources")),
     },
     {
         "name": "colony_read_work_source",

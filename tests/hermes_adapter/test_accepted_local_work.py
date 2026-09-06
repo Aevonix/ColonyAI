@@ -115,8 +115,11 @@ from hermes_cli.lifecycle import invoke_hook
 from model_tools import handle_function_call
 get_plugin_manager().discover_and_load()
 invoke_hook('pre_llm_call',session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',platform='cli',sender_id='',user_message='Please summarize this selected neutral file for my obligation.')
-accepted=json.loads(handle_function_call('colony_accept_local_draft',{'commitment_id':obligation['id'],'question':'Summarize the selected note','sources':[str(source)]},session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',tool_call_id='accept'))
+accept_args={'question':'Summarize the selected note','sources':[str(source)]}
+if mode!='standalone':accept_args['commitment_id']=obligation['id']
+accepted=json.loads(handle_function_call('colony_accept_local_draft',accept_args,session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',tool_call_id='accept'))
 assert accepted.get('status')=='pending',accepted
+assert accepted['context']['commitment_id']==(None if mode=='standalone' else obligation['id'])
 assert local_work_view()['items'][0]['liveness']=='not_started'
 for index in range(2):
     trigger_job(job['id']);tick(verbose=False,sync=True)
@@ -149,7 +152,7 @@ print(json.dumps({'mode':mode,'native_execution_and_tools':True,'restart_no_dupl
 '''
 
 
-@pytest.mark.parametrize('mode', ['complete', 'cancel', 'reconcile'])
+@pytest.mark.parametrize('mode', ['complete', 'cancel', 'reconcile', 'standalone'])
 def test_native_accepted_draft_lifecycle(artifacts, tmp_path, mode):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes to exercise its actual scheduler and tools')
