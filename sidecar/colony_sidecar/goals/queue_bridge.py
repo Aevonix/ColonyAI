@@ -81,7 +81,13 @@ class GoalQueueBridge:
     """Bridge between the Goal Engine and the distributed task queue."""
 
     def __init__(self, queue: Optional[QueueBackend] = None) -> None:
-        self._queue: QueueBackend = queue or InMemoryQueueBackend()
+        # A missing production binding must not silently become a test queue.
+        self._queue = queue
+
+    @property
+    def available(self) -> bool:
+        """Whether a caller supplied a backend, not proof of worker liveness."""
+        return self._queue is not None
 
     def subtask_to_job(self, goal: Goal, subtask: Subtask) -> Job:
         """Convert a ready Subtask into a task queue Job.
@@ -119,6 +125,8 @@ class GoalQueueBridge:
 
         Returns the number of jobs posted.
         """
+        if self._queue is None:
+            return 0
         count = 0
         for subtask in dag.ready_subtasks():
             job = self.subtask_to_job(goal, subtask)

@@ -11,6 +11,7 @@ from colony_sidecar.autonomy.loop import AutonomyLoop
 from colony_sidecar.goals.config import GoalEngineConfig
 from colony_sidecar.goals.engine import GoalEngine
 from colony_sidecar.goals.models import GoalStatus
+from colony_sidecar.goals.queue_bridge import GoalQueueBridge, InMemoryQueueBackend
 
 
 def _blocked_goal(engine, condition_type=None, condition_params=None):
@@ -24,7 +25,7 @@ def _blocked_goal(engine, condition_type=None, condition_params=None):
 
 @pytest.fixture
 def engine(tmp_path):
-    return GoalEngine(config=GoalEngineConfig(
+    return GoalEngine(queue_bridge=GoalQueueBridge(InMemoryQueueBackend()), config=GoalEngineConfig(
         db_path=str(tmp_path / "goals.db"), inference_enabled=False))
 
 
