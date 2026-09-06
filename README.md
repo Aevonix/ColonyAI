@@ -55,6 +55,10 @@ Automatic service installation for this profile is still pending.
 - **Automatic recollection.** The native memory provider requests context for
   the current participant, session and question before inference. A durable
   outbox captures ordinary turns; retry does not create another source.
+- **Scoped source recall.** Authenticated participants can recall their own
+  canonical evidence without the legacy graph runtime. Optional semantic
+  projections find retained passages and image descriptions, then resolve them
+  back to current sources before selection. [Source retrieval](docs/SOURCE-SEMANTIC-RECALL.md)
 - **Evidence that outlives a model.** Original messages, timestamps, provenance
   and derived claims persist independently of inference weights. Corrections
   and conflicting claims remain inspectable. [Source claims](docs/SOURCE-CLAIMS.md)
@@ -109,7 +113,7 @@ at `GET /v1/host/autonomy/posture` before enabling another loop.
 
 The [known gaps](docs/KNOWN-GAPS.md) inventory includes legacy components that
 are partial, dormant or awaiting replacement. It is not a list of 1.0 guarantees.
-Current work includes unattended startup, scoped guest recollection, broader
+Current work includes unattended startup, broader hardware and session
 session coverage, measured self-improvement and removal of obsolete operational
 machinery. No claim of general intelligence or complete autonomy is made here.
 
