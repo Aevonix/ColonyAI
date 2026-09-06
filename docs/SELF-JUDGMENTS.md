@@ -40,3 +40,14 @@ Focused tests exercise scoped HTTP ingress/context, two controlled processor
 identities, changed views with contrary evidence, persistence, erasure, concurrent
 heads and lease recovery. They demonstrate the storage and behavior contract;
 they do not establish semantic quality or coherence across actual live models.
+
+A bounded neutral LAN exercise ran the production projection against two
+configured models. Both formed and revised a checkpointing view and abstained
+on routine logistics. One model introduced an unsupported duration and count;
+the original results were retained. After making quotation grounding explicit
+and replacing semantic fixture IDs with opaque IDs, that model's three cases
+were repeated once. Its initial explanation stayed within the reported counts
+and outcomes, but the revision failed validation and logistics again produced
+abstention. The failed revision retained processor metadata and its error class,
+not the raw output or exact validation reason. No general quality pass follows
+from this exercise, and no production owner facts or judgments were created.
