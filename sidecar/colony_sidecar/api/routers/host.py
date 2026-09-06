@@ -13651,7 +13651,7 @@ async def update_initiative_priority(
 
 
 @router.post("/initiatives/{initiative_id}/retry")
-async def retry_initiative(initiative_id: str) -> Dict[str, Any]:
+async def retry_initiative(initiative_id: str, request: Request = None) -> Dict[str, Any]:
     """Retry a failed initiative."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
@@ -13663,14 +13663,9 @@ async def retry_initiative(initiative_id: str) -> Dict[str, Any]:
     if initiative.status != "failed":
         raise HTTPException(status_code=400, detail="Can only retry failed initiatives")
 
-    _initiative_store.update(
-        initiative_id,
-        status="pending",
-        assigned_agent_id=None,
-        failed_reason=None,
-        failed_at=None,
-    )
-    _initiative_store.log_history(initiative_id, action="retry", agent_id=None)
+    retried = _initiative_store.retry(initiative_id, request_authority(request).principal_id)
+    if retried is None:
+        raise HTTPException(status_code=400, detail="Can only retry failed initiatives")
 
     return {"status": "pending", "initiative_id": initiative_id}
 
