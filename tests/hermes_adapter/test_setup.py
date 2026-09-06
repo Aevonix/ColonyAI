@@ -184,6 +184,11 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
         assert not (home/'colony'/'lancedb').exists()
         assert (home/'colony'/'contacts.db').exists()
         if adapter_installation == 'wheel':
+            # Stop extraction from the completed conversations before counting
+            # requests from a separate attachment. The model server stays live.
+            server.terminate()
+            server.wait(10)
+            server = None
             # A same-version installed package with different code must not be
             # silently selected over the requested artifact on another attach.
             client = Path(manifest['adapter_binding']['sources']['colony_hermes'])/'client.py'
