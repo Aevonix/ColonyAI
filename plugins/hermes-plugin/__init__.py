@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from . import local_work
+from . import judgments as judgment_tools
 
 from .colony_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS as _CATALOG_ACTION_MODEL_TOOL_SCHEMAS,
@@ -99,6 +100,15 @@ def _parameters(
 # they are not part of that governed-action execution boundary.  The merged
 # model catalog is sorted before its exact JSON shape is hashed for preflight.
 _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "name": "colony_judgments",
+        "description": "Inspect current fallible agent judgments, their history and source IDs. When the owner explicitly requests it, withdraw one exact current judgment or reconsider it using a retained owner source ID. Reconsideration schedules evidence-based reflection; it does not install the owner's wording as an agent opinion. A current turn's source is available only after normal capture. No authority or preference change.",
+        "parameters": _parameters({
+            "operation": {"type": "string", "enum": ["inspect", "withdraw", "reconsider"]},
+            "judgment_id": {"type": "integer", "minimum": 1},
+            "source_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        }, ("operation",)),
+    },
     {
         "name": "colony_accept_local_draft",
         "description": "Accept an explicitly requested owner local comparison or summary. Optionally associate it with an existing commitment. Read only the selected local UTF-8 source files and save an unverified local draft; no sending or input changes. Do not schedule inferred work or a report's suggestions.",
@@ -236,7 +246,7 @@ _ACTION_INTENT_TOOL_NAMES: tuple[str, ...] = tuple(
 )
 
 _OWNER_MESSAGE_TOOL_NAMES: tuple[str, ...] = ("colony_send_message",)
-_COORDINATION_TOOL_NAMES = ('colony_accept_local_draft', 'colony_commitment_work', 'colony_read_work_source')
+_COORDINATION_TOOL_NAMES = ('colony_accept_local_draft', 'colony_commitment_work', 'colony_read_work_source', 'colony_judgments')
 
 # No event can be injected until Colony exposes an exact viewer-attested event
 # projection.  An empty catalog is an intentional security and attribution
@@ -2407,6 +2417,11 @@ def register(ctx: Any) -> None:
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
             task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
         return local_work.accept(args or {}, scope, client)
+    def judgment_handler(args=None, **kwargs):
+        context = _TOOL_EXECUTION_CONTEXT.get() or {}
+        scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
+            task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
+        return judgment_tools.handle(args or {}, scope, client)
     for schema in _TOOL_SCHEMAS:
         name = schema["name"]
         if name in _READ_TOOL_NAMES and name not in boundary.enabled_read_tools:
@@ -2420,6 +2435,7 @@ def register(ctx: Any) -> None:
             toolset="colony_local_work" if name == 'colony_read_work_source' else "colony",
             schema=schema,
             handler=(
+                judgment_handler if name == "colony_judgments" else
                 commitment_work_handler if name == "colony_commitment_work" else
                 (lambda args=None, _name=name, **kwargs: local_work_handler(_name, args))
                 if name in {'colony_accept_local_draft', 'colony_read_work_source'} else

@@ -102,6 +102,11 @@ login. See the setup guide for status, stop, uninstall and recovery.
   corrections and applied weights. Historical runtime outcomes remain
   inspectable without establishing task quality or current-model competence.
   [Working perspective](docs/WORKING-PERSPECTIVE.md)
+- **Revisable working views.** Attributed owner turns can support fallible agent
+  judgments with evidence and history. Owners can inspect, withdraw or request
+  reconsideration through the native tool. These views do not establish truth
+  or change authority; model grounding remains imperfect.
+  [Working judgments and observed limits](docs/SELF-JUDGMENTS.md)
 - **Evaluated skill updates.** Native Hermes review can stage a proposal for an
   existing skill. An explicitly selected task evaluator compares the current
   skill and candidate, verifies activation and uses native rollback for a

@@ -150,6 +150,8 @@ class TurnIdempotencyLedger:
                 initialize_media(conn)
                 from colony_sidecar.turns.source_vectors import initialize as initialize_vectors
                 initialize_vectors(conn)
+                from colony_sidecar.self_model.judgments import initialize as initialize_judgments
+                initialize_judgments(conn)
             self._initialized = True
 
     def record_source(
@@ -224,6 +226,8 @@ class TurnIdempotencyLedger:
             from colony_sidecar.beliefs.source_projection import enqueue
             if derive_claims:
                 enqueue(conn, turn_id, messages, scope=scope, timezone_name=timezone_name)
+                from colony_sidecar.self_model.judgments import enqueue as enqueue_judgments
+                enqueue_judgments(conn, turn_id, contact_id, messages, scope=scope)
             from colony_sidecar.turns.source_vectors import enqueue as enqueue_vectors
             enqueue_vectors(conn, turn_id)
         return True
@@ -344,6 +348,8 @@ class TurnIdempotencyLedger:
                 erase_media(conn, row["turn_id"], row["session_id"], retained)
                 from colony_sidecar.self_model.perspective import erase_removed as erase_preferences
                 erase_preferences(conn, row["turn_id"], row["session_id"], retained)
+                from colony_sidecar.self_model.judgments import erase_removed as erase_judgments
+                erase_judgments(conn, row["turn_id"], row["session_id"], retained)
                 affected.append(row["turn_id"])
                 for selected_id in selected:
                     conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (row["turn_id"], selected_id))

@@ -352,6 +352,9 @@ class SourceClaimProjection:
 async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=True):
     """One consumer, durable jobs and leases; process loss resumes from SQLite."""
     projection = SourceClaimProjection(ledger)
+    from colony_sidecar.identity import get_owner_contact_id
+    from colony_sidecar.self_model.judgments import SelfJudgments
+    judgments = SelfJudgments(ledger, owner_id=get_owner_contact_id())
     from colony_sidecar.turns.media import SourceMedia
     media = SourceMedia(ledger)
     from colony_sidecar.turns.source_vectors import SourceVectors
@@ -362,21 +365,36 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
         media.recover_unowned_files()
     except OSError:
         logger.warning("source media orphan recovery deferred")
-    while True:
-        worked = False
-        try:
-            worked = await vectors.process_one()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning("source semantic projection deferred (%s)", type(exc).__name__)
-        try:
-            if claims_enabled:
-                claim_worked = await projection.process_one(router_provider())
-                media_worked = await media.process_one(router_provider())
-                worked = worked or claim_worked or media_worked
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning("source claim worker deferred (%s)", type(exc).__name__)
-        await asyncio.sleep(.05 if worked else 2)
+    judgment_task = None
+    try:
+        while True:
+            worked = False
+            # One reflection belongs to this existing worker's lifecycle, but
+            # a slow reasoning request must not stall source indexing/captioning.
+            if claims_enabled and (judgment_task is None or judgment_task.done()):
+                if judgment_task is not None:
+                    try:
+                        worked = judgment_task.result()
+                    except Exception as exc:
+                        logger.warning("source judgment deferred (%s)", type(exc).__name__)
+                judgment_task = asyncio.create_task(judgments.process_one(router_provider()))
+            try:
+                worked = await vectors.process_one() or worked
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("source semantic projection deferred (%s)", type(exc).__name__)
+            try:
+                if claims_enabled:
+                    claim_worked = await projection.process_one(router_provider())
+                    media_worked = await media.process_one(router_provider())
+                    worked = worked or claim_worked or media_worked
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("source claim worker deferred (%s)", type(exc).__name__)
+            await asyncio.sleep(.05 if worked else 2)
+    finally:
+        if judgment_task is not None:
+            judgment_task.cancel()
+            await asyncio.gather(judgment_task, return_exceptions=True)
