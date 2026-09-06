@@ -498,3 +498,24 @@ async def test_models_api_falls_through_if_function_routing_disappears(monkeypat
     monkeypatch.setattr(host, 'get_state_dir', lambda: tmp_path)
     result = await host.list_models()
     assert not result.discovered and result.error
+
+
+@pytest.mark.asyncio
+async def test_declared_hostname_recovers_from_refused_ipv6_to_serving_ipv4(monkeypatch):
+    import socket
+    with endpoint(listing=[{'id': 'neutral-advertisement'}]) as (address, calls):
+        cfg = config(address.replace('127.0.0.1', 'model.example'), address)
+        cfg['modelPool']['interactive']['supportsVision'] = True
+        cfg['functionRoles']['vision'] = ['interactive']
+        cfg['localHosts'] = ['model.example']
+        r = router(cfg)
+        async def resolve(host, port, **kwargs):
+            assert host == 'model.example'
+            return [(socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('::1', 0, 0, 0)),
+                    (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('127.0.0.1', 0))]
+        monkeypatch.setattr(asyncio.get_running_loop(), 'getaddrinfo', resolve)
+        listed = await r.discover_models()
+        assert listed['models'] and all(item['available'] for item in listed['routing']['model_inventory'])
+        response = await complete(r, 'vision')
+        assert response.binding == 'interactive' and len(calls) == 1
+        assert r.routing_status()['completion_observations']['interactive']['state'] == 'available'

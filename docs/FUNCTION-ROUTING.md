@@ -153,6 +153,11 @@ do not follow redirects. Model endpoints themselves remain deployment-trusted
 services. A prompt or `allow_cloud` hint cannot authorize cloud fallback; a
 separate explicit authorization policy would be needed for that behavior.
 
+A hostname with an unavailable address family can try its other verified
+addresses after a connection failure. At most eight unique resolved addresses
+are considered under the same candidate deadline; authentication and validation
+responses do not cause address retries. This also applies to model discovery.
+
 ## Observable behavior and provenance
 
 `GET /v1/host/models` observes the explicitly configured pool through each

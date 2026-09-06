@@ -175,36 +175,49 @@ class LLMRouter:
                     models.setdefault(model['id'], model)
         return {'models': list(models.values()), 'routing': status}
 
-    async def _local_address(self, snapshot, binding, timeout=2):
+    async def _local_addresses(self, snapshot, binding):
         from .functions import endpoint_host
         host = endpoint_host(binding, snapshot)
         if host is None:
-            return None
+            return []
         try:
             ipaddress.ip_address(host)
-            return host
+            return [host]
         except ValueError:
             addresses = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(
-                host, None, type=socket.SOCK_STREAM), timeout)
+                host, None, type=socket.SOCK_STREAM), 2)
             if not addresses or any(not any(ipaddress.ip_address(item[4][0]) in net
                     for net in snapshot.networks) for item in addresses):
-                return None
-            return addresses[0][4][0]
+                return []
+            return list(dict.fromkeys(item[4][0] for item in addresses))[:8]
+
+    async def _at_endpoint(self, snapshot, binding, operation):
+        # One configured hostname can resolve to an unavailable address family.
+        # Retry only connection failures, within the caller's existing deadline.
+        addresses = await self._local_addresses(snapshot, binding)
+        if not addresses:
+            raise ConnectionError('Endpoint has no eligible resolved address')
+        for index, address in enumerate(addresses):
+            try:
+                return await operation(address)
+            except Exception as error:
+                if index == len(addresses)-1 or not _connection_failure(error):
+                    raise
 
     async def _probe_models(self, snapshot, binding):
         from .endpoints import models_url
-        pinned = await self._local_address(snapshot, binding)
-        if pinned is None:
-            raise ValueError('Endpoint is not in the configured local pool')
         headers = {'Authorization': 'Bearer '+binding.config.api_key} if binding.config.api_key else {}
-        async with _local_http_client(binding.config, pinned) as client:
-            async with client.stream('GET', models_url(binding.config.base_url), headers=headers) as response:
-                response.raise_for_status()
-                data = bytearray()
-                async for chunk in response.aiter_bytes():
-                    data.extend(chunk)
-                    if len(data) > 262144:
-                        raise ValueError('Model listing is too large')
+        async def read(pinned):
+            async with _local_http_client(binding.config, pinned) as client:
+                async with client.stream('GET', models_url(binding.config.base_url), headers=headers) as response:
+                    response.raise_for_status()
+                    data = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > 262144:
+                            raise ValueError('Model listing is too large')
+                    return data
+        data = await self._at_endpoint(snapshot, binding, read)
         rows = json.loads(data).get('data')
         if not isinstance(rows, list) or len(rows) > 256:
             raise ValueError('Expected a bounded model listing')
@@ -374,14 +387,13 @@ class LLMRouter:
                 failures.append('EndpointCoolingDown')
                 continue
             try:
-                pinned_ip = await self._local_address(snapshot, binding, min(2, remaining))
-                if pinned_ip is None:
-                    continue
-                response = await asyncio.wait_for(self._litellm_call(
-                    request_id=request_id, config=cfg, messages=messages, tools=tools,
-                    stream=False, max_output_tokens=context.get('max_output_tokens', context.get('max_tokens')), local_endpoint=True,
-                    pinned_ip=pinned_ip),
-                    min(role.timeout_seconds, deadline - time.monotonic()))
+                async def complete_on_address(pinned_ip):
+                    return await self._litellm_call(
+                        request_id=request_id, config=cfg, messages=messages, tools=tools,
+                        stream=False, max_output_tokens=context.get('max_output_tokens', context.get('max_tokens')),
+                        local_endpoint=True, pinned_ip=pinned_ip)
+                response = await asyncio.wait_for(self._at_endpoint(snapshot, binding, complete_on_address),
+                                                  timeout=min(role.timeout_seconds, remaining))
                 response.function_role = role_name
                 response.config_revision = snapshot.revision
                 response.model_revision = binding.weight_revision
@@ -644,3 +656,19 @@ def _retryable(exc):
         return True
     name = type(exc).__name__.lower()
     return any(word in name for word in ('timeout', 'connection', 'ratelimit', 'contextwindow'))
+
+
+def _connection_failure(error):
+    """Recognize transport connect failures even through SDK exception wrappers."""
+    from httpx import ConnectError, ConnectTimeout
+    pending, seen = [error], set()
+    while pending and len(seen) < 16:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, (ConnectionError, ConnectError, ConnectTimeout)):
+            return True
+        pending.extend(item for item in (current.__cause__, current.__context__)
+                       if isinstance(item, BaseException))
+    return False
