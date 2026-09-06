@@ -62,8 +62,10 @@ Rebuilding image embeddings requires a qualified model that can reproduce that
 image embedding space. The text rebuild refuses retained image-vector rows
 instead of replacing them with caption vectors and claiming compatibility.
 Canonical retained originals and their fallible descriptions remain separate.
-Semantic source and caption candidates are the next increment and must use the
-existing single context selector and budget.
+[Semantic source and caption candidates](SOURCE-SEMANTIC-RECALL.md) use their own
+scoped text projection in the managed generation, followed by the existing
+single context selector and budget. Caption retrieval quality still requires
+measurement with the selected embedding and reranking models.
 
 `test_embedding_generations.py` uses real LanceDB for identity mismatch, changed
 dimensions, non-destructive failed update, failed rebuild/resume, new arrivals,
