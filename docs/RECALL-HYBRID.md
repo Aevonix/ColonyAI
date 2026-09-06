@@ -78,8 +78,9 @@ not implement those remaining memory semantics.
 
 ## One selection path for turn context
 
-`/context/assemble` retrieves up to 25 authorized graph candidates and ten
-authorized conversation excerpts. Graph candidate retrieval skips reranking and
+`/context/assemble` combines authorized graph candidates, lexical and semantic
+source hits, source-claim expansions, media descriptions and relevant contact
+facts when those producers are available. Graph candidate retrieval skips reranking and
 recall-strength updates. P8 visibility and projection-erasure checks precede the
 combined model call. Source search independently enforces contact/session scope
 and source-message erasure; a partially redacted turn can retain unrelated
@@ -91,6 +92,17 @@ contains at most five total records in one `colony-memory` section. There is no
 separate conversation-evidence injection. Confidence in a belief is not treated
 as comparable to certainty that words were quoted: cross-kind selection uses
 rank and semantic relevance, preserving confidence separately as metadata.
+
+Combined recall submits at most four times the requested packet count to the
+inline reranker, in fused rank order: 20 candidates for the default five-record
+packet. This bounds model work as producers expand, while leaving room to select
+useful passages below the first five. The existing timeout still applies. On
+successful active reranking, only that submitted set competes for the packet;
+unsubmitted rank-fusion scores are not compared with cross-encoder scores.
+Disabled, shadow and failed reranking preserve the full original candidate set.
+This can exclude relevant evidence below the submission bound. Evaluate source
+retention alongside latency on the deployment's corpus; a smaller batch does
+not establish a relevance cutoff or solve unrelated-memory injection.
 
 The default combined rendered budget is 6,000 characters, adjustable through
 `COLONY_RECALL_CONTEXT_MAX_CHARS` up to 24,000; zero suppresses this packet.

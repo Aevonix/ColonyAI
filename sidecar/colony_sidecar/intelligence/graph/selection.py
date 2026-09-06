@@ -26,7 +26,8 @@ class RecallSelector:
             beliefs, quotations, limit=len(beliefs) + len(quotations),
             confidence_weighting=False)
         ranked = await self.rerank(
-            query, candidates, limit, confidence_weighting=False)
+            query, candidates, limit, confidence_weighting=False,
+            candidate_limit=max(1, 4 * limit))
         ranked.sort(key=lambda row: row.get("relevance", 0), reverse=True)
         return pack_memory_context(ranked, limit=limit, max_chars=max_chars)
 
@@ -38,6 +39,7 @@ class RecallSelector:
         *,
         strength_ranking: bool = False,
         confidence_weighting: bool = True,
+        candidate_limit: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Cross-encoder rerank of filtered recall candidates, bounded and
         fail-open.
@@ -50,6 +52,8 @@ class RecallSelector:
         (default 1200). On timeout or error, recall keeps the candidate order
         and marks selection unavailable. A candidate set that already fits
         skips reranking only when no calibrated abstention cutoff is active.
+        A candidate limit bounds model work, while preserving the full input
+        for disabled, shadow and failed selection.
         """
         mode = os.environ.get("COLONY_RECALL_RERANK", "off").strip().lower()
         if mode not in ("shadow", "on"):
@@ -97,7 +101,11 @@ class RecallSelector:
         except (TypeError, ValueError):
             timeout_ms = 1200.0
 
-        docs = [str(m.get("ranking_text", m.get("content", ""))) for m in memories]
+        # Combined recall fuses several producers. Overfetch relative to the
+        # packet size without making the inline model score every producer's
+        # entire result set. Keep the full list available for fallback.
+        submitted = memories if candidate_limit is None else memories[:candidate_limit]
+        docs = [str(m.get("ranking_text", m.get("content", ""))) for m in submitted]
         try:
             results = await asyncio.wait_for(
                 rerank_fn(query, docs, top_k=len(docs)),
@@ -115,7 +123,7 @@ class RecallSelector:
             score = r.get("score") if isinstance(r, dict) else getattr(r, "score", None)
             if idx is not None and score is not None:
                 idx, score = int(idx), float(score)
-                if 0 <= idx < len(memories) and math.isfinite(score):
+                if 0 <= idx < len(submitted) and math.isfinite(score):
                     scores[idx] = score
         if not scores:
             self._warn_rerank_failure(RuntimeError("reranker returned no scores"))
@@ -127,20 +135,23 @@ class RecallSelector:
             ann_top = [m.get("id") for m in sorted(
                 memories, key=lambda m: m.get("relevance", 0),
                 reverse=True)][:limit]
-            rr_idx = sorted(range(len(memories)),
+            rr_idx = sorted(range(len(submitted)),
                             key=lambda i: scores.get(i, float("-inf")),
                             reverse=True)
-            rr_top = [memories[i].get("id") for i in rr_idx[:limit]]
+            rr_top = [submitted[i].get("id") for i in rr_idx[:limit]]
             moved = sum(1 for a, b in zip(ann_top, rr_top) if a != b)
             self.logger.info(
                 "recall rerank shadow: candidates=%d limit=%d "
                 "top_overlap=%d/%d positions_changed=%d",
-                len(memories), limit, len(set(ann_top) & set(rr_top)),
+                len(submitted), limit, len(set(ann_top) & set(rr_top)),
                 limit, moved)
             return memories
 
         # mode == "on": rerank score replaces the vector score in the blend;
         # a document the reranker didn't score keeps its ANN relevance.
+        # The unsubmitted tail has no comparable model score and cannot enter
+        # a successfully reranked packet.
+        memories = submitted
         for i, mem in enumerate(memories):
             if i not in scores:
                 continue

@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.4 - bounded memory selection
+
+- Combined recall submits at most four times the requested packet count to the
+  inline reranker. The same timeout applies; disabled, shadow and unavailable
+  reranking retain the full original candidate set. Successful selection uses
+  the submitted set without mixing unsubmitted rank-fusion scores into model
+  scores. The bound can exclude lower-ranked evidence and does not establish
+  an abstention threshold for unrelated queries.
+- The setup wizard can optionally install two original native task skills for
+  evidence recall and work handoff. They use ordinary Hermes discovery, remain
+  opt-in and preserve existing local skill directories. Availability does not
+  establish better task outcomes or enforce work ownership.
+
 ## v1.0.3 - accepted native local work
 
 - Explicit owner acceptance can associate a local source comparison or summary
