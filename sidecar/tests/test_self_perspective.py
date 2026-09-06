@@ -136,14 +136,14 @@ async def test_actual_runtime_outcomes_do_not_change_priority_or_claim_quality(p
     executor._find_recent_completion = AsyncMock(return_value=None)
     executor._maybe_distill = AsyncMock()  # Skill updates are a separate loop.
     model = {'model_role': 'planning', 'model_id': 'fixture-model-a', 'model_revision': 'v1'}
-    result = (ReasoningResult(status='completed', message={'role': 'assistant', 'content': 'The inventory has 120 entries.'}, model_provenance=model)
+    result = (ReasoningResult(status='completed', message={'role': 'assistant', 'content': 'The inventory has 17 entries.'}, model_provenance=model)
               if runtime_outcome == 'completed_wrong_count' else
               ReasoningResult(status='error', error='TimeoutError: timed out', model_provenance=model))
     executor._run_turn_resilient = AsyncMock(return_value=result)
     original = candidates()
     before = [(item.id, item.priority) for item in await phase(sm, original)]
     for i in range(3):
-        item = store.create(type='research', description=f'Count all {142+i} neutral inventory entries', dedup_key=f'work-{i}')
+        item = store.create(type='research', description=f'Count all {42+i} neutral inventory entries', dedup_key=f'work-{i}')
         item = store.assign(item.id, 'colony-executor')
         await executor._execute_one(item)
     events = sm.store.events('research')

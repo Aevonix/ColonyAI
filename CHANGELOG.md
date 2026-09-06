@@ -12,6 +12,9 @@
 - Existing automatic opinion revisions remain inspectable as non-governing
   history, with original evidence and model provenance. Operational records and
   their append-only corrections are preserved; trust and grant paths are unchanged.
+- Valid memories without person links no longer produce orphan-repair proposals.
+  Both initiative paths ignore the retired classifier while retaining other
+  orphan evidence and schema drift detection. Memory contents and links are unchanged.
 
 ## v1.0.1 - fresh setup and local work visibility
 
