@@ -89,12 +89,18 @@ async def test_actual_http_same_function_failover_provenance_and_capability_filt
         assert response.function_role == 'extraction' and response.binding == 'deliberate'
         assert response.model_revision == 'fixture-revision-b' and response.config_revision
         assert len(a) == len(b) == 1 and b[0]['authorization'] == 'Bearer neutral-key'
+        assert response.prior_attempts == [{'binding':'interactive', 'model':'openai/fast-neutral',
+            'status':'failed', 'reason':'ServiceUnavailableError'}]
+        skipped = await complete(r)
+        assert skipped.prior_attempts == [{'binding':'interactive', 'model':'openai/fast-neutral',
+            'status':'skipped', 'reason':'EndpointCoolingDown'}]
+        assert 'neutral-key' not in json.dumps(skipped.prior_attempts)
         await complete(r, 'vision')
-        assert len(a) == 1 and len(b) == 2  # no modality-blind tier escalation
+        assert len(a) == 1 and len(b) == 3  # no modality-blind tier escalation
         with pytest.raises(RuntimeError): await complete(r, 'chat')
-        assert len(a) == 1 and len(b) == 2  # failed primary cools down; slow fallback violates chat bound
+        assert len(a) == 1 and len(b) == 3  # failed primary cools down; slow fallback violates chat bound
         await complete(r, required_context_tokens=64000)
-        assert len(a) == 1 and len(b) == 3
+        assert len(a) == 1 and len(b) == 4
         status = r.routing_status()
         assert status['recent_calls'][-1]['config_revision'] == response.config_revision
         assert 'neutral-key' not in json.dumps(status) and 'baseUrl' not in json.dumps(status)

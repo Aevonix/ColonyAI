@@ -59,3 +59,13 @@ blocking, and installed-wheel native Hermes dispatch against the real durable
 store. The canonical worker view is tested through actual queue claim, start,
 heartbeat aging and completion. A live two-session commitment exercise remains
 the deployment acceptance test.
+
+The same owner-only current-work surface also projects accepted local capability
+briefings from the existing initiative ledger. It exposes the initiating event,
+native job/execution IDs, current initiative status, and a bounded unverified
+result excerpt/report path. Read-time projection never creates, recovers or
+executes an initiative. Missing data is reported unavailable; assigned status
+does not establish process liveness. Guest views contain no such rows. This is
+operational work context, not an additional factual-memory writer or a grant.
+Ordinary turn context includes active work and only the latest capability result;
+the bounded seven-day result history remains available through the API.

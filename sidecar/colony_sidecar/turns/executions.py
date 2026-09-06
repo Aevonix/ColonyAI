@@ -100,6 +100,14 @@ def format_view(view: dict) -> str:
     if view["truncated"]:
         lines.append(f"Showing {len(view['items'])} of {view['total']} scoped observations.")
     import json
+    local = view.get('local_work')
+    if local:
+        if not local['available']:
+            lines.append('Accepted local work unavailable: '+local['reason']+'.')
+        # Full history remains in the API. Ordinary turns need the latest
+        # capability outcome, not repeated older briefing excerpts.
+        for item in local['items']+local['recent'][:1]:
+            lines.append('- Accepted local work and unverified draft: '+json.dumps(item, ensure_ascii=True))
     for item in view.get('worker_work', {}).get('items', []):
         lines.append('- Worker work: ' + json.dumps(item, ensure_ascii=True))
     if view.get('worker_work', {}).get('unavailable'):
