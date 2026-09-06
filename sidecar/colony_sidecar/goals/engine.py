@@ -135,6 +135,16 @@ class GoalEngine:
                 f"Cannot activate goal {goal_id} in state {goal.status.value}"
             )
 
+        if not self._queue_bridge.available:
+            # Acceptance is durable. Without an executor, neither a generated
+            # DAG nor a throwaway job ID establishes that work has started.
+            if goal.context.get("dispatch_unavailable") != "queue_backend_unconfigured":
+                goal.context["dispatch_unavailable"] = "queue_backend_unconfigured"
+                self._store.save_goal(goal)
+                logger.warning("Goal %s remains accepted: queue backend unconfigured", goal_id)
+            return goal
+        goal.context.pop("dispatch_unavailable", None)
+
         # Decompose
         dag = self._decomposer.decompose(goal)
         self._store.save_dag(dag)

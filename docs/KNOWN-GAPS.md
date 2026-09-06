@@ -14,6 +14,13 @@ general self-improvement simply by recording a successful review.
 
 ## Partially wired (works, with a missing half)
 
+- **Generic goal dispatch**: the default goal engine has no execution backend.
+  API-created goals remain durably `accepted`; activation records
+  `dispatch_unavailable=queue_backend_unconfigured` and creates no DAG or job.
+  A restart preserves that waiting state. The in-memory queue is an explicit
+  test fixture, never an implicit production fallback. Supplying a queue does
+  not establish worker liveness, durable native execution or cancellation of
+  an external worker. Historical goal states are not rewritten by this change.
 - **Mind-model briefing section** — `HealthSnapshot` (sleep/readiness) and
   predicted-load remain a protocol + stub with NO backing data source in the
   system. Deliberately not wired: fabricating health numbers would violate
