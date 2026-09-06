@@ -59,6 +59,8 @@ async def test_complete_turn_is_recalled_across_sessions_after_reopen(source_app
         response = await client.put("/v2/host/turns/turn-source", json=body)
         assert response.status_code == 201
         assert response.json()["source_recorded"] is True
+        assert response.json()["continuity_updated"] is True
+        assert response.json()["skipped_reason"] is None
         assert "Friday at nine" in await recalled(client, session="session-b")
         assert await recalled(client, contact="contact-b") == ""
     reopened = TurnIdempotencyLedger(tmp_path / "turn-idempotency.db")

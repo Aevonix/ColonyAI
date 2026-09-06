@@ -1,6 +1,7 @@
 """Tests for ToM LLM Extractor."""
 
 import pytest
+import json
 
 from colony_sidecar.tom.extractor import (
     TomExtractor,
@@ -70,17 +71,22 @@ class TestParseAffectJson:
         assert result["valence"] == 0.4
 
 
+def fact_item(evidence="test fact", **kwargs):
+    return {"evidence": evidence, "source": "told_by_contact", "confidence": 0.8,
+            "memory_kind": "personal_context", "recall_reason": "Recall relevant context when assisting this person.", **kwargs}
+
+
 class TestParseFactArray:
     def test_valid_array(self):
-        raw = '[{"fact": "User knows about v0.5.0", "source": "told_to_contact", "confidence": 0.9}]'
-        result = _parse_fact_array(raw)
+        raw = json.dumps([fact_item("I prefer tea", source="told_by_contact")])
+        result = _parse_fact_array(raw, conversation_text="user: I prefer tea")
         assert len(result) == 1
-        assert result[0]["fact"] == "User knows about v0.5.0"
-        assert result[0]["source"] == "told_to_contact"
+        assert result[0]["fact"] == "I prefer tea"
+        assert result[0]["source"] == "told_by_contact"
 
     def test_with_code_fence(self):
-        raw = '```json\n[{"fact": "test fact", "source": "inferred", "confidence": 0.6}]\n```'
-        result = _parse_fact_array(raw)
+        raw = '```json\n' + json.dumps([fact_item()]) + '\n```'
+        result = _parse_fact_array(raw, conversation_text="test fact")
         assert len(result) == 1
 
     def test_empty_array(self):
@@ -88,8 +94,8 @@ class TestParseFactArray:
         assert result == []
 
     def test_invalid_source_default(self):
-        raw = '[{"fact": "test", "source": "unknown", "confidence": 0.5}]'
-        result = _parse_fact_array(raw)
+        raw = json.dumps([fact_item(source="unknown")])
+        result = _parse_fact_array(raw, conversation_text="test fact")
         assert len(result) == 1
         assert result[0]["source"] == "inferred"
 
@@ -99,13 +105,13 @@ class TestParseFactArray:
         assert len(result) == 0
 
     def test_dict_with_facts_key(self):
-        raw = '{"facts": [{"fact": "test", "source": "shared_context", "confidence": 0.8}]}'
-        result = _parse_fact_array(raw)
+        raw = json.dumps({"facts": [fact_item()]})
+        result = _parse_fact_array(raw, conversation_text="test fact")
         assert len(result) == 1
 
     def test_confidence_clamped(self):
-        raw = '[{"fact": "test", "source": "inferred", "confidence": 2.0}]'
-        result = _parse_fact_array(raw)
+        raw = json.dumps([fact_item(confidence=2.0)])
+        result = _parse_fact_array(raw, conversation_text="test fact")
         assert result[0]["confidence"] == 1.0
 
 
@@ -138,12 +144,12 @@ class TestTomExtractor:
 
     async def test_extract_facts(self):
         router = FakeRouter([
-            '[{"fact": "User knows Colony v0.5.0 shipped", "source": "told_to_contact", "confidence": 0.9}]'
+            json.dumps([fact_item("I prefer tea", memory_kind="preference")])
         ])
         extractor = TomExtractor(router)
-        result = await extractor.extract_facts("v0.5.0 is released with pattern extraction", "owner")
+        result = await extractor.extract_facts("user: I prefer tea", "owner")
         assert len(result) == 1
-        assert result[0]["fact"] == "User knows Colony v0.5.0 shipped"
+        assert result[0]["fact"] == "I prefer tea"
         assert result[0]["contact_id"] == "owner"
 
     async def test_extract_facts_empty(self):
@@ -191,7 +197,7 @@ class TestTomExtractor:
         monkeypatch.setattr(module, "THROTTLE_MINUTES", 5)
         router = FakeRouter([
             '{"valence": 0.6, "arousal": 0.7, "trigger": "boat trip", "confidence": 0.9}',
-            '[{"fact": "The hydrofoil leaves Friday", "source": "told_by_contact", "confidence": 0.8}]',
+            json.dumps([fact_item("the hydrofoil leaves Friday", memory_kind="substantive_event")]),
         ])
         extractor = TomExtractor(router)
         text = "I am excited that the hydrofoil leaves Friday."

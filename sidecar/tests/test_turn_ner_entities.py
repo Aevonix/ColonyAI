@@ -1,12 +1,4 @@
-"""NER entities into record_turn (U20): COLONY_TURN_NER_ENTITIES.
-
-record_turn used to see only body.entities — usually [] from real hosts — so
-turn memories had no :MENTIONS edges and salience scored every exchange as
-entity-free. With the flag on, the rule-based extraction (already run once
-per turn for provenance) is merged into the record_turn entities (cap 12).
-Regression lock: flag off keeps record_turn's entities == body.entities
-byte-identical, while provenance still gets host + extracted entities.
-"""
+"""Canonical history keeps entity provenance without redundant graph memory."""
 
 from __future__ import annotations
 
@@ -48,45 +40,43 @@ def wired(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_default_record_turn_gets_only_host_entities(wired, monkeypatch):
-    """Regression lock: flag off -> record_turn sees exactly body.entities."""
-    monkeypatch.delenv("COLONY_TURN_NER_ENTITIES", raising=False)
+async def test_canonical_turn_keeps_provenance_without_graph_summary(wired):
     graph, store = wired
     await host_mod.turns_sync(_body(entities=["Host Entity"]))
-    assert graph.calls[0]["entities"] == ["Host Entity"]
+    assert graph.calls == []
     # ...while provenance still records host + NER entities (legacy behavior).
     assert store.contexts_for("Robin Sanchez")
     assert store.contexts_for("Host Entity")
 
 
 @pytest.mark.asyncio
-async def test_flag_merges_ner_into_record_turn(wired, monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_NER_ENTITIES", "1")
+async def test_legacy_summary_only_still_records_host_entities(wired):
     graph, store = wired
-    await host_mod.turns_sync(_body(entities=["Host Entity"]))
+    body = _body(entities=["Host Entity"])
+    body.user_message = None
+    response = await host_mod.turns_sync(body)
     ents = graph.calls[0]["entities"]
     assert "Host Entity" in ents            # host entities always kept, first
-    assert "Robin Sanchez" in ents          # NER merged in
-    assert store.contexts_for("Robin Sanchez")   # provenance unchanged
+    assert response.accepted and response.continuity_updated
+    assert not response.source_recorded
 
 
 @pytest.mark.asyncio
-async def test_flag_dedupes_and_caps_at_12(wired, monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_NER_ENTITIES", "1")
-    graph, _ = wired
-    text = ("Robin Sanchez met " + ", ".join(
-        f"Alice Number{i} Smith" for i in range(1, 15)) + " yesterday.")
-    await host_mod.turns_sync(_body(entities=["Robin Sanchez"], user_text=text))
-    ents = graph.calls[0]["entities"]
-    assert len(ents) <= 12
-    assert len({e.lower() for e in ents}) == len(ents)   # deduped
-    assert ents[0] == "Robin Sanchez"                    # host-first ordering
+async def test_graph_failure_cannot_break_canonical_ingress_but_legacy_reports_it(wired, monkeypatch):
+    async def fail(**kwargs):
+        raise OSError("controlled graph unavailable")
+    monkeypatch.setattr(wired[0], "record_turn", fail)
+    response = await host_mod.turns_sync(_body())
+    assert response.accepted and response.source_recorded and response.continuity_updated
+    assert response.skipped_reason is None
+    legacy = _body(); legacy.user_message = None
+    response = await host_mod.turns_sync(legacy)
+    assert not response.accepted and response.skipped_reason == "graph_record_failed"
 
 
 @pytest.mark.asyncio
-async def test_flag_fails_open_to_host_entities(wired, monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_NER_ENTITIES", "1")
-    graph, _ = wired
+async def test_ner_failure_keeps_host_provenance(wired, monkeypatch):
+    graph, store = wired
 
     class _Boom:
         async def extract(self, *a, **k):
@@ -94,14 +84,14 @@ async def test_flag_fails_open_to_host_entities(wired, monkeypatch):
 
     monkeypatch.setattr(host_mod, "_get_conversation_extractor", lambda: _Boom())
     await host_mod.turns_sync(_body(entities=["Host Entity"]))
-    assert graph.calls[0]["entities"] == ["Host Entity"]
+    assert graph.calls == []
+    assert store.contexts_for("Host Entity")
 
 
 @pytest.mark.asyncio
 async def test_single_extraction_shared_with_provenance(wired, monkeypatch):
     """The extractor runs ONCE per turn (was: once for provenance, and U20
     would have added a second for record_turn)."""
-    monkeypatch.setenv("COLONY_TURN_NER_ENTITIES", "1")
     calls = []
 
     class _Counting:

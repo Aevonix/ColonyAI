@@ -4007,14 +4007,11 @@ async def _process_turn_sync(
                 words = user_text.split()
                 body.topics = [w.lower().strip(".,!?;:") for w in words if len(w) > 4][:10]
 
-    # Rule-based NER on the incoming message, run ONCE and shared by the
-    # memory write (flag-gated) and context provenance (always) below. Fails
-    # open to body.entities: an extractor error must never drop host entities.
+    # Rule-based NER serves context provenance. Canonical turn history no
+    # longer needs a second entity-scored graph summary.
     _extracted_ents: List[str] = []
-    _turn_ner = os.environ.get(
-        "COLONY_TURN_NER_ENTITIES", "0") not in ("0", "false", "no", "")
     _user_text = getattr(body.user_message, "content", "") if body.user_message else ""
-    if _user_text and (_turn_ner or _context_provenance is not None):
+    if _user_text and _context_provenance is not None:
         _extractor = _get_conversation_extractor()
         if _extractor is not None:
             try:
@@ -4025,35 +4022,18 @@ async def _process_turn_sync(
             except Exception:
                 logger.debug("turn entity extraction failed", exc_info=True)
 
-    # COLONY_TURN_NER_ENTITIES=1: the stored turn memory carries the message's
-    # named entities even when the host sent none, so salience scoring and
-    # :MENTIONS edges reflect what the turn was actually about. Default 0 =
-    # legacy: record_turn sees exactly body.entities.
-    _turn_entities = body.entities
-    if _turn_ner and _extracted_ents:
-        _merged: List[str] = []
-        _seen = set()
-        for _name in list(body.entities or []) + _extracted_ents:
-            _name = (_name or "").strip()
-            if _name and _name.lower() not in _seen:
-                _seen.add(_name.lower())
-                _merged.append(_name)
-            if len(_merged) >= 12:
-                break
-        _turn_entities = _merged
-
-    # Store turn metadata in the graph if available. A wired graph that FAILS
-    # to record is a failed ingestion — the error is carried to the response
-    # below, never swallowed into a green-lit turn.
+    # Preserve the legacy summary-only contract. Canonical evidence already
+    # has scoped lexical/semantic recall and must not duplicate every exchange
+    # into a durable graph memory or depend on that optional store's uptime.
     graph_ok = False
     graph_error: Optional[str] = None
-    if _graph is not None:
+    if _graph is not None and not source_recorded:
         try:
             await _graph.record_turn(
                 session_id=body.context.session_id,
                 contact_id=body.context.contact_id,
                 topics=body.topics,
-                entities=_turn_entities,
+                entities=body.entities,
                 tools_used=body.tools_used,
                 summary=body.summary,
                 turn_id=source_id if source_messages else body.context.turn_id,
@@ -4375,8 +4355,8 @@ async def _process_turn_sync(
             source_recorded=source_recorded,
         )
     return TurnSyncResponse(
-        accepted=True, continuity_updated=graph_ok, source_recorded=source_recorded,
-        skipped_reason=None if graph_ok else "no_graph_store",
+        accepted=True, continuity_updated=graph_ok or source_recorded, source_recorded=source_recorded,
+        skipped_reason=None if graph_ok or source_recorded else "no_graph_store",
     )
 
 
@@ -12023,6 +12003,10 @@ async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
     endpoint uses it to count per-fact outcomes."""
     if _graph is None or not (fact or "").strip():
         return False
+    if record and (record.get('metadata') or {}).get('automatic_projection'):
+        # Contact knowledge estimates are not additional world facts. Canonical
+        # assertions and source history already provide grounded recall.
+        return False
     try:
         import hashlib
         lineage = record.get('source_lineage') if record else None
@@ -12584,7 +12568,7 @@ async def _run_tom_extraction(
     p8_producer=None,
     source_id: Optional[str] = None,
 ) -> None:
-    """Background task: extract affect + facts from a conversation turn."""
+    """Project affect and engagement; canonical assertions own factual learning."""
     if _tom_extractor is None:
         return
     lineage = None
@@ -12620,34 +12604,9 @@ async def _run_tom_extraction(
                 pass
     except Exception:
         logger.debug("ToM affect extraction failed", exc_info=True)
-    # Facts
-    try:
-        facts = await _tom_extractor.extract_facts(
-            conversation_text, contact_id, session_id=session_id,
-        )
-        if not source_current():
-            return
-        if facts and _facts_store is not None:
-            for f in facts:
-                record = _facts_store.create_fact(
-                    contact_id=f["contact_id"],
-                    fact=f["fact"],
-                    source=f["source"],
-                    confidence=f["confidence"],
-                    source_lineage=lineage,
-                    metadata={'model_provenance': f.get('model_provenance', {})} if lineage else None,
-                )
-                _append_p8_fact_record(
-                    record, producer=p8_producer, origin="model")
-                await _mirror_fact_to_graph(f["fact"], f["contact_id"],
-                                            f["source"], f["confidence"], record=record)
-            try:
-                from colony_sidecar.events.broadcaster import emit as _emit
-                _emit("mind.fact_created", {"contact_id": contact_id, "source": f["source"]})
-            except Exception:
-                pass
-    except Exception:
-        logger.debug("ToM fact extraction failed", exc_info=True)
+    # Factual learning has one automatic path: source-grounded assertions.
+    # Contact knowledge remains an explicit API, not a duplicate model call
+    # that guesses what this participant accepted from the assistant.
     # Engagement profile (OCEAN + communication style)
     try:
         eng = await _tom_extractor.extract_engagement(
@@ -12722,11 +12681,14 @@ async def extract_tom(
                     fact=f["fact"],
                     source=f["source"],
                     confidence=f["confidence"],
+                    metadata={'model_provenance': f.get('model_provenance', {}),
+                              'memory_quality': f.get('memory_quality', {}),
+                              'automatic_projection': True},
                 )
                 _append_p8_fact_record(
                     record, producer=_manual_p8_producer, origin="model")
                 await _mirror_fact_to_graph(f["fact"], f["contact_id"],
-                                            f["source"], f["confidence"])
+                                            f["source"], f["confidence"], record=record)
 
     throttled = not _tom_extractor._can_extract(body.contact_id)
     return TomExtractResponse(

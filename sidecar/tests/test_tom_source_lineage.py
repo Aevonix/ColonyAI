@@ -1,4 +1,4 @@
-"""Ordinary ingress, ToM facts, mirror recall and source erasure share lineage.
+"""Canonical ingress avoids duplicate facts; older linked facts still erase.
 
 The API and SQLite stores are real; extraction and graph I/O are controlled.
 The graph read fence is the production implementation, not a fixture oracle.
@@ -54,16 +54,15 @@ class Extractor:
         self.started = asyncio.Event()
         self.release = None
 
-    async def extract_affect(self, *args, **kwargs):
-        return None
-
-    async def extract_facts(self, text, contact_id, **kwargs):
+    async def extract_affect(self, text, contact_id, **kwargs):
         self.texts.append(text)
         self.started.set()
         if self.release is not None:
             await self.release.wait()
-        return [{"contact_id": contact_id, "fact": FACT, "source": "told_by_contact", "confidence": 0.8,
-                 "model_provenance": {"function_role": "extraction", "model_id": "neutral-model", "weight_revision": "unknown"}}]
+        return None
+
+    async def extract_facts(self, *args, **kwargs):
+        raise AssertionError("Canonical ingress must not invoke a second fact extractor")
 
     async def extract_engagement(self, *args, **kwargs):
         return None
@@ -114,18 +113,28 @@ async def forget(client, turn_id="turn-a"):
     return response.json()
 
 
+async def retained_linked_fact(runtime, turn="turn-a"):
+    """A pre-cutover projection, not a new automatic knowledge path."""
+    lineage, _ = runtime.facts.source_input(turn, "contact-a")
+    record = runtime.facts.create_fact(contact_id="contact-a", fact=FACT, source="told_by_contact",
+        source_lineage=lineage, metadata={"model_provenance": {"model_id": "old-neutral-model"}})
+    await host._mirror_fact_to_graph(FACT, "contact-a", "told_by_contact", .8, record=record)
+    return record
+
+
 @pytest.mark.asyncio
-async def test_ordinary_fact_mirror_erasure_and_replay(runtime):
+async def test_ordinary_contact_knowledge_has_lineage_without_becoming_world_fact(runtime):
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url="http://test") as client:
         body = await ingest(client, runtime)
-        record = runtime.facts.list_facts()["facts"][0]
+        assert runtime.facts.list_facts()["total"] == 0 and runtime.graph.rows == {}
+        record = await retained_linked_fact(runtime)
         assert record["source_lineage"]["turn_id"] == "turn-a"
         assert len(record["source_lineage"]["message_hashes"]) == 2
-        assert record["metadata"]["model_provenance"]["model_id"] == "neutral-model"
+        assert record["metadata"]["model_provenance"]["model_id"] == "old-neutral-model"
         assert FACT in runtime.extractor.texts[0] and "Tuesday" not in runtime.extractor.texts[0]
-        mirror = next(iter(runtime.graph.rows.values()))
-        assert mirror["source_uri"] == "turn:turn-a"
-        assert mirror["metadata"]["fact_record_id"] == record["id"]
+        # A later backfill must not reclassify this estimate as a world fact.
+        estimate = dict(record, metadata={"automatic_projection": True})
+        assert not await host._mirror_fact_to_graph(FACT, "contact-a", "told_by_contact", 0.8, record=estimate)
         assert FACT in await recalled(client, session="voice-session")
         assert await recalled(client, contact="contact-b") == ""
         result = await forget(client)
@@ -160,6 +169,8 @@ async def test_independent_same_wording_and_legacy_support_survive(runtime):
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url="http://test") as client:
         await ingest(client, runtime, "turn-a", "session-a")
         await ingest(client, runtime, "turn-b", "session-b")
+        await retained_linked_fact(runtime, "turn-a")
+        await retained_linked_fact(runtime, "turn-b")
         assert len(runtime.graph.rows) == 3
         await forget(client)
         survivors = runtime.facts.list_facts()["facts"]
@@ -172,7 +183,7 @@ async def test_independent_same_wording_and_legacy_support_survive(runtime):
 async def test_failed_cleanup_hides_rows_and_blocks_late_backfill(runtime, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url="http://test") as client:
         await ingest(client, runtime)
-        record = runtime.facts.list_facts()["facts"][0]
+        record = await retained_linked_fact(runtime)
         purge = runtime.facts.purge_erased_sources
         def unavailable(*args, **kwargs):
             raise OSError("facts unavailable")

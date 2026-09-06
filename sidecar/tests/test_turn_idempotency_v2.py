@@ -86,7 +86,8 @@ async def test_v1_identical_turn_retry_has_one_downstream_effect(app, graph):
     assert retry.status_code == 200
     assert retry.headers["Idempotency-Status"] == "replayed"
     assert retry.json() == first.json()
-    assert len(graph.calls) == 1
+    assert graph.calls == []
+    assert first.json()["source_recorded"] and first.json()["continuity_updated"]
 
 
 @pytest.mark.asyncio
@@ -102,7 +103,7 @@ async def test_v1_same_turn_id_with_different_content_conflicts(app, graph):
     assert first.status_code == 200
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "turn_id_content_conflict"
-    assert len(graph.calls) == 1
+    assert graph.calls == []
 
 
 @pytest.mark.asyncio
@@ -120,7 +121,7 @@ async def test_v2_put_returns_created_replayed_and_conflict(app, graph):
     assert (first.status_code, first.headers["Idempotency-Status"]) == (201, "created")
     assert (retry.status_code, retry.headers["Idempotency-Status"]) == (200, "replayed")
     assert conflict.status_code == 409
-    assert len(graph.calls) == 1
+    assert graph.calls == []
 
 
 @pytest.mark.asyncio
@@ -148,7 +149,7 @@ async def test_v2_accepts_url_escaped_host_turn_ids(app, graph):
         )
 
     assert response.status_code == 201
-    assert len(graph.calls) == 1
+    assert graph.calls == []
 
 
 @pytest.mark.asyncio
@@ -157,6 +158,11 @@ async def test_v2_concurrent_retry_is_truthful_pending_then_completed_replay(
     blocking = _BlockingGraph()
     monkeypatch.setattr(host, "_graph", blocking)
     body = _payload(turn_id="turn-concurrent")
+    # Legacy summary-only callers still use the graph. Block that real
+    # downstream effect to exercise concurrent ingestion and durable replay.
+    body.pop("user_message")
+    body.pop("assistant_message")
+    body["summary"] = "Legacy summary-only turn."
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
