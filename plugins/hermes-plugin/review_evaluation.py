@@ -165,7 +165,8 @@ def evaluate_pending(pending_id, skill, oracle, *, oracle_id):
         evidence = {'pending_id': pending_id, 'payload_sha256': payload_hash,
                     'oracle_id': oracle_id, 'skill_path': str(target),
                     'before_sha256': _digest(original), 'candidate_sha256': _digest(candidate),
-                    'baseline': baseline, 'candidate': proposed, 'case_ids': list(old_cases)}
+                    'baseline': baseline, 'candidate': proposed, 'case_ids': list(old_cases),
+                    'source_evidence': payload.get('_colony_review_evidence')}
         improved = (original != candidate and old_cases.keys() == new_cases.keys() and all(new_cases.values())
                     and sum(new_cases.values()) > sum(old_cases.values()))
         if not improved:
