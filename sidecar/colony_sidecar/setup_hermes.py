@@ -222,7 +222,7 @@ def run(root_dir=None, args=None):
                 raise ValueError('This instance belongs to another Hermes home')
             if config.get('plugins', {}).get('colony', {}).get('instance_dir') != str(state):
                 raise ValueError('The Hermes binding changed; restore its saved config or select another instance')
-            if getattr(args, 'local_work', False) and not manifest.get('local_work'):
+            if getattr(args, 'local_work', False):
                 # A native registration failure can follow successful attachment.
                 # Retry that missing step with the retained role and interpreter.
                 if not manifest.get('sidecar_python') or not manifest.get('sidecar_module_root'):
@@ -232,7 +232,7 @@ def run(root_dir=None, args=None):
                 options, _ = asyncio.run(planning(json.loads((state/'.colony-llm-config.json').read_text())))
                 verify_tools(options['base_url'], options['model'], options['api_key'])
                 install(state)
-                print('Accepted local drafts are registered. Restart this Colony instance to load its new job binding.')
+                print('Accepted local drafts use native Kanban. Restart this Colony instance and Hermes gateway to load the binding.')
             os.environ['COLONY_STATE_DIR'] = str(state)
             print(f'Existing private instance retained: {state}')
             print(f'Use colony --instance {str(state)!r} start, then status.')
@@ -429,8 +429,8 @@ def run(root_dir=None, args=None):
         print('Source memory, temporal claims, contacts, commitments and self state persist without a graph.')
         print('Graph/vector recall and consequential background work are optional and currently disabled.')
         if local_work:
-            print('Accepted local drafts are enabled. Keep the selected Hermes gateway running to fire its scheduler.')
-            print('Planning uses the local function binding in .colony-llm-config.json, read again on every task fire.')
+            print('Accepted local drafts use the native Kanban board and dedicated worker profile.')
+            print('Keep the selected Hermes gateway running. Its dispatch ticks refresh the planning role for future attempts.')
         print(f'Start: colony --instance {str(state)!r} start --detach')
         print(f'Status: colony --instance {str(state)!r} status')
         print('No existing Hermes process was restarted. Begin a new session to load the adapter.')

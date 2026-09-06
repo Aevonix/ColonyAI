@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## v1.0.5 - native draft execution
+
+- Accepted local source drafts use the stock Hermes Kanban dispatcher and a
+  constrained native worker profile. Colony retains consent, commitment scope,
+  source/report validation and current-work projection; Hermes owns attempts,
+  crash recovery and native completion delivery. Saved receipts reconcile an
+  interrupted acknowledgment without redrafting. Recovery may use a finishing
+  model call. Native hooks and the profile-scoped completion tool override require
+  no Hermes core patch.
+- Setup creates the board/profile and refreshes local planning bindings for
+  future worker processes. Pending legacy drafts migrate; in-flight cron
+  assignments drain before the old draft job is paused. Fresh installs create
+  no polling job. Reports remain unverified interpretations and do not fulfil
+  broader commitments.
 
 - Removed the experimental evidence-recall and work-handoff task skills and
   the setup wizard's `--task-skills` option. Sixteen runs across four synthetic

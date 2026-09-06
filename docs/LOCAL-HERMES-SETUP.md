@@ -71,22 +71,24 @@ also get that model in native Hermes config. An existing Hermes model is kept.
 
 Accepted local drafts are optional. With `--local-work`, setup checks function
 calling and creates a named `planning` role bound to the selected local model.
-It registers one job with the selected Hermes scheduler, running every five
-minutes. The selected Hermes gateway must be running for scheduled fires.
-The job remains idle until the owner accepts a specific question and local text
+It creates a native `colony-drafts` board and constrained worker profile.
+The selected Hermes gateway dispatcher must be running.
+The board remains idle until the owner accepts a specific question and local text
 sources through `colony_accept_local_draft`. No existing commitment is required;
 an optional commitment ID associates the draft with a broader obligation.
 
 The worker reads those sources, produces a cited draft and retains its execution
 and report in the instance. It cannot send the draft or change its source files.
-It loads the planning role afresh on each fire, using the Colony interpreter to
-resolve routing and the selected Hermes interpreter for native execution. The
+The gateway refreshes its planning profile from the current function role before
+promoting new work and on nonempty dispatch ticks. A running attempt keeps its
+selected snapshot; subsequent attempts use the refreshed profile. The
 two environments need no shared dependencies. See
 [accepted local work](ACCEPTED-LOCAL-WORK.md) for limits and cancellation.
-If scheduler registration fails after attachment, rerun the same command with
-`--local-work`. It retries the missing registration using the retained planning
-role, identity and credentials. Restart an already-running Colony instance to
-load the new job binding. An older instance without a planning role or compatible
+If native registration fails after attachment, rerun the same command with
+`--local-work`. It resumes the prepared profile using the retained planning
+role, identity and credentials. Restart an already-running Colony instance and
+Hermes gateway to load the new binding. Existing cron assignments drain before
+their old draft job is paused. An older instance without a planning role or compatible
 adapter needs explicit configuration or an adapter upgrade first.
 
 Graph/vector retrieval, embedding downloads and consequential background workers

@@ -144,6 +144,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000) -
               ('execution', view), ('worker_work', view.get('worker_work', {})),
               ('native_cron', view.get('native_cron', {}))]
     keys = ('initiative_id', 'commitment_id', 'native_job_id', 'native_execution_id',
+            'execution_backend', 'native_board', 'native_task_id', 'native_run_id', 'native_status', 'attempt_count',
             'execution_id', 'job_id', 'id', 'kind', 'task_class', 'label', 'platform',
             'status', 'state', 'phase', 'tool_name', 'liveness', 'freshness',
             'observation_age_seconds', 'record_age_seconds', 'age_seconds')

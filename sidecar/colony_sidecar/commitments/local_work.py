@@ -47,8 +47,10 @@ class LocalWork:
     def view(row):
         if row is None:
             return None
-        return {key: row[key] for key in ('id', 'description', 'status', 'attempt_count', 'max_attempts')} | {
-            'context': json.loads(row['context']), 'result': json.loads(row['result_metadata'] or '{}'),
+        context = json.loads(row['context'])
+        return {key: row[key] for key in ('id', 'description', 'status', 'attempt_count')} | {
+            'max_attempts': None if context.get('execution_backend') == 'kanban' else row['max_attempts'],
+            'context': context, 'result': json.loads(row['result_metadata'] or '{}'),
             'parent_commitment_fulfilled': False}
 
     @staticmethod
@@ -59,7 +61,8 @@ class LocalWork:
             raise KeyError('unknown_commitment')
         return row
 
-    def accept(self, commitment_id, *, contact_id, principal_id, session_id, turn_id, question, sources):
+    def accept(self, commitment_id, *, contact_id, principal_id, session_id, turn_id, question, sources,
+               execution_backend='cron', origin=None):
         material = {'commitment_id': commitment_id, 'question': question, 'sources': sources}
         # Replay of this owner acceptance is idempotent. A later explicit
         # acceptance can intentionally request a fresh draft of changed files.
@@ -76,7 +79,10 @@ class LocalWork:
             context = {**material, 'contact_id': contact_id, 'accepted_principal_id': principal_id,
                        'accepted_session_id': session_id, 'accepted_turn_id': turn_id,
                        'accepted_at': stamp(), 'task_class': SOURCE,
+                       'execution_backend': execution_backend,
                        'scope': 'Read selected local sources and create a new local draft only.'}
+            if origin:
+                context['origin'] = origin
             identifier = str(uuid.uuid4())
             db.execute('''INSERT INTO initiatives(id,dedup_key,type,description,priority,rationale,
                 source_type,source_id,created_by,status,entity_id,delivery_mode,context,max_attempts,timeout_seconds)
@@ -105,6 +111,84 @@ class LocalWork:
         with self.transaction() as db:
             return self.view(self.row(db, identifier, contact_id))
 
+    def native_pending(self, contact_id, *, limit=50):
+        """Reconcile accepted records on the native dispatch tick, not a timer."""
+        with self.transaction() as db:
+            rows = db.execute('''SELECT * FROM initiatives WHERE created_by=? AND source_type=?
+                AND entity_id=? AND status IN ('pending','assigned','acknowledged','failed')
+                ORDER BY created_at,id''', (CREATOR, SOURCE, contact_id)).fetchall()
+            items, legacy = [], 0
+            for original in rows:
+                row = self.row(db, original['id'], contact_id)
+                context = json.loads(row['context'])
+                if row['status'] not in {'pending', 'assigned', 'acknowledged', 'failed'}:
+                    continue
+                if context.get('execution_backend', 'cron') != 'kanban':
+                    # Pending work has no executing predecessor. Serialize this
+                    # handoff with the old selector so only one backend owns it.
+                    if row['status'] == 'pending':
+                        context['execution_backend'] = 'kanban'
+                        db.execute('UPDATE initiatives SET context=? WHERE id=?',
+                                   (encoded(context), row['id']))
+                        self.history(db, row['id'], contact_id, 'execution_migrated',
+                                     {'from': 'cron', 'to': 'kanban'})
+                        row = db.execute('SELECT * FROM initiatives WHERE id=?', (row['id'],)).fetchone()
+                    else:
+                        result = json.loads(row['result_metadata'] or '{}')
+                        if (row['status'] != 'failed' or
+                                (result.get('error_type') in TRANSIENT and row['attempt_count'] < row['max_attempts'])):
+                            legacy += 1
+                        continue
+                if row['status'] != 'failed':
+                    items.append(self.view(row))
+            # Bound each tick without letting old running tasks starve new
+            # acceptances that still need their native task association.
+            items.sort(key=lambda item: bool(item['context'].get('native_task_id')))
+            return {'items': items[:limit], 'legacy_in_flight': legacy}
+
+    def attach_native_task(self, identifier, contact_id, native):
+        with self.transaction() as db:
+            row = self.row(db, identifier, contact_id)
+            context = json.loads(row['context'])
+            if context.get('execution_backend') != 'kanban':
+                raise ValueError('native_execution_backend_required')
+            if context.get('native_task_id'):
+                if any(context.get(key) != value for key, value in native.items()):
+                    raise ValueError('native_task_association_changed')
+                return self.view(row)
+            if row['status'] != 'pending':
+                raise ValueError('pending_native_acceptance_required')
+            context.update(native)
+            db.execute('UPDATE initiatives SET context=? WHERE id=?', (encoded(context), identifier))
+            self.history(db, identifier, contact_id, 'native_task_bound', native)
+            return self.view(db.execute('SELECT * FROM initiatives WHERE id=?', (identifier,)).fetchone())
+
+    def bind_native_run(self, identifier, contact_id, native, *, attempt_count):
+        with self.transaction() as db:
+            row = self.row(db, identifier, contact_id)
+            context = json.loads(row['context'])
+            if (context.get('execution_backend') != 'kanban' or
+                    any(context.get(key) != native[key] for key in
+                        ('source_home_id', 'native_board', 'native_task_id'))):
+                raise ValueError('native_task_association_required')
+            if row['status'] == 'completed':
+                # Sidecar finish may have succeeded before native completion's
+                # acknowledgment was lost. Return the saved result for the new
+                # native attempt without changing its historical assignment.
+                return self.view(row) | {'context': context | native, 'reconcile_only': True}
+            if row['status'] not in {'pending', 'assigned', 'acknowledged', 'failed'}:
+                raise ValueError('assignment_cancelled_or_superseded')
+            if row['status'] == 'assigned' and all(context.get(k) == v for k, v in native.items()):
+                return self.view(row)
+            context.update(native)
+            actor = 'native-kanban:' + str(native['native_run_id'])
+            db.execute('''UPDATE initiatives SET status='assigned',assigned_agent_id=?,assigned_at=?,
+                last_attempt_at=?,attempt_count=?,context=?,result_metadata='{}',
+                failed_at=NULL,failed_reason=NULL WHERE id=?''',
+                (actor, stamp(), stamp(), attempt_count, encoded(context), identifier))
+            self.history(db, identifier, actor, 'assigned', native)
+            return self.view(db.execute('SELECT * FROM initiatives WHERE id=?', (identifier,)).fetchone())
+
     def select(self, contact_id, native, terminal):
         """One canonical native fire takes at most one pending assignment.
 
@@ -119,6 +203,8 @@ class LocalWork:
             for original in rows:
                 row = self.row(db, original['id'], contact_id)
                 context = json.loads(row['context'])
+                if context.get('execution_backend') == 'kanban':
+                    continue
                 if row['status'] in {'assigned', 'acknowledged'}:
                     if context.get('native_execution_id') == native['native_execution_id']:
                         return self.view(row)
