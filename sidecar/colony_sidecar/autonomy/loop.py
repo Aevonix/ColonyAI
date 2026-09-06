@@ -2323,6 +2323,7 @@ class AutonomyLoop:
 
         Filters out abandoned and completed goals so the autonomy loop
         does not generate follow-up initiatives for dead tasks forever.
+        An inferred proposal is awaiting acceptance, not an undertaking.
         """
         goals = self._registry.goals
         if goals is None:
@@ -2349,6 +2350,8 @@ class AutonomyLoop:
                     # Skip abandoned / completed / cancelled goals
                     g_status = getattr(goal, "status", None)
                     if g_status in ("abandoned", "completed", "cancelled"):
+                        continue
+                    if g_status == "proposed" and getattr(goal, "source", None) == "inferred":
                         continue
                     days_pending = 0
                     if goal.created_at:
