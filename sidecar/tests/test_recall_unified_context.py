@@ -168,6 +168,47 @@ def quotes():
 
 
 @pytest.mark.asyncio
+async def test_combined_rerank_bounds_model_work_without_mixing_unscored_tail(monkeypatch):
+    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
+    monkeypatch.delenv("COLONY_RECALL_RERANK_MIN_SCORE", raising=False)
+    calls = []
+
+    async def rank(query, documents, top_k):
+        calls.append((documents, top_k))
+        # Even low cross-encoder scores must not lose to an unsubmitted RRF
+        # score. A useful passage below the packet limit can still win.
+        return [{"index": i, "score": .01 if i == 19 else .001}
+                for i in range(len(documents))]
+
+    rows = [{**belief(f"Passage {i}"), "id": f"b{i}", "relevance": 100 - i}
+            for i in range(30)]
+    selected, text = await RecallSelector(rank).select_context("q", rows, [])
+    assert calls == [([f"Passage {i}" for i in range(20)], 20)]
+    assert len(selected) == 5
+    assert selected[0]["id"] == "b19"
+    assert all(row["rerank_status"] == "scored" for row in selected)
+    assert len(text) <= 6000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,fail", [("off", False), ("shadow", False), ("on", True)])
+async def test_bounded_rerank_preserves_full_fallback_and_shadow_input(monkeypatch, mode, fail):
+    monkeypatch.setenv("COLONY_RECALL_RERANK", mode)
+    monkeypatch.delenv("COLONY_RECALL_RERANK_MIN_SCORE", raising=False)
+    reranker = Reranker(fail=fail)
+    rows = [{**belief(f"Passage {i}"), "id": f"b{i}"} for i in range(30)]
+    result = await RecallSelector(reranker.rerank).rerank(
+        "q", rows, 5, candidate_limit=20)
+    assert result is rows
+    assert [row["id"] for row in result] == [f"b{i}" for i in range(30)]
+    assert len(reranker.calls) == (0 if mode == "off" else 1)
+    if reranker.calls:
+        assert len(reranker.calls[0]) == 20
+    if fail:
+        assert all(row["rerank_status"] == "unavailable" for row in result)
+
+
+@pytest.mark.asyncio
 async def test_reranker_failure_has_one_bounded_annotated_fallback(monkeypatch):
     reranker = Reranker(fail=True)
     calibrate(monkeypatch, reranker)
