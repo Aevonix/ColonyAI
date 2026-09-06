@@ -352,7 +352,9 @@ class _TransportScopeRegistry:
                 )
             self._by_turn[key] = scope
             self._by_turn.move_to_end(key)
-            if scope.session_id:
+            # Native review forks share their parent's session for prompt
+            # caching. Their exact turn must not replace its current speaker.
+            if scope.session_id and scope.platform != "background_review":
                 self._current_by_session[scope.session_id] = key
             while len(self._by_turn) > self._maximum:
                 old_key, _old_scope = self._by_turn.popitem(last=False)
@@ -440,6 +442,35 @@ class _TransportScopeRegistry:
 
 
 _TRANSPORT_SCOPES = _TransportScopeRegistry()
+
+# Native LLM middleware runs on the caller, while observer hooks run in copied
+# worker contexts. Capture here for propagate_context_to_thread at review spawn;
+# a latest-session lookup could borrow a later participant's authority.
+_REVIEW_PARENT_SCOPE: ContextVar[_TransportScope | None] = ContextVar(
+    "colony_review_parent_scope", default=None,
+)
+
+
+def _native_background_review() -> bool:
+    try:
+        from tools.skill_provenance import is_background_review
+        return is_background_review()
+    except ImportError:
+        return False
+
+
+def _background_review_scope(parent, **kwargs) -> _TransportScope:
+    session = str(kwargs.get("session_id") or "")
+    task = str(kwargs.get("task_id") or "")
+    turn = str(kwargs.get("turn_id") or "")
+    if (parent is not None and parent.valid_participant
+            and parent.platform != "background_review"
+            and session == str(kwargs.get("parent_session_id") or "") == parent.session_id
+            and task and turn and turn != parent.turn_id):
+        return replace(parent, task_id=task, turn_id=turn,
+                       platform="background_review", user_message="")
+    return _TransportScope(session, task, turn, "background_review", "", "",
+                           "unresolved", "parent_scope_missing")
 
 
 def _resolve_scope(
@@ -561,6 +592,9 @@ def _tool_execution_middleware(**kwargs: Any) -> Any:
             if scope.authority_lane not in {"owner", "system"}:
                 return _canonical_json({"error": "Native tool requires owner authorization; use an enabled Colony action request or ask the owner to perform it",
                     "status": "requires_authorization", "effect_performed": False, "approval_created": False})
+            if scope.platform == "background_review" and name == "skill_manage":
+                from .review import stage_skill_change
+                return stage_skill_change(args)
     except Exception:
         return _canonical_json({"error": "Native tool authority check is unavailable",
             "status": "unavailable", "effect_performed": False, "approval_created": False})
@@ -2142,7 +2176,9 @@ def register(ctx: Any) -> None:
         return str(content or "")
 
     def pre_llm_call(**kwargs: Any) -> None:
-        scope = _TRANSPORT_SCOPES.child_scope(**kwargs) if kwargs.get("parent_session_id") else _resolve_scope(
+        review = _native_background_review()
+        parent = _REVIEW_PARENT_SCOPE.get() if review else None
+        scope = _background_review_scope(parent, **kwargs) if review else _TRANSPORT_SCOPES.child_scope(**kwargs) if kwargs.get("parent_session_id") else _resolve_scope(
             client,
             session_id=str(kwargs.get("session_id") or ""),
             task_id=str(kwargs.get("task_id") or ""),
@@ -2154,10 +2190,10 @@ def register(ctx: Any) -> None:
             attested_system_platforms=attested_system_platforms,
         )
         _TRANSPORT_SCOPES.put(scope)
-        if scope.valid_participant:
+        if scope.valid_participant and not review:
             work_coordinator.bind_turn(**kwargs)
         if execution_observer is not None:
-            execution_observer.start(scope, **kwargs)
+            execution_observer.start(scope, review_parent=parent if review else None, **kwargs)
         return None
 
     def post_llm_call(**kwargs: Any) -> None:
@@ -2167,7 +2203,7 @@ def register(ctx: Any) -> None:
             task_id=str(kwargs.get("task_id") or ""),
             turn_id=str(kwargs.get("turn_id") or ""),
         )
-        if scope is None or not scope.valid_participant:
+        if scope is None or not scope.valid_participant or scope.platform == "background_review":
             return None
         if (
             turn_writer_platforms is not None
@@ -2248,6 +2284,8 @@ def register(ctx: Any) -> None:
         return None
 
     def transform_llm_output(**kwargs: Any) -> str | None:
+        if _native_background_review():
+            return None  # Internal review output is neither chat nor evidence.
         candidate = str(kwargs.get("response_text") or "")
         platform = str(kwargs.get("platform") or "")
         if not candidate or _voice_surface(platform):
@@ -2352,9 +2390,18 @@ def register(ctx: Any) -> None:
         _TRANSPORT_SCOPES.bind_current_session(**kwargs)
         scope = _TRANSPORT_SCOPES.for_execution(session_id=kwargs.get("session_id", ""),
             task_id=kwargs.get("task_id", ""), turn_id=kwargs.get("turn_id", ""))
-        if scope is not None and scope.valid_participant:
+        if scope is not None and scope.valid_participant and scope.platform != "background_review":
             work_coordinator.bind_turn(**kwargs)
     ctx.register_hook("pre_api_request", bind_current_session)
+    def capture_review_parent(**kwargs):
+        if _native_background_review():
+            return None
+        _TRANSPORT_SCOPES.bind_current_session(**kwargs)
+        scope = _TRANSPORT_SCOPES.for_execution(session_id=kwargs.get("session_id", ""),
+            task_id=kwargs.get("task_id", ""), turn_id=kwargs.get("turn_id", ""))
+        _REVIEW_PARENT_SCOPE.set(scope if scope is not None and scope.valid_participant else None)
+        return None  # No provider request changes.
+    ctx.register_middleware("llm_request", capture_review_parent)
     ctx.register_hook("transform_llm_output", transform_llm_output)
     ctx.register_hook("post_llm_call", post_llm_call)
     if execution_observer is not None:

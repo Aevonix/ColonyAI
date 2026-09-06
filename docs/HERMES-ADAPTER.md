@@ -264,3 +264,71 @@ deployment's channel admission, secret isolation and consent policy. Native
 owner tools retain their existing consent behavior; they are not converted to
 Colony intents by this gate. Qualify both owner and guest messages before
 enabling a public channel.
+
+## Native post-turn review
+
+Hermes' automatic review reuses its parent's session ID without emitting a
+subagent-start event. The adapter captures the exact parent participant on the
+native caller thread and accepts inheritance only with Hermes' trusted review
+provenance, matching parent/session, and a distinct task/turn. Later speakers in
+the same session cannot upgrade a queued guest review. Reviews get a separate
+work record linked to their parent, do not replace the session's current speaker,
+and do not write their internal harness into ordinary conversation evidence.
+
+For owner/system reviews, `skill_manage` produces a proposal in Hermes' existing
+`pending/skills` store. Native curator ownership checks still apply. Foreground
+owner requests retain native behavior. The proposal is not an evaluated or
+activated improvement: an explicit operator or a separately configured task
+evaluator must use the native apply path. Mutation history and rollback remain
+in Hermes' skill ledger. No new consent transport or learning store is added.
+
+Installed-wheel qualification runs real native automatic review threads with
+controlled inference for owner and guest, including a later-owner race in the
+guest's session. It checks proposal persistence, exact inherited authority,
+separate work observation, absent harness capture, and explicit native
+apply/ledger rollback. It does not claim measured task improvement from that
+controlled model fixture.
+
+### Measured skill updates
+
+`python -m colony_hermes.review_evaluation --skill NAME --pending ID
+--oracle trusted_local_module:function` evaluates one explicitly selected,
+existing curator-owned `SKILL.md` proposal. It accepts native full-content
+edits or exact text patches, including a one-operation native batch. Text
+patches must match their captured original content without ambiguity unless
+native `replace_all` is explicit. Support-file changes, multiple-operation batches,
+new skills and unrelated proposals stay in Hermes' ordinary pending mechanism.
+The selected local oracle is trusted operator code, not a model tool or a
+model-selected command. It receives the playbook text and a phase and must bound
+its own task execution. It returns explicit case IDs and boolean outcomes.
+
+Baseline and candidate must run the same cases; every candidate case must pass
+and at least one must improve. The adapter records task evidence, the proposal
+hash, oracle identity and before/candidate files in the native skill ledger,
+then calls native apply. It repeats the task after activation, permitting
+additional held-out checks while requiring all original cases. A failed or
+unavailable repeat invokes native rollback. `--audit EVALUATION_ID` repeats an
+existing candidate check later, using the same oracle implementation. This is
+an operator/cron entry point, not an additional background service.
+
+The proposal records its original file hash. A stale proposal or later owner
+edit is held rather than overwritten. A candidate ledger entry is written
+before apply and remains a recovery target if the process exits between apply
+and evaluation; retrying the pending ID resumes its post-check. Rollback checks
+all captured current files against the candidate snapshot first and restores
+only native skill files. It does not rewind memory, permissions or action
+records. These byte checks do not lock editors or foreign processes, so select
+a curator-owned path without another concurrent writer for automatic rollout.
+Native curation usage counters remain native telemetry after file rollback.
+
+Qualification tests exercise real pending files, native curator ownership,
+mutation/rollback and ledger recovery with controlled task outcomes. A selected
+oracle only establishes performance on its declared task cases. No evaluator
+or automatic rollout is enabled by default, and this contract does not qualify
+arbitrary code changes or prove general self-improvement.
+
+A disposable local-inference qualification also exercised an actual native
+review and exact text patch: its declared task scored 0/2 before, 2/2 with the
+candidate, and 2/2 after activation. An injected evaluator outage restored the
+original bytes through native rollback. This was a neutral fixture, not a live
+recurring skill or an observed spontaneous model regression.

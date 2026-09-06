@@ -33,7 +33,7 @@ class ExecutionObserver:
         except Exception:
             logger.debug("Execution observation unavailable; liveness will become unknown")
 
-    def start(self, scope, **kwargs):
+    def start(self, scope, *, review_parent=None, **kwargs):
         turn_id = str(kwargs.get("turn_id") or "")
         session_id = str(kwargs.get("session_id") or "")
         if not turn_id or not session_id:
@@ -43,7 +43,13 @@ class ExecutionObserver:
                 return
             parent_id = ""
             parent_session = str(kwargs.get("parent_session_id") or "")
-            if parent_session:
+            if scope is not None and scope.platform == "background_review":
+                if not scope.valid_participant or review_parent is None:
+                    return
+                person, platform = scope.contact_id, scope.platform
+                parent_id = hashlib.sha256(
+                    f"{self.instance}:{review_parent.session_id}:{review_parent.turn_id}".encode()).hexdigest()
+            elif parent_session:
                 bound = self._children.get(session_id)
                 if not bound or bound["parent_session_id"] != parent_session:
                     return
