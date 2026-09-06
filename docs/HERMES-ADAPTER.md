@@ -307,8 +307,11 @@ and at least one must improve. The adapter records task evidence, the proposal
 hash, oracle identity and before/candidate files in the native skill ledger,
 then calls native apply. It repeats the task after activation, permitting
 additional held-out checks while requiring all original cases. A failed or
-unavailable repeat invokes native rollback. `--audit EVALUATION_ID` repeats an
-existing candidate check later, using the same oracle implementation. This is
+unavailable initial check invokes native rollback. `--audit EVALUATION_ID` repeats
+an existing candidate check later, using the same oracle implementation. Once
+the ledger records a completed activation, an unavailable later audit records
+`unavailable` and retains the last qualified files. A completed task regression
+still invokes native rollback. Infrastructure failure is not a failed task case. This is
 an operator/cron entry point, not an additional background service.
 
 The proposal records its original file hash. A stale proposal or later owner

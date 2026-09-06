@@ -67,16 +67,28 @@ def audit_evaluation(entry_id, oracle, *, oracle_id):
     if not _matches(entry['after']):
         return {'status': 'changed_elsewhere', 'evaluation_id': entry_id}
     target = Path(evidence['skill_path'])
+    previously_activated = any(
+        row.get('action') == 'evaluation'
+        and row.get('evidence', {}).get('evaluation_id') == entry_id
+        and row['evidence'].get('status') == 'activated'
+        for row in ledger.list_entries(skill=skill))
+    unavailable = False
     try:
         measured, cases = _measure(oracle, target.read_text(), 'post_activation')
         accepted = set(evidence['case_ids']).issubset(cases) and all(cases.values())
     except Exception as error:
-        measured = {'error_type': type(error).__name__}
+        measured = {'status': 'unavailable', 'error_type': type(error).__name__}
+        unavailable = True
         accepted = False
     # The oracle may take time. Never rewind a later owner edit it overlapped.
     if not _matches(entry['after']):
         return {'status': 'changed_elsewhere', 'evaluation_id': entry_id}
-    if accepted:
+    if unavailable and previously_activated:
+        # An incomplete repeat is not evidence of a task regression. Keep the
+        # last qualified bytes; the next ordinary audit may try again. A new
+        # candidate without a completed post-apply check still rolls back.
+        status = 'unavailable'
+    elif accepted:
         status = 'activated'
     else:
         ok, _ = ledger.rollback_entry(entry_id)
