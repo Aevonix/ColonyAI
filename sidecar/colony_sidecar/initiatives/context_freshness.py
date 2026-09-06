@@ -10,7 +10,8 @@ initiative type therefore declares its context durability:
   freshness TTL before the agent acts on it.
 
 The agent-side contract: a volatile initiative's context carries
-``context_captured_at`` (stamped by the autonomy loop). Before acting,
+``context_captured_at``. Observation-backed proposals retain the actual source
+observation time rather than renewing it when a stored row is read. Before acting,
 the agent checks ``is_context_fresh()``; if stale, it calls
 ``POST /v1/host/initiatives/{id}/context/refresh`` which routes to the
 engine's per-entity ``rebuild_context()``.
@@ -85,7 +86,7 @@ def is_context_fresh(
     """Whether a context snapshot is still safe to act on.
 
     Durable contexts are always fresh. Volatile contexts without a
-    capture timestamp are treated as stale (fail closed).
+    capture timestamp, or with a future timestamp, are treated as stale.
     """
     ttl = freshness_ttl_for(type_value)
     if ttl is None:
@@ -99,4 +100,4 @@ def is_context_fresh(
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
     now = now or datetime.now(timezone.utc)
-    return (now - stamp).total_seconds() <= ttl
+    return 0 <= (now - stamp).total_seconds() <= ttl

@@ -69,7 +69,7 @@ class Observation:
     domain: str
     entity_id: str
     payload: Dict[str, Any]
-    observed_at: datetime
+    observed_at: Optional[datetime]
     reported_by: Optional[str] = None
 
     @classmethod
@@ -84,12 +84,12 @@ class Observation:
             try:
                 observed_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
             except (ValueError, TypeError):
-                observed_at = datetime.now(timezone.utc)
+                observed_at = None
         return cls(
             domain=row["domain"],
             entity_id=row["entity_id"],
             payload=payload,
-            observed_at=observed_at or datetime.now(timezone.utc),
+            observed_at=observed_at if isinstance(observed_at, datetime) else None,
             reported_by=row.get("reported_by"),
         )
 
@@ -98,7 +98,7 @@ class Observation:
             "domain": self.domain,
             "entity_id": self.entity_id,
             "payload": self.payload,
-            "observed_at": self.observed_at.isoformat(),
+            "observed_at": self.observed_at.isoformat() if self.observed_at else None,
             "reported_by": self.reported_by,
         }
 
@@ -184,7 +184,7 @@ class ObservationStore:
                 try:
                     observed_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
                 except (ValueError, TypeError):
-                    observed_at = None
+                    continue  # An invalid supplied time is not a fresh observation.
             self.record(
                 domain=domain,
                 entity_id=str(entity_id),

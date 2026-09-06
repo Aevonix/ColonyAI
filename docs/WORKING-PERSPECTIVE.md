@@ -112,6 +112,18 @@ original tasks and commitments. Selected skill evaluation uses the native
 [measured update path](HERMES-ADAPTER.md#measured-skill-updates), independently of
 this proposal cycle.
 
+Observation-backed volatile proposals use the existing freshness limits, including
+five minutes for system health. Reading an old stored snapshot does not renew its
+time or turn it into a current failure. Unknown, missing and restart-result status
+values do not mean unhealthy; system investigation requires a recognized failure
+status or a valid elevated error rate. Invalid observation timestamps remain
+unknown. A stale refresh returns unavailable context rather than certifying an
+old healthy or failed snapshot as current. The stored observations are retained.
+
+The legacy `.bak` scan describes only the newest file in its checked directory
+and explicitly leaves recovery coverage unverified. It does not determine the
+last complete backup, inspect other archive locations or update backup markers.
+
 The state and source history survive changing the interaction model. Operational
 weights carry a working strategy across a model swap, not a claim that the new
 model has inherited another model's competence. New outcomes revise the judgment.
