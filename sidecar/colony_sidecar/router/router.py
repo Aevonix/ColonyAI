@@ -345,6 +345,17 @@ class LLMRouter:
             raise ValueError('No eligible local model for function ' + role)
         return eligible[0].config
 
+    def function_deadline_seconds(self, *, context=None):
+        """Configured total role budget for bounded background callers."""
+        from .functions import TASK_ROLES
+        self._reload()
+        ctx = context or {}
+        role = ctx.get('function_role') or TASK_ROLES.get(ctx.get('task'), 'reasoning')
+        snapshot = self._snapshot
+        if snapshot is None or role not in snapshot.roles:
+            return None
+        return snapshot.roles[role].deadline_seconds
+
     async def _call_function(self, snapshot, messages, context, tools, force_tier, stream, request_id):
         from .functions import TASK_ROLES, candidates
         role_name = context.get('function_role') or TASK_ROLES.get(context.get('task'), 'reasoning')
