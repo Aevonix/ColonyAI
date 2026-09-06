@@ -22,6 +22,8 @@ def test_artifacts_contain_canonical_adapters_without_sidecar_or_worker(artifact
         "colony_memory/cli.py": "plugins/colony-memory/cli.py",
         "colony_hermes/colony_hostworker/catalog.py": "hostworker/colony_hostworker/catalog.py",
         "colony_hermes/colony_hostworker/contract.py": "hostworker/colony_hostworker/contract.py",
+        "colony_hermes/skills/colony-evidence-recall/SKILL.md": "plugins/hermes-plugin/skills/colony-evidence-recall/SKILL.md",
+        "colony_hermes/skills/colony-work-handoff/SKILL.md": "plugins/hermes-plugin/skills/colony-work-handoff/SKILL.md",
     }
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
@@ -48,6 +50,46 @@ def test_artifacts_contain_canonical_adapters_without_sidecar_or_worker(artifact
         names = archive.getnames()
         for canonical in expected.values():
             assert any(name.endswith("/" + canonical) for name in names)
+
+
+def test_optional_pack_enters_native_skill_index_and_loads_exact_bodies(artifacts, tmp_path):
+    if importlib.util.find_spec('hermes_cli') is None:
+        pytest.skip('Install the qualified Hermes release for native skill discovery')
+    _, wheel, _, installed = artifacts
+    script = r'''
+import json, os, socket, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+sys.path.insert(0, sys.argv[2])
+def no_network(*args, **kwargs):
+    raise AssertionError('Skill discovery must not contact a service')
+socket.socket.connect = no_network
+socket.create_connection = no_network
+from colony_sidecar.setup_hermes import _adapter_resources, _task_skill_resources, _install_task_skills
+home = Path(os.environ['HERMES_HOME'])
+skills = _task_skill_resources(_adapter_resources(sys.argv[3]))
+_install_task_skills(home, skills)
+from tools.skills_tool import _find_all_skills, skill_view
+from agent.prompt_builder import build_skills_system_prompt
+discovered = {entry['name']: entry for entry in _find_all_skills()}
+assert set(discovered) == set(skills), discovered
+prompt = build_skills_system_prompt()
+assert '<available_skills>' in prompt, prompt
+for name, raw in skills.items():
+    # Hermes deliberately shortens descriptions in the prompt index.
+    assert name in prompt and discovered[name]['description'][:40] in prompt, prompt
+    result = json.loads(skill_view(name, preprocess=False))
+    assert result['success'], result
+    assert result['content'] == raw.decode(), result
+print(json.dumps({'native_discovered_skills': sorted(discovered), 'network_calls': 0}))
+'''
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'SYSTEMROOT') if key in os.environ}
+    env.update(HOME=str(tmp_path), HERMES_HOME=str(tmp_path/'profile'),
+               HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),
+               HERMES_SKIP_DOTENV='1', HERMES_DISABLE_TELEMETRY='1')
+    result = run('-I', '-c', script, installed, ROOT/'sidecar', wheel, cwd=tmp_path, env=env)
+    assert json.loads(result.stdout.splitlines()[-1])['native_discovered_skills'] == [
+        'colony-evidence-recall', 'colony-work-handoff']
 
 
 NATIVE_PROBE = r'''

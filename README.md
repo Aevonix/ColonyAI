@@ -44,6 +44,11 @@ It attaches the canonical installed adapter when its bytes match, or installs
 profile directory adapters when no native package is present. It neither
 patches Hermes core nor restarts an existing gateway.
 
+In unreleased source, the wizard can optionally install [recall and work-handoff task guidance](docs/LOCAL-HERMES-SETUP.md#optional-task-guidance)
+through Hermes's ordinary skill discovery. Use `--task-skills` to opt in;
+existing copies are preserved. These instructions remain experimental guidance,
+with no measured model-quality improvement claimed.
+
 Accept the wizard's startup option, or run:
 
 ```bash

@@ -18,8 +18,9 @@ A separate Hermes environment needs its own native core dependencies. It does
 not need Colony's CLI dependency `typer` or a preinstalled Colony adapter; setup
 can attach the private adapter directly from the Colony environment.
 
-The wizard asks for your name, the agent's name, the model API root and model,
-whether to enable accepted local drafts, then whether to start Colony. An API key is prompted without echo. For unattended
+The wizard offers optional task skills, asks for your name, the agent's name,
+the model API root and model, whether to enable accepted local drafts, then
+whether to start Colony. An API key is prompted without echo. For unattended
 setup use `COLONY_MODEL_API_KEY` in the process environment, never a command-line
 key. A model that requires no key works too.
 
@@ -94,6 +95,39 @@ those services intentionally. Model quality still determines extraction and
 reasoning quality. Lexical retrieval does not promise semantic recall of every
 paraphrase. This setup is a growing local base, not a claim that every autonomous
 behaviour or public channel is ready.
+
+## Optional task guidance
+
+**Unreleased, current source only.** Published 1.0.3 artifacts predate this option
+and skill pack. Use matching packages built from this source until a new release
+includes them.
+
+The adapter distribution includes two original instruction packs:
+`colony-evidence-recall` for resolving incomplete or contradictory recollection,
+and `colony-work-handoff` for continuing an authorized task across sessions.
+They are experimental task guidance. Packaging and native discovery do not
+establish a measured improvement in model behavior.
+
+The wizard offers them with a default of no. Add `--task-skills` to `colony init`
+to opt in. An existing attached instance can add them without repeating model
+setup or changing its identity, credentials or runtime:
+
+```bash
+colony init --non-interactive --hermes-home /path/to/private/hermes --task-skills
+```
+
+Use `--adapter-wheel /path/to/colony_hermes.whl` to select a built adapter artifact
+instead of the installed distribution. Setup copies its public instructions to
+`<selected Hermes home>/skills/<skill name>/SKILL.md`. Hermes discovers their
+descriptions in its ordinary skill index and loads each body on demand; there
+is no additional loader, service or memory writer. Begin a new session to see
+the installed skills, and use Hermes's native controls to disable them.
+
+Re-running the option leaves identical files untouched and reports any existing
+different skill directory as preserved. It never silently updates user-edited
+skills. Compare the packaged source with your existing copy before replacing
+it manually. Private identity, device details and deployment procedures belong
+in your private agent's files, not in these public instructions.
 
 ## Identity and authority
 
