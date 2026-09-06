@@ -1948,14 +1948,16 @@ async def lifespan(app: FastAPI):
         from colony_sidecar.tom.affect import AffectStore
         from colony_sidecar.tom.facts import SharedFactsStore
 
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        source_ledger = get_turn_idempotency_ledger(state_dir)
         affect_db = state_dir / "colony-affect.db"
-        affect_store = AffectStore(db_path=affect_db)
+        affect_store = AffectStore(db_path=affect_db, source_ledger=source_ledger)
+        affect_store.purge_erased_sources()
         set_affect_store(affect_store)
         logger.info("AffectStore initialized (db=%s)", affect_db)
 
         facts_db = state_dir / "colony-facts.db"
-        from colony_sidecar.turns import get_turn_idempotency_ledger
-        facts_store = SharedFactsStore(db_path=facts_db, source_ledger=get_turn_idempotency_ledger(state_dir))
+        facts_store = SharedFactsStore(db_path=facts_db, source_ledger=source_ledger)
         facts_store.purge_erased_sources()
         set_facts_store(facts_store)
         logger.info("SharedFactsStore initialized (db=%s)", facts_db)
@@ -2059,7 +2061,8 @@ async def lifespan(app: FastAPI):
 
         from colony_sidecar.tom.engagement import EngagementStore
         engagement_db = state_dir / "colony-engagement.db"
-        engagement_store = EngagementStore(db_path=engagement_db)
+        engagement_store = EngagementStore(db_path=engagement_db, source_ledger=source_ledger)
+        engagement_store.purge_erased_sources()
         set_engagement_store(engagement_store)
         logger.info("EngagementStore initialized (db=%s)", engagement_db)
 

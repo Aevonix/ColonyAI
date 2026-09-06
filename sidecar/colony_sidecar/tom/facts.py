@@ -16,7 +16,10 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-class SharedFactsStore:
+from .source_lineage import SourceLinkedStore
+
+
+class SharedFactsStore(SourceLinkedStore):
     """SQLite-backed shared facts store."""
 
     def __init__(self, db_path: str, *, source_ledger=None) -> None:
@@ -51,59 +54,6 @@ class SharedFactsStore:
         if 'source_lineage_json' not in {row[1] for row in self._conn.execute('PRAGMA table_info(shared_facts)')}:
             self._conn.execute('ALTER TABLE shared_facts ADD COLUMN source_lineage_json TEXT')
             self._conn.commit()
-
-    def _ledger(self):
-        if self._source_ledger is None:
-            from colony_sidecar import get_state_dir
-            from colony_sidecar.turns import get_turn_idempotency_ledger
-            self._source_ledger = get_turn_idempotency_ledger(get_state_dir())
-        return self._source_ledger
-
-    def source_input(self, turn_id: str, contact_id: str) -> tuple[dict, str]:
-        """Canonical input and exact support hashes, never a generated summary."""
-        from colony_sidecar.turns.idempotency import source_message_hash, SourceErased
-        ledger = self._ledger()
-        if ledger.is_projection_erased(turn_id):
-            raise SourceErased('source_erased')
-        conn = ledger._connect()
-        try:
-            row = conn.execute(
-                'SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?',
-                (turn_id, contact_id),
-            ).fetchone()
-        finally:
-            conn.close()
-        if row is None or row['scope'] != 'person':
-            raise SourceErased('canonical_person_source_unavailable')
-        messages = json.loads(row['messages_json'])
-        lineage = {
-            'turn_id': turn_id, 'session_id': row['session_id'],
-            'message_hashes': [source_message_hash(row['session_id'], m) for m in messages],
-            'occurred_at': row['occurred_at'], 'ingested_at': row['ingested_at'],
-        }
-        texts = []
-        for message in messages:
-            content = message.get('content')
-            if isinstance(content, list):
-                content = '\n'.join(
-                    b['text'] for b in content
-                    if isinstance(b, dict) and isinstance(b.get('text'), str)
-                )
-            if isinstance(content, str) and content:
-                texts.append(message['role'] + ': ' + content)
-        return lineage, '\n'.join(texts)
-
-    def _source_visible(self, contact_id: str, raw) -> bool:
-        if raw is None:
-            return True  # No invented provenance or blanket removal of legacy facts.
-        from colony_sidecar.turns.idempotency import SourceErased
-        lineage = json.loads(raw) if isinstance(raw, str) else raw
-        try:
-            current, _ = self.source_input(lineage['turn_id'], contact_id)
-        except SourceErased:
-            return False
-        return (current['session_id'] == lineage['session_id']
-                and current['message_hashes'] == lineage['message_hashes'])
 
     def source_visible(self, record: dict) -> bool:
         return self._source_visible(record['contact_id'], record.get('source_lineage'))

@@ -22,11 +22,15 @@ DEFAULT_SUSTAINED_DECLINE_MAGNITUDE = 0.3
 _DECAY_ONLY_SOURCES = frozenset({"decay"})
 
 
-class AffectStore:
+from .source_lineage import SourceLinkedStore
+
+
+class AffectStore(SourceLinkedStore):
     """SQLite-backed affect event store with computed state."""
 
-    def __init__(self, db_path: str, *, decay_factor: float = DEFAULT_DECAY_FACTOR) -> None:
+    def __init__(self, db_path: str, *, decay_factor: float = DEFAULT_DECAY_FACTOR, source_ledger=None) -> None:
         self._db_path = db_path
+        self._source_ledger = source_ledger
         self._decay_factor = decay_factor
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
@@ -62,7 +66,28 @@ class AffectStore:
                 event_count INTEGER NOT NULL DEFAULT 0
             );
         """)
+        if 'source_lineage_json' not in {row[1] for row in self._conn.execute('PRAGMA table_info(affect_events)')}:
+            self._conn.execute('ALTER TABLE affect_events ADD COLUMN source_lineage_json TEXT')
         self._conn.commit()
+
+    def purge_erased_sources(self, turn_ids=None, *, contact_id=None) -> int:
+        sql = 'SELECT id,contact_id,source_lineage_json FROM affect_events WHERE source_lineage_json IS NOT NULL'
+        rows = self._conn.execute(sql + (' AND contact_id=?' if contact_id else ''),
+                                  (contact_id,) if contact_id else ()).fetchall()
+        invalid = self._invalid_sources(rows, turn_ids)
+        with self._conn:
+            self._conn.executemany('DELETE FROM affect_events WHERE id=?', [(row['id'],) for row in invalid])
+            for person in {row['contact_id'] for row in invalid}:
+                self._recompute_state(person, commit=False)
+        return len(invalid)
+
+    @staticmethod
+    def _decode(row):
+        event = dict(row)
+        raw = event.pop('source_lineage_json', None)
+        event['source_lineage'] = json.loads(raw) if raw else None
+        event['evidence_basis'] = 'canonical_source' if raw else 'unlinked_observation'
+        return event
 
     # ------------------------------------------------------------------
     # Event CRUD
@@ -78,11 +103,15 @@ class AffectStore:
         trigger: Optional[str] = None,
         session_id: Optional[str] = None,
         timestamp: Optional[str] = None,
+        source_lineage: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Record an affect event and update the contact's computed state.
 
         Returns the created event dict.
         """
+        if source_lineage is not None and not self._source_visible(contact_id, source_lineage):
+            from colony_sidecar.turns.idempotency import SourceErased
+            raise SourceErased('source_erased')
         # Clamp valence and arousal to valid ranges.
         valence = max(-1.0, min(1.0, valence))
         arousal = max(0.0, min(1.0, arousal))
@@ -90,27 +119,29 @@ class AffectStore:
         event_id = str(uuid.uuid4())
         ts = timestamp or datetime.now(timezone.utc).isoformat()
 
-        self._conn.execute(
-            """INSERT INTO affect_events (id, contact_id, valence, arousal, source, trigger, timestamp, session_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (event_id, contact_id, valence, arousal, source, trigger, ts, session_id),
-        )
-        self._conn.commit()
-
-        # Update computed state.
-        self._recompute_state(contact_id)
+        with self._conn:
+            self._conn.execute(
+                """INSERT INTO affect_events (id, contact_id, valence, arousal, source, trigger, timestamp, session_id, source_lineage_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (event_id, contact_id, valence, arousal, source, trigger, ts, session_id,
+                 json.dumps(source_lineage) if source_lineage is not None else None),
+            )
+            self._recompute_state(contact_id, commit=False)
 
         event = self.get_event(event_id)
-        assert event is not None
+        if event is None:
+            from colony_sidecar.turns.idempotency import SourceErased
+            raise SourceErased('source_erased')
         return event
 
     def get_event(self, event_id: str) -> Optional[Dict[str, Any]]:
+        self.purge_erased_sources()
         row = self._conn.execute(
             "SELECT * FROM affect_events WHERE id = ?", (event_id,)
         ).fetchone()
         if row is None:
             return None
-        return dict(row)
+        return self._decode(row)
 
     def list_events(
         self,
@@ -121,6 +152,7 @@ class AffectStore:
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List affect events with optional filters."""
+        self.purge_erased_sources(contact_id=contact_id)
         clauses: List[str] = []
         params: List[Any] = []
 
@@ -136,7 +168,7 @@ class AffectStore:
             f"SELECT * FROM affect_events{where} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
             params + [limit, offset],
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [self._decode(r) for r in rows]
 
     def count_events(
         self,
@@ -145,6 +177,7 @@ class AffectStore:
         source: Optional[str] = None,
     ) -> int:
         """Total matching events, so paginated views can report a real total."""
+        self.purge_erased_sources(contact_id=contact_id)
         clauses: List[str] = []
         params: List[Any] = []
         if contact_id is not None:
@@ -177,6 +210,7 @@ class AffectStore:
 
         Applies time-based decay before returning.
         """
+        self.purge_erased_sources(contact_id=contact_id)
         self._apply_decay(contact_id)
         row = self._conn.execute(
             "SELECT * FROM affect_state WHERE contact_id = ?", (contact_id,)
@@ -195,6 +229,7 @@ class AffectStore:
 
     def get_all_states(self) -> List[Dict[str, Any]]:
         """Get affect states for all contacts with recorded events."""
+        self.purge_erased_sources()
         rows = self._conn.execute("SELECT * FROM affect_state").fetchall()
         results = []
         for row in rows:
@@ -204,6 +239,7 @@ class AffectStore:
 
     def detect_negative_spike(self, contact_id: str, threshold: float = -0.5) -> bool:
         """Check if the most recent event is a negative spike."""
+        self.purge_erased_sources(contact_id=contact_id)
         row = self._conn.execute(
             "SELECT valence FROM affect_events WHERE contact_id = ? ORDER BY timestamp DESC LIMIT 1",
             (contact_id,),
@@ -287,7 +323,7 @@ class AffectStore:
         )
         self._conn.commit()
 
-    def _recompute_state(self, contact_id: str) -> None:
+    def _recompute_state(self, contact_id: str, *, commit=True) -> None:
         """Recompute the affect state from recent events.
 
         Uses a weighted average with recency bias: more recent events
@@ -302,7 +338,8 @@ class AffectStore:
             self._conn.execute(
                 "DELETE FROM affect_state WHERE contact_id = ?", (contact_id,)
             )
-            self._conn.commit()
+            if commit:
+                self._conn.commit()
             return
 
         # Weighted average with exponential recency bias.
@@ -340,7 +377,8 @@ class AffectStore:
                    event_count = excluded.event_count""",
             (contact_id, current_valence, current_arousal, trend, last_event["id"], now, len(rows)),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()

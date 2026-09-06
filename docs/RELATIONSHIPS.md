@@ -189,3 +189,28 @@ Doctor gains `server-relationships`:
 - Live E2E (reference deployment): synthetic group turn from a known
   third party attributes + records; unknown sender creates a shadow;
   voice turn accrues to the same contact as their texts.
+
+## Source erasure and evolving profiles
+
+New conversation-derived affect and engagement observations retain the canonical
+turn ID, session and exact message hashes already used by shared facts. The
+existing source-forget endpoint deletes their linked observations and recomputes
+current state. Reads also reconcile erased evidence, including after restart or
+an interrupted cleanup. A late model result cannot recreate erased support.
+The response reports `affect_cleanup` and `engagement_cleanup` separately;
+`pending` means the physical cleanup must be retried, not that erasure is done.
+
+Affect event responses expose `source_lineage` and `evidence_basis`. Events with
+unknown or explicit independent origins stay labeled `unlinked_observation`.
+Engagement keeps the old aggregate profile once as a `legacy_unlinked` baseline;
+new observations are separate records. Removing an observation removes its
+qualifier text and its numeric contribution, then replays only surviving
+observations over that baseline. The profile reports the baseline's unlinked
+observation count. Reopening the store never recaptures a derived profile as a
+new baseline. These changes do not infer historical provenance, erase backups,
+or change independently authored directives or permission grants.
+
+This is source-aware retention, not proof that an inferred trait or note is
+correct. Raw source retention, learned assertions and inferred relationship
+state remain distinct. Existing attribution and authority rules still govern
+which conversations can update these stores.

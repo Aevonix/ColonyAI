@@ -1231,6 +1231,8 @@ class AffectEventResponse(BaseModel):
     trigger: Optional[str] = None
     timestamp: str
     session_id: Optional[str] = None
+    source_lineage: Optional[Dict[str, Any]] = None
+    evidence_basis: str = "unlinked_observation"
 
 
 class AffectStateResponse(BaseModel):

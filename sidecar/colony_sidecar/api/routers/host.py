@@ -3685,6 +3685,15 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             fact_cleanup = "complete"
         except Exception:
             logger.warning("source erasure shared-fact cleanup is pending", exc_info=True)
+    tom_cleanup = {}
+    for name, store in (('affect', _affect_store), ('engagement', _engagement_store)):
+        tom_cleanup[name + '_cleanup'] = 'unavailable' if store is None else 'pending'
+        if store is not None:
+            try:
+                store.purge_erased_sources(list(dict.fromkeys(result['source_ids'] + result['affected_source_ids'])))
+                tom_cleanup[name + '_cleanup'] = 'complete'
+            except Exception:
+                logger.warning('source erasure %s cleanup is pending', name, exc_info=True)
     vector_cleanup = 'unavailable'
     from colony_sidecar.vector import get_store
     vector_store = get_store()
@@ -3703,8 +3712,8 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
         except Exception:
             logger.warning("source erasure graph cleanup is pending", exc_info=True)
     return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
-            "shared_facts_cleanup": fact_cleanup, "vector_cleanup": vector_cleanup,
-            "scope": "canonical_turn_sources_and_linked_graph_and_shared_fact_projections",
+            "shared_facts_cleanup": fact_cleanup, "vector_cleanup": vector_cleanup, **tom_cleanup,
+            "scope": "canonical_turn_sources_and_linked_projections",
             "host_reconciliation": "pending_until_each_host_connects"}
 
 
@@ -12601,6 +12610,8 @@ async def _run_tom_extraction(
                 arousal=affect["arousal"],
                 source="inferred",
                 trigger=affect.get("trigger"),
+                session_id=session_id,
+                source_lineage=lineage,
             )
             try:
                 from colony_sidecar.events.broadcaster import emit as _emit
@@ -12652,6 +12663,7 @@ async def _run_tom_extraction(
                 motivators=eng.get("motivators"),
                 topics=eng.get("topics"),
                 avoid=eng.get("avoid"),
+                source_lineage=lineage,
             )
     except Exception:
         logger.debug("ToM engagement extraction failed", exc_info=True)
