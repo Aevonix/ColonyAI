@@ -44,7 +44,11 @@ def response(**kwargs):
         if MODE!='cancel':
             assert json.loads(rows[-1]['content'])['native_read']['content'].find('neutral fixture source')>=0,rows
         calls=None
-    return NS(choices=[NS(message=NS(content='' if calls else json.dumps({'draft':'The selected note says neutral fixture source [source:0].','sources':[0]}),tool_calls=calls),finish_reason='tool_calls' if calls else 'stop')],model='fixture/local',usage=None)
+    draft='The selected note says neutral fixture source [source:0].'
+    if MODE=='fenced_missing_reference':draft=draft.replace('[source:0]','')
+    final=json.dumps({'draft':draft,'sources':[0]})
+    if MODE.startswith('fenced'):final='```json\n'+final+'\n```'
+    return NS(choices=[NS(message=NS(content='' if calls else final,tool_calls=calls),finish_reason='tool_calls' if calls else 'stop')],model='fixture/local',usage=None)
 client=MagicMock();client.chat.completions.create.side_effect=response
 original=AIAgent.__init__
 def initialize(self,*args,**kwargs):
@@ -135,6 +139,11 @@ view=local_work_view();recent=view['recent'][0]
 if mode=='cancel':
     assert recent['status']=='cancelled',recent
     assert not list((home/'drafts').rglob('report.md'))
+elif mode=='fenced_missing_reference':
+    assert recent['status']=='failed',recent
+    assert recent['result']['error_type']=='ValueError',recent
+    assert not list((home/'drafts').rglob('report.md'))
+    assert next((home/'drafts').rglob('model-final.txt')).read_text().startswith('```json\n')
 else:
     assert recent['status']=='completed',recent
     assert recent['native_execution_id']==native[0][0]
@@ -152,7 +161,7 @@ print(json.dumps({'mode':mode,'native_execution_and_tools':True,'restart_no_dupl
 '''
 
 
-@pytest.mark.parametrize('mode', ['complete', 'cancel', 'reconcile', 'standalone'])
+@pytest.mark.parametrize('mode', ['complete', 'cancel', 'reconcile', 'standalone', 'fenced', 'fenced_missing_reference'])
 def test_native_accepted_draft_lifecycle(artifacts, tmp_path, mode):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes to exercise its actual scheduler and tools')
@@ -164,3 +173,23 @@ def test_native_accepted_draft_lifecycle(artifacts, tmp_path, mode):
         LITELLM_LOCAL_MODEL_COST_MAP='True')
     result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),mode,WORKER,cwd=tmp_path,env=env)
     assert '"restart_no_duplicate": true' in result.stdout
+
+
+def test_packaged_draft_json_format_boundary(artifacts, tmp_path):
+    script = r'''
+import json,sys
+sys.path.insert(0,sys.argv[1])
+from colony_hermes.local_work_runner import decode_draft_response
+value={'draft':'Neutral source [source:0].','sources':[0]}
+raw=json.dumps(value)
+for body in [raw, '\n '+raw+' \n', '```json\n'+raw+'\n```', '```\r\n'+raw+'\r\n```']:
+    assert decode_draft_response(body)==value
+for body in ['Here is the draft:\n'+raw, '```json\n'+raw,
+             '```json\n'+raw+'\n```\nAdditional prose',
+             '```json\n'+raw+'\n```\n```json\n'+raw+'\n```',
+             '```json\n'+raw[:-1]+'\n```']:
+    try:decode_draft_response(body)
+    except json.JSONDecodeError:pass
+    else:raise AssertionError('Malformed or mixed-content result was accepted')
+'''
+    run_python('-I', '-c', script, artifacts[3], cwd=tmp_path)
