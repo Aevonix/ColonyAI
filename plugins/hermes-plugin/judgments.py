@@ -15,7 +15,7 @@ def handle(args, scope, client):
         return json.dumps({'error': 'Use inspect, withdraw with an exact judgment ID, or reconsider with an ID and retained source ID'})
     try:
         if operation == 'inspect':
-            response = client.get('/v1/host/self', timeout=3)
+            response = client.get("/v1/host/self", timeout=3)
             response.raise_for_status()
             perspective = response.json().get('perspective')
             if not isinstance(perspective, dict):
@@ -32,7 +32,7 @@ def handle(args, scope, client):
         # actual instruction come from the native turn, never tool arguments.
         identity = [scope.contact_id, scope.session_id, scope.turn_id, args]
         correction_id = 'native-judgment:' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-        response = client.post('/v1/host/learning/correction', timeout=3, json={
+        response = client.post("/v1/host/learning/correction", timeout=3, json={
             'identity': {'host_id': 'hermes'},
             'context': {'contact_id': scope.contact_id, 'session_id': scope.session_id, 'turn_id': scope.turn_id},
             'original': '', 'correction': scope.user_message[:1500],
