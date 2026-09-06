@@ -66,6 +66,13 @@ result = agent.run_conversation(sys.argv[2])
 print(json.dumps({'answer': result['final_response'], 'session_id': agent.session_id}))
 agent.close()
 '''
+DOCTOR = r'''
+import sys, runpy
+sys.path.insert(0, sys.argv[1])
+if sys.argv[2]: sys.path.append(sys.argv[2])
+sys.argv = ['colony', 'doctor', '--json']
+runpy.run_module('colony_sidecar', run_name='__main__')
+'''
 
 
 def _native_interpreter(tmp_path, wheel, adapter_installation):
@@ -183,6 +190,12 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
                    if body.get('stream') for message in body.get('messages', []) if message.get('role') == 'system')
         assert not (home/'colony'/'lancedb').exists()
         assert (home/'colony'/'contacts.db').exists()
+        diagnostic = run_python('-I', '-c', DOCTOR, installed, dependency_path, cwd=tmp_path, env=env)
+        checks = json.loads(diagnostic.stdout)
+        assert checks['ok'], diagnostic.stdout
+        names = {row['name'] for row in checks['results']}
+        assert 'server-source-memory' in names and 'server-auth' not in names
+        assert keyring['principals'][0]['credentials'][0]['secret'] not in diagnostic.stdout
         if adapter_installation == 'wheel':
             # Stop extraction from the completed conversations before counting
             # requests from a separate attachment. The model server stays live.

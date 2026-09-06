@@ -2431,6 +2431,7 @@ def _cmd_doctor(args) -> None:
     """Diagnose configuration and runtime health (v0.19.0 check engine)."""
     _load_dotenv()
     from colony_sidecar.doctor import (
+        default_api_key,
         default_colony_url,
         exit_code,
         format_report,
@@ -2439,7 +2440,7 @@ def _cmd_doctor(args) -> None:
     )
 
     url = args.url or default_colony_url()
-    api_key = args.api_key if args.api_key is not None else os.environ.get("COLONY_API_KEY", "")
+    api_key = args.api_key if args.api_key is not None else default_api_key()
 
     if getattr(args, "clean_orphans", False):
         killed = _cleanup_orphans(kill=True)
