@@ -35,6 +35,30 @@ class RerankerProvider(ABC):
         self._model_id = model_id
         self._model = None
 
+    def calibration_metadata(self) -> dict:
+        """Configuration identity for optional deployment-calibrated cutoffs.
+
+        A model name is not an immutable weight revision. The caller may add
+        an observed revision; otherwise that uncertainty remains explicit.
+        """
+        from urllib.parse import urlsplit, urlunsplit
+        import hashlib
+        endpoint = urlsplit(getattr(self, "_base_url", ""))
+        host = endpoint.hostname or ""
+        if endpoint.port:
+            host += f":{endpoint.port}"
+        prompt_style = getattr(self, "_prompt_style", "")
+        format_version = "raw-v1"
+        if prompt_style == "qwen3":
+            format_version = hashlib.sha256((QWEN3_RERANK_PREFIX + QWEN3_RERANK_INSTRUCTION + QWEN3_RERANK_SUFFIX).encode()).hexdigest()
+        return {
+            "provider": type(self).__name__, "model": self._model_id,
+            "endpoint": urlunsplit((endpoint.scheme, host, endpoint.path, "", "")),
+            "prompt_style": prompt_style,
+            "format_version": format_version,
+            "weights_revision": "unverified",
+        }
+
     @abstractmethod
     async def warmup(self) -> None: ...
 

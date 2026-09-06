@@ -41,8 +41,8 @@ class TestServerCreation:
     def test_creates_server(self, server):
         assert server.name == "colony"
 
-    def test_has_18_tools(self, tool_names):
-        assert len(tool_names) == 18
+    def test_has_19_tools(self, tool_names):
+        assert len(tool_names) == 19
 
     def test_has_expected_tools(self, tool_names):
         expected = [
@@ -58,6 +58,7 @@ class TestServerCreation:
             "colony_cancel_commitment",
             "colony_remember_fact",
             "colony_forget_fact",
+            "colony_forget_sources",
             "colony_record_affect",
             "colony_record_surprise",
             # Task / initiative tools added after the original 14.
@@ -89,7 +90,7 @@ class TestServerCreation:
     def test_mutating_tools(self, server):
         tools = server._tool_manager._tools
         rw_tools = [name for name, t in tools.items() if not t.annotations.readOnlyHint]
-        assert len(rw_tools) == 11
+        assert len(rw_tools) == 12
         assert "colony_create_commitment" in rw_tools
         assert "colony_remember_fact" in rw_tools
 

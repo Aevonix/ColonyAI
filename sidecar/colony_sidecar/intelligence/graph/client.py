@@ -275,6 +275,8 @@ class ColonyGraph:
     def set_rerank_fn(
         self,
         fn: Callable[..., Coroutine[Any, Any, Any]],
+        *,
+        calibration_metadata: Optional[Callable[[], Dict[str, Any]]] = None,
     ) -> None:
         """Register an async rerank function used by *recall* (mirrors
         :meth:`set_embed_fn`).
@@ -284,8 +286,12 @@ class ColonyGraph:
                 list of objects with ``index`` and ``score`` attributes (the
                 RerankerProvider.rerank contract). Only consulted when
                 COLONY_RECALL_RERANK is ``shadow`` or ``on``.
+            calibration_metadata: current provider/model/format configuration.
+                Optional calibrated abstention is invalidated when this changes.
         """
         self._rerank_fn = fn
+        self._rerank_calibration_metadata = calibration_metadata
+        self._recall_selector = None
 
     def set_adaptive_params(self, params: Any) -> None:
         """Register an AdaptiveParamStore consulted by *recall* for the
@@ -400,6 +406,42 @@ class ColonyGraph:
     # Core operations
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _source_projection_erased(source_uri: str | None) -> bool:
+        if not source_uri or not source_uri.startswith("turn:"):
+            return False
+        from colony_sidecar import get_state_dir
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        return get_turn_idempotency_ledger(get_state_dir()).is_projection_erased(source_uri[5:])
+
+    async def _filter_erased_source_memories(self, memories: list[dict]) -> list[dict]:
+        """A durable erase fence remains effective during projection outages."""
+        return [memory for memory in memories
+                if not self._source_projection_erased(memory.get("source_uri"))]
+
+    async def delete_source_memories(self, turn_ids: list[str]) -> int:
+        """Remove graph and vector copies after the source fence commits."""
+        uris = ["turn:" + item for item in dict.fromkeys(turn_ids)]
+        if not uris:
+            return 0
+        # Keep IDs until both stores have been addressed. The graph's source
+        # tombstone filter blocks recall even if vector deletion must be retried.
+        async with self.driver.session(database=self.database) as session:
+            result = await session.run("MATCH (m:Memory) WHERE m.source_uri IN $uris RETURN m.id AS id", uris=uris)
+            ids = [record["id"] async for record in result]
+        for memory_id in ids:
+            if self._vector_store is not None:
+                from colony_sidecar.vector.collections import Collection
+                await self._vector_store.delete(collection=Collection.MEMORIES, id=memory_id)
+            async with self.driver.session(database=self.database) as session:
+                await session.run("MATCH (m:Memory {id: $id}) DETACH DELETE m", id=memory_id)
+        ring = getattr(self, "_distill_preview", None)
+        if ring is not None:
+            retained = [item for item in ring if item.get("source_turn_id") not in turn_ids]
+            ring.clear()
+            ring.extend(retained)
+        return len(ids)
+
     async def store_memory(
         self,
         content: str,
@@ -436,6 +478,8 @@ class ColonyGraph:
             The UUID of the newly created Memory node.
         """
         metadata = metadata or {}
+        if self._source_projection_erased(source_uri):
+            return ""
         # Guard (v0.21.1): never store empty/whitespace memories — they were
         # accumulating as duplicate junk nodes.
         if not content or not content.strip():
@@ -499,6 +543,7 @@ class ColonyGraph:
                     """
                     MATCH (m:Memory {content_hash: $content_hash})
                     WHERE m.superseded_by IS NULL
+                      AND ($source_uri IS NULL OR m.source_uri = $source_uri)
                     SET m.accessed_at = datetime(),
                         m.corroboration_count = coalesce(m.corroboration_count, 0) + 1,
                         m.strength = CASE WHEN coalesce(m.strength, 0.0) < 1.0
@@ -508,6 +553,7 @@ class ColonyGraph:
                     LIMIT 1
                     """,
                     content_hash=content_hash,
+                    source_uri=source_uri,
                 )
                 existing = await dq.single()
                 if existing is not None:
@@ -634,6 +680,10 @@ class ColonyGraph:
             except Exception as exc:
                 logger.warning("Failed to write memory to vector store: %s", exc)
 
+        # A deletion may have committed while embedding or graph I/O awaited.
+        if self._source_projection_erased(source_uri):
+            await self.delete_source_memories([source_uri[5:]])
+            return ""
         return memory_id
 
     def _distill_preview_ring(self) -> "deque":
@@ -657,6 +707,7 @@ class ColonyGraph:
         entities: List[str],
         tools_used: List[str],
         summary: Optional[str],
+        turn_id: Optional[str] = None,
     ) -> Optional[str]:
         """Store a conversation turn as an episodic memory.
 
@@ -675,7 +726,7 @@ class ColonyGraph:
         Returns:
             The UUID of the created Memory node, or None if storage fails.
         """
-        if not summary:
+        if not summary or self._source_projection_erased("turn:" + turn_id if turn_id else None):
             return None
         # Salience gate: don't memorialize internal-plumbing turns (context-compaction references and
         # host-specific system-prompt wrappers / self-checks). Generic markers are built in; a
@@ -718,6 +769,7 @@ class ColonyGraph:
             try:
                 self._distill_preview_ring().append({
                     "session_id": session_id,
+                    "source_turn_id": turn_id,
                     "original": summary[:400],
                     "distilled": distilled[:400],
                     "importance": importance,
@@ -730,6 +782,7 @@ class ColonyGraph:
 
         metadata: Dict[str, Any] = {
             "turn": True,
+            "source_turn_id": turn_id,
             "topics": topics,
             "tools_used": tools_used,
             "salience": importance,
@@ -745,7 +798,8 @@ class ColonyGraph:
                 importance=importance,
                 person_id=contact_id,
                 source_type=MemorySourceType.CONVERSATION.value,
-                source_uri=f"session:{session_id}",
+                source_uri=f"turn:{turn_id}" if turn_id else f"session:{session_id}",
+                session_id=session_id,
                 content_hash=content_hash,
             )
         except Exception as exc:
@@ -865,9 +919,11 @@ class ColonyGraph:
             memories: List[Dict[str, Any]] = []
             async for record in result:
                 memories.append(dict(record["memory"]))
-            return memories
+            return await self._filter_erased_source_memories(memories)
 
     def _memory_is_recall_excluded(self, memory: Dict[str, Any]) -> bool:
+        if self._source_projection_erased(memory.get("source_uri")):
+            return True
         sources = set(getattr(self, "_recall_source_exclusions", ()))
         if str(memory.get("source_uri") or "") in sources:
             return True
@@ -889,6 +945,8 @@ class ColonyGraph:
         are hydrated by ID so their authoritative graph metadata is checked.
         Non-graph vectors (for example image captions) remain available.
         """
+        rows = [row for row in rows if not self._source_projection_erased(
+            row.get("source_uri") or (row.get("metadata") or {}).get("source_uri"))]
         if not (
             getattr(self, "_recall_source_exclusions", ())
             or getattr(self, "_recall_metadata_exclusions", ())
@@ -946,6 +1004,17 @@ class ColonyGraph:
             allowed.append(row)
         return allowed
 
+    async def recall_candidates(self, **kwargs):
+        """Authorized graph candidates without reranking or reinforcement."""
+        return await self.recall(**kwargs, candidates_only=True)
+
+    def record_recall_use(self, memories):
+        """Reinforce only graph records that actually entered turn context."""
+        for memory in memories:
+            if memory.get("kind", "belief") == "belief" and memory.get("id"):
+                self._retain_task(asyncio.create_task(
+                    self._touch_memory_safe(memory["id"])))
+
     async def recall(
         self,
         query: str,
@@ -954,6 +1023,8 @@ class ColonyGraph:
         min_confidence: float = 0.1,
         person_id: Optional[str] = None,
         exclude_source_uris: Optional[List[str]] = None,
+        *,
+        candidates_only: bool = False,
     ) -> List[Dict[str, Any]]:
         """Retrieve memories by semantic similarity with strength decay.
 
@@ -977,6 +1048,9 @@ class ColonyGraph:
         before confidence/relevance ranking and reranking.  The ANN candidate
         fetch is widened when this filter is present so excluded mirrors do
         not ordinarily starve the requested result window.
+
+        ``candidates_only`` skips final reranking and recall-strength updates;
+        the caller must select authorized candidates and record actual use.
 
         Returns:
             A list of memory dicts, each annotated with ``entities`` and
@@ -1002,6 +1076,8 @@ class ColonyGraph:
         ))
         excluded_metadata_markers = self._bounded_source_uris(
             getattr(self, "_recall_metadata_exclusions", ()))
+        hybrid = os.environ.get("COLONY_RECALL_HYBRID", "off").strip().lower() in (
+            "on", "1", "true", "yes")
         # Vector search path: embed query (with instruction) → LanceDB ANN → Neo4j hydration
         if self._vector_store is not None and self._embed_fn is not None:
             try:
@@ -1063,6 +1139,7 @@ class ColonyGraph:
                         min_relevance = 0.0
                 if min_relevance > 0.0:
                     results = [r for r in results if r.score >= min_relevance]
+                memories = []
                 if results:
                     memory_ids = [r.id for r in results]
                     score_map = {r.id: r.score for r in results}
@@ -1122,7 +1199,7 @@ class ColonyGraph:
                                 continue
                             # Filter terminal epistemic states and low confidence
                             epistemic_state = mem.get("epistemic_state", "inferred")
-                            if epistemic_state in ("stale", "superseded", "deprecated", "archived"):
+                            if mem.get("superseded_by") or epistemic_state in ("stale", "superseded", "deprecated", "archived"):
                                 continue
                             effective_confidence = float(mem.get("effective_confidence", mem.get("strength", 1.0)))
                             if effective_confidence < min_confidence:
@@ -1135,9 +1212,23 @@ class ColonyGraph:
                                 mem["relevance"] = vector_score * effective_confidence
                             memories.append(mem)
 
+                if hybrid:
+                    from .recall import fuse_candidates
+                    candidate_limit = min(max(limit * 5, limit), max(100, limit))
+                    lexical = await self._recall_lexical(
+                        query, candidate_limit, min_strength, min_confidence,
+                        person_scope, excluded_sources, excluded_metadata_markers)
+                    memories = fuse_candidates(
+                        memories, lexical, limit=candidate_limit,
+                        strength_ranking=strength_ranking)
+                if results or memories:
+                    memories = await self._filter_erased_source_memories(memories)
+                    if candidates_only:
+                        return sorted(memories, key=lambda m: m.get("relevance", 0), reverse=True)[:limit]
                     memories = await self._maybe_rerank(
                         query, memories, limit,
                         strength_ranking=strength_ranking)
+                    memories = await self._filter_erased_source_memories(memories)
                     memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)
                     memories = memories[:limit]
                     # Fire-and-forget touch_memory for each recalled result
@@ -1150,6 +1241,24 @@ class ColonyGraph:
                 logger.warning("Vector recall failed, falling back to graph-only: %s", exc)
 
         # Fallback: graph-only keyword/entity recall
+        if hybrid:
+            memories = await self._recall_lexical(
+                query, min(max(limit * 5, limit), max(100, limit)),
+                min_strength, min_confidence, person_scope,
+                excluded_sources, excluded_metadata_markers)
+            if memories:
+                memories = await self._filter_erased_source_memories(memories)
+                if candidates_only:
+                    return memories[:limit]
+                memories = await self._maybe_rerank(
+                    query, memories, limit, strength_ranking=strength_ranking)
+                memories = await self._filter_erased_source_memories(memories)
+                memories.sort(key=lambda m: m.get("relevance", 0), reverse=True)
+                memories = memories[:limit]
+                for mem in memories:
+                    if mem.get("id"):
+                        self._retain_task(asyncio.create_task(self._touch_memory_safe(mem["id"])))
+                return memories
         async with self.driver.session(database=self.database) as session:
             if person_scope:
                 result = await session.run(
@@ -1164,6 +1273,7 @@ class ColonyGraph:
                           WHERE toLower(coalesce(m.metadata, ""))
                             CONTAINS marker))
                       AND toLower(m.content) CONTAINS toLower($search_text)
+                      AND m.superseded_by IS NULL
                       AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
                     OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
                     WITH m, collect(e.name) AS entity_names
@@ -1193,6 +1303,7 @@ class ColonyGraph:
                           WHERE toLower(coalesce(m.metadata, ""))
                             CONTAINS marker))
                       AND toLower(m.content) CONTAINS toLower($search_text)
+                      AND m.superseded_by IS NULL
                       AND NOT m.epistemic_state IN ["stale", "superseded", "deprecated", "archived"]
                     OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
                     WITH m, collect(e.name) AS entity_names
@@ -1215,12 +1326,79 @@ class ColonyGraph:
                 if effective_confidence < min_confidence:
                     continue
                 memories.append(mem)
+        memories = await self._filter_erased_source_memories(memories)
+        if candidates_only:
+            return memories[:limit]
         # Fire-and-forget touch_memory for each recalled result
         for mem in memories:
             mid = mem.get("id")
             if mid:
                 self._retain_task(asyncio.create_task(self._touch_memory_safe(mid)))
         return memories
+
+    async def _recall_lexical(
+        self, query, limit, min_strength, min_confidence,
+        person_scope, excluded_sources, excluded_metadata_markers,
+    ):
+        """Native source-text candidates with the same authoritative boundary.
+
+        The full-text index is maintained with graph writes, so an embedding
+        backlog does not hide newly stored facts. Filtering happens before
+        content reaches Python/reranking. A missing/populating index degrades
+        to the existing vector/keyword path.
+        """
+        from .recall import FULLTEXT_INDEX, lexical_query
+        search_text = lexical_query(query)
+        if not search_text:
+            return []
+
+        async def search():
+            async with self.driver.session(database=self.database) as session:
+                result = await session.run(
+                    """
+                    CALL db.index.fulltext.queryNodes($index_name, $search_text)
+                    YIELD node AS m, score
+                    WHERE m:Memory
+                      AND ($person_id IS NULL OR EXISTS {
+                        MATCH (m)-[:ABOUT]->(:Person {id: $person_id})
+                      })
+                      AND coalesce(m.strength, 1.0) >= $min_strength
+                      AND coalesce(m.effective_confidence, m.strength, 1.0) >= $min_confidence
+                      AND m.superseded_by IS NULL
+                      AND NOT coalesce(m.epistemic_state, "inferred") IN
+                        ["stale", "superseded", "deprecated", "archived"]
+                      AND (size($exclude_source_uris) = 0 OR NOT (
+                        coalesce(m.source_uri, "") IN $exclude_source_uris))
+                      AND (size($exclude_metadata_markers) = 0 OR
+                        NONE(marker IN $exclude_metadata_markers
+                          WHERE toLower(coalesce(m.metadata, "")) CONTAINS marker))
+                    WITH m, score
+                    ORDER BY score DESC
+                    LIMIT $limit
+                    OPTIONAL MATCH (m)-[:MENTIONS]->(e:Entity)
+                    WITH m, score, collect(DISTINCT e.name) AS entity_names
+                    RETURN m {.*, entities: entity_names} AS memory,
+                           score AS lexical_score
+                    ORDER BY lexical_score DESC
+                    """,
+                    index_name=FULLTEXT_INDEX, search_text=search_text,
+                    limit=limit, person_id=person_scope,
+                    min_strength=min_strength, min_confidence=min_confidence,
+                    exclude_source_uris=excluded_sources,
+                    exclude_metadata_markers=excluded_metadata_markers,
+                )
+                memories = []
+                async for record in result:
+                    mem = dict(record["memory"])
+                    mem["relevance"] = float(record["lexical_score"])
+                    mem["retrieval_method"] = "lexical"
+                    memories.append(mem)
+                return memories
+        try:
+            return await asyncio.wait_for(search(), timeout=1.2)
+        except Exception as exc:
+            logger.warning("Lexical recall unavailable, using existing recall: %s", type(exc).__name__)
+            return []
 
     def _retain_task(self, task) -> None:
         """Keep a strong ref to a fire-and-forget task until it finishes; the
@@ -1240,103 +1418,18 @@ class ColonyGraph:
             logger.debug("touch_memory failed for %s: %s", memory_id, exc)
 
     async def _maybe_rerank(
-        self,
-        query: str,
-        memories: List[Dict[str, Any]],
-        limit: int,
-        *,
-        strength_ranking: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """Cross-encoder rerank of filtered recall candidates, bounded and
-        fail-open.
-
-        COLONY_RECALL_RERANK gates it: ``off`` (default) never calls the
-        reranker; ``shadow`` scores and logs the rank delta but returns ANN
-        order untouched (measure p95 before flipping); ``on`` replaces the
-        vector score in the relevance blend with the rerank score. The call
-        is inline but hard-capped by COLONY_RECALL_RERANK_TIMEOUT_MS
-        (default 1200) — on timeout or any error, recall falls open to ANN
-        order (warn once per ~5 min, debug otherwise). Skipped entirely when
-        the candidate set already fits the limit: there is nothing for a
-        rerank to save then, only latency to add.
-        """
-        mode = os.environ.get("COLONY_RECALL_RERANK", "off").strip().lower()
-        if mode not in ("shadow", "on"):
-            return memories
-        rerank_fn = getattr(self, "_rerank_fn", None)
-        if rerank_fn is None or len(memories) <= limit:
-            return memories
-        try:
-            timeout_ms = float(os.environ.get(
-                "COLONY_RECALL_RERANK_TIMEOUT_MS", "1200"))
-        except (TypeError, ValueError):
-            timeout_ms = 1200.0
-
-        docs = [str(m.get("content", "")) for m in memories]
-        try:
-            results = await asyncio.wait_for(
-                rerank_fn(query, docs, top_k=len(docs)),
-                timeout=max(timeout_ms, 1.0) / 1000.0,
-            )
-        except Exception as exc:
-            self._warn_rerank_failure(exc)
-            return memories
-
-        scores: Dict[int, float] = {}
-        for r in results or []:
-            idx = r.get("index") if isinstance(r, dict) else getattr(r, "index", None)
-            score = r.get("score") if isinstance(r, dict) else getattr(r, "score", None)
-            if idx is not None and score is not None:
-                scores[int(idx)] = float(score)
-        if not scores:
-            self._warn_rerank_failure(RuntimeError("reranker returned no scores"))
-            return memories
-
-        if mode == "shadow":
-            ann_top = [m.get("id") for m in sorted(
-                memories, key=lambda m: m.get("relevance", 0),
-                reverse=True)][:limit]
-            rr_idx = sorted(range(len(memories)),
-                            key=lambda i: scores.get(i, float("-inf")),
-                            reverse=True)
-            rr_top = [memories[i].get("id") for i in rr_idx[:limit]]
-            moved = sum(1 for a, b in zip(ann_top, rr_top) if a != b)
-            logger.info(
-                "recall rerank shadow: candidates=%d limit=%d "
-                "top_overlap=%d/%d positions_changed=%d",
-                len(memories), limit, len(set(ann_top) & set(rr_top)),
-                limit, moved)
-            return memories
-
-        # mode == "on": rerank score replaces the vector score in the blend;
-        # a document the reranker didn't score keeps its ANN relevance.
-        for i, mem in enumerate(memories):
-            if i not in scores:
-                continue
-            effective_confidence = float(
-                mem.get("effective_confidence", mem.get("strength", 1.0)))
-            relevance = scores[i] * effective_confidence
-            if strength_ranking:
-                relevance *= 0.5 + 0.5 * float(mem.get("strength", 1.0))
-            mem["relevance"] = relevance
-        return memories
-
-    def _warn_rerank_failure(self, exc: BaseException) -> None:
-        """Warn on rerank failure at most once per ~5 minutes (fail-open is
-        by design; a dead reranker must not turn every recall into a WARNING
-        stream)."""
-        now = time.monotonic()
-        # Sentinel must be None, not 0.0: time.monotonic() is measured from an
-        # arbitrary origin (system boot on Linux), so a 0.0 default suppresses
-        # the FIRST warning entirely for the first 300s of uptime.
-        last = getattr(self, "_rerank_warn_at", None)
-        if last is None or now - last >= 300:
-            self._rerank_warn_at = now
-            logger.warning(
-                "recall rerank failed (fail-open to ANN order): %s", exc)
-        else:
-            logger.debug(
-                "recall rerank failed (fail-open to ANN order): %s", exc)
+        self, query, memories, limit, *, strength_ranking=False,
+    ):
+        # The same selector is used for mixed source/belief turn context.
+        from .selection import RecallSelector
+        selector = getattr(self, "_recall_selector", None)
+        if selector is None:
+            selector = self._recall_selector = RecallSelector(
+                getattr(self, "_rerank_fn", None),
+                calibration_metadata=getattr(self, "_rerank_calibration_metadata", None),
+                logger=logger)
+        return await selector.rerank(
+            query, memories, limit, strength_ranking=strength_ranking)
 
     # ------------------------------------------------------------------
     # Decay & pruning

@@ -1,11 +1,10 @@
 """Colony Graph Schema Migrations.
 
 Applies Neo4j constraints and indexes required by the Colony graph memory
-system.  Designed to be idempotent — safe to re-run.
+system. Designed to be idempotent and safe to re-run.
 
-Note: Vector index creation has been removed.  Vector search is now handled
-by a local LanceDB store (see colony/vector/).  The Neo4j Community Edition
-does not support ``db.index.vector.*`` procedures.
+Vectors are maintained in a local LanceDB store in this implementation
+(see colony_sidecar/vector/), so these migrations create no vector index.
 """
 
 from __future__ import annotations
@@ -51,6 +50,9 @@ SCHEMA_V1: List[str] = [
     "CREATE INDEX memory_strength IF NOT EXISTS FOR (m:Memory) ON (m.strength)",
     "CREATE INDEX memory_accessed_at IF NOT EXISTS FOR (m:Memory) ON (m.accessed_at)",
     "CREATE INDEX memory_created_at IF NOT EXISTS FOR (m:Memory) ON (m.created_at)",
+    # Synchronous full-text updates keep new/corrected source memories
+    # searchable while their independently maintained vectors catch up.
+    "CREATE FULLTEXT INDEX memory_content_fulltext IF NOT EXISTS FOR (m:Memory) ON EACH [m.content]",
     "CREATE INDEX person_tier IF NOT EXISTS FOR (p:Person) ON (p.tier)",
     "CREATE INDEX person_score IF NOT EXISTS FOR (p:Person) ON (p.score)",
     "CREATE INDEX person_last_interaction IF NOT EXISTS FOR (p:Person) ON (p.lastInteraction)",

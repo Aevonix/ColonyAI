@@ -1029,7 +1029,7 @@ def _hermes_plugin_files(colony_repo: Path, hermes_home: Path) -> list[tuple[byt
         ("plugins/colony-memory", "plugins/colony-memory",
          ("__init__.py", "provider.py", "cli.py", "plugin.yaml", "SKILL.md")),
         ("plugins/hermes-plugin", "plugins/colony",
-         ("__init__.py", "client.py", "events.py", "slash.py", "plugin.yaml")),
+         ("__init__.py", "client.py", "events.py", "evidence.py", "slash.py", "plugin.yaml")),
         ("plugins/hermes-plugin/colony_hostworker", "plugins/colony/colony_hostworker", ("__init__.py",)),
         ("hostworker/colony_hostworker", "plugins/colony/colony_hostworker", ("catalog.py", "contract.py")),
     ):
@@ -1104,6 +1104,7 @@ def _setup_hermes_plugin(
     print("  Staging only: Hermes activation and live memory behaviour were not verified.")
     print("  Existing settings and secret references were retained; changed YAML formatting may be normalized.")
     print("  Before activating, qualify the runtime, make COLONY_API_KEY available through its private environment,")
+    print("  install the colony-hermes adapter package in the target Hermes interpreter for durable checkpoints,")
     print("  and configure general-plugin activation/coexistence for that runtime.")
     print("  No restart, custom compressor, global services or hardware adapters were installed.")
     return True

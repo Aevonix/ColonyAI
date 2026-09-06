@@ -621,8 +621,8 @@ def catalog_attestation() -> Dict[str, Any]:
             "reply_thread_projection": (
                 "disabled_pending_transport_attested_endpoint"
             ),
-            "memory_write_hook": "disabled_in_general_plugin_mode",
-            "pre_compress_write_hook": "disabled_in_general_plugin_mode",
+            "memory_write_hook": "source_erasure_enabled_other_writes_disabled_in_general_plugin_mode",
+            "pre_compress_write_hook": "durable_source_checkpoint_v2",
         },
         "provider_governance_ready": True,
         "general_plugin_governance_ready": False,
@@ -669,6 +669,8 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         contact_id: Contact ID for context assembly (or set COLONY_MCP_CONTACT_ID)
     """
 
+    pre_compress_checkpoint_api_version = 2
+
     def __init__(self, config: dict[str, Any] | None = None):
         self._hermes_home = str(_active_hermes_home())
         self._explicit_config = dict(config) if config is not None else None
@@ -709,6 +711,8 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._connection_status = "unverified"
         self._last_sync_attempt: Optional[str] = None
         self._last_sync_error: Optional[str] = None
+        self._last_checkpoint: dict[str, Any] = {"state": "unverified"}
+        self._last_erasure: dict[str, Any] = {"state": "unverified"}
         self._turn_writer_skip_logged = False
         for binding_flag in (
             "COLONY_PREFETCH_TURN_CONTACT",
@@ -766,6 +770,8 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             "connection_status": self._connection_status,
             "stale_cache_misses": self._stale_cache_misses,
             "turn_writer": "enabled" if self._turn_writer_enabled() else "read-only",
+            "checkpoint": dict(self._last_checkpoint),
+            "source_erasure": dict(self._last_erasure),
         }
 
     def _turn_writer_enabled(self) -> bool:
@@ -2281,7 +2287,30 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         logger.debug("Colony: turn %d started (session=%s)", turn_number, self._session_id)
 
     def on_memory_write(self, action: str, target: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Mirror built-in memory writes back to Colony."""
+        """Mirror writes; source removal remains active in coexistence mode."""
+        if action == "remove":
+            contact = self._prefetch_contact()
+            old_text = (metadata or {}).get("old_text")
+            self._last_erasure = {"state": "unmapped", "scope": "canonical_turn_sources"}
+            if not contact or not old_text or not self._session_id:
+                return
+            try:
+                with httpx.Client(timeout=3) as client:
+                    response = client.post(
+                        f"{self.sidecar_url}/v1/host/memory/sources/forget",
+                        headers=self._headers(),
+                        json={"contact_id": contact, "session_id": self._session_id, "old_text": old_text},
+                    )
+                if response.is_success and response.json().get("source_erased") is True:
+                    self._last_erasure = {"state": "source_erased", "scope": "canonical_turn_sources", "watermark": response.json()["watermark"], "host_reconciliation": "pending"}
+                    with self._cache_lock:
+                        self._cached_context = ""
+                    self._temporal_cache = (0.0, "")
+                else:
+                    self._last_erasure = {"state": "unmapped_or_ambiguous", "scope": "canonical_turn_sources"}
+            except Exception:
+                self._last_erasure = {"state": "failed", "scope": "canonical_turn_sources"}
+            return
         if not self._turn_writer_enabled():
             return
         contact_id = self._prefetch_contact()
@@ -2314,50 +2343,43 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         except Exception as exc:
             logger.debug("Colony on_memory_write mirror failed: %s", exc)
 
-    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
-        """Extract insights before context compression discards old messages."""
+    def on_pre_compress(
+        self, messages: List[Dict[str, Any]], *, require_checkpoint: bool = False,
+    ) -> str:
+        """Commit direct evidence before native Hermes discards context.
+
+        Checkpointing is separate from ordinary turn writing. The general
+        adapter continues to own completed turns in coexistence mode.
+        """
         self._rw_mark_compressed(self._session_id)
-        if not self._turn_writer_enabled():
-            return ""
-        contact_id = self._prefetch_contact()
-        if not contact_id:
-            logger.debug(
-                "Colony on_pre_compress skipped: no exact turn participant"
+        try:
+            if not messages:
+                self._last_checkpoint = {"state": "empty", "messages": 0}
+                return ""
+            contact_id = self._prefetch_contact()
+            if not contact_id:
+                raise ValueError("checkpoint has no exact participant")
+            from colony_hermes.evidence import checkpoint
+            import yaml
+            home = Path(self._hermes_home)
+            config = self._explicit_config or _profile_config(home)
+            # Share the general adapter's exact outbox and its recovery loop.
+            config_file = home / "config.yaml"
+            native = yaml.safe_load(config_file.read_text()) if config_file.exists() else {}
+            general = (native or {}).get("plugins", {}).get("colony", {})
+            self._last_checkpoint = checkpoint(
+                messages, session_id=self._session_id, contact_id=contact_id,
+                home=home, url=self.sidecar_url, api_key=self._api_key,
+                outbox_path=str(
+                    general.get("turn_outbox_path") or config.get("turn_outbox_path")
+                    or _profile_env("COLONY_HERMES_TURN_OUTBOX", home) or ""
+                ),
             )
-            return ""
-        # Best-effort: fire a compressed turn sync so Colony sees the full history
-        # before Hermes drops it. This ensures commitments/facts from early turns
-        # are not lost.
-        if len(messages) >= 4:
-            try:
-                user_msgs = [m for m in messages if m.get("role") == "user"]
-                asst_msgs = [m for m in messages if m.get("role") == "assistant"]
-                if user_msgs and asst_msgs:
-                    summary = f"Compression summary: {len(messages)} messages"
-                    # Fire lightweight signal ingest instead of full turn sync
-                    with httpx.Client(timeout=3) as client:
-                        payload = {
-                            "identity": {"host_id": "hermes"},
-                            "context": {
-                                "session_id": self._session_id,
-                                "contact_id": contact_id,
-                            },
-                            "signals": [
-                                {
-                                    "type": "compression",
-                                    "data": {"message_count": len(messages), "summary": summary},
-                                    "source": "hermes",
-                                }
-                            ],
-                        }
-                        client.post(
-                            f"{self.sidecar_url}/v1/host/signals/ingest",
-                            headers=self._headers(),
-                            json=payload,
-                            timeout=3,
-                        )
-            except Exception as exc:
-                logger.debug("Colony on_pre_compress signal failed: %s", exc)
+        except Exception as error:
+            self._last_checkpoint = {"state": "failed", "error": type(error).__name__}
+            if require_checkpoint:
+                raise RuntimeError("Colony durable checkpoint failed") from error
+            logger.warning("Colony durable checkpoint deferred (%s)", type(error).__name__)
         return ""
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:

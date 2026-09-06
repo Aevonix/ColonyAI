@@ -73,11 +73,13 @@ To run the sidecar and Neo4j together under Docker, clone this repo and use
 the provided `docker-compose.yml` (it builds the sidecar image from
 `./sidecar`, so compose needs the repo checkout; the pip path above does not).
 
-Hermes plugin staging currently requires an editable source checkout so the
-plugin resources are available:
+The thin `colony-hermes` package registers native Hermes general and memory
+adapters. Install it in the Python environment used by the target Hermes runtime.
+The current source wizard also needs an editable sidecar checkout for staging:
 
 ```bash
 python -m pip install -e ./sidecar
+/path/to/hermes/.venv/bin/python -m pip install .
 colony init --agent-harness hermes --hermes-home /path/to/hermes-profile
 ```
 
@@ -94,8 +96,9 @@ Hermes. The surrounding `colony init` wizard still configures Colony itself.
 
 Runtime compatibility, private credentials, general-plugin coexistence,
 activation and an observed recall test remain required. A successful staging
-result is not a connected-agent claim. Wheel-based attachment and guided
-private-agent creation are follow-up work described in
+result is not a connected-agent claim. The native adapter wheel and its required
+pre-compression checkpoint are tested against Hermes v0.21.0. Guided activation
+and private-agent creation are follow-up work described in
 [the architecture](docs/ARCHITECTURE.md).
 
 ## The autonomy model

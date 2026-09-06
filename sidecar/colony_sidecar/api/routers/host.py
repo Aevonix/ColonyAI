@@ -2406,36 +2406,62 @@ async def context_assemble(
     except Exception as exc:
         logger.debug("context_assemble self-knowledge section failed: %s", exc)
 
-    # --- Memory ---
-    if _exact_person_allowed and _graph is not None and query_text:
+    # --- Memory: authorized candidates, one selection and one budget ---
+    if _exact_person_allowed and query_text:
+        from colony_sidecar.intelligence.graph.recall import source_candidates
+        beliefs, quotations = [], []
+        if _graph is not None:
+            try:
+                candidates_fn = getattr(_graph, "recall_candidates", None)
+                recall_kwargs = {
+                    "query": query_text,
+                    "limit": 25 if callable(candidates_fn) else 5,
+                    "person_id": body.context.contact_id if body.context else None,
+                }
+                if _p8_runtime is not None:
+                    recall_kwargs["exclude_source_uris"] = ["tom:shared_fact"]
+                recall_fn = candidates_fn if callable(candidates_fn) else _graph.recall
+                beliefs = _p8_filter_graph_recall(await recall_fn(**recall_kwargs))
+            except Exception as exc:
+                logger.warning("context_assemble memory search failed: %s", exc)
+
+        # Source text is a candidate producer, not a separate injection path.
+        # Checkpoints additionally require the original session because native
+        # compression history does not attest every earlier speaker's identity.
+        if body.context and body.context.contact_id:
+            try:
+                from colony_sidecar.turns import get_turn_idempotency_ledger
+                if (Path(get_state_dir()) / "turn-idempotency.db").exists():
+                    source_hits = get_turn_idempotency_ledger(get_state_dir()).search_sources(
+                        query_text, contact_id=body.context.contact_id,
+                        session_id=body.context.session_id, limit=10)
+                    quotations = source_candidates(source_hits)
+            except Exception as exc:
+                logger.warning("source evidence recall failed (%s)", type(exc).__name__)
+
         try:
-            recall_kwargs = {
-                "query": query_text,
-                "limit": 5,
-                # Hard viewer/recipient candidate boundary. Ranking happens
-                # only inside this person's ABOUT-linked memories; a miss
-                # remains empty rather than retrying against global memory.
-                "person_id": (
-                    body.context.contact_id if body.context else None),
-            }
-            if _p8_runtime is not None:
-                recall_kwargs["exclude_source_uris"] = [
-                    "tom:shared_fact"]
-            results = await _graph.recall(**recall_kwargs)
-            results = _p8_filter_graph_recall(results)
-            if results:
-                body_text = "\n".join(
-                    f"- [{r.get('relevance', r.get('score', 0)):.2f}] {r.get('content', '')}"
-                    for r in results
-                )
+            # Redacted source turns invalidate their entire graph summary.
+            # Source search separately excludes erased message excerpts while
+            # retaining unrelated quotations from a partially redacted turn.
+            erased_filter = getattr(_graph, "_filter_erased_source_memories", None)
+            if callable(erased_filter):
+                beliefs = await erased_filter(beliefs)
+            try:
+                max_chars = int(os.environ.get("COLONY_RECALL_CONTEXT_MAX_CHARS", "6000"))
+            except (TypeError, ValueError):
+                max_chars = 6000
+            selected, body_text = await _memory_context_selector().select_context(
+                query_text, beliefs, quotations, limit=5,
+                max_chars=max(0, min(max_chars, 24000)))
+            if body_text:
                 sections.append(ContextSection(
-                    id="colony-memory",
-                    title="Relevant Memories",
-                    body=body_text,
-                    priority=90,
-                ))
+                    id="colony-memory", title="Relevant Memories",
+                    body=body_text, priority=90))
+                record_use = getattr(_graph, "record_recall_use", None)
+                if callable(record_use):
+                    record_use(selected)
         except Exception as exc:
-            logger.warning("context_assemble memory search failed: %s", exc)
+            logger.warning("combined memory selection failed (%s)", type(exc).__name__)
 
     # --- Active Goals ---
     if _legacy_global_allowed and _goals_store is not None:
@@ -3453,6 +3479,51 @@ def _conversation_turn_concern_metadata(
         "boundary_attested": False,
     }
 
+class SourceForgetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contact_id: str = Field(min_length=1, max_length=256)
+    source_ids: list[str] = Field(default_factory=list, max_length=100)
+    old_text: str | None = Field(default=None, min_length=1, max_length=131072)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = Field(default=None, max_length=256)
+
+
+@router.get("/memory/sources/erasures")
+async def source_erasure_feed(contact_id: str, after: int = Query(0, ge=0), request: Request = None):
+    person = resolve_request_person(request, claimed_person_id=contact_id) or contact_id
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    try:
+        return get_turn_idempotency_ledger(get_state_dir()).erasure_feed(person, after)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "erasure_history_mismatch"}) from exc
+
+
+@router.post("/memory/sources/forget")
+async def forget_turn_sources(body: SourceForgetRequest, request: Request = None):
+    person = resolve_request_person(request, claimed_person_id=body.contact_id) or body.contact_id
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    try:
+        result = get_turn_idempotency_ledger(get_state_dir()).erase_sources(
+            contact_id=person, turn_ids=body.source_ids,
+            old_text=body.old_text, session_id=body.session_id,
+        )
+    except ValueError as exc:
+        code = str(exc) if str(exc) in {"ambiguous_source", "source_not_found"} else "invalid_source_selection"
+        raise HTTPException(status_code=409 if code == "ambiguous_source" else 422, detail={"code": code}) from exc
+    # The durable tombstone precedes external projection deletion. A failed
+    # cleanup remains a truthful pending result, and recall stays fenced.
+    graph_cleanup = "unavailable" if _graph is None else "pending"
+    if _graph is not None:
+        try:
+            await _graph.delete_source_memories(list(dict.fromkeys(result["source_ids"] + result["affected_source_ids"])))
+            graph_cleanup = "complete"
+        except Exception:
+            logger.warning("source erasure graph cleanup is pending", exc_info=True)
+    return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
+            "scope": "canonical_turn_sources_and_linked_graph_projections",
+            "host_reconciliation": "pending_until_each_host_connects"}
+
+
 async def _ingest_turn_idempotently(
     body: TurnSyncRequest,
     request: Request | None = None,
@@ -3482,6 +3553,27 @@ async def _ingest_turn_idempotently(
 
     digest = canonical_turn_digest(body)
     ledger = get_turn_idempotency_ledger(get_state_dir())
+    if ledger.is_source_erased(turn_id, body.context.contact_id):
+        return TurnSyncResponse(accepted=False, source_recorded=False, continuity_updated=False, skipped_reason="source_erased"), "erased"
+    if body.checkpoint_messages is not None:
+        # One atomic source+index commit, no ordinary conversation effects.
+        # A retry after an interrupted response can safely repeat this write.
+        try:
+            created = ledger.record_source(
+                turn_id, contact_id=body.context.contact_id,
+                session_id=body.context.session_id, scope="session",
+                messages=[message.model_dump(mode="json") for message in body.checkpoint_messages],
+                occurred_at=(body.context.metadata or {}).get("occurred_at"),
+            )
+        except ValueError as exc:
+            from colony_sidecar.turns.idempotency import SourceErased
+            if isinstance(exc, SourceErased):
+                return TurnSyncResponse(accepted=False, source_recorded=False, continuity_updated=False, skipped_reason="source_erased"), "erased"
+            raise HTTPException(status_code=409, detail={"code": "checkpoint_source_conflict"}) from exc
+        return TurnSyncResponse(
+            accepted=True, continuity_updated=False, source_recorded=True,
+            skipped_reason="checkpoint_source_only",
+        ), "created" if created else "replayed"
     reservation = ledger.reserve(turn_id, digest)
     if reservation.outcome == ReservationOutcome.CONFLICT:
         raise HTTPException(
@@ -3653,6 +3745,38 @@ async def _process_turn_sync(
                      exc_info=True)
     _is_system_turn = body.context.contact_id == "system"
 
+    # Persist complete attributed messages before derived graph/mining effects.
+    # This is the central source of truth even when extractors are disabled.
+    source_messages = [
+        {"role": message.role, "content": message.content}
+        for message in (body.user_message, body.assistant_message)
+        if message is not None and message.content.strip()
+    ]
+    source_recorded = False
+    if source_messages:
+        from colony_sidecar.turns import canonical_turn_digest, get_turn_idempotency_ledger
+        source_id = body.context.turn_id or "unkeyed:" + canonical_turn_digest(body)
+        ledger = get_turn_idempotency_ledger(get_state_dir())
+        if ledger.is_source_erased(source_id, body.context.contact_id):
+            return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")
+        retained = ledger.retained_messages(contact_id=body.context.contact_id, session_id=body.context.session_id, messages=source_messages)
+        if not retained:
+            return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")
+        from colony_sidecar.turns.idempotency import SourceErased
+        try:
+            ledger.record_source(
+                source_id, contact_id=body.context.contact_id,
+                session_id=body.context.session_id, messages=source_messages,
+                occurred_at=(body.context.metadata or {}).get("occurred_at"),
+            )
+        except SourceErased:
+            return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")
+        source_recorded = True
+        if retained != source_messages or ledger.is_projection_erased(source_id):
+            # Preserve unrelated evidence, but never run extractors on an
+            # envelope whose summary or tools may repeat erased content.
+            return TurnSyncResponse(accepted=False, source_recorded=True, continuity_updated=False, skipped_reason="source_erased")
+
     # Conversation presence (L1.1, passive): now that WHO is settled, record
     # the sighting so the environment-risk classifier has a real census. The
     # store itself skips the system sentinel; any failure must never affect
@@ -3729,6 +3853,7 @@ async def _process_turn_sync(
                 entities=_turn_entities,
                 tools_used=body.tools_used,
                 summary=body.summary,
+                turn_id=source_id if source_messages else body.context.turn_id,
             )
             graph_ok = True
         except Exception as exc:
@@ -4039,8 +4164,12 @@ async def _process_turn_sync(
             continuity_updated=False,
             skipped_reason="graph_record_failed",
             errors=[graph_error],
+            source_recorded=source_recorded,
         )
-    return TurnSyncResponse(accepted=True, continuity_updated=graph_ok, skipped_reason=None if graph_ok else "no_graph_store")
+    return TurnSyncResponse(
+        accepted=True, continuity_updated=graph_ok, source_recorded=source_recorded,
+        skipped_reason=None if graph_ok else "no_graph_store",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -10975,6 +11104,22 @@ def set_secrets_manager(manager) -> None:
     _secrets_manager = manager
 
 
+def _memory_context_selector():
+    """Keep one selector per active reranker, also usable without graph storage."""
+    global _context_recall_selector
+    if _context_recall_selector is None or _context_recall_selector[0] is not _reranker:
+        from colony_sidecar.intelligence.graph.selection import RecallSelector
+        from colony_sidecar.intelligence.graph.recall import provider_calibration_metadata
+        provider = _reranker
+        selector = RecallSelector(
+            provider.rerank if provider is not None else None,
+            calibration_metadata=(lambda: provider_calibration_metadata(provider))
+                if provider is not None else None,
+            logger=logger)
+        _context_recall_selector = (provider, selector)
+    return _context_recall_selector[1]
+
+
 def set_reranker(reranker) -> None:
     global _reranker
     _reranker = reranker
@@ -11081,6 +11226,7 @@ async def secrets_delete(body: SecretDeleteRequest) -> SecretDeleteResponse:
 _autonomy_loop = None
 _autonomy_task = None
 _reranker = None
+_context_recall_selector = None
 _session_store = None
 _task_queue = None
 _session_report_store = None

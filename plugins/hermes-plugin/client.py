@@ -604,6 +604,34 @@ class PrivateSQLitePath:
             os.close(parent_fd)
 
 
+def source_message_hash(session_id: str, message: Mapping[str, Any]) -> str:
+    canonical = json.dumps({"session_id": session_id, "role": message.get("role"), "content": message.get("content")}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def redact_source_payload(payload: Mapping[str, Any], rules: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Remove exact erased evidence without replaying ordinary turn effects."""
+    original = dict(payload)
+    if any(rule["turn_id"] == original.get("turn_id") for rule in rules):
+        return None
+    session = str(original.get("session_id") or "")
+    hashes = {value for rule in rules if rule["session_id"] == session for value in rule["message_hashes"]}
+    messages = original.get("checkpoint_messages")
+    if messages is None:
+        messages = [{"role": role, "content": original[key]} for role, key in (("user", "user_message"), ("assistant", "assistant_message")) if original.get(key)]
+    retained = [message for message in messages if source_message_hash(session, message) not in hashes]
+    if len(retained) == len(messages):
+        return original
+    if not retained:
+        return None
+    # A fresh checkpoint stores only survivors. Retiring the old ID avoids
+    # mutating an immutable envelope or rerunning its now-unsafe summary/tools.
+    result = {"session_id": session, "contact_id": original["contact_id"], "checkpoint_messages": retained}
+    digest = hashlib.sha256(json.dumps(result, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    result["turn_id"] = "checkpoint:" + digest
+    return result
+
+
 class TurnOutbox:
     """SQLite-backed durable turn ledger shared across Hermes processes.
 
@@ -615,7 +643,14 @@ class TurnOutbox:
     """
 
     _APPLICATION_ID = 1_129_270_361  # big-endian ASCII ``COLY``
-    _USER_VERSION = 1
+    _USER_VERSION = 2
+    _ERASURE_SCHEMA = """
+        CREATE TABLE turn_erasures (
+            contact_id TEXT PRIMARY KEY,
+            watermark INTEGER NOT NULL,
+            rules_json TEXT NOT NULL
+        )
+    """
     _SCHEMA = """
         CREATE TABLE turn_outbox (
             turn_id TEXT PRIMARY KEY,
@@ -664,12 +699,12 @@ class TurnOutbox:
         self,
         path: str | os.PathLike[str],
         *,
-        max_payload_bytes: int = 64 * 1024,
+        max_payload_bytes: int = 8 * 1024 * 1024,
         max_pending: int = 10_000,
         max_delivered: int = 8_192,
     ):
         self.path = Path(os.path.expanduser(str(path)))
-        self.max_payload_bytes = max(4096, min(int(max_payload_bytes), 256 * 1024))
+        self.max_payload_bytes = max(4096, min(int(max_payload_bytes), 8 * 1024 * 1024))
         self.max_pending = max(128, min(int(max_pending), 100_000))
         self.max_delivered = max(128, min(int(max_delivered), 100_000))
         self._schema_lock = threading.RLock()
@@ -695,7 +730,7 @@ class TurnOutbox:
         )
 
     @classmethod
-    def _expected_objects(cls, *, predecessor: bool) -> tuple[tuple[Any, ...], ...]:
+    def _expected_objects(cls, *, predecessor: bool, legacy: bool = False) -> tuple[tuple[Any, ...], ...]:
         table_sql = cls._PREDECESSOR_SCHEMA if predecessor else cls._SCHEMA
         objects: list[tuple[Any, ...]] = [
             ("index", "sqlite_autoindex_turn_outbox_1", "turn_outbox", None),
@@ -706,7 +741,12 @@ class TurnOutbox:
                 cls._PENDING_INDEX,
             ))
         objects.append(("table", "turn_outbox", "turn_outbox", table_sql))
-        return tuple(objects)
+        if not predecessor and not legacy:
+            objects.extend([
+                ("index", "sqlite_autoindex_turn_erasures_1", "turn_erasures", None),
+                ("table", "turn_erasures", "turn_erasures", cls._ERASURE_SCHEMA),
+            ])
+        return tuple(sorted(objects, key=lambda row: (row[0], row[1])))
 
     @classmethod
     def _objects_match(
@@ -852,6 +892,10 @@ class TurnOutbox:
             ):
                 return "predecessor"
             return "unknown"
+        if cls._objects_match(objects, cls._expected_objects(predecessor=False, legacy=True)) and cls._table_columns(connection) == cls._CURRENT_COLUMNS:
+            if (application_id, user_version) in ((0, 0), (cls._APPLICATION_ID, 1)):
+                return "version_one"
+            return "unknown"
         if cls._objects_match(
             objects, cls._expected_objects(predecessor=False),
         ) and cls._table_columns(connection) == cls._CURRENT_COLUMNS:
@@ -887,13 +931,15 @@ class TurnOutbox:
                 )
                 connection.execute(cls._PENDING_INDEX)
                 mutated = True
-            elif state == "unversioned_current":
+            elif state in {"unversioned_current", "version_one"}:
                 mutated = True
             elif state != "current":
                 raise PrivateSQLitePathError(
                     "private SQLite schema is unknown or malformed"
                 )
             if mutated:
+                if state != "unversioned_current":
+                    connection.execute(cls._ERASURE_SCHEMA)
                 connection.execute(f"PRAGMA application_id={cls._APPLICATION_ID}")
                 connection.execute(f"PRAGMA user_version={cls._USER_VERSION}")
             cls._validate_current_schema(connection)
@@ -914,6 +960,7 @@ class TurnOutbox:
     def _configure_durability(connection: sqlite3.Connection) -> dict[str, Any]:
         journal = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
         connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA secure_delete=ON")
         connection.execute("PRAGMA fullfsync=ON")
         connection.execute("PRAGMA checkpoint_fullfsync=ON")
         synchronous = int(connection.execute("PRAGMA synchronous").fetchone()[0])
@@ -1090,6 +1137,14 @@ class TurnOutbox:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            erasures = connection.execute("SELECT rules_json FROM turn_erasures WHERE contact_id=?", (str(payload.get("contact_id") or ""),)).fetchone()
+            retained = redact_source_payload(payload, json.loads(erasures[0])) if erasures else dict(payload)
+            if retained != dict(payload):
+                if retained is not None:
+                    self._insert_redacted(connection, retained, now)
+                connection.commit()
+                self._fsync_storage()
+                return {"turn_id": stable_id, "state": "erased", "attempts": 0}
             row = connection.execute(
                 "SELECT envelope_sha256, state, attempts FROM turn_outbox WHERE turn_id = ?",
                 (stable_id,),
@@ -1134,6 +1189,79 @@ class TurnOutbox:
             "state": "pending",
             "attempts": 0,
         }
+
+    def _insert_redacted(self, connection: sqlite3.Connection, payload: dict[str, Any], now: float) -> None:
+        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(encoded.encode()).hexdigest()
+        existing = connection.execute("SELECT envelope_sha256 FROM turn_outbox WHERE turn_id=?", (payload["turn_id"],)).fetchone()
+        if existing is not None and existing[0] != digest:
+            raise TurnOutboxConflict("redacted source ID already has different evidence")
+        if existing is None and connection.execute("SELECT count(*) FROM turn_outbox WHERE state='pending'").fetchone()[0] >= self.max_pending:
+            raise TurnOutboxFull("durable turn outbox is full")
+        connection.execute("INSERT OR IGNORE INTO turn_outbox(turn_id,envelope_sha256,payload_json,state,created_at,updated_at) VALUES(?,?,?,'pending',?,?)", (payload["turn_id"], digest, encoded, now, now))
+
+    def erasure_watermark(self, contact_id: str, *, deadline_monotonic: float | None = None) -> int:
+        connection = self._connect(deadline_monotonic=deadline_monotonic)
+        try:
+            row = connection.execute("SELECT watermark FROM turn_erasures WHERE contact_id=?", (contact_id,)).fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            connection.close()
+
+    def apply_erasure_page(self, contact_id: str, page: Mapping[str, Any], *, deadline_monotonic: float | None = None) -> None:
+        if page.get("contact_id") != contact_id:
+            raise ValueError("erasure feed contact mismatch")
+        events, through = page["events"], int(page["through"])
+        if not isinstance(events, list) or len(events) > 500 or through < 0:
+            raise ValueError("invalid erasure feed")
+        connection = self._connect(deadline_monotonic=deadline_monotonic)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT watermark,rules_json FROM turn_erasures WHERE contact_id=?", (contact_id,)).fetchone()
+            current, rules = (int(row[0]), json.loads(row[1])) if row else (0, [])
+            if through < current:
+                connection.rollback()
+                return  # A concurrent host thread already applied a newer page.
+            if through == current:
+                connection.rollback()
+                return
+            by_id = {rule["turn_id"]: rule for rule in rules}
+            for rule in events:
+                if not current < int(rule["sequence"]) <= through:
+                    continue
+                if not isinstance(rule["session_id"], str) or not isinstance(rule["turn_id"], str) or not isinstance(rule["message_hashes"], list) or any(not isinstance(h, str) or not re.fullmatch(r"[0-9a-f]{64}", h) for h in rule["message_hashes"]):
+                    raise ValueError("invalid erasure rule")
+                by_id[rule["turn_id"]] = dict(rule)
+            rules = list(by_id.values())
+            # Purge delivered receipts too: they still contain original content.
+            rows = connection.execute("SELECT turn_id,payload_json,state FROM turn_outbox").fetchall()
+            for queued in rows:
+                self._remaining_seconds(deadline_monotonic)
+                payload = json.loads(queued["payload_json"])
+                if payload.get("contact_id") != contact_id:
+                    continue
+                retained = redact_source_payload(payload, rules)
+                if retained == payload:
+                    continue
+                connection.execute("DELETE FROM turn_outbox WHERE turn_id=?", (queued["turn_id"],))
+                if retained is not None and queued["state"] == "pending":
+                    self._insert_redacted(connection, retained, time.time())
+            connection.execute("INSERT INTO turn_erasures(contact_id,watermark,rules_json) VALUES(?,?,?) ON CONFLICT(contact_id) DO UPDATE SET watermark=excluded.watermark,rules_json=excluded.rules_json", (contact_id, through, json.dumps(rules, separators=(",", ":"))))
+            connection.commit()
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+        self._fsync_storage()
+
+    def contains_turn(self, turn_id: str, *, deadline_monotonic: float | None = None) -> bool:
+        connection = self._connect(deadline_monotonic=deadline_monotonic)
+        try:
+            return connection.execute("SELECT 1 FROM turn_outbox WHERE turn_id=?", (turn_id,)).fetchone() is not None
+        finally:
+            connection.close()
 
     @staticmethod
     def _cooperative_delivery(
@@ -1462,7 +1590,9 @@ class ColonyClient:
     def get(self, path: str, **kwargs: Any) -> httpx.Response:
         timeout = kwargs.pop("timeout", 5)
         headers = self._headers(kwargs.pop("headers", None))
-        with httpx.Client(timeout=timeout) as client:
+        deadline = kwargs.pop("_deadline_monotonic", None)
+        transport = _AbsoluteDeadlineHTTPTransport(float(deadline)) if deadline is not None else None
+        with httpx.Client(timeout=timeout, transport=transport, trust_env=deadline is None) as client:
             return client.get(f"{self.url}{path}", headers=headers, **kwargs)
 
     def post(self, path: str, **kwargs: Any) -> httpx.Response:
@@ -1505,6 +1635,9 @@ class ColonyClient:
         model: str = "",
         turn_id: str = "",
         sender: Mapping[str, str] | None = None,
+        checkpoint_messages: Sequence[Mapping[str, Any]] | None = None,
+        require_source_receipt: bool = False,
+        outbox: TurnOutbox | None = None,
         timeout_seconds: float = 0.25,
     ) -> bool:
         """Persist one participant-bound observation through Colony's ledger."""
@@ -1516,6 +1649,19 @@ class ColonyClient:
             contact = str(contact_id or "").strip()
             if not session or not contact:
                 return False
+            if outbox is not None:
+                # Never replay while erasure state is unavailable or incomplete.
+                # The queued source remains durable and chat remains independent.
+                after = outbox.erasure_watermark(contact, deadline_monotonic=deadline)
+                response = self.get("/v1/host/memory/sources/erasures", params={"contact_id": contact, "after": after}, timeout=max(0.001, deadline - time.monotonic()), _deadline_monotonic=deadline)
+                if not response.is_success:
+                    return False
+                page = response.json()
+                outbox.apply_erasure_page(contact, page, deadline_monotonic=deadline)
+                if page.get("complete") is not True:
+                    return False
+                if turn_id and not outbox.contains_turn(turn_id, deadline_monotonic=deadline):
+                    return False  # Purged, or replaced by a survivor-only checkpoint.
             payload: dict[str, Any] = {
                 "identity": {"host_id": "hermes"},
                 "context": {
@@ -1545,6 +1691,8 @@ class ColonyClient:
                 payload["summary"] = str(summary)
             if model:
                 payload["model"] = str(model)
+            if checkpoint_messages is not None:
+                payload["checkpoint_messages"] = list(checkpoint_messages)
 
             if turn_id:
                 response = self.put(
@@ -1568,7 +1716,13 @@ class ColonyClient:
                 raise TurnDeliveryOutcomeUnknown(
                     "participant-bound turn outcome is unknown"
                 )
-            return bool(isinstance(value, Mapping) and value.get("accepted"))
+            return bool(
+                isinstance(value, Mapping) and value.get("accepted")
+                and (
+                    not (require_source_receipt or checkpoint_messages is not None)
+                    or value.get("source_recorded") is True
+                )
+            )
         except TurnDeliveryOutcomeUnknown:
             raise
         except httpx.TimeoutException:

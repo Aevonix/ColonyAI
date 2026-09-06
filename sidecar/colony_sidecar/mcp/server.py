@@ -297,6 +297,19 @@ def create_server() -> FastMCP:
         return await _post("/v1/host/mind/facts", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    async def colony_forget_sources(source_ids: list[str], contact_id: str | None = None) -> dict:
+        """Forget selected canonical turn sources by their recalled source IDs.
+
+        Removes exact checkpoint copies and linked graph summaries. Does not
+        claim to erase native transcripts, backups or legacy unlinked facts.
+        Use only for the user's explicit forget request; never guess IDs.
+        """
+        cid, err = _require_contact(contact_id)
+        if err:
+            return err
+        return await _post("/v1/host/memory/sources/forget", {"contact_id": cid, "source_ids": source_ids})
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     async def colony_forget_fact(
         fact_id: str,
     ) -> dict:

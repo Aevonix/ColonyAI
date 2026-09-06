@@ -2080,8 +2080,9 @@ def register(ctx: Any) -> None:
             "session_id": session_id,
             "contact_id": scope.contact_id,
             "turn_id": stable_turn_id,
-            "user_message": user_message[:2000],
-            "assistant_message": assistant_message[:2000],
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            "require_source_receipt": True,
             "summary": (
                 f"User: {user_message[:300]}\nAgent: {assistant_message[:300]}"
                 if user_message and assistant_message else ""
@@ -2113,7 +2114,7 @@ def register(ctx: Any) -> None:
                     stored: Mapping[str, Any], *, timeout_seconds: float,
                 ) -> bool:
                     return client.sync_turn(
-                        **stored, timeout_seconds=timeout_seconds,
+                        **stored, outbox=turn_outbox, timeout_seconds=timeout_seconds,
                     )
 
                 turn_outbox.drain(
