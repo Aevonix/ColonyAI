@@ -31,6 +31,7 @@ def args(tmp_path, monkeypatch):
     monkeypatch.delenv('COLONY_STATE_DIR', raising=False)
     monkeypatch.delenv('COLONY_SKIP_DOTENV', raising=False)
     monkeypatch.setattr(setup_hermes, '_interpreter', lambda value: Path('/fixture/python'))
+    monkeypatch.setattr(setup_hermes, '_adapter_binding', lambda *args: {'mode': 'private-directory'})
     monkeypatch.setattr(setup, '_check_port', lambda port: False)
     monkeypatch.setattr(httpx, 'post', lambda *a, **k: httpx.Response(200,
         request=httpx.Request('POST', 'http://test'), json={'choices': [{'message': {'content': 'OK'}}]}))
@@ -88,7 +89,7 @@ def test_attach_preserves_existing_identity_channels_model_and_unrelated_env(arg
     assert yaml.safe_load((home/'colony/hermes-original/config.yaml').read_text()) == original
 
 
-@pytest.mark.parametrize('failure', ['endpoint', 'provider', 'artifact', 'malformed_config'])
+@pytest.mark.parametrize('failure', ['endpoint', 'provider', 'artifact', 'malformed_config', 'installed_mismatch'])
 def test_preflight_failure_leaves_selected_home_and_state_unchanged(args, monkeypatch, failure):
     home = Path(args.hermes_home); home.mkdir()
     (home/'SOUL.md').write_text('Keep me')
@@ -97,6 +98,9 @@ def test_preflight_failure_leaves_selected_home_and_state_unchanged(args, monkey
     if failure == 'provider': (home/'config.yaml').write_text('memory: {provider: other}\n')
     if failure == 'artifact': args.adapter_wheel = str(home/'missing.whl')
     if failure == 'malformed_config': (home/'config.yaml').write_text('model: 1\nmodel: 2\n')
+    if failure == 'installed_mismatch':
+        def mismatch(*a): raise ValueError('Installed adapter mismatch')
+        monkeypatch.setattr(setup_hermes, '_adapter_binding', mismatch)
     before = {str(p.relative_to(home)): p.read_bytes() for p in home.rglob('*') if p.is_file()}
     assert setup.run_init(None, args) == 1
     assert before == {str(p.relative_to(home)): p.read_bytes() for p in home.rglob('*') if p.is_file()}

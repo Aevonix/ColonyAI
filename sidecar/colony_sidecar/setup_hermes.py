@@ -94,6 +94,52 @@ def _adapter_resources(wheel=None):
     return resources
 
 
+def _adapter_binding(python, resources):
+    """Respect native entry-point precedence, verifying the selected code first."""
+    expected = {name: hashlib.sha256(value).hexdigest() for name, value in resources.items()}
+    probe = subprocess.run([str(python), '-I', '-c', r'''
+import hashlib, importlib.metadata, importlib.util, json, sys
+from pathlib import Path
+expected = json.load(sys.stdin)
+entries = importlib.metadata.entry_points()
+selected = []
+for group, name, module in [('hermes_agent.plugins', 'colony', 'colony_hermes'),
+                            ('hermes_agent.memory_providers', 'colony-memory', 'colony_memory')]:
+    matches = [ep for ep in entries.select(group=group) if ep.name == name]
+    if len(matches) > 1 or (matches and matches[0].value != module):
+        raise ValueError('Conflicting Colony entry point')
+    selected.append(matches[0] if matches else None)
+if not any(selected):
+    print(json.dumps({'mode': 'private-directory'}))
+    sys.exit(0)
+if not all(selected):
+    raise ValueError('Both canonical native Colony entry points are required')
+sources, versions = {}, set()
+for ep in selected:
+    module = ep.value
+    spec = importlib.util.find_spec(module)
+    if spec is None or not spec.origin:
+        raise ValueError('Installed adapter package cannot be resolved')
+    root = Path(spec.origin).resolve().parent
+    sources[module] = str(root)
+    versions.add(ep.dist.version)
+    names = {name for name in expected if name.startswith(module+'/')}
+    actual_python = {module+'/'+str(path.relative_to(root)) for path in root.rglob('*.py')}
+    if actual_python != {name for name in names if name.endswith('.py')}:
+        raise ValueError('Installed adapter Python files differ from the selected artifact')
+    for name in names:
+        path = root/name.split('/', 1)[1]
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected[name]:
+            raise ValueError('Installed adapter bytes differ from the selected artifact')
+if len(versions) != 1:
+    raise ValueError('Installed adapter entry-point versions disagree')
+print(json.dumps({'mode': 'native-installed', 'version': versions.pop(), 'sources': sources}))
+'''], input=json.dumps(expected), capture_output=True, text=True, timeout=30)
+    if probe.returncode:
+        raise ValueError('Hermes has an incomplete or different installed Colony adapter; select its matching artifact, upgrade that package explicitly, or use a separate Hermes interpreter')
+    return json.loads(probe.stdout.splitlines()[-1])
+
+
 def _forwarder(site, module, memory=False):
     # Native Hermes memory discovery is import-free and looks for this symbol.
     hint = '# ColonyMemoryProvider native provider entry point.\n' if memory else ''
@@ -171,6 +217,7 @@ def run(root_dir=None, args=None):
             replace_provider = True
         python = _interpreter(getattr(args, 'hermes_python', None))
         resources = _adapter_resources(getattr(args, 'adapter_wheel', None))
+        binding = _adapter_binding(python, resources)
         owner_name = ask('Your name', getattr(args, 'contact_name', None) or os.environ.get('USER', 'Owner'), True)
         agent_name = ask('Agent name', getattr(args, 'agent_name', None) or 'Assistant', True)
         endpoint = _endpoint(ask('Local model API root', getattr(args, 'model_url', None), True))
@@ -249,6 +296,7 @@ def run(root_dir=None, args=None):
             manifest = {'version': 1, 'hermes_home': str(home), 'hermes_python': str(python),
                 'owner_id': owner_id, 'agent_name': agent_name, 'endpoint': endpoint, 'model': model,
                 'adapter_sha256': hashlib.sha256(b''.join(name.encode()+resources[name] for name in sorted(resources))).hexdigest(),
+                'adapter_binding': binding,
                 'profile': 'local', 'status': 'configured_not_behaviorally_verified'}
             _private_write(staged/'instance.json', _json(manifest))
             # Prepare the existing config path with the canonical provider helper.
@@ -296,10 +344,11 @@ def run(root_dir=None, args=None):
                 raw = value if isinstance(value, bytes) else value.encode()
                 _private_write(path, raw)
                 created.append((path, raw))
-            for directory, module in (('colony', 'colony_hermes'), ('colony-memory', 'colony_memory')):
-                create(home/'plugins'/directory/'__init__.py', _forwarder(state/'adapter', module, directory == 'colony-memory'))
-                create(home/'plugins'/directory/'plugin.yaml', resources[module+'/plugin.yaml'])
-            create(home/'plugins'/'colony-memory'/'cli.py', _forwarder(state/'adapter', 'colony_memory.cli'))
+            if binding['mode'] == 'private-directory':
+                for directory, module in (('colony', 'colony_hermes'), ('colony-memory', 'colony_memory')):
+                    create(home/'plugins'/directory/'__init__.py', _forwarder(state/'adapter', module, directory == 'colony-memory'))
+                    create(home/'plugins'/directory/'plugin.yaml', resources[module+'/plugin.yaml'])
+                create(home/'plugins'/'colony-memory'/'cli.py', _forwarder(state/'adapter', 'colony_memory.cli'))
             setup._atomic_hermes_config_write(config_path, original, final_config)
             replaced.append((config_path, original, final_config))
             if not (home/'SOUL.md').exists():
@@ -324,6 +373,7 @@ def run(root_dir=None, args=None):
             raise
         os.environ['COLONY_STATE_DIR'] = str(state)
         print(f'Private agent configured in {home}; state in {state}.')
+        print('Adapter loading: ' + binding['mode'] + ' (canonical artifact bytes verified).')
         print('Canonical memory capture and recollection are enabled for new Hermes sessions.')
         print('Source memory, temporal claims, contacts, commitments and self state persist without a graph.')
         print('Graph/vector recall and consequential background work are optional and currently disabled.')

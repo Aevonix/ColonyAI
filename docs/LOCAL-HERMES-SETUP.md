@@ -76,10 +76,18 @@ Native owner tools remain available; consequential effects remain subject to
 the existing application consent rules. Public guest context needs the existing
 scoped projection contract and is not enabled by this local profile.
 
-Canonical adapters are copied from the distribution into private state. Tiny
-profile-local entry points load those exact modules. No code is duplicated or
-patched. Other profiles and running Hermes sessions are not restarted or
-modified. Start a new Hermes session after attachment.
+Canonical adapter bytes are retained in private state. If the selected Hermes
+interpreter already has both native Colony entry points, setup verifies their
+package bytes against the selected artifact and uses that installed package.
+It records the loading mode, package version and source paths in `instance.json`.
+A different or incomplete installed adapter is rejected before attachment;
+upgrade it explicitly or select its matching artifact or another interpreter.
+With a separate interpreter lacking those entry points, tiny profile-local
+forwarders load the private adapter copy. Setup does not patch Hermes or install
+competing forwarders that its native precedence would ignore. An explicit later
+upgrade of a shared installed package affects every home using that interpreter.
+Other profiles and running Hermes sessions are not restarted or modified by
+attachment. Start a new Hermes session afterward.
 
 For a new home, `SOUL.md` contains the chosen identity. An existing SOUL, channels,
 model and unrelated settings are retained. An incumbent non-Colony memory
@@ -122,7 +130,7 @@ retains it; it is not an upgrade command.
 
 To undo an attachment, stop this instance and Hermes, restore the original
 `config.yaml` and `.env` from `hermes-original` (remove only wizard-created files
-when no original existed), and remove the two wizard-created forwarding
-directories `plugins/colony` and `plugins/colony-memory`. Keep the private Colony
+when no original existed), and remove `plugins/colony` and `plugins/colony-memory`
+only if this setup created them in private-directory mode. Keep the private Colony
 state and Hermes transcripts. No database rollback is part of installation or
 recovery. Compare files before restoring if you have edited them since setup.

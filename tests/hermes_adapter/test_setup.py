@@ -6,8 +6,10 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
+import venv
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -19,7 +21,7 @@ import sys
 sys.path.insert(0, sys.argv[1])
 if sys.argv[2]: sys.path.append(sys.argv[2])
 from colony_sidecar.cli import main
-sys.argv = ['colony', 'init', '--non-interactive', '--hermes-python', sys.executable,
+sys.argv = ['colony', 'init', '--non-interactive', '--hermes-python', sys.argv[7],
     '--hermes-home', sys.argv[3], '--adapter-wheel', sys.argv[4], '--agent-name', 'Orion',
     '--contact-name', 'Fixture Owner', '--model-url', sys.argv[5], '--model', 'fixture', '--port', sys.argv[6]]
 main()
@@ -38,7 +40,7 @@ sys.argv = ['colony', 'start']  # Discover the same instance from HERMES_HOME.
 main()
 '''
 TURN = r'''
-import sys, json
+import sys, json, inspect
 from pathlib import Path
 from hermes_cli.plugins import get_plugin_manager
 from dotenv import load_dotenv
@@ -48,22 +50,52 @@ manager = get_plugin_manager()
 manager.discover_and_load()
 assert manager._plugins['colony'].enabled, manager._plugins['colony'].error
 import colony_hermes
-assert Path(colony_hermes.__file__).is_relative_to(get_hermes_home()/'colony'/'adapter')
+manifest = json.loads((get_hermes_home()/'colony'/'instance.json').read_text())
+binding = manifest['adapter_binding']
+roots = (binding['sources'] if binding['mode'] == 'native-installed' else
+         {name: str(get_hermes_home()/'colony'/'adapter'/name) for name in ('colony_hermes', 'colony_memory')})
+assert Path(colony_hermes.__file__).resolve().parent == Path(roots['colony_hermes'])
 from run_agent import AIAgent
 agent = AIAgent(api_key='local-no-key', base_url=sys.argv[1], provider='openai',
     model='fixture', max_iterations=2, quiet_mode=True, platform='cli', enabled_toolsets=[],
     skip_context_files=False)
-assert any(type(p).__name__ == 'ColonyMemoryProvider' for p in agent._memory_manager._providers), 'Native memory provider absent'
+providers = [p for p in agent._memory_manager._providers if type(p).__name__ == 'ColonyMemoryProvider']
+assert len(providers) == 1, 'Native memory provider absent or duplicated'
+assert Path(inspect.getfile(type(providers[0]))).resolve().parent == Path(roots['colony_memory'])
 result = agent.run_conversation(sys.argv[2])
 print(json.dumps({'answer': result['final_response'], 'session_id': agent.session_id}))
 agent.close()
 '''
 
 
-def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(artifacts, tmp_path):
+def _native_interpreter(tmp_path, wheel, installed_adapter):
+    """Reuse qualified dependencies while controlling actual adapter metadata.
+
+    The native subprocess gets a real fresh venv. Symlink dependencies instead
+    of downloading them twice; never hide or mock Hermes discovery functions.
+    """
+    target = tmp_path/'native'
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(target)
+    site = target/'lib'/f'python{sys.version_info.major}.{sys.version_info.minor}'/'site-packages'
+    for source in Path(sysconfig.get_path('purelib')).iterdir():
+        if 'colony_hermes' in source.name or source.name in {'colony_memory', '__pycache__'}:
+            continue
+        (site/source.name).symlink_to(source, target_is_directory=source.is_dir())
+    if installed_adapter:
+        run_python('-m', 'pip', 'install', '--no-index', '--no-deps', '--target', site, wheel, cwd=tmp_path)
+    return target/'bin'/'python'
+
+
+@pytest.mark.parametrize('installed_adapter', [False, True], ids=['separate-interpreter', 'installed-native-entrypoints'])
+def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(artifacts, tmp_path, installed_adapter):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Requires qualified native Hermes')
     output, wheel, _, installed = artifacts
+    native_python = _native_interpreter(tmp_path, wheel, installed_adapter)
+    def run_native(*args, **kwargs):
+        result = subprocess.run([str(native_python), *map(str, args)], text=True, capture_output=True, timeout=120, **kwargs)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result
     # Wheel-install Colony separately from the source tree; dependencies must be
     # installed by the qualification job. Optional local reuse is never shipped.
     sidecar_output = output/'sidecar'
@@ -106,7 +138,11 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
                HERMES_DISABLE_TELEMETRY='1', COLONY_GUARD_CHAT_MODE='off', LITELLM_LOCAL_MODEL_COST_MAP='True')
     server = None
     try:
-        run_python('-I', '-c', INSTALL, installed, dependency_path, home, wheel, endpoint, port, cwd=tmp_path, env=env)
+        run_python('-I', '-c', INSTALL, installed, dependency_path, home, wheel, endpoint, port, native_python, cwd=tmp_path, env=env)
+        manifest = json.loads((home/'colony'/'instance.json').read_text())
+        assert manifest['adapter_binding']['mode'] == ('native-installed' if installed_adapter else 'private-directory')
+        assert (home/'plugins'/'colony').exists() is not installed_adapter
+        assert (home/'plugins'/'colony-memory').exists() is not installed_adapter
         log_path = tmp_path/'sidecar.log'
         with log_path.open('w') as log:
             server = subprocess.Popen([sys.executable, '-I', '-c', SERVER, str(installed), dependency_path],
@@ -120,7 +156,7 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
             except httpx.HTTPError: pass
             time.sleep(.1)
         else: pytest.fail('Sidecar did not start: '+log_path.read_text()[-12000:])
-        first = run_python('-I', '-c', TURN, endpoint, 'Please remember that my orchard badge is cobalt-716.', cwd=tmp_path, env=env)
+        first = run_native('-I', '-c', TURN, endpoint, 'Please remember that my orchard badge is cobalt-716.', cwd=tmp_path, env=env)
         instance = json.loads((home/'colony'/'instance.json').read_text())
         keyring = json.loads((home/'colony'/'api-keyring.json').read_text())
         response = httpx.post(f'http://127.0.0.1:{port}/v1/host/context/assemble',
@@ -129,7 +165,7 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
                   'incoming_message': {'role':'user', 'content':'Which orchard badge did I ask you to remember?'}}, trust_env=False, timeout=15)
         assert response.status_code == 200, response.text
         assert 'cobalt-716' in response.text, response.text
-        second = run_python('-I', '-c', TURN, endpoint, 'Which orchard badge did I ask you to remember?', cwd=tmp_path, env=env)
+        second = run_native('-I', '-c', TURN, endpoint, 'Which orchard badge did I ask you to remember?', cwd=tmp_path, env=env)
         a, b = [json.loads(next(line for line in reversed(r.stdout.splitlines()) if line.startswith('{"answer"'))) for r in (first, second)]
         assert a['session_id'] != b['session_id']
         assert b['answer'] == 'cobalt-716', (second.stdout, second.stderr, log_path.read_text()[-12000:])
@@ -140,6 +176,22 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
                    if body.get('stream') for message in body.get('messages', []) if message.get('role') == 'system')
         assert not (home/'colony'/'lancedb').exists()
         assert (home/'colony'/'contacts.db').exists()
+        if installed_adapter:
+            # A same-version installed package with different code must not be
+            # silently selected over the requested artifact on another attach.
+            client = Path(manifest['adapter_binding']['sources']['colony_hermes'])/'client.py'
+            client.write_bytes(client.read_bytes()+b'\n# Different installed payload\n')
+            other = tmp_path/'mismatch-home'; other.mkdir()
+            (other/'config.yaml').write_text('plugins: {enabled: []}\n')
+            (other/'SOUL.md').write_text('Retained identity')
+            before = {path.name: path.read_bytes() for path in other.iterdir()}
+            request_count = len(requests)
+            rejected = subprocess.run([sys.executable, '-I', '-c', INSTALL, str(installed), dependency_path,
+                str(other), str(wheel), endpoint, str(port), str(native_python)],
+                cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60)
+            assert rejected.returncode != 0 and 'different installed Colony adapter' in rejected.stdout
+            assert before == {path.name: path.read_bytes() for path in other.iterdir()}
+            assert len(requests) == request_count, 'Adapter conflict must fail before endpoint probing'
     finally:
         if server is not None:
             server.terminate()
