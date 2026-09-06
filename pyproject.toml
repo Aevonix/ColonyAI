@@ -31,7 +31,7 @@ colony_hermes = "plugins/hermes-plugin"
 colony_memory = "plugins/colony-memory"
 
 [tool.setuptools.package-data]
-colony_hermes = ["plugin.yaml"]
+colony_hermes = ["plugin.yaml", "skills/*/SKILL.md"]
 colony_memory = ["plugin.yaml", "SKILL.md"]
 
 [tool.pytest.ini_options]
