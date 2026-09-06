@@ -252,6 +252,7 @@ async def _migrate_generation(store, pipeline, *, graph, old_model_id, batch_siz
                     'declared_revision': store.identity.declared_revision, 'embedded_at': now}
             projected = {'id': row['id'], 'text': row['text'], 'vector': vector,
                          'metadata': json.dumps(meta, default=str),
+                         'scope_key': meta.get('scope_key'),
                          'modality': meta.get('modality', 'text'), 'image_hash': meta.get('image_hash', ''),
                          'image_ref': meta.get('image_ref', ''), 'thumbnail_ref': meta.get('thumbnail_ref', ''),
                          'caption': meta.get('caption', ''), 'created_at': now, 'updated_at': now}

@@ -2434,7 +2434,7 @@ async def context_assemble(
     # --- Memory: authorized candidates, one selection and one budget ---
     if _exact_person_allowed and query_text:
         from colony_sidecar.intelligence.graph.recall import source_candidates
-        beliefs, quotations, source_hits = [], [], []
+        beliefs, quotations, source_hits, semantic_media = [], [], [], []
         source_ledger = None
         if _graph is not None:
             try:
@@ -2462,6 +2462,15 @@ async def context_assemble(
                     source_hits = source_ledger.search_sources(
                         query_text, contact_id=body.context.contact_id,
                         session_id=body.context.session_id, limit=10)
+                    try:
+                        from colony_sidecar.turns.source_vectors import SourceVectors, merge_source_hits
+                        from colony_sidecar.vector import get_store, get_pipeline
+                        semantic_hits, semantic_media = await SourceVectors(
+                            source_ledger, get_store(), get_pipeline()).search(query_text,
+                            contact_id=body.context.contact_id, session_id=body.context.session_id, limit=15)
+                        source_hits = merge_source_hits(source_hits, semantic_hits)
+                    except Exception as exc:
+                        logger.debug("source semantic recall unavailable (%s); retaining lexical evidence", type(exc).__name__)
                     quotations = source_candidates(source_hits)
             except Exception as exc:
                 logger.warning("source evidence recall failed (%s)", type(exc).__name__)
@@ -2491,8 +2500,10 @@ async def context_assemble(
                     beliefs, source_hits, contact_id=body.context.contact_id,
                     session_id=body.context.session_id, time_query=time_query)
                 from colony_sidecar.turns.media import SourceMedia
-                quotations.extend(filter_unstructured(SourceMedia(source_ledger).search(
-                    query_text, contact_id=body.context.contact_id, session_id=body.context.session_id), time_query))
+                media_hits = SourceMedia(source_ledger).search(
+                    query_text, contact_id=body.context.contact_id, session_id=body.context.session_id)
+                media_by_id = {row['id']: row for row in media_hits + semantic_media}
+                quotations.extend(filter_unstructured(list(media_by_id.values()), time_query))
             else:
                 beliefs = filter_unstructured(beliefs, time_query)
             try:
@@ -3588,7 +3599,10 @@ async def source_claim_projection_status(contact_id: str, request: Request = Non
     from colony_sidecar.beliefs.source_projection import SourceClaimProjection
     from colony_sidecar.turns.media import SourceMedia
     ledger = get_turn_idempotency_ledger(get_state_dir())
-    return {"sources": SourceClaimProjection(ledger).status(person), "media": SourceMedia(ledger).status(person)}
+    from colony_sidecar.turns.source_vectors import SourceVectors
+    from colony_sidecar.vector import get_store, get_pipeline
+    return {"sources": SourceClaimProjection(ledger).status(person), "media": SourceMedia(ledger).status(person),
+            "semantic": SourceVectors(ledger, get_store(), get_pipeline()).status(person)}
 
 
 @router.get("/memory/sources/assets/{asset_hash}")

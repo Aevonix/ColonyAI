@@ -333,23 +333,34 @@ class SourceClaimProjection:
                 bundles + filter_unstructured(source_candidates(retained_hits), time_query))
 
 
-async def run_source_claim_worker(ledger, router_provider):
+async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=True):
     """One consumer, durable jobs and leases; process loss resumes from SQLite."""
     projection = SourceClaimProjection(ledger)
     from colony_sidecar.turns.media import SourceMedia
     media = SourceMedia(ledger)
+    from colony_sidecar.turns.source_vectors import SourceVectors
+    from colony_sidecar.vector import get_store, get_pipeline
+    vectors = SourceVectors(ledger, get_store(), get_pipeline())
+    vectors.backfill()
     try:
         media.recover_unowned_files()
     except OSError:
         logger.warning("source media orphan recovery deferred")
     while True:
+        worked = False
         try:
-            worked = await projection.process_one(router_provider())
-            media_worked = await media.process_one(router_provider())
-            worked = worked or media_worked
+            worked = await vectors.process_one()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("source semantic projection deferred (%s)", type(exc).__name__)
+        try:
+            if claims_enabled:
+                claim_worked = await projection.process_one(router_provider())
+                media_worked = await media.process_one(router_provider())
+                worked = worked or claim_worked or media_worked
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.warning("source claim worker deferred (%s)", type(exc).__name__)
-            worked = False
         await asyncio.sleep(.05 if worked else 2)

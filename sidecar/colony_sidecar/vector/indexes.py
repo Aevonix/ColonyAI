@@ -155,5 +155,8 @@ class IndexCatalog:
                                 (collection, entry_id)).fetchone() is not None
 
     def source_erased(self, metadata) -> bool:
+        if (metadata or {}).get('source_projection'):
+            from colony_sidecar.turns.source_vectors import hydrate
+            return hydrate(self.ledger, metadata) is None
         source = (metadata or {}).get('source_uri', '')
         return isinstance(source, str) and source.startswith('turn:') and self.ledger.is_projection_erased(source[5:])
