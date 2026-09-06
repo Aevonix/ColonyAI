@@ -1,8 +1,9 @@
 # A first inspectable working perspective
 
-This increment gives the agent a source-backed communication preference and an
-operational judgment that changes optional research ordering. It is a first self
-behavior, not a general personality, emotions, consciousness or worldview.
+This increment gives the agent source-backed communication and initiative
+preferences, with inspectable attention. Explicit owner corrections can change
+optional research ordering. Runtime outcomes do not establish cognitive ability,
+general opinions, emotions, consciousness or a worldview.
 Identity prose and deployment-specific values remain private configuration.
 
 ## Owner corrections
@@ -29,9 +30,9 @@ Use normal priority for research initiatives.
 ```
 
 `knowledge acquisition` can replace `research`. These set a priority preference,
-not permission to execute, send, spend or change production. Owner corrections
-take precedence over observational weights until a later correction or erasure.
-Implicit observations cannot overwrite them. A late-delivered older correction
+not permission to execute, send, spend or change production. These explicit owner
+corrections are the only weights this perspective applies, until a later correction
+or erasure. Implicit observations cannot overwrite them. A late-delivered older correction
 does not displace a newer one. Source occurrence time is used when available;
 otherwise the source's observed ingestion time supplies the ordering fallback.
 
@@ -48,34 +49,42 @@ and up to 100 recent surviving corrections. The source-backed deployment's
 owner source. It no longer turns arbitrary endpoint text into a new correction.
 Ordinary owner messages remain the main capture path.
 
-## Operational judgment and attention
+## Runtime history and attention
 
-The existing competence store supplies effective observed or verified runtime
-outcomes, with shadow, invalidated and unavailable evidence excluded. Legacy
-unattributed counters are not sufficient evidence. The initiative executor now
+The existing competence store retains outcome records and their available
+provenance, including the distinction between recorded and corrected evidence.
+The initiative executor
 records a stable work/attempt reference and the last available model response
 metadata. Unavailable model IDs, roles and weights revisions are `unknown`.
 Runtime completion is not verified semantic task success.
 
-The reducer considers at most 20 distinct recent work sources per research
-domain. Repeated attempts on one work item count as one source. Ordinary updates
-need three newly observed sources and move the priority weight by at most 0.05,
-inside [0.8, 1.2]. These bounds are conservative policy choices, not calibrated
-probabilities. Withdrawal or reconciliation of supporting evidence immediately
-recomputes the affected judgment, including returning to neutral when evidence
-is insufficient. Every revision retains its evidence basis and reducer version.
+Automatic outcome-derived research weights are retired. Completing a report with
+the wrong count cannot earn a quality claim or a priority increase. A model
+endpoint timeout cannot become a judgment that the agent is bad at research.
+The self brief reports historical outcome labels, explicitly limiting claims
+about output quality and current-model ability. A timeout alone does not establish
+output quality or its cause. Old or unverified records are not verified task results.
 
-`AutonomyLoop._phase_initiative` uses that weight to order optional research and
-knowledge-acquisition candidates. It copies candidates, so recurring ticks do
+Existing automatic opinion revisions remain unchanged in the ledger. Inspection
+returns their original basis, model provenance and reducer version, marked
+`legacy_non_governing`, plus up to 100 recent revisions in `opinion_history`.
+They are neither injected as current opinions nor used for ranking. Existing
+competence inspection and append-only evidence reconciliation remain available;
+invalidating an outcome retains its recorded value and correction provenance.
+
+`AutonomyLoop._phase_initiative` uses explicit owner weights to order optional
+research and knowledge-acquisition candidates. It copies candidates, so recurring ticks do
 not compound their priority. Urgent candidates and other initiative types keep
 their original priority; an optional candidate cannot acquire urgent priority
 through a preference. Existing consent and execution gates still apply.
 
 One persisted attention snapshot records the last ranking, original and effective
-priorities, applicable correction/opinion IDs, and the existing load probe. It
+priorities, applicable correction IDs, and the existing load probe. It
 is explicitly a dated decision snapshot, not a complete live process inventory.
 Missing load sources are not proven idle. This supplements the separate shared
-execution view rather than replacing it.
+execution view rather than replacing it. A snapshot from the retired automatic
+weighting version remains inspectable as `historical_only` and is omitted from
+the current prompt brief until a new ranking replaces it.
 
 Owner context uses this same state and includes source and revision references.
 `GET /v1/host/self` exposes the inspectable perspective. Both inspection routes
@@ -124,20 +133,24 @@ The legacy `.bak` scan describes only the newest file in its checked directory
 and explicitly leaves recovery coverage unverified. It does not determine the
 last complete backup, inspect other archive locations or update backup markers.
 
-The state and source history survive changing the interaction model. Operational
-weights carry a working strategy across a model swap, not a claim that the new
-model has inherited another model's competence. New outcomes revise the judgment.
+Owner preferences, source history and attention persist independently of the
+interaction model. Historical runtime records retain their available model
+provenance; changing processors does not transfer a claim of competence. There
+is no automatic quality grader or outcome-derived strategy update in this loop.
 
 ## Qualification and remaining acceptance
 
 Neutral tests drive actual source ingestion, SQLite stores, the initiative
 executor's outcome recording, the autonomy phase, scoped HTTP middleware and
-context assembly. Three distinct runtime timeouts move optional research from
-0.80 to 0.76, behind a 0.77 follow-up. An owner correction moves it to 0.89 while
-an urgent 0.95 commitment remains first. A fresh store instance and another
+context assembly. Three completed-but-wrong count results or three runtime
+timeouts leave optional research at 0.80. An owner correction can move it to
+0.64, behind a 0.77 follow-up, while an urgent 0.95 commitment remains first.
+A fresh store instance and another
 session produce the same stored preference and ranking. Tests also cover replay,
 late delivery, source erasure, guest denial, preserved correction precedence and
-uncertain wording retained as evidence.
+uncertain wording retained as evidence. Legacy opinion revisions cannot govern
+ranking, and evidence invalidation preserves both original records and the
+correction history.
 
 No real model output is needed to calculate this deterministic ranking. Model
 responses in the outcome test are controlled fixtures, not claims of model
@@ -145,4 +158,7 @@ accuracy. Production acceptance still requires an actual owner correction
 through the deployed native adapter, a later session observing the correction,
 and an autonomy tick whose recorded before/after ordering matches what runs.
 Do not call this a complete self or general opinion system before that behavior
-is observed, and do not expand it into a personality simulator first.
+is observed, and do not expand it into a personality simulator first. For R1,
+this is inspectable owner-directed state and its dated decision trace. It does
+not close S2: task-quality regression detection and verified improvement require
+their own measured task result, rather than credit for a completed execution.

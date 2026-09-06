@@ -908,7 +908,7 @@ class AutonomyLoop:
             sm = getattr(self._registry, 'self_model', None)
             perspective = getattr(sm, 'perspective', None)
             if perspective is not None:
-                initiatives = perspective.rank(initiatives, competence=sm.store, load=sm.load())
+                initiatives = perspective.rank(initiatives, load=sm.load())
             self._pending_initiatives = initiatives
             self.stats.initiatives_generated += len(initiatives)
 
