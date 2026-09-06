@@ -4224,22 +4224,10 @@ async def _process_turn_sync(
     try:
         if (_tom_extractor is not None and _affect_store is not None
                 and _facts_store is not None and not _is_system_turn and source_recorded):
-            _p8_producer = None
-            if _p8_runtime is not None:
-                try:
-                    _p8_producer = _p8_viewer_for_request(
-                        request,
-                        body.context.contact_id,
-                        server_resolved=_resolved_human_sender,
-                    )
-                except HTTPException:
-                    logger.debug(
-                        "P8 extracted fact envelope omitted: producer unavailable")
             _spawn_task(_run_tom_extraction(
                 conversation_text=body.summary or "",
                 contact_id=body.context.contact_id,
                 session_id=body.context.session_id,
-                p8_producer=_p8_producer,
                 source_id=source_id,
             ))
     except Exception:
@@ -12565,7 +12553,6 @@ async def _run_tom_extraction(
     conversation_text: str,
     contact_id: str,
     session_id: Optional[str] = None,
-    p8_producer=None,
     source_id: Optional[str] = None,
 ) -> None:
     """Project affect and engagement; canonical assertions own factual learning."""
