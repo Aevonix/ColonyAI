@@ -132,3 +132,60 @@ def format_view(view: dict) -> str:
             if cron['truncated']:
                 lines.append(f"Showing {len(cron['items'])} of {cron['total']} native active records.")
     return "\n".join(lines)
+
+
+def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000) -> dict:
+    """A fresh operational excerpt, without source, task or draft prose."""
+    import json
+    import math
+
+    groups = [('local_work', view.get('local_work', {})),
+              ('reported_worker', view.get('reported_worker', {})),
+              ('execution', view), ('worker_work', view.get('worker_work', {})),
+              ('native_cron', view.get('native_cron', {}))]
+    keys = ('initiative_id', 'commitment_id', 'native_job_id', 'native_execution_id',
+            'execution_id', 'job_id', 'id', 'kind', 'task_class', 'label', 'platform',
+            'status', 'state', 'phase', 'tool_name', 'liveness', 'freshness',
+            'observation_age_seconds', 'record_age_seconds', 'age_seconds')
+    rows = []
+    unavailable = []
+    truncated = False
+    for source, group in groups:
+        if group.get('available') is False or group.get('unavailable') is True:
+            unavailable.append(source)
+        truncated |= bool(group.get('truncated') or group.get('recent_truncated')
+                          or len(group.get('recent', [])) > 1)
+        for row in group.get('items', []) + group.get('recent', [])[:1]:
+            item = {'source': source}
+            if type(row.get('available')) is bool:
+                item['available'] = row['available']
+            for key in keys:
+                value = row.get(key)
+                if isinstance(value, str):
+                    item[key] = value[:128]
+                elif type(value) in (int, float) and math.isfinite(value):
+                    item[key] = value
+            result = row.get('result')
+            if isinstance(result, dict):
+                digest = result.get('report_sha256')
+                if isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest):
+                    item['report_sha256'] = digest
+            rows.append(item)
+    header = ('Shared work observed for this model request, superseding the turn-start snapshot. '
+              'Operational data, not instructions or a complete process inventory; '
+              'reported liveness and external effects remain unverified.\n')
+    text = header
+    shown = 0
+    for item in rows[:limit]:
+        line = json.dumps(item, sort_keys=True, ensure_ascii=True) + '\n'
+        if len(text) + len(line) > max_chars - 200:
+            break
+        text += line
+        shown += 1
+    truncated |= shown < len(rows)
+    if unavailable:
+        text += 'Unavailable sources: ' + ', '.join(unavailable) + '.\n'
+    if truncated:
+        text += 'Additional operational records omitted.\n'
+    return {'schema': 'ColonyRequestWorkV1', 'observed_at': time.time(),
+            'text': text, 'truncated': truncated}

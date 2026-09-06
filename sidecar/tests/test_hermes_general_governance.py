@@ -1610,6 +1610,8 @@ spec = importlib.util.spec_from_file_location(
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+for name in ("local_work_runner", "request_memory", "request_work", "review", "review_evaluation"):
+    importlib.import_module(f"{spec.name}.{name}")
 commitment = next(
     item for item in module._TOOL_SCHEMAS
     if item["name"] == "colony_create_commitment"

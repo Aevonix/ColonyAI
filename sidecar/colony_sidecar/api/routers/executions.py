@@ -46,10 +46,19 @@ def observe(body: ExecutionObservation, request: Request):
 
 
 @router.get("")
-async def active(request: Request, contact_id: str, session_id: str = "", limit: int = Query(20, ge=1, le=100)):
+async def active(request: Request, contact_id: str, session_id: str = "", limit: int = Query(20, ge=1, le=100),
+                 projection: Literal['full', 'request'] = 'full'):
     person, owner = authorized_viewer(request, contact_id, scope="context:read")
+    if projection == 'request' and not owner:
+        raise HTTPException(403, detail='owner_work_context_required')
+    if projection == 'request':
+        limit = min(limit, 8)
     view = registry().view(contact_id=person, owner=owner, session_id=session_id, limit=limit)
-    return await with_queue_work(view, owner=owner, limit=limit)
+    view = await with_queue_work(view, owner=owner, limit=limit)
+    if projection == 'request':
+        from colony_sidecar.turns.executions import request_work_context
+        return request_work_context(view, limit=limit)
+    return view
 
 
 async def with_queue_work(view, *, owner, limit=8):

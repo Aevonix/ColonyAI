@@ -59,6 +59,9 @@ def test_stage_targets_only_selected_home(selection, tmp_path, monkeypatch, isol
     for relative in (
         "colony-memory/provider.py", "colony-memory/plugin.yaml", "colony/__init__.py",
         "colony/evidence.py",
+        "colony/local_work_runner.py", "colony/model_response.py",
+        "colony/request_memory.py", "colony/request_work.py",
+        "colony/review.py", "colony/review_evaluation.py",
         "colony/colony_hostworker/catalog.py", "colony/colony_hostworker/contract.py",
     ):
         assert (target / "plugins" / relative).is_file()
