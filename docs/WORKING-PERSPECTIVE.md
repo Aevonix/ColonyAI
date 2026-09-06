@@ -83,6 +83,35 @@ use `context:read` and require owner person authority; preference reprojection
 requires `memory:write` and owner person authority. Affect and relationship scores
 never grant access to these routes or change action authority.
 
+### Activating a selected continuous cycle
+
+An existing installation can run attention and durable proposals without waking
+its unrelated legacy maintenance phases:
+
+```dotenv
+COLONY_AUTONOMY_MODE=proactive
+COLONY_AUTONOMY_PHASES=initiative,execute,telemetry
+COLONY_AUTONOMY_PROPOSALS_ONLY=true
+```
+
+The same sidecar timer generates candidates, applies the stored perspective,
+and persists deduplicated pending initiatives. The `execute` phase in this mode
+does not invoke legacy self-maintenance skills, enqueue work, broadcast or
+deliver proposals. The dated attention snapshot includes descriptions; stored
+initiative context retains `candidate_id` for matching that ranking. Restarting
+the sidecar preserves both state and pending records. Autonomy status reports
+the selected phases and proposal mode. Unset phase selection keeps the existing
+phase set; empty or unknown names are rejected.
+
+This selection governs this loop only. Keep independent executors, workers,
+delivery and other background services disabled unless separately intended.
+Already-admitted delivery reconciliation keeps its existing behavior. Review
+and explicitly supersede stale generated proposals before enabling an executor;
+do not treat a historical pending record as a fresh instruction or erase the
+original tasks and commitments. Selected skill evaluation uses the native
+[measured update path](HERMES-ADAPTER.md#measured-skill-updates), independently of
+this proposal cycle.
+
 The state and source history survive changing the interaction model. Operational
 weights carry a working strategy across a model swap, not a claim that the new
 model has inherited another model's competence. New outcomes revise the judgment.
