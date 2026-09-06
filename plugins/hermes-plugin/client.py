@@ -1271,6 +1271,15 @@ class TurnOutbox:
             connection.close()
         self._fsync_storage()
 
+    def erasure_state(self, contact_id: str, *, deadline_monotonic: float | None = None) -> tuple[int, list[dict[str, Any]]]:
+        """Read the same durable rules used to prevent forgotten turn replay."""
+        connection = self._connect(deadline_monotonic=deadline_monotonic)
+        try:
+            row = connection.execute("SELECT watermark,rules_json FROM turn_erasures WHERE contact_id=?", (contact_id,)).fetchone()
+            return (int(row[0]), json.loads(row[1])) if row else (0, [])
+        finally:
+            connection.close()
+
     def contains_turn(self, turn_id: str, *, deadline_monotonic: float | None = None) -> bool:
         connection = self._connect(deadline_monotonic=deadline_monotonic)
         try:

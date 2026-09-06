@@ -250,6 +250,7 @@ class ContextAssembleResponse(BaseModel):
     sections: List[ContextSection] = []
     notices: Optional[List[str]] = None
     projection_attestation: Optional[ContextProjectionAttestation] = None
+    source_erasure_watermark: Optional[int] = None
 
 
 class MemoryFlushRequest(BaseModel):

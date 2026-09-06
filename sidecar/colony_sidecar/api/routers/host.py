@@ -2401,6 +2401,14 @@ async def context_assemble(
             if _p8_viewer is not None else None
         )
     # Context assembly pulls from identity + memory + goals + contacts + world model + skills
+    # Stamp before reading any producer. A concurrent forget makes the entire
+    # packet stale at the native request boundary, including derived sections.
+    source_erasure_watermark = None
+    try:
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        source_erasure_watermark = get_turn_idempotency_ledger(get_state_dir()).erasure_watermark(body.context.contact_id)
+    except Exception:
+        logger.warning("context erasure freshness unavailable")
     sections: list[ContextSection] = []
     query_text = body.incoming_message.content if body.incoming_message else ""
 
@@ -3078,6 +3086,7 @@ async def context_assemble(
                   "and commitments proven shared in their source evidence. Legacy tasks, graph, relationship, shared-fact, "
                   "and global context are omitted."] if _canonical_only else None),
         projection_attestation=_projection,
+        source_erasure_watermark=source_erasure_watermark,
     )
 
 
