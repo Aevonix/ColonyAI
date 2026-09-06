@@ -225,6 +225,20 @@ third-party effect. Guests receive no native cron rows. Missing, incompatible
 or unreadable ledgers are explicitly unavailable, and `complete` is always
 false for the combined work view.
 
+An optional private `COLONY_WORKER_STATUS_PATHS` environment value maps neutral
+worker labels to local JSON heartbeat paths, for example
+`{"Local transport":"/private/runtime/transport-heartbeat.json"}`. It is unset
+by default. The same owner API and context join expose these as separate
+`reported_worker` entries, never executions or success receipts. Heartbeats
+supply `state` and numeric Unix `updated_at`; optional `detail_code` and
+`release_commit` are included. Other fields and configured paths are omitted.
+The reader reports age and marks reports older than 120 seconds stale; future
+timestamps and unreadable/malformed files remain unknown or unavailable.
+States such as `uncertain` are preserved even when stale. Process liveness and
+external effects remain unverified. Reads are limited to eight configured
+workers and 16 KiB per heartbeat; no store, heartbeat writer or poller is added.
+Guests receive no configured worker reports.
+
 Qualification fires a due native `no_agent` job in a disposable profile with
 `deliver=local`, observes the same execution ID during and after actual script
 completion, and checks the persisted output. This does not depend on an empty
