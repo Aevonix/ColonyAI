@@ -118,8 +118,8 @@ at `GET /v1/host/autonomy/posture` before enabling another loop.
 
 The [known gaps](docs/KNOWN-GAPS.md) inventory includes legacy components that
 are partial, dormant or awaiting replacement. It is not a list of 1.0 guarantees.
-Current work includes unattended startup, broader hardware and session
-session coverage, measured self-improvement and removal of obsolete operational
+Current work includes broader hardware and session coverage, measured
+self-improvement and removal of obsolete operational
 machinery. No claim of general intelligence or complete autonomy is made here.
 
 ## Development
