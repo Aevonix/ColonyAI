@@ -389,7 +389,7 @@ def _has_litellm_prefix(model_id: str) -> bool:
 # Tier building from host config
 # ---------------------------------------------------------------------------
 
-def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
+def build_tiers_from_host(config: dict, *, configure_environment=True, discover=True) -> dict[ModelTier, TierConfig]:
     """Build tier configurations from host-provided LLM config.
 
     The host (OpenClaw, Hermes, etc.) sends its LLM provider details
@@ -593,7 +593,7 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
     # ------------------------------------------------------------------
     # Auto-discovery when no overrides are provided for local providers
     # ------------------------------------------------------------------
-    elif provider in ("ollama", "local", "custom", "lmstudio", "vllm"):
+    elif discover and provider in ("ollama", "local", "custom", "lmstudio", "vllm"):
         discovered = discover_local_models(provider, base_url, api_key)
         if discovered:
             logger.info(
@@ -646,6 +646,8 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
     # ------------------------------------------------------------------
     # Set provider-specific environment variables for LiteLLM
     # ------------------------------------------------------------------
+    if not configure_environment:
+        return tiers
     if provider in openai_compat_providers:
         if api_key:
             os.environ["OPENAI_API_KEY"] = api_key
@@ -654,10 +656,9 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
         elif provider == "zai":
             os.environ["OPENAI_API_BASE"] = "https://api.z.ai/api/paas/v4"
         logger.info(
-            "Configured OpenAI-compat provider: base=%s key=%s...%s",
+            "Configured OpenAI-compat provider: base=%s key_present=%s",
             os.environ.get("OPENAI_API_BASE", "(none)"),
-            api_key[:4] if api_key else "(none)",
-            api_key[-4:] if len(api_key) > 4 else "",
+            bool(api_key),
         )
     elif provider in ollama_providers:
         if base_url:

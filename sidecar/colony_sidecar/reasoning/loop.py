@@ -205,9 +205,10 @@ class ReasoningLoop:
 
             # Accumulate usage
             used = getattr(response, 'tier_used', None)
-            model_provenance = {'model_role': getattr(used, 'value', str(used or 'unknown')),
+            model_provenance = {'model_role': getattr(response, 'function_role', '') or getattr(used, 'value', str(used or 'unknown')),
                 'model_id': getattr(response, 'model_id', 'unknown'),
                 'model_revision': getattr(response, 'model_revision', 'unknown'),
+                'config_revision': getattr(response, 'config_revision', '') or 'unknown',
                 'basis': 'last_successful_model_response'}
             last_usage = dict(response.usage)
             for k in cumulative_usage:

@@ -327,7 +327,10 @@ class InferenceHandler(JobHandler):
                     tier = self._router.route(user_text, {})[0]
                 except Exception:
                     return messages
-            tier_cfg = getattr(self._router, "tier_config", lambda _t: None)(tier)
+            if force_tier is None and getattr(self._router, 'supports_function_routing', False) is True:
+                tier_cfg = self._router.function_config()
+            else:
+                tier_cfg = getattr(self._router, "tier_config", lambda _t: None)(tier)
             budget = getattr(tier_cfg, "useful_context_tokens", 0) or gcfg.default_budget_tokens
             if budget <= 0:
                 return messages

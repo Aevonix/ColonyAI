@@ -32,6 +32,8 @@ def initialize(conn):
         description TEXT,model TEXT,description_version TEXT,error TEXT,
         attempts INTEGER NOT NULL DEFAULT 0,next_attempt REAL NOT NULL DEFAULT 0,
         lease_until REAL NOT NULL DEFAULT 0,lease_token TEXT NOT NULL DEFAULT '')''')
+    if 'model_provenance_json' not in {row[1] for row in conn.execute('PRAGMA table_info(source_media)')}:
+        conn.execute('ALTER TABLE source_media ADD COLUMN model_provenance_json TEXT')
     conn.execute('''CREATE TABLE IF NOT EXISTS source_media_links (
         turn_id TEXT NOT NULL,message_hash TEXT NOT NULL,asset_hash TEXT NOT NULL,
         block_index INTEGER NOT NULL,role TEXT NOT NULL,
@@ -209,7 +211,7 @@ class SourceMedia:
                          (token, now + 60, row['asset_hash']))
             return dict(row, lease_token=token)
 
-    def finish(self, job, *, description=None, model=None, error=None):
+    def finish(self, job, *, description=None, model=None, error=None, model_provenance=None):
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             row = conn.execute("SELECT 1 FROM source_media WHERE asset_hash=? AND status='running' AND lease_token=?",
@@ -220,8 +222,8 @@ class SourceMedia:
                 conn.execute("UPDATE source_media SET status='pending',error=?,next_attempt=?,lease_until=0 WHERE asset_hash=?",
                              (error, time.time() + min(900, 15 * 2 ** min(job['attempts'], 6)), job['asset_hash']))
             else:
-                conn.execute("UPDATE source_media SET status='complete',description=?,model=?,description_version=?,error=NULL,lease_until=0 WHERE asset_hash=?",
-                             (description, model, DESCRIPTION_VERSION, job['asset_hash']))
+                conn.execute("UPDATE source_media SET status='complete',description=?,model=?,description_version=?,model_provenance_json=?,error=NULL,lease_until=0 WHERE asset_hash=?",
+                             (description, model, DESCRIPTION_VERSION, json.dumps(model_provenance or {}), job['asset_hash']))
                 conn.execute('DELETE FROM source_media_search WHERE asset_hash=?', (job['asset_hash'],))
                 conn.execute('INSERT INTO source_media_search(asset_hash,description) VALUES (?,?)', (job['asset_hash'], description))
             return True
@@ -239,9 +241,10 @@ class SourceMedia:
         try:
             from colony_sidecar.beliefs.source_claims import local_tier
             from colony_sidecar.router.tiers import ModelTier
-            config = router.tier_config(ModelTier.VISION) if router is not None else None
+            functions = getattr(router, 'supports_function_routing', False) is True
+            config = router.tier_config(ModelTier.VISION) if router is not None and not functions else None
             tier = local_tier(router, ModelTier.VISION) if config is not None and getattr(config, "supports_vision", False) is True else None
-            if tier is None:
+            if not functions and tier is None:
                 self.finish(job, error='local_vision_role_unavailable')
                 return True
             data = self.store._original_path(job['asset_hash'], job['mime_type']).read_bytes()
@@ -251,11 +254,16 @@ class SourceMedia:
                 {'role': 'system', 'content': DESCRIPTION_PROMPT},
                 {'role': 'user', 'content': [{'type': 'image_url', 'image_url': {
                     'url': 'data:' + job['mime_type'] + ';base64,' + base64.b64encode(data).decode()}}]}],
-                force_tier=tier, context={'task': 'source_image_description', 'max_output_tokens': 400, 'allow_fallback': False}), 20)
+                force_tier=tier, context={'task': 'source_image_description', 'function_role': 'vision',
+                    'max_output_tokens': 400, 'allow_fallback': functions}), 40 if functions else 20)
             text = response.content.strip()
             if not text or len(text) > 2400:
                 raise ValueError('invalid image description')
-            self.finish(job, description=text, model=response.model_id)
+            self.finish(job, description=text, model=response.model_id, model_provenance={
+                'function_role': getattr(response, 'function_role', '') or 'vision',
+                'config_revision': getattr(response, 'config_revision', '') or 'unknown',
+                'weight_revision': getattr(response, 'model_revision', '') or 'unknown',
+                'model_id': response.model_id})
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -265,7 +273,7 @@ class SourceMedia:
     def status(self, contact_id):
         with closing(self.ledger._connect()) as conn:
             return [dict(row) for row in conn.execute('''SELECT DISTINCT m.asset_hash,m.status,m.error,m.attempts,
-                m.model,m.description_version,m.mime_type,m.size_bytes
+                m.model,m.model_provenance_json,m.description_version,m.mime_type,m.size_bytes
                 FROM source_media m JOIN source_media_links l ON l.asset_hash=m.asset_hash
                 JOIN turn_sources s ON s.turn_id=l.turn_id WHERE s.contact_id=? LIMIT 20''', (contact_id,))]
 
