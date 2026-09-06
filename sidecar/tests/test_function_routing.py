@@ -470,3 +470,31 @@ def test_cancelled_recovery_releases_its_own_slot_only():
     assert not runtime.acquire(snapshot, binding, 'recovery-2')
     runtime.release(snapshot, binding, 'recovery-1')
     assert runtime.acquire(snapshot, binding, 'recovery-2')
+
+
+@pytest.mark.asyncio
+async def test_inventory_cancellation_before_children_start_releases_slots(monkeypatch):
+    r = router(config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1'))
+    gather = asyncio.gather
+    def cancelled(*children):
+        pending = gather(*children)
+        pending.cancel()
+        return pending
+    async def probe(snapshot, binding):
+        pytest.fail('Probe must not start in this cancellation fixture')
+    with monkeypatch.context() as patch:
+        patch.setattr(asyncio, 'gather', cancelled)
+        with pytest.raises(asyncio.CancelledError):
+            await r._endpoints.refresh(r._snapshot, probe)
+    assert not r._endpoints._probing
+
+
+@pytest.mark.asyncio
+async def test_models_api_falls_through_if_function_routing_disappears(monkeypatch, tmp_path):
+    from colony_sidecar.api.routers import host
+    async def no_snapshot(): return None
+    monkeypatch.setattr(host, '_llm_router', SimpleNamespace(supports_function_routing=True,
+        discover_models=no_snapshot, routing_status=lambda: {}))
+    monkeypatch.setattr(host, 'get_state_dir', lambda: tmp_path)
+    result = await host.list_models()
+    assert not result.discovered and result.error
