@@ -1548,19 +1548,20 @@ async def lifespan(app: FastAPI):
         if config_path.exists():
             try:
                 host_llm_config = _json.loads(config_path.read_text())
-                tiers = build_tiers_from_host(host_llm_config)
-                llm_router = LLMRouter(tiers=tiers)
+                llm_router = LLMRouter(tiers={})
+                llm_router.configure(host_llm_config, config_path=config_path)
                 logger.info(
                     "LLMRouter initialized from persisted host config (provider=%s)",
                     host_llm_config.get("provider", "unknown"),
                 )
             except Exception as cfg_exc:
-                logger.warning("Failed to load persisted LLM config, using defaults: %s", cfg_exc)
-                llm_router = LLMRouter()
-                logger.info("LLMRouter initialized with default tiers")
+                logger.warning("Persisted LLM config unavailable: %s", type(cfg_exc).__name__)
+                llm_router = LLMRouter(tiers={})
+                llm_router.watch_config(config_path)
         else:
-            llm_router = LLMRouter()
-            logger.info("LLMRouter initialized with default tiers (no host config yet)")
+            llm_router = LLMRouter(tiers={})
+            llm_router.watch_config(config_path)
+            logger.info("LLMRouter awaiting explicit host config")
     except Exception as exc:
         logger.warning("LLMRouter init failed — reasoning will not be available: %s", exc)
 

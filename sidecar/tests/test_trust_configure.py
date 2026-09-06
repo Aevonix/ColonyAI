@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+import json
 
 import pytest
 from fastapi import FastAPI
@@ -105,77 +106,39 @@ async def test_chain_verify_no_chain_returns_invalid():
 
 
 @pytest.mark.asyncio
-async def test_configure_host_rebuilds_router(tmp_path, monkeypatch):
-    """configure_host rebuilds the LLMRouter and persists the config."""
-    # The router module imports litellm at module level — an optional
-    # dependency; skip cleanly where it isn't installed.
+async def test_configure_host_preserves_router_and_executor_references(tmp_path, monkeypatch):
+    """A host update reaches retained consumers without replacing tool state."""
     pytest.importorskip("litellm")
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-
-    # Reuse real LLMRouter / ReasoningLoop wiring — only the builder is stubbed.
-    captured: dict = {}
-
-    from colony_sidecar.router import tiers as _tiers_mod
-    from colony_sidecar.router import router as _router_mod
-    from colony_sidecar import reasoning as _reasoning_mod
-
-    class _FakeRouter:
-        pass
-
-    class _FakeLoop:
-        def __init__(self, model=None, tools=None):
-            captured["loop_built"] = True
-            captured["tools"] = tools
-
-    def _fake_build_tiers(cfg):
-        captured["provider"] = cfg.get("provider")
-        return []
-
-    monkeypatch.setattr(_tiers_mod, "build_tiers_from_host", _fake_build_tiers)
-    monkeypatch.setattr(_router_mod, "LLMRouter", lambda tiers=None: _FakeRouter())
-    monkeypatch.setattr(_reasoning_mod, "ReasoningLoop", _FakeLoop)
-
-    # Pretend an existing reasoning loop is wired so the re-wire branch runs.
-    prev_loop = host_mod._reasoning_loop
-    prev_executor = host_mod._tool_executor
-    from colony_sidecar.reasoning import ToolExecutor
-    preserved_executor = ToolExecutor()
-    preserved_executor.register("preserved_test_tool", lambda _args: None)
-    host_mod._tool_executor = preserved_executor
-    host_mod._reasoning_loop = _FakeLoop(tools=preserved_executor)
-
-    app = FastAPI()
-    app.include_router(host_mod.router)
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            resp = await client.post(
-                "/v1/host/configure",
-                json={
-                    "identity": {"host_id": "h"},
-                    "llm": {
-                        "provider": "openai",
-                        "api_key": "sk-test",
-                        "models": {"medium": "gpt-4o-mini"},
-                    },
-                },
-            )
-            assert resp.status_code == 200
-            body = resp.json()
-            assert body["configured"] is True
-            assert body["provider"] == "openai"
-            assert body["models"] == {"medium": "gpt-4o-mini"}
-    finally:
-        host_mod._reasoning_loop = prev_loop
-        host_mod._tool_executor = prev_executor
-
-    # Persisted config ended up in state dir.
-    persisted = tmp_path / ".colony-llm-config.json"
-    assert persisted.exists()
-    assert captured["provider"] == "openai"
-    assert captured["tools"] is preserved_executor
+    from colony_sidecar.router.router import LLMRouter
+    from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
+    previous = LLMRouter(tiers={})
+    previous.configure({'provider': 'vllm', 'baseUrl': 'http://127.0.0.1:8080/v1',
+                        'models': {'small': 'old-neutral'}})
+    retained_extractor = previous
+    tools = ToolExecutor()
+    tools.register("preserved_test_tool", lambda _args: None)
+    loop = ReasoningLoop(model=previous, tools=tools)
+    monkeypatch.setattr(host_mod, '_llm_router', previous)
+    monkeypatch.setattr(host_mod, '_tool_executor', tools)
+    monkeypatch.setattr(host_mod, '_reasoning_loop', loop)
+    cfg = {'provider': 'vllm', 'baseUrl': 'http://127.0.0.1:8081/v1',
+           'apiKey': 'neutral-key', 'models': {'small': 'new-neutral'}}
+    app = FastAPI(); app.include_router(host_mod.router)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post('/v1/host/configure', json={'identity': {'host_id': 'h'}, 'llm': cfg})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()['routing']['models']['small']['model_id'] == 'openai/new-neutral'
+        assert retained_extractor is host_mod._llm_router is loop._model
+        assert host_mod._reasoning_loop is loop and loop._tools is tools
+        old_revision = retained_extractor.routing_status()['config_revision']
+        cfg['functionRoles'] = {'vision': ['missing-binding']}
+        invalid = await client.post('/v1/host/configure', json={'identity': {'host_id': 'h'}, 'llm': cfg})
+        assert invalid.status_code == 422
+        assert retained_extractor.routing_status()['config_revision'] == old_revision
+    persisted = tmp_path / '.colony-llm-config.json'
+    assert json.loads(persisted.read_text())['models']['small'] == 'new-neutral'
+    assert persisted.stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.asyncio

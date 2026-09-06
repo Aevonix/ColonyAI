@@ -508,64 +508,52 @@ async def configure_host(body: HostConfigureRequest) -> HostConfigureResponse:
     its LLM provider credentials and model assignments. Colony does not
     manage its own LLM keys — it inherits them from the host.
 
-    This rebuilds the LLMRouter with the new tiers and updates the
-    ReasoningLoop to use the reconfigured router.
+    Validate and persist one configuration, then atomically update the shared
+    router. Existing consumer references and in-flight snapshots are retained.
     """
     global _reasoning_loop
 
     if body.llm is None:
         return HostConfigureResponse(configured=False)
 
-    from colony_sidecar.router.tiers import build_tiers_from_host
     from colony_sidecar.router.router import LLMRouter
-    from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
+    import os
+    import tempfile
 
     try:
-        tiers = build_tiers_from_host(body.llm)
-
-        new_router = LLMRouter(tiers=tiers)
-        set_llm_router(new_router)
-
-        # Re-wire the reasoning loop with the new router while retaining the
-        # one executor that owns native/dynamic handlers and the shared
-        # DirectiveGuard policy. Replacing it here used to silently remove all
-        # three after a host config refresh.
-        if _reasoning_loop is not None:
-            tools = _tool_executor or getattr(_reasoning_loop, "_tools", None)
-            if tools is None:
-                tools = ToolExecutor(graph_client=_graph)
-            else:
-                tools._graph = _graph
-            _reasoning_loop = ReasoningLoop(
-                model=new_router,
-                tools=tools,
-            )
-
-            set_reasoning_loop(_reasoning_loop)
-            set_tool_executor(tools)
-            logger.info(
-                "ReasoningLoop re-wired with host LLM config (provider=%s)",
-                body.llm.get("provider", "unknown"),
-            )
-
-        # Persist config for restarts
+        prepared = LLMRouter(tiers={})
+        prepared.configure(body.llm)
+        config_path = get_state_dir() / ".colony-llm-config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, pending = tempfile.mkstemp(prefix=".llm-config-", dir=config_path.parent)
         try:
-            import json
-            config_path = get_state_dir() / ".colony-llm-config.json"
-            config_path.write_text(json.dumps(body.llm, indent=2))
-            logger.info("LLM config persisted to %s", config_path)
-        except Exception as exc:
-            logger.warning("Failed to persist LLM config: %s", exc)
-
-        models_info = body.llm.get("models", {})
+            with os.fdopen(fd, "w") as output:
+                json.dump(body.llm, output, indent=2)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(pending, config_path)
+        finally:
+            if os.path.exists(pending):
+                os.unlink(pending)
+        # Keep every extractor/thinker/worker reference live. In-flight calls
+        # retain their immutable snapshot; subsequent calls see this revision.
+        if _llm_router is not None:
+            _llm_router.adopt_configuration(prepared, config_path=config_path)
+            new_router = _llm_router
+        else:
+            prepared.watch_config(config_path)
+            new_router = prepared
+            set_llm_router(new_router)
+        if _reasoning_loop is not None:
+            _reasoning_loop._model = new_router
         return HostConfigureResponse(
-            configured=True,
-            provider=body.llm.get("provider"),
-            models=models_info,
-        )
+            configured=True, provider=body.llm.get("provider"),
+            models=body.llm.get("models", {}), routing=new_router.routing_status())
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid host model configuration") from exc
     except Exception as exc:
-        logger.error("configure_host failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("configure_host failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Model configuration update failed") from exc
 
 
 @router.get("/models", response_model=ModelListResponse)
@@ -595,12 +583,14 @@ async def list_models() -> ModelListResponse:
 
     if not provider:
         return ModelListResponse(
+            routing=_llm_router.routing_status() if _llm_router is not None else None,
             provider="",
             error="No LLM provider configured. Call POST /v1/host/configure first.",
         )
 
     if provider not in ("ollama", "local", "custom", "lmstudio", "vllm"):
         return ModelListResponse(
+            routing=_llm_router.routing_status() if _llm_router is not None else None,
             provider=provider,
             error="Model listing is only supported for local providers (ollama, local, custom, lmstudio, vllm).",
         )
@@ -608,6 +598,7 @@ async def list_models() -> ModelListResponse:
     discovered = discover_local_models(provider, base_url, api_key)
     if discovered:
         return ModelListResponse(
+            routing=_llm_router.routing_status() if _llm_router is not None else None,
             provider=provider,
             base_url=base_url or None,
             models=[
@@ -624,6 +615,7 @@ async def list_models() -> ModelListResponse:
         )
 
     return ModelListResponse(
+        routing=_llm_router.routing_status() if _llm_router is not None else None,
         provider=provider,
         base_url=base_url or None,
         error="Could not discover models from the local server. Is it running?",

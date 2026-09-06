@@ -167,8 +167,9 @@ async def extract_claims(router, source: dict, message: dict, prior: list[dict],
         return [], "unsupported_message"
     if len(content) > 12000:
         return [], "oversize_message"
-    tier = local_tier(router) if router is not None else None
-    if tier is None:
+    functions = getattr(router, 'supports_function_routing', False) is True
+    tier = None if functions else (local_tier(router) if router is not None else None)
+    if not functions and tier is None:
         return [], "local_extraction_role_unavailable"
     payload = {"message": content, "source_occurred_at": source["occurred_at"],
                "timezone": timezone_name, "prior_assertions": [
@@ -177,7 +178,14 @@ async def extract_claims(router, source: dict, message: dict, prior: list[dict],
     response = await asyncio.wait_for(router.complete(
         messages=[{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-        force_tier=tier, context={"task": "source_claim_extraction", "max_output_tokens": 1400,
-                                  "allow_fallback": False}), timeout=20)
-    return validated_claims(response.content, message=content, prior=prior,
-                            observed_at=source["occurred_at"], timezone_name=timezone_name), response.model_id
+        force_tier=tier, context={"task": "source_claim_extraction", "function_role": "extraction", "max_output_tokens": 1400,
+                                  "allow_fallback": functions}), timeout=40 if functions else 20)
+    claims = validated_claims(response.content, message=content, prior=prior,
+                            observed_at=source["occurred_at"], timezone_name=timezone_name)
+    for claim in claims:
+        claim['model_provenance'] = {
+            'function_role': getattr(response, 'function_role', '') or 'extraction',
+            'config_revision': getattr(response, 'config_revision', '') or 'unknown',
+            'weight_revision': getattr(response, 'model_revision', '') or 'unknown',
+            'model_id': response.model_id}
+    return claims, response.model_id

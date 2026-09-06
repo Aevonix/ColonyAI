@@ -28,6 +28,12 @@ import logging
 import os
 import time
 import uuid
+import json
+import ipaddress
+import socket
+import threading
+from collections import deque
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,6 +61,10 @@ class LLMResponse:
     latency_ms: int
     cost_usd: float
     raw: Any = field(default=None, repr=False)
+    function_role: str = ""
+    config_revision: str = ""
+    model_revision: str = "unknown"
+    binding: str = ""
 
 
 class LLMRouter:
@@ -68,7 +78,13 @@ class LLMRouter:
         fallback_handler: FallbackHandler | None = None,
         event_bus: Any | None = None,
     ) -> None:
-        self._tiers = tiers or DEFAULT_TIERS
+        self._tiers = DEFAULT_TIERS if tiers is None else tiers
+        self._snapshot = None
+        self._config_path = None
+        self._config_stamp = None
+        self._config_lock = threading.RLock()
+        self._reload_error = None
+        self._recent_calls = deque(maxlen=20)
         self._scorer = scorer or ComplexityScorer()
         self._fallback = fallback_handler or FallbackHandler()
         self._bus = event_bus
@@ -78,6 +94,65 @@ class LLMRouter:
         except Exception as exc:  # noqa: BLE001
             logger.warning("RouterSelfLearner unavailable: %s", exc)
             self._learner = None
+
+    @property
+    def supports_function_routing(self):
+        return self._snapshot is not None
+
+    def configure(self, host_config, *, config_path=None):
+        """Update this object so every retained consumer sees the same router."""
+        from .tiers import build_tiers_from_host
+        from .functions import build_snapshot
+        if not isinstance(host_config, dict):
+            raise ValueError('Host model config must be an object')
+        # Only explicitly named deployed models enter function routing. Provider
+        # presets and discovery size guesses are not capability declarations.
+        raw_tiers = build_tiers_from_host(host_config, configure_environment=False, discover=False)
+        tiers = {tier: cfg for tier, cfg in raw_tiers.items() if tier.value in host_config.get('models', {})}
+        snapshot = build_snapshot(host_config, tiers)
+        with self._config_lock:
+            self._snapshot = snapshot
+            self._tiers = snapshot.tiers
+            if config_path is not None:
+                self._config_path = Path(config_path)
+                self._config_stamp = None
+            self._reload_error = None
+        return snapshot.status()
+
+    def watch_config(self, path):
+        self._config_path = Path(path)
+        self._config_stamp = None
+
+    def adopt_configuration(self, prepared, *, config_path):
+        with self._config_lock:
+            self._snapshot = prepared._snapshot
+            self._tiers = self._snapshot.tiers
+            self.watch_config(config_path)
+            self._reload_error = None
+
+    def _reload(self):
+        if self._config_path is None:
+            return
+        with self._config_lock:
+            try:
+                stat = self._config_path.stat()
+                stamp = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+                if stamp == self._config_stamp:
+                    return
+                if stat.st_size > 262144:
+                    raise ValueError('Routing config is too large')
+                config = json.loads(self._config_path.read_text())
+                self.configure(config)
+                self._config_stamp = stamp
+            except Exception as exc:
+                # Keep the last validated config; never replace it with cloud
+                # defaults after a partial write or invalid candidate binding.
+                self._reload_error = type(exc).__name__
+
+    def routing_status(self):
+        self._reload()
+        status = self._snapshot.status() if self._snapshot else {'config_revision': None, 'roles': {}}
+        return {**status, 'reload_error': self._reload_error, 'recent_calls': list(self._recent_calls)}
 
     # ------------------------------------------------------------------
     # Public API
@@ -106,13 +181,20 @@ class LLMRouter:
         tools:
             Tool definitions to pass to LiteLLM.
         stream:
-            If True, returns the first assembled chunk (streaming not yet
-            fully implemented — kept for API compatibility).
+            Reserved legacy argument. The function path rejects True before
+            dispatch; Colony consumers currently request complete responses.
         """
         request_id = str(uuid.uuid4())
         ctx = context or {}
         if tools:
             ctx = {**ctx, "tools": tools}
+
+        self._reload()
+        snapshot = self._snapshot
+        if snapshot is not None:
+            return await self._call_function(snapshot, messages, ctx, tools, force_tier, stream, request_id)
+        if not self._tiers:
+            raise ValueError('No validated model configuration is available')
 
         # Determine prompt text for scoring (last user message)
         prompt = _last_user_text(messages)
@@ -153,6 +235,10 @@ class LLMRouter:
         -------
         (tier, model_id)
         """
+        self._reload()
+        if self._snapshot is not None:
+            cfg = self.function_config(context=context)
+            return cfg.tier, cfg.model_id
         tier = self._select_tier(prompt, context or {})
         config = self._tiers.get(tier) or self._tiers.get(ModelTier.MEDIUM)
         model_id = config.model_id if config else ""
@@ -165,7 +251,94 @@ class LLMRouter:
         e.g. the context gate reads ``useful_context_tokens`` to decide
         whether an input needs chunking/retrieval before dispatch.
         """
+        self._reload()
         return self._tiers.get(tier)
+
+    def function_config(self, *, context=None):
+        """Capability hint for the existing context gate; dispatch rechecks DNS."""
+        from .functions import TASK_ROLES, candidates
+        self._reload()
+        ctx = context or {}
+        role = ctx.get('function_role') or TASK_ROLES.get(ctx.get('task'), 'reasoning')
+        if self._snapshot is None or role not in self._snapshot.roles:
+            return None
+        eligible = candidates(self._snapshot, role, ctx, has_images=False, has_tools=bool(ctx.get('tools')))
+        if not eligible:
+            raise ValueError('No eligible local model for function ' + role)
+        return eligible[0].config
+
+    async def _call_function(self, snapshot, messages, context, tools, force_tier, stream, request_id):
+        from .functions import TASK_ROLES, candidates, endpoint_host
+        role_name = context.get('function_role') or TASK_ROLES.get(context.get('task'), 'reasoning')
+        if force_tier == ModelTier.VISION:
+            role_name = 'vision'
+        if role_name not in snapshot.roles:
+            raise ValueError('Unknown function role')
+        if stream:
+            raise ValueError('Function routing currently returns complete responses')
+        has_images = any(isinstance(m.get('content'), list) and any(
+            isinstance(b, dict) and b.get('type') in {'image_url', 'input_image'} for b in m['content']) for m in messages)
+        from colony_sidecar.contextgate import estimate_tokens
+        text = '\n'.join(m['content'] if isinstance(m.get('content'), str) else '\n'.join(
+            b.get('text', '') for b in (m.get('content') or []) if isinstance(b, dict) and isinstance(b.get('text'), str)) for m in messages)
+        selection_context = {**context, 'estimated_input_tokens': estimate_tokens(text) + 8 * len(messages)}
+        available = candidates(snapshot, role_name, selection_context, has_images=has_images, has_tools=bool(tools))
+        if force_tier is not None:
+            # Explicit legacy tier selection remains exact, but must still
+            # satisfy this call's capabilities and local network restrictions.
+            forced = getattr(force_tier, 'value', force_tier)
+            available = [b for b in available if b.name == forced]
+        if context.get('allow_fallback') is False:
+            available = available[:1]
+        role = snapshot.roles[role_name]
+        deadline = time.monotonic() + role.deadline_seconds
+        failures = []
+        seen = set()
+        for binding in available:
+            cfg = binding.config
+            # This finite transport path pins a local OpenAI-compatible client.
+            # Provider prefixes may not silently select a cloud SDK instead.
+            if not cfg.model_id.startswith('openai/'):
+                continue
+            endpoint_key = (cfg.base_url, cfg.model_id, binding.weight_revision)
+            if endpoint_key in seen:
+                continue
+            seen.add(endpoint_key)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: break
+            try:
+                host = endpoint_host(binding, snapshot)
+                pinned_ip = host
+                try:
+                    ipaddress.ip_address(host)
+                except ValueError:
+                    # Hostnames must be declared and every address must be in
+                    # deployment networks. A friendly name alone is no proof.
+                    addresses = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(
+                        host, None, type=socket.SOCK_STREAM), min(2, remaining))
+                    if not addresses or any(not any(ipaddress.ip_address(item[4][0]) in net for net in snapshot.networks) for item in addresses):
+                        continue
+                    pinned_ip = addresses[0][4][0]
+                response = await asyncio.wait_for(self._litellm_call(
+                    request_id=request_id, config=cfg, messages=messages, tools=tools,
+                    stream=False, max_output_tokens=context.get('max_output_tokens', context.get('max_tokens')), local_endpoint=True,
+                    pinned_ip=pinned_ip),
+                    min(role.timeout_seconds, deadline - time.monotonic()))
+                response.function_role = role_name
+                response.config_revision = snapshot.revision
+                response.model_revision = binding.weight_revision
+                response.binding = binding.name
+                self._recent_calls.append({'request_id': request_id, 'function_role': role_name,
+                    'model_id': cfg.model_id, 'binding': binding.name, 'config_revision': snapshot.revision,
+                    'weight_revision': binding.weight_revision, 'latency_ms': response.latency_ms})
+                self._emit_cost_event(response)
+                return response
+            except Exception as exc:
+                failures.append(type(exc).__name__)
+                if not _retryable(exc):
+                    break
+        raise RuntimeError('No eligible local model completed function ' + role_name +
+                           '; attempts=' + ','.join(failures))
 
     def record_outcome(
         self,
@@ -266,6 +439,8 @@ class LLMRouter:
         tools: list[dict] | None,
         stream: bool,
         max_output_tokens: int | None = None,
+        local_endpoint: bool = False,
+        pinned_ip: str | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": config.model_id,
@@ -291,7 +466,27 @@ class LLMRouter:
 
         t0 = time.monotonic()
         # LiteLLM's async completion
-        raw = await litellm.acompletion(**kwargs)
+        if local_endpoint:
+            # Prevent environment proxy/credential inheritance and HTTP
+            # redirects from turning a local fallback into a remote request.
+            import httpx
+            from openai import AsyncOpenAI
+            from urllib.parse import urlsplit
+            origin = urlsplit(config.base_url)
+            async def pin_request(request):
+                if request.url.host != origin.hostname:
+                    raise ValueError('Unexpected model request host')
+                if pinned_ip:
+                    request.headers['Host'] = origin.netloc
+                    request.extensions['sni_hostname'] = origin.hostname
+                    request.url = request.url.copy_with(host=pinned_ip)
+            async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
+                                         event_hooks={'request': [pin_request]}) as http_client:
+                async with AsyncOpenAI(base_url=config.base_url, api_key=config.api_key or 'local-no-key',
+                                       max_retries=0, http_client=http_client) as client:
+                    raw = await litellm.acompletion(**kwargs, client=client, num_retries=0)
+        else:
+            raw = await litellm.acompletion(**kwargs)
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         choice = raw.choices[0]
@@ -331,6 +526,10 @@ class LLMRouter:
                     "request_id": response.request_id,
                     "tier": response.tier_used.value,
                     "model": response.model_id,
+                    "function_role": response.function_role,
+                    "config_revision": response.config_revision,
+                    "model_revision": response.model_revision,
+                    "binding": response.binding,
                     "cost_usd": response.cost_usd,
                     "latency_ms": response.latency_ms,
                     "tokens": response.usage,
@@ -367,3 +566,14 @@ def _estimate_cost(config: TierConfig, usage: dict[str, int]) -> float:
     input_cost = usage.get("prompt_tokens", 0) * config.cost_per_1k_input / 1000
     output_cost = usage.get("completion_tokens", 0) * config.cost_per_1k_output / 1000
     return round(input_cost + output_cost, 8)
+
+
+def _retryable(exc):
+    """Finite same-role failover, never arbitrary validation/auth retries."""
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return True
+    status = getattr(exc, 'status_code', None)
+    if status in {408, 429, 500, 502, 503, 504}:
+        return True
+    name = type(exc).__name__.lower()
+    return any(word in name for word in ('timeout', 'connection', 'ratelimit', 'contextwindow'))

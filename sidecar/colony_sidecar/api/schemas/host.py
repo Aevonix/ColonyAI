@@ -1094,6 +1094,7 @@ class HostConfigureResponse(BaseModel):
     # Values may be bare model strings or per-tier object specs, so the echo
     # must accept both (a str-only type 500s on multi-endpoint configs).
     models: Optional[Dict[str, Any]] = None
+    routing: Optional[Dict[str, Any]] = None
 
 
 # --- Models (local LLM discovery) -------------------------------------------
@@ -1111,6 +1112,7 @@ class ModelListResponse(BaseModel):
     models: List[ModelInfo] = []
     discovered: bool = False
     error: Optional[str] = None
+    routing: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
