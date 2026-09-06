@@ -98,15 +98,19 @@ behaviour or public channel is ready.
 
 ## Optional task guidance
 
-**Unreleased, current source only.** Published 1.0.3 artifacts predate this option
-and skill pack. Use matching packages built from this source until a new release
-includes them.
+**Available since 1.0.4.** Both the adapter and sidecar must include this option;
+published 1.0.3 artifacts predate the skill pack.
 
 The adapter distribution includes two original instruction packs:
 `colony-evidence-recall` for resolving incomplete or contradictory recollection,
 and `colony-work-handoff` for continuing an authorized task across sessions.
 They are experimental task guidance. Packaging and native discovery do not
-establish a measured improvement in model behavior.
+establish a measured improvement in model behavior. An initial trial used four
+synthetic tasks, two local processors and skill-absent/present pairs through
+native Hermes discovery and execution. Sixteen runs showed no consistent gain;
+two enabled runs exhausted their request budget. Factual results, response
+formatting and attempted tool actions were assessed separately. The pack remains
+optional and is not a reliable control over memory writes or work ownership.
 
 The wizard offers them with a default of no. Add `--task-skills` to `colony init`
 to opt in. An existing attached instance can add them without repeating model
