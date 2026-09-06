@@ -13,7 +13,7 @@ import uuid
 
 from colony_sidecar.vector.image_store import LocalImageStore
 from colony_sidecar.vector.multimodal_types import ImageInput
-from colony_sidecar.router.output import final_text
+from colony_sidecar.util.model_output import final_text
 
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 DESCRIPTION_VERSION = "source-image-description-v2"

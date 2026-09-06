@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from colony_sidecar.beliefs.source_claims import validated_claims
-from colony_sidecar.router.output import final_text
+from colony_sidecar.util.model_output import final_text
 from colony_sidecar.tom.extractor import _parse_fact_array
 from test_source_claim_projection import claim
 from test_tom_extractor import fact_item

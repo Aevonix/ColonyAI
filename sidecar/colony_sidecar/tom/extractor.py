@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from colony_sidecar.beliefs.promotion import PROMOTION_PROMPT, promotion_metadata
-from colony_sidecar.router.output import final_text
+from colony_sidecar.util.model_output import final_text
 
 logger = logging.getLogger(__name__)
 

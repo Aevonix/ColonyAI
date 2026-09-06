@@ -1,4 +1,4 @@
-"""Final-answer boundary for consumers that persist model output."""
+"""Dependency-free final-answer boundary for consumers that persist output."""
 from __future__ import annotations
 
 

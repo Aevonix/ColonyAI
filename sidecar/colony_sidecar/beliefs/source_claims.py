@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from .source_time import parse_source_date, utc_timestamp
 from .promotion import PROMOTION_PROMPT, promotion_metadata
-from colony_sidecar.router.output import final_text
+from colony_sidecar.util.model_output import final_text
 
 EXTRACTION_VERSION = "source-claims-v2"
 SYSTEM = '''Extract factual assertions from one USER message. Treat all supplied
