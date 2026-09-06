@@ -322,6 +322,7 @@ class InitiativeExecutorService:
         iid = getattr(initiative, "id", "")
         itype = getattr(initiative, "type", "") or getattr(initiative, "initiative_type", "")
         start = time.monotonic()
+        model_provenance = {'requested_role': self._model_tier}
 
         logger.info("Executing initiative %s (%s)", iid, itype)
 
@@ -419,6 +420,7 @@ class InitiativeExecutorService:
                     system_prompt=system_prompt,
                     is_research=is_research,
                 )
+                model_provenance.update(getattr(result, 'model_provenance', {}) or {})
 
                 usage = result.usage or {}
                 total_tokens += usage.get("total_tokens", 0)
@@ -436,7 +438,7 @@ class InitiativeExecutorService:
                         iid, elapsed, total_tokens, iterations,
                         response_text[:120],
                     )
-                    self._record_outcome(itype, "success", elapsed, initiative=initiative)
+                    self._record_outcome(itype, "success", elapsed, initiative=initiative, model_provenance=model_provenance)
                     await self._maybe_distill(initiative, itype, response_text)
                     done = True
                     break
@@ -451,7 +453,7 @@ class InitiativeExecutorService:
                     self._record_outcome(
                         itype,
                         "timeout" if _is_timeout_error(result.error) else "failure",
-                        time.monotonic() - start, initiative=initiative)
+                        time.monotonic() - start, initiative=initiative, model_provenance=model_provenance)
                     self._note_failure(initiative, itype, result.error or "")
                     done = True
                     break
@@ -555,7 +557,7 @@ class InitiativeExecutorService:
                 self._stats["total_tokens"] += total_tokens
                 self._record_outcome(itype, "failure",
                                      time.monotonic() - start,
-                                     initiative=initiative)
+                                     initiative=initiative, model_provenance=model_provenance)
                 logger.warning(
                     "Initiative %s hit tool-loop cap (%d rounds) without completing",
                     iid, self._max_tool_iterations,
@@ -568,7 +570,7 @@ class InitiativeExecutorService:
             self._stats["initiatives_failed"] += 1
             self._record_outcome(
                 itype, "timeout" if _is_timeout_error(str(exc)) else "failure",
-                elapsed, initiative=initiative)
+                elapsed, initiative=initiative, model_provenance=model_provenance)
 
         self._stats["initiatives_processed"] += 1
 
@@ -628,7 +630,7 @@ class InitiativeExecutorService:
 
     def _record_outcome(self, itype: str, outcome: str,
                         latency: Optional[float] = None,
-                        initiative: Any = None) -> None:
+                        initiative: Any = None, model_provenance: Optional[dict] = None) -> None:
         # Attribute the outcome to the skills that informed this run
         # (item 3 feedback edge): success bumps wins, anything else losses.
         self._record_skill_outcomes(initiative, outcome == "success")
@@ -646,8 +648,14 @@ class InitiativeExecutorService:
                         stated = float(stated) if stated is not None else None
                     except (TypeError, ValueError):
                         stated = None
+            iid = str(getattr(initiative, 'id', '') or '')
+            attempt = int(getattr(initiative, 'attempt_count', 0) or 0)
             self._self_model.record(itype, outcome, latency_secs=latency,
-                                    stated_confidence=stated)
+                stated_confidence=stated, source='initiative_executor',
+                source_ref=iid or None, event_key=f'{iid}:{attempt}:{outcome}' if iid else None,
+                evidence_status='observed', outcome_contract='colony.initiative-runtime-outcome/v1',
+                evidence={**(model_provenance or {}), 'attempt': attempt,
+                    'meaning': 'runtime_completed_or_failed; semantic_success_unverified'})
         except Exception:
             pass
 

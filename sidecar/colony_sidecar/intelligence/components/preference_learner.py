@@ -119,8 +119,9 @@ class PreferenceLearner:
             directives survive a restart.
     """
 
-    def __init__(self, graph_client: Any = None, db_path: Optional[str] = None) -> None:
+    def __init__(self, graph_client: Any = None, db_path: Optional[str] = None, *, perspective: Any = None) -> None:
         self.graph = graph_client
+        self.perspective = perspective
         self._preferences: Dict[str, Preference] = {}
         self._conn: Optional[sqlite3.Connection] = None
         if db_path:
@@ -241,6 +242,10 @@ class PreferenceLearner:
         pref_key = f"{category}.{key}"
         existing = self._preferences.get(pref_key)
 
+        if existing and existing.learned_from == "explicit":
+            return  # Observations cannot overwrite a correction from the owner.
+        if self.perspective is not None and pref_key in self.perspective.tracked_keys():
+            return
         if existing:
             existing.value = value
             existing.confidence = min(1.0, existing.confidence + 0.1)
@@ -275,6 +280,12 @@ class PreferenceLearner:
             The preference value, or default if not found
         """
         pref_key = f"{category}.{key}"
+        if self.perspective is not None:
+            for source in self.perspective.preferences():
+                if source['pref_key'] == pref_key:
+                    return source['value']
+            if pref_key in self.perspective.tracked_keys():
+                return default
         pref = self._preferences.get(pref_key)
         return pref.value if pref else default
 
@@ -287,7 +298,13 @@ class PreferenceLearner:
         Returns:
             List of matching preferences
         """
-        prefs = list(self._preferences.values())
+        tracked = self.perspective.tracked_keys() if self.perspective is not None else set()
+        prefs = [pref for key, pref in self._preferences.items() if key not in tracked]
+        if self.perspective is not None:
+            for source in self.perspective.preferences():
+                source_category, key = source['pref_key'].split('.', 1)
+                prefs.append(Preference(source_category, key, source['value'], 0.9,
+                    'explicit_source', datetime.fromisoformat(source['source_at'])))
         if category:
             prefs = [p for p in prefs if p.category == category]
         return prefs
@@ -380,6 +397,10 @@ class PreferenceLearner:
         logger.info("Learned owner directive(s) from: %r", message[:80])
         return primary
 
+    def learn_source(self, turn_id: str) -> list:
+        """Project attributed owner corrections from retained canonical words."""
+        return self.perspective.observe_source(turn_id, self) if self.perspective is not None else []
+
     # Human-readable rendering of each communication-style preference.
     _BRIEF_LINES: Dict[Tuple[str, Any], str] = {
         ("length", "short"): "Keep replies short and to the point.",
@@ -404,12 +425,22 @@ class PreferenceLearner:
         confident to assert.
         """
         lines: List[str] = []
-        for pref in self._preferences.values():
+        tracked = self.perspective.tracked_keys() if self.perspective is not None else set()
+        for pref_key, pref in self._preferences.items():
+            if pref_key in tracked:
+                continue
             if pref.category != "communication_style" or pref.confidence < min_confidence:
                 continue
             line = self._BRIEF_LINES.get((pref.key, pref.value))
             if line and line not in lines:
                 lines.append(line)
+        if self.perspective is not None:
+            for pref in self.perspective.preferences():
+                if not pref['pref_key'].startswith('communication_style.'):
+                    continue
+                line = self._BRIEF_LINES.get((pref['pref_key'].split('.', 1)[1], pref['value']))
+                if line:
+                    lines.append(f"{line} [Owner correction {pref['id']}, source turn:{pref['source_turn_id']}]")
         return "\n".join(f"- {ln}" for ln in lines)
 
     def _parse_feedback(self, category: str, feedback: str) -> Tuple[str, Any]:

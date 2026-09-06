@@ -795,6 +795,7 @@ class SelfModel:
         self._registry = registry
         self.trust = trust          # TrustEngine (Amendment 1)
         self.journal = journal      # ActionJournal (Amendment 1)
+        self.perspective = None      # Optional source-backed working judgments; never authority.
 
     # -- recording (thin passthrough; trust engine hooks demotion) -------
     def record(self, domain: str, outcome: str,
@@ -876,4 +877,7 @@ class SelfModel:
 
     def brief(self) -> str:
         from colony_sidecar.self_model.brief import self_brief
-        return self_brief(self.store.snapshot(), self.load())
+        parts = [self_brief(self.store.snapshot(), self.load())]
+        if self.perspective is not None:
+            parts.append(self.perspective.brief())
+        return '\n'.join(part for part in parts if part)

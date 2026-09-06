@@ -2695,7 +2695,7 @@ async def context_assemble(
             logger.debug("context_assemble approach brief failed: %s", exc)
 
     # --- Owner's stated preferences (explicit directives the owner gave me) ---
-    if _legacy_global_allowed and _preference_learner is not None \
+    if _exact_person_allowed and _preference_learner is not None \
             and contact_id:
         try:
             from colony_sidecar.identity import get_owner_contact_id
@@ -2708,6 +2708,12 @@ async def context_assemble(
                         body=_brief,
                         priority=88,
                     ))
+                perspective = getattr(_preference_learner, 'perspective', None)
+                if perspective is not None:
+                    working_brief = perspective.brief()
+                    if working_brief:
+                        sections.append(ContextSection(id='colony-self-perspective',
+                            title='Current working judgments and attention', body=working_brief, priority=87))
         except Exception as exc:
             logger.debug("context_assemble owner preferences failed: %s", exc)
 
@@ -4019,9 +4025,13 @@ async def _process_turn_sync(
             from colony_sidecar.identity import get_owner_contact_id
             owner_id = get_owner_contact_id()
             if owner_id and body.context.contact_id == owner_id:
-                hit = await _preference_learner.learn_directive(
-                    getattr(body.user_message, "content", "") or ""
-                )
+                if getattr(_preference_learner, 'perspective', None) is not None:
+                    changes = _preference_learner.learn_source(source_id) if source_recorded else []
+                    hit = (changes[0][0].split('.', 1)[0], changes[0][0], changes[0][1]) if changes else None
+                else:
+                    hit = await _preference_learner.learn_directive(
+                        getattr(body.user_message, "content", "") or ""
+                    )
                 if hit is not None:
                     try:
                         from colony_sidecar.events.broadcaster import emit as _emit
@@ -9799,14 +9809,17 @@ async def compute_benchmark(week: str = "") -> dict:
 
 
 @router.get("/self")
-async def get_self_model() -> dict:
+async def get_self_model(request: Request = None) -> dict:
     """Self-model: per-domain competence, live load, trust stages."""
     if _self_model is None:
         return {"available": False}
+    _require_perspective_owner(request)
     try:
         out = {"available": True}
         out.update(_self_model.status())
         out["brief"] = _self_model.brief()
+        if getattr(_self_model, 'perspective', None) is not None:
+            out['perspective'] = _self_model.perspective.status()
         return out
     except Exception as exc:
         return {"available": True, "error": str(exc)}
@@ -10288,14 +10301,16 @@ async def revoke_directive(directive_id: str) -> dict:
 
 
 @router.get("/preferences")
-async def get_owner_preferences() -> dict:
+async def get_owner_preferences(request: Request = None) -> dict:
     """Return the owner's learned communication preferences and rendered brief."""
     if _preference_learner is None:
         return {"available": False, "brief": "", "preferences": []}
+    _require_perspective_owner(request)
     prefs = await _preference_learner.get_all_preferences()
     return {
         "available": True,
         "brief": _preference_learner.build_brief(),
+        "sourced": _preference_learner.perspective.status() if getattr(_preference_learner, 'perspective', None) is not None else None,
         "preferences": [
             {
                 "category": p.category, "key": p.key, "value": p.value,
@@ -10308,7 +10323,7 @@ async def get_owner_preferences() -> dict:
 
 
 @router.post("/preferences/learn")
-async def learn_owner_preference(body: dict) -> dict:
+async def learn_owner_preference(body: dict, request: Request = None) -> dict:
     """Teach the owner-preference learner from text.
 
     Body: ``{"text": "be concise", "explicit": true, "force": false}``
@@ -10320,6 +10335,13 @@ async def learn_owner_preference(body: dict) -> dict:
     """
     if _preference_learner is None:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
+    _require_perspective_owner(request)
+    if getattr(_preference_learner, 'perspective', None) is not None:
+        source_id = body.get('source_id')
+        if not isinstance(source_id, str) or not source_id:
+            raise HTTPException(status_code=422, detail='Use an attributed owner turn and supply its source_id; free text cannot mint a source-backed correction.')
+        changes = _preference_learner.learn_source(source_id)
+        return {'learned': changes, 'brief': _preference_learner.build_brief()}
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="text required")
@@ -10335,6 +10357,15 @@ async def learn_owner_preference(body: dict) -> dict:
         await _preference_learner.learn_from_behavior(text)
         learned = {"category": "behavior"}
     return {"learned": learned, "brief": _preference_learner.build_brief()}
+
+
+def _require_perspective_owner(request):
+    if request is not None:
+        from colony_sidecar.identity import get_owner_contact_id
+        owner = get_owner_contact_id()
+        if not owner:
+            raise HTTPException(status_code=503, detail='Owner identity is not configured')
+        resolve_request_person(request, claimed_person_id=owner)
 
 
 _tom_extractor = None
