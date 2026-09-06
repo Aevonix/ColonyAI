@@ -137,7 +137,9 @@ class SourceVectors:
         catalog = getattr(self.store, 'catalog', None)
         active = catalog.active() if catalog is not None else None
         generation = active['id'] if active else ''
-        compatible = bool(active and active['fingerprint'] == self.store.identity.fingerprint)
+        compatible = bool(active and self.pipeline is not None
+                          and self.store.identity == self.pipeline.index_identity
+                          and active['fingerprint'] == self.store.identity.fingerprint)
         with closing(self.ledger._connect()) as conn:
             rows = conn.execute('''SELECT j.status,j.generation_id,j.error FROM turn_sources s
                 LEFT JOIN source_vector_jobs j ON j.turn_id=s.turn_id WHERE s.contact_id=?''', (contact_id,)).fetchall()
@@ -226,8 +228,11 @@ class SourceVectors:
 
     async def search(self, query, *, contact_id, session_id, limit=10):
         from colony_sidecar.vector.collections import Collection
+        from colony_sidecar.vector.indexes import IncompatibleIndex
         if not contact_id or self.store is None or self.pipeline is None or getattr(self.store, 'catalog', None) is None:
             return [], []
+        if self.store.identity != self.pipeline.index_identity:
+            raise IncompatibleIndex('The source query pipeline and index identity do not match')
         # Validate generation before spending inference, and never read an
         # unscoped top-K followed by filtering away another person's results.
         generation = self.store.catalog.read_generation(self.store.identity)

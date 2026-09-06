@@ -160,6 +160,21 @@ async def test_model_swap_reprojects_canonical_sources_with_new_equal_dimension_
 
 
 @pytest.mark.asyncio
+async def test_mismatched_retained_store_and_new_query_pipeline_never_compare(tmp_path):
+    from unittest.mock import AsyncMock
+    ledger, store, pipeline, projection = await setup(tmp_path)
+    wrong_pipeline = Pipeline('different-model', rotate=True)
+    wrong_pipeline.embed_query = AsyncMock(side_effect=AssertionError('must not embed'))
+    store.search = AsyncMock(side_effect=AssertionError('must not query'))
+    mixed = SourceVectors(ledger, store, wrong_pipeline)
+    with pytest.raises(IncompatibleIndex, match='query pipeline'):
+        await mixed.search('vessel code', contact_id='c', session_id='s')
+    wrong_pipeline.embed_query.assert_not_called()
+    store.search.assert_not_called()
+    assert mixed.status('c')['index_state'] == 'unverified_or_unavailable'
+
+
+@pytest.mark.asyncio
 async def test_bounded_projection_resumes_cursor_and_reports_retryable_failure(tmp_path):
     ledger, store, pipeline, projection = await setup(tmp_path)
     ledger.record_source('long', contact_id='c', session_id='s', messages=[
