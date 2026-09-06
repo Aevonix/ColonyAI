@@ -1,8 +1,10 @@
 # Architecture and ownership
 
-Status: target architecture and migration rules. This document does not claim
-that the current runtime implements every boundary below. Current defaults and
-known gaps remain documented in the README and `KNOWN-GAPS.md`.
+Status: current ownership decisions and remaining migration rules. Built-artifact
+qualifications cover the native attachment, canonical source memory and shared
+work. Individual deployments still need to verify their active loops. Current
+defaults and remaining limitations are documented in the README and the linked
+capability guides.
 
 Colony supplies persistent cognition to a host runtime. A private deployment
 supplies one agent's identity, integrations and operating environment. Build on
@@ -104,23 +106,35 @@ plugin or successful health request does not prove the integration is active.
 Unknown or incompatible installations receive an actionable compatibility
 result, not silent core patching.
 
-The current source-checkout attachment repair is deliberately narrower: choose
-one home, preflight it, preserve unrelated configuration and stage resources
-without provisioning global services. Packaged resources, safe activation and
-runtime conformance remain explicit follow-up work.
+The packaged installer selects one home, preserves unrelated configuration and
+uses the native general-plugin and memory-provider registrations. It can install
+an optional user service through systemd or launchd. Existing gateways are not
+restarted by attachment. See [local setup](LOCAL-HERMES-SETUP.md) for activation
+and [the native adapter](HERMES-ADAPTER.md) for the evaluated learning path.
 
 ## State ownership and recovery
 
-The target authority is PostgreSQL with relational constraints for invariants
-and extensible payloads where needed. LanceDB is a rebuildable retrieval
-projection. Source media lives behind a content-addressed storage interface.
-SQLite remains appropriate for bounded local adapter outboxes.
+Keep SQLite as the canonical store for the supported local deployment. The
+canonical source ledger, claims and projection outbox share its transaction
+boundary. Other existing domains still own separate databases; a backup of
+several databases is not one atomic snapshot. Local adapters also use SQLite
+for durable delivery outboxes.
 
-This is a migration decision, not a claim that the existing SQLite, graph and
-vector stores have been replaced. Transfer write ownership by domain using
-captured deltas and short fences. Preserve identifiers, evidence, corrections,
-consumed consent, revocations, tombstones and uncertain effects. Never perform
-best-effort dual writes or reconstruct historical authority with a model.
+Lance is an optional, replaceable semantic index. A deployment can start with
+lexical source recall and add embeddings later. Original image bytes retain
+content hashes and source-ledger ownership independently of generated captions.
+Neo4j remains the extended profile's legacy graph store. Historical graph
+records without canonical provenance are not yet reconstructible from source
+memory and must be preserved separately.
+
+Do not make PostgreSQL a prerequisite or migrate databases to obtain a more
+impressive architecture. Revisit it when measured write contention, operations
+across machines or a specific cross-domain invariant requires a different
+transaction boundary. Compare that change with consolidating the affected
+SQLite tables first. A future migration must preserve identifiers, evidence,
+corrections, consumed consent, revocations, tombstones and uncertain effects.
+Never perform best-effort dual writes or reconstruct historical authority with
+a model.
 
 Commit an accepted state change, its event and its delivery/index outbox in one
 transaction. Search returns candidate identifiers; current authoritative scope,
@@ -130,7 +144,13 @@ immutable embedding model revision or digest, dimensions, preprocessing and
 modality. Never mix incompatible generations even when role names, model names
 and dimensions match.
 
-Recovery must establish an acknowledged authority/erasure watermark from a
+The source-memory backup captures consistent individual SQLite databases and
+the original images owned by their captured ledger. Restore verifies their
+bytes before writing. [Recovery coverage](SOURCE-MEMORY-RECOVERY.md) describes
+what remains outside that backup, including host transcripts and external
+graph state.
+
+Before returning restored state to service, recovery must establish an acknowledged authority/erasure watermark from a
 surviving source. A stale backup cannot certify itself. If current authority
 cannot be established, hold consequential work and quarantine restored private
 recall. Roll back compatible code against current state instead of rewinding
@@ -167,7 +187,8 @@ duplicate delivery, conflicting sessions, stale recall, revocation and restart
 where relevant. Keep status honest: staged, active, degraded and unverified are
 different outcomes.
 
-The first integrated demonstration is a fact recalled in a new session, one
-shared commitment observed through another interface, and a decision that can
-wait while independent work continues. Richer self-state, multimedia and
-learning then extend the same contracts.
+The integrated demonstration is a fact recalled in a new session, one shared
+commitment observed through another interface, and a decision that can wait
+while independent work continues. Source-backed images, inspectable self-state
+and native skill evaluation extend those contracts. Their availability in a
+package does not establish that a deployment has enabled or qualified them.

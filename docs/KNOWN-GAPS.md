@@ -1,12 +1,16 @@
-# Known gaps — features that exist in code but are not (fully) wired
+# Known gaps and retired scaffolding
 
-Honest inventory, verified by cross-referencing call sites (last full audit:
-v0.30.0 cycle). Everything here compiles and imports; what it does NOT do is
-run in a live deployment. When one of these gets wired, delete its entry.
+This is a source inventory, not a production health report. The original
+extended-profile audit was written during the v0.30.0 cycle. The 1.0
+consolidation has qualified narrower canonical-memory and native-host paths;
+their current behavior and limits live in the README and capability guides.
+Enabling a profile still requires checking its actual effects.
 
-Closed in v0.30.0 (kept briefly for the record): per-goal external-condition
-polling (goals now self-unblock), anomaly/synthesis/goal/relationship/calendar
-briefing aggregators, world-model pruning, self-referential-query grounding.
+Known current limits include complete erasure of unlinked historical data and
+host transcripts, cross-database recovery, empirical retrieval quality beyond
+the tested cases, and deployment-specific hardware coverage. Native skill
+evaluation needs an independently supplied task oracle; it does not establish
+general self-improvement simply by recording a successful review.
 
 ## Partially wired (works, with a missing half)
 
@@ -15,9 +19,10 @@ briefing aggregators, world-model pruning, self-referential-query grounding.
   system. Deliberately not wired: fabricating health numbers would violate
   the measurement doctrine. Wire only when a real health/wearable source
   feeds the mind model.
-- **Gate Layer 6 secondary review** — fails open (always passes) unless a
-  review LLM client is injected; the pipeline logs a loud boot warning when
-  enabled without one. Known configuration state, not hidden.
+- **Gate Layer 6 secondary review**: without an injected reviewer, it returns
+  an unflagged result. A configured reviewer exception or malformed JSON flags
+  the result as a review error. Neither the unconfigured path nor the separate
+  ResponseGuard shadow mode establishes enforcement.
 - **ResponseGuard applied-output receipts** — guarded candidates now carry an
   exact candidate digest, and the proactive send path honors enforce verdicts,
   but the audit store records evaluations rather than durable proof of the
@@ -58,19 +63,23 @@ unbuilt HERE by design:
   `COLONY_EXECUTOR_ENABLED=false` (the default): enabling both means two
   executors competing to claim the same initiatives.
 
-## Unwired (feature code with zero callers)
+## Removed during the 1.0 consolidation
 
-- `chain/consensus.py` — Raft-lite consensus scaffolding for multi-colony
-  federation; single-colony deployments don't need it. The chain package
-  docstring now labels it scaffolding.
-- `world_model/extraction/structured_importer.py` — superseded in practice
-  by the connector → populator ingest path, which already imports structured
-  observations into the world model.
-- `chain/keys_cli.py`, `chain/sentinel_cli.py`, `chain/admin_cli.py` — no
-  entry points; federation-era scaffolding.
-- `skills/versioning.py`, `skills/marketplace.py`,
-  `contacts/importers/email_contacts.py`, `gate/pending_dispatch.py` —
-  no consumers.
+The following modules had no runtime imports, registered entry points or
+configured loaders in this repository. They are retained in Git history rather
+than offered as unfinished features:
+
+- Raft consensus and its isolated unit suite, plus the unregistered chain key,
+  sentinel and administrative CLIs. Existing chain identity, storage and
+  validation consumers remain intact.
+- The federation skill marketplace and its unused protocol, plus the unused
+  skill schema-version helper. Hermes owns the supported native skill review
+  path; the existing initiative executor registry remains available.
+- The unused structured-world importer and email-header contact importer.
+  Existing connector/populator and supported contact import paths remain.
+
+`gate/pending_dispatch.py` remains a small compatibility re-export. Removing
+that alias would not simplify the gate implementation or its stored state.
 
 ## Known mechanisms (documented so the log noise is interpretable)
 

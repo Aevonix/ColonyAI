@@ -86,6 +86,20 @@ login. See the setup guide for status, stop, uninstall and recovery.
   removes linked fact, graph and vector projections. Cleanup status is explicit.
   Unlinked historical records, host transcripts and backups require additional
   reconciliation. [Derived fact lineage](docs/TOM-SOURCE-LINEAGE.md)
+- **Inspectable priorities.** Source-backed owner corrections and measured
+  outcomes can change optional research ordering. The dated attention snapshot
+  records the evidence and applied weights. This is a bounded working
+  perspective, not a claim of subjective feelings.
+  [Working perspective](docs/WORKING-PERSPECTIVE.md)
+- **Evaluated skill updates.** Native Hermes review can stage a proposal for an
+  existing skill. An explicitly selected task evaluator compares the current
+  skill and candidate, verifies activation and uses native rollback for a
+  measured regression. Deployments supply their own task cases and activation
+  policy. [Native skill review](docs/HERMES-ADAPTER.md#measured-skill-updates)
+- **Source recovery.** Backups capture consistent individual SQLite databases
+  and the original images owned by their source ledger. Restore verifies the
+  captured images and restores SQLite through its backup API. Coverage and
+  cross-store limits are explicit. [Memory recovery](docs/SOURCE-MEMORY-RECOVERY.md)
 
 ## Architecture and extension
 
@@ -100,10 +114,12 @@ can use the HTTP API, with participant identity supplied by an authenticated
 adapter. Device protocols, continuous audio, camera capture and private identity
 belong in deployment adapters rather than public cognition code.
 
-Named model roles choose configured local endpoints and fallbacks. Changing a
-processor does not replace the agent's memories or identity. Fleet discovery,
-capacity scheduling and empirical model selection are separate work; role
-configuration alone does not provide them.
+Named model roles choose eligible local endpoints and fallbacks. Runtime reload,
+configured endpoint advertisements and completion availability let later requests
+follow changed bindings. Changing a processor does not replace the agent's
+memories or identity. Automatic fleet enrollment, capacity scheduling and empirical
+model selection remain separate work.
+[Function routing](docs/FUNCTION-ROUTING.md)
 
 See [architecture and ownership](docs/ARCHITECTURE.md) before adding a component.
 Every addition should close an observable loop, have one state owner, and reuse
