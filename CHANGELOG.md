@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.1 - fresh setup and local work visibility
+
+- Fresh Hermes environments no longer need the legacy Colony CLI dependency
+  `typer` to pass setup. The wizard attaches the private native adapter using
+  the selected Hermes core environment.
+- Owner current-work views include accepted local capability briefings and
+  their bounded, unverified results from the existing initiative ledger.
+  Ordinary context includes only the latest result; guest views exclude it.
+- Successful named-role responses record prior failed or skipped candidates
+  alongside the actual processor, without exposing endpoint or credential data.
+
 ## v1.0.0 - persistent native core
 
 Colony 1.0 defines a supported core beside Hermes, with private identity and
