@@ -17,7 +17,7 @@ from __future__ import annotations
 import copy
 from collections import OrderedDict
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import ipaddress
 import json
@@ -309,6 +309,7 @@ class _TransportScopeRegistry:
         self._lock = threading.RLock()
         self._by_turn: OrderedDict[tuple[str, str, str], _TransportScope] = OrderedDict()
         self._current_by_session: dict[str, tuple[str, str, str]] = {}
+        self._children: OrderedDict[str, tuple[str, _TransportScope] | None] = OrderedDict()
 
     @staticmethod
     def _key(session_id: str, task_id: str, turn_id: str) -> tuple[str, str, str]:
@@ -318,6 +319,7 @@ class _TransportScopeRegistry:
         with self._lock:
             self._by_turn.clear()
             self._current_by_session.clear()
+            self._children.clear()
 
     def put(self, scope: _TransportScope) -> _TransportScope:
         key = self._key(scope.session_id, scope.task_id, scope.turn_id)
@@ -376,6 +378,55 @@ class _TransportScopeRegistry:
         with self._lock:
             key = self._current_by_session.get(session)
             return self._by_turn.get(key) if key else None
+
+    def bind_child(self, **kwargs: Any) -> None:
+        """Native spawn events bind a child to one exact parent turn."""
+        parent_session = str(kwargs.get("parent_session_id") or "")
+        parent_turn = str(kwargs.get("parent_turn_id") or "")
+        child_session = str(kwargs.get("child_session_id") or "")
+        if not (parent_session and parent_turn and child_session):
+            return
+        with self._lock:
+            matches = [scope for scope in self._by_turn.values()
+                       if scope.session_id == parent_session and scope.turn_id == parent_turn]
+            parent = matches[0] if len(matches) == 1 else None
+            binding = (parent_session, parent) if parent and parent.valid_participant else None
+            if child_session in self._children and self._children[child_session] != binding:
+                binding = None
+            self._children[child_session] = binding
+            while len(self._children) > self._maximum:
+                self._children.popitem(last=False)
+
+    def child_scope(self, **kwargs: Any) -> _TransportScope:
+        session = str(kwargs.get("session_id") or "")
+        parent_session = str(kwargs.get("parent_session_id") or "")
+        with self._lock:
+            binding = self._children.get(session)
+            if binding and binding[0] == parent_session:
+                return replace(binding[1], session_id=session,
+                    task_id=str(kwargs.get("task_id") or ""),
+                    turn_id=str(kwargs.get("turn_id") or ""),
+                    user_message=str(kwargs.get("user_message") or ""))
+        # A child's default CLI platform is not a fresh local owner attestation.
+        return _TransportScope(session, str(kwargs.get("task_id") or ""),
+            str(kwargs.get("turn_id") or ""), "subagent", "", "",
+            "unresolved", "parent_scope_missing")
+
+    def bind_current_session(self, **kwargs: Any) -> None:
+        """Follow native compression rotation, without guessing by session recency."""
+        session, task, turn = (str(kwargs.get(key) or "")
+                               for key in ("session_id", "task_id", "turn_id"))
+        if not (session and task and turn):
+            return
+        with self._lock:
+            if (session, task, turn) in self._by_turn:
+                return
+            matches = [scope for scope in self._by_turn.values()
+                       if scope.task_id == task and scope.turn_id == turn]
+            if not matches or any(replace(scope, session_id=session) !=
+                                  replace(matches[0], session_id=session) for scope in matches):
+                return
+            self.put(replace(matches[0], session_id=session))
 
 
 _TRANSPORT_SCOPES = _TransportScopeRegistry()
@@ -450,7 +501,12 @@ _TOOL_EXECUTION_CONTEXT: ContextVar[dict[str, str] | None] = ContextVar(
 
 
 def _tool_execution_middleware(**kwargs: Any) -> Any:
-    """Carry exact Hermes execution metadata through its reduced handler API."""
+    """Authorize native tools and carry exact metadata to reduced handler APIs.
+
+    Hermes fails open when a middleware raises before dispatch. Return an
+    explicit error on every local authority failure, and keep downstream tool
+    exceptions outside that catch so they retain native failure semantics.
+    """
 
     next_call = kwargs.get("next_call")
     if not callable(next_call):
@@ -469,6 +525,35 @@ def _tool_execution_middleware(**kwargs: Any) -> Any:
             "tool_name", "turn_id",
         )
     }
+    try:
+        inherited = _TOOL_EXECUTION_CONTEXT.get() or {}
+        # Native execute_code RPC threads copy the current ContextVars, but
+        # forward only task_id to model_tools. Do not use a global task lookup
+        # or allow an explicit conflicting session/turn to inherit authority.
+        if (not snapshot["session_id"] and not snapshot["turn_id"]
+                and snapshot["task_id"] and snapshot["task_id"] == inherited.get("task_id")
+                and inherited.get("tool_name") == "execute_code"):
+            for key in ("session_id", "turn_id", "api_request_id"):
+                snapshot[key] = inherited.get(key, "")
+        name = snapshot["tool_name"]
+        # These exact adapter-owned tools perform their own scope/capability
+        # checks and submit effects to the existing mediator. No prefix grant.
+        governed = name in {*_READ_TOOL_NAMES, *_ACTION_INTENT_TOOL_NAMES, *_OWNER_MESSAGE_TOOL_NAMES}
+        if not governed:
+            exact = all(snapshot[key] for key in ("session_id", "task_id", "turn_id"))
+            scope = _TRANSPORT_SCOPES.for_execution(
+                session_id=snapshot["session_id"], task_id=snapshot["task_id"],
+                turn_id=snapshot["turn_id"],
+            ) if exact else None
+            if scope is None or not scope.valid_participant:
+                return _canonical_json({"error": "Native tool withheld: exact participant authority is unavailable",
+                    "status": "unavailable", "effect_performed": False, "approval_created": False})
+            if scope.authority_lane not in {"owner", "system"}:
+                return _canonical_json({"error": "Native tool requires owner authorization; use an enabled Colony action request or ask the owner to perform it",
+                    "status": "requires_authorization", "effect_performed": False, "approval_created": False})
+    except Exception:
+        return _canonical_json({"error": "Native tool authority check is unavailable",
+            "status": "unavailable", "effect_performed": False, "approval_created": False})
     token = _TOOL_EXECUTION_CONTEXT.set(snapshot)
     try:
         return next_call(args)
@@ -2038,15 +2123,22 @@ def register(ctx: Any) -> None:
         scopes=_TRANSPORT_SCOPES,
     )
 
+    def direct_text(content):
+        if isinstance(content, list):
+            return "\n".join(block["text"] for block in content if isinstance(block, dict)
+                             and block.get("type") in {"text", "input_text", "output_text"}
+                             and isinstance(block.get("text"), str))
+        return str(content or "")
+
     def pre_llm_call(**kwargs: Any) -> None:
-        scope = _resolve_scope(
+        scope = _TRANSPORT_SCOPES.child_scope(**kwargs) if kwargs.get("parent_session_id") else _resolve_scope(
             client,
             session_id=str(kwargs.get("session_id") or ""),
             task_id=str(kwargs.get("task_id") or ""),
             turn_id=str(kwargs.get("turn_id") or ""),
             platform=str(kwargs.get("platform") or ""),
             sender_id=str(kwargs.get("sender_id") or ""),
-            user_message=str(kwargs.get("user_message") or ""),
+            user_message=direct_text(kwargs.get("user_message")),
             owner_contact_id=owner_contact_id,
             attested_system_platforms=attested_system_platforms,
         )
@@ -2069,7 +2161,8 @@ def register(ctx: Any) -> None:
             and scope.platform not in turn_writer_platforms
         ):
             return None
-        user_message = str(kwargs.get("user_message") or scope.user_message or "")
+        user_message = kwargs.get("user_message") or scope.user_message or ""
+        user_text = direct_text(user_message)
         assistant_message = str(kwargs.get("assistant_response") or "")
         if not (user_message or assistant_message):
             return None
@@ -2091,7 +2184,7 @@ def register(ctx: Any) -> None:
             "assistant_message": assistant_message,
             "require_source_receipt": True,
             "summary": (
-                f"User: {user_message[:300]}\nAgent: {assistant_message[:300]}"
+                f"User: {user_text[:300]}\nAgent: {assistant_message[:300]}"
                 if user_message and assistant_message else ""
             ),
             "model": str(kwargs.get("model") or ""),
@@ -2227,6 +2320,8 @@ def register(ctx: Any) -> None:
         )
 
     ctx.register_hook("pre_llm_call", pre_llm_call)
+    ctx.register_hook("subagent_start", _TRANSPORT_SCOPES.bind_child)
+    ctx.register_hook("pre_api_request", _TRANSPORT_SCOPES.bind_current_session)
     ctx.register_hook("transform_llm_output", transform_llm_output)
     ctx.register_hook("post_llm_call", post_llm_call)
     if execution_observer is not None:

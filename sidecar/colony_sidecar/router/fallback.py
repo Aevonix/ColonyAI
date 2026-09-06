@@ -40,8 +40,8 @@ class FallbackHandler:
 
     def should_escalate(self, error: Exception, current_tier: ModelTier) -> bool:
         """Return True if the error warrants a tier upgrade."""
-        if current_tier == ModelTier.LARGE:
-            return False  # Already at the top
+        if current_tier not in _TIER_PROMOTION:
+            return False  # No escalation for the top tier or explicit roles.
 
         msg = str(error).lower()
         triggered = any(trigger in msg for trigger in _UPGRADE_TRIGGERS)

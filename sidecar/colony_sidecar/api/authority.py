@@ -969,6 +969,8 @@ def required_scope(method: str, path: str) -> str:
     key = (method.upper(), path)
     if key in WORK_READ_SURFACE_V1:
         return "work:read"
+    if method.upper() == "GET" and path.startswith("/v1/host/memory/sources/assets/"):
+        return "memory:read"
     if method.upper() == "POST" and path in {
         "/v1/host/contact-policy/standing",
         "/v1/host/contact-policy/provision",
@@ -1086,6 +1088,7 @@ def required_scope(method: str, path: str) -> str:
         ("POST", "/v1/host/memory/write"): "memory:write",
         ("POST", "/v1/host/memory/sources/forget"): "memory:write",
         ("GET", "/v1/host/memory/sources/erasures"): "turns:write",
+        ("GET", "/v1/host/memory/sources/claims/status"): "memory:read",
         ("POST", "/v1/host/context/assemble"): "context:read",
         ("GET", "/v1/host/executions"): "context:read",
         ("POST", "/v1/host/executions/observe"): "turns:write",

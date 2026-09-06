@@ -2465,6 +2465,9 @@ async def context_assemble(
                 beliefs, quotations = SourceClaimProjection(source_ledger).prepare_context(
                     beliefs, source_hits, contact_id=body.context.contact_id,
                     session_id=body.context.session_id, time_query=time_query)
+                from colony_sidecar.turns.media import SourceMedia
+                quotations.extend(filter_unstructured(SourceMedia(source_ledger).search(
+                    query_text, contact_id=body.context.contact_id, session_id=body.context.session_id), time_query))
             else:
                 beliefs = filter_unstructured(beliefs, time_query)
             try:
@@ -3540,7 +3543,22 @@ async def source_claim_projection_status(contact_id: str, request: Request = Non
     person = resolve_request_person(request, claimed_person_id=contact_id) or contact_id
     from colony_sidecar.turns import get_turn_idempotency_ledger
     from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-    return {"sources": SourceClaimProjection(get_turn_idempotency_ledger(get_state_dir())).status(person)}
+    from colony_sidecar.turns.media import SourceMedia
+    ledger = get_turn_idempotency_ledger(get_state_dir())
+    return {"sources": SourceClaimProjection(ledger).status(person), "media": SourceMedia(ledger).status(person)}
+
+
+@router.get("/memory/sources/assets/{asset_hash}")
+async def read_source_asset(asset_hash: str, contact_id: str, session_id: str, request: Request = None):
+    person = resolve_request_person(request, claimed_person_id=contact_id) or contact_id
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    from colony_sidecar.turns.media import SourceMedia
+    try:
+        data, mime = SourceMedia(get_turn_idempotency_ledger(get_state_dir())).read(
+            asset_hash, contact_id=person, session_id=session_id)
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="unknown source asset") from None
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/memory/sources/forget")
@@ -3735,6 +3753,18 @@ async def _process_turn_sync(
     body: TurnSyncRequest,
     request: Request | None = None,
 ) -> TurnSyncResponse:
+    # Keep direct blocks for canonical source storage. All existing text-only
+    # cognition consumers receive only explicit text, never repr(base64/URLs).
+    from colony_sidecar.turns import canonical_turn_digest
+    source_body = body
+    source_messages = [{"role": message.role, "content": message.content}
+                       for message in (body.user_message, body.assistant_message)
+                       if message is not None and (message.content.strip() if isinstance(message.content, str) else message.content)]
+    body = body.model_copy(deep=True)
+    for field in ("user_message", "assistant_message"):
+        message = getattr(body, field)
+        if message is not None and isinstance(message.content, list):
+            message.content = message.text_content()
     # Auto-derive channel_id when the host does not provide one, so
     # context provenance and cross-context leak detection always work.
     body.context.channel_id = await _ensure_channel_id(
@@ -3793,15 +3823,11 @@ async def _process_turn_sync(
 
     # Persist complete attributed messages before derived graph/mining effects.
     # This is the central source of truth even when extractors are disabled.
-    source_messages = [
-        {"role": message.role, "content": message.content}
-        for message in (body.user_message, body.assistant_message)
-        if message is not None and message.content.strip()
-    ]
+    source_id = body.context.turn_id or "unkeyed:" + canonical_turn_digest(
+        source_body.model_copy(update={"context": body.context}))
     source_recorded = False
     if source_messages:
         from colony_sidecar.turns import canonical_turn_digest, get_turn_idempotency_ledger
-        source_id = body.context.turn_id or "unkeyed:" + canonical_turn_digest(body)
         ledger = get_turn_idempotency_ledger(get_state_dir())
         if ledger.is_source_erased(source_id, body.context.contact_id):
             return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")

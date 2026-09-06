@@ -57,7 +57,7 @@ def render_memory_context(memories: list[dict[str, Any]]) -> str:
                   "kind": memory.get("kind", "belief"),
                   "source": str(memory.get("source_uri") or ""),
                   "state": str(memory.get("epistemic_state") or "inferred")}
-        for name in ("source_turn_id", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status"):
+        for name in ("source_turn_id", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version"):
             if memory.get(name) is not None:
                 source[name] = memory[name]
         if memory.get("effective_confidence") is not None:

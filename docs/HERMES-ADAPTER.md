@@ -189,8 +189,9 @@ context assembly includes up to eight observations when present.
 
 The native `subagent_start` event binds each executing child to the exact
 observed parent turn. Child observations inherit that participant and cannot
-broaden it. This does not change Hermes toolsets, approval rules or capability
-grants. No model argument selects the writer or owner role.
+broaden it. Observation does not grant tool authority; the separate enforcement
+below also works when observation is disabled. No model argument selects the
+writer or owner role.
 
 This packet observes running Hermes turns, including agent cron fires and
 executing subagents. It does not yet cover queued children, script-only cron
@@ -198,3 +199,38 @@ jobs, Colony queue workers, external coding processes or every hardware service.
 It also does not enforce atomic conversational commitments. Existing person
 commitments remain a separate store; seeing concurrent work is a prerequisite
 for coordination, not a guarantee that promises cannot conflict.
+
+## Native tool authority
+
+On the qualified Hermes release, the general plugin enforces participant
+authority at native `tool_execution` middleware. Resolved owner turns and
+explicitly configured local system platforms retain native tools and existing
+Hermes toolset, approval and guardrail checks. Guests cannot directly invoke
+shell, files, network, devices, coding, delegation, native memory/session tools,
+or unknown plugin/MCP tools. The exact Colony tools keep their existing scoped
+read checks and action mediators. No arbitrary tool prefix or relationship
+score grants access.
+
+A native-tool request from a guest returns `requires_authorization`, with no
+effect and no approval created. The response directs the agent to an enabled
+Colony action request or the owner. It does not invent an approval request or
+permit a raw tool after conversational consent. Broader guest capabilities
+require a scoped mediated interface; this packet supplies none automatically.
+
+Authority uses the transport-resolved participant bound to the exact native
+session/task/turn, never fields in model arguments. A native child-spawn event
+binds the child to the exact parent's authority. Missing or conflicting parent
+bindings cannot acquire the local CLI system role. Native pre-API callbacks
+retain that binding across compression session rotation. Coding RPC calls use
+Hermes' propagated execution context, without a process-global last-owner or
+task-only lookup. Unavailable identity returns an explicit error because
+Hermes middleware exceptions otherwise fail open. Local trusted CLI remains
+available when contact resolution is offline; remote identity is not guessed.
+
+This is a boundary for model-requested tool dispatch while the general plugin
+is loaded. It does not sandbox trusted installed plugin code, remove private
+facts already present in old transcripts/system prompts, or replace the
+deployment's channel admission, secret isolation and consent policy. Native
+owner tools retain their existing consent behavior; they are not converted to
+Colony intents by this gate. Qualify both owner and guest messages before
+enabling a public channel.

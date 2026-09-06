@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -45,22 +46,81 @@ class LocalImageStore:
             thumbs/{hash}.jpg
     """
 
-    def __init__(self, state_dir: Optional[str] = None) -> None:
+    def __init__(self, state_dir: Optional[str] = None, *, source_evidence: bool = False) -> None:
         base = Path(state_dir or os.environ.get("COLONY_STATE_DIR", "."))
         self._base_dir = base / "images"
+        if source_evidence:
+            self._base_dir /= "sources"
         self._originals_dir = self._base_dir / "originals"
         self._thumbs_dir = self._base_dir / "thumbs"
 
     def _ensure_dirs(self) -> None:
-        self._originals_dir.mkdir(parents=True, exist_ok=True)
-        self._thumbs_dir.mkdir(parents=True, exist_ok=True)
+        self._originals_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._thumbs_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for directory in (self._base_dir, self._originals_dir, self._thumbs_dir):
+            directory.chmod(0o700)
 
     def _original_path(self, image_hash: str, mime_type: str) -> Path:
-        ext = "jpg" if "jpeg" in mime_type else "png"
+        ext = {"image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}.get(mime_type, "png")
         return self._originals_dir / f"{image_hash}.{ext}"
 
     def _thumbnail_path(self, image_hash: str) -> Path:
         return self._thumbs_dir / f"{image_hash}.jpg"
+
+    @staticmethod
+    def _write_durable(path: Path, data: bytes) -> None:
+        # The caller serializes source asset ownership in the source ledger.
+        # The file is durable before a source transaction can reference it.
+        fd, temporary = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+
+    def store_original(self, image: ImageInput) -> StoredImage:
+        """Retain exact image bytes separately from a regenerable thumbnail."""
+        self._ensure_dirs()
+        image_hash = hashlib.sha256(image.data).hexdigest()
+        original = self._original_path(image_hash, image.mime_type)
+        thumbnail = self._thumbnail_path(image_hash)
+        if not original.exists() or hashlib.sha256(original.read_bytes()).hexdigest() != image_hash:
+            self._write_durable(original, image.data)
+        if not thumbnail.exists():
+            from colony_sidecar.vector.image_preprocess import generate_thumbnail
+            data = generate_thumbnail(image.data)
+            if data:
+                self._write_durable(thumbnail, data)
+        return StoredImage(image_hash, str(original), str(thumbnail) if thumbnail.exists() else "",
+                           image.mime_type, image.width, image.height, len(image.data))
+
+    def delete_original(self, image_hash: str) -> bool:
+        """Delete an owned original and thumbnail after ledger reference checks."""
+        if len(image_hash) != 64 or any(c not in "0123456789abcdef" for c in image_hash):
+            raise ValueError("invalid image hash")
+        deleted = False
+        for directory, extensions in ((self._originals_dir, ("jpg", "png", "jpeg", "webp", "gif")),
+                                      (self._thumbs_dir, ("jpg",))):
+            for ext in extensions:
+                path = directory / f"{image_hash}.{ext}"
+                if path.exists():
+                    path.unlink()
+                    deleted = True
+            if directory.exists():
+                fd = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+        return deleted
 
     async def store(self, image: ImageInput) -> StoredImage:
         """Store an image and its thumbnail. Returns reference info.

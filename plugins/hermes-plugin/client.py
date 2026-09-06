@@ -1697,7 +1697,7 @@ class ColonyClient:
             if timezone_name is not None:
                 payload["context"]["timezone"] = timezone_name
             if user_message:
-                payload["user_message"] = {"role": "user", "content": str(user_message)}
+                payload["user_message"] = {"role": "user", "content": user_message if isinstance(user_message, list) else str(user_message)}
             if assistant_message:
                 payload["assistant_message"] = {
                     "role": "assistant", "content": str(assistant_message),

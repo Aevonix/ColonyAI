@@ -134,6 +134,22 @@ else:
     raise AssertionError("oversize checkpoint was silently accepted")
 assert len(TurnOutbox(path).snapshot()) == 2
 
+# Hermes' actual native image builder reaches the ordinary outbox and wire
+# without stringifying content blocks or putting base64 into a text summary.
+import base64
+from agent.image_routing import build_native_content_parts
+image_path = home / "neutral.png"
+image_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4v8AAAAASUVORK5CYII="))
+parts, skipped = build_native_content_parts("Remember this image", [str(image_path)])
+assert not skipped and any(part["type"] == "image_url" for part in parts)
+plugins.invoke_hook("pre_llm_call", session_id="session-image", task_id="task-image", turn_id="image-a", platform="cli", sender_id="", user_message=parts)
+plugins.invoke_hook("post_llm_call", session_id="session-image", task_id="task-image", turn_id="image-a", platform="cli", user_message=parts, assistant_response="Image received", conversation_history=[], model="processor-a")
+image_rows = [row for row in TurnOutbox(path).snapshot() if row["turn_id"] == "image-a"]
+assert len(image_rows) == 1 and image_rows[0]["payload"]["user_message"] == parts
+assert "base64," not in image_rows[0]["payload"].get("summary", "")
+TurnOutbox(path).drain(deliver, timeout_seconds=1)
+assert any(body.get("user_message", {}).get("content") == parts for _, body in wire)
+
 # A local persistence failure reaches the real compression host and leaves
 # its caller's transcript unchanged, without invoking the compressor.
 def failed_enqueue(*args, **kwargs):
