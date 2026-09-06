@@ -195,7 +195,35 @@ writer or owner role.
 
 The view observes running Hermes turns, including agent cron fires and
 executing subagents, and reads claimed/running workers from the canonical task
-queue for the owner. It does not cover queued children, script-only cron jobs,
+queue for the owner. It also reads native cron attempts, including script-only
+jobs, from one explicitly bound Hermes profile. The sidecar uses its private
+local-instance manifest or explicit `HERMES_HOME`; it never scans other profiles
+or assumes a default home. A conflicting binding is unavailable. The existing
+CLI-managed service supplies the same private home automatically.
+
+The cron projection reads `cron/executions.db` without importing or running the
+native scheduler, initializing its schema, or rewriting its status. It returns
+native execution/job IDs, a hashed source-home identity, optional job names,
+record timestamps and claimed/running status, plus a bounded day of recent
+completed/failed/unknown records. Prompts, scripts, output, errors and credentials
+are excluded. No observation writer or polling daemon is added. Native recorded
+running state has **unknown process liveness**, however recent it is. Only
+Hermes can reconcile abandoned attempts; completed records do not prove a
+third-party effect. Guests receive no native cron rows. Missing, incompatible
+or unreadable ledgers are explicitly unavailable, and `complete` is always
+false for the combined work view.
+
+Qualification fires a due native `no_agent` job in a disposable profile with
+`deliver=local`, observes the same execution ID during and after actual script
+completion, and checks the persisted output. This does not depend on an empty
+`enabled_toolsets`, which Hermes treats as its default tool selection. A separate
+installed-wheel test runs actual native parent and child turns with controlled
+inference, reads a neutral local file, delivers the asynchronous completion
+through the native CLI ownership filter, and resumes the parent. A foreign
+session cannot consume that completion; a guest child retains guest tool limits.
+These tests do not contact a model endpoint or a production profile.
+
+The view still does not cover queued children,
 unregistered external coding processes or every hardware service.
 It does not enforce atomic free-text conversational commitments. The optional
 [explicit shared undertaking](COMMITMENT-WORK.md) coordinates work against an

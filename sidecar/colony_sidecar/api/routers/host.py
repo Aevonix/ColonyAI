@@ -2651,7 +2651,7 @@ async def context_assemble(
         if owner:
             work = registry().view(contact_id=person, owner=True, limit=8)
             work = await with_queue_work(work, owner=True, limit=8)
-            if work["items"] or work.get('worker_work', {}).get('items'):
+            if work["items"] or work.get('worker_work', {}).get('items') or work.get('native_cron'):
                 sections.append(ContextSection(id="colony-executions", title="Observed current work", body=format_view(work), priority=73))
     except HTTPException:
         pass

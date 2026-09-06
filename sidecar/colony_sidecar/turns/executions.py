@@ -84,7 +84,7 @@ class ExecutionRegistry:
             items.append(item)
         return {"schema": "ColonyExecutionViewV1", "items": items, "total": total,
                 "truncated": total > len(items), "coverage": "registered Hermes turns only",
-                "commitments_enforced": False}
+                "commitments_enforced": False, "complete": False}
 
 
 def registry() -> ExecutionRegistry:
@@ -104,4 +104,16 @@ def format_view(view: dict) -> str:
         lines.append('- Worker work: ' + json.dumps(item, ensure_ascii=True))
     if view.get('worker_work', {}).get('unavailable'):
         lines.append('Canonical worker work is temporarily unavailable.')
+    cron = view.get('native_cron')
+    if cron:
+        if not cron['available']:
+            lines.append('Native cron coverage unavailable: ' + cron['reason'] + '.')
+        else:
+            lines.append('Native cron records from selected profile ' + cron['source_home_id'] + '; process liveness and external effects unverified.')
+            for item in cron['items']:
+                lines.append('- Native cron work: ' + json.dumps(item, ensure_ascii=True))
+            for item in cron['recent']:
+                lines.append('- Recent native cron outcome: ' + json.dumps(item, ensure_ascii=True))
+            if cron['truncated']:
+                lines.append(f"Showing {len(cron['items'])} of {cron['total']} native active records.")
     return "\n".join(lines)

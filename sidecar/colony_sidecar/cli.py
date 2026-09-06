@@ -481,7 +481,7 @@ def main() -> None:
         try:
             resp = httpx.post(
                 f"http://{host}:{port}/v1/host/memory/backfill",
-                json={"identity": {"gateway_id": "cli"}, "collection": args.collection, "batch_size": args.batch_size},
+                json={"identity": {"host_id": "cli"}, "collection": args.collection, "batch_size": args.batch_size},
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=10,
             )
@@ -522,7 +522,7 @@ def main() -> None:
         try:
             resp = httpx.post(
                 f"http://{host}:{port}/v1/host/memory/migrate",
-                json={"identity": {"gateway_id": "cli"}, "old_model_id": args.old_model, "batch_size": args.batch_size},
+                json={"identity": {"host_id": "cli"}, "old_model_id": args.old_model, "batch_size": args.batch_size},
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=10,
             )
@@ -530,7 +530,6 @@ def main() -> None:
                 data = resp.json()
                 task_id = data.get("task_id", "")
                 print(f"Migration started (task_id={task_id})")
-                import time
                 deadline = time.monotonic() + args.wait_seconds
                 status_url = f"http://{host}:{port}/v1/host/memory/migrate/{task_id}"
                 while time.monotonic() < deadline:
