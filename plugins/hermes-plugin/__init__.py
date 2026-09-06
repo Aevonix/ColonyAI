@@ -2498,6 +2498,8 @@ def register(ctx: Any) -> None:
         scope = _TRANSPORT_SCOPES.for_execution(session_id=kwargs.get("session_id", ""),
             task_id=kwargs.get("task_id", ""), turn_id=kwargs.get("turn_id", ""))
         _REVIEW_PARENT_SCOPE.set(scope if scope is not None and scope.valid_participant else None)
+        from .review_evidence import capture
+        capture(scope, kwargs.get('request'))
         return None  # No provider request changes.
     ctx.register_middleware("llm_request", capture_review_parent)
     ctx.register_middleware('llm_request', reconcile_request)

@@ -46,6 +46,10 @@ def stage_skill_change(arguments):
                    content=arguments.get('content') or '', file_path=arguments.get('file_path') or '',
                    old_string=arguments.get('old_string') or '', new_string=arguments.get('new_string') or ''))
     payload = dict(arguments)
+    # Source references come from the actual native request captured before
+    # Hermes forked this review, never from the proposed skill's arguments.
+    from .review_evidence import current
+    payload['_colony_review_evidence'] = current()
     operation = editable_operation(arguments)
     if operation is not None:
         current = manager._find_skill(operation.get('name', ''))

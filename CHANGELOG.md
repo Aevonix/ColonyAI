@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.6 - traceable native learning reviews
+
+Native background reviews now carry bounded references to actual failed tool
+calls from their originating request. Proposed skill changes and their existing
+evaluation records retain the observing session, turn, tool-call identifier
+and request-visible result hash. Model-written provenance is replaced by this
+captured evidence; reviews without eligible evidence record its absence.
+
+The real Hermes request hook and background-review fork are covered by failed
+read, successful-read and guest controls. This establishes traceability, not a
+measured learning gain, and does not automatically adopt a skill or add another
+learning service. See [native review evidence](docs/NATIVE-REVIEW-EVIDENCE.md).
+
 ## v1.0.5 - native draft execution
 
 - Accepted local source drafts use the stock Hermes Kanban dispatcher and a

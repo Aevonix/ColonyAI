@@ -11,6 +11,7 @@ PROBE = r'''
 import json,os,socket,sys
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace as NS
 sys.path.insert(0,sys.argv[1]); scenario=sys.argv[2]
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
@@ -20,6 +21,12 @@ socket.socket.connect=no_network; socket.create_connection=no_network
 from tools import skill_manager_tool as manager,skill_provenance as provenance,skill_ledger as ledger,write_approval as approval
 from colony_hermes.review import stage_skill_change
 from colony_hermes.review_evaluation import evaluate_pending,audit_evaluation
+from colony_hermes.review_evidence import capture,current
+capture(NS(valid_participant=True,authority_lane='owner',platform='cli',session_id='native-parent',turn_id='native-turn'),
+    {'messages':[{'role':'assistant','tool_calls':[{'id':'failed-read','function':{'name':'read_file'}}]},
+        {'role':'tool','tool_call_id':'failed-read','content':json.dumps({'error':'Selected fixture path is absent'})}]})
+if scenario=='batch':capture(None,{})
+expected_source=current()
 name='neutral-path-recovery'
 old='---\nname: '+name+'\ndescription: Recover a neutral supplied path.\n---\nUse the earlier path after a read failure.\n'
 new=old.replace('Use the earlier path after a read failure.','Use the current supplied path after a read failure.')
@@ -33,8 +40,11 @@ try:
         operation={'action':'patch','name':name,'content':new}
         if scenario in {'targeted','patch_conflict','interrupted_targeted'}:
             operation={'action':'patch','name':name,'old_string':'absent-text' if scenario=='patch_conflict' else 'earlier','new_string':'current supplied'}
-        staged=json.loads(stage_skill_change({'operations':[operation]} if scenario in {'batch','targeted','patch_conflict','interrupted_targeted'} else operation))
+        arguments={'operations':[operation]} if scenario in {'batch','targeted','patch_conflict','interrupted_targeted'} else operation
+        arguments['_colony_review_evidence']={'invented_by_model':True}
+        staged=json.loads(stage_skill_change(arguments))
         assert staged['staged']; pid=staged['pending_id']
+        assert approval.get_pending(approval.SKILLS,pid)['payload']['_colony_review_evidence']==expected_source
 finally: provenance.reset_current_write_origin(token)
 target=manager._find_skill(name)['path']/'SKILL.md'
 phases=[]
@@ -93,6 +103,7 @@ else:
     else:
         assert not approval.get_pending(approval.SKILLS,pid)
         entry=ledger.get_entry(result['evaluation_id'])
+        assert entry['evidence']['source_evidence']==expected_source
         assert entry['evidence']['baseline']['cases'][0]['passed'] is False
         assert entry['evidence']['candidate']['cases'][0]['passed'] is True
         if scenario in {'regression','initial_unavailable'}:
