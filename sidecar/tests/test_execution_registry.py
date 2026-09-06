@@ -92,9 +92,17 @@ async def test_api_binds_owner_and_subject_to_existing_authority(store, monkeypa
         assert (await client.post("/v1/host/executions/observe", json=observation("forged", contact_id="owner"))).status_code == 403
         own = await client.get("/v1/host/executions", params={"contact_id": "contact-a", "session_id": "session-a"})
         assert own.json()["total"] == 1
+        assert (await client.get('/v1/host/executions', params={
+            'contact_id': 'contact-a', 'projection': 'request'})).status_code == 403
         assert (await client.get("/v1/host/executions", params={"contact_id": "contact-a", "session_id": "session-other"})).json()["total"] == 0
         principal[0] = RequestAuthority(principal_id="owner-host", credential_id="key", scopes=frozenset({"context:read"}), viewer_person_id="owner", person_ids=frozenset({"owner"}), audiences=frozenset({"owner"}), authenticated=True)
         assert (await client.get("/v1/host/executions", params={"contact_id": "owner"})).json()["total"] == 2
+        current = await client.get('/v1/host/executions', params={
+            'contact_id': 'owner', 'projection': 'request', 'limit': 100})
+        assert current.status_code == 200
+        assert current.json()['schema'] == 'ColonyRequestWorkV1'
+        assert observation()['execution_id'] in current.json()['text']
+        assert len(current.json()['text']) <= 4000
         assert (await client.post("/v1/host/executions/observe", json=observation("write", contact_id="owner"))).status_code == 403
     assert required_scope("GET", "/v1/host/executions") == "context:read"
     assert required_scope("POST", "/v1/host/executions/observe") == "turns:write"

@@ -89,6 +89,10 @@ login. See the setup guide for status, stop, uninstall and recovery.
   persistent registry. Another session sees who holds it. A lease coordinates
   work; it cannot by itself make an external side effect exactly once.
   [Commitment work](docs/COMMITMENT-WORK.md)
+  During a long owner turn, a bounded operational view refreshes before each
+  model request so concurrent completion does not wait for another user message.
+  Full memory recollection remains once per turn.
+  [Current work within a turn](docs/REQUEST-WORK-CONTEXT.md)
 - **Replaceable search indexes.** Optional Lance indexes record embedding
   identity and rebuild into a separate generation. Interrupted rebuilds resume;
   incompatible or unknown vectors are not compared. Canonical evidence remains

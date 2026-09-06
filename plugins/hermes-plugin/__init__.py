@@ -54,6 +54,7 @@ from .slash import SLASH_COMMANDS
 from .executions import ExecutionObserver
 from .commitment_work import CommitmentCoordinator
 from .request_memory import RequestMemory
+from .request_work import RequestWork
 
 
 logger = logging.getLogger(__name__)
@@ -2181,6 +2182,7 @@ def register(ctx: Any) -> None:
     turn_writer_platforms = boundary.turn_writer_platforms
     turn_outbox = boundary.turn_outbox
     request_memory = RequestMemory(client, turn_outbox)
+    request_work = RequestWork(client)
     execution_observer = (
         ExecutionObserver(client)
         if config.get("execution_registry_enabled") is True else None
@@ -2403,7 +2405,9 @@ def register(ctx: Any) -> None:
             session_id=str(kwargs.get('session_id') or ''),
             task_id=str(kwargs.get('task_id') or ''),
             turn_id=str(kwargs.get('turn_id') or ''))
-        return request_memory(request, scope)
+        result = request_memory(request, scope)
+        result['request'] = request_work(result['request'], scope)
+        return result
 
     def commitment_work_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}
