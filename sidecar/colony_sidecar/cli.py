@@ -65,14 +65,14 @@ def main() -> None:
     sub.add_parser("status", help="Check sidecar health and pipeline status")
 
     # --- service ---
-    service_p = sub.add_parser("service", help="Manage launchd service")
+    service_p = sub.add_parser("service", help="Manage the selected private instance user service")
     service_sub = service_p.add_subparsers(dest="service_command")
-    service_sub.add_parser("install", help="Install the launchd service")
-    service_sub.add_parser("uninstall", help="Uninstall the launchd service")
-    service_sub.add_parser("start", help="Start the launchd service")
-    service_sub.add_parser("stop", help="Stop the launchd service")
-    service_sub.add_parser("restart", help="Restart the launchd service")
-    service_sub.add_parser("status", help="Show launchd service status")
+    service_sub.add_parser("install", help="Install and enable autostart (does not start the process)")
+    service_sub.add_parser("uninstall", help="Remove the selected service; retain private data")
+    service_sub.add_parser("start", help="Start the selected service and wait for HTTP readiness")
+    service_sub.add_parser("stop", help="Stop the selected service")
+    service_sub.add_parser("restart", help="Restart the selected service")
+    service_sub.add_parser("status", help="Show manager state and HTTP readiness")
 
     # --- validate ---
     val_p = sub.add_parser("validate", help="Run end-to-end pipeline validation (uses LLM credits)")
@@ -308,9 +308,8 @@ def main() -> None:
 
         # Service-aware: error out if launchd is managing the sidecar
         if _is_service_loaded():
-            print("❌ The launchd service is managing this sidecar.")
+            print("❌ A user service is managing this sidecar.")
             print("  Use 'colony service stop' and 'colony service start' instead,")
-            print("  or 'launchctl unload' first.")
             sys.exit(1)
 
         # Check and start Neo4j if needed (both foreground and daemon mode)
@@ -361,7 +360,7 @@ def main() -> None:
         _load_dotenv()
         # Service-aware: error out if launchd is managing the sidecar
         if _is_service_loaded():
-            print("❌ Sidecar is managed by launchd.")
+            print("❌ Sidecar is managed by a user service.")
             print("  Use 'colony service stop' instead.")
             sys.exit(1)
         _cmd_stop()
@@ -372,10 +371,14 @@ def main() -> None:
 
     elif args.command == "service":
         _load_dotenv()
-        if os.environ.get("COLONY_INSTALL_PROFILE") == "local":
-            print("This private instance uses 'start --detach' or your own per-instance supervisor.")
-            print("The legacy global launchd service command does not manage private instances.")
-            raise SystemExit(1)
+        if os.environ.get("COLONY_INSTALL_PROFILE") == "local" and args.service_command:
+            from colony_sidecar.services.instance import manage, ServiceError
+            try:
+                manage(args.service_command)
+            except (ServiceError, ValueError, OSError) as exc:
+                print(f"Service operation failed: {exc}", file=sys.stderr)
+                raise SystemExit(1) from None
+            return
         if not hasattr(args, "service_command") or not args.service_command:
             print("❌ No service subcommand given")
             print("  Usage: colony service {install|uninstall|start|stop|restart|status}")
@@ -1332,8 +1335,18 @@ def _find_pids_on_port(port: int) -> list[int]:
 
 
 def _is_service_loaded() -> bool:
-    """Check if the launchd service is currently loaded and running."""
-    if os.environ.get("COLONY_INSTALL_PROFILE") == "local" or not shutil.which("launchctl"):
+    """Check the selected user service, retaining legacy launchd behavior."""
+    if os.environ.get("COLONY_INSTALL_PROFILE") == "local":
+        from colony_sidecar.services.instance import InstanceService
+        service = InstanceService.selected()
+        if os.environ.get("COLONY_INSTANCE_SERVICE") == service.label:
+            return False  # This foreground invocation belongs to that manager.
+        if not service.link.exists() and not service.link.is_symlink():
+            return False
+        state = service.status()
+        return (state["loaded"] if service.platform == "darwin" else
+                state.get("state") in {"active", "activating", "deactivating"})
+    if not shutil.which("launchctl"):
         return False
     result = subprocess.run(
         ["launchctl", "list", "ai.aevonix.colony-sidecar"],

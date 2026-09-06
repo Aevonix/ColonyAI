@@ -108,10 +108,56 @@ from `plugins.colony.instance_dir`. They never fall back to another instance's
 `.env`. The private instance's `.env` governs startup; edit that file for lasting
 changes. Its `sidecar.log` and process record belong to that instance. A busy port
 is not permission to stop its occupant. Stop checks the recorded process's
-creation time and command before signaling it. This daemon does not install
-reboot persistence: use your existing per-instance launchd/systemd supervisor
-with `colony --instance /private/path start` for unattended operation. The legacy
-global `colony service` command refuses this profile.
+creation time and command before signaling it.
+
+For automatic restart and login startup, use the existing CLI's user-service
+commands from the Python environment you want to run. First stop any detached
+instance process. Installation enables the selected service but does not start
+it; `service start` waits for both the manager's process and authenticated HTTP
+health before reporting readiness.
+
+```sh
+colony --instance /private/path service install
+colony --instance /private/path service start
+colony --instance /private/path service status
+colony --instance /private/path service stop
+colony --instance /private/path service uninstall
+```
+
+Linux uses `systemctl --user`; macOS uses a LaunchAgent in the logged-in user's
+GUI session. Each label derives from the resolved instance directory. Definitions
+and logs live under that instance's `service/` directory; the user manager gets
+only a link to its definition. Commands never use sudo or change login policy.
+Other instances retain their definitions, processes and data. Uninstall stops
+and removes this instance's manager registration while retaining its private
+state, logs and definition.
+
+These are user services. A macOS LaunchAgent runs while that user is logged in.
+A Linux user service's lifetime follows the existing user-manager policy; boot
+before login or operation after logout requires an already configured lingering
+user manager. The CLI does not enable lingering. See the native
+[launchd lifecycle](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html)
+and [systemd user service contract](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html).
+
+The definition preserves the exact Python interpreter used for installation,
+including its virtual environment. To change that environment, stop the service,
+run `service install` with the new environment, then start it. The previous
+definition is retained as `service/<name>.previous`, and a failed installation
+restores its bytes. This does not roll back databases or application releases.
+If startup fails, inspect the private `service/sidecar.log`; the manager remains
+installed for recovery. An occupied port is an error, never permission to stop
+its occupant. The old global launchd command remains only for legacy profiles.
+
+The opt-in `sidecar/tests/test_instance_service_live.py` qualification creates
+two disposable instances through the installed CLI and actual native manager.
+It checks HTTP turn capture and later recall, kills only one newly created
+service PID to verify manager recovery, verifies the second instance stays up,
+and uninstalls both registrations while retaining their private data. Normal
+unit runs skip this test. Set `COLONY_TEST_USER_SERVICE=1`,
+`COLONY_TEST_SERVICE_PYTHON` to the installed Colony interpreter, and
+`COLONY_TEST_HERMES_PYTHON` to a supported Hermes interpreter to run it explicitly.
+It uses a loopback model fixture; this is process/persistence evidence, not a
+model-quality or actual reboot test.
 
 Verify the real loop: tell Hermes a distinctive harmless fact, exit, open a new
 session and ask about it. Check the answer and retained source through the

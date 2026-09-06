@@ -48,7 +48,12 @@ Start a new Hermes session, give it a harmless fact, then ask for that fact in a
 second session. The [setup guide](docs/LOCAL-HERMES-SETUP.md) explains existing
 profiles, unattended flags, startup and recovery. The minimum profile remembers
 and observes. Consequential background execution requires deliberate setup.
-Automatic service installation for this profile is still pending.
+For login startup and automatic process recovery, stop a detached instance and
+run `colony --instance /path/to/private/colony service install`, then
+`colony --instance /path/to/private/colony service start`. Linux systemd user
+services and macOS LaunchAgents use the selected environment and private state.
+This follows the user session's lifetime, not a guarantee of operation before
+login. See the setup guide for status, stop, uninstall and recovery.
 
 ## What the active paths provide
 
@@ -113,8 +118,8 @@ at `GET /v1/host/autonomy/posture` before enabling another loop.
 
 The [known gaps](docs/KNOWN-GAPS.md) inventory includes legacy components that
 are partial, dormant or awaiting replacement. It is not a list of 1.0 guarantees.
-Current work includes unattended startup, broader hardware and session
-session coverage, measured self-improvement and removal of obsolete operational
+Current work includes broader hardware and session coverage, measured
+self-improvement and removal of obsolete operational
 machinery. No claim of general intelligence or complete autonomy is made here.
 
 ## Development
