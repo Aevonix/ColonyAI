@@ -3585,6 +3585,13 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
         raise HTTPException(status_code=409 if code == "ambiguous_source" else 422, detail={"code": code}) from exc
     # The durable tombstone precedes external projection deletion. A failed
     # cleanup remains a truthful pending result, and recall stays fenced.
+    fact_cleanup = "unavailable" if _facts_store is None else "pending"
+    if _facts_store is not None:
+        try:
+            _facts_store.purge_erased_sources(list(dict.fromkeys(result["source_ids"] + result["affected_source_ids"])))
+            fact_cleanup = "complete"
+        except Exception:
+            logger.warning("source erasure shared-fact cleanup is pending", exc_info=True)
     graph_cleanup = "unavailable" if _graph is None else "pending"
     if _graph is not None:
         try:
@@ -3592,8 +3599,8 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             graph_cleanup = "complete"
         except Exception:
             logger.warning("source erasure graph cleanup is pending", exc_info=True)
-    return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
-            "scope": "canonical_turn_sources_and_linked_graph_projections",
+    return {"source_erased": True, **result, "graph_cleanup": graph_cleanup, "shared_facts_cleanup": fact_cleanup,
+            "scope": "canonical_turn_sources_and_linked_graph_and_shared_fact_projections",
             "host_reconciliation": "pending_until_each_host_connects"}
 
 
@@ -4123,7 +4130,7 @@ async def _process_turn_sync(
     # people: a system-attributed turn must never mint affect/facts/psyche.
     try:
         if (_tom_extractor is not None and _affect_store is not None
-                and _facts_store is not None and not _is_system_turn):
+                and _facts_store is not None and not _is_system_turn and source_recorded):
             _p8_producer = None
             if _p8_runtime is not None:
                 try:
@@ -4140,6 +4147,7 @@ async def _process_turn_sync(
                 contact_id=body.context.contact_id,
                 session_id=body.context.session_id,
                 p8_producer=_p8_producer,
+                source_id=source_id,
             ))
     except Exception:
         logger.debug("ToM extraction from turn_sync failed", exc_info=True)
@@ -11888,14 +11896,14 @@ async def delete_affect_event(event_id: str):
 # ---------------------------------------------------------------------------
 
 async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
-                                source: str, confidence: float) -> bool:
+                                source: str, confidence: float, *, record=None) -> bool:
     """Mirror a shared fact into the memory graph as a `fact` memory.
 
     Shared facts live in their own store; semantic recall searches the memory
     graph. Without this mirror a stored fact is structurally unrecallable
-    (recall.fact_coverage measured exactly that). Content-hash dedup in
-    store_memory makes the mirror idempotent: re-extraction reinforces the
-    existing node instead of duplicating it.
+    (recall.fact_coverage measured exactly that). A linked fact's hash includes
+    its source and contact: replay can reinforce that support, but cannot
+    take ownership of identical wording from another turn or a legacy row.
 
     Returns True when the fact reached the graph (created or reinforced),
     False otherwise — callers on the hot path ignore this; the backfill
@@ -11904,18 +11912,30 @@ async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
         return False
     try:
         import hashlib
-        await _graph.store_memory(
+        lineage = record.get('source_lineage') if record else None
+        if lineage and (_facts_store is None or not _facts_store.source_visible(record)):
+            return False
+        source_uri = 'turn:' + lineage['turn_id'] if lineage else 'tom:shared_fact'
+        metadata = {"shared_fact": True, "fact_source": source or ""}
+        if lineage:
+            metadata.update(source_turn_id=lineage['turn_id'], fact_record_id=record['id'],
+                source_message_hashes=lineage['message_hashes'],
+                model_provenance=(record.get('metadata') or {}).get('model_provenance', {}))
+        # A linked support must not reinforce or take ownership of an old
+        # independent fact, or of the same wording learned in another turn.
+        basis = json.dumps([source_uri, contact_id, fact], ensure_ascii=False) if lineage else fact
+        memory_id = await _graph.store_memory(
             content=fact,
             memory_type="fact",
             entities=[],
-            metadata={"shared_fact": True, "fact_source": source or ""},
+            metadata=metadata,
             importance=max(0.1, min(1.0, confidence if confidence is not None else 0.7)),
             person_id=contact_id,
             source_type="inference",
-            source_uri="tom:shared_fact",
-            content_hash=hashlib.sha256(fact.encode("utf-8")).hexdigest(),
+            source_uri=source_uri,
+            content_hash=hashlib.sha256(basis.encode("utf-8")).hexdigest(),
         )
-        return True
+        return bool(memory_id) if lineage else True
     except Exception:
         logger.debug("shared fact -> graph mirror failed", exc_info=True)
         return False
@@ -12068,6 +12088,7 @@ async def backfill_shared_facts(body: FactsBackfillRequest) -> dict:
                     fact_row.get("contact_id"),
                     fact_row.get("source") or "",
                     fact_row.get("confidence"),
+                    record=fact_row,
                 )
                 _facts_backfill_state["processed"] += 1
                 if ok:
@@ -12448,15 +12469,27 @@ async def _run_tom_extraction(
     contact_id: str,
     session_id: Optional[str] = None,
     p8_producer=None,
+    source_id: Optional[str] = None,
 ) -> None:
     """Background task: extract affect + facts from a conversation turn."""
     if _tom_extractor is None:
         return
+    lineage = None
+    if source_id is not None:
+        try:
+            lineage, conversation_text = _facts_store.source_input(source_id, contact_id)
+        except Exception:
+            logger.debug('ToM source unavailable; background projection skipped', exc_info=True)
+            return
+    def source_current():
+        return lineage is None or _facts_store._source_visible(contact_id, lineage)
     # Affect
     try:
         affect = await _tom_extractor.extract_affect(
             conversation_text, contact_id, session_id=session_id,
         )
+        if not source_current():
+            return
         if affect and _affect_store is not None:
             _affect_store.create_event(
                 contact_id=affect["contact_id"],
@@ -12477,6 +12510,8 @@ async def _run_tom_extraction(
         facts = await _tom_extractor.extract_facts(
             conversation_text, contact_id, session_id=session_id,
         )
+        if not source_current():
+            return
         if facts and _facts_store is not None:
             for f in facts:
                 record = _facts_store.create_fact(
@@ -12484,11 +12519,13 @@ async def _run_tom_extraction(
                     fact=f["fact"],
                     source=f["source"],
                     confidence=f["confidence"],
+                    source_lineage=lineage,
+                    metadata={'model_provenance': f.get('model_provenance', {})} if lineage else None,
                 )
                 _append_p8_fact_record(
                     record, producer=p8_producer, origin="model")
                 await _mirror_fact_to_graph(f["fact"], f["contact_id"],
-                                            f["source"], f["confidence"])
+                                            f["source"], f["confidence"], record=record)
             try:
                 from colony_sidecar.events.broadcaster import emit as _emit
                 _emit("mind.fact_created", {"contact_id": contact_id, "source": f["source"]})
@@ -12501,6 +12538,8 @@ async def _run_tom_extraction(
         eng = await _tom_extractor.extract_engagement(
             conversation_text, contact_id, session_id=session_id,
         )
+        if not source_current():
+            return
         if eng and _engagement_store is not None:
             _engagement_store.update_from_observation(
                 contact_id,

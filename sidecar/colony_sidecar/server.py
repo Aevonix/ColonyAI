@@ -1960,7 +1960,9 @@ async def lifespan(app: FastAPI):
         logger.info("AffectStore initialized (db=%s)", affect_db)
 
         facts_db = state_dir / "colony-facts.db"
-        facts_store = SharedFactsStore(db_path=facts_db)
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        facts_store = SharedFactsStore(db_path=facts_db, source_ledger=get_turn_idempotency_ledger(state_dir))
+        facts_store.purge_erased_sources()
         set_facts_store(facts_store)
         logger.info("SharedFactsStore initialized (db=%s)", facts_db)
 

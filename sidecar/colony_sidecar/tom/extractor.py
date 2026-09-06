@@ -168,6 +168,11 @@ class TomExtractor:
         self._mark_extracted(contact_id)
         for r in results:
             r["contact_id"] = contact_id
+            r['model_provenance'] = {
+                'function_role': getattr(resp, 'function_role', '') or 'extraction',
+                'model_id': getattr(resp, 'model_id', 'unknown'),
+                'config_revision': getattr(resp, 'config_revision', '') or 'unknown',
+                'weight_revision': getattr(resp, 'model_revision', '') or 'unknown'}
         return results
 
     async def extract_engagement(
