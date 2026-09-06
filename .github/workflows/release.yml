@@ -9,26 +9,25 @@ permissions:
   id-token: write
 
 jobs:
-  # --- Python sidecar → PyPI ---
+  # --- Canonical adapter and sidecar → PyPI ---
   pypi:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sidecar
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Build package
+      - name: Build both distributions
         run: |
-          pip install build
-          python -m build
+          pip install build twine
+          python -m build --outdir dist .
+          python -m build --outdir dist ./sidecar
+          python -m twine check dist/*
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
-          packages-dir: sidecar/dist/
+          packages-dir: dist/
           # Re-running a release (e.g. to recover a failed later job) must not
           # fail just because this version is already on PyPI.
           skip-existing: true

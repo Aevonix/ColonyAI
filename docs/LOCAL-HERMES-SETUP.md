@@ -100,6 +100,7 @@ requires an explicit upgrade rather than being silently replaced.
 ```bash
 colony --instance "$HOME/.hermes-orion/colony" start --detach
 colony --instance "$HOME/.hermes-orion/colony" status
+colony --instance "$HOME/.hermes-orion/colony" doctor
 colony --instance "$HOME/.hermes-orion/colony" stop
 ```
 
@@ -109,6 +110,12 @@ from `plugins.colony.instance_dir`. They never fall back to another instance's
 changes. Its `sidecar.log` and process record belong to that instance. A busy port
 is not permission to stop its occupant. Stop checks the recorded process's
 creation time and command before signaling it.
+
+`doctor` checks the selected local instance's files, configured model, HTTP
+health and scoped source-job status using its client credential. It does not
+require a global administrator credential, graph services or background-effect
+workers. Reported extraction errors remain visible; a healthy diagnostic is
+not a substitute for the real recollection check below.
 
 For automatic restart and login startup, use the existing CLI's user-service
 commands from the Python environment you want to run. First stop any detached

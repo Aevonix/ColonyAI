@@ -40,6 +40,8 @@ _ENV_VARS = (
     "COLONY_EMIT_HERMES_SKILLS",
     "COLONY_HERMES_SKILLS_DIR",
     "COLONY_API_KEY",
+    "COLONY_CLIENT_API_KEY",
+    "COLONY_INSTALL_PROFILE",
     "COLONY_URL",
     "COLONY_SIDECAR_URL",
 )
@@ -61,6 +63,40 @@ def clean_env(monkeypatch, tmp_path):
 
 def _by_name(results):
     return {r.name: r for r in results}
+
+
+@pytest.mark.parametrize('outcome', ['ready', 'wrong_key', 'pending_error', 'down'])
+def test_private_profile_uses_only_scoped_source_diagnostics(clean_env, monkeypatch, outcome):
+    monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
+    monkeypatch.setenv('COLONY_CLIENT_API_KEY', 'scoped-fixture-key')
+    monkeypatch.setenv('COLONY_API_KEY', '')
+    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'person+fixture')
+    calls = []
+    def request(url, key, timeout):
+        calls.append(url)
+        assert key == 'scoped-fixture-key'
+        if outcome == 'down':
+            raise OSError('offline')
+        if url.endswith('/health'):
+            return 200, {'status': 'ok'}
+        assert url.endswith('/memory/sources/claims/status?contact_id=person%2Bfixture')
+        if outcome == 'wrong_key': return 403, {'detail': 'forbidden'}
+        return 200, {'sources': ([{'status': 'pending', 'error': 'TimeoutError'}]
+            if outcome == 'pending_error' else []), 'media': [], 'semantic': {}}
+    monkeypatch.setattr(doctor, '_http_get', request)
+    result = _by_name(run_doctor(colony_url='http://fixture'))
+    expected = FAIL if outcome in {'wrong_key', 'down'} else WARN if outcome == 'pending_error' else PASS
+    assert result['server-source-memory'].status == expected
+    assert 'server-auth' not in result and 'server-memory-graph' not in result
+    assert all('/queue/' not in url and '/admin/' not in url for url in calls)
+
+
+def test_doctor_default_credential_preserves_legacy_profile(clean_env, monkeypatch):
+    monkeypatch.setenv('COLONY_CLIENT_API_KEY', 'local-client')
+    monkeypatch.setenv('COLONY_API_KEY', 'legacy')
+    assert doctor.default_api_key() == 'legacy'
+    monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
+    assert doctor.default_api_key() == 'local-client'
 
 
 def _fake_http(responses):

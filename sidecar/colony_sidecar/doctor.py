@@ -28,6 +28,7 @@ import re
 import sqlite3
 import urllib.error
 import urllib.request
+from urllib.parse import urlencode
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2013,6 +2014,47 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
 # Engine entry point + reporting
 # ---------------------------------------------------------------------------
 
+def run_private_instance_checks(base_url: str, api_key: str, timeout: float) -> List[CheckResult]:
+    """Diagnose the local profile through its existing exact-person API."""
+    results = []
+    for name, check in (("state-dir", check_state_dir), ("llm-config", check_llm_config),
+                        ("contacts-db", check_contacts_db), ("owner-contact-id", check_owner_contact_id)):
+        results += _run(name, check)
+    try:
+        status, body = _http_get(base_url + '/v1/host/health', api_key, timeout)
+        healthy = status == 200 and isinstance(body, dict) and body.get('status') == 'ok'
+        results.append(CheckResult('server-health', PASS if healthy else FAIL,
+            detail='Sidecar HTTP health is ready' if healthy else f'Sidecar health is not ready (HTTP {status})'))
+    except Exception as exc:
+        results.append(CheckResult('server-health', FAIL, detail='Sidecar is unavailable: ' + type(exc).__name__,
+            remedy='Start this private instance and inspect its sidecar.log.'))
+        healthy = False
+    owner = os.environ.get('COLONY_OWNER_CONTACT_ID', '')
+    if not healthy or not owner or not api_key:
+        results.append(CheckResult('server-source-memory', FAIL,
+            detail='A ready instance, owner contact and scoped client credential are required.',
+            remedy='Use the selected instance environment and its COLONY_CLIENT_API_KEY.'))
+        return results
+    try:
+        status, body = _http_get(base_url + '/v1/host/memory/sources/claims/status?' +
+            urlencode({'contact_id': owner}), api_key, timeout)
+        if (status != 200 or not isinstance(body, dict) or
+                not all(isinstance(body.get(name), list) for name in ('sources', 'media'))):
+            results.append(CheckResult('server-source-memory', FAIL,
+                detail=f'Scoped source status unavailable (HTTP {status}); check the selected owner and client credential.'))
+        else:
+            jobs = body['sources'] + body['media']
+            errors = sum(bool(row.get('error')) for row in jobs if isinstance(row, dict))
+            pending = sum(row.get('status') != 'complete' for row in jobs if isinstance(row, dict))
+            results.append(CheckResult('server-source-memory', WARN if errors else PASS,
+                detail=f'Scoped source status accepted: {len(jobs)} recent jobs, {pending} pending, {errors} with errors. '
+                       'This verifies access and reported jobs, not model recall quality.'))
+    except Exception as exc:
+        results.append(CheckResult('server-source-memory', FAIL,
+            detail='Scoped source status unavailable: ' + type(exc).__name__))
+    return results
+
+
 def run_doctor(
     colony_url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -2020,10 +2062,18 @@ def run_doctor(
 ) -> List[CheckResult]:
     """Run every local and server check; never raises."""
     url = colony_url or default_colony_url()
-    key = api_key if api_key is not None else os.environ.get("COLONY_API_KEY", "")
+    key = api_key if api_key is not None else default_api_key()
+    if os.environ.get('COLONY_INSTALL_PROFILE') == 'local':
+        return run_private_instance_checks(url, key, timeout)
     results = run_local_checks()
     results += run_server_checks(url, key, timeout=timeout)
     return results
+
+
+def default_api_key() -> str:
+    if os.environ.get('COLONY_INSTALL_PROFILE') == 'local':
+        return os.environ.get('COLONY_CLIENT_API_KEY', '')
+    return os.environ.get('COLONY_API_KEY', '')
 
 
 def default_colony_url() -> str:
