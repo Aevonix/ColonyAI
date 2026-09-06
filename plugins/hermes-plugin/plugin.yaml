@@ -1,5 +1,5 @@
 name: colony
-version: 0.4.1
+version: 1.0.0
 description: |
   Governed Colony sidecar adapter for Hermes: transport-attested private reads,
   immutable mediator-only HermesToolActionIntentV1 effects, one durable exact
