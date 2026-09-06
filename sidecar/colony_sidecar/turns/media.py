@@ -112,7 +112,7 @@ def normalize_messages(conn, store, turn_id, session_id, messages):
                 (turn_id,message_hash,asset_hash,block_index,role) VALUES (?,?,?,?,?)''',
                 (turn_id, original_hash, stored.image_hash, index, message['role']))
             blocks.append({'type': 'image', 'asset_id': 'sha256:' + stored.image_hash, 'mime_type': stored.mime_type})
-        normalized = {'role': message['role'], 'content': blocks}
+        normalized = dict(message, content=blocks)
         if changed:
             normalized['_source_message_hash'] = original_hash
         result.append(normalized)

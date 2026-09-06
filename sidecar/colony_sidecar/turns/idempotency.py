@@ -157,6 +157,7 @@ class TurnIdempotencyLedger:
         messages: list[dict[str, Any]], scope: str = "person",
         occurred_at: str | None = None,
         timezone_name: str | None = None,
+        derive_claims: bool = True,
     ) -> bool:
         """Atomically retain source JSON and its rebuildable lexical index.
 
@@ -164,6 +165,10 @@ class TurnIdempotencyLedger:
         not attest the speaker of every old message. Ordinary attributed turns
         can be recalled by that person across sessions. No inference or affect
         update occurs in this storage path. True means newly committed.
+
+        Reviewed historical imports can set derive_claims=False to retain
+        quotations without scheduling assertion learning. Text indexing still
+        uses the same source ledger and semantic projection queue.
         """
         if not turn_id or not contact_id or not session_id or not messages:
             raise ValueError("source requires an id, participant, session and messages")
@@ -187,7 +192,11 @@ class TurnIdempotencyLedger:
         with closing(self._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             rules = self._erasure_rules(conn, contact_id)
-            if any(rule["turn_id"] == turn_id for rule in rules):
+            # Source IDs are globally unique. Reattributing an erased source
+            # must not resurrect it under a different contact after restore or
+            # a reviewed historical mapping change. Exact message-copy rules
+            # below remain scoped to their original contact and session.
+            if conn.execute("SELECT 1 FROM source_erasures WHERE turn_id=?", (turn_id,)).fetchone():
                 raise SourceErased("source was erased")
             retained = self._retained_messages(messages, session_id, rules)
             if retained != messages:
@@ -213,7 +222,8 @@ class TurnIdempotencyLedger:
             )
             self._index_messages(conn, turn_id, messages)
             from colony_sidecar.beliefs.source_projection import enqueue
-            enqueue(conn, turn_id, messages, scope=scope, timezone_name=timezone_name)
+            if derive_claims:
+                enqueue(conn, turn_id, messages, scope=scope, timezone_name=timezone_name)
             from colony_sidecar.turns.source_vectors import enqueue as enqueue_vectors
             enqueue_vectors(conn, turn_id)
         return True

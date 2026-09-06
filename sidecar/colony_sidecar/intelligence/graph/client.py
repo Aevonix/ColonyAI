@@ -6,6 +6,7 @@ relationships, events, and behavioral patterns.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import json
@@ -470,7 +471,14 @@ class ColonyGraph:
                     continue
                 metadata = memory.get('metadata') or {}
                 if isinstance(metadata, str):
-                    metadata = json.loads(metadata)
+                    try:
+                        metadata = json.loads(metadata)
+                    except json.JSONDecodeError:
+                        # Earlier store_memory writers used str(dict), not JSON.
+                        # Read those retained records without rewriting evidence.
+                        metadata = ast.literal_eval(metadata)
+                if not isinstance(metadata, dict):
+                    raise ValueError('Graph memory metadata must be an object')
                 metadata = {**metadata, **{key: memory.get(key) for key in
                     ('source_uri', 'source_type', 'source_version', 'content_hash', 'session_id',
                      'type', 'strength', 'effective_confidence', 'epistemic_state', 'protected')}}
@@ -609,7 +617,7 @@ class ColonyGraph:
 
         # Preserve dict for vector store before stringifying for Neo4j
         metadata_dict = metadata
-        metadata_str = str(metadata_dict) if metadata_dict else "{}"
+        metadata_str = json.dumps(metadata_dict, default=str)
 
         async with self.driver.session(database=self.database) as session:
             result = await session.run(
