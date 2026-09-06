@@ -112,6 +112,13 @@ def format_view(view: dict) -> str:
         lines.append('- Worker work: ' + json.dumps(item, ensure_ascii=True))
     if view.get('worker_work', {}).get('unavailable'):
         lines.append('Canonical worker work is temporarily unavailable.')
+    reported = view.get('reported_worker')
+    if reported:
+        lines.append('Local worker reports; process liveness and external effects are unverified.')
+        if not reported['available']:
+            lines.append('Local worker reports unavailable: '+reported['reason']+'.')
+        for item in reported['items']:
+            lines.append('- Reported worker status: '+json.dumps(item,ensure_ascii=True))
     cron = view.get('native_cron')
     if cron:
         if not cron['available']:
