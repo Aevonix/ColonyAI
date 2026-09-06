@@ -4132,6 +4132,8 @@ def create_app() -> FastAPI:
     app.include_router(host_v2_router)
     from colony_sidecar.api.routers import executions as executions_router
     app.include_router(executions_router.router)
+    from colony_sidecar.api.routers import commitment_work as commitment_work_router
+    app.include_router(commitment_work_router.router)
 
     # Exact PUT/GET action endpoint.  Middleware maps these methods to
     # actions:execute/actions:verify; the router independently rejects legacy,

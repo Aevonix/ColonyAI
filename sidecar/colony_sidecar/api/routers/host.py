@@ -2576,14 +2576,15 @@ async def context_assemble(
 
     # --- Scoped execution observations (not a commitment lock) ---
     try:
-        from colony_sidecar.api.routers.executions import authorized_viewer
+        from colony_sidecar.api.routers.executions import authorized_viewer, with_queue_work
         from colony_sidecar.turns.executions import registry, format_view
         person, owner = authorized_viewer(request, body.context.contact_id, scope="context:read")
         # Public/guest turns do not get cross-session activity. The owner view
         # is sealed from existing exact person grants, never a body owner flag.
         if owner:
             work = registry().view(contact_id=person, owner=True, limit=8)
-            if work["items"]:
+            work = await with_queue_work(work, owner=True, limit=8)
+            if work["items"] or work.get('worker_work', {}).get('items'):
                 sections.append(ContextSection(id="colony-executions", title="Observed current work", body=format_view(work), priority=73))
     except HTTPException:
         pass
@@ -2614,11 +2615,22 @@ async def context_assemble(
             all_comms = _listed + [c for c in overdue[:5]
                                    if c.get("id") not in _seen_ids]
             if all_comms:
-                lines = []
+                from colony_sidecar.commitments.work import CommitmentWork
+                reservations = {}
+                reservations_available = True
+                try:
+                    reservations = CommitmentWork(_commitment_store).for_commitments(
+                        [c['id'] for c in all_comms], contact_id=contact_id)
+                except Exception:
+                    reservations_available = False
+                    logger.debug('commitment reservation view unavailable', exc_info=True)
+                lines = ["Claim the commitment ID with colony_commitment_work before undertaking it. Another session's live reservation means do not duplicate its work. Claims authorize no external effect."]
                 for c in all_comms:
-                    status_tag = "[OVERDUE]" if c.get("status") == "overdue" or (c.get("due_at") and c.get("status") == "pending") else "[pending]"
+                    status_tag = "[OVERDUE]" if c.get("status") == "overdue" or c['id'] in {item['id'] for item in overdue} else "[pending]"
                     due = f" (due: {c.get('due_at', '')})" if c.get('due_at') else ""
-                    lines.append(f"- {status_tag} {c.get('description', '')}{due}")
+                    reservation = reservations.get(c['id'])
+                    work_tag = ('; work=' + reservation['work_state'] + '; session=' + reservation.get('session_id', '')) if reservation else ('; work=unclaimed' if reservations_available else '; work=unknown')
+                    lines.append(f"- {status_tag} id={c['id']}; {c.get('description', '')}{due}{work_tag}")
                 sections.append(ContextSection(
                     id="colony-commitments",
                     title="Pending Commitments",
@@ -11541,15 +11553,6 @@ async def create_commitment(body: CommitmentCreateRequest) -> CommitmentResponse
     if _commitment_store is None:
         raise HTTPException(status_code=501, detail="Commitment tracking not initialized")
 
-    if body.dedupe:
-        try:
-            existing = _commitment_store.find_open_duplicate(
-                body.person_id, body.description)
-        except Exception:
-            existing = None
-        if existing is not None:
-            return CommitmentResponse(**existing, deduped=True)
-
     try:
         result = _commitment_store.create(
             person_id=body.person_id,
@@ -11559,9 +11562,13 @@ async def create_commitment(body: CommitmentCreateRequest) -> CommitmentResponse
             source_type=body.source_type,
             source_context=body.source_context,
             metadata=body.metadata,
+            dedupe=body.dedupe,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+    if result.get("deduped"):
+        return CommitmentResponse(**result)
 
     try:
         from colony_sidecar.events.broadcaster import emit as _emit

@@ -49,6 +49,7 @@ from .client import (
 )
 from .slash import SLASH_COMMANDS
 from .executions import ExecutionObserver
+from .commitment_work import CommitmentCoordinator
 
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,14 @@ def _parameters(
 # they are not part of that governed-action execution boundary.  The merged
 # model catalog is sorted before its exact JSON shape is hashed for preflight.
 _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "name": "colony_commitment_work",
+        "description": "Before undertaking a listed commitment, claim its ID atomically. If another session holds it, inspect status and do not duplicate its work. Release when stopping. A claim authorizes no external effect and does not mark the obligation fulfilled.",
+        "parameters": _parameters({
+            "commitment_id": _identifier_model_schema(),
+            "operation": {"type": "string", "enum": ["claim", "status", "release"]},
+        }, ("commitment_id", "operation")),
+    },
     {
         "name": "colony_autonomy_status",
         "description": "Read bounded Colony autonomy status in an attested private scope.",
@@ -241,6 +250,7 @@ def governance_attestation() -> dict[str, Any]:
             "legacy_effect_workers": "inert_not_installable",
         },
         "read_tool_names": list(_READ_TOOL_NAMES),
+        "coordination_tool_names": ["colony_commitment_work"],
         "action_intent_tool_names": list(_ACTION_INTENT_TOOL_NAMES),
         "owner_message_intent_tool_names": list(_OWNER_MESSAGE_TOOL_NAMES),
         "direct_effect_tool_names": [],
@@ -538,7 +548,7 @@ def _tool_execution_middleware(**kwargs: Any) -> Any:
         name = snapshot["tool_name"]
         # These exact adapter-owned tools perform their own scope/capability
         # checks and submit effects to the existing mediator. No prefix grant.
-        governed = name in {*_READ_TOOL_NAMES, *_ACTION_INTENT_TOOL_NAMES, *_OWNER_MESSAGE_TOOL_NAMES}
+        governed = name in {*_READ_TOOL_NAMES, *_ACTION_INTENT_TOOL_NAMES, *_OWNER_MESSAGE_TOOL_NAMES, "colony_commitment_work"}
         if not governed:
             exact = all(snapshot[key] for key in ("session_id", "task_id", "turn_id"))
             scope = _TRANSPORT_SCOPES.for_execution(
@@ -2102,6 +2112,7 @@ def register(ctx: Any) -> None:
     # command becomes visible to Hermes.
     boundary = _prepare_runtime_boundary(config)
     client = ColonyClient(url=url, api_key=api_key)
+    work_coordinator = CommitmentCoordinator(client)
     mediator = boundary.mediator
     runtime_enabled_actions = boundary.enabled_action_tools
     turn_writer_platforms = boundary.turn_writer_platforms
@@ -2143,6 +2154,8 @@ def register(ctx: Any) -> None:
             attested_system_platforms=attested_system_platforms,
         )
         _TRANSPORT_SCOPES.put(scope)
+        if scope.valid_participant:
+            work_coordinator.bind_turn(**kwargs)
         if execution_observer is not None:
             execution_observer.start(scope, **kwargs)
         return None
@@ -2287,20 +2300,30 @@ def register(ctx: Any) -> None:
             return _GUARD_WITHHELD_TEXT if mode == "enforce" else None
 
     # Register the context carrier before any model-visible handler.
-    if execution_observer is None:
-        ctx.register_middleware("tool_execution", _tool_execution_middleware)
-    else:
-        def observe_tool(**kwargs):
-            next_call = kwargs.get("next_call")
-            if not callable(next_call):
-                return _tool_execution_middleware(**kwargs)
-            def observed(args):
+    def observe_tool(**kwargs):
+        next_call = kwargs.get("next_call")
+        if not callable(next_call):
+            return _tool_execution_middleware(**kwargs)
+        def observed(args):
+            # Only turns that explicitly acquired an undertaking incur this
+            # check. A stale holder cannot dispatch more tools under its token.
+            denial = work_coordinator.before_tool(_TOOL_EXECUTION_CONTEXT.get() or {})
+            if denial is not None:
+                return denial
+            if execution_observer is not None:
                 return execution_observer.tool(next_call, args, **{
                     key: value for key, value in kwargs.items()
                     if key not in {"next_call", "args"}
                 })
-            return _tool_execution_middleware(**{**kwargs, "next_call": observed})
-        ctx.register_middleware("tool_execution", observe_tool)
+            return next_call(args)
+        return _tool_execution_middleware(**{**kwargs, "next_call": observed})
+    ctx.register_middleware("tool_execution", observe_tool)
+
+    def commitment_work_handler(args=None, **kwargs):
+        context = _TOOL_EXECUTION_CONTEXT.get() or {}
+        scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get("session_id", ""),
+            task_id=context.get("task_id", ""), turn_id=context.get("turn_id", ""))
+        return work_coordinator.handle(args or {}, scope, context)
     for schema in _TOOL_SCHEMAS:
         name = schema["name"]
         if name in _READ_TOOL_NAMES and name not in boundary.enabled_read_tools:
@@ -2314,14 +2337,24 @@ def register(ctx: Any) -> None:
             toolset="colony",
             schema=schema,
             handler=(
+                commitment_work_handler if name == "colony_commitment_work" else
                 lambda args=None, _name=name, **kwargs:
                 dispatcher.dispatch(_name, args or {}, **kwargs)
             ),
         )
 
     ctx.register_hook("pre_llm_call", pre_llm_call)
-    ctx.register_hook("subagent_start", _TRANSPORT_SCOPES.bind_child)
-    ctx.register_hook("pre_api_request", _TRANSPORT_SCOPES.bind_current_session)
+    def bind_child(**kwargs):
+        _TRANSPORT_SCOPES.bind_child(**kwargs)
+        work_coordinator.child(**kwargs)
+    ctx.register_hook("subagent_start", bind_child)
+    def bind_current_session(**kwargs):
+        _TRANSPORT_SCOPES.bind_current_session(**kwargs)
+        scope = _TRANSPORT_SCOPES.for_execution(session_id=kwargs.get("session_id", ""),
+            task_id=kwargs.get("task_id", ""), turn_id=kwargs.get("turn_id", ""))
+        if scope is not None and scope.valid_participant:
+            work_coordinator.bind_turn(**kwargs)
+    ctx.register_hook("pre_api_request", bind_current_session)
     ctx.register_hook("transform_llm_output", transform_llm_output)
     ctx.register_hook("post_llm_call", post_llm_call)
     if execution_observer is not None:

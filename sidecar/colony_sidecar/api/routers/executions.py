@@ -46,6 +46,21 @@ def observe(body: ExecutionObservation, request: Request):
 
 
 @router.get("")
-def active(request: Request, contact_id: str, session_id: str = "", limit: int = Query(20, ge=1, le=100)):
+async def active(request: Request, contact_id: str, session_id: str = "", limit: int = Query(20, ge=1, le=100)):
     person, owner = authorized_viewer(request, contact_id, scope="context:read")
-    return registry().view(contact_id=person, owner=owner, session_id=session_id, limit=limit)
+    view = registry().view(contact_id=person, owner=owner, session_id=session_id, limit=limit)
+    return await with_queue_work(view, owner=owner, limit=limit)
+
+
+async def with_queue_work(view, *, owner, limit=8):
+    if not owner:
+        return view
+    from colony_sidecar.api.routers import host
+    queue = getattr(host._task_queue, 'queue', host._task_queue)
+    if queue is not None and callable(getattr(queue, 'current_work', None)):
+        try:
+            view['worker_work'] = await queue.current_work(limit=limit)
+            view['coverage'] = 'registered Hermes turns and canonical Colony claimed/running jobs'
+        except Exception:
+            view['worker_work'] = {'items': [], 'unavailable': True, 'source': 'canonical_task_queue'}
+    return view

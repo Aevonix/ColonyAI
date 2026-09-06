@@ -7615,6 +7615,33 @@ class QueueManager:
         return jobs
 
     @_serialized_read
+    async def current_work(self, limit: int = 20) -> dict:
+        """Bounded canonical worker work, with no payload/result disclosure."""
+        assert self._db is not None
+        bounded = max(1, min(limit, 100))
+        cur = await self._db.execute("""SELECT job_id,job_type,status,claimed_by,
+            claim_attempt_id,claim_expires_at,last_heartbeat,payload FROM jobs
+            WHERE status IN ('claimed','running') ORDER BY posted_at DESC LIMIT ?""", (bounded + 1,))
+        rows = await cur.fetchall()
+        now = self._worker_now()
+        items = []
+        for row in rows[:bounded]:
+            payload = json.loads(row['payload'] or '{}')
+            description = next((payload[key] for key in ('title', 'goal', 'description', 'instruction', 'task')
+                                if isinstance(payload.get(key), str) and payload[key].strip()), row['job_type'])
+            age = None
+            if row['last_heartbeat']:
+                try:
+                    age = max(0, (now - datetime.fromisoformat(row['last_heartbeat'])).total_seconds())
+                except (TypeError, ValueError):
+                    pass
+            items.append({'job_id': row['job_id'], 'job_type': row['job_type'], 'state': row['status'],
+                'worker_id': row['claimed_by'], 'claim_attempt_id': row['claim_attempt_id'],
+                'description': description[:240], 'heartbeat_age_seconds': round(age, 1) if age is not None else None,
+                'liveness': 'recently_observed' if age is not None and age < self._worker_heartbeat_ttl_secs else 'unknown'})
+        return {'items': items, 'truncated': len(rows) > bounded, 'source': 'canonical_task_queue'}
+
+    @_serialized_read
     async def get_jobs_by_status(self, status: JobStatus) -> List[Job]:
         """Return all jobs with a given status."""
         assert self._db is not None

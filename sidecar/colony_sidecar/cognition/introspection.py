@@ -189,13 +189,17 @@ async def run_turn_introspection(
             row = commitment_store.create(
                 person_id=person_id,
                 description=desc[:1000],
+                dedupe=True,
                 due_at=(it.get("due_at") or None),
                 priority=int(it.get("priority") or 60),
                 source_type=(it.get("source_type") or "introspection"),
                 source_context="inline turn introspection",
                 metadata=(it.get("metadata") if isinstance(it.get("metadata"), dict) else None),
             )
-            created.append(row.get("id"))
+            if row.get("deduped"):
+                skipped_duplicates += 1
+            else:
+                created.append(row.get("id"))
             _known.append(norm)   # a later candidate in the same batch can also dupe this one
         except Exception as exc:
             # e.g. a non-future due_at is rejected by the store — skip that one, keep going.
