@@ -325,6 +325,11 @@ class SourceClaimProjection:
             bundles.append({"id": "assertions:" + identifier, "kind": "source_quote",
                             "source_uri": "turn:" + group[0]["turn_id"], "claim_status": status,
                             "epistemic_state": status, "atomic_evidence": True,
+                            # Rank the grounded language the user supplied.
+                            # Administrative IDs/timestamps in the output JSON
+                            # are provenance, not the passage's semantic topic.
+                            # Conflicting peers remain one indivisible candidate.
+                            "ranking_text": "\n".join(dict.fromkeys(c["evidence"] for c in group)),
                             **({"validity_status": "query_time_unresolved"} if time_query.mode == "unresolved_time" else {}),
                             "contradiction_count": len(values) - 1 if conflict else 0, "relevance": 1 / (61 + len(bundles)),
                             "content": json.dumps({"subject": group[0]["subject"], "predicate": key[1],

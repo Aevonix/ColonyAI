@@ -236,7 +236,7 @@ async def test_caption_semantics_keeps_exact_asset_and_shared_source_erasure(tmp
 
 
 @pytest.mark.asyncio
-async def test_semantic_candidates_still_use_temporal_conflict_and_correction_bundles(source_app, tmp_path):
+async def test_semantic_candidates_still_use_temporal_conflict_and_correction_bundles(source_app, tmp_path, monkeypatch):
     from test_source_claim_projection import Model, claim, ingest
     from colony_sidecar.beliefs.source_projection import SourceClaimProjection
     from colony_sidecar.beliefs.source_time import interpret_time_query
@@ -256,6 +256,14 @@ async def test_semantic_candidates_still_use_temporal_conflict_and_correction_bu
         bundles = [json.loads(row['content']) for row in rows if row.get('atomic_evidence')]
         assert bundles[0]['status'] == 'unresolved_conflict'
         assert {row['value'] for row in bundles[0]['assertions']} == {'River', 'Lake'}
+        from colony_sidecar.intelligence.graph.selection import RecallSelector
+        from colony_sidecar.intelligence.graph.recall import provider_calibration_metadata
+        reranker = Reranker(); calibrate(monkeypatch, reranker)
+        selector = RecallSelector(reranker.rerank, calibration_metadata=lambda: provider_calibration_metadata(reranker))
+        selected, context = await selector.select_context('workplace', [], rows)
+        assert reranker.calls == [[a + '\n' + b]]
+        assert len(selected) == 1 and selected[0]['atomic_evidence']
+        assert all(value in context for value in ('unresolved_conflict', 'River', 'Lake', 'turn:a', 'turn:b'))
         corrected = 'Correction: My office is in Orchard, not River.'
         await ingest(client, 'corrected', corrected)
         await claims.process_one(Model({corrected:claim(corrected, 'Orchard', operation='correct', match_prior=True)}))

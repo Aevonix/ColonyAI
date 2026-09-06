@@ -50,6 +50,13 @@ abstention uses the existing optional calibration, not a universal similarity
 threshold. An absent or failed reranker retains the existing fallback behavior;
 semantic proximity alone is not proof of relevance.
 
+Atomic claim bundles are ranked by their original grounded quotations. Their
+full structured record, including every conflicting member, validity and source
+handle, remains the output. This prevents administrative JSON from obscuring
+the evidence's topic in the reranker. The candidate input format is part of the
+calibration stamp, so changing this representation invalidates an older stamp;
+the public code does not lower or choose a global relevance threshold.
+
 `test_source_vectors.py` exercises ordinary HTTP ingestion, the actual worker,
 cross-session context, one rerank pass, scoped prefiltering with more than 200
 foreign chunks, current-source hydration, partial and late erasure, equal-width
