@@ -19,11 +19,12 @@ def main() -> None:
         prog="colony",
         description="Colony intelligence sidecar server",
     )
+    parser.add_argument("--instance", help="Private Colony state directory (otherwise use selected Hermes profile binding)")
     sub = parser.add_subparsers(dest="command")
 
     # --- init ---
     init_p = sub.add_parser("init", help="Initialize Colony identity and setup")
-    init_p.add_argument("--dir", default=".", help="Root directory for config files")
+    init_p.add_argument("--dir", default=None, help="Private instance directory (default: selected Hermes home/colony)")
     init_p.add_argument("--passphrase", default=None, help="Encrypt Colony private key with passphrase (prompted if --encrypt)")
     init_p.add_argument("--encrypt", action="store_true", help="Encrypt Colony private key")
     init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Colony only)")
@@ -32,7 +33,13 @@ def main() -> None:
     # Harness configuration (new approach)
     init_p.add_argument("--mcp-harnesses", help="Connect coding harnesses via MCP (comma-separated: claude-code,codex,crush,opencode)")
     init_p.add_argument("--agent-harness", choices=["hermes"], help="Connect agent harness via plugin (OpenClaw support was removed in v0.21.14)")
-    init_p.add_argument("--hermes-home", default=None, help="Hermes profile/home to stage into (default: HERMES_HOME or ~/.hermes; no activation)")
+    init_p.add_argument("--hermes-home", default=None, help="Selected Hermes profile/home (default: HERMES_HOME or ~/.hermes)")
+    init_p.add_argument("--hermes-python", help="Python interpreter of an existing supported Hermes installation")
+    init_p.add_argument("--agent-name", help="Name for a new private identity; existing SOUL is preserved")
+    init_p.add_argument("--model-url", help="One local OpenAI-compatible API root")
+    init_p.add_argument("--model", help="Model identifier at that endpoint")
+    init_p.add_argument("--adapter-wheel", help="Use this canonical colony-hermes wheel instead of the installed distribution")
+    init_p.add_argument("--replace-memory-provider", action="store_true", help="Explicitly replace selection of another memory provider; retain its files and a config backup")
     init_p.add_argument("--no-harness", action="store_true", help="Skip all harness setup (standalone mode)")
     # Backward compatibility
     init_p.add_argument("--host-framework", choices=["openclaw", "hermes", "claude-code", "codex", "crush", "standalone"], help="Host framework (deprecated: use --agent-harness or --mcp-harnesses)")
@@ -269,6 +276,9 @@ def main() -> None:
                          help="ISO week to compute (e.g. 2026-W27)")
 
     args = parser.parse_args()
+    if args.instance:
+        os.environ["COLONY_INSTANCE_SELECTED"] = "1"
+        os.environ["COLONY_STATE_DIR"] = str(Path(args.instance).expanduser().resolve())
 
     if args.command == "init":
         # Run setup wizard
@@ -302,7 +312,8 @@ def main() -> None:
             sys.exit(1)
 
         # Check and start Neo4j if needed (both foreground and daemon mode)
-        _check_and_start_neo4j()
+        if os.environ.get("COLONY_GRAPH_ENABLED", "true").lower() not in {"0", "false", "off"}:
+            _check_and_start_neo4j()
 
         if args.detach:
             _cmd_start_daemon(host, port, args.force)
@@ -310,6 +321,9 @@ def main() -> None:
             # Foreground mode — check port first
             existing_pid = _find_pid_on_port(port)
             if existing_pid:
+                if os.environ.get("COLONY_INSTALL_PROFILE") == "local":
+                    print("Selected port is already in use; no process was stopped.")
+                    raise SystemExit(1)
                 if args.force:
                     print(f"Killing existing process {existing_pid} on port {port}...")
                     try:
@@ -355,6 +369,11 @@ def main() -> None:
         _cmd_status()
 
     elif args.command == "service":
+        _load_dotenv()
+        if os.environ.get("COLONY_INSTALL_PROFILE") == "local":
+            print("This private instance uses 'start --detach' or your own per-instance supervisor.")
+            print("The legacy global launchd service command does not manage private instances.")
+            raise SystemExit(1)
         if not hasattr(args, "service_command") or not args.service_command:
             print("❌ No service subcommand given")
             print("  Usage: colony service {install|uninstall|start|stop|restart|status}")
@@ -1293,6 +1312,8 @@ def _find_pids_on_port(port: int) -> list[int]:
 
 def _is_service_loaded() -> bool:
     """Check if the launchd service is currently loaded and running."""
+    if os.environ.get("COLONY_INSTALL_PROFILE") == "local" or not shutil.which("launchctl"):
+        return False
     result = subprocess.run(
         ["launchctl", "list", "ai.aevonix.colony-sidecar"],
         capture_output=True, text=True,
@@ -1588,13 +1609,22 @@ def _check_and_start_neo4j() -> bool:
 def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     """Start the sidecar as a background daemon."""
     # Clean up any orphaned processes first
-    orphan_count = _cleanup_orphans(kill=True)
+    local_instance = os.environ.get("COLONY_INSTALL_PROFILE") == "local"
+    if local_instance:
+        from colony_sidecar.setup import _check_port
+        if _check_port(port):
+            print("Selected port is already in use; no process was stopped.")
+            raise SystemExit(1)
+    orphan_count = 0 if local_instance else _cleanup_orphans(kill=True)
     if orphan_count:
         print(f"  Cleaned up {orphan_count} orphan process(es)")
 
     # Check if port is already in use
     existing_pids = _find_pids_on_port(port)
     if existing_pids:
+        if local_instance:
+            print("Selected port is already in use; no process was stopped.")
+            raise SystemExit(1)
         if force:
             for pid in existing_pids:
                 print(f"  Killing existing process {pid} on port {port}...")
@@ -1665,10 +1695,14 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     # Write PID file
     pid_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / "sidecar.pid"
     pid_path.write_text(str(proc.pid))
+    if local_instance:
+        record = pid_path.with_name("sidecar-process.json")
+        record.write_text(json.dumps({"pid": proc.pid, "signature": _process_signature(proc.pid)}))
+        record.chmod(0o600)
 
     # Wait for health check
     _load_dotenv()
-    api_key = os.environ.get("COLONY_API_KEY", "dev-mode-no-key")
+    api_key = os.environ.get("COLONY_CLIENT_API_KEY") or os.environ.get("COLONY_API_KEY", "dev-mode-no-key")
     if _wait_for_sidecar(host, port, api_key, timeout=20.0):
         import httpx
         try:
@@ -1723,6 +1757,13 @@ def _wait_for_sidecar(host: str, port: int, api_key: str, timeout: float = 10.0)
     return False
 
 
+def _process_signature(pid: int) -> str:
+    """PID creation time and command prevent a stale file targeting PID reuse."""
+    result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
+                            capture_output=True, text=True, timeout=5)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def _cmd_stop() -> None:
     """Stop the running sidecar."""
     # Try PID file first
@@ -1736,6 +1777,31 @@ def _cmd_stop() -> None:
         except ValueError:
             pass
 
+    # New private instances never infer process ownership from a port alone.
+    if not pid and os.environ.get("COLONY_INSTALL_PROFILE") == "local":
+        print("No recorded process for this private instance.")
+        return
+    if os.environ.get("COLONY_INSTALL_PROFILE") == "local":
+        try:
+            record_path = pid_path.with_name("sidecar-process.json")
+            record = json.loads(record_path.read_text())
+            expected = record.get("signature")
+            if record.get("pid") != pid or not expected or _process_signature(pid) != expected:
+                raise ValueError()
+        except (OSError, ValueError, subprocess.SubprocessError):
+            print("Recorded process is gone or changed; no process was stopped.")
+            return
+        os.kill(pid, 15)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _process_signature(pid) == expected:
+            time.sleep(.1)
+        if _process_signature(pid) == expected:
+            print("Sidecar has not stopped yet; inspect this instance's log before retrying.")
+            raise SystemExit(1)
+        pid_path.unlink(missing_ok=True)
+        record_path.unlink(missing_ok=True)
+        print("Private instance stopped.")
+        return
     # Fallback: find by port
     if not pid:
         pid = _find_pid_on_port(port)
@@ -1779,15 +1845,26 @@ def _cmd_status() -> None:
     host = os.environ.get("COLONY_SIDECAR_HOST", "127.0.0.1")
     port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
     url = f"http://{host}:{port}"
-    api_key = os.environ.get("COLONY_API_KEY", "")
+    api_key = os.environ.get("COLONY_CLIENT_API_KEY") or os.environ.get("COLONY_API_KEY", "")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     try:
         resp = httpx.get(f"{url}/v1/host/health", headers=headers, timeout=5)
+        resp.raise_for_status()
         data = resp.json()
         status = data.get("status", "unknown")
         caps = data.get("capabilities", [])
         notes = data.get("notes", {})
+        if os.environ.get("COLONY_INSTALL_PROFILE") == "local":
+            print(f"Private instance: {os.environ['COLONY_STATE_DIR']}")
+            print(f"Sidecar HTTP status: {status}; endpoint: {url}")
+            response = httpx.get(f"{url}/v1/host/memory/sources/claims/status", headers=headers,
+                params={"contact_id": os.environ["COLONY_OWNER_CONTACT_ID"]}, timeout=5)
+            response.raise_for_status()
+            print("Source projection: " + json.dumps(response.json(), sort_keys=True))
+            print("Verify recollection by telling Hermes a fact, then asking in a new session.")
+            print("Graph/vector services and consequential background workers are disabled in this profile.")
+            return
 
         # Status icon
         icon = "🟢" if status == "ok" else "🔴"
@@ -2361,42 +2438,8 @@ def _cmd_doctor(args) -> None:
 
 
 def _load_dotenv() -> None:
-    """Load .env from ~/.colony/ first, then CWD.
-    
-    Does not override existing environment variables.
-    """
-    if os.environ.get("COLONY_SKIP_DOTENV", "").strip().lower() in {
-        "1", "true", "yes", "on",
-    }:
-        return
-
-    from pathlib import Path
-    
-    # Priority: ~/.colony/.env > CWD/.env
-    env_paths = [
-        Path.home() / ".colony" / ".env",
-        Path.cwd() / ".env",
-    ]
-    
-    for env_path in env_paths:
-        if not env_path.exists():
-            continue
-        
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    k = k.strip()
-                    v = v.strip()
-                    # Don't override existing env vars
-                    if k not in os.environ:
-                        os.environ[k] = v
-        
-        # Only load first found .env
-        break
+    from colony_sidecar.util.instance import load_environment
+    load_environment()
 
 
 def _cmd_persona(args) -> None:

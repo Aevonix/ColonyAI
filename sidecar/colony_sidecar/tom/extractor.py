@@ -4,8 +4,8 @@ Extracts affect signals and shared facts from conversation turns.
 Uses the LLM router (same as world model entity extraction) — Colony
 does NOT build its own LLM client.
 
-Throttled per contact: max 1 extraction per COLONY_TOM_EXTRACTION_THROTTLE_MINUTES
-(default 5 minutes) per contact.
+Throttled per contact and operation: max 1 extraction per
+COLONY_TOM_EXTRACTION_THROTTLE_MINUTES (default 5 minutes).
 """
 
 from __future__ import annotations
@@ -81,6 +81,7 @@ class TomExtractor:
     def __init__(self, llm_router: Any) -> None:
         self._router = llm_router
         self._last_extraction: Dict[str, str] = {}  # contact_id → ISO timestamp
+        self._last_facts: Dict[str, str] = {}  # affect must not suppress fact extraction
         self._last_engagement: Dict[str, str] = {}  # separate throttle for engagement
 
     async def extract_affect(
@@ -140,7 +141,7 @@ class TomExtractor:
         Returns list of dicts with fact, source, confidence.
         Throttled per contact.
         """
-        if not self._can_extract(contact_id):
+        if not self._can_extract(contact_id, operation="facts"):
             return []
 
         snippet = (conversation_text or "").strip()
@@ -165,9 +166,14 @@ class TomExtractor:
 
         content = getattr(resp, "content", "") or ""
         results = _parse_fact_array(content)
-        self._mark_extracted(contact_id)
+        self._mark_extracted(contact_id, operation="facts")
         for r in results:
             r["contact_id"] = contact_id
+            r['model_provenance'] = {
+                'function_role': getattr(resp, 'function_role', '') or 'extraction',
+                'model_id': getattr(resp, 'model_id', 'unknown'),
+                'config_revision': getattr(resp, 'config_revision', '') or 'unknown',
+                'weight_revision': getattr(resp, 'model_revision', '') or 'unknown'}
         return results
 
     async def extract_engagement(
@@ -223,9 +229,10 @@ class TomExtractor:
                 result["session_id"] = session_id
         return result
 
-    def _can_extract(self, contact_id: str) -> bool:
-        """Check throttle: min THROTTLE_MINUTES between extractions per contact."""
-        last = self._last_extraction.get(contact_id)
+    def _can_extract(self, contact_id: str, *, operation: str = "affect") -> bool:
+        """Check the operation's per-contact throttle."""
+        timestamps = self._last_facts if operation == "facts" else self._last_extraction
+        last = timestamps.get(contact_id)
         if last is None:
             return True
         try:
@@ -235,8 +242,9 @@ class TomExtractor:
         except (ValueError, TypeError):
             return True
 
-    def _mark_extracted(self, contact_id: str) -> None:
-        self._last_extraction[contact_id] = datetime.now(timezone.utc).isoformat()
+    def _mark_extracted(self, contact_id: str, *, operation: str = "affect") -> None:
+        timestamps = self._last_facts if operation == "facts" else self._last_extraction
+        timestamps[contact_id] = datetime.now(timezone.utc).isoformat()
 
 
 # ---------------------------------------------------------------------------

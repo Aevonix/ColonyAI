@@ -177,3 +177,28 @@ class TestTomExtractor:
         assert result is None
         facts = await extractor.extract_facts("test", "owner")
         assert facts == []
+
+    async def test_affect_and_facts_run_same_contact_same_clock(self, monkeypatch):
+        from datetime import datetime, timezone
+        import colony_sidecar.tom.extractor as module
+
+        class FixedClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
+
+        monkeypatch.setattr(module, "datetime", FixedClock)
+        monkeypatch.setattr(module, "THROTTLE_MINUTES", 5)
+        router = FakeRouter([
+            '{"valence": 0.6, "arousal": 0.7, "trigger": "boat trip", "confidence": 0.9}',
+            '[{"fact": "The hydrofoil leaves Friday", "source": "told_by_contact", "confidence": 0.8}]',
+        ])
+        extractor = TomExtractor(router)
+        text = "I am excited that the hydrofoil leaves Friday."
+        assert await extractor.extract_affect(text, "same-person") is not None
+        assert len(await extractor.extract_facts(text, "same-person")) == 1
+        assert router._idx == 2
+        # Each operation still throttles its own repeats, without another model call.
+        assert await extractor.extract_affect(text, "same-person") is None
+        assert await extractor.extract_facts(text, "same-person") == []
+        assert router._idx == 2
