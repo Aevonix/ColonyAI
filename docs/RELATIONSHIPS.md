@@ -215,6 +215,15 @@ correct. Raw source retention, learned assertions and inferred relationship
 state remain distinct. Existing attribution and authority rules still govern
 which conversations can update these stores.
 
+Cached relationship briefs re-read current affect and engagement projections at
+use time. A changed or forgotten source therefore changes the next ordinary
+turn's approach guidance without waiting for five more interactions. New cache
+rows omit copied mood and psyche guidance; old copies are ignored on read. If a
+current projection is unavailable, its advice is omitted. Contact/channel and
+cadence caching, scoped rapport projection, standing and outreach rules retain
+their existing behavior. This keeps advice consistent with retained evidence;
+it does not establish that an inferred trait is correct.
+
 
 If code is rolled back to a writer that only understands the old engagement
 aggregate, its subsequent aggregate edits have no observation lineage. The

@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _EXCLUDED_IDS = ("system", "default")
+_MOOD_CAUTION = "recent mood is negative; lead carefully"
 
 
 def profile_min_interactions() -> int:
@@ -142,6 +143,7 @@ class RelationshipProfiler:
             return None
         try:
             brief = RelationshipBrief(**json.loads(row["brief_json"]))
+            self._refresh_approach(brief)
             # Rapport topics are content-derived. Cached/autonomy reads carry
             # no authority and therefore stay contentless. A request boundary
             # may supply its server-sealed viewer; re-project on every such read
@@ -162,6 +164,11 @@ class RelationshipProfiler:
 
     def _save(self, brief: RelationshipBrief) -> None:
         payload = brief.to_dict()
+        # Current source-backed projections are read at use time, including
+        # erasure reconciliation. The interaction cache does not own copies.
+        for key in ("affect_valence", "affect_trend", "psyche_guidance", "psyche_motivators"):
+            payload.pop(key, None)
+        payload["cautions"] = [c for c in payload["cautions"] if c != _MOOD_CAUTION]
         if self._p8 is not None:
             # The cache is an availability optimization, never an authority
             # receipt. Persist only non-P8 profile fields.
@@ -265,20 +272,7 @@ class RelationshipProfiler:
                 logger.debug("comms stats failed for %s", contact_id,
                              exc_info=True)
 
-        # Affect.
-        if self._affect is not None:
-            try:
-                st = self._affect.get_state(contact_id) or {}
-                if st.get("event_count"):
-                    brief.affect_valence = round(
-                        float(st.get("current_valence", 0.0)), 3)
-                    brief.affect_trend = str(st.get("trend", "") or "")
-                    if brief.affect_valence <= -0.3 or (
-                            brief.affect_trend == "declining"):
-                        brief.cautions.append(
-                            "recent mood is negative; lead carefully")
-            except Exception:
-                pass
+        self._refresh_approach(brief)
 
         # Rapport topics from shared facts. Once P8 is attached, raw rows are
         # never a fallback and autonomy has no implicit recipient authority.
@@ -302,21 +296,6 @@ class RelationshipProfiler:
             except Exception:
                 pass
 
-        # Psyche: the engagement extractor's profile + its guidance renderer.
-        if self._engagement is not None:
-            try:
-                from colony_sidecar.tom.engagement import build_guidance
-                prof = self._engagement.get_profile(contact_id) or {}
-                guidance = build_guidance(prof)
-                brief.psyche_guidance = [
-                    ln.lstrip("- ").strip()
-                    for ln in guidance.splitlines() if ln.strip()][:6]
-                qual = prof.get("qual") or {}
-                brief.psyche_motivators = list(
-                    (qual.get("motivators") or [])[:4])
-            except Exception:
-                pass
-
         # Cadence caution: silent for much longer than their usual gap.
         try:
             if brief.interaction_count >= 5 and brief.last_interaction_at:
@@ -333,6 +312,37 @@ class RelationshipProfiler:
 
         self._save(brief)
         return brief
+
+    def _refresh_approach(self, brief: RelationshipBrief) -> None:
+        """Reproject changing source-backed advice without a new interaction."""
+        # Old cache rows can contain copied guidance. Clear it before reading
+        # the current stores, so an unavailable source cannot serve old advice.
+        brief.affect_valence = None
+        brief.affect_trend = ""
+        brief.psyche_guidance = []
+        brief.psyche_motivators = []
+        brief.cautions = [c for c in brief.cautions if c != _MOOD_CAUTION]
+        if self._affect is not None:
+            try:
+                st = self._affect.get_state(brief.contact_id) or {}
+                if st.get("event_count"):
+                    valence = round(float(st.get("current_valence", 0.0)), 3)
+                    trend = str(st.get("trend", "") or "")
+                    brief.affect_valence, brief.affect_trend = valence, trend
+                    if valence <= -0.3 or trend == "declining":
+                        brief.cautions.append(_MOOD_CAUTION)
+            except Exception:
+                logger.debug("current relationship affect unavailable", exc_info=True)
+        if self._engagement is not None:
+            try:
+                from colony_sidecar.tom.engagement import build_guidance
+                prof = self._engagement.get_profile(brief.contact_id) or {}
+                guidance = [ln.lstrip("- ").strip()
+                            for ln in build_guidance(prof).splitlines() if ln.strip()][:6]
+                motivators = list(((prof.get("qual") or {}).get("motivators") or [])[:4])
+                brief.psyche_guidance, brief.psyche_motivators = guidance, motivators
+            except Exception:
+                logger.debug("current relationship engagement unavailable", exc_info=True)
 
     async def refresh_due(self, *, limit: int = 20) -> Dict[str, Any]:
         """(Re)profile contacts that accrued enough new interactions since
