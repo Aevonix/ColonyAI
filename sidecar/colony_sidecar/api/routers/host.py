@@ -2409,7 +2409,8 @@ async def context_assemble(
     # --- Memory: authorized candidates, one selection and one budget ---
     if _exact_person_allowed and query_text:
         from colony_sidecar.intelligence.graph.recall import source_candidates
-        beliefs, quotations = [], []
+        beliefs, quotations, source_hits = [], [], []
+        source_ledger = None
         if _graph is not None:
             try:
                 candidates_fn = getattr(_graph, "recall_candidates", None)
@@ -2432,7 +2433,8 @@ async def context_assemble(
             try:
                 from colony_sidecar.turns import get_turn_idempotency_ledger
                 if (Path(get_state_dir()) / "turn-idempotency.db").exists():
-                    source_hits = get_turn_idempotency_ledger(get_state_dir()).search_sources(
+                    source_ledger = get_turn_idempotency_ledger(get_state_dir())
+                    source_hits = source_ledger.search_sources(
                         query_text, contact_id=body.context.contact_id,
                         session_id=body.context.session_id, limit=10)
                     quotations = source_candidates(source_hits)
@@ -2446,6 +2448,25 @@ async def context_assemble(
             erased_filter = getattr(_graph, "_filter_erased_source_memories", None)
             if callable(erased_filter):
                 beliefs = await erased_filter(beliefs)
+            from colony_sidecar.beliefs.source_time import interpret_time_query, filter_unstructured
+            from colony_sidecar.util import temporal as memory_temporal
+            contact_tz = None
+            if _contacts_store is not None and body.context.contact_id:
+                try:
+                    contact = await _contacts_store.get(body.context.contact_id)
+                    contact_tz = getattr(contact, "timezone", None)
+                except Exception:
+                    logger.debug("contact timezone unavailable for memory recall", exc_info=True)
+            time_query = interpret_time_query(
+                query_text, now=memory_temporal.now_utc(),
+                timezone_name=memory_temporal.resolve_communication_timezone(contact_tz, body.context.timezone))
+            if source_ledger is not None:
+                from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+                beliefs, quotations = SourceClaimProjection(source_ledger).prepare_context(
+                    beliefs, source_hits, contact_id=body.context.contact_id,
+                    session_id=body.context.session_id, time_query=time_query)
+            else:
+                beliefs = filter_unstructured(beliefs, time_query)
             try:
                 max_chars = int(os.environ.get("COLONY_RECALL_CONTEXT_MAX_CHARS", "6000"))
             except (TypeError, ValueError):
@@ -2549,6 +2570,22 @@ async def context_assemble(
                 ))
         except Exception as exc:
             logger.warning("context_assemble skills failed: %s", exc)
+
+    # --- Scoped execution observations (not a commitment lock) ---
+    try:
+        from colony_sidecar.api.routers.executions import authorized_viewer
+        from colony_sidecar.turns.executions import registry, format_view
+        person, owner = authorized_viewer(request, body.context.contact_id, scope="context:read")
+        # Public/guest turns do not get cross-session activity. The owner view
+        # is sealed from existing exact person grants, never a body owner flag.
+        if owner:
+            work = registry().view(contact_id=person, owner=True, limit=8)
+            if work["items"]:
+                sections.append(ContextSection(id="colony-executions", title="Observed current work", body=format_view(work), priority=73))
+    except HTTPException:
+        pass
+    except Exception:
+        logger.debug("execution observation view unavailable", exc_info=True)
 
     # --- Pending Commitments ---
     contact_id = body.context.contact_id if body.context else None
@@ -3498,6 +3535,14 @@ async def source_erasure_feed(contact_id: str, after: int = Query(0, ge=0), requ
         raise HTTPException(status_code=409, detail={"code": "erasure_history_mismatch"}) from exc
 
 
+@router.get("/memory/sources/claims/status")
+async def source_claim_projection_status(contact_id: str, request: Request = None):
+    person = resolve_request_person(request, claimed_person_id=contact_id) or contact_id
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    return {"sources": SourceClaimProjection(get_turn_idempotency_ledger(get_state_dir())).status(person)}
+
+
 @router.post("/memory/sources/forget")
 async def forget_turn_sources(body: SourceForgetRequest, request: Request = None):
     person = resolve_request_person(request, claimed_person_id=body.contact_id) or body.contact_id
@@ -3564,6 +3609,7 @@ async def _ingest_turn_idempotently(
                 session_id=body.context.session_id, scope="session",
                 messages=[message.model_dump(mode="json") for message in body.checkpoint_messages],
                 occurred_at=(body.context.metadata or {}).get("occurred_at"),
+                timezone_name=body.context.timezone,
             )
         except ValueError as exc:
             from colony_sidecar.turns.idempotency import SourceErased
@@ -3768,6 +3814,7 @@ async def _process_turn_sync(
                 source_id, contact_id=body.context.contact_id,
                 session_id=body.context.session_id, messages=source_messages,
                 occurred_at=(body.context.metadata or {}).get("occurred_at"),
+                timezone_name=body.context.timezone,
             )
         except SourceErased:
             return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")

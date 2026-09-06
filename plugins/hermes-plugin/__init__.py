@@ -48,6 +48,7 @@ from .client import (
     derive_hermes_turn_id,
 )
 from .slash import SLASH_COMMANDS
+from .executions import ExecutionObserver
 
 
 logger = logging.getLogger(__name__)
@@ -2020,6 +2021,10 @@ def register(ctx: Any) -> None:
     runtime_enabled_actions = boundary.enabled_action_tools
     turn_writer_platforms = boundary.turn_writer_platforms
     turn_outbox = boundary.turn_outbox
+    execution_observer = (
+        ExecutionObserver(client)
+        if config.get("execution_registry_enabled") is True else None
+    )
     _TRANSPORT_SCOPES.clear()
     dispatcher = _ToolDispatcher(
         client=client,
@@ -2046,6 +2051,8 @@ def register(ctx: Any) -> None:
             attested_system_platforms=attested_system_platforms,
         )
         _TRANSPORT_SCOPES.put(scope)
+        if execution_observer is not None:
+            execution_observer.start(scope, **kwargs)
         return None
 
     def post_llm_call(**kwargs: Any) -> None:
@@ -2090,8 +2097,12 @@ def register(ctx: Any) -> None:
             "model": str(kwargs.get("model") or ""),
             "sender": {"platform": scope.platform, "user_id": scope.sender_id},
         }
+        if kwargs.get("occurred_at"):
+            payload["occurred_at"] = str(kwargs["occurred_at"])
+        if kwargs.get("timezone"):
+            payload["timezone_name"] = str(kwargs["timezone"])
         try:
-            receipt = turn_outbox.enqueue(stable_turn_id, payload)
+            receipt = turn_outbox.enqueue(stable_turn_id, payload, capture_ordinary=True)
         except TurnOutboxConflict:
             logger.critical(
                 "stable Hermes turn id was reused with different canonical content"
@@ -2183,7 +2194,20 @@ def register(ctx: Any) -> None:
             return _GUARD_WITHHELD_TEXT if mode == "enforce" else None
 
     # Register the context carrier before any model-visible handler.
-    ctx.register_middleware("tool_execution", _tool_execution_middleware)
+    if execution_observer is None:
+        ctx.register_middleware("tool_execution", _tool_execution_middleware)
+    else:
+        def observe_tool(**kwargs):
+            next_call = kwargs.get("next_call")
+            if not callable(next_call):
+                return _tool_execution_middleware(**kwargs)
+            def observed(args):
+                return execution_observer.tool(next_call, args, **{
+                    key: value for key, value in kwargs.items()
+                    if key not in {"next_call", "args"}
+                })
+            return _tool_execution_middleware(**{**kwargs, "next_call": observed})
+        ctx.register_middleware("tool_execution", observe_tool)
     for schema in _TOOL_SCHEMAS:
         name = schema["name"]
         if name in _READ_TOOL_NAMES and name not in boundary.enabled_read_tools:
@@ -2205,6 +2229,8 @@ def register(ctx: Any) -> None:
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("transform_llm_output", transform_llm_output)
     ctx.register_hook("post_llm_call", post_llm_call)
+    if execution_observer is not None:
+        execution_observer.register(ctx)
 
     register_command = getattr(ctx, "register_command", None) or getattr(
         ctx, "register_slash_command", None

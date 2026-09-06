@@ -43,6 +43,7 @@ def source_candidates(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "content": hit["content"], "epistemic_state": "quotation",
             "occurred_at": hit.get("occurred_at"),
             "ingested_at": hit.get("ingested_at"),
+            **({"excerpt_truncated": True} if hit.get("excerpt_truncated") else {}),
             "relevance": 1 / (60 + rank), "retrieval_method": "lexical",
         })
     return rows
@@ -56,7 +57,7 @@ def render_memory_context(memories: list[dict[str, Any]]) -> str:
                   "kind": memory.get("kind", "belief"),
                   "source": str(memory.get("source_uri") or ""),
                   "state": str(memory.get("epistemic_state") or "inferred")}
-        for name in ("source_turn_id", "role", "occurred_at", "ingested_at", "excerpt_truncated"):
+        for name in ("source_turn_id", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status"):
             if memory.get(name) is not None:
                 source[name] = memory[name]
         if memory.get("effective_confidence") is not None:
@@ -92,6 +93,9 @@ def pack_memory_context(
         row = dict(original)
         rendered = render_memory_context([row])
         if len(rendered) > remaining:
+            if row.get("atomic_evidence"):
+                # Never show only the convenient half of a conflicting bundle.
+                continue
             row["excerpt_truncated"] = True
             content = str(row.get("content", ""))
             low, high = 0, len(content)

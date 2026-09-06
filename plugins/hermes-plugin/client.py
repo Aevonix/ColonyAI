@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import ipaddress
 import json
@@ -1119,7 +1120,7 @@ class TurnOutbox:
     def _fsync_storage(self) -> None:
         self._storage().fsync()
 
-    def enqueue(self, turn_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def enqueue(self, turn_id: str, payload: Mapping[str, Any], *, capture_ordinary: bool = False) -> dict[str, Any]:
         stable_id = str(turn_id or "").strip()
         if not stable_id:
             raise TurnOutboxPayloadError("turn_id is required")
@@ -1146,9 +1147,23 @@ class TurnOutbox:
                 self._fsync_storage()
                 return {"turn_id": stable_id, "state": "erased", "attempts": 0}
             row = connection.execute(
-                "SELECT envelope_sha256, state, attempts FROM turn_outbox WHERE turn_id = ?",
+                "SELECT envelope_sha256, payload_json, state, attempts FROM turn_outbox WHERE turn_id = ?",
                 (stable_id,),
             ).fetchone()
+            if capture_ordinary and payload.get("checkpoint_messages") is None:
+                stamped = dict(payload)
+                if row is not None:
+                    # Duplicate lifecycle callbacks must reuse the original
+                    # capture time; old unstamped rows stay unknown.
+                    original = json.loads(row["payload_json"])
+                    if "occurred_at" not in stamped and original.get("occurred_at"):
+                        stamped["occurred_at"] = original["occurred_at"]
+                elif not stamped.get("occurred_at"):
+                    stamped["occurred_at"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
+                payload_json = json.dumps(stamped, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+                if len(payload_json.encode("utf-8")) > self.max_payload_bytes:
+                    raise TurnOutboxPayloadError("turn payload exceeds the durable outbox limit")
+                digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
             if row is not None:
                 if row["envelope_sha256"] != digest:
                     raise TurnOutboxConflict(
@@ -1637,6 +1652,8 @@ class ColonyClient:
         sender: Mapping[str, str] | None = None,
         checkpoint_messages: Sequence[Mapping[str, Any]] | None = None,
         require_source_receipt: bool = False,
+        occurred_at: str | None = None,
+        timezone_name: str | None = None,
         outbox: TurnOutbox | None = None,
         timeout_seconds: float = 0.25,
     ) -> bool:
@@ -1675,6 +1692,10 @@ class ColonyClient:
                 user_id = str(sender.get("user_id") or "").strip()
                 if platform and user_id:
                     payload["sender"] = {"platform": platform, "user_id": user_id}
+            if occurred_at is not None:
+                payload["context"]["metadata"] = {"occurred_at": occurred_at}
+            if timezone_name is not None:
+                payload["context"]["timezone"] = timezone_name
             if user_message:
                 payload["user_message"] = {"role": "user", "content": str(user_message)}
             if assistant_message:
