@@ -70,6 +70,7 @@ client=MagicMock()
 client.chat.completions.create.side_effect=[
     NS(choices=[NS(message=NS(content='BEFORE_OK',tool_calls=None),finish_reason='stop')],model='fixture/model',usage=None),
     NS(choices=[NS(message=NS(content='AFTER_OK',tool_calls=None),finish_reason='stop')],model='fixture/model',usage=None),
+    NS(choices=[NS(message=NS(content='RETOLD_OK',tool_calls=None),finish_reason='stop')],model='fixture/model',usage=None),
 ]
 with patch('run_agent.OpenAI',return_value=client), patch('run_agent.get_tool_definitions',return_value=[]), patch('run_agent.check_toolset_requirements',return_value={}):
     agent=AIAgent(api_key='fixture',base_url='http://127.0.0.1:1/v1',provider='openai',
@@ -92,6 +93,11 @@ with patch('run_agent.OpenAI',return_value=client), patch('run_agent.get_tool_de
     assert fact not in json.dumps(sent), sent
     assert 'Continue after forgetting.' in json.dumps(sent)
     assert 'What is my orchard badge?' in json.dumps(sent)
+    retold=agent.run_conversation(fact, conversation_history=db.get_messages_as_conversation('original'), task_id='erasure-retelling')
+    assert retold['final_response']=='RETOLD_OK'
+    sent=client.chat.completions.create.call_args_list[-1].kwargs['messages']
+    assert sum(fact in str(row.get('content','')) for row in sent) == 1, sent
+    assert fact in sent[-1]['content']  # only the observed new direct input
     agent.close()
 assert any(path.endswith('/memory/sources/erasures') and code==200 for path,code in wire), wire
 assert fact in json.dumps(db.get_messages_as_conversation('original'))
@@ -115,7 +121,7 @@ filtered=apply_llm_request_middleware({'messages':[{'role':'user','content':enri
 assert 'neutral-fixture' not in json.dumps(filtered) and 'Neutral original pixels' not in json.dumps(filtered)
 print(json.dumps({'native_compressor':True,'native_persist_resume':True,'before_present':True,
     'standard_forget':True,'resumed_request_absent':True,'native_storage_gap_explicit':True,
-    'multimodal_whole_source_erased':True,'controlled_inference':True}))
+    'multimodal_whole_source_erased':True,'explicit_retelling_preserved':True,'controlled_inference':True}))
 '''
 
 

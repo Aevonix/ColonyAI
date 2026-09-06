@@ -18,6 +18,12 @@ exact association when clock notes or other native context surround the source.
 It is cleared on completion and bounded across concurrent turns. Multimodal
 messages are matched as complete original block lists after removing appended
 packet-only notes, so forgotten image bytes do not survive as residual blocks.
+The current direct input is new evidence: an owner can deliberately tell the
+agent the same fact again. This exception requires the actual current input
+from the authenticated native turn observation and its matching request row;
+it never selects an old historical row merely because it is last. Recalled
+packets on that new input still undergo freshness checks. Existing canonical
+source and outbox tombstones remain unchanged.
 
 - Exact whole-message matches against deleted source hashes become an explicit
   forgotten-source placeholder. Original session and speaker hashes also identify

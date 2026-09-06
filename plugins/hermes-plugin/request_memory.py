@@ -28,7 +28,7 @@ def _content_key(content):
                                     separators=(',', ':')).encode()).hexdigest()
 
 
-def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None):
+def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None):
     """Keep fresh packets and remove exact evidence, preserving tool structure.
 
     Hashes include original session and speaker. Trying those retained origins
@@ -61,18 +61,18 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             valid = False
         return block if valid else ''
 
-    def text_content(text):
+    def text_content(text, *, current=False):
         clean = _PACKET.sub('', _MEMORY.sub('', text))
-        if erased(clean):
+        if not current and erased(clean):
             return _ERASED
         return _PACKET.sub(packet, _MEMORY.sub(packet, text))
 
-    def content(value):
+    def content(value, *, current=False):
         original = aliases.get(_content_key(value), value) if origins and aliases else value
-        if erased(original):
+        if not current and erased(original):
             return _ERASED
         if isinstance(value, str):
-            return text_content(value)
+            return text_content(value, current=current)
         if isinstance(value, list):
             # Native multimodal notes can append packet-only text parts. Match
             # the original full list before filtering individual text blocks,
@@ -82,9 +82,9 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
                 and isinstance(part.get('text'), str)
                 and (_MEMORY.search(part['text']) or _PACKET.search(part['text']))
                 and not _PACKET.sub('', _MEMORY.sub('', part['text'])).strip())]
-            if erased(direct):
+            if not current and erased(direct):
                 return _ERASED
-            return [{**part, 'text': text_content(part['text'])}
+            return [{**part, 'text': text_content(part['text'], current=current)}
                     if isinstance(part, dict) and isinstance(part.get('text'), str) else part
                     for part in value]
         return value
@@ -109,7 +109,9 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             if not fresh and i < latest_user and row.get('role') not in ('system', 'developer'):
                 continue
             if 'content' in row:
-                row['content'] = content(row['content'])
+                current = (i == latest_user and current_content is not None
+                           and row['content'] == current_content)
+                row['content'] = content(row['content'], current=current)
             if 'output' in row:  # Responses API function output
                 row['output'] = content(row['output'])
             retained.append(row)
@@ -129,15 +131,23 @@ class RequestMemory:
         self._lock = threading.Lock()
         self._aliases = OrderedDict()
 
-    def observe(self, scope, messages):
+    def observe(self, scope, messages, *, user_message=None):
         # Native pre_llm_call exposes both clean content and persisted
         # api_content. Retain only their mapping for this active turn, without
         # mutating messages or guessing how other plugins append context.
         aliases = {_content_key(row['api_content']): row.get('content')
                    for row in messages if isinstance(row, dict) and row.get('api_content')}
+        # The native hook includes the actual current input separately from
+        # history. Only its matching final row may be treated as new evidence.
+        # Observe the descriptor without mutation: native composition stamps
+        # api_content onto this same row after the hook, before request dispatch.
+        current = messages[-1] if (messages and isinstance(messages[-1], dict)
+            and messages[-1].get('role') == 'user'
+            and user_message is not None and messages[-1].get('content') == user_message
+            and scope.valid_participant) else None
         key = (scope.contact_id, scope.task_id, scope.turn_id)
         with self._lock:
-            self._aliases[key] = aliases
+            self._aliases[key] = (aliases, current)
             self._aliases.move_to_end(key)
             while len(self._aliases) > 32:
                 self._aliases.popitem(last=False)
@@ -152,8 +162,9 @@ class RequestMemory:
         contact = scope.contact_id if scope is not None and scope.valid_participant else ''
         with self._lock:
             observed_key = (contact, scope.task_id, scope.turn_id) if scope else None
-            aliases = self._aliases.get(observed_key, {})
+            aliases, current = self._aliases.get(observed_key, ({}, None))
             observed = observed_key in self._aliases
+        current_content = current.get('api_content', current.get('content')) if current else None
         deadline = time.monotonic() + .25
         watermark, rules, fresh = 0, [], False
         try:
@@ -184,7 +195,7 @@ class RequestMemory:
         # Failure returns an explicit reduced request instead of stale history.
         try:
             filtered = filter_request(request, contact_id=contact, watermark=watermark,
-                                      rules=rules, fresh=fresh, aliases=aliases)
+                                      rules=rules, fresh=fresh, aliases=aliases, current_content=current_content)
         except Exception:
             filtered = filter_request(request, contact_id=contact, watermark=0, rules=[], fresh=False)
             fresh = False

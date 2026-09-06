@@ -122,6 +122,30 @@ def test_missing_observation_cannot_replay_enriched_history(runtime):
     assert rt.fact not in json.dumps(without_observation) and 'Current request' in json.dumps(without_observation)
 
 
+def test_observed_retelling_keeps_new_input_but_not_its_stale_packet_or_history(runtime):
+    rt = runtime
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
+    def get(path, **kwargs):
+        return httpx.Response(200, json=rt.ledger.erasure_feed('owner', kwargs['params']['after']),
+                              request=httpx.Request('GET', 'http://fixture' + path))
+    middleware = rt.module.RequestMemory(SimpleNamespace(get=get), rt.outbox)
+    scope = SimpleNamespace(contact_id='owner', valid_participant=True, task_id='task', turn_id='turn')
+    earlier = {'role': 'user', 'content': rt.fact}
+    current = {'role': 'user', 'content': rt.fact}
+    middleware.observe(scope, [earlier, current], user_message=rt.fact)
+    # Native composition stamps this same descriptor after the pre-turn hook.
+    current['api_content'] = rt.fact + '\n\n' + packet('owner', 0, 'stale-evidence')
+    request = {'messages': [earlier, {'role': 'user', 'content': current['api_content']}]}
+    result = middleware(request, scope)['request']['messages']
+    assert rt.fact not in result[0]['content']
+    assert result[1]['content'] == rt.fact and 'stale-evidence' not in json.dumps(result)
+    # A last historical user row is insufficient without the actual matching
+    # direct input carried by this authenticated native turn observation.
+    middleware.observe(scope, [earlier], user_message='A different current input')
+    result = middleware({'messages': [earlier]}, scope)
+    assert rt.fact not in json.dumps(result)
+
+
 @pytest.mark.asyncio
 async def test_context_stamps_before_a_concurrent_forget(source_app, tmp_path, monkeypatch):
     from colony_sidecar.api.routers import host

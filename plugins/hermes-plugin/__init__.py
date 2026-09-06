@@ -2192,7 +2192,9 @@ def register(ctx: Any) -> None:
             attested_system_platforms=attested_system_platforms,
         )
         _TRANSPORT_SCOPES.put(scope)
-        request_memory.observe(scope, kwargs.get('conversation_history') or [])
+        request_memory.observe(scope, kwargs.get('conversation_history') or [],
+            user_message=(None if review or kwargs.get('parent_session_id')
+                          or scope.platform == 'cron' else kwargs.get('user_message')))
         if scope.valid_participant and not review:
             work_coordinator.bind_turn(**kwargs)
         if execution_observer is not None:
