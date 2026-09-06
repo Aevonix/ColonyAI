@@ -12,6 +12,7 @@ import logging
 import shutil
 import sqlite3
 import uuid
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -697,6 +698,34 @@ class InitiativeStore:
                 self._add_to_dlq(initiative, reason)
 
         return updated
+
+    def retry(self, initiative_id: str, actor_id: str) -> Optional[StoredInitiative]:
+        """Requeue a failed initiative and its history in one transaction."""
+        if not isinstance(actor_id, str) or not actor_id.strip():
+            raise ValueError("Retry requires an actor")
+        # Do not borrow the shared connection: another operation must never
+        # commit this transition without its history or inherit a failed write.
+        with closing(sqlite3.connect(self._db_path, timeout=2)) as db, db:
+            db.row_factory = sqlite3.Row
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM initiatives WHERE id=? AND status='failed'",
+                             (initiative_id,)).fetchone()
+            if row is None:
+                return None
+            details = {
+                "attempt_count": row["attempt_count"],
+                "previous_agent_id": row["assigned_agent_id"],
+                "failed_reason": row["failed_reason"],
+                "failed_at": row["failed_at"],
+                "previous_context": json.loads(row["context"] or "{}"),
+                "previous_result": json.loads(row["result_metadata"] or "{}"),
+            }
+            db.execute("""UPDATE initiatives SET status='pending', assigned_agent_id=NULL,
+                failed_reason=NULL, failed_at=NULL WHERE id=?""", (initiative_id,))
+            db.execute("""INSERT INTO assignment_history(initiative_id,agent_id,action,details)
+                VALUES(?,?,'retry',?)""", (initiative_id, actor_id, json.dumps(details)))
+            return StoredInitiative.from_row(dict(db.execute(
+                "SELECT * FROM initiatives WHERE id=?", (initiative_id,)).fetchone()))
 
     def cancel(
         self,
