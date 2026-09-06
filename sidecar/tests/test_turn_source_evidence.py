@@ -110,7 +110,11 @@ async def test_media_references_retained_but_not_lexically_indexed(source_app, t
         body["checkpoint_messages"][0]["api_content"] = "injected recall"
         assert (await client.put("/v2/host/turns/invalid-source", json=body)).status_code == 422
     with sqlite3.connect(tmp_path / "turn-idempotency.db") as conn:
-        assert json.loads(conn.execute("SELECT messages_json FROM turn_sources").fetchone()[0])[0]["content"] == blocks
+        stored = json.loads(conn.execute("SELECT messages_json FROM turn_sources").fetchone()[0])[0]
+        assert stored["content"][0] == blocks[0]
+        assert stored["content"][1]["type"] == "image_unretained"
+        from colony_sidecar.turns.idempotency import source_message_hash
+        assert source_message_hash("session-a", stored) == source_message_hash("session-a", {"role": "user", "content": blocks})
 
 
 def test_additive_schema_preserves_existing_idempotency_digest():

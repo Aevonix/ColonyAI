@@ -30,6 +30,11 @@ class SourceErased(ValueError):
 
 
 def source_message_hash(session_id: str, message: Mapping[str, Any]) -> str:
+    # Ledger-owned normalization metadata retains the input message identity.
+    # Public message schemas cannot supply this top-level field.
+    original = message.get("_source_message_hash")
+    if isinstance(original, str) and re.fullmatch(r"[0-9a-f]{64}", original):
+        return original
     return canonical_turn_digest({"session_id": session_id, "role": message.get("role"), "content": message.get("content")})
 
 
@@ -141,6 +146,8 @@ class TurnIdempotencyLedger:
                 conn.execute("CREATE TABLE IF NOT EXISTS source_projection_erasures (turn_id TEXT NOT NULL, source_turn_id TEXT NOT NULL, PRIMARY KEY(turn_id, source_turn_id))")
                 from colony_sidecar.beliefs.source_projection import initialize
                 initialize(conn)
+                from colony_sidecar.turns.media import initialize as initialize_media
+                initialize_media(conn)
             self._initialized = True
 
     def record_source(
@@ -193,6 +200,9 @@ class TurnIdempotencyLedger:
                 if row[0] != digest:
                     raise ValueError("source id already contains different evidence")
                 return False
+            from colony_sidecar.turns.media import normalize_messages, SourceMedia
+            messages = normalize_messages(conn, SourceMedia(self).store, turn_id, session_id, messages)
+            encoded = json.dumps(messages, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False)
             conn.execute(
                 "INSERT INTO turn_sources "
                 "(turn_id, content_sha256, contact_id, session_id, scope, messages_json, occurred_at) "
@@ -312,6 +322,8 @@ class TurnIdempotencyLedger:
                     continue
                 from colony_sidecar.beliefs.source_projection import erase_removed
                 erase_removed(conn, row["turn_id"], row["session_id"], retained)
+                from colony_sidecar.turns.media import erase_removed as erase_media
+                erase_media(conn, row["turn_id"], row["session_id"], retained)
                 affected.append(row["turn_id"])
                 for selected_id in selected:
                     conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (row["turn_id"], selected_id))
@@ -329,7 +341,15 @@ class TurnIdempotencyLedger:
             for selected_id in selected:
                 affected.extend(row[0] for row in conn.execute("SELECT turn_id FROM source_projection_erasures WHERE source_turn_id=?", (selected_id,)))
             watermark = conn.execute("SELECT coalesce(max(sequence),0) FROM source_erasures WHERE contact_id=?", (contact_id,)).fetchone()[0]
-        return {"source_ids": selected, "affected_source_ids": list(dict.fromkeys(affected)), "watermark": watermark}
+        from colony_sidecar.turns.media import SourceMedia
+        media = SourceMedia(self)
+        try:
+            media.collect_orphans(limit=100)
+            media_cleanup = media.cleanup_status()
+        except OSError:
+            media_cleanup = "pending"
+        return {"source_ids": selected, "affected_source_ids": list(dict.fromkeys(affected)),
+                "watermark": watermark, "media_cleanup": media_cleanup}
 
     def search_sources(
         self, query: str, *, contact_id: str, session_id: str, limit: int = 5,

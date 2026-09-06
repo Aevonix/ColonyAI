@@ -133,10 +133,11 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
     return output
 
 
-def local_tier(router):
+def local_tier(router, tier=None):
     """Automatic source extraction has no implicit cloud fallback."""
     from colony_sidecar.router.tiers import ModelTier
-    config = router.tier_config(ModelTier.SMALL)
+    tier = tier or ModelTier.SMALL
+    config = router.tier_config(tier)
     if config is None:
         return None
     endpoint = config.base_url
@@ -156,7 +157,7 @@ def local_tier(router):
         local = address.is_private or address.is_loopback
     except ValueError:
         pass
-    return ModelTier.SMALL if local else None
+    return tier if local else None
 
 
 async def extract_claims(router, source: dict, message: dict, prior: list[dict], *, timezone_name="UTC"):

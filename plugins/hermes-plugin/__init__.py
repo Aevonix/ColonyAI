@@ -2123,6 +2123,13 @@ def register(ctx: Any) -> None:
         scopes=_TRANSPORT_SCOPES,
     )
 
+    def direct_text(content):
+        if isinstance(content, list):
+            return "\n".join(block["text"] for block in content if isinstance(block, dict)
+                             and block.get("type") in {"text", "input_text", "output_text"}
+                             and isinstance(block.get("text"), str))
+        return str(content or "")
+
     def pre_llm_call(**kwargs: Any) -> None:
         scope = _TRANSPORT_SCOPES.child_scope(**kwargs) if kwargs.get("parent_session_id") else _resolve_scope(
             client,
@@ -2131,7 +2138,7 @@ def register(ctx: Any) -> None:
             turn_id=str(kwargs.get("turn_id") or ""),
             platform=str(kwargs.get("platform") or ""),
             sender_id=str(kwargs.get("sender_id") or ""),
-            user_message=str(kwargs.get("user_message") or ""),
+            user_message=direct_text(kwargs.get("user_message")),
             owner_contact_id=owner_contact_id,
             attested_system_platforms=attested_system_platforms,
         )
@@ -2154,7 +2161,8 @@ def register(ctx: Any) -> None:
             and scope.platform not in turn_writer_platforms
         ):
             return None
-        user_message = str(kwargs.get("user_message") or scope.user_message or "")
+        user_message = kwargs.get("user_message") or scope.user_message or ""
+        user_text = direct_text(user_message)
         assistant_message = str(kwargs.get("assistant_response") or "")
         if not (user_message or assistant_message):
             return None
@@ -2176,7 +2184,7 @@ def register(ctx: Any) -> None:
             "assistant_message": assistant_message,
             "require_source_receipt": True,
             "summary": (
-                f"User: {user_message[:300]}\nAgent: {assistant_message[:300]}"
+                f"User: {user_text[:300]}\nAgent: {assistant_message[:300]}"
                 if user_message and assistant_message else ""
             ),
             "model": str(kwargs.get("model") or ""),

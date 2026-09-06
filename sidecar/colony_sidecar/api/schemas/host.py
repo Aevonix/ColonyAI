@@ -475,6 +475,18 @@ class CheckpointMessage(BaseModel):
         return self
 
 
+class TurnMessage(HostMessage):
+    """Direct source blocks are retained; ordinary cognition receives text only."""
+    content: Union[str, List[Dict[str, Any]]]
+
+    def text_content(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        return "\n".join(block["text"] for block in self.content
+                         if block.get("type") in {"text", "input_text", "output_text"}
+                         and isinstance(block.get("text"), str))
+
+
 class TurnSyncRequest(BaseModel):
     identity: HostIdentity
     context: HostTurnContext
@@ -487,8 +499,8 @@ class TurnSyncRequest(BaseModel):
     # Raw message fields — populated by Hermes provider and MCP tools.
     # When structured fields are empty but raw messages are present,
     # the sidecar runs extraction from the raw messages.
-    user_message: Optional[HostMessage] = None
-    assistant_message: Optional[HostMessage] = None
+    user_message: Optional[Union[HostMessage, TurnMessage]] = None
+    assistant_message: Optional[Union[HostMessage, TurnMessage]] = None
     # Model that produced the assistant side of this turn (optional, additive).
     # Lets the mining layer detect provider escalations / cloud failovers from
     # real per-turn metadata instead of guessing from text.
@@ -500,13 +512,13 @@ class TurnSyncRequest(BaseModel):
 
     @model_validator(mode="after")
     def bounded_checkpoint(self):
+        if len(self.model_dump_json().encode("utf-8")) > 8 * 1024 * 1024:
+            raise ValueError("turn exceeds the 8 MiB source limit")
         if self.checkpoint_messages is not None:
             if self.sender is not None or self.user_message is not None or self.assistant_message is not None:
                 raise ValueError("checkpoint cannot also represent an ordinary turn")
             if not self.context.turn_id:
                 raise ValueError("checkpoint requires an idempotent turn id")
-            if len(self.model_dump_json().encode("utf-8")) > 8 * 1024 * 1024:
-                raise ValueError("checkpoint exceeds the 8 MiB source limit")
         return self
 
 

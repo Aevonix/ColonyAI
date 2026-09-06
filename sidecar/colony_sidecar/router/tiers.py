@@ -25,6 +25,7 @@ class ModelTier(Enum):
     SMALL = "small"          # Fast/cheap: haiku-class, gpt-4o-mini
     MEDIUM = "medium"        # Balanced: sonnet-class, gpt-4o
     LARGE = "large"          # Best quality: opus-class, o3
+    VISION = "vision"        # Explicit image role; never selected by cost scoring
 
 
 @dataclass
@@ -50,6 +51,8 @@ class TierConfig:
     # advertised maximum. 0 = unknown/unlimited. Consumed by the context
     # gate to decide when to chunk/retrieve instead of passing whole.
     useful_context_tokens: int = 0
+    # Explicit host capability declaration, not inferred from a model name.
+    supports_vision: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +474,9 @@ def build_tiers_from_host(config: dict) -> dict[ModelTier, TierConfig]:
             v = _spec_field(value, "apiKey", "api_key")
             if v:
                 overrides["api_key"] = str(v)
+            v = _spec_field(value, "supportsVision", "supports_vision")
+            if isinstance(v, bool):
+                overrides["supports_vision"] = v
             v = _spec_field(value, "extraBody", "extra_body")
             if isinstance(v, dict) and v:
                 overrides["extra_body"] = dict(v)

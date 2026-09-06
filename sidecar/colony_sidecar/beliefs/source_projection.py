@@ -336,9 +336,17 @@ class SourceClaimProjection:
 async def run_source_claim_worker(ledger, router_provider):
     """One consumer, durable jobs and leases; process loss resumes from SQLite."""
     projection = SourceClaimProjection(ledger)
+    from colony_sidecar.turns.media import SourceMedia
+    media = SourceMedia(ledger)
+    try:
+        media.recover_unowned_files()
+    except OSError:
+        logger.warning("source media orphan recovery deferred")
     while True:
         try:
             worked = await projection.process_one(router_provider())
+            media_worked = await media.process_one(router_provider())
+            worked = worked or media_worked
         except asyncio.CancelledError:
             raise
         except Exception as exc:
