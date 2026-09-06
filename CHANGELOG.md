@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.0.0 - persistent native core
+
+Colony 1.0 defines a supported core beside Hermes, with private identity and
+hardware integrations supplied by each deployment.
+
+- **Native Hermes integration:** packaged general and memory-provider adapters,
+  qualified against Hermes 0.21.0 through its native loaders, hooks, middleware,
+  compression checkpoints, delegation and review contracts. No Hermes core
+  patch is required for this integration.
+- **Canonical, selective memory:** durable source capture and one quoted-claim
+  promotion path retain provenance, corrections and conflicts. Raw conversation
+  history remains distinct from asserted knowledge. Retained image originals
+  and fallible descriptions have linked source identities.
+- **Replaceable retrieval:** lexical recall works without embeddings. Optional
+  semantic indexes record embedding identity, rebuild into resumable generations
+  and hydrate results against current sources before context selection.
+- **Scoped recall and forgetting:** participant-bound context and source erasure
+  extend through linked projections, new affect/engagement observations, outbox
+  replay and exact native request copies. Historical unlinked records, arbitrary
+  paraphrases, native transcript storage and backups are not globally erased.
+- **Shared work and perspective:** persistent commitments and work claims,
+  native execution observations, source-backed owner preferences and bounded
+  operational judgments make selected state inspectable across sessions. This
+  does not guarantee conflict-free promises or a complete process inventory.
+- **Evaluated native skills:** native review stages proposals; an explicitly
+  selected task evaluator can compare, activate, verify and roll back an existing
+  curator-owned skill. Results apply to its declared cases, not general
+  self-improvement. No automatic evaluator is enabled by the lightweight setup.
+- **Local installation and operation:** guided private setup supports one local
+  chat endpoint, SQLite, profile-scoped diagnostics and user services. Named
+  model roles can reload eligible endpoint bindings and use fallbacks. Source
+  backups include ledger-owned original images with explicit recovery coverage.
+
+Upgrade the adapter and sidecar together, retain private profiles and source
+backups, and qualify any new Hermes version before activation using the
+[native checks](docs/HERMES-ADAPTER.md#qualification). The
+[setup guide](docs/LOCAL-HERMES-SETUP.md) covers attachment and service recovery;
+[memory recovery](docs/SOURCE-MEMORY-RECOVERY.md) documents backup boundaries.
+Extended autonomy loops, public channels, voice and hardware adapters still need
+deployment-specific qualification. This release does not claim subjective
+feelings or completion of every autonomous-agent acceptance behavior.
+
 ## v0.34.0 — governed actions, cognition spine, fail-closed hardening
 
 **Preset-loop coupling — default flip + migration note**

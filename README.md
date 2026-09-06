@@ -11,10 +11,16 @@ what happened, assembles relevant evidence before a turn, and shares commitments
 and work across sessions. Your private deployment supplies its identity,
 credentials, channels and hardware adapters.
 
-This repository is undergoing the 1.0 consolidation. The native attachment,
-source memory and shared-work paths have executable qualifications. The larger
-legacy autonomy surface is still being reduced and integrated. A package or an
-API route being present does not establish that its loop works in a deployment.
+Colony 1.0 supports native Hermes attachment, durable source memory, scoped
+recollection and shared work. Optional image and semantic projections, a bounded
+working perspective, and evaluated native skill updates extend that core. These
+paths have executable qualifications; model quality and each deployment's
+configuration still determine their results.
+
+The lightweight installation starts with memory and observation. Extended
+autonomy loops, public channels, voice systems and hardware need explicit
+deployment integration and their own behavioral checks. Version 1.0 does not
+claim complete autonomy, a complete view of every process, or subjective feelings.
 
 ## Start with Hermes
 
@@ -136,10 +142,12 @@ Existing extended deployments must inspect their actual resolved configuration
 at `GET /v1/host/autonomy/posture` before enabling another loop.
 
 The [known gaps](docs/KNOWN-GAPS.md) inventory includes legacy components that
-are partial, dormant or awaiting replacement. It is not a list of 1.0 guarantees.
-Current work includes broader hardware and session coverage, measured
-self-improvement and removal of obsolete operational
-machinery. No claim of general intelligence or complete autonomy is made here.
+are partial, dormant or awaiting replacement. They are outside the supported
+core until their deployment loops are qualified. Shared observations do not
+prevent every conflicting promise; a selected skill evaluator does not establish
+general self-improvement. Source forgetting does not rewrite arbitrary old
+transcripts, unlinked paraphrases or backups. See the
+[native request boundary](docs/NATIVE-REQUEST-ERASURE.md) for its exact scope.
 
 ## Development
 
