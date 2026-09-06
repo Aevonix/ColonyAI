@@ -137,6 +137,18 @@ but cannot prove that a replaced server with reused sequence numbers is equivale
 
 ## Qualification
 
+Pull-request CI keeps an exact qualified Hermes commit pinned. The separate
+`Latest Hermes compatibility` workflow runs daily and can be dispatched manually.
+It selects the latest published stable upstream release, records its exact Git
+commit and runs the same built-artifact/native-profile tests. It uses disposable
+profiles and controlled inference, without deployment credentials or a live
+agent. A compatibility failure leaves production and the qualified pin intact.
+
+When a new upstream release passes, update the pin in an ordinary reviewed
+change and qualify the deployment's actual channels and recovery before moving
+that deployment. The scheduled result catches upstream drift; it does not
+establish production readiness or automatically upgrade a running agent.
+
 The qualification target is Hermes v0.21.0, tag `v2026.8.31`, commit
 `29112bef099274229cadff79cdff7bf7b99c4b77`, tested on Python 3.12. The package
 allows Python 3.11 through 3.13; those other interpreters are not yet qualified.

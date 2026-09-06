@@ -1,0 +1,67 @@
+name: Latest Hermes compatibility
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latest-hermes-compatibility
+  cancel-in-progress: true
+
+jobs:
+  latest-stable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select the latest published stable release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          release = json.loads(subprocess.check_output([
+              'gh', 'api', 'repos/NousResearch/hermes-agent/releases/latest']))
+          tag = release['tag_name']
+          assert tag and '\n' not in tag and '\r' not in tag
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('tag=' + tag + '\n')
+          PY
+      - uses: actions/checkout@v6
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ steps.release.outputs.tag }}
+          path: .qualification/hermes
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            sidecar/pyproject.toml
+            .qualification/hermes/pyproject.toml
+      - name: Record the selected runtime
+        env:
+          HERMES_RELEASE: ${{ steps.release.outputs.tag }}
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          revision = subprocess.check_output([
+              'git', '-C', '.qualification/hermes', 'rev-parse', 'HEAD'], text=True).strip()
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write('Hermes release: ' + os.environ['HERMES_RELEASE'] + '\n\n')
+              stream.write('Exact commit: `' + revision + '`\n\n')
+              stream.write('Built-artifact compatibility only. No deployment or pin is changed.\n')
+          PY
+      - name: Install adapter and selected native runtime
+        run: |
+          python -m pip install -e '.[test]'
+          python -m pip install -e ./.qualification/hermes
+          python -m pip install ./sidecar
+      - name: Qualify built artifacts against latest stable Hermes
+        run: python -m pytest tests/hermes_adapter -q
