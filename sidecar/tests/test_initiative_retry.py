@@ -71,8 +71,6 @@ def test_retry_preserves_failed_attempt_and_separate_native_connection_can_claim
     assert event['action'] == 'retry' and event['agent_id'] == 'operator'
     details = json.loads(event['details'])
     assert details['attempt_count'] == before['attempt_count'] == 1
-    assert details['previous_context'] == json.loads(before['context'])
-    assert details['previous_result'] == json.loads(before['result_metadata'])
     assert details['failed_reason'] == before['failed_reason']
     assert details['previous_agent_id'] == before['assigned_agent_id']
     assert not store._db.in_transaction

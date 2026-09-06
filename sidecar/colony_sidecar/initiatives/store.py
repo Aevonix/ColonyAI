@@ -717,8 +717,6 @@ class InitiativeStore:
                 "previous_agent_id": row["assigned_agent_id"],
                 "failed_reason": row["failed_reason"],
                 "failed_at": row["failed_at"],
-                "previous_context": json.loads(row["context"] or "{}"),
-                "previous_result": json.loads(row["result_metadata"] or "{}"),
             }
             db.execute("""UPDATE initiatives SET status='pending', assigned_agent_id=NULL,
                 failed_reason=NULL, failed_at=NULL WHERE id=?""", (initiative_id,))
