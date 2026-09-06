@@ -1,7 +1,6 @@
 """One ordinary native cron fire consumes one explicitly accepted local draft."""
 import argparse
 from contextlib import closing
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,10 +10,7 @@ import subprocess
 from .client import ColonyClient
 from .local_work import Undertaking, request, selected
 from .model_response import decode_json_response
-
-
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from .draft_artifacts import write, make_directory, retain_draft, restore_report
 
 
 def active_execution(home, job_id):
@@ -23,35 +19,6 @@ def active_execution(home, job_id):
     if len(rows) != 1 or rows[0][1] != os.getppid():
         raise ValueError('unique_native_parent_execution_required')
     return rows[0][0]
-
-
-def sync_directory(path):
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def write(path, value):
-    raw = value if isinstance(value, str) else json.dumps(value, sort_keys=True, indent=2)+'\n'
-    with path.open('x') as stream:
-        stream.write(raw)
-        stream.flush()
-        os.fsync(stream.fileno())
-    path.chmod(0o600)
-    sync_directory(path.parent)
-
-
-def make_directory(path):
-    missing = []
-    current = path
-    while not current.exists():
-        missing.append(current)
-        current = current.parent
-    for directory in reversed(missing):
-        directory.mkdir(mode=0o700)
-        sync_directory(directory.parent)
 
 
 def finish(client, assignment, result):
@@ -68,10 +35,9 @@ def reconcile(client, assignment, directory):
         result = receipt['result']
         if (receipt['initiative_id'] != assignment['id']
                 or receipt['native_execution_id'] != assignment['context']['native_execution_id']
-                or Path(result['report_path']) != directory/'report.md'
-                or digest(directory/'report.md') != result['report_sha256']):
+                or Path(result['report_path']) != directory/'report.md'):
             raise ValueError('saved_draft_receipt_mismatch')
-        return finish(client, assignment, result)
+        return finish(client, assignment, restore_report(directory, receipt))
     return finish(client, assignment, {'status': 'unavailable',
                   'error_type': 'NativeExecutionEndedBeforeResult'})
 
@@ -145,27 +111,10 @@ def run_once(*, home, job_id, destination, provider=None, model=None, client=Non
                 or work.read != set(range(len(assignment['context']['sources'])))):
             raise ValueError('native_local_draft_incomplete')
         interpretation = decode_json_response(raw)
-        if (not isinstance(interpretation, dict) or set(interpretation) != {'draft', 'sources'}
-                or not isinstance(interpretation['draft'], str) or not interpretation['draft'].strip()
-                or len(interpretation['draft']) > 32000
-                or interpretation['sources'] != sorted(work.read)
-                or any('[source:'+str(index)+']' not in interpretation['draft'] for index in work.read)):
-            raise ValueError('local_draft_reference_contract_failed')
-        work.verify_holder()
-        for source in work.sources.values():
-            if digest(Path(source['path'])) != source['sha256']:
-                raise ValueError('source_changed_during_draft')
-        report = '# Unverified local source draft\n\n'+interpretation['draft'].strip()+'\n\nSources:\n'
-        report += ''.join('[source:'+index+'] '+source['path']+' SHA256 '+source['sha256']+'\n'
-                          for index, source in sorted(work.sources.items()))
-        write(directory/'report.md', report)
-        result = {'status': 'draft_created', 'summary': 'Unverified local draft: '+interpretation['draft'][:1500],
-                  'report_path': str(directory/'report.md'), 'report_sha256': digest(directory/'report.md'),
-                  'sources': {source['path']: source['sha256'] for source in work.sources.values()},
-                  'model': str(getattr(agent, 'model', selected_model) or '')}
-        write(directory/'draft-receipt.json', {'initiative_id': assignment['id'],
-            'native_execution_id': native_id, 'native_session_id': agent.session_id,
-            'routing_policy': routing_policy, 'result': result})
+        result = retain_draft(work, interpretation, directory,
+            model=getattr(agent, 'model', selected_model), receipt_context={
+                'native_execution_id': native_id, 'native_session_id': agent.session_id,
+                'routing_policy': routing_policy})
         completed = finish(client, assignment, result)
         return {'status': 'draft_created', 'initiative_id': assignment['id'], 'work': completed}
     except Exception as error:

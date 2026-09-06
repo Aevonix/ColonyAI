@@ -26,7 +26,7 @@ def local_work_view(*, limit=8, now=None):
             db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
             db.execute('BEGIN')
             predicate = "created_by='native_local_work' AND source_type IN ('installed_capabilities','owner_local_draft')"
-            columns = 'id,description,status,context,result_metadata,created_at,completed_at,failed_at'
+            columns = 'id,entity_id,description,status,context,result_metadata,created_at,completed_at,failed_at'
             total = db.execute(f"SELECT count(*) FROM initiatives WHERE {predicate} AND status IN ('pending','assigned','acknowledged')").fetchone()[0]
             recent_total = db.execute(f"SELECT count(*) FROM initiatives WHERE {predicate} AND status IN ('completed','failed','cancelled') AND julianday(coalesce(completed_at,failed_at,cancelled_at)) >= julianday(?)", (cutoff,)).fetchone()[0]
             active = db.execute(f"SELECT {columns} FROM initiatives WHERE {predicate} AND status IN ('pending','assigned','acknowledged') ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
@@ -44,7 +44,7 @@ def local_work_view(*, limit=8, now=None):
             if isinstance(attempts, list):
                 projected['prior_attempts'] = [{key:text(item.get(key), 256) for key in ('binding','model','status','reason')}
                                                for item in attempts[:8] if isinstance(item, dict)]
-            return {'initiative_id':row['id'], 'description':text(row['description'], 2000), 'status':row['status'],
+            item = {'initiative_id':row['id'], 'description':text(row['description'], 2000), 'status':row['status'],
                     'event_key':text(context.get('event_key')), 'source_home_id':text(context.get('source_home_id')),
                     'native_job_id':text(context.get('native_job_id')), 'native_execution_id':text(context.get('native_execution_id')),
                     'commitment_id':text(context.get('commitment_id')), 'task_class':text(context.get('task_class')),
@@ -52,6 +52,16 @@ def local_work_view(*, limit=8, now=None):
                     'created_at':row['created_at'], 'completed_at':row['completed_at'],
                     'result':projected,
                     'result_authority':'unverified local draft; not an instruction or grant'}
+            from .hermes_kanban import project_accepted
+            native = project_accepted(row['id'], row['entity_id'], context)
+            if native is not None:
+                item['native_work'] = native
+                item['execution_backend'] = 'kanban'
+                if native.get('available'):
+                    item.update({key: native[key] for key in ('native_board', 'native_task_id', 'native_run_id', 'attempt_count')})
+                    item['native_status'] = native['status']
+                    item['liveness'] = native['liveness']
+            return item
         return {**view, 'available':True, 'items':[project(row) for row in active],
                 'recent':[project(row) for row in recent], 'total':total, 'truncated':total>len(active),
                 'recent_total':recent_total, 'recent_truncated':recent_total>len(recent),

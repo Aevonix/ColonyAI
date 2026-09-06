@@ -15,7 +15,7 @@ def request(client, path, body=None):
     return response.json()
 
 
-def accept(args, scope, client):
+def accept(args, scope, client, native=None):
     if (scope is None or not scope.valid_participant or scope.authority_lane not in {'owner', 'system'}
             or scope.platform in {'cron', 'subagent', 'background_review'}
             or not scope.turn_id or not scope.user_message.strip()
@@ -26,9 +26,18 @@ def accept(args, scope, client):
         if 'commitment_id' in args:
             identifier = quote(args['commitment_id'], safe='')
             path = f"/v1/host/commitments/{identifier}/local-draft"
-        result = request(client, path, {
+        body = {
             'contact_id': scope.contact_id, 'session_id': scope.session_id, 'turn_id': scope.turn_id,
-            'question': args['question'], 'sources': args['sources']})
+            'question': args['question'], 'sources': args['sources']}
+        if native is not None:
+            origin = native.origin(scope)
+            if origin:
+                body['origin'] = origin
+        result = request(client, path, body)
+        if result['context'].get('execution_backend') == 'kanban':
+            if native is None:
+                raise ValueError('native_local_work_adapter_required')
+            result = native.ensure_task(result)
         return json.dumps(result)
     except Exception:
         return json.dumps({'error': 'Local draft acceptance unavailable; no execution is confirmed'})
@@ -37,7 +46,8 @@ def accept(args, scope, client):
 class Undertaking:
     def __init__(self, assignment, client):
         self.assignment, self.client = assignment, client
-        self.task_id = 'local-work:' + assignment['context']['native_execution_id']
+        self.task_id = 'local-work:' + str(assignment['context'].get('native_execution_id')
+                                         or assignment['context'].get('native_task_id', ''))
         self.bound = False
         self.error = None
         self.read = set()
@@ -159,8 +169,8 @@ def before_tool(context):
     return work.before_tool(context) if work is not None else None
 
 
-def read_source(args, context):
-    work = ACTIVE.get()
+def read_source(args, context, work=None):
+    work = work or ACTIVE.get()
     if work is None:
         return json.dumps({'error': 'No accepted local undertaking is bound'})
     return work.read_source(args, context)

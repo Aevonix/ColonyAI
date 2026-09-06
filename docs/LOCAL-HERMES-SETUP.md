@@ -18,9 +18,9 @@ A separate Hermes environment needs its own native core dependencies. It does
 not need Colony's CLI dependency `typer` or a preinstalled Colony adapter; setup
 can attach the private adapter directly from the Colony environment.
 
-The wizard offers optional task skills, asks for your name, the agent's name,
-the model API root and model, whether to enable accepted local drafts, then
-whether to start Colony. An API key is prompted without echo. For unattended
+The wizard asks for your name, the agent's name, the model API root and model,
+whether to enable accepted local drafts, then whether to start Colony. An API
+key is prompted without echo. For unattended
 setup use `COLONY_MODEL_API_KEY` in the process environment, never a command-line
 key. A model that requires no key works too.
 
@@ -71,22 +71,24 @@ also get that model in native Hermes config. An existing Hermes model is kept.
 
 Accepted local drafts are optional. With `--local-work`, setup checks function
 calling and creates a named `planning` role bound to the selected local model.
-It registers one job with the selected Hermes scheduler, running every five
-minutes. The selected Hermes gateway must be running for scheduled fires.
-The job remains idle until the owner accepts a specific question and local text
+It creates a native `colony-drafts` board and constrained worker profile.
+The selected Hermes gateway dispatcher must be running.
+The board remains idle until the owner accepts a specific question and local text
 sources through `colony_accept_local_draft`. No existing commitment is required;
 an optional commitment ID associates the draft with a broader obligation.
 
 The worker reads those sources, produces a cited draft and retains its execution
 and report in the instance. It cannot send the draft or change its source files.
-It loads the planning role afresh on each fire, using the Colony interpreter to
-resolve routing and the selected Hermes interpreter for native execution. The
+The gateway refreshes its planning profile from the current function role before
+promoting new work and on nonempty dispatch ticks. A running attempt keeps its
+selected snapshot; subsequent attempts use the refreshed profile. The
 two environments need no shared dependencies. See
 [accepted local work](ACCEPTED-LOCAL-WORK.md) for limits and cancellation.
-If scheduler registration fails after attachment, rerun the same command with
-`--local-work`. It retries the missing registration using the retained planning
-role, identity and credentials. Restart an already-running Colony instance to
-load the new job binding. An older instance without a planning role or compatible
+If native registration fails after attachment, rerun the same command with
+`--local-work`. It resumes the prepared profile using the retained planning
+role, identity and credentials. Restart an already-running Colony instance and
+Hermes gateway to load the new binding. Existing cron assignments drain before
+their old draft job is paused. An older instance without a planning role or compatible
 adapter needs explicit configuration or an adapter upgrade first.
 
 Graph/vector retrieval, embedding downloads and consequential background workers
@@ -95,43 +97,6 @@ those services intentionally. Model quality still determines extraction and
 reasoning quality. Lexical retrieval does not promise semantic recall of every
 paraphrase. This setup is a growing local base, not a claim that every autonomous
 behaviour or public channel is ready.
-
-## Optional task guidance
-
-**Available since 1.0.4.** Both the adapter and sidecar must include this option;
-published 1.0.3 artifacts predate the skill pack.
-
-The adapter distribution includes two original instruction packs:
-`colony-evidence-recall` for resolving incomplete or contradictory recollection,
-and `colony-work-handoff` for continuing an authorized task across sessions.
-They are experimental task guidance. Packaging and native discovery do not
-establish a measured improvement in model behavior. An initial trial used four
-synthetic tasks, two local processors and skill-absent/present pairs through
-native Hermes discovery and execution. Sixteen runs showed no consistent gain;
-two enabled runs exhausted their request budget. Factual results, response
-formatting and attempted tool actions were assessed separately. The pack remains
-optional and is not a reliable control over memory writes or work ownership.
-
-The wizard offers them with a default of no. Add `--task-skills` to `colony init`
-to opt in. An existing attached instance can add them without repeating model
-setup or changing its identity, credentials or runtime:
-
-```bash
-colony init --non-interactive --hermes-home /path/to/private/hermes --task-skills
-```
-
-Use `--adapter-wheel /path/to/colony_hermes.whl` to select a built adapter artifact
-instead of the installed distribution. Setup copies its public instructions to
-`<selected Hermes home>/skills/<skill name>/SKILL.md`. Hermes discovers their
-descriptions in its ordinary skill index and loads each body on demand; there
-is no additional loader, service or memory writer. Begin a new session to see
-the installed skills, and use Hermes's native controls to disable them.
-
-Re-running the option leaves identical files untouched and reports any existing
-different skill directory as preserved. It never silently updates user-edited
-skills. Compare the packaged source with your existing copy before replacing
-it manually. Private identity, device details and deployment procedures belong
-in your private agent's files, not in these public instructions.
 
 ## Identity and authority
 

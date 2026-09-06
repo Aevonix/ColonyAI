@@ -44,11 +44,6 @@ It attaches the canonical installed adapter when its bytes match, or installs
 profile directory adapters when no native package is present. It neither
 patches Hermes core nor restarts an existing gateway.
 
-Since 1.0.4, the wizard can optionally install [recall and work-handoff task guidance](docs/LOCAL-HERMES-SETUP.md#optional-task-guidance)
-through Hermes's ordinary skill discovery. Use `--task-skills` to opt in;
-existing copies are preserved. These instructions remain experimental guidance,
-and the initial paired local-model trial showed no consistent improvement.
-
 Accept the wizard's startup option, or run:
 
 ```bash
@@ -62,7 +57,7 @@ profiles, unattended flags, startup and recovery. The minimum profile remembers
 and observes. Consequential background execution requires deliberate setup.
 The wizard can also enable [accepted local drafts](docs/ACCEPTED-LOCAL-WORK.md):
 ask for a summary or comparison of selected local text files, and the native
-Hermes scheduler completes it in the background with a retained cited report.
+Hermes Kanban worker completes it in the background with a retained cited report.
 This requires a local model with function calling and a running Hermes gateway.
 For login startup and automatic process recovery, stop a detached instance and
 run `colony --instance /path/to/private/colony service install`, then

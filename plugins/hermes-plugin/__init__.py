@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from . import local_work
+from .native_drafts import NativeDrafts
 from . import judgments as judgment_tools
 
 from .colony_hostworker.catalog import (
@@ -2177,6 +2178,9 @@ def register(ctx: Any) -> None:
     boundary = _prepare_runtime_boundary(config)
     client = ColonyClient(url=url, api_key=api_key)
     work_coordinator = CommitmentCoordinator(client)
+    native_config = config.get('native_local_work')
+    native_drafts = (NativeDrafts(native_config, client, owner_contact_id)
+                     if isinstance(native_config, dict) else None)
     mediator = boundary.mediator
     runtime_enabled_actions = boundary.enabled_action_tools
     turn_writer_platforms = boundary.turn_writer_platforms
@@ -2222,15 +2226,18 @@ def register(ctx: Any) -> None:
             attested_system_platforms=attested_system_platforms,
         )
         _TRANSPORT_SCOPES.put(scope)
-        request_memory.observe(scope, kwargs.get('conversation_history') or [],
-            user_message=(None if review or kwargs.get('parent_session_id')
-                          or scope.platform == 'cron' else kwargs.get('user_message')))
+        native_context = (native_drafts.bind(scope, work_coordinator, kwargs)
+                          if native_drafts is not None else None)
+        if native_drafts is None or not native_drafts.worker:
+            request_memory.observe(scope, kwargs.get('conversation_history') or [],
+                user_message=(None if review or kwargs.get('parent_session_id')
+                              or scope.platform == 'cron' else kwargs.get('user_message')))
         if scope.valid_participant and not review:
             work_coordinator.bind_turn(**kwargs)
             local_work.bind_selected(scope, work_coordinator, kwargs)
         if execution_observer is not None:
             execution_observer.start(scope, review_parent=parent if review else None, **kwargs)
-        return None
+        return native_context
 
     def post_llm_call(**kwargs: Any) -> None:
         request_memory.finish(task_id=str(kwargs.get('task_id') or ''),
@@ -2242,7 +2249,8 @@ def register(ctx: Any) -> None:
             turn_id=str(kwargs.get("turn_id") or ""),
         )
         if (scope is None or not scope.valid_participant or scope.platform == "background_review"
-                or local_work.ACTIVE.get() is not None):
+                or local_work.ACTIVE.get() is not None
+                or (native_drafts is not None and native_drafts.worker)):
             return None
         if (
             turn_writer_platforms is not None
@@ -2390,6 +2398,10 @@ def register(ctx: Any) -> None:
             denial = local_work.before_tool(_TOOL_EXECUTION_CONTEXT.get() or {})
             if denial is not None:
                 return denial
+            if native_drafts is not None:
+                denial = native_drafts.before_tool(_TOOL_EXECUTION_CONTEXT.get() or {})
+                if denial is not None:
+                    return denial
             if execution_observer is not None:
                 return execution_observer.tool(next_call, args, **{
                     key: value for key, value in kwargs.items()
@@ -2400,6 +2412,8 @@ def register(ctx: Any) -> None:
     ctx.register_middleware("tool_execution", observe_tool)
 
     def reconcile_request(request, **kwargs):
+        if native_drafts is not None and native_drafts.worker:
+            return {'request': request}
         _TRANSPORT_SCOPES.bind_current_session(**kwargs)
         scope = _TRANSPORT_SCOPES.for_execution(
             session_id=str(kwargs.get('session_id') or ''),
@@ -2418,10 +2432,11 @@ def register(ctx: Any) -> None:
     def local_work_handler(name, args):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}
         if name == 'colony_read_work_source':
-            return local_work.read_source(args or {}, context)
+            return local_work.read_source(args or {}, context,
+                native_drafts.work if native_drafts is not None and native_drafts.worker else None)
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
             task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
-        return local_work.accept(args or {}, scope, client)
+        return local_work.accept(args or {}, scope, client, native_drafts)
     def judgment_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
@@ -2449,6 +2464,18 @@ def register(ctx: Any) -> None:
             ),
         )
 
+    if native_drafts is not None:
+        if native_drafts.worker:
+            from tools import kanban_tools
+            def complete_native_draft(args=None, **kwargs):
+                return native_drafts.complete(args or {}, _TOOL_EXECUTION_CONTEXT.get() or {},
+                                              kanban_tools._handle_complete)
+            ctx.register_tool(name='kanban_complete', toolset='kanban',
+                schema=kanban_tools.KANBAN_COMPLETE_SCHEMA, handler=complete_native_draft,
+                check_fn=kanban_tools._check_kanban_mode, override=True)
+        else:
+            ctx.register_hook('on_kanban_dispatch_tick', native_drafts.reconcile_pending)
+
     ctx.register_hook("pre_llm_call", pre_llm_call)
     def bind_child(**kwargs):
         _TRANSPORT_SCOPES.bind_child(**kwargs)
@@ -2460,6 +2487,9 @@ def register(ctx: Any) -> None:
             task_id=kwargs.get("task_id", ""), turn_id=kwargs.get("turn_id", ""))
         if scope is not None and scope.valid_participant and scope.platform != "background_review":
             work_coordinator.bind_turn(**kwargs)
+            if (native_drafts is not None and native_drafts.worker and native_drafts.work is not None
+                    and native_drafts.work.task_id == kwargs.get('task_id')):
+                native_drafts.model = str(kwargs.get('model') or native_drafts.model)
     ctx.register_hook("pre_api_request", bind_current_session)
     def capture_review_parent(**kwargs):
         if _native_background_review():

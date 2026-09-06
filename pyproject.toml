@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "colony-hermes"
-version = "1.0.4"
+version = "1.0.5"
 description = "Native Hermes general and memory adapters for a Colony sidecar"
 readme = "docs/HERMES-ADAPTER.md"
 requires-python = ">=3.11,<3.14"
@@ -31,7 +31,7 @@ colony_hermes = "plugins/hermes-plugin"
 colony_memory = "plugins/colony-memory"
 
 [tool.setuptools.package-data]
-colony_hermes = ["plugin.yaml", "skills/*/SKILL.md"]
+colony_hermes = ["plugin.yaml"]
 colony_memory = ["plugin.yaml", "SKILL.md"]
 
 [tool.pytest.ini_options]

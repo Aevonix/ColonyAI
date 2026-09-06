@@ -21,17 +21,6 @@ import sys, os
 sys.path.insert(0, sys.argv[1])
 if sys.argv[2]: sys.path.append(sys.argv[2])
 import runpy
-if os.environ.get('COLONY_TEST_LOSE_JOB_OUTPUT'):
-    from colony_sidecar import setup_local_work
-    import subprocess
-    original_run = setup_local_work.subprocess.run
-    def lose_created_output(argv, **kwargs):
-        result = original_run(argv, **kwargs)
-        if any('job=create_job(' in arg for arg in argv):
-            assert result.returncode == 0, result.stderr
-            raise subprocess.TimeoutExpired(argv, 30)
-        return result
-    setup_local_work.subprocess.run = lose_created_output
 sys.argv = ['colony', 'init', '--non-interactive', '--hermes-python', sys.argv[7],
     '--hermes-home', sys.argv[3], '--adapter-wheel', sys.argv[4], '--agent-name', 'Orion',
     '--contact-name', 'Fixture Owner', '--model-url', sys.argv[5], '--model', 'fixture', '--port', sys.argv[6],
@@ -87,7 +76,7 @@ runpy.run_module('colony_sidecar', run_name='__main__')
 '''
 
 LOCAL_DRAFT = r'''
-import json,os,sqlite3
+import json,os,signal,sqlite3,time
 from pathlib import Path
 from dotenv import load_dotenv
 from hermes_constants import get_hermes_home
@@ -105,23 +94,43 @@ accepted=json.loads(handle_function_call('colony_accept_local_draft',
     task_id='owner-draft',turn_id='owner-draft',tool_call_id='accept-draft'))
 assert accepted.get('status')=='pending',accepted
 assert accepted['context']['commitment_id'] is None
-from cron.jobs import trigger_job
-from cron.scheduler import tick
-job=manifest['local_work']['job_id'];trigger_job(job);tick(verbose=False,sync=True)
-with sqlite3.connect(home/'cron/executions.db') as db:
-    rows=db.execute('SELECT id,status FROM executions WHERE job_id=?',(job,)).fetchall()
-assert len(rows)==1 and rows[0][1]=='completed',rows
+assert accepted['context']['execution_backend']=='kanban'
+from hermes_cli import kanban_db as kb
+lane=manifest['local_work'];assert lane['executor']=='kanban',lane
+board=lane['board'];tid=accepted['context']['native_task_id']
+with kb.connect(board=board) as db:
+    assert kb.get_task(db,tid).status=='ready'
+    outcome=kb.dispatch_once(db,board=board,max_spawn=1)
+    assert outcome.spawned,vars(outcome)
+    try:
+        deadline=time.monotonic()+60
+        while time.monotonic()<deadline:
+            task=kb.get_task(db,tid)
+            if task.status!='running':break
+            time.sleep(.1)
+        task=kb.get_task(db,tid)
+        log=kb.read_worker_log(tid,board=board,tail_bytes=12000)
+        assert task.status=='done',(task.status,log)
+        run=kb.latest_run(db,tid)
+        assert run.outcome=='completed',run
+        assert db.execute('SELECT count(*) FROM task_runs WHERE task_id=?',(tid,)).fetchone()[0]==1
+        assert db.execute('SELECT count(*) FROM kanban_notify_subs').fetchone()[0]==0
+    finally:
+        task=kb.get_task(db,tid)
+        if task.status=='running' and task.worker_pid:
+            try:os.kill(task.worker_pid,signal.SIGTERM)
+            except ProcessLookupError:pass
+        kb.reap_worker_zombies()
 reports=list((state/'drafts').rglob('report.md'));assert len(reports)==1,reports
 assert 'cobalt-716' in reports[0].read_text()
 receipt=json.loads((reports[0].parent/'draft-receipt.json').read_text())
-assert receipt['native_execution_id']==rows[0][0]
-assert receipt['routing_policy']['role']=='planning'
+assert receipt['native_task_id']==tid and receipt['native_run_id']==run.id
 with sqlite3.connect(state/'initiatives.db') as db:
     status=db.execute('SELECT status FROM initiatives WHERE id=?',(accepted['id'],)).fetchone()[0]
 assert status=='completed',status
 with sqlite3.connect((state/'colony-commitments.db').as_uri()+'?mode=ro',uri=True) as db:
     assert db.execute('SELECT count(*) FROM commitments').fetchone()[0]==0
-print(json.dumps({'standalone_draft_completed':True,'native_execution':rows[0][0]}))
+print(json.dumps({'standalone_draft_completed':True,'native_task':tid,'native_run':run.id}))
 '''
 
 
@@ -145,51 +154,16 @@ def _native_interpreter(tmp_path, wheel, adapter_installation):
     elif adapter_installation == 'editable':
         run_python('-m', 'pip', 'install', '--no-index', '--no-deps', '--no-build-isolation',
             '--target', site, '-e', ROOT, cwd=tmp_path)
+    # Give the stock dispatcher a console script bound to this fresh runtime.
+    launcher = target/'bin/hermes'
+    launcher.write_text('#!'+str(target/'bin/python')+'\nfrom hermes_cli.main import main\nmain()\n')
+    launcher.chmod(0o700)
     return target/'bin'/'python'
 
 
-def test_lost_native_creation_output_leaves_no_orphan_job(tmp_path):
-    if importlib.util.find_spec('hermes_cli') is None:
-        pytest.skip('Requires qualified native Hermes')
-    script = r'''
-import json,os,subprocess,sys
-from pathlib import Path
-sys.path.insert(0,sys.argv[1])
-if sys.argv[2]:sys.path.append(sys.argv[2])
-from colony_sidecar import setup_local_work
-from cron.jobs import create_job,list_jobs
-home=Path(os.environ['HERMES_HOME']);home.mkdir(exist_ok=True);state=home/'colony';state.mkdir()
-manifest={'version':1,'profile':'local','hermes_home':str(home),'hermes_python':sys.executable}
-original=json.dumps(manifest);(state/'instance.json').write_text(original)
-(state/'.env').write_text('COLONY_INSTALL_PROFILE=local\n')
-other=create_job(prompt='Unrelated retained task',schedule='every 1h',name='Existing task',deliver='local')
-before=list_jobs(include_disabled=True)
-run=setup_local_work.subprocess.run
-def lose_output(argv,**kwargs):
-    result=run(argv,**kwargs)
-    if any('job=create_job(' in arg for arg in argv):
-        assert result.returncode==0,result.stderr
-        raise subprocess.TimeoutExpired(argv,30)
-    return result
-setup_local_work.subprocess.run=lose_output
-try:setup_local_work.install(state)
-except subprocess.TimeoutExpired:pass
-else:raise AssertionError('Expected lost child output')
-assert list_jobs(include_disabled=True)==before
-assert not (home/'scripts'/setup_local_work.SCRIPT).exists()
-assert (state/'instance.json').read_text()==original
-assert (state/'.env').read_text()=='COLONY_INSTALL_PROFILE=local\n'
-print('native_registration_recovered')
-'''
-    environment = dict(os.environ, HERMES_HOME=str(tmp_path/'profile'),
-                       HERMES_SKIP_DOTENV='1', HERMES_DISABLE_TELEMETRY='1')
-    result = run_python('-I','-c',script,ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),
-                        cwd=tmp_path,env=environment)
-    assert 'native_registration_recovered' in result.stdout
-
-
-@pytest.mark.parametrize('adapter_installation', ['absent', 'wheel', 'editable'])
-def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(artifacts, tmp_path, adapter_installation):
+@pytest.mark.parametrize('adapter_installation,named_home', [
+    ('absent', False), ('wheel', False), ('editable', False), ('absent', True)])
+def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(artifacts, tmp_path, adapter_installation, named_home):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Requires qualified native Hermes')
     output, wheel, _, installed = artifacts
@@ -226,17 +200,26 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
             if isinstance(choice, dict) and choice.get('function', {}).get('name') == 'colony_setup_echo':
                 calls = [{'id':'setup-call','type':'function','function':{
                     'name':'colony_setup_echo','arguments':json.dumps({'token':'colony-ready'})}}]
-            elif 'Produce the explicitly accepted local comparison/summary below.' in str(last):
+            elif 'Produce the accepted local source draft below.' in full:
                 results = [m for m in body['messages'] if m.get('role')=='tool']
+                names = {tool['function']['name'] for tool in body.get('tools', [])}
                 if not results:
-                    name,args='tool_search',{'queries':['read selected local work source']}
-                elif len(results)==1:
-                    name,args='tool_call',{'name':'colony_read_work_source','arguments':{'source':0}}
+                    if 'colony_read_work_source' in names:
+                        name,args='colony_read_work_source',{'source':0}
+                    else:
+                        name,args='tool_search',{'queries':['colony_read_work_source', 'kanban_complete']}
+                elif not any('native_read' in str(row.get('content')) for row in results):
+                    name,args='colony_read_work_source',{'source':0}
+                elif not any('"ok": true' in str(row.get('content')) for row in results):
+                    assert any('cobalt-716' in str(row.get('content')) for row in results)
+                    name,args='kanban_complete',{'summary':'Retain the selected source draft',
+                        'metadata':{'draft':'The source names orchard badge cobalt-716 [source:0].','sources':[0]}}
                 else:
-                    assert 'cobalt-716' in results[-1]['content']
                     name,args=None,None
-                    answer=json.dumps({'draft':'The source names orchard badge cobalt-716 [source:0].','sources':[0]})
+                    answer='Unverified local draft retained.'
                 if name:
+                    if name not in names and 'tool_call' in names:
+                        name,args='tool_call',{'name':name,'arguments':args}
                     calls=[{'id':'draft-call-'+str(len(results)),'type':'function',
                             'function':{'name':name,'arguments':json.dumps(args)}}]
             message = {'role':'assistant','content':'' if calls else answer}
@@ -260,26 +243,25 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
     endpoint = f'http://127.0.0.1:{model.server_port}/v1'
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
-    home = tmp_path/'profile'; bundled = tmp_path/'bundled'; bundled.mkdir()
+    home = tmp_path/'profile'
+    if named_home:
+        home = home/'profiles'/'owner'
+    bundled = tmp_path/'bundled'; bundled.mkdir()
     env = {key: os.environ[key] for key in ('PATH', 'LANG') if key in os.environ}
     env.update(HOME=str(tmp_path), HERMES_HOME=str(home), HERMES_BUNDLED_PLUGINS=str(bundled),
+               HERMES_BIN=str(native_python.parent/'hermes'),
+               HERMES_DISABLE_LAZY_INSTALLS='1', TIRITH_ENABLED='false',
                HERMES_DISABLE_TELEMETRY='1', COLONY_GUARD_CHAT_MODE='off', LITELLM_LOCAL_MODEL_COST_MAP='True',
                PYTHONPATH=dependency_path)
+    if named_home:
+        run_native('-I', '-c',
+            'import os; os.umask(0o077); from hermes_cli.profiles import create_profile; '
+            'profile=create_profile("owner",no_alias=True,no_skills=True); '
+            '(profile/"SOUL.md").write_text("You are Orion, the retained profile identity.\\n")', cwd=tmp_path, env=env)
     server = None
     try:
-        if adapter_installation == 'absent':
-            failed = subprocess.run([sys.executable, '-I', '-c', INSTALL, str(installed),
-                dependency_path, str(home), str(wheel), endpoint, str(port), str(native_python), 'local-work'],
-                cwd=tmp_path, env=dict(env, COLONY_TEST_LOSE_JOB_OUTPUT='1'),
-                text=True, capture_output=True, timeout=120)
-            assert failed.returncode == 1, failed.stdout + failed.stderr
-            retained = {name: (home/'colony'/name).read_bytes()
-                        for name in ('api-keyring.json', 'contacts.db', '.colony-llm-config.json')}
-            assert 'local_work' not in json.loads((home/'colony'/'instance.json').read_text())
         run_python('-I', '-c', INSTALL, installed, dependency_path, home, wheel, endpoint, port, native_python,
                    'local-work' if adapter_installation=='absent' else '', cwd=tmp_path, env=env)
-        if adapter_installation == 'absent':
-            assert all((home/'colony'/name).read_bytes() == raw for name, raw in retained.items())
         manifest = json.loads((home/'colony'/'instance.json').read_text())
         assert manifest['adapter_binding']['mode'] == ('native-installed' if installed_adapter else 'private-directory')
         assert (home/'plugins'/'colony').exists() is not installed_adapter
