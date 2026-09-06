@@ -179,17 +179,27 @@ def test_packaged_draft_json_format_boundary(artifacts, tmp_path):
     script = r'''
 import json,sys
 sys.path.insert(0,sys.argv[1])
-from colony_hermes.local_work_runner import decode_draft_response
+from colony_hermes.model_response import decode_json_response
 value={'draft':'Neutral source [source:0].','sources':[0]}
 raw=json.dumps(value)
 for body in [raw, '\n '+raw+' \n', '```json\n'+raw+'\n```', '```\r\n'+raw+'\r\n```']:
-    assert decode_draft_response(body)==value
+    assert decode_json_response(body)==value
 for body in ['Here is the draft:\n'+raw, '```json\n'+raw,
              '```json\n'+raw+'\n```\nAdditional prose',
              '```json\n'+raw+'\n```\n```json\n'+raw+'\n```',
              '```json\n'+raw[:-1]+'\n```']:
-    try:decode_draft_response(body)
+    try:decode_json_response(body)
     except json.JSONDecodeError:pass
     else:raise AssertionError('Malformed or mixed-content result was accepted')
+def reject_duplicates(pairs):
+    result={}
+    for key,value in pairs:
+        if key in result:raise ValueError('duplicate key')
+        result[key]=value
+    return result
+assert decode_json_response('```json\n'+raw+'\n```',object_pairs_hook=reject_duplicates)==value
+try:decode_json_response('```json\n{"draft":"first","draft":"second"}\n```',object_pairs_hook=reject_duplicates)
+except ValueError as error:assert str(error)=='duplicate key'
+else:raise AssertionError('The caller-provided JSON decoder hook was discarded')
 '''
     run_python('-I', '-c', script, artifacts[3], cwd=tmp_path)

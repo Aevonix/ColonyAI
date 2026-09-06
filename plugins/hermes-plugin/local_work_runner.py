@@ -5,23 +5,16 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import sqlite3
 import subprocess
 
 from .client import ColonyClient
 from .local_work import Undertaking, request, selected
+from .model_response import decode_json_response
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def decode_draft_response(raw):
-    """Accept JSON with an optional complete Markdown code fence."""
-    body = raw.strip()
-    fenced = re.fullmatch(r'```(?:json)?[ \t]*\r?\n(.*?)\r?\n```', body, re.DOTALL)
-    return json.loads(fenced.group(1) if fenced else body)
 
 
 def active_execution(home, job_id):
@@ -151,7 +144,7 @@ def run_once(*, home, job_id, destination, provider=None, model=None, client=Non
                 or native_result.get('interrupted') or native_result.get('error')
                 or work.read != set(range(len(assignment['context']['sources'])))):
             raise ValueError('native_local_draft_incomplete')
-        interpretation = decode_draft_response(raw)
+        interpretation = decode_json_response(raw)
         if (not isinstance(interpretation, dict) or set(interpretation) != {'draft', 'sources'}
                 or not isinstance(interpretation['draft'], str) or not interpretation['draft'].strip()
                 or len(interpretation['draft']) > 32000
