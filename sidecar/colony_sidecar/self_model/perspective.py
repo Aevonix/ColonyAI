@@ -230,6 +230,7 @@ class SelfPerspective:
                 applied = domain in DOMAINS and original < 0.9
                 item.priority = round(max(0.0, min(0.89, original * weight)), 4) if applied else original
                 decisions.append({'initiative_id': str(item.id), 'domain': domain, 'original_priority': original,
+                    'description': str(getattr(item, 'description', '') or '')[:500],
                     'priority': item.priority, 'weight': weight if applied else 1.0,
                     'basis': 'owner_correction' if override and applied else 'operational_judgment' if opinion and applied else 'unchanged',
                     'correction_id': override['id'] if override and applied else None,

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 import pytest
 
 from colony_sidecar.autonomy.loop import AutonomyLoop, LoopStats
+from colony_sidecar.autonomy.config import AutonomyConfig
 from colony_sidecar.intelligence.graph import client as client_mod
 
 
@@ -144,6 +145,7 @@ class _Reg:
 
 def _bare_loop(graph=object()):
     loop = AutonomyLoop.__new__(AutonomyLoop)
+    loop.config = AutonomyConfig()
     loop._registry = _Reg(graph)
     loop._periodic_last = {}
     loop._phase_skip_warned = set()

@@ -323,6 +323,9 @@ class AutonomyLoop:
     ) -> None:
         self._registry = registry
         self.config = config or AutonomyConfig()
+        for phase in self.config.enabled_phases or ():
+            if not callable(getattr(self, '_phase_' + phase, None)):
+                raise ValueError(f'Unknown autonomy phase: {phase}')
         self.events = event_bus or EventBus()
         self.stats = LoopStats()
         self._scheduler = scheduler
@@ -1190,7 +1193,7 @@ class AutonomyLoop:
             }
 
             # Try auto-execute for self-initiatives
-            if is_self_initiative and engine is not None:
+            if is_self_initiative and engine is not None and not self.config.proposals_only:
                 try:
                     exec_result = await engine.execute_initiative(initiative.id)
                     result_status = exec_result.get("status")
@@ -1229,6 +1232,7 @@ class AutonomyLoop:
                     "context_captured_at",
                     datetime.now(timezone.utc).isoformat(),
                 )
+                initiative_context.setdefault("candidate_id", str(initiative.id))
 
                 # Persist initiative before dispatch so it survives restarts
                 store = getattr(self._registry, "initiative_store", None)
@@ -1267,6 +1271,12 @@ class AutonomyLoop:
                         continue
                 else:
                     initiative_id = getattr(initiative, "id", str(uuid.uuid4()))
+
+                if self.config.proposals_only:
+                    # Ranking and durable proposal creation are the complete
+                    # effect of this selected rollout. Do not wake legacy
+                    # executor skills or enqueue/deliver the proposal here.
+                    continue
 
                 # --- v0.13.0: Route AGENT_ACTION initiatives to task queue ---
                 action_hint = getattr(initiative, "action_hint", None) or ""
@@ -3517,6 +3527,11 @@ class AutonomyLoop:
         """Await one tick phase, recording its name while it runs and its
         wall-clock duration (last and worst) afterwards. The marker is left in
         place on cancellation so the budget-cancel path can name the phase."""
+        selected = self.config.enabled_phases
+        if selected is not None and name not in selected:
+            awaitable.close()
+            self.stats.phases_skipped += 1
+            return
         self._current_phase = name
         started = time.monotonic()
         try:
@@ -4339,6 +4354,9 @@ class AutonomyLoop:
             "in_quiet_hours": self._in_quiet_hours(),
             "config": {
                 "mode": self.config.mode.value,
+                "enabled_phases": (list(self.config.enabled_phases)
+                                   if self.config.enabled_phases is not None else None),
+                "proposals_only": self.config.proposals_only,
                 "timezone": self.config.timezone,
                 "tick_interval_secs": self.config.tick_interval_secs,
                 "initiative_confidence_threshold": self.config.initiative_confidence_threshold,

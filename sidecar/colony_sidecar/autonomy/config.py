@@ -16,6 +16,17 @@ class AutonomyMode(str, Enum):
     PROACTIVE = "proactive"  # Timer-based
 
 
+def _enabled_phases(value) -> Optional[tuple[str, ...]]:
+    if value is None:
+        return None
+    parts = value.split(',') if isinstance(value, str) else value
+    if not isinstance(parts, (list, tuple)) or not parts:
+        raise ValueError('enabled_phases must name at least one existing phase')
+    if any(not isinstance(part, str) or not part.strip() for part in parts):
+        raise ValueError('enabled_phases contains an empty or invalid name')
+    return tuple(dict.fromkeys(part.strip() for part in parts))
+
+
 @dataclass
 class InitiativeConfig:
     """Configuration for initiative deduplication and feedback (v0.7.10)."""
@@ -42,6 +53,14 @@ class AutonomyConfig:
     # file), or "default". Diagnostic only — surfaced in the posture
     # endpoint so an operator can always see WHY the loop runs as it does.
     mode_source: str = "default"
+
+    # None retains the existing phase set. A deployment can activate only the
+    # reviewed phases of this same loop without waking unrelated maintenance.
+    enabled_phases: Optional[tuple[str, ...]] = None
+    # Only affects the execute phase: persist proposals without legacy skill
+    # execution, queue dispatch, broadcasts or delivery. Other services retain
+    # their independent configuration and authority.
+    proposals_only: bool = False
 
     # IANA timezone for quiet hours (e.g., "America/El_Salvador")
     timezone: str = "UTC"
@@ -149,6 +168,8 @@ class AutonomyConfig:
         return cls(
             mode=mode,
             mode_source="config",
+            enabled_phases=_enabled_phases(_get("enabled_phases", None)),
+            proposals_only=bool(_get("proposals_only", False)),
             timezone=timezone,
             tick_interval_secs=float(_get("tick_interval_secs", defaults.tick_interval_secs)),
             initiative_confidence_threshold=float(_get(
@@ -220,6 +241,8 @@ class AutonomyConfig:
 
         Environment variables:
             COLONY_AUTONOMY_MODE
+            COLONY_AUTONOMY_PHASES (comma-separated existing phase names)
+            COLONY_AUTONOMY_PROPOSALS_ONLY
             COLONY_PRESET_LOOP_COUPLING (default on: an active
                 COLONY_AUTONOMY_PRESET supplies the mode when
                 COLONY_AUTONOMY_MODE is unset)
@@ -315,6 +338,8 @@ class AutonomyConfig:
         return cls(
             mode=mode,
             mode_source=mode_source,
+            enabled_phases=_enabled_phases(os.environ.get("COLONY_AUTONOMY_PHASES")),
+            proposals_only=_bool("COLONY_AUTONOMY_PROPOSALS_ONLY", False),
             timezone=timezone,
             tick_interval_secs=_float(
                 "COLONY_AUTONOMY_TICK_INTERVAL_SECS",
