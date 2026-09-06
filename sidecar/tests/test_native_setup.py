@@ -142,8 +142,23 @@ def test_instance_never_uses_another_homes_environment(tmp_path, monkeypatch):
     (tmp_path/'.colony').mkdir()
     (tmp_path/'.colony'/'.env').write_text('OTHER_AGENT_ONLY=private\n')
     monkeypatch.delenv('OTHER_AGENT_ONLY', raising=False)
-    load_environment()
+    with pytest.raises(ValueError, match='incomplete'):
+        load_environment()
     assert 'OTHER_AGENT_ONLY' not in os.environ
+
+
+@pytest.mark.parametrize('command', [['start', '--detach'], ['stop']])
+@pytest.mark.parametrize('skip_dotenv', ['', '1'])
+def test_missing_explicit_instance_never_enters_legacy_process_control(tmp_path, monkeypatch, command, skip_dotenv):
+    from colony_sidecar import cli
+    monkeypatch.setattr(os, 'environ', dict(os.environ))
+    monkeypatch.setenv('COLONY_SKIP_DOTENV', skip_dotenv)
+    monkeypatch.setattr(cli.sys, 'argv', ['colony', '--instance', str(tmp_path/'typo'), *command])
+    monkeypatch.setattr(cli, '_cleanup_orphans', lambda **kw: pytest.fail('Global cleanup invoked'))
+    monkeypatch.setattr(cli, '_find_pid_on_port', lambda *a: pytest.fail('Unrelated port probed'))
+    monkeypatch.setattr(cli.os, 'kill', lambda *a: pytest.fail('Process signalled'))
+    with pytest.raises(ValueError, match='no legacy fallback'):
+        cli.main()
 
 
 def test_local_stop_refuses_reused_pid_and_other_instance_port(tmp_path, monkeypatch, capsys):
