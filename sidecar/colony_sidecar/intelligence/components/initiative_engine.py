@@ -21,6 +21,7 @@ import logging
 
 from colony_sidecar.skills.base import ExecutionResult, InitiativeExecutionContext
 from colony_sidecar.skills.registry import SkillRegistry
+from colony_sidecar.initiatives.context_freshness import is_context_fresh
 
 logger = logging.getLogger(__name__)
 
@@ -932,15 +933,22 @@ class InitiativeEngine:
                     tasks.append({
                         "entity_id": "database_backup",
                         "entity_type": "backup",
-                        "description": f"Last backup was {newest_age_days:.0f} days ago",
+                        "description": f"Review backup coverage: newest legacy .bak file was modified {newest_age_days:.0f} days ago; recovery coverage is unverified",
                         "age_days": newest_age_days,
+                        "evidence_scope": "legacy_bak_directory_only",
+                        "evidence_path": str(backup_dir),
+                        "latest_file_modified_at": datetime.fromtimestamp(backups[0].stat().st_mtime, timezone.utc).isoformat(),
+                        "observed_at": datetime.now(timezone.utc).isoformat(),
                     })
             else:
                 tasks.append({
                     "entity_id": "database_backup",
                     "entity_type": "backup",
-                    "description": "No backups found",
+                    "description": "Review backup coverage: no legacy .bak files found in the checked directory; other backup locations were not assessed",
                     "age_days": 999,
+                    "evidence_scope": "legacy_bak_directory_only",
+                    "evidence_path": str(backup_dir),
+                    "observed_at": datetime.now(timezone.utc).isoformat(),
                 })
 
         # Check log sizes
@@ -2002,11 +2010,13 @@ class InitiativeEngine:
             if observations:
                 self._context[domain] = [
                     {
-                        "entity_id": o.entity_id,
-                        "observed_at": o.observed_at.isoformat(),
                         **(o.payload or {}),
+                        "entity_id": o.entity_id,
+                        "observed_at": o.observed_at.isoformat() if o.observed_at else None,
+                        "context_captured_at": o.observed_at.isoformat() if o.observed_at else None,
                     }
                     for o in observations
+                    if is_context_fresh(domain, o.observed_at.isoformat() if o.observed_at else None)
                 ]
 
     @staticmethod
@@ -2020,6 +2030,15 @@ class InitiativeEngine:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed
+
+    @staticmethod
+    def _system_error_rate(payload: Dict[str, Any]) -> Optional[float]:
+        value = payload.get("error_rate")
+        try:
+            rate = float(value) if value is not None else 0.0
+        except (TypeError, ValueError):
+            return None
+        return rate if not isinstance(value, bool) and 0 <= rate <= 1 else None
 
     @staticmethod
     def _observation_condition_cleared(domain: str, payload: Dict[str, Any]) -> bool:
@@ -2036,8 +2055,8 @@ class InitiativeEngine:
             return ci_ok and not payload.get("review_requested")
         if domain == "system":
             status = str(payload.get("status") or "").lower()
-            error_rate = float(payload.get("error_rate") or 0.0)
-            return status in healthy and error_rate <= 0.1
+            error_rate = InitiativeEngine._system_error_rate(payload)
+            return status in healthy and error_rate is not None and error_rate <= 0.1
         if domain == "calendar":
             start = InitiativeEngine._parse_iso(payload.get("start_time"))
             return start is not None and start < datetime.now(timezone.utc)
@@ -2067,9 +2086,12 @@ class InitiativeEngine:
             return None
         if obs is None:
             return None
+        stamp = obs.observed_at.isoformat() if obs.observed_at else None
+        if not is_context_fresh(domain, stamp):
+            return None
         return {
-            domain: {"entity_id": entity_id, **(obs.payload or {})},
-            "context_captured_at": obs.observed_at.isoformat(),
+            domain: {**(obs.payload or {}), "entity_id": entity_id, "observed_at": stamp},
+            "context_captured_at": stamp,
             "condition_cleared": self._observation_condition_cleared(domain, obs.payload or {}),
         }
 
@@ -2256,28 +2278,30 @@ class InitiativeEngine:
         """Unhealthy services, from agent observations."""
         initiatives: List[Initiative] = []
         now = datetime.now(timezone.utc)
-        healthy = {"healthy", "ok", "active", "up", "passing", "green"}
+        unhealthy = {"degraded", "down", "error", "failed", "failing", "unhealthy",
+                     "unreachable", "offline", "critical", "unavailable"}
         for item in self._context.get("system", []):
             entity_id = item.get("entity_id")
-            if not entity_id:
+            if not entity_id or not is_context_fresh("system", item.get("observed_at"), now=now):
                 continue
-            status = str(item.get("status") or "").lower()
-            error_rate = float(item.get("error_rate") or 0.0)
-            if status in healthy and error_rate <= 0.1:
+            status = str(item.get("status") or "").strip().lower()
+            error_rate = self._system_error_rate(item)
+            if status not in unhealthy and not (error_rate is not None and error_rate > 0.1):
                 continue
             initiatives.append(
                 Initiative(
                     id=f"system-{entity_id}",
                     type=InitiativeType.SYSTEM,
-                    description=f"Investigate {entity_id}: {item.get('status', 'degraded')}",
+                    description=f"Investigate {entity_id}: {status if status in unhealthy else 'elevated error rate'}",
                     priority=0.9,
                     rationale=item.get("message")
-                    or f"status={item.get('status')}, error_rate={error_rate:.2f}",
+                    or f"observed status={status or 'unspecified'}, error_rate={error_rate}",
                     action_hint="system_check_health",
                     entity_id=str(entity_id),
                     dedup_key=f"system:{entity_id}",
                     expires_at=now + timedelta(hours=2),
-                    trigger_data={k: v for k, v in item.items() if k != "entity_id"},
+                    trigger_data={**{k: v for k, v in item.items() if k != "entity_id"},
+                                  "context_captured_at": item["observed_at"]},
                 )
             )
         return initiatives
