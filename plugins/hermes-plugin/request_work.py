@@ -71,7 +71,7 @@ class RequestWork:
         text = _UNAVAILABLE
         deadline = time.monotonic() + .25
         try:
-            response = self.client.get('/v1/host/executions',
+            response = self.client.get("/v1/host/executions",
                 params={'contact_id': scope.contact_id, 'session_id': scope.session_id,
                         'limit': 8, 'projection': 'request'},
                 timeout=.25, _deadline_monotonic=deadline)

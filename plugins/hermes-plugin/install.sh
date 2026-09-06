@@ -32,8 +32,10 @@ fi
 
 mkdir -p "$PLUGIN_DIR"
 chmod 700 "$PLUGIN_DIR"
-for name in __init__.py client.py events.py evidence.py executions.py commitment_work.py judgments.py local_work.py local_work_runner.py request_memory.py slash.py plugin.yaml; do
-  cp "$SCRIPT_DIR/$name" "$PLUGIN_DIR/$name"
+# Match the wheel's module contents without a second, drifting module list.
+for source in "$SCRIPT_DIR"/*.py "$SCRIPT_DIR/plugin.yaml"; do
+  name="${source##*/}"
+  cp "$source" "$PLUGIN_DIR/$name"
   chmod 600 "$PLUGIN_DIR/$name"
 done
 

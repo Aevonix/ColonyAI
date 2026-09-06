@@ -1025,11 +1025,13 @@ def _write_hermes_config(config_path: Path, api_key: str, sidecar_url: str, cont
 def _hermes_plugin_files(colony_repo: Path, hermes_home: Path) -> list[tuple[bytes, Path]]:
     """The existing source-checkout layout, with every required file checked."""
     files = []
+    plugin_modules = tuple(path.name for path in sorted(
+        (colony_repo / "plugins/hermes-plugin").glob("*.py")) if path.name != "__init__.py")
     for source, target, names in (
         ("plugins/colony-memory", "plugins/colony-memory",
          ("__init__.py", "provider.py", "cli.py", "plugin.yaml", "SKILL.md")),
         ("plugins/hermes-plugin", "plugins/colony",
-         ("__init__.py", "client.py", "events.py", "evidence.py", "executions.py", "commitment_work.py", "judgments.py", "local_work.py", "local_work_runner.py", "slash.py", "plugin.yaml")),
+         ("__init__.py", *plugin_modules, "plugin.yaml")),
         ("plugins/hermes-plugin/colony_hostworker", "plugins/colony/colony_hostworker", ("__init__.py",)),
         ("hostworker/colony_hostworker", "plugins/colony/colony_hostworker", ("catalog.py", "contract.py")),
     ):

@@ -97,7 +97,7 @@ with patch('run_agent.OpenAI',return_value=client), patch('run_agent.get_tool_de
     assert retold['final_response']=='RETOLD_OK'
     sent=client.chat.completions.create.call_args_list[-1].kwargs['messages']
     assert sum(fact in str(row.get('content','')) for row in sent) == 1, sent
-    assert fact in sent[-1]['content']  # only the observed new direct input
+    assert fact in next(row['content'] for row in reversed(sent) if row.get('role')=='user'), sent
     agent.close()
 assert any(path.endswith('/memory/sources/erasures') and code==200 for path,code in wire), wire
 assert fact in json.dumps(db.get_messages_as_conversation('original'))
