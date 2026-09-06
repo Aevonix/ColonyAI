@@ -139,12 +139,15 @@ class TurnIdempotencyLedger:
                     )
                 """)
                 conn.execute("CREATE TABLE IF NOT EXISTS source_projection_erasures (turn_id TEXT NOT NULL, source_turn_id TEXT NOT NULL, PRIMARY KEY(turn_id, source_turn_id))")
+                from colony_sidecar.beliefs.source_projection import initialize
+                initialize(conn)
             self._initialized = True
 
     def record_source(
         self, turn_id: str, *, contact_id: str, session_id: str,
         messages: list[dict[str, Any]], scope: str = "person",
         occurred_at: str | None = None,
+        timezone_name: str | None = None,
     ) -> bool:
         """Atomically retain source JSON and its rebuildable lexical index.
 
@@ -197,6 +200,8 @@ class TurnIdempotencyLedger:
                 (turn_id, digest, contact_id, session_id, scope, encoded, occurred_at),
             )
             self._index_messages(conn, turn_id, messages)
+            from colony_sidecar.beliefs.source_projection import enqueue
+            enqueue(conn, turn_id, messages, scope=scope, timezone_name=timezone_name)
         return True
 
     @staticmethod
@@ -305,6 +310,8 @@ class TurnIdempotencyLedger:
                 retained = [] if row["turn_id"] in erased_ids else self._retained_messages(messages, row["session_id"], rules)
                 if retained == messages:
                     continue
+                from colony_sidecar.beliefs.source_projection import erase_removed
+                erase_removed(conn, row["turn_id"], row["session_id"], retained)
                 affected.append(row["turn_id"])
                 for selected_id in selected:
                     conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (row["turn_id"], selected_id))

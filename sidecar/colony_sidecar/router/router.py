@@ -133,6 +133,7 @@ class LLMRouter:
                 int(ctx["max_output_tokens"])
                 if ctx.get("max_output_tokens") is not None else None
             ),
+            allow_fallback=ctx.get("allow_fallback", True) is not False,
         )
 
     def route(self, prompt: str, context: dict | None = None) -> tuple[ModelTier, str]:
@@ -214,6 +215,7 @@ class LLMRouter:
         stream: bool,
         prompt: str,
         max_output_tokens: int | None = None,
+        allow_fallback: bool = True,
     ) -> LLMResponse:
         current_tier = tier
         last_exc: Exception | None = None
@@ -237,7 +239,7 @@ class LLMRouter:
 
             except Exception as exc:
                 last_exc = exc
-                if self._fallback.should_escalate(exc, current_tier):
+                if allow_fallback and self._fallback.should_escalate(exc, current_tier):
                     next_t = self._fallback.next_tier(current_tier)
                     if next_t is None:
                         break

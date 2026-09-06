@@ -2090,8 +2090,12 @@ def register(ctx: Any) -> None:
             "model": str(kwargs.get("model") or ""),
             "sender": {"platform": scope.platform, "user_id": scope.sender_id},
         }
+        if kwargs.get("occurred_at"):
+            payload["occurred_at"] = str(kwargs["occurred_at"])
+        if kwargs.get("timezone"):
+            payload["timezone_name"] = str(kwargs["timezone"])
         try:
-            receipt = turn_outbox.enqueue(stable_turn_id, payload)
+            receipt = turn_outbox.enqueue(stable_turn_id, payload, capture_ordinary=True)
         except TurnOutboxConflict:
             logger.critical(
                 "stable Hermes turn id was reused with different canonical content"

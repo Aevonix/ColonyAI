@@ -3821,7 +3821,21 @@ async def lifespan(app: FastAPI):
         logger.info("Governed action ledger initialized")
     except Exception as exc:
         logger.warning("Governed action ledger init failed: %s", exc)
+    source_claim_task = None
+    if os.environ.get("COLONY_SOURCE_CLAIMS", "on").strip().lower() in {"on", "1", "true"}:
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        from colony_sidecar.beliefs.source_projection import run_source_claim_worker
+        from colony_sidecar.api.routers import host as source_claim_host
+        source_claim_task = asyncio.create_task(run_source_claim_worker(
+            get_turn_idempotency_ledger(state_dir), lambda: source_claim_host._llm_router))
     yield
+
+    if source_claim_task is not None:
+        source_claim_task.cancel()
+        try:
+            await source_claim_task
+        except asyncio.CancelledError:
+            pass
 
     # Shutdown — close connections
     set_external_event_intake(None)
