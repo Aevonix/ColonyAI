@@ -1434,11 +1434,10 @@ async def test_context_renders_only_authenticated_enveloped_facts(
     assert "Bob private context" not in section.body
 
     legacy_response = await host.context_assemble(
-        _context("alice"), request=_request(legacy_authority()))
-    assert all(
-        part.id != "colony-shared-facts"
-        for part in legacy_response.sections
-    )
+        query, request=_request(legacy_authority()))
+    legacy_text = '\n'.join(part.body for part in legacy_response.sections)
+    assert all(text not in legacy_text for text in (
+        "allowed alice context", "legacy row must not render", "Bob private context"))
 
 
 @pytest.mark.asyncio
