@@ -905,6 +905,11 @@ class LearningCorrectionRequest(BaseModel):
     # Callers that retry can supply a stable id.  FeedbackStore makes the
     # resulting persistence idempotent across process restarts.
     correction_id: Optional[str] = None
+    # Explicit owner control of one current agent judgment. Ordinary feedback
+    # retains its existing behavior when these fields are absent.
+    judgment_id: Optional[int] = Field(default=None, strict=True, gt=0)
+    judgment_action: Optional[Literal["withdraw", "reconsider"]] = None
+    source_id: Optional[str] = None
 
 
 class LearningEngagementRequest(BaseModel):

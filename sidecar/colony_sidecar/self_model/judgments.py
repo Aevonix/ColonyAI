@@ -19,6 +19,16 @@ from colony_sidecar.turns.idempotency import source_message_hash
 from colony_sidecar.util.model_output import final_text
 
 VERSION = 'agent-judgment-v1'
+
+
+class JudgmentValidationError(ValueError):
+    """A fixed local validation code, never provider response text."""
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
 SYSTEM = '''Form or revise ONE useful working judgment of your own from the
 attributed conversation supplied as data. A judgment is your reasoned, fallible
 view, not an owner's preference or an assertion that their reports are verified.
@@ -34,6 +44,10 @@ generalizations are not durable judgments: abstain on those.
 Consider contrary evidence explicitly. Reuse an existing topic when applicable.
 Previous judgments are model-generated views, not independent evidence.
 Consult the separately rehydrated prior evidence quotations when revising them.
+When owner_correction is present, the previous view is withdrawn. Reconsider
+that exact topic using the retained evidence; do not adopt the owner's wording
+as your own position merely because they requested reconsideration. Abstain if
+no reasoned replacement is supported. Retaining the withdrawn view is invalid.
 Return one JSON object, without markdown. Use exactly one of these shapes:
 {"action":"abstain"}
 {"action":"retain","topic":"existing topic","supersedes":123}
@@ -79,6 +93,14 @@ def initialize(conn):
     conn.execute('''CREATE TABLE IF NOT EXISTS self_judgment_heads (
         owner_id TEXT NOT NULL, topic TEXT NOT NULL, revision_id INTEGER NOT NULL,
         PRIMARY KEY(owner_id,topic))''')
+    for table, column, kind in (
+        ('self_judgment_runs', 'validation_code', 'TEXT'),
+        ('self_judgment_runs', 'reconsider_revision_id', 'INTEGER'),
+        ('self_judgment_revisions', 'correction_id', 'TEXT'),
+    ):
+        if column not in {r[1] for r in conn.execute('PRAGMA table_info(' + table + ')')}:
+            conn.execute('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + kind)
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS self_judgment_correction_id ON self_judgment_revisions(owner_id,correction_id) WHERE correction_id IS NOT NULL')
 
 
 def enqueue(conn, turn_id, contact_id, messages, *, scope):
@@ -94,13 +116,13 @@ def enqueue(conn, turn_id, contact_id, messages, *, scope):
 
 def erase_removed(conn, turn_id, session_id, retained):
     hashes = {source_message_hash(session_id, message) for message in retained}
-    for row in conn.execute("SELECT id,dependency_json FROM self_judgment_revisions WHERE status='current'").fetchall():
+    for row in conn.execute("SELECT id,status,dependency_json FROM self_judgment_revisions WHERE status IN ('current','withdrawn','reconsidering')").fetchall():
         refs = json.loads(row['dependency_json'])
         if any(ref['turn_id'] == turn_id and ref['message_hash'] not in hashes for ref in refs):
             # Keep the head tombstone. Forgetting a revision must not reactivate
             # an older view; its derived prose is removed from history as well.
-            conn.execute("UPDATE self_judgment_revisions SET status='erased',topic='',payload_json='{}',dependency_json='[]' WHERE id=?",
-                         (row['id'],))
+            conn.execute("UPDATE self_judgment_revisions SET status=?,topic='',payload_json='{}',dependency_json='[]' WHERE id=?",
+                         ('erased' if row['status'] == 'current' else 'withdrawn', row['id']))
     if not retained:
         conn.execute('DELETE FROM self_judgment_runs WHERE turn_id=?', (turn_id,))
 
@@ -147,6 +169,13 @@ class SelfJudgments:
             result = []
             for row in rows:
                 refs = json.loads(row['dependency_json'])
+                if row['status'] in {'withdrawn', 'reconsidering'}:
+                    if history:
+                        result.append({'id': row['id'], 'topic': row['topic'], 'status': row['status'],
+                            'supersedes': row['supersedes'], 'correction_id': row['correction_id'],
+                            'owner_correction': json.loads(row['payload_json']).get('owner_correction'),
+                            'created_at': row['created_at']})
+                    continue
                 if row['status'] != 'current' or not self._retained(conn, refs):
                     if history:
                         result.append({'id': row['id'], 'topic': row['topic'], 'status': 'erased', 'supersedes': row['supersedes']})
@@ -166,6 +195,12 @@ class SelfJudgments:
         scored.sort(key=lambda pair: (pair[0], pair[1]['id']), reverse=True)
         return [row for score, row in scored if score][:limit]
 
+    def processing(self):
+        with closing(self.ledger._connect()) as conn:
+            return [dict(row) for row in conn.execute('''SELECT turn_id,status,attempts,
+                disposition,error,validation_code,next_attempt FROM self_judgment_runs
+                WHERE owner_id=? ORDER BY rowid DESC LIMIT 10''', (self.owner_id,))]
+
     def brief(self, query):
         rows = self.relevant(query, limit=2)
         if not rows:
@@ -180,6 +215,60 @@ class SelfJudgments:
             if len('\n'.join(lines)) + len(line) + 1 <= 2400:
                 lines.append(line)
         return '\n'.join(lines)
+
+    def correct(self, revision_id, *, action, correction_id, reason, source_id=None):
+        """Explicit owner control, separate from a model-authored stance."""
+        if (type(revision_id) is not int or action not in {'withdraw', 'reconsider'} or
+                not isinstance(correction_id, str) or not 1 <= len(correction_id) <= 192 or
+                not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1500):
+            raise ValueError('invalid_judgment_correction')
+        operation = {'action': action, 'reason': reason, 'actor': 'owner',
+                     'source_id': source_id, 'target_revision_id': revision_id}
+        with closing(self.ledger._connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            prior = conn.execute('SELECT * FROM self_judgment_revisions WHERE owner_id=? AND correction_id=?',
+                                 (self.owner_id, correction_id)).fetchone()
+            if prior:
+                retained = json.loads(prior['payload_json']).get('owner_correction')
+                if retained is not None and retained != operation:
+                    raise ValueError('judgment_correction_id_conflict')
+                return {'revision_id': prior['id'], 'status': prior['status'], 'correction_id': correction_id}
+            row = conn.execute('''SELECT r.* FROM self_judgment_revisions r JOIN self_judgment_heads h
+                ON h.revision_id=r.id WHERE r.owner_id=? AND r.id=?''', (self.owner_id, revision_id)).fetchone()
+            if row is None or not row['topic']:
+                raise ValueError('judgment_head_changed')
+            refs = json.loads(row['dependency_json'])
+            if source_id is not None or action == 'reconsider':
+                evidence = conn.execute("SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=? AND scope='person'",
+                                        (source_id, self.owner_id)).fetchone()
+                if evidence is None:
+                    raise ValueError('retained_owner_source_required')
+                current = [{'turn_id': source_id, 'message_hash': source_message_hash(evidence['session_id'], m)}
+                           for m in json.loads(evidence['messages_json']) if m.get('role') == 'user' and _text(m).strip()]
+                if not current:
+                    raise ValueError('retained_owner_source_required')
+                refs.extend(current)
+            if action == 'reconsider':
+                assigned = conn.execute("""SELECT r.topic FROM self_judgment_runs j
+                    JOIN self_judgment_revisions r ON r.id=j.reconsider_revision_id
+                    WHERE j.turn_id=? AND j.status IN ('pending','running')""",
+                                        (source_id,)).fetchone()
+                if assigned and assigned['topic'] != row['topic']:
+                    raise ValueError('judgment_reconsideration_source_busy')
+            status = 'withdrawn' if action == 'withdraw' else 'reconsidering'
+            cur = conn.execute('''INSERT INTO self_judgment_revisions
+                (owner_id,topic,payload_json,dependency_json,supersedes,processor_json,created_at,status,source_turn_id,version,correction_id)
+                VALUES (?,?,?,?,?,'{}',?,?,?,?,?)''', (self.owner_id, row['topic'],
+                _json({'owner_correction': operation}), _json(refs), revision_id, self.clock(), status,
+                source_id or '', VERSION, correction_id))
+            conn.execute('UPDATE self_judgment_heads SET revision_id=? WHERE owner_id=? AND topic=?',
+                         (cur.lastrowid, self.owner_id, _topic_key(row['topic'])))
+            if action == 'reconsider':
+                conn.execute('''INSERT INTO self_judgment_runs(turn_id,owner_id,status,reconsider_revision_id)
+                    VALUES (?,?,'pending',?) ON CONFLICT(turn_id) DO UPDATE SET status='pending',attempts=0,
+                    next_attempt=0,lease_token='',lease_until=0,disposition=NULL,error=NULL,validation_code=NULL,
+                    reconsider_revision_id=excluded.reconsider_revision_id''', (source_id, self.owner_id, cur.lastrowid))
+            return {'revision_id': cur.lastrowid, 'status': status, 'correction_id': correction_id}
 
     def claim(self, deadline):
         now = self.clock()
@@ -199,7 +288,7 @@ class SelfJudgments:
             return dict(row, lease_token=token)
 
     def _finish(self, conn, job, disposition, processor=None):
-        conn.execute("UPDATE self_judgment_runs SET status='complete',disposition=?,processor_json=?,finished_at=?,lease_until=0,error=NULL WHERE turn_id=? AND lease_token=?",
+        conn.execute("UPDATE self_judgment_runs SET status='complete',disposition=?,processor_json=?,finished_at=?,lease_until=0,error=NULL,validation_code=NULL WHERE turn_id=? AND lease_token=?",
                      (disposition, _json(processor or {}), self.clock(), job['turn_id'], job['lease_token']))
 
     def _head_changed(self, conn, job, processor):
@@ -225,6 +314,25 @@ class SelfJudgments:
         with closing(self.ledger._connect()) as conn:
             heads = {r['topic']: r['revision_id'] for r in conn.execute(
                 'SELECT topic,revision_id FROM self_judgment_heads WHERE owner_id=?', (self.owner_id,))}
+            correction = None
+            if job.get('reconsider_revision_id'):
+                control = conn.execute('''SELECT r.* FROM self_judgment_revisions r JOIN self_judgment_heads h
+                    ON h.revision_id=r.id WHERE r.id=? AND r.owner_id=? AND r.status='reconsidering' ''',
+                    (job['reconsider_revision_id'], self.owner_id)).fetchone()
+                if control is None:
+                    return None
+                correction = json.loads(control['payload_json'])['owner_correction']
+                original = control
+                while original is not None and original['status'] in {'withdrawn', 'reconsidering'}:
+                    original = conn.execute('SELECT * FROM self_judgment_revisions WHERE id=? AND owner_id=?',
+                                            (original['supersedes'], self.owner_id)).fetchone()
+                view = json.loads(original['payload_json']) if original and original['status'] == 'current' else {}
+                previous = [{'id': control['id'], 'topic': control['topic'],
+                    'stance': view.get('stance', 'Previous view withdrawn.'),
+                    'reason': view.get('reason', 'Owner requested evidence-based reconsideration.'),
+                    'certainty': view.get('certainty', 'tentative'),
+                    'support': view.get('support', []), 'contrary': view.get('contrary', []),
+                    'dependencies': json.loads(control['dependency_json'])}]
             quotes, seen = [], {e['handle'] for e in evidence}
             # Rehydrate source bytes, not the prior model's account of them.
             for prior in previous:
@@ -246,42 +354,49 @@ class SelfJudgments:
                     seen.add(ref['handle'])
         payload = {'evidence': evidence, 'previous_evidence': quotes, 'previous_judgments': [
             {k: row[k] for k in ('id', 'topic', 'stance', 'reason', 'certainty')} for row in previous]}
+        if correction is not None:
+            payload['owner_correction'] = correction
         return payload, previous, heads
 
     def _validate(self, raw, payload, previous):
-        result = json.loads(raw)
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise JudgmentValidationError('invalid_judgment_json') from exc
         if not isinstance(result, dict):
-            raise ValueError('invalid_judgment_output')
+            raise JudgmentValidationError('invalid_judgment_output')
         if result == {'action': 'abstain'}:
             return result
         if result.get('action') not in {'retain', 'revise'}:
-            raise ValueError('invalid_judgment_action')
+            raise JudgmentValidationError('invalid_judgment_action')
         topic = result.get('topic')
         if not isinstance(topic, str) or not 1 <= len(topic.strip()) <= 80 or '\n' in topic:
-            raise ValueError('invalid_judgment_topic')
+            raise JudgmentValidationError('invalid_judgment_topic')
         result['topic'] = ' '.join(topic.casefold().split())
+        if payload.get('owner_correction') and (result['topic'] != previous[0]['topic'] or result['action'] == 'retain'):
+            raise JudgmentValidationError('invalid_judgment_reconsideration')
         old = next((r for r in previous if r['topic'] == result['topic']), None)
         if type(result.get('supersedes')) not in (int, type(None)) or result.get('supersedes') != (old['id'] if old else None):
-            raise ValueError('invalid_judgment_predecessor')
+            raise JudgmentValidationError('invalid_judgment_predecessor')
         if result['action'] == 'retain':
             if old is None or set(result) != {'action', 'topic', 'supersedes'}:
-                raise ValueError('invalid_judgment_retention')
+                raise JudgmentValidationError('invalid_judgment_retention')
             return result
         if set(result) != {'action', 'topic', 'supersedes', 'stance', 'reason', 'certainty', 'support', 'contrary'}:
-            raise ValueError('invalid_judgment_shape')
+            raise JudgmentValidationError('invalid_judgment_shape')
         for field, maximum in (('stance', 500), ('reason', 700)):
             if not isinstance(result[field], str) or not 1 <= len(result[field].strip()) <= maximum:
-                raise ValueError('invalid_judgment_text')
+                raise JudgmentValidationError('invalid_judgment_text')
         if result['certainty'] not in {'tentative', 'moderate', 'strong'}:
-            raise ValueError('invalid_judgment_certainty')
+            raise JudgmentValidationError('invalid_judgment_certainty')
         current_handles = {e['handle'] for e in payload['evidence']}
         handles = current_handles | {e['handle'] for e in payload['previous_evidence']}
         for field in ('support', 'contrary'):
             refs = result[field]
             if not isinstance(refs, list) or any(not isinstance(r, str) or r not in handles for r in refs) or len(set(refs)) != len(refs):
-                raise ValueError('invalid_judgment_evidence')
+                raise JudgmentValidationError('invalid_judgment_evidence')
         if not current_handles.intersection(result['support']):
-            raise ValueError('missing_judgment_support')
+            raise JudgmentValidationError('missing_judgment_support')
         return result
 
     def commit(self, job, result, payload, previous, heads, processor):
@@ -303,6 +418,9 @@ class SelfJudgments:
                 if live is None or live['revision_id'] != prior['id']:
                     return self._head_changed(conn, job, processor)
             if result['action'] == 'abstain':
+                if job.get('reconsider_revision_id'):
+                    conn.execute("UPDATE self_judgment_revisions SET status='withdrawn' WHERE id=? AND status='reconsidering'",
+                                 (job['reconsider_revision_id'],))
                 self._finish(conn, job, 'abstained', processor)
                 return 'abstained'
             topic_key = _topic_key(result['topic'])
@@ -316,7 +434,11 @@ class SelfJudgments:
             if result['action'] == 'retain':
                 self._finish(conn, job, 'retained', processor)
                 return 'retained'
-            if head and self.clock() - head['created_at'] < _interval():
+            if head and (head['status'] == 'withdrawn' or (head['status'] == 'reconsidering' and
+                    job.get('reconsider_revision_id') != head['id'])):
+                self._finish(conn, job, 'owner_withdrawn', processor)
+                return 'owner_withdrawn'
+            if head and head['status'] != 'reconsidering' and self.clock() - head['created_at'] < _interval():
                 # Preserve the source as eligible for reconsideration after
                 # the topic interval, including contrary evidence.
                 conn.execute("UPDATE self_judgment_runs SET status='pending',attempts=0,disposition='topic_rate_limited',next_attempt=?,lease_until=0,processor_json=? WHERE turn_id=? AND lease_token=?",
@@ -360,13 +482,19 @@ class SelfJudgments:
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (
                 ('model_id', 'model_id'), ('binding', 'binding'), ('config_revision', 'config_revision'),
                 ('weight_revision', 'model_revision'))}
-            result = self._validate(final_text(response), payload, previous)
+            try:
+                completed = final_text(response)
+            except ValueError as exc:
+                code = str(exc) if str(exc) in {'missing_final_answer', 'incomplete_final_answer'} else 'invalid_final_answer'
+                raise JudgmentValidationError(code) from exc
+            result = self._validate(completed, payload, previous)
             self.commit(job, result, payload, previous, heads, processor)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             with closing(self.ledger._connect()) as conn, conn:
                 conn.execute('''UPDATE self_judgment_runs SET status=CASE WHEN attempts>=3 THEN 'unavailable' ELSE 'pending' END,
-                    error=?,next_attempt=?,lease_until=0,processor_json=? WHERE turn_id=? AND lease_token=?''',
-                    (type(exc).__name__, self.clock() + 60 * (job['attempts'] + 1), _json(processor), job['turn_id'], job['lease_token']))
+                    error=?,validation_code=?,next_attempt=?,lease_until=0,processor_json=? WHERE turn_id=? AND lease_token=?''',
+                    (type(exc).__name__, exc.code if isinstance(exc, JudgmentValidationError) else None,
+                     self.clock() + 60 * (job['attempts'] + 1), _json(processor), job['turn_id'], job['lease_token']))
         return True

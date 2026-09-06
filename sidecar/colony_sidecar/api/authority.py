@@ -1099,6 +1099,7 @@ def required_scope(method: str, path: str) -> str:
         ("GET", "/v1/host/preferences"): "context:read",
         ("GET", "/v1/host/self"): "context:read",
         ("POST", "/v1/host/preferences/learn"): "memory:write",
+        ("POST", "/v1/host/learning/correction"): "memory:write",
         ("POST", "/v1/host/context/assemble"): "context:read",
         ("GET", "/v1/host/executions"): "context:read",
         ("POST", "/v1/host/executions/observe"): "turns:write",

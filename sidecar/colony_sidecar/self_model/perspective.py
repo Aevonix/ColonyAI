@@ -211,6 +211,7 @@ class SelfPerspective:
         return {'kind': 'operational_working_perspective', 'preferences': self.preferences(),
                 'corrections': self.preferences(history=True), 'opinions': self.opinions(),
                 'judgments': self.judgments.revisions(), 'judgment_history': self.judgments.revisions(history=True),
+                'judgment_processing': self.judgments.processing(),
                 'opinion_history': self.opinions(history=True), 'automatic_weighting': 'retired', 'attention': attention}
 
     def brief(self, query=''):

@@ -29,6 +29,25 @@ unrelated or empty query adds no judgment text. These views do not change owner
 preferences, memory truth, tool authority or initiative priority. Existing
 automatic legacy opinion weights remain non-governing.
 
+The existing `POST /v1/host/learning/correction` accepts an exact current
+`judgment_id`, a stable `correction_id`, and `judgment_action` of `withdraw` or
+`reconsider`, alongside its ordinary identity/context/correction fields. It uses
+the existing `memory:write` scope and resolves the configured owner. Withdrawal
+immediately removes the view from current context and appends an owner control
+record; later automatic output for the same normalized topic remains withheld.
+This does not promise semantic suppression under arbitrary topic renaming.
+
+Reconsideration requires a retained, attributed owner `source_id`. It keeps the
+view withdrawn while the existing worker reasons from that evidence, permits
+one reconsideration assignment without the ordinary daily wait, and requires
+the same topic. An abstention leaves withdrawal in place. No owner wording is
+installed as an agent stance. Repeating a correction ID is idempotent; a stale
+target is rejected, and changing the head fences any in-flight reflection.
+Owner control records remain visible in judgment history. Source erasure clears
+dependent correction text too while preserving value-free withdrawal records.
+The latest ten processing records are exposed under `judgment_processing`,
+including fixed local validation codes without raw provider responses.
+
 The projection and processing records use the canonical source SQLite database.
 Only new attributed owner sources eligible for ordinary claim derivation enqueue
 reflection; historical imports and session-scoped transcript checkpoints do not.

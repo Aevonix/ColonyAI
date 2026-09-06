@@ -6938,6 +6938,22 @@ async def submit_correction(
     body: LearningCorrectionRequest,
     request: Request,
 ) -> dict:
+    if body.judgment_id is not None or body.judgment_action is not None:
+        from colony_sidecar.identity import get_owner_contact_id
+        owner = get_owner_contact_id()
+        person = resolve_request_person(request, context_person_id=body.context.contact_id)
+        if not owner or person != owner:
+            raise HTTPException(status_code=403, detail='Only the owner can correct an agent judgment')
+        perspective = getattr(_self_model, 'perspective', None)
+        if perspective is None:
+            raise HTTPException(status_code=503, detail='Self perspective is unavailable')
+        try:
+            outcome = perspective.judgments.correct(body.judgment_id, action=body.judgment_action,
+                correction_id=body.correction_id, reason=body.correction, source_id=body.source_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {'accepted': True, 'learned': False, 'judgment': outcome,
+                'authority_changed': False}
     if _learner is None and _learning_feedback_store is None:
         return {"accepted": False}
     try:

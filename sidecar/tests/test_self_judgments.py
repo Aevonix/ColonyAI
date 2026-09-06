@@ -225,6 +225,7 @@ async def test_abstention_scope_and_invalid_output_do_not_create_opinions(judgme
         clock.value += 1000
     assert run_row(state, 'invalid')['status'] == 'unavailable'
     assert state.revisions() == []
+    assert run_row(state, 'invalid')['validation_code'] == 'invalid_judgment_evidence'
 
 
 @pytest.mark.asyncio
@@ -275,7 +276,7 @@ async def test_prior_model_or_prior_source_alone_cannot_justify_an_update(judgme
         return revise(payload) | {'support': [payload['previous_evidence'][0]['handle']]}
     await state.process_one(Processor('second-model', decide=old_only))
     assert len(state.revisions(history=True)) == 1
-    assert run_row(state, 'unrelated-basis')['error'] == 'ValueError'
+    assert run_row(state, 'unrelated-basis')['error'] == 'JudgmentValidationError'
 
 
 @pytest.mark.asyncio
@@ -290,5 +291,109 @@ async def test_reasoning_or_truncated_provider_output_is_not_a_judgment(judgment
             return response
     await state.process_one(Truncated())
     assert state.revisions(history=True) == []
-    assert run_row(state, 'first')['error'] == 'ValueError'
+    assert run_row(state, 'first')['error'] == 'JudgmentValidationError'
     assert json.loads(run_row(state, 'first')['processor_json'])['model_id'] == 'processor-a'
+    assert run_row(state, 'first')['validation_code'] == 'incomplete_final_answer'
+
+
+@pytest.mark.asyncio
+async def test_owner_api_withdraw_reconsider_restart_and_correction_history(source_app, perspective):
+    state, _, _ = perspective
+    state.judgments.clock = Clock()
+    async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
+        await tell(client, 'Long local work checkpoints recovered lost progress.', 'original')
+        await state.judgments.process_one(Processor())
+        original = state.judgments.revisions()[0]
+        body = {'identity': {'host_id': 'fixture'}, 'context': {'contact_id': 'contact-a', 'session_id': 'correction'},
+                'original': '', 'correction': 'Withdraw this working view until I ask for reconsideration.',
+                'correction_id': 'withdraw-1', 'judgment_id': original['id'], 'judgment_action': 'withdraw'}
+        guest = await client.post('/v1/host/learning/correction', headers={'Authorization': 'Bearer guest-key'}, json=body)
+        assert guest.status_code == 403
+        response = await client.post('/v1/host/learning/correction', headers={'Authorization': 'Bearer owner-key'}, json=body)
+        assert response.status_code == 200, response.text
+        withdrawn = response.json()['judgment']
+        assert state.judgments.revisions() == [] and state.judgments.brief('local work checkpoints') == ''
+        again = await client.post('/v1/host/learning/correction', headers={'Authorization': 'Bearer owner-key'}, json=body)
+        assert again.json()['judgment'] == withdrawn
+        stale = await client.post('/v1/host/learning/correction', headers={'Authorization': 'Bearer owner-key'},
+                                  json=body | {'correction_id': 'stale-control'})
+        assert stale.status_code == 409 and stale.json()['detail'] == 'judgment_head_changed'
+        conflict = await client.post('/v1/host/learning/correction', headers={'Authorization': 'Bearer owner-key'},
+                                     json=body | {'correction': 'Changed operation under an old ID'})
+        assert conflict.status_code == 409 and conflict.json()['detail'] == 'judgment_correction_id_conflict'
+        await tell(client, 'Another local work checkpoint observation is available.', 'fresh')
+        await state.judgments.process_one(Processor())
+        assert run_row(state.judgments, 'fresh')['disposition'] == 'owner_withdrawn'
+        reopened = SelfJudgments(TurnIdempotencyLedger(state.ledger.db_path), owner_id='contact-a', clock=state.judgments.clock)
+        assert reopened.revisions() == []
+        correction_text = 'The measured overhead was large for short work. Reconsider the checkpoint judgment using this correction.'
+        await tell(client, correction_text, 'owner-evidence')
+        body.update(judgment_id=withdrawn['revision_id'], judgment_action='reconsider', correction_id='reconsider-1',
+                    correction='Reconsider using the retained observation.', source_id='owner-evidence')
+        response = await client.post('/v1/host/learning/correction', headers={'Authorization': 'Bearer owner-key'}, json=body)
+        assert response.status_code == 200, response.text
+        correction = response.json()['judgment']
+        assert state.judgments.revisions() == []  # no copied owner stance before inference
+        model = Processor('reconsidered', decide=lambda p: revise(p, stance='I favor phase checkpoints when expected recovery exceeds their overhead.', contrary=True))
+        await state.judgments.process_one(model)
+        assert model.requests[0]['owner_correction']['source_id'] == 'owner-evidence'
+        assert model.requests[0]['evidence'][0]['text'] == correction_text
+        assert model.requests[0]['previous_evidence'][0]['text'].startswith('Long local work')
+        current = state.judgments.revisions()[0]
+        assert current['supersedes'] == correction['revision_id']
+        assert current['processor']['model_id'] == 'reconsidered'
+        assert len(state.judgments.revisions(history=True)) == 4
+        assert state.preferences() == [] and current['authority_changed'] is False
+        inspected = await client.get('/v1/host/self', headers={'Authorization': 'Bearer owner-key'})
+        assert inspected.status_code == 200
+        assert inspected.json()['perspective']['judgment_processing'][0]['disposition'] == 'revised'
+        # Forgetting dependency prose retains value-free owner control history.
+        state.ledger.erase_sources(contact_id='contact-a', turn_ids=['original'])
+        assert state.judgments.revisions() == []
+        history = state.judgments.revisions(history=True)
+        assert all(not r['topic'] for r in history)
+        assert [r.get('correction_id') for r in history if r.get('correction_id')] == ['reconsider-1', 'withdraw-1']
+
+
+@pytest.mark.asyncio
+async def test_withdraw_fences_inflight_view_and_reconsider_abstention_stays_withdrawn(judgments):
+    state, _ = judgments
+    source(state)
+    await state.process_one(Processor())
+    old = state.revisions()[0]
+    source(state, 'later')
+    async def withdraw(_):
+        state.correct(old['id'], action='withdraw', correction_id='stop', reason='Owner withdrew this judgment.')
+    await state.process_one(Processor(before_return=withdraw))
+    assert state.revisions() == [] and run_row(state, 'later')['disposition'] == 'head_changed'
+    control = state.revisions(history=True)[0]
+    with pytest.raises(ValueError, match='retained_owner_source_required'):
+        state.correct(control['id'], action='reconsider', correction_id='missing', reason='Reconsider', source_id='missing')
+    state.correct(control['id'], action='reconsider', correction_id='again', reason='Reconsider the source.', source_id='later')
+    await state.process_one(Processor(decide=lambda _: {'action': 'abstain'}))
+    assert state.revisions() == [] and state.revisions(history=True)[0]['status'] == 'withdrawn'
+    source(state, 'another')
+    await state.process_one(Processor())
+    assert state.revisions() == [] and run_row(state, 'another')['disposition'] == 'owner_withdrawn'
+
+
+@pytest.mark.asyncio
+async def test_reconsider_cannot_rename_topic_and_validation_code_excludes_provider_text(judgments):
+    state, _ = judgments
+    source(state)
+    await state.process_one(Processor())
+    source(state, 'correction')
+    state.correct(state.revisions()[0]['id'], action='reconsider', correction_id='revisit', reason='Reconsider.', source_id='correction')
+    await state.process_one(Processor(decide=lambda p: revise(p) | {'topic': 'invented new topic'}))
+    assert run_row(state, 'correction')['validation_code'] == 'invalid_judgment_reconsideration'
+    assert state.revisions() == []
+    class Broken(Processor):
+        async def complete(self, **kwargs):
+            result = await super().complete(**kwargs)
+            result.content = 'unparseable private provider content'
+            return result
+    source(state, 'broken')
+    await state.process_one(Broken())
+    row = run_row(state, 'broken')
+    assert row['validation_code'] == 'invalid_judgment_json'
+    assert 'private provider content' not in json.dumps(row)
