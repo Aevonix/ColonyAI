@@ -360,6 +360,7 @@ async def test_server_resolver_projects_exact_contact_without_body_broadening(
         "viewer_attested": True,
         "viewer_is_owner": False,
         "p8_mode": "shadow",
+        "projection_backend": "p8",
         "scoped_projection_ready": True,
         "legacy_global_allowed": False,
     }

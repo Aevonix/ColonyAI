@@ -497,7 +497,7 @@ async def test_p8_exact_owner_retains_untyped_global_context(
 
 
 @pytest.mark.asyncio
-async def test_p8_off_scoped_guest_fails_before_global_context_producers(
+async def test_p8_off_scoped_guest_uses_canonical_projection_without_global_producers(
     monkeypatch,
 ):
     monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
@@ -509,14 +509,13 @@ async def test_p8_off_scoped_guest_fails_before_global_context_producers(
 
     assembled_body = _context("alice")
     assembled_body.include_initiatives = True
-    with pytest.raises(HTTPException) as unavailable:
-        await host.context_assemble(
-            assembled_body, request=alice_request)
-
-    assert unavailable.value.status_code == 503
-    assert unavailable.value.detail["code"] == (
-        "scoped_context_runtime_unavailable"
-    )
+    assembled_body.projection_policy = "scoped_viewer_required"
+    response = await host.context_assemble(assembled_body, request=alice_request)
+    assert response.projection_attestation.projection_backend == "canonical_sources"
+    assert response.projection_attestation.scoped_projection_ready
+    assert response.projection_attestation.p8_mode == "off"
+    assert not response.projection_attestation.legacy_global_allowed
+    assert "owner-global" not in repr(response)
     assert all(count == 0 for count in spies.calls.values())
 
 
@@ -1520,8 +1519,8 @@ async def test_default_off_preserves_strict_graph_recall_signature(monkeypatch):
     host.set_p8_runtime(None)
     host._graph = StrictGraphRecall()
     # The legacy migration lane keeps the exact historical recall call.  A
-    # scoped guest is covered by the readiness-gate test above and must not
-    # reach this producer while P8 is unavailable.
+    # scoped guest uses only canonical sources and must not reach this legacy
+    # producer while P8 is unavailable.
     request = _request(legacy_authority())
 
     assembled = await host.context_assemble(

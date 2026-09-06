@@ -1019,40 +1019,15 @@ def _require_scoped_context_runtime_for_guest(
     request: Request | None,
     resolved_person_id: str,
 ) -> None:
-    """Stop scoped guest assembly before legacy-global producers can run.
+    """Require an exact attested viewer before selecting the guest projection.
 
-    P8 is the visibility boundary for non-owner context.  If that runtime is
-    unavailable, a scoped guest request must receive a clear readiness error
-    instead of silently falling through to the historical owner-global
-    assembly path.  The exact scoped owner, the temporary legacy bearer, and
-    local anonymous development retain their migration behavior.
+    Canonical source evidence has its own exact-person boundary and does not
+    need P8. Missing viewer authority must still never select legacy context.
     """
-
-    if _p8_runtime is not None:
-        return
     authority = request_authority(request)
     if authority.legacy or authority.anonymous or not authority.authenticated:
         return
-    owner = _owner_person_id()
-    person = str(resolved_person_id or "").strip()
-    exact_owner = bool(
-        person
-        and person == owner
-        and authority.viewer_person_id == owner
-        and owner in authority.person_ids
-    )
-    if exact_owner:
-        return
-    raise HTTPException(
-        status_code=503,
-        detail={
-            "code": "scoped_context_runtime_unavailable",
-            "message": (
-                "scoped guest context is unavailable until the P8 "
-                "visibility runtime is ready"
-            ),
-        },
-    )
+    _p8_viewer_for_request(request, resolved_person_id)
 
 
 def _context_projection_attestation(
@@ -1060,7 +1035,7 @@ def _context_projection_attestation(
     contact_id: str,
     viewer,
 ) -> ContextProjectionAttestation:
-    """Describe only server-observed viewer authority and P8 readiness."""
+    """Describe server-observed authority and the actual projection backend."""
 
     viewer_id = str(getattr(viewer, "viewer_person_id", "") or "")
     owner_id = str(getattr(viewer, "owner_person_id", "") or "")
@@ -1072,19 +1047,62 @@ def _context_projection_attestation(
     )
     raw_mode = str(getattr(_p8_runtime, "mode", "off") or "off").lower()
     mode = raw_mode if raw_mode in {"shadow", "live"} else "off"
-    scoped_ready = bool(attested and _p8_runtime is not None and mode != "off")
+    canonical_only = bool(attested and owner_id and viewer_id != owner_id
+                          and _p8_runtime is None)
+    p8_ready = bool(attested and _p8_runtime is not None and mode != "off")
+    scoped_ready = canonical_only or p8_ready
     return ContextProjectionAttestation(
         viewer_person_id=viewer_id if attested else "",
         viewer_attested=attested,
         viewer_is_owner=bool(attested and owner_id and viewer_id == owner_id),
         p8_mode=mode,
+        projection_backend=("canonical_sources" if canonical_only else
+                            "p8" if p8_ready else "unavailable"),
         scoped_projection_ready=scoped_ready,
         legacy_global_allowed=bool(
-            attested and _p8_legacy_global_context_allowed(
+            attested and not canonical_only and _p8_legacy_global_context_allowed(
                 viewer if _p8_runtime is not None else None
             )
         ),
     )
+
+
+def _canonical_shared_commitments(rows, contact_id):
+    """Expose only descriptions already present in this person's source evidence.
+
+    person_id is a subject selector, not an audience grant. A metadata link
+    alone is insufficient: the current person-scoped source must contain the
+    displayed description. Unclassified legacy tasks stay owner-private.
+    """
+    from contextlib import closing
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    if not contact_id or not (Path(get_state_dir()) / "turn-idempotency.db").exists():
+        return []
+    visible = []
+    ledger = get_turn_idempotency_ledger(get_state_dir())
+    with closing(ledger._connect()) as conn:
+        for row in rows:
+            metadata = row.get("metadata")
+            source_id = metadata.get("source_turn_id") if isinstance(metadata, dict) else None
+            description = str(row.get("description") or "").strip()
+            if row.get("person_id") != contact_id or not isinstance(source_id, str) or not description:
+                continue
+            source = conn.execute(
+                "SELECT messages_json FROM turn_sources WHERE turn_id=? AND contact_id=? AND scope='person'",
+                (source_id, contact_id)).fetchone()
+            if source is None:
+                continue
+            for message in json.loads(source["messages_json"]):
+                content = message.get("content")
+                texts = ([content] if isinstance(content, str) else
+                         [block["text"] for block in content if isinstance(block, dict)
+                          and block.get("type") in {"text", "input_text", "output_text"}
+                          and isinstance(block.get("text"), str)] if isinstance(content, list) else [])
+                if any(description.casefold() in text.casefold() for text in texts):
+                    visible.append(row)
+                    break
+    return visible[:5]
+
 
 def _p8_tool_actor_policy(
     request: Request | None,
@@ -2354,15 +2372,19 @@ async def context_assemble(
             detail={
                 "code": "scoped_projection_required",
                 "message": (
-                    "exact viewer authority and a P8 scoped projection are "
+                    "exact viewer authority and a supported scoped projection are "
                     "required before context producers may run"
                 ),
             },
         )
     _p8_viewer = _attested_viewer if _p8_runtime is not None else None
-    _legacy_global_allowed = _p8_legacy_global_context_allowed(_p8_viewer)
-    _exact_person_allowed = _p8_exact_person_context_allowed(_p8_viewer)
-    _tom_context_facts = _facts_store
+    _canonical_only = _projection.projection_backend == "canonical_sources"
+    _legacy_global_allowed = not _canonical_only and _p8_legacy_global_context_allowed(_p8_viewer)
+    # Legacy person stores can contain private owner observations ABOUT a
+    # guest. Exact subject identity does not make those observations shareable.
+    _exact_person_allowed = not _canonical_only and _p8_exact_person_context_allowed(_p8_viewer)
+    _canonical_person_allowed = _canonical_only or _exact_person_allowed
+    _tom_context_facts = None if _canonical_only else _facts_store
     if _p8_runtime is not None:
         _tom_context_facts = (
             _p8_runtime.projected_facts_view(
@@ -2380,63 +2402,69 @@ async def context_assemble(
             if body.context and _exact_person_allowed else None
         )
         override_tz = getattr(body.context, "timezone", None) if body.context else None
-        sections.append(await _build_temporal_section(
-            cid,
-            override_tz,
-            include_global_heads_up=_legacy_global_allowed,
-        ))
+        if _canonical_only:
+            sections.append(ContextSection(
+                id="temporal-context", title="Current Time", priority=100,
+                body="Current UTC time: " + datetime.now(timezone.utc).isoformat()))
+        else:
+            sections.append(await _build_temporal_section(
+                cid,
+                override_tz,
+                include_global_heads_up=_legacy_global_allowed,
+            ))
     except Exception as exc:
         logger.debug("context_assemble temporal section failed: %s", exc)
 
-    # --- Colony Identity ---
-    identity_lines = []
-    try:
-        from colony_sidecar.chain.identity import get_or_create_colony_id, get_genesis_manifest
-        from colony_sidecar.chain.node import get_or_create_node_id
-        state_dir = Path(os.environ.get("COLONY_STATE_DIR", os.path.expanduser("~/.colony")))
-        colony_id = get_or_create_colony_id(state_dir)
-        identity_lines.append(f"Colony ID: {colony_id}")
-        manifest = get_genesis_manifest()
-        if manifest:
-            identity_lines.append("Genesis: yes (trust anchor)")
-        else:
-            identity_lines.append("Genesis: no")
-        node_id = get_or_create_node_id(state_dir)
-        identity_lines.append(f"Node ID: {node_id}")
-    except Exception as exc:
-        logger.debug("context_assemble identity section failed: %s", exc)
-    if identity_lines:
-        sections.append(ContextSection(
-            id="colony-identity",
-            title="Who I Am",
-            body="\n".join(identity_lines),
-            priority=100,
-        ))
+    if not _canonical_only:
+        # --- Colony Identity ---
+        identity_lines = []
+        try:
+            from colony_sidecar.chain.identity import get_or_create_colony_id, get_genesis_manifest
+            from colony_sidecar.chain.node import get_or_create_node_id
+            state_dir = Path(os.environ.get("COLONY_STATE_DIR", os.path.expanduser("~/.colony")))
+            colony_id = get_or_create_colony_id(state_dir)
+            identity_lines.append(f"Colony ID: {colony_id}")
+            manifest = get_genesis_manifest()
+            if manifest:
+                identity_lines.append("Genesis: yes (trust anchor)")
+            else:
+                identity_lines.append("Genesis: no")
+            node_id = get_or_create_node_id(state_dir)
+            identity_lines.append(f"Node ID: {node_id}")
+        except Exception as exc:
+            logger.debug("context_assemble identity section failed: %s", exc)
+        if identity_lines:
+            sections.append(ContextSection(
+                id="colony-identity",
+                title="Who I Am",
+                body="\n".join(identity_lines),
+                priority=100,
+            ))
 
-    # --- Self-knowledge: when the message asks about Colony ITSELF
-    # (capabilities, architecture, subsystems), ground the answer in the
-    # identity-bootstrap corpus instead of leaving the model to guess. ---
-    try:
-        from colony_sidecar.identity_bootstrap.self_query import (
-            build_self_context_from_corpus, query_is_self_referential)
-        if query_text and query_is_self_referential(query_text):
-            self_ctx = build_self_context_from_corpus()
-            if self_ctx:
-                sections.append(ContextSection(
-                    id="colony-self-knowledge",
-                    title="What I Am",
-                    body=self_ctx,
-                    priority=100,
-                ))
-    except Exception as exc:
-        logger.debug("context_assemble self-knowledge section failed: %s", exc)
+        # --- Self-knowledge: when the message asks about Colony ITSELF
+        # (capabilities, architecture, subsystems), ground the answer in the
+        # identity-bootstrap corpus instead of leaving the model to guess. ---
+        try:
+            from colony_sidecar.identity_bootstrap.self_query import (
+                build_self_context_from_corpus, query_is_self_referential)
+            if query_text and query_is_self_referential(query_text):
+                self_ctx = build_self_context_from_corpus()
+                if self_ctx:
+                    sections.append(ContextSection(
+                        id="colony-self-knowledge",
+                        title="What I Am",
+                        body=self_ctx,
+                        priority=100,
+                    ))
+        except Exception as exc:
+            logger.debug("context_assemble self-knowledge section failed: %s", exc)
 
     # --- Memory: authorized candidates, one selection and one budget ---
-    if _exact_person_allowed and query_text:
+    if _canonical_person_allowed and query_text:
         from colony_sidecar.intelligence.graph.recall import source_candidates
         beliefs, quotations, source_hits, semantic_media = [], [], [], []
         source_ledger = None
-        if _graph is not None:
+        if not _canonical_only and _graph is not None:
             try:
                 candidates_fn = getattr(_graph, "recall_candidates", None)
                 recall_kwargs = {
@@ -2479,13 +2507,14 @@ async def context_assemble(
             # Redacted source turns invalidate their entire graph summary.
             # Source search separately excludes erased message excerpts while
             # retaining unrelated quotations from a partially redacted turn.
-            erased_filter = getattr(_graph, "_filter_erased_source_memories", None)
-            if callable(erased_filter):
+            erased_filter = (getattr(_graph, "_filter_erased_source_memories", None)
+                             if not _canonical_only else None)
+            if not _canonical_only and callable(erased_filter):
                 beliefs = await erased_filter(beliefs)
             from colony_sidecar.beliefs.source_time import interpret_time_query, filter_unstructured
             from colony_sidecar.util import temporal as memory_temporal
             contact_tz = None
-            if _contacts_store is not None and body.context.contact_id:
+            if not _canonical_only and _contacts_store is not None and body.context.contact_id:
                 try:
                     contact = await _contacts_store.get(body.context.contact_id)
                     contact_tz = getattr(contact, "timezone", None)
@@ -2493,7 +2522,8 @@ async def context_assemble(
                     logger.debug("contact timezone unavailable for memory recall", exc_info=True)
             time_query = interpret_time_query(
                 query_text, now=memory_temporal.now_utc(),
-                timezone_name=memory_temporal.resolve_communication_timezone(contact_tz, body.context.timezone))
+                timezone_name=memory_temporal.resolve_communication_timezone(
+                    contact_tz, body.context.timezone or ("UTC" if _canonical_only else None)))
             if source_ledger is not None:
                 from colony_sidecar.beliefs.source_projection import SourceClaimProjection
                 beliefs, quotations = SourceClaimProjection(source_ledger).prepare_context(
@@ -2517,8 +2547,9 @@ async def context_assemble(
                 sections.append(ContextSection(
                     id="colony-memory", title="Relevant Memories",
                     body=body_text, priority=90))
-                record_use = getattr(_graph, "record_recall_use", None)
-                if callable(record_use):
+                record_use = (getattr(_graph, "record_recall_use", None)
+                              if not _canonical_only else None)
+                if not _canonical_only and callable(record_use):
                     record_use(selected)
         except Exception as exc:
             logger.warning("combined memory selection failed (%s)", type(exc).__name__)
@@ -2596,7 +2627,7 @@ async def context_assemble(
             logger.warning("context_assemble world model failed: %s", exc)
 
     # --- Available Skills ---
-    if _skills_registry is not None:
+    if not _canonical_only and _skills_registry is not None:
         try:
             skills = await _skills_registry.list_all()
             if skills:
@@ -2629,10 +2660,10 @@ async def context_assemble(
 
     # --- Pending Commitments ---
     contact_id = body.context.contact_id if body.context else None
-    if _exact_person_allowed and _commitment_store is not None:
+    if _canonical_person_allowed and _commitment_store is not None:
         try:
             commitments = _commitment_store.list(
-                person_id=contact_id, status=["pending", "overdue"], limit=5,
+                person_id=contact_id, status=["pending", "overdue"], limit=50 if _canonical_only else 5,
             )
             # The exact-person list already includes overdue rows. A sealed
             # guest must not trigger a global get-then-filter query.
@@ -2647,6 +2678,8 @@ async def context_assemble(
                 ]
             _listed = (commitments if isinstance(commitments, list)
                        else commitments.get("commitments", []))
+            if _canonical_only:
+                _listed = _canonical_shared_commitments(_listed, contact_id)
             _seen_ids = {c.get("id") for c in _listed}
             all_comms = _listed + [c for c in overdue[:5]
                                    if c.get("id") not in _seen_ids]
@@ -2665,7 +2698,8 @@ async def context_assemble(
                     status_tag = "[OVERDUE]" if c.get("status") == "overdue" or c['id'] in {item['id'] for item in overdue} else "[pending]"
                     due = f" (due: {c.get('due_at', '')})" if c.get('due_at') else ""
                     reservation = reservations.get(c['id'])
-                    work_tag = ('; work=' + reservation['work_state'] + '; session=' + reservation.get('session_id', '')) if reservation else ('; work=unclaimed' if reservations_available else '; work=unknown')
+                    work_tag = ('; work=' + reservation['work_state']
+                                + ('' if _canonical_only else '; session=' + reservation.get('session_id', ''))) if reservation else ('; work=unclaimed' if reservations_available else '; work=unknown')
                     lines.append(f"- {status_tag} id={c['id']}; {c.get('description', '')}{due}{work_tag}")
                 sections.append(ContextSection(
                     id="colony-commitments",
@@ -2971,7 +3005,7 @@ async def context_assemble(
             logger.debug("context_assemble comms landscape failed: %s", exc)
 
     # --- Shared Facts ---
-    if _facts_store is not None and contact_id:
+    if not _canonical_only and _facts_store is not None and contact_id:
         try:
             if _p8_runtime is not None:
                 facts = (
@@ -3031,6 +3065,9 @@ async def context_assemble(
 
     return ContextAssembleResponse(
         sections=sections,
+        notices=(["Canonical scoped context provides own source evidence, claims, media, "
+                  "and commitments proven shared in their source evidence. Legacy tasks, graph, relationship, shared-fact, "
+                  "and global context are omitted."] if _canonical_only else None),
         projection_attestation=_projection,
     )
 
