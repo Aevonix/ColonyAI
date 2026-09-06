@@ -49,7 +49,8 @@ async def test_real_timer_persists_ranked_proposals_and_restarts_without_dispatc
     registry = SimpleNamespace(initiative_engine=engine, initiative_store=store,
                                self_model=sm, delivery=delivery)
     config = AutonomyConfig(mode=AutonomyMode.PROACTIVE, enabled_phases=('initiative', 'execute'),
-        proposals_only=True, tick_interval_secs=.01, quiet_hours_start='00:00', quiet_hours_end='00:00')
+        proposals_only=True, max_actions_per_hour=0, tick_interval_secs=.01,
+        quiet_hours_start='00:00', quiet_hours_end='00:00')
 
     async def run_two_ticks():
         loop = AutonomyLoop(registry, config)

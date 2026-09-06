@@ -1180,7 +1180,8 @@ class AutonomyLoop:
         delivery = self._registry.delivery
 
         for initiative in list(self._pending_initiatives):
-            if self.stats.actions_this_hour >= self.config.max_actions_per_hour:
+            if (not self.config.proposals_only
+                    and self.stats.actions_this_hour >= self.config.max_actions_per_hour):
                 logger.warning("Hourly action limit reached")
                 break
 
