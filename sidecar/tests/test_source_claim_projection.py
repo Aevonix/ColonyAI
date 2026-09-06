@@ -37,6 +37,7 @@ class Model:
 def claim(text, value, **kwargs):
     return {"subject": "I", "predicate": "office_location", "value": value,
             "evidence": text, "operation": "assert", "prior_claim_id": None,
+            "memory_kind": "personal_context", "recall_reason": "Use the reported location when helping with future visits.",
             "valid_from_text": None, "valid_to_text": None, "event_at_text": None, **kwargs}
 
 

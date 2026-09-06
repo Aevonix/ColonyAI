@@ -6,9 +6,16 @@ Ordinary attributed turns now retain a small factual assertion projection in the
 
 `TurnIdempotencyLedger.record_source` stores the source and queues its projection in the same transaction. The new `source_claim_jobs` and `source_claims` tables use the existing `turn-idempotency.db`. There is no additional database or vector index. Existing sources are not automatically backfilled. Historical checkpoints remain quotations because their individual messages do not attest the speaker and occurrence time.
 
-The background consumer uses the configured SMALL role, concurrency one, a 20-second request timeout and no router escalation. It starts with the sidecar; `COLONY_SOURCE_CLAIMS=off` stops extraction while retaining sources and previously derived records. It calls only a configured loopback/private-IP/`.local` endpoint; an unavailable local role leaves durable pending work. This is an endpoint check, not model-weight attestation. Jobs have leases and ownership tokens. Process loss retries incomplete work; stale consumers cannot commit or finish a reclaimed job.
+The background consumer uses the named extraction role and its configured local fallbacks with a 40-second outer timeout. Older tier-only configurations use SMALL with a 20-second timeout and no escalation. Concurrency is one. It starts with the sidecar; `COLONY_SOURCE_CLAIMS=off` stops extraction while retaining sources and previously derived records. An unavailable local role leaves durable pending work. Jobs have leases and ownership tokens. Process loss retries incomplete work; stale consumers cannot commit or finish a reclaimed job.
 
 Extraction accepts at most six assertions per string user message of at most 12,000 characters. Each must retain an exact contiguous source quotation, its message hash and character span. Subject and value must occur in that quotation. Unsupported, uncertain or rejected extraction remains raw source evidence. No confidence number is promoted to truth. The result records the extractor model alias and extraction version; changing the model does not change stored assertions.
+
+Version 2 also requires a useful memory category and an inspectable reason for
+later recall. These are unverified model judgments. Explicit personal-disavowal
+phrases are checked against the full message so an extractor cannot clip them
+away and turn a self-example into a preference. This is a limited English
+validation rule, not general entailment checking. Persistent consumers reject
+reasoning-only and unfinished provider output. See [memory quality](MEMORY-QUALITY.md).
 
 The ordinary-turn outbox captures `occurred_at` once when a new turn enters durable delivery, unless a lifecycle timestamp was supplied. Retries reuse that value. The fallback timestamp means turn capture, not independently verified speech or event time. Source ingestion time remains separate. An explicit event date is separately stored as `event_at`. Unknown historical occurrence times remain unknown.
 

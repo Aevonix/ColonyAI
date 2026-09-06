@@ -1,17 +1,17 @@
-# Ordinary-turn shared facts follow source erasure
+# Retained shared facts follow source erasure
 
 The ordinary turn API previously retained a canonical source but ran Theory
 of Mind fact extraction from a generated summary. Its shared-fact records and
 graph mirrors had no source lineage. Forgetting the source could therefore
 leave its inferred facts available to later sessions as `tom:shared_fact`.
 
-Ordinary extraction now reads retained canonical messages for the resolved
-person. Each inferred fact retains the canonical turn, session, exact message
-hashes, observed and ingestion times, and extractor model provenance when
-available. The fact remains an inference. Model identity records how it was
-produced, and does not determine whether another model can use it. Raw
-multimodal blocks contribute text only; this extractor does not interpret
-images or treat their transport representation as evidence.
+The earlier source-lineage migration gave those projections a canonical turn,
+session, exact message hashes, observed/ingestion times and model provenance.
+Those records remain supported and erasable. Automatic fact learning now uses
+the canonical assertion worker exclusively; ordinary ToM processing updates
+affect and engagement. See [memory quality](MEMORY-QUALITY.md). Explicit
+contact-knowledge APIs remain available, but model estimates from that API are
+not mirrored into the world-fact graph.
 
 The existing shared-facts SQLite table gains one additive nullable lineage
 column. Graph mirrors use `turn:<canonical-id>` and the existing graph erasure
@@ -32,9 +32,9 @@ Restart reconciles physical fact cleanup, and repeating the forget operation
 retries both stores. A source database read failure does not reveal linked
 facts through an unchecked fallback.
 
-The existing extractor does not provide exact per-fact quotation spans.
-Consequently each extracted fact is conservatively supported by the whole
-turn. If any supporting message is erased, all inferred facts from that turn
+Older projections did not provide exact per-fact quotation spans.
+Consequently each linked fact is conservatively supported by the whole
+turn. If any supporting message is erased, all linked facts from that turn
 are suppressed. Unrelated raw quotations in a partially erased checkpoint
 remain available through canonical source recall.
 
@@ -53,4 +53,4 @@ jobs and independent supports. Model extraction and graph I/O are controlled;
 the graph read fence is the production implementation. These checks prove
 lineage and erasure behavior, not extraction quality or live database service
 compatibility. The deployment qualification must repeat the ordinary neutral
-fact and forget loop with the actual extractor and graph.
+source and forget loop, including retained pre-cutover projections.

@@ -67,6 +67,9 @@ login. See the setup guide for status, stop, uninstall and recovery.
 - **Evidence that outlives a model.** Original messages, timestamps, provenance
   and derived claims persist independently of inference weights. Corrections
   and conflicting claims remain inspectable. [Source claims](docs/SOURCE-CLAIMS.md)
+- **Selective factual learning.** One extractor promotes useful, quoted
+  assertions. Routine logs remain source history, without duplicate graph
+  summaries or automatic contact-knowledge guesses. [Memory quality](docs/MEMORY-QUALITY.md)
 - **Images with origins.** Retained image bytes and model-generated descriptions
   stay distinct. Recollection can include the description and a scoped reference
   to its source. This does not imply reliable understanding of every image.

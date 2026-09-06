@@ -13,9 +13,10 @@ import uuid
 
 from colony_sidecar.vector.image_store import LocalImageStore
 from colony_sidecar.vector.multimodal_types import ImageInput
+from colony_sidecar.util.model_output import final_text
 
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
-DESCRIPTION_VERSION = "source-image-description-v1"
+DESCRIPTION_VERSION = "source-image-description-v2"
 DESCRIPTION_PROMPT = (
     "Describe the visible image as evidence for later recall, in at most 160 words. "
     "Include visible objects, their colors/positions and legible labels. Distinguish "
@@ -258,9 +259,9 @@ class SourceMedia:
                 {'role': 'user', 'content': [{'type': 'image_url', 'image_url': {
                     'url': 'data:' + job['mime_type'] + ';base64,' + base64.b64encode(data).decode()}}]}],
                 force_tier=tier, context={'task': 'source_image_description', 'function_role': 'vision',
-                    'max_output_tokens': 400, 'allow_fallback': functions}), 40 if functions else 20)
-            text = response.content.strip()
-            if not text or len(text) > 2400:
+                    'max_output_tokens': 1600, 'allow_fallback': functions}), 40 if functions else 20)
+            text = final_text(response)
+            if len(text) > 2400 or len(text.split()) > 160:
                 raise ValueError('invalid image description')
             self.finish(job, description=text, model=response.model_id, model_provenance={
                 'function_role': getattr(response, 'function_role', '') or 'vision',

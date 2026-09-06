@@ -1,0 +1,22 @@
+[
+  {"id":"preference","role":"user","message":"I prefer unsweetened tea to coffee.","promote":true},
+  {"id":"keys","role":"user","message":"My spare key is in the blue tin beside the garage door.","promote":true},
+  {"id":"relationship","role":"user","message":"Nora is my sister and lives in Riverton.","promote":true},
+  {"id":"decision","role":"user","message":"We chose Cedar Hall as the venue for our annual workshop.","promote":true},
+  {"id":"procedure","role":"user","message":"When the workshop panel freezes, holding its reset button for ten seconds restores it without erasing settings.","promote":true},
+  {"id":"incident","role":"user","message":"The garage flooded on 2026-03-04 and ruined the stored paper archives.","promote":true},
+  {"id":"correction","role":"user","message":"Correction: my office is in Lake, not River.","promote":true},
+  {"id":"appointment","role":"user","message":"My workshop is scheduled for 2026-03-21 at Cedar Hall.","promote":true},
+  {"id":"constraint","role":"user","message":"I cannot use stairs and need step-free access when we choose venues.","promote":true},
+  {"id":"temporary_relevant","role":"user","message":"I left my bicycle at the station; I need to collect it tomorrow.","promote":true},
+  {"id":"ack","role":"user","message":"Okay, thanks!","promote":false},
+  {"id":"status","role":"user","message":"Build is still running. 28 tests have passed so far.","promote":false},
+  {"id":"health","role":"user","message":"Routine health check: all services returned HTTP 200.","promote":false},
+  {"id":"generic","role":"user","message":"Reliable software is important and good testing helps.","promote":false},
+  {"id":"debug","role":"user","message":"Debug output: attempt=2 elapsed_ms=431 bytes_read=1024 retry=true.","promote":false},
+  {"id":"question","role":"user","message":"Would Cedar Hall be a suitable venue for a workshop?","promote":false},
+  {"id":"hypothetical","role":"user","message":"Suppose I lived in Riverton and Nora were my sister. How would that change the story?","promote":false},
+  {"id":"command","role":"user","message":"Check whether the workshop service is responding now.","promote":false},
+  {"id":"fixture","role":"user","message":"This is a synthetic parser fixture, not information about me: my favorite drink is petrol.","promote":false},
+  {"id":"assistant_guess","role":"assistant","message":"Perhaps you prefer quiet rooms. I am only guessing; you have not said that.","promote":false}
+]

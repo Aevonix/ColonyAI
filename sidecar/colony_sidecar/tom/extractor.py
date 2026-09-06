@@ -17,6 +17,9 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from colony_sidecar.beliefs.promotion import PROMOTION_PROMPT, promotion_metadata
+from colony_sidecar.util.model_output import final_text
+
 logger = logging.getLogger(__name__)
 
 MAX_INPUT_CHARS = 4_000
@@ -47,12 +50,16 @@ _FACT_SYSTEM_PROMPT = (
     "You are a knowledge extraction engine. Read the conversation and identify "
     "what the contact now KNOWS or BELIEVES as a result of this conversation. "
     "Return a JSON array of objects. Each object has keys: "
-    '"fact" (string, the knowledge item), '
+    '"evidence" (an exact contiguous quotation of at most 500 characters from the conversation), '
     '"source" (one of: told_by_contact, told_to_contact, shared_context, inferred), '
     '"confidence" (float 0.0 to 1.0). '
-    "Return ONLY the JSON array. Return [] if no new knowledge. "
+    "Keep the speaker's actual words and attribution. This is an estimate of what "
+    "was communicated, not proof it is true or that the contact accepted it. "
+    "Do not infer that the contact knows something merely because it was in the "
+    "assistant's response. Return at most 6 items. "
+    "Return ONLY the JSON array. Return [] if no useful new knowledge. "
     "Do not add prose, code fences, or explanation."
-)
+) + '\n' + PROMOTION_PROMPT
 
 
 _ENGAGEMENT_SYSTEM_PROMPT = (
@@ -119,7 +126,10 @@ class TomExtractor:
             logger.warning("ToM affect extraction LLM call failed: %s", exc)
             return None
 
-        content = getattr(resp, "content", "") or ""
+        try:
+            content = final_text(resp)
+        except ValueError:
+            return None
         result = _parse_affect_json(content)
         if result is not None:
             self._mark_extracted(contact_id)
@@ -164,8 +174,11 @@ class TomExtractor:
             logger.warning("ToM fact extraction LLM call failed: %s", exc)
             return []
 
-        content = getattr(resp, "content", "") or ""
-        results = _parse_fact_array(content)
+        try:
+            content = final_text(resp)
+        except ValueError:
+            return []
+        results = _parse_fact_array(content, conversation_text=snippet)
         self._mark_extracted(contact_id, operation="facts")
         for r in results:
             r["contact_id"] = contact_id
@@ -220,7 +233,10 @@ class TomExtractor:
             logger.warning("ToM engagement extraction LLM call failed: %s", exc)
             return None
 
-        content = getattr(resp, "content", "") or ""
+        try:
+            content = final_text(resp)
+        except ValueError:
+            return None
         result = _parse_engagement_json(content)
         if result is not None:
             self._last_engagement[contact_id] = datetime.now(timezone.utc).isoformat()
@@ -338,8 +354,8 @@ def _parse_affect_json(raw: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def _parse_fact_array(raw: str) -> List[Dict[str, Any]]:
-    """Parse LLM response into list of fact dicts."""
+def _parse_fact_array(raw: str, *, conversation_text: str = "") -> List[Dict[str, Any]]:
+    """Accept useful quotations; unsupported output remains conversation history."""
     if not raw:
         return []
     candidate = _strip_code_fence(raw).strip()
@@ -356,15 +372,17 @@ def _parse_fact_array(raw: str) -> List[Dict[str, Any]]:
 
     if isinstance(parsed, dict):
         parsed = parsed.get("facts") or parsed.get("items") or []
-    if not isinstance(parsed, list):
+    if not isinstance(parsed, list) or len(parsed) > 6:
         return []
 
     facts: List[Dict[str, Any]] = []
     for item in parsed:
         if not isinstance(item, dict):
             continue
-        fact_text = item.get("fact")
-        if not isinstance(fact_text, str) or not fact_text.strip():
+        fact_text = item.get("evidence")
+        quality = promotion_metadata(item)
+        if (not isinstance(fact_text, str) or not fact_text.strip()
+                or len(fact_text) > 500 or fact_text not in conversation_text or quality is None):
             continue
         source = item.get("source", "inferred")
         if source not in ("told_by_contact", "told_to_contact", "shared_context", "inferred"):
@@ -378,5 +396,9 @@ def _parse_fact_array(raw: str) -> List[Dict[str, Any]]:
             "fact": fact_text.strip(),
             "source": source,
             "confidence": confidence,
+            "memory_quality": quality,
         })
-    return facts
+    unique = {}
+    for fact in facts:
+        unique.setdefault((fact['source'], fact['fact']), fact)
+    return list(unique.values())
