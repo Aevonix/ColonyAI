@@ -1,6 +1,7 @@
-"""Source → stable correction / work outcome → judgment → actual ranking/context."""
+"""Owner source → durable correction → ranking; runtime history remains scoped."""
 import json
 import sqlite3
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -124,7 +125,8 @@ async def phase(sm, items):
 
 
 @pytest.mark.asyncio
-async def test_actual_executor_outcomes_change_initiative_order_and_context(perspective, source_app, tmp_path):
+@pytest.mark.parametrize('runtime_outcome', ['completed_wrong_count', 'timeout'])
+async def test_actual_runtime_outcomes_do_not_change_priority_or_claim_quality(perspective, source_app, tmp_path, runtime_outcome):
     from colony_sidecar.initiatives.store import InitiativeStore
     from colony_sidecar.reasoning.loop import ReasoningResult
     from colony_sidecar.services.initiative_executor import InitiativeExecutorService
@@ -132,59 +134,79 @@ async def test_actual_executor_outcomes_change_initiative_order_and_context(pers
     store = InitiativeStore(tmp_path / 'initiatives')
     executor = InitiativeExecutorService(store, None, None, self_model=sm)
     executor._find_recent_completion = AsyncMock(return_value=None)
-    executor._run_turn_resilient = AsyncMock(return_value=ReasoningResult(status='error', error='timed out',
-        model_provenance={'model_role': 'large', 'model_id': 'fixture-model-a', 'model_revision': 'unknown'}))
+    executor._maybe_distill = AsyncMock()  # Skill updates are a separate loop.
+    model = {'model_role': 'planning', 'model_id': 'fixture-model-a', 'model_revision': 'v1'}
+    result = (ReasoningResult(status='completed', message={'role': 'assistant', 'content': 'The inventory has 120 entries.'}, model_provenance=model)
+              if runtime_outcome == 'completed_wrong_count' else
+              ReasoningResult(status='error', error='TimeoutError: timed out', model_provenance=model))
+    executor._run_turn_resilient = AsyncMock(return_value=result)
     original = candidates()
-    assert [i.id for i in await phase(sm, original)] == ['urgent', 'research-next', 'follow-up']
+    before = [(item.id, item.priority) for item in await phase(sm, original)]
     for i in range(3):
-        item = store.create(type='research', description=f'Neutral research task {i}', dedup_key=f'work-{i}')
+        item = store.create(type='research', description=f'Count all {142+i} neutral inventory entries', dedup_key=f'work-{i}')
         item = store.assign(item.id, 'colony-executor')
         await executor._execute_one(item)
-        if i < 2:
-            state.refresh(sm.store)
-            assert state.opinions() == []
     events = sm.store.events('research')
     assert len(events) == 3 and all(e['source_ref'] and e['event_key'] for e in events)
-    ranked = await phase(sm, original)
-    assert [i.id for i in ranked] == ['urgent', 'follow-up', 'research-next']
-    assert ranked[-1].priority == 0.76
-    assert original[0].priority == 0.8
-    assert (await phase(sm, original))[-1].priority == 0.76  # cached candidates do not compound
-    opinion = state.opinions()[0]
-    assert opinion['weight'] == 0.95 and len(opinion['basis']) == 3
-    assert all(item['model_id'] == 'fixture-model-a' for item in opinion['basis'])
+    assert all(e['evidence']['meaning'].endswith('semantic_success_unverified') for e in events)
+    assert all(e['evidence']['model_id'] == 'fixture-model-a' for e in events)
+    assert {e['outcome'] for e in events} == ({'success'} if runtime_outcome == 'completed_wrong_count' else {'timeout'})
+    assert [(item.id, item.priority) for item in await phase(sm, original)] == before
+    assert state.opinions() == []
+    # History remains readable, but cannot become a competence claim about a replacement model.
+    brief = sm.brief()
+    assert 'Recorded runtime outcomes:' in brief
+    assert 'do not verify output quality' in brief and "current model's ability" in brief
+    assert 'You reliably complete' not in brief and 'You often fail at' not in brief
+    reopened = SelfPerspective(TurnIdempotencyLedger(state.ledger.db_path), owner_id='contact-a')
+    assert [(item.id, item.priority) for item in reopened.rank(original)] == before
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
-        text = await context(client, 'different-session')
-        assert '3/3' in text and 'revision' in text and 'research-next' in text
-        await tell(client, 'Prefer research initiatives.', 'override')
-        after = await phase(sm, original)
-        assert [i.id for i in after] == ['urgent', 'research-next', 'follow-up']
-        assert after[1].priority == 0.89  # optional preference cannot become urgent
+        await tell(client, 'Deprioritize research initiatives.', 'override')
+        ranked = await phase(sm, original)
+        assert [i.id for i in ranked] == ['urgent', 'follow-up', 'research-next']
+        assert ranked[-1].priority == .64
         trace = state.status()['attention']
         assert trace['authority_changed'] is False
         assert trace['decisions'][0]['basis'] == 'owner_correction'
-        before_count = len(sm.store.events('research'))
-        state.refresh(sm.store)
-        assert len(sm.store.events('research')) == before_count
-        reopened = SelfPerspective(TurnIdempotencyLedger(state.ledger.db_path), owner_id='contact-a')
-        assert reopened.rank(original)[1].priority == 0.89
         assert 'turn:override' in await context(client, 'model-swapped')
+        erased = await client.post('/v1/host/memory/sources/forget', headers={'Authorization': 'Bearer owner-key'},
+            json={'contact_id': 'contact-a', 'source_ids': ['override']})
+        assert erased.status_code == 200
+        assert [(item.id, item.priority) for item in await phase(sm, original)] == before
+        assert len(sm.store.events('research')) == 3
 
 
-def test_distinct_work_required_and_reconciliation_removes_stale_judgment(perspective):
+def test_legacy_opinions_and_evidence_corrections_remain_inspectable_but_inactive(perspective):
     state, _, sm = perspective
-    for i in range(12):
-        sm.store.record('research', 'timeout', source='worker', source_ref='same-work', event_key=f'attempt-{i}', outcome_contract='fixture/v1')
-    state.refresh(sm.store)
-    assert state.opinions() == []
-    for i in range(2):
-        sm.store.record('research', 'timeout', source='worker', source_ref=f'other-{i}', event_key=f'other-{i}', outcome_contract='fixture/v1')
-    state.refresh(sm.store)
-    assert state.opinions()[0]['weight'] == 0.95
-    # Exercise the effective-evidence contract with evidence now unavailable.
-    state.refresh(SimpleNamespace(events=lambda *args, **kwargs: []))
-    assert state.opinions()[0]['weight'] == 1.0
-    assert 'Insufficient' in state.opinions()[0]['reason']
+    sm.store.record('research', 'success', source='worker', source_ref='work', event_key='attempt',
+                    outcome_contract='runtime/v1', evidence={'model_id': 'old-model'})
+    event = sm.store.events('research')[0]
+    old_basis = json.dumps([{'event_id': event['id'], 'fingerprint': event['fingerprint'], 'model_id': 'old-model'}])
+    with sqlite3.connect(state.ledger.db_path) as conn:
+        for weight in (.95, 1.2):
+            conn.execute('INSERT INTO self_opinion_revisions(domain,weight,basis_json,basis_digest,reason,updated_at,version) VALUES (?,?,?,?,?,?,?)',
+                ('research', weight, old_basis, 'old-digest', 'LEGACY_ABILITY_CLAIM', 1, 'operational-perspective-v1'))
+        conn.execute('INSERT OR REPLACE INTO self_attention VALUES (1,?,?)',
+            (json.dumps({'version':'operational-perspective-v1','ordered_ids':['legacy-ranked'],'decisions':[]}), 1))
+        original_rows = conn.execute('SELECT * FROM self_opinion_revisions ORDER BY id').fetchall()
+    assert state.status()['attention']['historical_only'] is True
+    assert 'legacy-ranked' not in state.brief() and 'LEGACY_ABILITY_CLAIM' not in state.brief()
+    original = candidates()
+    state.rank(original, competence=sm.store)
+    assert next(item for item in state.rank(original) if item.id == 'research-next').priority == .8
+    status = state.status()
+    assert status['automatic_weighting'] == 'retired'
+    assert len(status['opinion_history']) == 2
+    assert all(row['status'] == 'legacy_non_governing' and row['governing'] is False for row in status['opinion_history'])
+    assert status['opinion_history'][0]['basis'][0]['model_id'] == 'old-model'
+    sm.store.apply_reconciliation({'schema':'colony.competence-reconciliation/v1','created_by':'test-reviewer',
+        'reason':'Recorded output failed its count check','provenance':{'criterion':'exact inventory count'},
+        'event_corrections':[{'event_id':event['id'],'target_fingerprint':event['fingerprint'],'disposition':'invalidate'}]})
+    assert sm.store.events('research') == [] and len(sm.store.reconciliation_ledger()) == 1
+    assert [(i.id,i.priority) for i in state.rank(original)] == [(i.id,i.priority) for i in sorted(original,key=lambda i:-i.priority)]
+    with sqlite3.connect(state.ledger.db_path) as conn:
+        assert conn.execute('SELECT * FROM self_opinion_revisions ORDER BY id').fetchall() == original_rows
+    assert sm.store.inspect_events('research', 0, time.time()+1)[0]['recorded_outcome'] == 'success'
 
 
 @pytest.mark.parametrize('text', ['Stop using bullet points.', 'Be concise and detailed.',

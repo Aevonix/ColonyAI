@@ -54,16 +54,18 @@ def test_events_windowing_and_shadow_flag():
 # Brief
 # ---------------------------------------------------------------------------
 
-def test_brief_thresholds():
+def test_brief_reports_runtime_counts_without_claiming_ability():
     s = CompetenceStore()
-    _fill(s, "research", wins=8, losses=1)          # reliable
-    _fill(s, "scheduling", wins=1, losses=3)        # weak
-    _fill(s, "coding", wins=2, timeouts=2)          # timeout-prone
+    _fill(s, "research", wins=8, losses=1)
+    _fill(s, "scheduling", wins=1, losses=3)
+    _fill(s, "coding", wins=2, timeouts=2)
     text = self_brief(s.snapshot(), {"total": 2, "active_initiatives": 1,
                                      "active_projects": 1, "queued_jobs": 0})
-    assert "research" in text and "reliably" in text
-    assert "scheduling" in text and "fail" in text
-    assert "coding" in text and "Timeout-prone" in text
+    assert "research: 8 labeled success, 1 failure, 0 timeout" in text
+    assert "scheduling: 1 labeled success, 3 failure, 0 timeout" in text
+    assert "coding: 2 labeled success, 0 failure, 2 timeout" in text
+    assert "do not verify output quality" in text and "current model's ability" in text
+    assert "You reliably complete" not in text and "You often fail at" not in text
     assert "2 in flight" in text
 
 

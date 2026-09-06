@@ -1,22 +1,21 @@
-"""Source-backed preferences and bounded operational judgments.
+"""Source-backed preferences and inspectable attention.
 
 This is a portable working perspective, not feelings, a worldview or authority.
-Original owner words stay in the canonical source ledger. Operational judgments
-reuse effective competence evidence and only adjust optional research priority.
+Original owner words stay in the canonical source ledger. Only explicit owner
+preferences adjust optional research priority; prior automatic weights are history.
 """
 from __future__ import annotations
 
 from contextlib import closing
 from copy import copy
 from datetime import datetime, timezone
-import hashlib
 import json
 import re
 import time
 
 
 DOMAINS = frozenset({'research', 'knowledge_acquisition'})
-VERSION = 'operational-perspective-v1'
+VERSION = 'owner-directed-perspective-v2'
 
 
 def initialize(conn):
@@ -161,80 +160,36 @@ class SelfPerspective:
         with closing(self.ledger._connect()) as conn:
             return {r[0] for r in conn.execute('SELECT pref_key FROM self_preference_keys WHERE owner_id=?', (self.owner_id,))}
 
-    def refresh(self, competence):
-        """At least three distinct completed work sources per ordinary update.
-
-        Weights stay in [0.8,1.2] and move at most 0.05 per new evidence batch.
-        Reconciled/withdrawn evidence resets an unsupported judgment immediately.
-        These are priority weights, never statistical confidence or permission.
-        """
-        if competence is None:
-            return
-        for domain in sorted(DOMAINS):
-            events = competence.events(domain, include_shadow=False, limit=120)
-            unique = {}
-            for event in events:
-                if event.get('evidence_status') not in {'observed', 'verified'} or not event.get('source_ref') or not event.get('event_key') or event.get('outcome_contract') in {None, '', 'legacy.unversioned'}:
-                    continue
-                key = str(event['source']) + ':' + str(event['source_ref'])
-                evidence = event.get('evidence') or {}
-                if not isinstance(evidence, dict):
-                    evidence = {}
-                unique.setdefault(key, {'key': key, 'event_id': event['id'], 'fingerprint': event['fingerprint'], 'outcome': event['outcome'],
-                    'model_role': evidence.get('model_role', 'unknown'), 'model_id': evidence.get('model_id', 'unknown'),
-                    'model_revision': evidence.get('model_revision', 'unknown'), 'evidence_status': event['evidence_status']})
-            basis = list(unique.values())[:20]
-            digest = hashlib.sha256(_json(basis).encode()).hexdigest()
-            with closing(self.ledger._connect()) as conn, conn:
-                conn.execute('BEGIN IMMEDIATE')
-                previous = conn.execute('SELECT * FROM self_opinion_revisions WHERE domain=? ORDER BY id DESC LIMIT 1', (domain,)).fetchone()
-                if previous and previous['basis_digest'] == digest:
-                    continue
-                old = json.loads(previous['basis_json']) if previous else []
-                old_keys = {item['key'] for item in old}
-                removed = old_keys - set(unique)
-                revised = any(item['key'] in unique and (item['outcome'] != unique[item['key']]['outcome'] or item['fingerprint'] != unique[item['key']]['fingerprint']) for item in old)
-                new_count = len({item['key'] for item in basis} - old_keys)
-                if new_count < 3 and not removed and not revised:
-                    continue
-                if len(basis) < 3:
-                    weight, reason = 1.0, 'Insufficient surviving independent work evidence; use neutral priority.'
-                else:
-                    failures = sum(item['outcome'] != 'success' for item in basis)
-                    target = 1.0 + 0.2 * (1.0 - 2.0 * failures / len(basis))
-                    previous_weight = float(previous['weight']) if previous else 1.0
-                    weight = target if removed or revised else max(previous_weight - 0.05, min(previous_weight + 0.05, target))
-                    reason = f'{failures}/{len(basis)} distinct recent work runtime outcomes failed or timed out; optional {domain} priority reflects this working judgment, not verified semantic quality.'
-                conn.execute('INSERT INTO self_opinion_revisions(domain,weight,basis_json,basis_digest,reason,updated_at,version) VALUES (?,?,?,?,?,?,?)',
-                    (domain, round(max(0.8, min(1.2, weight)), 4), _json(basis), digest, reason, self.clock(), VERSION))
-
-    def opinions(self):
+    def opinions(self, *, history=False):
+        """Retained automatic revisions are inspectable, never governing."""
         with closing(self.ledger._connect()) as conn:
-            rows = conn.execute('SELECT * FROM self_opinion_revisions WHERE id IN (SELECT max(id) FROM self_opinion_revisions GROUP BY domain) ORDER BY domain').fetchall()
-        return [dict(row) | {'basis': json.loads(row['basis_json'])} for row in rows]
+            query = ('SELECT * FROM self_opinion_revisions ORDER BY id DESC LIMIT 100' if history else
+                     'SELECT * FROM self_opinion_revisions WHERE id IN (SELECT max(id) FROM self_opinion_revisions GROUP BY domain) ORDER BY domain')
+            rows = conn.execute(query).fetchall()
+        return [dict(row) | {'basis': json.loads(row['basis_json']),
+                'status': 'legacy_non_governing', 'governing': False} for row in rows]
 
     def rank(self, initiatives, *, competence=None, load=None):
-        self.refresh(competence)
+        # competence is retained as a call-compatibility argument, never consumed.
         initiatives = [copy(item) for item in initiatives]  # no compounding on cached engine candidates
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
-            opinions = {row['domain']: row for row in self.opinions()}
             overrides = {row['pref_key'].removeprefix('initiative.'): row for row in self.preferences() if row['pref_key'].startswith('initiative.')}
             decisions = []
             for item in initiatives:
                 domain = getattr(item.type, 'value', str(item.type))
                 original = float(item.priority)
-                override, opinion = overrides.get(domain), opinions.get(domain)
-                weight = float(override['value']) if override else float(opinion['weight']) if opinion else 1.0
+                override = overrides.get(domain)
+                weight = float(override['value']) if override else 1.0
                 # Due/urgent and non-research work keeps its existing urgency.
-                applied = domain in DOMAINS and original < 0.9
+                applied = override is not None and domain in DOMAINS and original < 0.9
                 item.priority = round(max(0.0, min(0.89, original * weight)), 4) if applied else original
                 decisions.append({'initiative_id': str(item.id), 'domain': domain, 'original_priority': original,
                     'description': str(getattr(item, 'description', '') or '')[:500],
                     'priority': item.priority, 'weight': weight if applied else 1.0,
-                    'basis': 'owner_correction' if override and applied else 'operational_judgment' if opinion and applied else 'unchanged',
+                    'basis': 'owner_correction' if override and applied else 'unchanged',
                     'correction_id': override['id'] if override and applied else None,
-                    'opinion_revision': opinion['id'] if opinion and applied else None})
+                    'opinion_revision': None})
             ranked = sorted(initiatives, key=lambda item: -item.priority)
             snapshot = {'version': VERSION, 'load': dict(load or {}), 'decisions': decisions,
                         'ordered_ids': [str(item.id) for item in ranked], 'authority_changed': False,
@@ -245,19 +200,24 @@ class SelfPerspective:
     def status(self):
         with closing(self.ledger._connect()) as conn:
             row = conn.execute('SELECT * FROM self_attention WHERE slot=1').fetchone()
-        attention = None if row is None else json.loads(row['snapshot_json']) | {'observed_at': row['observed_at'], 'age_seconds': max(0, round(self.clock() - row['observed_at'], 1))}
+        attention = None
+        if row is not None:
+            snapshot = json.loads(row['snapshot_json'])
+            attention = snapshot | {'observed_at': row['observed_at'],
+                'age_seconds': max(0, round(self.clock() - row['observed_at'], 1)),
+                'historical_only': snapshot.get('version') != VERSION}
         return {'kind': 'operational_working_perspective', 'preferences': self.preferences(),
-                'corrections': self.preferences(history=True), 'opinions': self.opinions(), 'attention': attention}
+                'corrections': self.preferences(history=True), 'opinions': self.opinions(),
+                'opinion_history': self.opinions(history=True), 'automatic_weighting': 'retired', 'attention': attention}
 
     def brief(self):
-        rows = self.opinions()
-        lines = [f"Working judgment: {row['reason']} Priority weight {row['weight']:.2f}; opinion revision {row['id']}." for row in rows]
+        lines = []
         for pref in self.preferences():
             if pref['pref_key'].startswith('initiative.'):
-                lines.append(f"Owner correction: {pref['pref_key']} priority weight {pref['value']:.2f}; source turn:{pref['source_turn_id']}; overrides observational weighting.")
+                lines.append(f"Owner correction: {pref['pref_key']} priority weight {pref['value']:.2f}; source turn:{pref['source_turn_id']}; applies only to optional research ordering.")
         state = self.status()['attention']
-        if state is not None:
+        if state is not None and not state['historical_only']:
             lines.append(f"Last initiative ranking, {state['age_seconds']:g}s ago: " + ', '.join(state['ordered_ids'][:8]) + '. This is a decision snapshot, not current liveness.')
         if lines:
-            lines.append('These are evidence-based operational judgments, not emotions, general preferences or authorization grants.')
+            lines.append('Only explicit owner preferences adjust these priorities. Runtime history establishes neither output quality nor the competence of the current model; it grants no authority.')
         return '\n'.join(lines)

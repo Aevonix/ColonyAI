@@ -12,8 +12,9 @@ and work across sessions. Your private deployment supplies its identity,
 credentials, channels and hardware adapters.
 
 Colony 1.0 supports native Hermes attachment, durable source memory, scoped
-recollection and shared work. Optional image and semantic projections, a bounded
-working perspective, and evaluated native skill updates extend that core. These
+recollection and shared work. Optional image and semantic projections,
+source-backed owner preferences and inspectable attention, and evaluated native
+skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
@@ -92,10 +93,10 @@ login. See the setup guide for status, stop, uninstall and recovery.
   removes linked fact, graph and vector projections. Cleanup status is explicit.
   Unlinked historical records, host transcripts and backups require additional
   reconciliation. [Derived fact lineage](docs/TOM-SOURCE-LINEAGE.md)
-- **Inspectable priorities.** Source-backed owner corrections and measured
-  outcomes can change optional research ordering. The dated attention snapshot
-  records the evidence and applied weights. This is a bounded working
-  perspective, not a claim of subjective feelings.
+- **Inspectable priorities.** Source-backed owner corrections can change
+  optional research ordering. The dated attention snapshot records the
+  corrections and applied weights. Historical runtime outcomes remain
+  inspectable without establishing task quality or current-model competence.
   [Working perspective](docs/WORKING-PERSPECTIVE.md)
 - **Evaluated skill updates.** Native Hermes review can stage a proposal for an
   existing skill. An explicitly selected task evaluator compares the current

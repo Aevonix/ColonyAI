@@ -64,7 +64,7 @@ def test_sections_injected_only_when_supplied():
     for tag in ("<self_model>", "<boundaries>", "<skills>", "<corrections>"):
         assert tag not in p
     p2 = build_system_prompt(
-        "executor", self_brief="You reliably complete research (p=0.9, n=12).",
+        "executor", self_brief="Recorded runtime outcomes: research: 9 labeled success, 3 timeout. Output quality is unverified.",
         boundaries="MUST NOT: touch the billing spreadsheet",
         skills="- Recover serving stack: check logs first",
         corrections=["reporting completion without observed evidence"])
@@ -161,11 +161,11 @@ async def test_golden_thinker_prose_garbage_yields_nothing():
 @pytest.mark.asyncio
 async def test_golden_thinker_prompt_carries_situation_and_briefs():
     thinker = _thinker("[]")
-    thinker._self_brief_fn = lambda: "You often time out on research (n=6)."
+    thinker._self_brief_fn = lambda: "Recorded runtime outcomes: research: 6 timeout. Output quality is unverified."
     thinker._boundaries_fn = lambda: "MUST NOT: contact vendors"
     await thinker.think({"open_goals": ["ship the report"]})
     system = thinker._router.messages[0]["content"]
-    assert "<self_model>" in system and "time out on research" in system
+    assert "<self_model>" in system and "research: 6 timeout" in system
     assert "<boundaries>" in system and "contact vendors" in system
     assert "ship the report" in thinker._router.messages[1]["content"]
 

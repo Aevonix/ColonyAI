@@ -1,16 +1,14 @@
-"""Self-model / trust engine: earned, graduated autonomy (item 4, Amendment 1).
+"""Runtime outcome history, owner-directed perspective and existing trust helpers.
 
-Measures what the system is actually good at from real outcomes (executor
-completions, project steps, directed audits, delivery pushes, worker jobs),
-renders a compact brief injected into reasoning prompts, and, as the central
-trust engine, converts that track record into per-class autonomy: act above
-earned confidence (with journaling), ask when unsure, hold in calibration,
-never self-decide the immutable floor. Circuit breakers demote a class on
-clustered failures or any audit violation.
+Execution records retain their source and correction history. Their prompt
+brief describes recorded runtime labels and current load without establishing
+task quality or current-model competence. Source-backed owner preferences and
+dated attention are maintained separately from those outcome labels.
 
-Measurement, journal and brief run live by default
-(COLONY_SELF_MODEL_ENABLED, default true); gating applies wherever a
-capability consults TrustEngine.gate().
+SelfModel is enabled by default (COLONY_SELF_MODEL_ENABLED); individual outcome
+producers must be wired and running to supply records. The existing TrustEngine
+and its opt-in graduation behavior are unchanged by the perspective. Gating
+applies wherever a capability explicitly consults TrustEngine.gate().
 """
 
 from colony_sidecar.self_model.store import CompetenceStore, SelfModel, self_model_enabled

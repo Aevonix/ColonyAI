@@ -1,52 +1,35 @@
 """Render the self-model into a compact prompt brief.
 
-The brief states only what the evidence supports: reliable domains (enough
-samples, high success), unreliable domains, timeout-prone domains, and the
-current load. Domains without enough samples are omitted -- no flattery, no
-invented weaknesses.
+Historical outcome labels describe execution records. They do not establish
+output quality, intrinsic ability, or competence after changing models.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
-# Evidence thresholds. A claim of reliability needs more samples than a
-# warning (asymmetric: it is safer to under-claim competence).
-_RELIABLE_MIN_N = 5
-_RELIABLE_RATE = 0.8
-_WEAK_MIN_N = 3
-_WEAK_RATE = 0.4
-_TIMEOUT_MIN_N = 3
-_TIMEOUT_RATE = 0.3
-
 
 def self_brief(domains: List[Dict[str, Any]], load: Dict[str, int]) -> str:
-    """Compact self-assessment text for prompt injection. Empty when nothing
+    """Compact historical runtime facts for prompt injection. Empty when nothing
     is evidenced yet."""
-    reliable, weak, slow = [], [], []
+    records = []
     for d in domains or []:
         n = int(d.get("n") or 0)
-        rate = d.get("success_rate")
-        trate = d.get("timeout_rate")
         name = d.get("domain", "?")
-        if n >= _TIMEOUT_MIN_N and trate is not None and trate >= _TIMEOUT_RATE:
-            slow.append(f"{name} ({int(round(trate * 100))}% timeouts, n={n})")
-        if rate is None:
+        if d.get("evidence_available") is False:
+            records.append(f"{name}: historical evidence incomplete")
             continue
-        if n >= _RELIABLE_MIN_N and rate >= _RELIABLE_RATE:
-            reliable.append(f"{name} (p={rate:.2f}, n={n})")
-        elif n >= _WEAK_MIN_N and rate <= _WEAK_RATE:
-            weak.append(f"{name} (p={rate:.2f}, n={n})")
+        if n:
+            records.append(f"{name}: {int(d.get('success') or 0)} labeled success, "
+                           f"{int(d.get('failure') or 0)} failure, "
+                           f"{int(d.get('timeout') or 0)} timeout")
 
     lines: List[str] = []
-    if reliable:
-        lines.append("You reliably complete: " + "; ".join(sorted(reliable)) + ".")
-    if weak:
-        lines.append("You often fail at: " + "; ".join(sorted(weak))
-                     + ". Prefer smaller scopes or escalate to the owner.")
-    if slow:
-        lines.append("Timeout-prone: " + "; ".join(sorted(slow))
-                     + ". Budget extra time or defer under load.")
+    if records:
+        lines.append("These historical labels may include legacy or unverified records. "
+                     "They do not verify output quality or establish the current model's ability. "
+                     "A timeout alone does not establish output quality or its cause.")
+        lines.append("Recorded runtime outcomes: " + "; ".join(sorted(records)) + ".")
     total = int((load or {}).get("total") or 0)
     if total or lines:
         lines.append(
