@@ -118,7 +118,7 @@ def erase_removed(conn, turn_id, session_id, retained):
     hashes = {source_message_hash(session_id, message) for message in retained}
     for row in conn.execute("SELECT id,status,dependency_json FROM self_judgment_revisions WHERE status IN ('current','withdrawn','reconsidering')").fetchall():
         refs = json.loads(row['dependency_json'])
-        if any(ref['turn_id'] == turn_id and ref['message_hash'] not in hashes for ref in refs):
+        if any(ref['turn_id'] == turn_id and (ref.get('erasure_only') is True or ref['message_hash'] not in hashes) for ref in refs):
             # Keep the head tombstone. Forgetting a revision must not reactivate
             # an older view; its derived prose is removed from history as well.
             conn.execute("UPDATE self_judgment_revisions SET status=?,topic='',payload_json='{}',dependency_json='[]' WHERE id=?",
@@ -150,6 +150,14 @@ class SelfJudgments:
         seen = {}
         for ref in refs:
             turn_id = ref['turn_id']
+            if ref.get('erasure_only') is True:
+                # Native owner controls precede the normal turn finalizer.
+                # This event identity is not a retained quote or source claim.
+                if conn.execute('''SELECT 1 FROM source_erasures WHERE contact_id=? AND
+                    (turn_id=? OR turn_id IN (SELECT source_turn_id FROM source_projection_erasures WHERE turn_id=?))''',
+                                (self.owner_id, turn_id, turn_id)).fetchone():
+                    return False
+                continue
             if turn_id not in seen:
                 source = conn.execute("SELECT session_id,messages_json FROM turn_sources WHERE turn_id=? AND contact_id=? AND scope='person'",
                                       (turn_id, self.owner_id)).fetchone()
@@ -216,14 +224,15 @@ class SelfJudgments:
                 lines.append(line)
         return '\n'.join(lines)
 
-    def correct(self, revision_id, *, action, correction_id, reason, source_id=None):
+    def correct(self, revision_id, *, action, correction_id, reason, source_id=None, control_turn_id=None):
         """Explicit owner control, separate from a model-authored stance."""
         if (type(revision_id) is not int or action not in {'withdraw', 'reconsider'} or
                 not isinstance(correction_id, str) or not 1 <= len(correction_id) <= 192 or
                 not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1500):
             raise ValueError('invalid_judgment_correction')
         operation = {'action': action, 'reason': reason, 'actor': 'owner',
-                     'source_id': source_id, 'target_revision_id': revision_id}
+                     'source_id': source_id, 'target_revision_id': revision_id,
+                     'control_turn_id': control_turn_id}
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             prior = conn.execute('SELECT * FROM self_judgment_revisions WHERE owner_id=? AND correction_id=?',
@@ -238,6 +247,13 @@ class SelfJudgments:
             if row is None or not row['topic']:
                 raise ValueError('judgment_head_changed')
             refs = json.loads(row['dependency_json'])
+            if control_turn_id is not None:
+                if not isinstance(control_turn_id, str) or not 1 <= len(control_turn_id) <= 256:
+                    raise ValueError('invalid_control_turn_id')
+                control_ref = {'turn_id': control_turn_id, 'erasure_only': True}
+                if not self._retained(conn, [control_ref]):
+                    raise ValueError('control_turn_erased')
+                refs.append(control_ref)
             if source_id is not None or action == 'reconsider':
                 evidence = conn.execute("SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=? AND scope='person'",
                                         (source_id, self.owner_id)).fetchone()

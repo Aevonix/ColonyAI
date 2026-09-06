@@ -113,7 +113,7 @@ def test_native_owner_judgment_control(artifacts, tmp_path, monkeypatch):
                                         'Reconsider the withdrawn checkpoint view using the retained observation.'}
             calls.append(body)
             result = state.correct(body['judgment_id'], action=body['judgment_action'], correction_id=body['correction_id'],
-                                   reason=body['correction'], source_id=body['source_id'])
+                                   reason=body['correction'], source_id=body['source_id'], control_turn_id=body['context']['turn_id'])
             self.reply({'accepted':True,'judgment':result,'authority_changed':False})
     server = ThreadingHTTPServer(('127.0.0.1',0),Handler)
     thread = threading.Thread(target=server.serve_forever,daemon=True); thread.start()
@@ -125,8 +125,10 @@ def test_native_owner_judgment_control(artifacts, tmp_path, monkeypatch):
         result = run_python('-I','-c',PROBE,installed,'http://127.0.0.1:'+str(server.server_port),cwd=tmp_path,env=env)
         assert json.loads(result.stdout.splitlines()[-1])['native_owner_controls']
         assert len(calls) == 2 and state.revisions() == []
+        assert state.revisions(history=True)[0]['owner_correction']['control_turn_id'] == calls[-1]['context']['turn_id']
         asyncio.run(state.process_one(Processor()))
         assert state.revisions()[0]['supersedes'] == 3
+        assert {'turn_id': calls[-1]['context']['turn_id'], 'erasure_only': True} in state.revisions()[0]['dependencies']
         with ledger._connect() as db:
             assert db.execute('SELECT count(*) FROM turn_sources').fetchone()[0] == 2
     finally:

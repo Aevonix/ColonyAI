@@ -59,6 +59,10 @@ to satisfy reconsideration. Scheduled, subagent and internal review turns cannot
 perform owner controls. A built-wheel native fixture exercises actual owner
 conversation tool dispatch over HTTP, guest/scheduled denial and subsequent
 reflection using controlled inference, without adding canonical sources.
+The native control turn ID is also an explicitly erasure-only dependency until
+normal capture. Forgetting that turn clears its copied instruction and dependent
+view prose, including during inference, without reviving a withdrawn view or
+treating the event reference as quoted evidence.
 
 The projection and processing records use the canonical source SQLite database.
 Only new attributed owner sources eligible for ordinary claim derivation enqueue

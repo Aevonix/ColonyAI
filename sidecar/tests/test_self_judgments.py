@@ -397,3 +397,88 @@ async def test_reconsider_cannot_rename_topic_and_validation_code_excludes_provi
     row = run_row(state, 'broken')
     assert row['validation_code'] == 'invalid_judgment_json'
     assert 'private provider content' not in json.dumps(row)
+
+
+@pytest.mark.asyncio
+async def test_later_captured_control_turn_erases_its_copied_reason_only(source_app, perspective):
+    state, _, _ = perspective
+    async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
+        await tell(client, 'Long local work benefited from checkpoints.', 'basis')
+        await state.judgments.process_one(Processor())
+        target = state.judgments.revisions()[0]['id']
+        instruction = 'Withdraw the checkpoint view; my correction must remain separate from your opinion.'
+        response = await client.post('/v1/host/learning/correction', headers={'Authorization':'Bearer owner-key'}, json={
+            'identity':{'host_id':'fixture'}, 'context':{'contact_id':'contact-a','session_id':'s-control','turn_id':'control'},
+            'original':'','correction':instruction,'correction_id':'native-control','judgment_id':target,'judgment_action':'withdraw'})
+        assert response.status_code == 200, response.text
+        with state.ledger._connect() as conn:
+            assert conn.execute("SELECT 1 FROM turn_sources WHERE turn_id='control'").fetchone() is None
+        control = state.judgments.revisions(history=True)[0]
+        assert control['owner_correction']['control_turn_id'] == 'control'
+        # Normal canonical ingress later captures the native turn identity.
+        await tell(client, instruction, 'control')
+        state.ledger.erase_sources(contact_id='contact-a', turn_ids=['control'])
+        assert state.judgments.revisions() == []
+        history = state.judgments.revisions(history=True)
+        assert history[0]['status'] == 'withdrawn' and history[0]['owner_correction'] is None
+        assert history[1]['status'] == 'fallible_agent_judgment'  # original evidence remains history, not current
+        with state.ledger._connect() as conn:
+            assert conn.execute("SELECT 1 FROM turn_sources WHERE turn_id='basis'").fetchone()
+            assert all(instruction not in row[0] for row in conn.execute('SELECT payload_json FROM self_judgment_revisions'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('erase_during_inference', [False, True])
+async def test_control_turn_erasure_fences_and_removes_downstream_views(judgments, erase_during_inference):
+    state, _ = judgments
+    source(state)
+    await state.process_one(Processor())
+    source(state, 'observations', 'Local work checkpoints have measurable overhead in short tasks.')
+    state.correct(state.revisions()[0]['id'], action='reconsider', correction_id='native-reconsider',
+                  reason='Reconsider using these observations.', source_id='observations', control_turn_id='native-control')
+    def erase():
+        source(state, 'native-control', 'Reconsider using these observations.')
+        state.ledger.erase_sources(contact_id='contact-a', turn_ids=['native-control'])
+    async def before_return(_): erase()
+    model = Processor(before_return=before_return if erase_during_inference else None)
+    await state.process_one(model)
+    assert all('erasure_only' not in row for row in model.requests[0]['evidence'] + model.requests[0]['previous_evidence'])
+    if not erase_during_inference:
+        assert state.revisions() and any(ref.get('erasure_only') for ref in state.revisions()[0]['dependencies'])
+        erase()
+    else:
+        assert run_row(state, 'observations')['disposition'] == 'source_erased'
+    reopened = SelfJudgments(TurnIdempotencyLedger(state.ledger.db_path), owner_id='contact-a', clock=state.clock)
+    assert reopened.revisions() == []
+    # The control tombstone and cleared derived prose survive reopening.
+    with reopened.ledger._connect() as conn:
+        assert conn.execute("SELECT 1 FROM source_erasures WHERE turn_id='native-control'").fetchone()
+        assert all('Reconsider using these observations.' not in row[0]
+                   for row in conn.execute('SELECT payload_json FROM self_judgment_revisions'))
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_alias_control_erasure_fences_later_automatic_revision(judgments):
+    state, clock = judgments
+    source(state)
+    await state.process_one(Processor())
+    source(state, 'observations', 'Short local work checkpoints have high overhead.')
+    instruction = 'Reconsider the checkpoint view using these measured observations.'
+    state.correct(state.revisions()[0]['id'], action='reconsider', correction_id='control-operation',
+                  reason=instruction, source_id='observations', control_turn_id='native-control')
+    await state.process_one(Processor())
+    source(state, 'native-control', instruction)
+    # The same native turn was subsequently included in a session checkpoint.
+    state.ledger.record_source('checkpoint-copy', contact_id='contact-a', session_id='session-native-control',
+        messages=[{'role':'user','content':instruction}], scope='session', derive_claims=False)
+    await state.process_one(Processor(decide=lambda _: {'action':'abstain'}))
+    clock.value += 86401
+    source(state, 'later-automatic', 'New local work checkpoint measurements suggest a different tradeoff.')
+    async def erase_copy(_):
+        state.ledger.erase_sources(contact_id='contact-a', turn_ids=['checkpoint-copy'])
+        with state.ledger._connect() as conn:
+            assert not conn.execute("SELECT 1 FROM source_erasures WHERE turn_id='native-control'").fetchone()
+            assert conn.execute("SELECT 1 FROM source_projection_erasures WHERE turn_id='native-control' AND source_turn_id='checkpoint-copy'").fetchone()
+    await state.process_one(Processor(before_return=erase_copy))
+    assert state.revisions() == []
+    assert run_row(state, 'later-automatic')['disposition'] == 'source_erased'

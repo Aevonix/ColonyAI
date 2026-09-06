@@ -6949,7 +6949,8 @@ async def submit_correction(
             raise HTTPException(status_code=503, detail='Self perspective is unavailable')
         try:
             outcome = perspective.judgments.correct(body.judgment_id, action=body.judgment_action,
-                correction_id=body.correction_id, reason=body.correction, source_id=body.source_id)
+                correction_id=body.correction_id, reason=body.correction, source_id=body.source_id,
+                control_turn_id=body.context.turn_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {'accepted': True, 'learned': False, 'judgment': outcome,
