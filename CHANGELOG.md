@@ -4,7 +4,7 @@
 
 Native background reviews now carry bounded references to actual failed tool
 calls from their originating request. Proposed skill changes and their existing
-evaluation records retain the originating session, turn, tool-call identifier
+evaluation records retain the observing session, turn, tool-call identifier
 and request-visible result hash. Model-written provenance is replaced by this
 captured evidence; reviews without eligible evidence record its absence.
 

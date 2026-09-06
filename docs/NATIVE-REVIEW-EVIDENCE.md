@@ -1,6 +1,6 @@
 # Source references for native review proposals
 
-Unreleased source adds a small provenance connection to the existing Hermes
+Version 1.0.6 adds a small provenance connection to the existing Hermes
 background review and skill evaluation path. It does not add a review worker,
 recurrence queue, scheduler, automatic skill activation or new memory store.
 
@@ -16,6 +16,12 @@ session/turn, tool call ID, tool name, failure classification and
 model request. They are not claims about canonical SessionDB bytes, an original
 document, tool arguments or content before redaction/serialization. No raw
 result or argument is copied into this metadata. Missing evidence is `null`.
+
+Session and turn identify the request observing the result. Its history may
+contain an earlier failure that has already recovered, so these references do
+not establish the original failure turn, current failure or recurrence. Chat
+Completions and Responses support is limited to JSON string tool outputs;
+list-valued multimodal outputs are not captured by this bridge.
 
 Model-provided evidence fields are replaced with the captured references.
 The existing evaluator carries those references into its native evaluation
