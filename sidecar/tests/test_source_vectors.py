@@ -184,6 +184,20 @@ async def test_bounded_projection_resumes_cursor_and_reports_retryable_failure(t
 
 
 @pytest.mark.asyncio
+async def test_large_checkpoint_yields_between_batches_to_new_source(tmp_path):
+    ledger, store, pipeline, projection = await setup(tmp_path)
+    ledger.record_source('checkpoint', contact_id='c', session_id='s', scope='session', messages=[
+        {'role':'user', 'content':'Historical item ' + str(index)} for index in range(3)])
+    await projection.process_one(batch_size=1)
+    ledger.record_source('fresh', contact_id='c', session_id='new', messages=[
+        {'role':'user', 'content':'The hydrofoil code changed to lime.'}])
+    await projection.process_one(batch_size=1)
+    with ledger._connect() as conn:
+        assert conn.execute("SELECT status FROM source_vector_jobs WHERE turn_id='fresh'").fetchone()[0] == 'complete'
+        assert conn.execute("SELECT cursor FROM source_vector_jobs WHERE turn_id='checkpoint'").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
 async def test_caption_semantics_keeps_exact_asset_and_shared_source_erasure(tmp_path):
     from test_source_media import message, Vision, image_bytes
     from colony_sidecar.turns.media import SourceMedia

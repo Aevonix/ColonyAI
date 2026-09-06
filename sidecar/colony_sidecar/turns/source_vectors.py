@@ -166,7 +166,8 @@ class SourceVectors:
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('''UPDATE source_vector_jobs SET cursor=?,status=?,lease_until=0,next_attempt=?,error=?
                 WHERE turn_id=? AND lease_token=?''', (cursor, 'complete' if complete else 'pending',
-                time.time() + 30 if error else 0, error, job['turn_id'], job['lease_token']))
+                time.time() + 30 if error else (0 if complete else time.time()),
+                error, job['turn_id'], job['lease_token']))
 
     async def _table(self, generation):
         from colony_sidecar.vector.collections import Collection
