@@ -264,3 +264,27 @@ deployment's channel admission, secret isolation and consent policy. Native
 owner tools retain their existing consent behavior; they are not converted to
 Colony intents by this gate. Qualify both owner and guest messages before
 enabling a public channel.
+
+## Native post-turn review
+
+Hermes' automatic review reuses its parent's session ID without emitting a
+subagent-start event. The adapter captures the exact parent participant on the
+native caller thread and accepts inheritance only with Hermes' trusted review
+provenance, matching parent/session, and a distinct task/turn. Later speakers in
+the same session cannot upgrade a queued guest review. Reviews get a separate
+work record linked to their parent, do not replace the session's current speaker,
+and do not write their internal harness into ordinary conversation evidence.
+
+For owner/system reviews, `skill_manage` produces a proposal in Hermes' existing
+`pending/skills` store. Native curator ownership checks still apply. Foreground
+owner requests retain native behavior. The proposal is not an evaluated or
+activated improvement: an explicit operator or a separately configured task
+evaluator must use the native apply path. Mutation history and rollback remain
+in Hermes' skill ledger. No new consent transport or learning store is added.
+
+Installed-wheel qualification runs real native automatic review threads with
+controlled inference for owner and guest, including a later-owner race in the
+guest's session. It checks proposal persistence, exact inherited authority,
+separate work observation, absent harness capture, and explicit native
+apply/ledger rollback. It does not claim measured task improvement from that
+controlled model fixture.
