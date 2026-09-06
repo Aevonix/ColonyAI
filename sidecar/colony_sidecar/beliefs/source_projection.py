@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 
-from .source_claims import EXTRACTION_VERSION, extract_claims, norm_value
+from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_timeout_seconds, norm_value
 from .source_time import MemoryTimeQuery, filter_unstructured
 
 logger = logging.getLogger(__name__)
@@ -199,6 +199,14 @@ class SourceClaimProjection:
                 conn.execute("UPDATE source_claim_jobs SET status='complete',error=NULL,model=?,extraction_version=?,lease_until=0 WHERE turn_id=? AND lease_token=?",
                              (model, EXTRACTION_VERSION, job["turn_id"], job["lease_token"]))
 
+    def renew_job(self, job, request_timeout):
+        """Extend this existing lease for one bounded request and its commit."""
+        with closing(self.ledger._connect()) as conn, conn:
+            updated = conn.execute('''UPDATE source_claim_jobs SET lease_until=?
+                WHERE turn_id=? AND status='running' AND lease_token=?''',
+                (time.time() + request_timeout + 30, job['turn_id'], job['lease_token']))
+            return updated.rowcount == 1
+
     async def process_one(self, router):
         job = self.claim_job()
         if job is None:
@@ -208,8 +216,11 @@ class SourceClaimProjection:
             for message in json.loads(job["messages_json"]):
                 if message.get("role") != "user":
                     continue
+                request_timeout = extraction_timeout_seconds(router)
+                if not self.renew_job(job, request_timeout):
+                    return True  # Forgotten or reclaimed; do not start a stale model call.
                 claims, model = await extract_claims(router, job, message, self.prior(job, message),
-                                                    timezone_name=job["timezone"])
+                                                    timezone_name=job["timezone"], request_timeout=request_timeout)
                 if model == "local_extraction_role_unavailable":
                     self.finish_job(job, error=model)
                     return True

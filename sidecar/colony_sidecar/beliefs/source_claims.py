@@ -178,7 +178,22 @@ def local_tier(router, tier=None):
     return tier if local else None
 
 
-async def extract_claims(router, source: dict, message: dict, prior: list[dict], *, timezone_name="UTC"):
+def extraction_timeout_seconds(router):
+    """Capture one request bound; the router still owns candidate deadlines."""
+    if getattr(router, 'supports_function_routing', False) is not True:
+        return 20
+    read_deadline = getattr(router, 'function_deadline_seconds', None)
+    if callable(read_deadline):
+        deadline = read_deadline(context={'function_role': 'extraction'})
+        if isinstance(deadline, (int, float)) and not isinstance(deadline, bool) and 0 < deadline <= 600:
+            # Allow dispatch/validation overhead without clipping the role's
+            # configured total budget. This also bounds a concurrent reload.
+            return float(deadline) + 5
+    return 40  # Compatibility with older function-router adapters.
+
+
+async def extract_claims(router, source: dict, message: dict, prior: list[dict], *, timezone_name="UTC",
+                         request_timeout=None):
     """Bounded role-routed extraction; rejected content is never lost."""
     content = message.get("content")
     if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
@@ -197,7 +212,8 @@ async def extract_claims(router, source: dict, message: dict, prior: list[dict],
         messages=[{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
         force_tier=tier, context={"task": "source_claim_extraction", "function_role": "extraction", "max_output_tokens": 1400,
-                                  "allow_fallback": functions}), timeout=40 if functions else 20)
+                                  "allow_fallback": functions}),
+        timeout=extraction_timeout_seconds(router) if request_timeout is None else request_timeout)
     claims = validated_claims(final_text(response), message=content, prior=prior,
                             observed_at=source["occurred_at"], timezone_name=timezone_name)
     for claim in claims:
