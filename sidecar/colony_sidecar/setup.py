@@ -1859,6 +1859,11 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         root_dir: Root directory for config files
         args: Parsed argparse Namespace for non-interactive mode
     """
+    if (not getattr(args, 'no_harness', False) and not getattr(args, 'mcp_harnesses', None)
+            and getattr(args, 'host_framework', None) in (None, 'hermes')):
+        from colony_sidecar.setup_hermes import run
+        return run(root_dir, args)
+
     base = Path(root_dir) if root_dir else Path(".")
     env_path = base / ".env"
     colony_root = Path(__file__).resolve().parents[2]  # colony/

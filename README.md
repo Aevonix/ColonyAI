@@ -45,61 +45,26 @@ For the target architecture, public/private ownership and incremental cleanup
 rules, see [Architecture and ownership](docs/ARCHITECTURE.md). Its planned
 boundaries are not a claim that every migration is already shipped.
 
-Requirements: Python 3.11+, Neo4j 5.x reachable over Bolt, and an
-OpenAI-compatible LLM and embedding endpoint.
+The lightweight Hermes path needs Python 3.11 to 3.13, Hermes 0.21.0 and one
+local OpenAI-compatible chat endpoint. Neo4j, Docker and embeddings are optional.
+From this checkout, install the canonical adapter and sidecar packages:
 
 ```bash
-pip install colonyai
-
-# Interactive wizard: identity, state dir, Neo4j, API key, model endpoints,
-# autonomy preset, and any detected agent harnesses
-colony init
-
-# Diagnose configuration and (if running) live runtime health
-colony doctor
-
-# Start the sidecar
-colony start -d             # daemon; omit -d to run in the foreground
+python -m pip install . ./sidecar
+colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
-Verify it is up:
+The wizard selects a Hermes home, asks for your identity and model, creates
+private state and scoped credentials, and activates profile-local native
+adapters. Existing identity, channels and model settings are retained. An
+incumbent memory provider requires an explicit choice. Nothing writes to Hermes
+core or restarts a running gateway.
 
-```bash
-curl -s -H "Authorization: Bearer $COLONY_API_KEY" \
-  http://127.0.0.1:7777/v1/host/health
-```
-
-To run the sidecar and Neo4j together under Docker, clone this repo and use
-the provided `docker-compose.yml` (it builds the sidecar image from
-`./sidecar`, so compose needs the repo checkout; the pip path above does not).
-
-The thin `colony-hermes` package registers native Hermes general and memory
-adapters. Install it in the Python environment used by the target Hermes runtime.
-The current source wizard also needs an editable sidecar checkout for staging:
-
-```bash
-python -m pip install -e ./sidecar
-/path/to/hermes/.venv/bin/python -m pip install .
-colony init --agent-harness hermes --hermes-home /path/to/hermes-profile
-```
-
-`--hermes-home` takes precedence over `HERMES_HOME`, then the default
-`~/.hermes`. The staging step preserves unrelated configuration values and
-existing contact/secret bindings. An actual YAML change can normalize formatting
-and comments; the original configuration is retained in a private
-`.config.yaml.colony-backup-*` file beside it.
-
-Staging refuses a different memory provider, conflicting instance settings or
-different installed plugin files. It does not select a custom compressor,
-provision user-global Hermes services, enable the general plugin or restart
-Hermes. The surrounding `colony init` wizard still configures Colony itself.
-
-Runtime compatibility, private credentials, general-plugin coexistence,
-activation and an observed recall test remain required. A successful staging
-result is not a connected-agent claim. The native adapter wheel and its required
-pre-compression checkpoint are tested against Hermes v0.21.0. Guided activation
-and private-agent creation are follow-up work described in
-[the architecture](docs/ARCHITECTURE.md).
+Start a new Hermes session, tell it a harmless fact, then ask about it in a
+second session. The [local setup guide](docs/LOCAL-HERMES-SETUP.md) covers explicit
+homes, unattended flags, private state, startup, recovery and the optional
+capabilities. The lightweight profile observes and remembers; consequential
+background workers remain disabled until configured deliberately.
 
 ## The autonomy model
 
@@ -107,7 +72,7 @@ Agency in Colony is *earned, not configured*. Two mechanisms work together:
 
 - **One knob:** `COLONY_AUTONOMY_PRESET` supplies coherent defaults for all
   seventeen autonomy flags at once. `passive` observes and remembers only;
-  `calibration` (the wizard default) runs every subsystem in shadow or
+  `calibration` (the extended wizard default) runs every subsystem in shadow or
   dry-run; `autonomous` runs them live. An explicitly set env var always wins
   over the preset, and the exploration sandbox never goes live from a preset.
   Since v0.34.0 an active preset also supplies the autonomy *loop* mode when

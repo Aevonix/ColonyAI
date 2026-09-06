@@ -16,28 +16,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Load ~/.colony/.env before any config reads (mirrors CLI behaviour for
-# service/standalone launches that skip the CLI entrypoint).
-_env_loaded = False
-_skip_dotenv = os.environ.get("COLONY_SKIP_DOTENV", "").strip().lower() in {
-    "1", "true", "yes", "on",
-}
-if not _env_loaded and not _skip_dotenv:
-    for _env_path in (Path.home() / ".colony" / ".env", Path.cwd() / ".env"):
-        if _env_path.exists():
-            with open(_env_path) as _f:
-                for _line in _f:
-                    _line = _line.strip()
-                    if not _line or _line.startswith("#"):
-                        continue
-                    if "=" in _line:
-                        _k, _v = _line.split("=", 1)
-                        _k = _k.strip()
-                        _v = _v.strip()
-                        if _k not in os.environ:
-                            os.environ[_k] = _v
-            break
-    _env_loaded = True
+# CLI and direct service starts use the same selected private instance.
+from colony_sidecar.util.instance import load_environment
+load_environment()
 
 from fastapi import FastAPI
 
@@ -1583,59 +1564,64 @@ async def lifespan(app: FastAPI):
 
     # --- 3. Neo4j Graph memory ---
     graph = None
-    try:
-        from colony_sidecar.intelligence.graph.client import ColonyGraph, GraphConfig
-        from pydantic import SecretStr
-        neo4j_uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-        neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
-        neo4j_pass = os.environ.get("NEO4J_PASSWORD", "")
-        # Neo4j Community Edition only has the "neo4j" database.
-        # Enterprise users can override via NEO4J_DATABASE.
-        neo4j_db = os.environ.get("NEO4J_DATABASE", "neo4j")
-        graph_config = GraphConfig(
-            uri=neo4j_uri,
-            auth=(neo4j_user, SecretStr(neo4j_pass)) if neo4j_pass else None,
-            database=neo4j_db,
-        )
-        graph = ColonyGraph(graph_config)
-        # Apply graph schema constraints/indexes before any queries run
+    if os.environ.get("COLONY_GRAPH_ENABLED", "true").lower() not in {"0", "false", "off"}:
         try:
-            from colony_sidecar.intelligence.graph.migrations import run_migrations
-            await run_migrations(graph.driver, database=neo4j_db)
-        except Exception as exc:
-            logger.warning("Graph migrations failed (queries may be degraded): %s", exc)
-        set_graph(graph)
-        # Wire graph into ToolExecutor for capability-gap detection
-        try:
-            import colony_sidecar.api.routers.host as _host_router
-            te = _host_router._tool_executor
-            if te is not None:
-                te._graph = graph
-        except Exception:
-            logger.warning("ToolExecutor graph wiring failed (capability-gap detection degraded)")
-        logger.info("ColonyGraph initialized (uri=%s db=%s)", neo4j_uri, neo4j_db)
-
-        # Ensure Colony self-representation in graph (v0.11.0)
-        try:
-            await graph.ensure_colony_self()
-        except Exception as self_exc:
-            logger.warning("Colony self-representation setup skipped: %s", self_exc)
-
-        # Wire consolidator (adaptive merge threshold when params wired)
-        try:
-            from colony_sidecar.intelligence.graph.consolidator import MemoryConsolidator
-            consolidator = MemoryConsolidator(graph, params=_adaptive_params)
-            set_consolidator(consolidator)
-            logger.info("MemoryConsolidator initialized")
-        except Exception as cexc:
-            logger.warning("MemoryConsolidator init skipped: %s", cexc)
-        if _adaptive_params is not None:
+            from colony_sidecar.intelligence.graph.client import ColonyGraph, GraphConfig
+            from pydantic import SecretStr
+            neo4j_uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+            neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
+            neo4j_pass = os.environ.get("NEO4J_PASSWORD", "")
+            # Neo4j Community Edition only has the "neo4j" database.
+            # Enterprise users can override via NEO4J_DATABASE.
+            neo4j_db = os.environ.get("NEO4J_DATABASE", "neo4j")
+            graph_config = GraphConfig(
+                uri=neo4j_uri,
+                auth=(neo4j_user, SecretStr(neo4j_pass)) if neo4j_pass else None,
+                database=neo4j_db,
+            )
+            graph = ColonyGraph(graph_config)
+            # Apply graph schema constraints/indexes before any queries run
             try:
-                graph.set_adaptive_params(_adaptive_params)
+                from colony_sidecar.intelligence.graph.migrations import run_migrations
+                await run_migrations(graph.driver, database=neo4j_db)
+            except Exception as exc:
+                logger.warning("Graph migrations failed (queries may be degraded): %s", exc)
+            set_graph(graph)
+            # Wire graph into ToolExecutor for capability-gap detection
+            try:
+                import colony_sidecar.api.routers.host as _host_router
+                te = _host_router._tool_executor
+                if te is not None:
+                    te._graph = graph
             except Exception:
-                logger.debug("graph adaptive-params wiring failed", exc_info=True)
-    except Exception as exc:
-        logger.warning("ColonyGraph init failed — memory endpoints will be degraded: %s", exc)
+                logger.warning("ToolExecutor graph wiring failed (capability-gap detection degraded)")
+            logger.info("ColonyGraph initialized (uri=%s db=%s)", neo4j_uri, neo4j_db)
+
+            # Ensure Colony self-representation in graph (v0.11.0)
+            try:
+                await graph.ensure_colony_self()
+            except Exception as self_exc:
+                logger.warning("Colony self-representation setup skipped: %s", self_exc)
+
+            # Wire consolidator (adaptive merge threshold when params wired)
+            try:
+                from colony_sidecar.intelligence.graph.consolidator import MemoryConsolidator
+                consolidator = MemoryConsolidator(graph, params=_adaptive_params)
+                set_consolidator(consolidator)
+                logger.info("MemoryConsolidator initialized")
+            except Exception as cexc:
+                logger.warning("MemoryConsolidator init skipped: %s", cexc)
+            if _adaptive_params is not None:
+                try:
+                    graph.set_adaptive_params(_adaptive_params)
+                except Exception:
+                    logger.debug("graph adaptive-params wiring failed", exc_info=True)
+        except Exception as exc:
+            logger.warning("ColonyGraph init failed — memory endpoints will be degraded: %s", exc)
+
+    else:
+        set_graph(None)
+        logger.info("Graph disabled; canonical source memory and SQLite state remain available")
 
     # --- 4. Response Gate (safety pipeline) ---
     _gate_ref = None
@@ -1688,7 +1674,7 @@ async def lifespan(app: FastAPI):
     reranker_model = os.environ.get("COLONY_RERANKER_MODEL", "")
 
     # Auto-detect tier if not explicitly configured
-    if not embed_provider or not embed_model:
+    if embed_provider != "skip" and (not embed_provider or not embed_model):
         try:
             from colony_sidecar.vector.scanner import scan
             from colony_sidecar.vector.tiers import get_tier_by_memory

@@ -262,31 +262,15 @@ def test_yaml_alias_does_not_mutate_unrelated_configuration(tmp_path):
 
 
 def test_run_init_returns_failure_and_passes_selected_home(tmp_path, monkeypatch):
-    # Exercise the real wizard up to its attachment boundary, with all unrelated
-    # infrastructure calls replaced. No dependencies, models or services run.
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0))
-    monkeypatch.setattr(setup, "_check_python", lambda: (True, "test"))
-    monkeypatch.setattr(setup, "_check_docker", lambda: (setup.DockerStatus.NOT_INSTALLED, "test"))
-    monkeypatch.setattr(setup, "_check_port", lambda *a: False)
-    monkeypatch.setattr(setup, "_handle_docker_setup", lambda *a: False)
-    monkeypatch.setattr(setup, "_check_neo4j", lambda: (False, "test"))
-    monkeypatch.setattr(setup, "_prompt", lambda *a, **k: "")
-    monkeypatch.setattr(setup, "_load_existing_env", lambda *a: {
-        "COLONY_EMBED_PROVIDER": "skip", "COLONY_EMBED_MODEL": "test", "COLONY_API_KEY": "test-key",
-    })
+    from colony_sidecar import setup_hermes
     seen = []
-    def fail_staging(*args, **kwargs):
-        seen.append((args, kwargs))
-        return False
-    monkeypatch.setattr(setup, "_setup_hermes_plugin", fail_staging)
-    args = SimpleNamespace(
-        non_interactive=True, contact_name=None, host_framework=None,
-        agent_harness="hermes", hermes_home=str(tmp_path / "chosen"),
-        bind="127.0.0.1", port=7777,
-    )
-    assert setup.run_init(str(tmp_path), args) == 1
-    assert seen[0][1]["hermes_home"] == args.hermes_home
-    assert seen[0][0][3] == ""  # Do not invent a replacement contact binding.
+    def fail(root_dir, args):
+        seen.append((root_dir, args.hermes_home))
+        return 1
+    monkeypatch.setattr(setup_hermes, "run", fail)
+    args = SimpleNamespace(hermes_home=str(tmp_path / "chosen"))
+    assert setup.run_init(str(tmp_path / "private"), args) == 1
+    assert seen == [(str(tmp_path / "private"), args.hermes_home)]
 
 
 def test_cli_threads_home_and_preserves_failure_exit(monkeypatch, tmp_path):
