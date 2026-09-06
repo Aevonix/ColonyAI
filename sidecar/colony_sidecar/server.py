@@ -1713,6 +1713,7 @@ async def lifespan(app: FastAPI):
             provider=embed_provider,
             model_id=embed_model,
             dimensions=int(embed_dims) if embed_dims else 384,
+            revision=os.environ.get("COLONY_EMBED_REVISION") or None,
         )
         from colony_sidecar.vector.embedder import make_provider
         provider = make_provider(embed_config)
@@ -1763,17 +1764,24 @@ async def lifespan(app: FastAPI):
 
             # Wire embedding pipeline into ColonyGraph for vector-backed recall
             try:
-                graph.set_embed_fn(pipeline.embed)
                 from colony_sidecar.vector.store import VectorStore
+                from colony_sidecar.vector.indexes import IndexCatalog
+                from colony_sidecar.turns import get_turn_idempotency_ledger
+                from colony_sidecar.vector import set_store, set_pipeline
                 vector_db_path = os.path.join(state_dir, "lancedb")
-                vs = VectorStore(data_dir=vector_db_path)
+                vs = VectorStore(data_dir=vector_db_path, identity=pipeline.index_identity,
+                    catalog=IndexCatalog(get_turn_idempotency_ledger(state_dir)))
                 embed_dims = int(os.environ.get("COLONY_EMBED_DIMS", pipeline.dimensions or 384))
                 await vs.connect(dimensions=embed_dims)
                 await vs.ensure_collections(dimensions=embed_dims)
-                graph.set_vector_store(vs)
+                set_store(vs)
+                set_pipeline(pipeline)
+                if graph is not None:
+                    graph.set_embed_fn(pipeline.embed)
+                    graph.set_vector_store(vs)
                 logger.info("ColonyGraph wired to vector store (path=%s)", vector_db_path)
 
-                if graph._embed_fn and graph._vector_store:
+                if graph is not None and graph._embed_fn and graph._vector_store:
                     logger.info("ColonyGraph fully operational (Neo4j + embeddings + vector store)")
                 else:
                     logger.warning("ColonyGraph partially wired — memory may be degraded")

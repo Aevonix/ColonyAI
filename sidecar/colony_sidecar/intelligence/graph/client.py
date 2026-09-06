@@ -267,6 +267,8 @@ class ColonyGraph:
             fn: async callable that maps a string to a float vector.
         """
         self._embed_fn = fn
+        owner = getattr(fn, '__self__', None)
+        self._embed_query_fn = getattr(owner, 'embed_query', None)
 
     def set_vector_store(self, store: "VectorStore") -> None:
         """Register a VectorStore for ANN search (replaces Neo4j vector index)."""
@@ -319,6 +321,8 @@ class ColonyGraph:
         and the right memory never surfaces). Configurable via
         COLONY_EMBED_QUERY_INSTRUCTION (set to empty for symmetric models).
         """
+        if callable(getattr(self, '_embed_query_fn', None)):
+            return await self._embed_query_fn(query)
         import os
         default_instr = ("Instruct: Given a search query, retrieve relevant "
                          "memories that answer it\nQuery: ")
@@ -441,6 +445,38 @@ class ColonyGraph:
             ring.clear()
             ring.extend(retained)
         return len(ids)
+
+    async def iter_indexable_memories(self, batch_size: int = 128):
+        """Current graph evidence for a projection rebuild, without old vectors."""
+        after = ''
+        while True:
+            async with self.driver.session(database=self.database) as session:
+                result = await session.run('''
+                    MATCH (m:Memory) WHERE m.id > $after
+                    WITH m ORDER BY m.id LIMIT $limit
+                    OPTIONAL MATCH (m)-[:ABOUT]->(p:Person)
+                    RETURN properties(m) AS memory, collect(p.id) AS people
+                    ORDER BY memory.id
+                ''', after=after, limit=batch_size)
+                rows = [dict(row) async for row in result]
+            if not rows:
+                return
+            for row in rows:
+                memory = row['memory']
+                after = memory['id']
+                if self._source_projection_erased(memory.get('source_uri')):
+                    continue
+                if memory.get('superseded_by') or not memory.get('content'):
+                    continue
+                metadata = memory.get('metadata') or {}
+                if isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+                metadata = {**metadata, **{key: memory.get(key) for key in
+                    ('source_uri', 'source_type', 'source_version', 'content_hash', 'session_id',
+                     'type', 'strength', 'effective_confidence', 'epistemic_state', 'protected')}}
+                metadata['person_id'] = (row['people'] or [None])[0]
+                metadata['memory_id'] = memory['id']
+                yield {'id': memory['id'], 'text': memory['content'], 'metadata': metadata}
 
     async def store_memory(
         self,

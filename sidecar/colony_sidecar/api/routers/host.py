@@ -1995,18 +1995,37 @@ async def memory_migrate(body: MigrateRequest) -> MigrateResponse:
     if store is None:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="VectorStore not initialized")
 
+    if getattr(router, '_migrate_running', False):
+        raise HTTPException(status_code=409, detail='A vector rebuild is already running')
+    if not 1 <= body.batch_size <= 128:
+        raise HTTPException(status_code=422, detail='Rebuild batch size must be between 1 and 128')
+    if getattr(store, 'catalog', None) is not None and body.old_model_id:
+        raise HTTPException(status_code=422, detail='A generation rebuild must include all retained rows')
+
     task_id = str(uuid.uuid4())
+    if getattr(store, 'catalog', None) is not None:
+        task_id = store.catalog.begin(store.identity)['id']
+    router._migrate_running = True
+    router._migrate_task_id = task_id
 
     async def _run():
         from colony_sidecar.vector.migrate import migrate_tier
         try:
-            result = await migrate_tier(store, _embedder, old_model_id=body.old_model_id, batch_size=body.batch_size)
+            result = await migrate_tier(store, _embedder, old_model_id=body.old_model_id,
+                                        batch_size=body.batch_size, graph=_graph)
             _migrate_results[task_id] = result
         except Exception as exc:
             logger.error("Migration failed: %s", exc)
+            from colony_sidecar.vector.migrate import MigrationResult
+            _migrate_results[task_id] = MigrationResult(errors=[str(exc)], generation_id=task_id)
+            if getattr(store, 'catalog', None) is not None:
+                store.catalog.finish(task_id, error=str(exc))
+        finally:
+            router._migrate_running = False
 
     _migrate_results: dict = getattr(router, "_migrate_results", {})
     router._migrate_results = _migrate_results
+    _migrate_results.pop(task_id, None)
 
     _spawn_task(_run())
     return MigrateResponse(task_id=task_id, status="started")
@@ -2015,18 +2034,32 @@ async def memory_migrate(body: MigrateRequest) -> MigrateResponse:
 @router.get("/memory/migrate/{task_id}", response_model=MigrateResponse)
 async def migrate_status(task_id: str) -> MigrateResponse:
     """Check the status of a running migration task."""
+    if getattr(router, '_migrate_running', False) and getattr(router, '_migrate_task_id', None) == task_id:
+        return MigrateResponse(task_id=task_id, status='running', generation_id=task_id)
     _migrate_results: dict = getattr(router, "_migrate_results", {})
     result = _migrate_results.get(task_id)
     if result is None:
-        return MigrateResponse(task_id=task_id, status="running")
+        from colony_sidecar.vector import get_store
+        store = get_store()
+        if store is not None and getattr(store, 'catalog', None) is not None:
+            generation = next((g for g in store.catalog.generations() if g['id'] == task_id), None)
+            if generation:
+                active = store.catalog.active()
+                return MigrateResponse(task_id=task_id, generation_id=task_id,
+                    fingerprint=generation['fingerprint'] or '',
+                    status='completed' if generation['status'] in {'ready', 'retained'} else 'resumable',
+                    errors=[generation['error']] if generation.get('error') else [])
+        raise HTTPException(status_code=404, detail='Unknown vector rebuild')
     return MigrateResponse(
         task_id=task_id,
-        status="completed",
+        status="failed" if result.errors else "completed",
         collections_migrated=result.collections_migrated,
         vectors_migrated=result.vectors_migrated,
         vectors_failed=result.vectors_failed,
         duration_s=round(result.duration_s, 2),
         errors=result.errors,
+        generation_id=getattr(result, 'generation_id', ''),
+        fingerprint=getattr(result, 'fingerprint', ''),
     )
 
 
@@ -3592,6 +3625,16 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             fact_cleanup = "complete"
         except Exception:
             logger.warning("source erasure shared-fact cleanup is pending", exc_info=True)
+    vector_cleanup = 'unavailable'
+    from colony_sidecar.vector import get_store
+    vector_store = get_store()
+    if vector_store is not None and getattr(vector_store, 'catalog', None) is not None:
+        vector_cleanup = 'pending'
+        try:
+            await vector_store.erase_source_projections(list(dict.fromkeys(result['source_ids'] + result['affected_source_ids'])))
+            vector_cleanup = 'complete'
+        except Exception:
+            logger.warning('source erasure vector generation cleanup is pending', exc_info=True)
     graph_cleanup = "unavailable" if _graph is None else "pending"
     if _graph is not None:
         try:
@@ -3599,7 +3642,8 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             graph_cleanup = "complete"
         except Exception:
             logger.warning("source erasure graph cleanup is pending", exc_info=True)
-    return {"source_erased": True, **result, "graph_cleanup": graph_cleanup, "shared_facts_cleanup": fact_cleanup,
+    return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
+            "shared_facts_cleanup": fact_cleanup, "vector_cleanup": vector_cleanup,
             "scope": "canonical_turn_sources_and_linked_graph_and_shared_fact_projections",
             "host_reconciliation": "pending_until_each_host_connects"}
 
@@ -12666,10 +12710,8 @@ async def seed_self_knowledge_endpoint(force: bool = Query(False, description="F
     )
 
 
-# ============================================================================
-# World Model — Entity CRUD
-# ============================================================================
-
+# =====================================================================# World Model — Entity CRUD
+# =====================================================================
 @router.post("/world/entities", response_model=WorldEntityDetailResponse)
 async def create_world_entity(body: WorldEntityCreateRequest) -> WorldEntityDetailResponse:
     """Create a new entity in the world model."""
@@ -12759,10 +12801,8 @@ async def delete_world_entity(entity_id: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ============================================================================
-# World Model — Relationship CRUD
-# ============================================================================
-
+# =====================================================================# World Model — Relationship CRUD
+# =====================================================================
 @router.post("/world/relationships", response_model=WorldRelationshipResponse)
 async def create_world_relationship(body: WorldRelationshipCreateRequest) -> WorldRelationshipResponse:
     """Create a new relationship between two entities."""
@@ -12882,10 +12922,8 @@ async def delete_world_relationship(rel_id: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ============================================================================
-# World Model — Graph Traversal
-# ============================================================================
-
+# =====================================================================# World Model — Graph Traversal
+# =====================================================================
 @router.get("/world/entities/{entity_id}/neighborhood", response_model=WorldNeighborhoodResponse)
 async def get_entity_neighborhood(
     entity_id: str,
@@ -12944,10 +12982,8 @@ async def find_entity_path(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ============================================================================
-# World Model — Causal chain (read-only; the sanctioned causal-edge surface)
-# ============================================================================
-
+# =====================================================================# World Model — Causal chain (read-only; the sanctioned causal-edge surface)
+# =====================================================================
 @router.get("/world/causal/chain")
 async def world_causal_chain(
     entity_id: str,
@@ -13001,10 +13037,8 @@ async def get_world_stats() -> WorldStatsResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ============================================================================
-# World Model — Helpers
-# ============================================================================
-
+# =====================================================================# World Model — Helpers
+# =====================================================================
 def _wm_entity_to_response(entity) -> WorldEntityDetailResponse:
     """Convert a BaseEntity subclass to WorldEntityDetailResponse."""
     return WorldEntityDetailResponse(
@@ -13038,10 +13072,8 @@ def _wm_rel_to_response(rel) -> WorldRelationshipResponse:
     )
 
 
-# ============================================================================
-# Multi-Agent — Agent Management (v0.7.0)
-# ============================================================================
-
+# =====================================================================# Multi-Agent — Agent Management (v0.7.0)
+# =====================================================================
 _agent_store = None
 _invite_store = None
 _initiative_store = None

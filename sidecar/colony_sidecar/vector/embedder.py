@@ -369,6 +369,9 @@ class EmbeddingPipeline:
         self._cache_order: list[str] = []
         self._cache_size = cache_size
         self._multimodal_enabled = multimodal_provider is not None
+        self.query_instruction = os.environ.get('COLONY_EMBED_QUERY_INSTRUCTION',
+            'Instruct: Given a search query, retrieve relevant memories that answer it\nQuery: ')
+        self._index_identity = None
 
     @property
     def is_multimodal(self) -> bool:
@@ -386,9 +389,25 @@ class EmbeddingPipeline:
     def dimensions(self) -> int:
         return self._provider.dimensions
 
+    @property
+    def index_identity(self):
+        from colony_sidecar.vector.indexes import EmbeddingIdentity
+        return self._index_identity or EmbeddingIdentity.from_pipeline(self)
+
     async def warmup(self) -> None:
         """Delegate warmup to the underlying provider."""
         await self._provider.warmup()
+        from colony_sidecar.vector.indexes import EmbeddingIdentity
+        self._index_identity = EmbeddingIdentity.from_pipeline(self)
+
+    def _check_identity(self):
+        if self._index_identity is not None:
+            from colony_sidecar.vector.indexes import EmbeddingIdentity, IncompatibleIndex
+            if EmbeddingIdentity.from_pipeline(self) != self._index_identity:
+                raise IncompatibleIndex('Embedding configuration changed; use a new pipeline and index generation')
+
+    async def embed_query(self, query: str) -> list[float]:
+        return await self.embed(self.query_instruction + query)
 
     async def health_check(self) -> dict[str, Any]:
         """Verify the embedder is loaded and producing valid output.
@@ -431,6 +450,7 @@ class EmbeddingPipeline:
 
     async def embed(self, text: str) -> list[float]:
         """Single embed with LRU caching and latency monitoring."""
+        self._check_identity()
         cached = self._cache.get(text)
         if cached is not None:
             return cached
@@ -452,6 +472,7 @@ class EmbeddingPipeline:
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Explicit batch embed — bypasses auto-batch window."""
+        self._check_identity()
         if not texts:
             return []
 

@@ -315,6 +315,8 @@ class MigrateResponse(BaseModel):
     vectors_failed: int = 0
     duration_s: float = 0.0
     errors: List[str] = []
+    generation_id: str = ""
+    fingerprint: str = ""
 
 
 class IndexRequest(BaseModel):

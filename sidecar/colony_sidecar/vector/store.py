@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+from pathlib import Path
 import re
 import time
 from typing import Any, Optional
@@ -110,10 +112,15 @@ def _base_schema(dims: int) -> pa.Schema:
 class VectorStore:
     """LanceDB-backed vector store.  One table per Collection."""
 
-    def __init__(self, data_dir: str) -> None:
+    def __init__(self, data_dir: str, *, identity=None, catalog=None) -> None:
         self._data_dir = data_dir
         self._db = None
         self._dims: int | None = None
+        self.identity = identity
+        self.catalog = catalog
+        if (identity is None) != (catalog is None):
+            raise ValueError('Managed indexes require both embedding identity and source-ledger catalog')
+        self._generation_dbs = {}
 
     async def connect(self, dimensions: int) -> None:
         """Open (or create) the LanceDB database directory."""
@@ -122,6 +129,11 @@ class VectorStore:
         os.makedirs(self._data_dir, exist_ok=True)
         self._db = await lancedb.connect_async(self._data_dir)
         self._dims = dimensions
+        if self.identity is not None and self.identity.dimensions != dimensions:
+            raise ValueError('Embedding identity dimension disagrees with selected pipeline')
+        if self.catalog is not None:
+            self.catalog.initialize(self.identity, legacy_exists=bool(await self._db.table_names()))
+            self._generation_dbs['legacy'] = self._db
         logger.info("VectorStore connected (path=%s, dims=%d)", self._data_dir, dimensions)
 
     async def ensure_collections(self, dimensions: int) -> None:
@@ -129,12 +141,54 @@ class VectorStore:
         if self._db is None:
             await self.connect(dimensions)
 
-        existing = set(await self._db.table_names())
+        db = self._db
+        if self.catalog is not None:
+            active = self.catalog.active()
+            if active['fingerprint'] != self.identity.fingerprint:
+                return  # Never relabel or overwrite an existing unknown index.
+            db = await self._generation_db(active)
+        existing = set(await db.table_names())
         schema = _base_schema(dimensions)
         for col in Collection:
             if col.value not in existing:
-                await self._db.create_table(col.value, schema=schema)
+                await db.create_table(col.value, schema=schema)
                 logger.info("Created vector collection: %s", col.value)
+
+    async def _generation_db(self, generation):
+        key = generation['id']
+        if key not in self._generation_dbs:
+            import lancedb
+            if not re.fullmatch(r'[0-9a-f]{32}', key):
+                raise ValueError('Invalid vector generation identifier')
+            path = Path(self._data_dir) / 'generations' / key
+            path.mkdir(parents=True, exist_ok=True)
+            self._generation_dbs[key] = await lancedb.connect_async(str(path))
+        return self._generation_dbs[key]
+
+    async def _table(self, collection, *, write=False, semantic=False, generation=None):
+        if self.catalog is None:
+            return await self._db.open_table(collection.value)
+        if generation is None:
+            generation = (self.catalog.write_generation(self.identity) if write else
+                          self.catalog.read_generation(self.identity) if semantic else self.catalog.active())
+        db = await self._generation_db(generation)
+        if write and collection.value not in await db.table_names():
+            await db.create_table(collection.value, schema=_base_schema(generation['identity']['dimensions']), exist_ok=True)
+        return await db.open_table(collection.value)
+
+    def _eligible(self, collection, entry_id, metadata):
+        return self.catalog is None or not (
+            self.catalog.deleted(collection.value, str(entry_id)) or self.catalog.source_erased(metadata))
+
+    def _validate_vector(self, vector):
+        if self._dims and len(vector) != self._dims:
+            raise ValueError(f'Vector dimension mismatch: expected {self._dims}, got {len(vector)}; rebuild a separate index generation')
+        if not vector or not all(math.isfinite(value) for value in vector) or not any(vector):
+            raise ValueError('Vector must contain finite nonzero values')
+
+    @staticmethod
+    def _quoted(value):
+        return "'" + str(value).replace("'", "''") + "'"
 
     # ------------------------------------------------------------------
     # CRUD
@@ -155,13 +209,16 @@ class VectorStore:
         meta.setdefault("modality", "text")
 
         # Dimension validation
-        if self._dims and len(vector) != self._dims:
-            raise ValueError(
-                f"Vector dimension mismatch: table expects {self._dims}, got {len(vector)}. "
-                "Run 'colony migrate-tier' to re-embed with the current model."
-            )
+        self._validate_vector(vector)
+        if not self._eligible(collection, id, meta):
+            return
+        if self.identity is not None:
+            meta = {**meta, 'embedding_fingerprint': self.identity.fingerprint,
+                    'requested_model': self.identity.requested_model,
+                    'served_model': self.identity.served_model,
+                    'declared_revision': self.identity.declared_revision}
 
-        table = await self._db.open_table(collection.value)
+        table = await self._table(collection, write=True)
         await table.add([{
             "id": id,
             "text": text,
@@ -175,6 +232,8 @@ class VectorStore:
             "created_at": now,
             "updated_at": now,
         }])
+        if not self._eligible(collection, id, meta):
+            await table.delete('id = ' + self._quoted(id))
 
     async def add_batch(
         self,
@@ -187,16 +246,17 @@ class VectorStore:
         now = time.time()
 
         # Dimension validation on first item
-        if self._dims and items and len(items[0].vector) != self._dims:
-            raise ValueError(
-                f"Vector dimension mismatch: table expects {self._dims}, got {len(items[0].vector)}. "
-                "Run 'colony migrate-tier' to re-embed with the current model."
-            )
+        for item in items:
+            self._validate_vector(item.vector)
 
-        table = await self._db.open_table(collection.value)
+        table = await self._table(collection, write=True)
         rows = []
         for item in items:
             meta = item.metadata or {}
+            if not self._eligible(collection, item.id, meta):
+                continue
+            if self.identity is not None:
+                meta = {**meta, 'embedding_fingerprint': self.identity.fingerprint}
             meta.setdefault("embedded_at", now)
             meta.setdefault("modality", "text")
             rows.append({
@@ -212,7 +272,11 @@ class VectorStore:
                 "created_at": now,
                 "updated_at": now,
             })
-        await table.add(rows)
+        if rows:
+            await table.add(rows)
+            for item in items:
+                if not self._eligible(collection, item.id, item.metadata):
+                    await table.delete('id = ' + self._quoted(item.id))
 
     async def search(
         self,
@@ -223,7 +287,8 @@ class VectorStore:
         min_score: float = 0.0,
     ) -> list[VectorResult]:
         """ANN search on a collection.  Returns results sorted by score descending."""
-        table = await self._db.open_table(collection.value)
+        self._validate_vector(query_vector)
+        table = await self._table(collection, semantic=True)
         query = table.vector_search(query_vector).distance_type("cosine")
 
         if filter and _METADATA_JSON_FILTER_RE.search(filter):
@@ -253,6 +318,8 @@ class VectorStore:
                 meta = json.loads(meta_str) if isinstance(meta_str, str) else {}
             except (json.JSONDecodeError, TypeError):
                 meta = {}
+            if not self._eligible(collection, row['id'], meta):
+                continue
             out.append(VectorResult(
                 id=str(row["id"]),
                 score=score,
@@ -311,8 +378,8 @@ class VectorStore:
     async def search_by_image_hash(self, collection: Collection, image_hash: str) -> Optional[VectorResult]:
         """Find an existing vector by image hash (for dedup)."""
         try:
-            table = await self._db.open_table(collection.value)
-            results = await table.search().where(f"image_hash = '{image_hash}'").limit(1).to_pandas()
+            table = await self._table(collection, semantic=True)
+            results = await table.query().where('image_hash = ' + self._quoted(image_hash)).limit(1).to_pandas()
             if results.empty:
                 return None
             row = results.iloc[0]
@@ -321,6 +388,8 @@ class VectorStore:
                 meta = json.loads(meta_str) if isinstance(meta_str, str) else {}
             except (json.JSONDecodeError, TypeError):
                 meta = {}
+            if not self._eligible(collection, row['id'], meta):
+                return None
             return VectorResult(
                 id=str(row["id"]),
                 score=1.0,
@@ -332,8 +401,16 @@ class VectorStore:
 
     async def delete(self, collection: Collection, id: str) -> None:
         """Delete a single entry by ID."""
-        table = await self._db.open_table(collection.value)
-        await table.delete(f"id = '{id}'")
+        if self.catalog is None:
+            table = await self._table(collection)
+            await table.delete('id = ' + self._quoted(id))
+            return
+        self.catalog.delete(collection.value, id)
+        # Exact ID removal covers active, staged, unknown legacy and retained generations.
+        for generation in self.catalog.generations():
+            db = await self._generation_db(generation)
+            if collection.value in await db.table_names():
+                await (await db.open_table(collection.value)).delete('id = ' + self._quoted(id))
 
     async def update(
         self,
@@ -343,14 +420,28 @@ class VectorStore:
         vector: list[float],
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Update an entry (delete + re-add)."""
-        await self.delete(collection, id)
-        await self.add(collection, id, text, vector, metadata)
+        """Validate first, then atomically replace an entry in one generation."""
+        self._validate_vector(vector)
+        meta = dict(metadata or {})
+        if not self._eligible(collection, id, meta):
+            return
+        now = time.time()
+        meta.setdefault('embedded_at', now)
+        if self.identity is not None:
+            meta['embedding_fingerprint'] = self.identity.fingerprint
+        row = {'id': id, 'text': text, 'vector': vector, 'metadata': json.dumps(meta),
+               'modality': meta.get('modality', 'text'), 'image_hash': meta.get('image_hash', ''),
+               'image_ref': meta.get('image_ref', ''), 'thumbnail_ref': meta.get('thumbnail_ref', ''),
+               'caption': meta.get('caption', ''), 'created_at': now, 'updated_at': now}
+        table = await self._table(collection, write=True)
+        await table.merge_insert('id').when_matched_update_all().when_not_matched_insert_all().execute([row])
+        if not self._eligible(collection, id, meta):
+            await table.delete('id = ' + self._quoted(id))
 
     async def get(self, collection: Collection, id: str) -> Optional[VectorResult]:
         """Fetch a single entry by ID."""
-        table = await self._db.open_table(collection.value)
-        results = await table.search().where(f"id = '{id}'").limit(1).to_pandas()
+        table = await self._table(collection)
+        results = await table.query().where('id = ' + self._quoted(id)).limit(1).to_pandas()
         if results.empty:
             return None
         row = results.iloc[0]
@@ -359,6 +450,8 @@ class VectorStore:
             meta = json.loads(meta_str) if isinstance(meta_str, str) else {}
         except (json.JSONDecodeError, TypeError):
             meta = {}
+        if not self._eligible(collection, row['id'], meta):
+            return None
         return VectorResult(
             id=str(row["id"]),
             score=1.0,
@@ -368,7 +461,7 @@ class VectorStore:
 
     async def count(self, collection: Collection) -> int:
         """Return the number of entries in a collection."""
-        table = await self._db.open_table(collection.value)
+        table = await self._table(collection)
         return await table.count_rows()
 
     async def list_ids(self, collection: Collection) -> list[str]:
@@ -378,7 +471,7 @@ class VectorStore:
         id-only projection, cheap enough to run against a large store (used
         by the orphan-vector vacuum to diff against graph node ids).
         """
-        table = await self._db.open_table(collection.value)
+        table = await self._table(collection)
         df = await table.query().select(["id"]).to_pandas()
         if df.empty:
             return []
@@ -386,7 +479,7 @@ class VectorStore:
 
     async def scan_all(self, collection: Collection) -> list[dict[str, Any]]:
         """Return all rows from a collection as raw dicts."""
-        table = await self._db.open_table(collection.value)
+        table = await self._table(collection)
         df = await table.to_pandas()
         if df.empty:
             return []
@@ -414,3 +507,26 @@ class VectorStore:
     async def close(self) -> None:
         """Release database resources."""
         self._db = None
+        self._generation_dbs.clear()
+
+    async def erase_source_projections(self, turn_ids):
+        """Remove exact linked rows even when the old graph row is already gone."""
+        if self.catalog is None:
+            return 0
+        selected = {'turn:' + value for value in turn_ids}
+        deleted = set()
+        for generation in self.catalog.generations():
+            db = await self._generation_db(generation)
+            names = await db.table_names()
+            for collection in Collection:
+                if collection.value not in names:
+                    continue
+                table = await db.open_table(collection.value)
+                rows = await table.query().select(['id', 'metadata']).to_list()
+                for row in rows:
+                    meta = json.loads(row['metadata'] or '{}')
+                    if meta.get('source_uri') in selected and self.catalog.source_erased(meta):
+                        self.catalog.delete(collection.value, row['id'])
+                        await table.delete('id = ' + self._quoted(row['id']))
+                        deleted.add((collection.value, row['id']))
+        return len(deleted)
