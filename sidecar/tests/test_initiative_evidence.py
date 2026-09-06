@@ -93,3 +93,40 @@ async def test_backup_proposal_describes_only_the_observed_legacy_file(tmp_path,
     assert 'Last backup' not in rows[0].description and 'unverified' in rows[0].description
     assert rows[0].trigger_data['evidence_scope']=='legacy_bak_directory_only'
     assert rows[0].trigger_data['latest_file_modified_at']==datetime.fromtimestamp(stamp,timezone.utc).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_inferred_proposal_needs_acceptance_before_real_followup_generation(tmp_path, monkeypatch):
+    from colony_sidecar.goals.models import Goal, GoalSource, GoalStatus
+    from colony_sidecar.goals.store import GoalStore
+    monkeypatch.setenv('COLONY_COGNITION_SPINE', 'off')
+    goals = GoalStore(str(tmp_path/'goals.db'))
+    old = datetime.now(timezone.utc)-timedelta(days=30)
+    proposed = Goal(title='Investigate a suggested documentation gap', source=GoalSource.INFERRED,
+                    status=GoalStatus.PROPOSED, created_at=old)
+    goals.save_goal(proposed)
+    expected = set()
+    for source, status in ((GoalSource.EXPLICIT, GoalStatus.PROPOSED),
+                           (GoalSource.INFERRED, GoalStatus.ACCEPTED),
+                           (GoalSource.INFERRED, GoalStatus.ACTIVE),
+                           (GoalSource.INFERRED, GoalStatus.BLOCKED)):
+        goal = Goal(title='Review a selected documentation task', source=source, status=status, created_at=old)
+        goals.save_goal(goal)
+        expected.add(goal.goal_id)
+    engine = InitiativeEngine(None, None, None)
+    loop = AutonomyLoop(SimpleNamespace(goals=goals), AutonomyConfig())
+    try:
+        await loop._feed_pending_tasks(engine)
+        generated = await engine._generate_follow_ups()
+        assert {item.entity_id for item in generated} == expected
+        retained = goals.get_goal(proposed.goal_id)
+        assert retained.status == GoalStatus.PROPOSED and retained.last_initiative_at is None
+        # A real change in the existing canonical lifecycle, not age or a
+        # renewed inferred description, makes the same goal eligible.
+        retained.status = GoalStatus.ACCEPTED
+        retained.accepted_at = datetime.now(timezone.utc)
+        goals.save_goal(retained)
+        await loop._feed_pending_tasks(engine)
+        assert {item.entity_id for item in await engine._generate_follow_ups()} == expected | {proposed.goal_id}
+    finally:
+        goals.close()
