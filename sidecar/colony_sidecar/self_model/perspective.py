@@ -64,6 +64,8 @@ class SelfPerspective:
         self.clock = clock
         with closing(ledger._connect()) as conn, conn:
             initialize(conn)
+        from colony_sidecar.self_model.judgments import SelfJudgments
+        self.judgments = SelfJudgments(ledger, owner_id=self.owner_id, clock=clock)
 
     def observe_source(self, turn_id, learner):
         """Learn only direct, attributed owner words; replay does not add votes."""
@@ -208,9 +210,10 @@ class SelfPerspective:
                 'historical_only': snapshot.get('version') != VERSION}
         return {'kind': 'operational_working_perspective', 'preferences': self.preferences(),
                 'corrections': self.preferences(history=True), 'opinions': self.opinions(),
+                'judgments': self.judgments.revisions(), 'judgment_history': self.judgments.revisions(history=True),
                 'opinion_history': self.opinions(history=True), 'automatic_weighting': 'retired', 'attention': attention}
 
-    def brief(self):
+    def brief(self, query=''):
         lines = []
         for pref in self.preferences():
             if pref['pref_key'].startswith('initiative.'):
@@ -220,4 +223,7 @@ class SelfPerspective:
             lines.append(f"Last initiative ranking, {state['age_seconds']:g}s ago: " + ', '.join(state['ordered_ids'][:8]) + '. This is a decision snapshot, not current liveness.')
         if lines:
             lines.append('Only explicit owner preferences adjust these priorities. Runtime history establishes neither output quality nor the competence of the current model; it grants no authority.')
+        judgments = self.judgments.brief(query)
+        if judgments:
+            lines.append(judgments)
         return '\n'.join(lines)

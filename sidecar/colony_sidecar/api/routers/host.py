@@ -2822,7 +2822,8 @@ async def context_assemble(
                     ))
                 perspective = getattr(_preference_learner, 'perspective', None)
                 if perspective is not None:
-                    working_brief = perspective.brief()
+                    working_brief = perspective.brief(query=(
+                        query_text if _projection.viewer_attested and _projection.viewer_is_owner else ''))
                     if working_brief:
                         sections.append(ContextSection(id='colony-self-perspective',
                             title='Current working judgments and attention', body=working_brief, priority=87))
