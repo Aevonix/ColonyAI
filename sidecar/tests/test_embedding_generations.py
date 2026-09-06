@@ -314,3 +314,86 @@ def test_vector_cli_request_matches_current_host_contract(monkeypatch, capsys, c
     assert len(accepted) == len(polls) == 1
     assert polls[0] == accepted[0] + '/neutral-contract-task'
     assert summary in capsys.readouterr().out
+
+
+class BatchMergeObserver:
+    """Observe the real Lance commit boundary, including an injected race."""
+    def __init__(self, table, batches, after_commit=None, before_commit=None):
+        self.table, self.batches = table, batches
+        self.after_commit, self.before_commit = after_commit, before_commit
+
+    def __getattr__(self, name):
+        return getattr(self.table, name)
+
+    def merge_insert(self, key):
+        observer = self
+        class Builder:
+            def when_not_matched_insert_all(self):
+                return self
+
+            async def execute(self, rows):
+                observer.batches.append([row['id'] for row in rows])
+                if observer.before_commit:
+                    await observer.before_commit(observer.table, rows)
+                await observer.table.merge_insert(key).when_not_matched_insert_all().execute(rows)
+                if observer.after_commit:
+                    observer.after_commit(rows)
+        return Builder()
+
+
+@pytest.mark.asyncio
+async def test_batch_merge_preserves_concurrent_update_and_erasure_during_commit(tmp_path, monkeypatch):
+    old = await legacy(tmp_path)
+    for name in ('neutral-b', 'neutral-c'):
+        await old.add(Collection.MEMORIES, name, 'Retained '+name, [1., 0.])
+    identity = EmbeddingIdentity('new', 'served-new', 'r2', 2)
+    store = await managed(tmp_path, identity)
+    original_table, batches = store._table, []
+    async def live_write(table, rows):
+        newer = dict(next(row for row in rows if row['id'] == 'neutral-a'), text='Newer concurrent evidence')
+        await table.merge_insert('id').when_matched_update_all().when_not_matched_insert_all().execute([newer])
+    def erase_while_committing(rows):
+        # Only the durable fence has landed. Migration must remove the row it
+        # just committed without requiring an independent cleanup worker.
+        store.catalog.delete(Collection.MEMORIES.value, 'neutral-b')
+    async def observed_table(collection, **kwargs):
+        table = await original_table(collection, **kwargs)
+        if collection == Collection.MEMORIES and kwargs.get('write'):
+            return BatchMergeObserver(table, batches, erase_while_committing, live_write)
+        return table
+    monkeypatch.setattr(store, '_table', observed_table)
+    result = await migrate_tier(store, Pipeline(identity), batch_size=3)
+    assert not result.errors and result.vectors_migrated == 2
+    assert len(batches) == 1 and set(batches[0]) == {'neutral-a', 'neutral-b', 'neutral-c'}
+    table = await original_table(Collection.MEMORIES)
+    rows = {row['id']: row['text'] for row in await table.query().select(['id', 'text']).to_list()}
+    assert rows == {'neutral-a': 'Newer concurrent evidence', 'neutral-c': 'Retained neutral-c'}
+
+
+@pytest.mark.asyncio
+async def test_interruption_after_atomic_batch_commit_resumes_only_missing_rows(tmp_path, monkeypatch):
+    old = await legacy(tmp_path)
+    for index in range(1, 8):
+        await old.add(Collection.MEMORIES, 'neutral-'+str(index), 'Retained '+str(index), [1., 0.])
+    identity = EmbeddingIdentity('new', 'served-new', 'r2', 2)
+    store = await managed(tmp_path, identity)
+    original_table, batches = store._table, []
+    def crash_after_first_commit(rows):
+        if len(batches) == 1:
+            raise OSError('Interrupted immediately after atomic batch commit')
+    async def observed_table(collection, **kwargs):
+        table = await original_table(collection, **kwargs)
+        if collection == Collection.MEMORIES and kwargs.get('write'):
+            return BatchMergeObserver(table, batches, crash_after_first_commit)
+        return table
+    monkeypatch.setattr(store, '_table', observed_table)
+    first = await migrate_tier(store, Pipeline(identity), batch_size=3)
+    assert first.errors and store.catalog.active()['id'] == 'legacy'
+    staged = await original_table(Collection.MEMORIES, generation=store.catalog.begin(identity))
+    assert len(await staged.query().select(['id']).to_list()) == 3
+    resumed = await migrate_tier(store, Pipeline(identity), batch_size=3)
+    assert not resumed.errors and resumed.generation_id == first.generation_id
+    assert resumed.vectors_migrated == 5 and [len(batch) for batch in batches] == [3, 3, 2]
+    final = await original_table(Collection.MEMORIES)
+    ids = [row['id'] for row in await final.query().select(['id']).to_list()]
+    assert len(ids) == len(set(ids)) == 8

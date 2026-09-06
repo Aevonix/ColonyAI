@@ -242,6 +242,7 @@ async def _migrate_generation(store, pipeline, *, graph, old_model_id, batch_siz
         for vector in vectors:
             store._validate_vector(vector)
         table = await store._table(collection, write=True, generation=generation)
+        projected_rows, eligible = [], []
         for row, vector in zip(rows, vectors):
             meta = row['metadata']
             if not store._eligible(collection, row['id'], meta):
@@ -256,11 +257,17 @@ async def _migrate_generation(store, pipeline, *, graph, old_model_id, batch_siz
                          'modality': meta.get('modality', 'text'), 'image_hash': meta.get('image_hash', ''),
                          'image_ref': meta.get('image_ref', ''), 'thumbnail_ref': meta.get('thumbnail_ref', ''),
                          'caption': meta.get('caption', ''), 'created_at': now, 'updated_at': now}
-            # Existing staged rows include concurrent live writes. Resume does
-            # not overwrite them with an earlier source snapshot.
-            await table.merge_insert('id').when_not_matched_insert_all().execute([projected])
-            if not store._eligible(collection, row['id'], meta):
-                await table.delete('id = ' + store._quoted(row['id']))
+            projected_rows.append(projected)
+            eligible.append((row['id'], meta))
+        if not projected_rows:
+            return
+        # One Lance commit per embedding batch. Existing staged rows include
+        # concurrent live writes and survive the insert-only merge unchanged.
+        await table.merge_insert('id').when_not_matched_insert_all().execute(projected_rows)
+        for entry_id, meta in eligible:
+            # A source can be erased while the batch commit is in flight.
+            if not store._eligible(collection, entry_id, meta):
+                await table.delete('id = ' + store._quoted(entry_id))
             else:
                 result.vectors_migrated += 1
 
