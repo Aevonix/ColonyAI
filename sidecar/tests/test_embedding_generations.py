@@ -397,3 +397,18 @@ async def test_interruption_after_atomic_batch_commit_resumes_only_missing_rows(
     final = await original_table(Collection.MEMORIES)
     ids = [row['id'] for row in await final.query().select(['id']).to_list()]
     assert len(ids) == len(set(ids)) == 8
+
+
+@pytest.mark.parametrize('batch_size', [1, 32])
+@pytest.mark.asyncio
+async def test_legacy_duplicate_ids_retain_first_row_once(tmp_path, batch_size):
+    old = await legacy(tmp_path)
+    await old.add(Collection.MEMORIES, 'neutral-a', 'Later duplicate must not replace the first row.', [0., 1.])
+    assert await old.count(Collection.MEMORIES) == 2
+    identity = EmbeddingIdentity('new', 'served-new', 'r2', 2)
+    store = await managed(tmp_path, identity)
+    result = await migrate_tier(store, Pipeline(identity), batch_size=batch_size)
+    assert not result.errors
+    table = await store._table(Collection.MEMORIES)
+    rows = await table.query().select(['id', 'text']).to_list()
+    assert rows == [{'id': 'neutral-a', 'text': 'The hydrofoil departs Friday.'}]

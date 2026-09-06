@@ -242,10 +242,10 @@ async def _migrate_generation(store, pipeline, *, graph, old_model_id, batch_siz
         for vector in vectors:
             store._validate_vector(vector)
         table = await store._table(collection, write=True, generation=generation)
-        projected_rows, eligible = [], []
+        projected_rows, eligible, projected_ids = [], [], set()
         for row, vector in zip(rows, vectors):
             meta = row['metadata']
-            if not store._eligible(collection, row['id'], meta):
+            if row['id'] in projected_ids or not store._eligible(collection, row['id'], meta):
                 continue
             now = time.time()
             meta = {**meta, 'embedding_fingerprint': store.identity.fingerprint,
@@ -259,6 +259,9 @@ async def _migrate_generation(store, pipeline, *, graph, old_model_id, batch_siz
                          'caption': meta.get('caption', ''), 'created_at': now, 'updated_at': now}
             projected_rows.append(projected)
             eligible.append((row['id'], meta))
+            # Legacy Lance collections can contain repeated IDs. Preserve the
+            # first eligible row, as the earlier per-row insert-only merge did.
+            projected_ids.add(row['id'])
         if not projected_rows:
             return
         # One Lance commit per embedding batch. Existing staged rows include
