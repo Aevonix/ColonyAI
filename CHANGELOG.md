@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.2 - scoped self evidence
+
+- Runtime completions, failures and timeouts no longer produce automatic
+  research-priority weights or claims of task quality and current-model ability.
+  The self brief labels their historical, potentially unverified evidence before
+  listing outcome counts.
+- Explicit source-backed owner preferences still govern optional research
+  ordering and retain their correction and erasure behavior. Dated attention
+  records expose the applied preference and priority.
+- Existing automatic opinion revisions remain inspectable as non-governing
+  history, with original evidence and model provenance. Operational records and
+  their append-only corrections are preserved; trust and grant paths are unchanged.
+
 ## v1.0.1 - fresh setup and local work visibility
 
 - Fresh Hermes environments no longer need the legacy Colony CLI dependency
