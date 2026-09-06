@@ -32,6 +32,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from . import local_work
+
 from .colony_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS as _CATALOG_ACTION_MODEL_TOOL_SCHEMAS,
     ACTION_TOOL_NAMES as _CATALOG_ACTION_TOOL_NAMES,
@@ -97,6 +99,21 @@ def _parameters(
 # they are not part of that governed-action execution boundary.  The merged
 # model catalog is sorted before its exact JSON shape is hashed for preflight.
 _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "name": "colony_accept_local_draft",
+        "description": "Accept an explicitly requested owner local comparison or summary for an existing commitment. Read only the selected local UTF-8 source files and save an unverified local draft; no sending or input changes. Do not schedule inferred work or a report's suggestions.",
+        "parameters": _parameters({
+            "commitment_id": _identifier_model_schema(),
+            "question": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "sources": {"type": "array", "minItems": 1, "maxItems": 8,
+                        "items": {"type": "string", "description": "Explicit absolute local source path"}},
+        }, ("commitment_id", "question", "sources")),
+    },
+    {
+        "name": "colony_read_work_source",
+        "description": "Read one source of this transport-bound accepted local draft using the native file reader.",
+        "parameters": _parameters({"source": {"type": "integer", "minimum": 0, "maximum": 7}}, ("source",)),
+    },
     {
         "name": "colony_commitment_work",
         "description": "Before undertaking a listed commitment, claim its ID atomically. If another session holds it, inspect status and do not duplicate its work. Release when stopping. A claim authorizes no external effect and does not mark the obligation fulfilled.",
@@ -219,6 +236,7 @@ _ACTION_INTENT_TOOL_NAMES: tuple[str, ...] = tuple(
 )
 
 _OWNER_MESSAGE_TOOL_NAMES: tuple[str, ...] = ("colony_send_message",)
+_COORDINATION_TOOL_NAMES = ('colony_accept_local_draft', 'colony_commitment_work', 'colony_read_work_source')
 
 # No event can be injected until Colony exposes an exact viewer-attested event
 # projection.  An empty catalog is an intentional security and attribution
@@ -251,7 +269,7 @@ def governance_attestation() -> dict[str, Any]:
             "legacy_effect_workers": "inert_not_installable",
         },
         "read_tool_names": list(_READ_TOOL_NAMES),
-        "coordination_tool_names": ["colony_commitment_work"],
+        "coordination_tool_names": list(_COORDINATION_TOOL_NAMES),
         "action_intent_tool_names": list(_ACTION_INTENT_TOOL_NAMES),
         "owner_message_intent_tool_names": list(_OWNER_MESSAGE_TOOL_NAMES),
         "direct_effect_tool_names": [],
@@ -580,7 +598,7 @@ def _tool_execution_middleware(**kwargs: Any) -> Any:
         name = snapshot["tool_name"]
         # These exact adapter-owned tools perform their own scope/capability
         # checks and submit effects to the existing mediator. No prefix grant.
-        governed = name in {*_READ_TOOL_NAMES, *_ACTION_INTENT_TOOL_NAMES, *_OWNER_MESSAGE_TOOL_NAMES, "colony_commitment_work"}
+        governed = name in {*_READ_TOOL_NAMES, *_ACTION_INTENT_TOOL_NAMES, *_OWNER_MESSAGE_TOOL_NAMES, *_COORDINATION_TOOL_NAMES}
         if not governed:
             exact = all(snapshot[key] for key in ("session_id", "task_id", "turn_id"))
             scope = _TRANSPORT_SCOPES.for_execution(
@@ -2197,6 +2215,7 @@ def register(ctx: Any) -> None:
                           or scope.platform == 'cron' else kwargs.get('user_message')))
         if scope.valid_participant and not review:
             work_coordinator.bind_turn(**kwargs)
+            local_work.bind_selected(scope, work_coordinator, kwargs)
         if execution_observer is not None:
             execution_observer.start(scope, review_parent=parent if review else None, **kwargs)
         return None
@@ -2210,7 +2229,8 @@ def register(ctx: Any) -> None:
             task_id=str(kwargs.get("task_id") or ""),
             turn_id=str(kwargs.get("turn_id") or ""),
         )
-        if scope is None or not scope.valid_participant or scope.platform == "background_review":
+        if (scope is None or not scope.valid_participant or scope.platform == "background_review"
+                or local_work.ACTIVE.get() is not None):
             return None
         if (
             turn_writer_platforms is not None
@@ -2355,6 +2375,9 @@ def register(ctx: Any) -> None:
             denial = work_coordinator.before_tool(_TOOL_EXECUTION_CONTEXT.get() or {})
             if denial is not None:
                 return denial
+            denial = local_work.before_tool(_TOOL_EXECUTION_CONTEXT.get() or {})
+            if denial is not None:
+                return denial
             if execution_observer is not None:
                 return execution_observer.tool(next_call, args, **{
                     key: value for key, value in kwargs.items()
@@ -2377,6 +2400,13 @@ def register(ctx: Any) -> None:
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get("session_id", ""),
             task_id=context.get("task_id", ""), turn_id=context.get("turn_id", ""))
         return work_coordinator.handle(args or {}, scope, context)
+    def local_work_handler(name, args):
+        context = _TOOL_EXECUTION_CONTEXT.get() or {}
+        if name == 'colony_read_work_source':
+            return local_work.read_source(args or {}, context)
+        scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
+            task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
+        return local_work.accept(args or {}, scope, client)
     for schema in _TOOL_SCHEMAS:
         name = schema["name"]
         if name in _READ_TOOL_NAMES and name not in boundary.enabled_read_tools:
@@ -2387,10 +2417,12 @@ def register(ctx: Any) -> None:
             continue
         ctx.register_tool(
             name=name,
-            toolset="colony",
+            toolset="colony_local_work" if name == 'colony_read_work_source' else "colony",
             schema=schema,
             handler=(
                 commitment_work_handler if name == "colony_commitment_work" else
+                (lambda args=None, _name=name, **kwargs: local_work_handler(_name, args))
+                if name in {'colony_accept_local_draft', 'colony_read_work_source'} else
                 lambda args=None, _name=name, **kwargs:
                 dispatcher.dispatch(_name, args or {}, **kwargs)
             ),
