@@ -15,7 +15,7 @@ from colony_sidecar.router.router import LLMRouter
 
 @contextmanager
 def endpoint(*, status=200, delay=0, started=None, release=None, content=None, location=None,
-             listing=None, listing_calls=None):
+             listing=None, listing_calls=None, error_message='neutral unavailable'):
     calls = []
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -35,7 +35,7 @@ def endpoint(*, status=200, delay=0, started=None, release=None, content=None, l
                 self.send_response(current_status)
                 if location: self.send_header('Location', location)
                 self.send_header('Content-Type', 'application/json'); self.end_headers()
-                try: self.wfile.write(b'{"error":{"message":"neutral unavailable","type":"server_error"}}')
+                try: self.wfile.write(json.dumps({'error': {'message': error_message, 'type': 'server_error'}}).encode())
                 except (BrokenPipeError, ConnectionResetError): pass
                 return
             answer = content(payload) if callable(content) else (content or payload['model'])
@@ -519,3 +519,41 @@ async def test_declared_hostname_recovers_from_refused_ipv6_to_serving_ipv4(monk
         response = await complete(r, 'vision')
         assert response.binding == 'interactive' and len(calls) == 1
         assert r.routing_status()['completion_observations']['interactive']['state'] == 'available'
+
+
+@pytest.mark.asyncio
+async def test_context_window_failure_does_not_cool_down_healthy_binding():
+    remaining = [1]
+    def status():
+        if remaining[0]:
+            remaining[0] -= 1
+            return 400
+        return 200
+    with endpoint(status=status, error_message="This model's maximum context length is 16 tokens; this request uses 64.") as (first, a), endpoint() as (second, b):
+        r = router(config(first, second))
+        assert (await complete(r)).binding == 'deliberate'
+        assert r.routing_status()['completion_observations']['interactive']['state'] == 'unknown'
+        assert (await complete(r)).binding == 'interactive'
+        assert len(a) == 2 and len(b) == 1
+
+
+@pytest.mark.asyncio
+async def test_inventory_provider_metadata_comes_from_retained_valid_snapshot(monkeypatch, tmp_path):
+    from colony_sidecar.api.routers import host
+    with endpoint(listing=[{'id': 'retained-model'}]) as (address, calls):
+        cfg = config(address, address); cfg['baseUrl'] = address
+        path = tmp_path / '.colony-llm-config.json'; path.write_text(json.dumps(cfg))
+        r = router(cfg, path)
+        monkeypatch.setattr(host, '_llm_router', r)
+        monkeypatch.setattr(host, 'get_state_dir', lambda: tmp_path)
+        original = await host.list_models()
+        changed = deepcopy(cfg)
+        changed.update(provider='lmstudio', baseUrl='http://127.0.0.1:1/v1')
+        changed['modelPool']['interactive']['contextTokens'] = -1
+        path.write_text(json.dumps(changed))
+        retained = await host.list_models()
+        assert retained.provider == original.provider == 'vllm'
+        assert retained.base_url == original.base_url == address
+        assert retained.models == original.models
+        assert retained.routing['config_revision'] == original.routing['config_revision']
+        assert retained.routing['reload_error'] == 'ValueError'

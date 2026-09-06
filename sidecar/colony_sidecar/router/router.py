@@ -173,7 +173,8 @@ class LLMRouter:
             if item['available'] and not item['stale']:
                 for model in item['models']:
                     models.setdefault(model['id'], model)
-        return {'models': list(models.values()), 'routing': status}
+        return {'models': list(models.values()), 'routing': status,
+                'provider': snapshot.provider, 'base_url': snapshot.base_url or None}
 
     async def _local_addresses(self, snapshot, binding):
         from .functions import endpoint_host
@@ -408,7 +409,10 @@ class LLMRouter:
                 failures.append(type(exc).__name__)
                 if not _retryable(exc):
                     break
-                self._endpoints.failure(snapshot, binding, exc)
+                # An oversized request may use a larger candidate, but says
+                # nothing about this binding's availability for other requests.
+                if 'contextwindow' not in type(exc).__name__.lower():
+                    self._endpoints.failure(snapshot, binding, exc)
             finally:
                 self._endpoints.release(snapshot, binding, request_id)
         raise RuntimeError('No eligible local model completed function ' + role_name +
