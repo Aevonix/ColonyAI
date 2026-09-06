@@ -14,6 +14,8 @@ from .hermes_work import selected_home
 
 def selected_board():
     home = selected_home()
+    if home is not None and home.parent.name == 'profiles':
+        home = home.parent.parent
     board = os.environ.get('COLONY_LOCAL_WORK_BOARD', 'colony-drafts').strip()
     profile = os.environ.get('COLONY_LOCAL_WORK_PROFILE', 'colony-drafts').strip()
     if home is None or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', board) or not profile:

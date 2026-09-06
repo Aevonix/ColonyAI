@@ -9,7 +9,7 @@ import subprocess
 import threading
 from urllib.parse import quote
 
-from .draft_artifacts import digest, make_directory, retain_draft
+from .draft_artifacts import make_directory, retain_draft, restore_report
 from .local_work import Undertaking, request
 
 PREFIX = 'colony-local-work:'
@@ -256,10 +256,9 @@ class NativeDrafts:
         if (receipt['initiative_id'] != self.work.assignment['id']
                 or any(receipt.get(key) != context.get(key) for key in ('source_home_id', 'native_board', 'native_task_id'))
                 or Path(result['report_path']) != self.directory/'report.md'
-                or digest(self.directory/'report.md') != result['report_sha256']
                 or set(result['sources']) != set(context['sources'])):
             raise ValueError('saved_draft_receipt_mismatch')
-        return result
+        return restore_report(self.directory, receipt)
 
     def before_tool(self, context):
         if not self.worker:

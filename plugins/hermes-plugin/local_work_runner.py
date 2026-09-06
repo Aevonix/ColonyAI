@@ -10,7 +10,7 @@ import subprocess
 from .client import ColonyClient
 from .local_work import Undertaking, request, selected
 from .model_response import decode_json_response
-from .draft_artifacts import digest, write, make_directory, retain_draft
+from .draft_artifacts import write, make_directory, retain_draft, restore_report
 
 
 def active_execution(home, job_id):
@@ -35,10 +35,9 @@ def reconcile(client, assignment, directory):
         result = receipt['result']
         if (receipt['initiative_id'] != assignment['id']
                 or receipt['native_execution_id'] != assignment['context']['native_execution_id']
-                or Path(result['report_path']) != directory/'report.md'
-                or digest(directory/'report.md') != result['report_sha256']):
+                or Path(result['report_path']) != directory/'report.md'):
             raise ValueError('saved_draft_receipt_mismatch')
-        return finish(client, assignment, result)
+        return finish(client, assignment, restore_report(directory, receipt))
     return finish(client, assignment, {'status': 'unavailable',
                   'error_type': 'NativeExecutionEndedBeforeResult'})
 

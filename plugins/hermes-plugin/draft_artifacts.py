@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import tempfile
 
 
 def digest(path):
@@ -19,12 +20,37 @@ def sync_directory(path):
 
 def write(path, value):
     raw = value if isinstance(value, str) else json.dumps(value, sort_keys=True, indent=2)+'\n'
-    with path.open('x') as stream:
-        stream.write(raw)
-        stream.flush()
-        os.fsync(stream.fileno())
-    path.chmod(0o600)
-    sync_directory(path.parent)
+    descriptor, temporary = tempfile.mkstemp(prefix='.'+path.name+'-', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(raw.encode('utf-8'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        # Publish complete bytes exclusively; existing artifacts remain intact.
+        os.link(temporary, path)
+        sync_directory(path.parent)
+    finally:
+        os.unlink(temporary)
+        sync_directory(path.parent)
+
+
+def restore_report(directory, receipt):
+    """Materialize a receipt's validated report, preserving older saved pairs."""
+    result = receipt['result']
+    path = directory/'report.md'
+    if Path(result['report_path']) != path:
+        raise ValueError('saved_draft_receipt_mismatch')
+    report = receipt.get('report_text')
+    if report is not None and (not isinstance(report, str)
+            or hashlib.sha256(report.encode('utf-8')).hexdigest() != result['report_sha256']):
+        raise ValueError('saved_draft_receipt_mismatch')
+    if not path.exists():
+        if report is None:
+            raise ValueError('saved_draft_receipt_mismatch')
+        write(path, report)
+    if digest(path) != result['report_sha256']:
+        raise ValueError('saved_draft_receipt_mismatch')
+    return result
 
 
 def make_directory(path):
@@ -56,11 +82,17 @@ def retain_draft(work, interpretation, directory, *, model, receipt_context):
     report = '# Unverified local source draft\n\n'+interpretation['draft'].strip()+'\n\nSources:\n'
     report += ''.join('[source:'+index+'] '+source['path']+' SHA256 '+source['sha256']+'\n'
                       for index, source in sorted(work.sources.items()))
-    write(directory/'report.md', report)
+    report_sha256 = hashlib.sha256(report.encode('utf-8')).hexdigest()
+    if (directory/'report.md').exists() and digest(directory/'report.md') != report_sha256:
+        raise ValueError('saved_draft_receipt_mismatch')
     result = {'status': 'draft_created', 'summary': 'Unverified local draft: '+interpretation['draft'][:1500],
-              'report_path': str(directory/'report.md'), 'report_sha256': digest(directory/'report.md'),
+              'report_path': str(directory/'report.md'), 'report_sha256': report_sha256,
               'sources': {source['path']: source['sha256'] for source in work.sources.values()},
               'model': str(model or '')}
-    write(directory/'draft-receipt.json', {'initiative_id': work.assignment['id'],
-          **receipt_context, 'result': result})
+    receipt = {'initiative_id': work.assignment['id'], **receipt_context,
+               'report_text': report, 'result': result}
+    # The receipt is the recoverable artifact. A retry can restore a report if
+    # publication was interrupted after this durable receipt became visible.
+    write(directory/'draft-receipt.json', receipt)
+    restore_report(directory, receipt)
     return result

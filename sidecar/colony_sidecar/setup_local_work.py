@@ -1,6 +1,7 @@
 """Attach accepted source drafts to Hermes' native board and worker profile."""
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,12 @@ import httpx
 import yaml
 
 BOARD = PROFILE = 'colony-drafts'
+
+
+def native_root(home):
+    # Match native get_default_hermes_root/resolve_profile_env. A selected
+    # named conversation profile shares its root's board/profile namespace.
+    return home.parent.parent if home.parent.name == 'profiles' else home
 
 
 def verify_tools(endpoint, model, key):
@@ -82,7 +89,7 @@ def refresh_role(state):
     if binding.get('executor') != 'kanban':
         raise ValueError('A native local-work binding is required')
     home = Path(manifest['hermes_home'])
-    worker = home/'profiles'/binding['worker_profile']
+    worker = native_root(home)/'profiles'/binding['worker_profile']
     path = worker/'config.yaml'
     before = path.read_bytes()
     config = yaml.safe_load(before)
@@ -109,6 +116,11 @@ def install(state):
     previous = manifest.get('local_work') or {}
     if manifest.get('version') != 1 or manifest.get('profile') != 'local':
         raise ValueError('Expected a local Colony instance')
+    adapter = manifest['adapter_binding']
+    adapter_root = (state/'adapter/colony_hermes' if adapter['mode'] == 'private-directory'
+                    else Path(adapter['sources']['colony_hermes']))
+    if not (adapter_root/'native_drafts.py').is_file():
+        raise ValueError('Upgrade this instance\'s native adapter before installing Kanban drafts')
     if previous.get('executor') == 'kanban':
         refresh_role(state)
         return previous
@@ -117,9 +129,11 @@ def install(state):
     config = yaml.safe_load(config_before)
     if config.get('kanban', {}).get('dispatch_in_gateway') is False:
         raise ValueError('Enable the selected Hermes gateway dispatcher before installing local drafts')
-    worker = home/'profiles'/PROFILE
+    suffix = '-'+hashlib.sha256(str(home).encode()).hexdigest()[:8] if native_root(home) != home else ''
+    board, profile = BOARD+suffix, PROFILE+suffix
+    worker = native_root(home)/'profiles'/profile
     preparation = state/'local-work-install.json'
-    marker = {'hermes_home':str(home), 'worker_profile':PROFILE}
+    marker = {'hermes_home':str(home), 'worker_profile':profile}
     owned = preparation.is_file() and json.loads(preparation.read_text()) == marker
     if worker.exists() and not owned:
         raise ValueError('The colony-drafts profile already exists; retain or reconcile its binding')
@@ -136,14 +150,14 @@ def install(state):
     result = subprocess.run([native, '-B', '-c',
         'import os; os.umask(0o077); '
         'from hermes_cli.profiles import create_profile,profile_exists; from hermes_cli import kanban_db as kb; '
-        f'profile_exists({PROFILE!r}) or create_profile({PROFILE!r},no_alias=True,no_skills=True); '
-        f'kb.create_board({BOARD!r},name="Accepted local drafts")'],
+        f'profile_exists({profile!r}) or create_profile({profile!r},no_alias=True,no_skills=True); '
+        f'kb.create_board({board!r},name="Accepted local drafts")'],
         env=environment, capture_output=True, text=True, timeout=30)
     if result.returncode:
         raise ValueError('Native board/profile creation failed; prepared native files are retained')
-    binding = {'executor':'kanban', 'board':BOARD, 'worker_profile':PROFILE,
+    binding = {'executor':'kanban', 'board':board, 'worker_profile':profile,
                'role':'planning', 'scope':'explicitly_accepted_local_sources'}
-    lane = {'board':BOARD, 'worker_profile':PROFILE, 'destination':str(state/'drafts'),
+    lane = {'board':board, 'worker_profile':profile, 'destination':str(state/'drafts'),
             'worker':False, 'instance_dir':str(state)}
     if previous.get('job_id'):
         binding['legacy_job_id'] = lane['legacy_job_id'] = previous['job_id']
@@ -176,7 +190,7 @@ def install(state):
         'COLONY_LOCAL_WORK_ENABLED=', 'COLONY_LOCAL_WORK_EXECUTOR=',
         'COLONY_LOCAL_WORK_BOARD=', 'COLONY_LOCAL_WORK_PROFILE='))]
     lines += ['COLONY_LOCAL_WORK_ENABLED=true', 'COLONY_LOCAL_WORK_EXECUTOR=kanban',
-              'COLONY_LOCAL_WORK_BOARD='+BOARD, 'COLONY_LOCAL_WORK_PROFILE='+PROFILE]
+              'COLONY_LOCAL_WORK_BOARD='+board, 'COLONY_LOCAL_WORK_PROFILE='+profile]
     _atomic_hermes_config_write(env_path, env_before, ('\n'.join(lines)+'\n').encode())
     _atomic_hermes_config_write(path, config_before, yaml.safe_dump(config, sort_keys=False).encode())
     _atomic_hermes_config_write(manifest_path, original, _json(manifest).encode())

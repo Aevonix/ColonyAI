@@ -161,8 +161,9 @@ def _native_interpreter(tmp_path, wheel, adapter_installation):
     return target/'bin'/'python'
 
 
-@pytest.mark.parametrize('adapter_installation', ['absent', 'wheel', 'editable'])
-def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(artifacts, tmp_path, adapter_installation):
+@pytest.mark.parametrize('adapter_installation,named_home', [
+    ('absent', False), ('wheel', False), ('editable', False), ('absent', True)])
+def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(artifacts, tmp_path, adapter_installation, named_home):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Requires qualified native Hermes')
     output, wheel, _, installed = artifacts
@@ -242,13 +243,21 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
     endpoint = f'http://127.0.0.1:{model.server_port}/v1'
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
-    home = tmp_path/'profile'; bundled = tmp_path/'bundled'; bundled.mkdir()
+    home = tmp_path/'profile'
+    if named_home:
+        home = home/'profiles'/'owner'
+    bundled = tmp_path/'bundled'; bundled.mkdir()
     env = {key: os.environ[key] for key in ('PATH', 'LANG') if key in os.environ}
     env.update(HOME=str(tmp_path), HERMES_HOME=str(home), HERMES_BUNDLED_PLUGINS=str(bundled),
                HERMES_BIN=str(native_python.parent/'hermes'),
                HERMES_DISABLE_LAZY_INSTALLS='1', TIRITH_ENABLED='false',
                HERMES_DISABLE_TELEMETRY='1', COLONY_GUARD_CHAT_MODE='off', LITELLM_LOCAL_MODEL_COST_MAP='True',
                PYTHONPATH=dependency_path)
+    if named_home:
+        run_native('-I', '-c',
+            'import os; os.umask(0o077); from hermes_cli.profiles import create_profile; '
+            'profile=create_profile("owner",no_alias=True,no_skills=True); '
+            '(profile/"SOUL.md").write_text("You are Orion, the retained profile identity.\\n")', cwd=tmp_path, env=env)
     server = None
     try:
         run_python('-I', '-c', INSTALL, installed, dependency_path, home, wheel, endpoint, port, native_python,

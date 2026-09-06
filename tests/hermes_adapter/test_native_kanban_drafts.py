@@ -7,7 +7,7 @@ from conftest import ROOT, run_python
 
 
 PROBE = r'''
-import json,os,sys
+import hashlib,json,os,sys
 os.umask(0o077)
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -142,11 +142,25 @@ else:
         gateway.ensure_task(current)
         assert kb.get_task(db,tid).status=='blocked', 'Reconciliation must not retry native terminal runs'
     else:
-        # Sidecar commits, then worker is interrupted before native completion.
-        def interrupt(args):raise ConnectionError('Controlled interruption before native commit')
-        result=json.loads(worker.complete(args,context,interrupt));assert result['saved_receipt'] is True,result
         report=worker.directory/'report.md';receipt=worker.directory/'draft-receipt.json'
-        original=(report.read_bytes(),receipt.read_bytes());first_run=claimed.current_run_id
+        if mode=='publication_interrupted':
+            # A durable receipt exists, but the report and sidecar completion
+            # have not been published. The next native attempt restores bytes
+            # without reading changed sources or generating another draft.
+            with patch('colony_hermes.draft_artifacts.restore_report',side_effect=OSError('Controlled publication interruption')):
+                result=json.loads(worker.complete(args,context,kanban_tools._handle_complete))
+            assert result['saved_receipt'] is True and not report.exists(),result
+            retained=json.loads(receipt.read_text())
+            assert hashlib.sha256(retained['report_text'].encode('utf-8')).hexdigest()==retained['result']['report_sha256']
+            assert client.get(gateway.path(accepted['id'])+'?contact_id=owner').json()['status']=='assigned'
+            original=(retained['report_text'].encode('utf-8'),receipt.read_bytes())
+            sources[0].write_text('Changed after the completed draft was retained.\n')
+        else:
+            # Sidecar commits, then worker is interrupted before native completion.
+            def interrupt(args):raise ConnectionError('Controlled interruption before native commit')
+            result=json.loads(worker.complete(args,context,interrupt));assert result['saved_receipt'] is True,result
+            original=(report.read_bytes(),receipt.read_bytes())
+        first_run=claimed.current_run_id
         kb.reclaim_task(db,tid,reason='Controlled interrupted worker')
         claimed=kb.claim_task(db,tid);assert claimed.current_run_id!=first_run
         assert json.loads(worker.complete(args,context,kanban_tools._handle_complete))['error']=='current_native_run_required'
@@ -159,7 +173,7 @@ else:
         assert (report.read_bytes(),receipt.read_bytes())==original
         assert json.loads(recovery.complete({'summary':'Replay'},context,kanban_tools._handle_complete))['replayed'] is True
         assert len(kb.list_runs(db,tid))==2
-if mode in {'native_agent','recovery'}:
+if mode in {'native_agent','recovery','publication_interrupted'}:
     task=kb.get_task(db,tid);assert task.status=='done',task
     saved=client.get(gateway.path(accepted['id'])+'?contact_id=owner').json()
     assert saved['status']=='completed',saved
@@ -174,7 +188,7 @@ db.close();initiatives.close();selected.stop();selected_board.stop()
 '''
 
 
-@pytest.mark.parametrize('mode', ['native_agent', 'recovery', 'source_changed', 'missing_reference'])
+@pytest.mark.parametrize('mode', ['native_agent', 'recovery', 'publication_interrupted', 'source_changed', 'missing_reference'])
 def test_packaged_native_kanban_draft(artifacts, tmp_path, mode):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native task/run integration')
