@@ -193,11 +193,13 @@ broaden it. Observation does not grant tool authority; the separate enforcement
 below also works when observation is disabled. No model argument selects the
 writer or owner role.
 
-This packet observes running Hermes turns, including agent cron fires and
-executing subagents. It does not yet cover queued children, script-only cron
-jobs, Colony queue workers, external coding processes or every hardware service.
-It also does not enforce atomic conversational commitments. Existing person
-commitments remain a separate store; seeing concurrent work is a prerequisite
+The view observes running Hermes turns, including agent cron fires and
+executing subagents, and reads claimed/running workers from the canonical task
+queue for the owner. It does not cover queued children, script-only cron jobs,
+unregistered external coding processes or every hardware service.
+It does not enforce atomic free-text conversational commitments. The optional
+[explicit shared undertaking](COMMITMENT-WORK.md) coordinates work against an
+existing person commitment ID in its durable store. Seeing concurrent work is a prerequisite
 for coordination, not a guarantee that promises cannot conflict.
 
 ## Native tool authority

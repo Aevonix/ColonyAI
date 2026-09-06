@@ -55,6 +55,7 @@ class ReasoningResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    model_provenance: dict[str, Any] = field(default_factory=dict)
 
 
 def _messages_to_dicts(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -166,6 +167,7 @@ class ReasoningLoop:
             "completion_tokens": 0,
             "total_tokens": 0,
         }
+        model_provenance: dict[str, Any] = {}
 
         while iterations < self._config.max_iterations:
             iterations += 1
@@ -198,9 +200,15 @@ class ReasoningLoop:
                 return ReasoningResult(
                     status="error",
                     error=f"LLM call failed: {exc}",
+                    model_provenance=model_provenance,
                 )
 
             # Accumulate usage
+            used = getattr(response, 'tier_used', None)
+            model_provenance = {'model_role': getattr(used, 'value', str(used or 'unknown')),
+                'model_id': getattr(response, 'model_id', 'unknown'),
+                'model_revision': getattr(response, 'model_revision', 'unknown'),
+                'basis': 'last_successful_model_response'}
             last_usage = dict(response.usage)
             for k in cumulative_usage:
                 cumulative_usage[k] += last_usage.get(k, 0)
@@ -219,6 +227,7 @@ class ReasoningLoop:
                         "content": assistant_content,
                     },
                     usage=cumulative_usage,
+                    model_provenance=model_provenance,
                 )
 
             # Tool calls — execute them
@@ -255,6 +264,7 @@ class ReasoningLoop:
                     tool_calls=tool_calls_raw,
                     usage=cumulative_usage,
                     error=f"Tool execution failed: {exc}",
+                    model_provenance=model_provenance,
                 )
 
             # Append tool results to working history
@@ -279,6 +289,7 @@ class ReasoningLoop:
             },
             tool_calls=tool_calls_raw,
             usage=cumulative_usage,
+            model_provenance=model_provenance,
         )
 
     @staticmethod

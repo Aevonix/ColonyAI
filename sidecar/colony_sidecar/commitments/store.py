@@ -496,8 +496,9 @@ class CommitmentStore:
         source_type: str = "manual",
         source_context: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        *, dedupe: bool = False,
     ) -> Dict[str, Any]:
-        """Create a new commitment. Returns the full record."""
+        """Create, optionally reusing the same open obligation under one write lock."""
         commitment_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
@@ -523,6 +524,12 @@ class CommitmentStore:
         with self._lock:
             conn = self._connect()
             try:
+                conn.execute("BEGIN IMMEDIATE")
+                if dedupe:
+                    existing = self._find_open_duplicate(conn, person_id, description)
+                    if existing is not None:
+                        conn.commit()
+                        return {**existing, "deduped": True}
                 conn.execute(
                     """INSERT INTO commitments
                        (id, person_id, description, made_at, due_at, status,
@@ -771,18 +778,32 @@ class CommitmentStore:
             finally:
                 conn.close()
 
-    def find_open_duplicate(
-        self, person_id: str, description: str
-    ) -> Optional[Dict[str, Any]]:
-        """Return an open commitment for this person that already says the
-        same thing (normalized/containment/token-overlap match), or None."""
+    def _find_open_duplicate(self, conn, person_id, description):
         norm = _normalize_desc(description)
         if not norm:
             return None
-        for c in self.get_pending_for_person(person_id):
-            if _similar_desc(norm, _normalize_desc(c.get("description") or "")):
-                return c
+        rows = conn.execute(
+            "SELECT * FROM commitments WHERE person_id=? AND status IN (?,?) ORDER BY made_at DESC",
+            (person_id, *OPEN_STATUSES))
+        for row in rows:
+            if _similar_desc(norm, _normalize_desc(row["description"] or "")):
+                return self._row_to_dict(row)
         return None
+
+    def find_open_duplicate(
+        self, person_id: str, description: str
+    ) -> Optional[Dict[str, Any]]:
+        """Inspect the existing normalized/containment/token-overlap predicate.
+
+        Writers needing deduplication must use create(dedupe=True), which checks
+        and inserts in the same SQLite transaction across independent processes.
+        """
+        with self._lock:
+            conn = self._connect()
+            try:
+                return self._find_open_duplicate(conn, person_id, description)
+            finally:
+                conn.close()
 
     # ------------------------------------------------------------------
     # Resolution: settle an item with a reason the system can learn from

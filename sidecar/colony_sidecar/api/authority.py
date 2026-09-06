@@ -967,6 +967,8 @@ def required_scope(method: str, path: str) -> str:
     """Return the exact scope required for a scoped credential."""
 
     key = (method.upper(), path)
+    if method.upper() == "POST" and path.startswith("/v1/host/commitments/") and path.endswith("/work"):
+        return "turns:write"
     if key in WORK_READ_SURFACE_V1:
         return "work:read"
     if method.upper() == "GET" and path.startswith("/v1/host/memory/sources/assets/"):
@@ -1089,6 +1091,9 @@ def required_scope(method: str, path: str) -> str:
         ("POST", "/v1/host/memory/sources/forget"): "memory:write",
         ("GET", "/v1/host/memory/sources/erasures"): "turns:write",
         ("GET", "/v1/host/memory/sources/claims/status"): "memory:read",
+        ("GET", "/v1/host/preferences"): "context:read",
+        ("GET", "/v1/host/self"): "context:read",
+        ("POST", "/v1/host/preferences/learn"): "memory:write",
         ("POST", "/v1/host/context/assemble"): "context:read",
         ("GET", "/v1/host/executions"): "context:read",
         ("POST", "/v1/host/executions/observe"): "turns:write",

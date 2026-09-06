@@ -2075,7 +2075,11 @@ async def lifespan(app: FastAPI):
         # about how to communicate ("be concise", "use bullets", "no emoji") at
         # high confidence; complements the inferred per-contact EngagementStore.
         from colony_sidecar.intelligence.components.preference_learner import PreferenceLearner
-        preference_learner = PreferenceLearner(db_path=str(state_dir / "colony-preferences.db"))
+        from colony_sidecar.self_model.perspective import SelfPerspective
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        from colony_sidecar.identity import get_owner_contact_id
+        preference_learner = PreferenceLearner(db_path=str(state_dir / "colony-preferences.db"),
+            perspective=SelfPerspective(get_turn_idempotency_ledger(state_dir), owner_id=get_owner_contact_id()))
         set_preference_learner(preference_learner)
         logger.info("PreferenceLearner initialized (db=%s)", state_dir / "colony-preferences.db")
     except Exception as exc:
@@ -2156,6 +2160,7 @@ async def lifespan(app: FastAPI):
                 feedback_store=_fb_for_trust, journal=_journal)
             _sm_for_directed = SelfModel(_competence, registry=_Reg(),
                                          trust=_trust, journal=_journal)
+            _sm_for_directed.perspective = getattr(locals().get('preference_learner'), 'perspective', None)
             set_self_model(_sm_for_directed)
             if _adaptive_params is not None:
                 _adaptive_params.set_journal(_journal)
@@ -4127,6 +4132,8 @@ def create_app() -> FastAPI:
     app.include_router(host_v2_router)
     from colony_sidecar.api.routers import executions as executions_router
     app.include_router(executions_router.router)
+    from colony_sidecar.api.routers import commitment_work as commitment_work_router
+    app.include_router(commitment_work_router.router)
 
     # Exact PUT/GET action endpoint.  Middleware maps these methods to
     # actions:execute/actions:verify; the router independently rejects legacy,

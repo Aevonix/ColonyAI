@@ -32,7 +32,7 @@ fi
 
 mkdir -p "$PLUGIN_DIR"
 chmod 700 "$PLUGIN_DIR"
-for name in __init__.py client.py events.py executions.py slash.py plugin.yaml; do
+for name in __init__.py client.py events.py evidence.py executions.py commitment_work.py slash.py plugin.yaml; do
   cp "$SCRIPT_DIR/$name" "$PLUGIN_DIR/$name"
   chmod 600 "$PLUGIN_DIR/$name"
 done

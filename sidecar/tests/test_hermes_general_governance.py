@@ -359,6 +359,7 @@ def test_catalog_and_attestation_are_exact_and_self_consistent():
     assert value["direct_effect_tool_names"] == []
     assert sorted(
         value["read_tool_names"]
+        + value["coordination_tool_names"]
         + value["action_intent_tool_names"]
         + value["owner_message_intent_tool_names"]
     ) == names
@@ -1353,6 +1354,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     expected_default = [
         schema for schema in module._TOOL_SCHEMAS
         if schema["name"] in module._READ_TOOL_NAMES
+        or schema["name"] == "colony_commitment_work"
         or schema["name"] == "colony_create_commitment"
         or schema["name"] == "colony_send_message"
     ]
@@ -1380,7 +1382,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     }
     message_only_context = _Context(message_only_config)
     module.register(message_only_context)
-    assert list(message_only_context.tools) == ["colony_send_message"]
+    assert list(message_only_context.tools) == ["colony_commitment_work", "colony_send_message"]
     message_only_attestation = module.runtime_governance_attestation(
         message_only_config
     )
@@ -1402,6 +1404,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     subset_context = _Context(subset_config)
     module.register(subset_context)
     assert set(subset_context.tools) == {
+        "colony_commitment_work",
         "colony_create_commitment",
         "colony_list_goals",
         "colony_queue_stats",

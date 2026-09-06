@@ -324,6 +324,8 @@ class TurnIdempotencyLedger:
                 erase_removed(conn, row["turn_id"], row["session_id"], retained)
                 from colony_sidecar.turns.media import erase_removed as erase_media
                 erase_media(conn, row["turn_id"], row["session_id"], retained)
+                from colony_sidecar.self_model.perspective import erase_removed as erase_preferences
+                erase_preferences(conn, row["turn_id"], row["session_id"], retained)
                 affected.append(row["turn_id"])
                 for selected_id in selected:
                     conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (row["turn_id"], selected_id))
