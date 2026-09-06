@@ -11,6 +11,10 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 
 from colony_sidecar.api.routers import host
+from colony_sidecar.contacts.comms import CommsLog
+from colony_sidecar.contacts.config import ContactsConfig
+from colony_sidecar.contacts.store import SQLiteContactStore
+from colony_sidecar.intelligence.relationships.profiler import RelationshipProfiler
 from colony_sidecar.tom.affect import AffectStore
 from colony_sidecar.tom.engagement import EngagementStore, build_guidance
 from colony_sidecar.tom.facts import SharedFactsStore
@@ -49,6 +53,114 @@ async def engagement_brief(client):
     })
     assert response.status_code == 200
     return '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'colony-engagement')
+
+
+@pytest.fixture
+async def approach(relations, monkeypatch, tmp_path):
+    from colony_sidecar.contacts import store as contact_module
+    from colony_sidecar import identity
+    monkeypatch.setattr(contact_module, '_gen_id', lambda prefix: 'contact-a')
+    monkeypatch.setattr(identity, 'get_owner_contact_id', lambda: 'owner')
+    contacts = SQLiteContactStore(config=ContactsConfig(sqlite_path=str(tmp_path / 'contacts.db')))
+    await contacts.connect()
+    await contacts.create(display_name='Neutral contact', trust_tier='regular')
+    for _ in range(6):
+        await contacts.record_interaction('contact-a')
+    log = CommsLog(db_path=str(tmp_path / 'comms.db'))
+    log.log('contact-a', channel='test:thread-a', direction='in')
+    profiler = RelationshipProfiler(contacts_store=contacts, comms_log=log,
+        affect_store=relations.affect, engagement_store=relations.engagement,
+        db_path=str(tmp_path / 'relationships.db'))
+    monkeypatch.setattr(host, '_contacts_store', contacts)
+    monkeypatch.setattr(host, '_relationship_profiler', profiler)
+    relations.profiler, relations.contacts = profiler, contacts
+    yield relations
+    relations.profiler._conn.close()
+    log._conn.close()
+    await contacts.close()
+
+
+async def relationship_context(client):
+    response = await client.post('/v1/host/context/assemble', json={
+        'identity': {'host_id': 'test-host'},
+        'context': {'contact_id': 'contact-a', 'session_id': 'later-session'},
+        'incoming_message': {'role': 'user', 'content': 'neutral query'},
+    })
+    assert response.status_code == 200, response.text
+    return {s['id']: s['body'] for s in response.json()['sections']}
+
+
+@pytest.mark.asyncio
+async def test_cached_approach_forget_reopen_changes_next_ordinary_context(approach, monkeypatch, tmp_path):
+    r = approach
+    r.engagement.update_from_observation('contact-a', style={'warmth': .9}, topics=['independent topic'])
+    async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
+        await ingest(client, r)
+        brief = await r.profiler.profile('contact-a')
+        before = await relationship_context(client)
+        assert 'neutral-source-topic' in before['colony-approach']
+        assert 'mood is negative' in before['colony-approach']
+        cached = json.loads(r.profiler._conn.execute('SELECT brief_json FROM relationship_briefs').fetchone()[0])
+        assert not {'affect_valence', 'affect_trend', 'psyche_guidance', 'psyche_motivators'} & cached.keys()
+        assert 'recent mood is negative; lead carefully' not in cached['cautions']
+        # An actual old-format cache carries copied advice. Its reopened read
+        # must obey erasure even with no new interactions or refresh phase.
+        with r.profiler._conn:
+            r.profiler._conn.execute('UPDATE relationship_briefs SET brief_json=?', (json.dumps(brief.to_dict()),))
+        count = (await r.contacts.get('contact-a')).interaction_count
+        result = await forget(client)
+        assert result['affect_cleanup'] == result['engagement_cleanup'] == 'complete'
+        r.profiler._conn.close()
+        r.profiler = RelationshipProfiler(contacts_store=r.contacts,
+            affect_store=r.affect, engagement_store=r.engagement,
+            db_path=str(tmp_path / 'relationships.db'))
+        monkeypatch.setattr(host, '_relationship_profiler', r.profiler)
+        after = await relationship_context(client)
+        assert 'neutral-source-topic' not in '\n'.join(after.values())
+        assert 'mood is negative' not in after['colony-approach']
+        assert 'independent topic' in after['colony-approach']
+        assert 'mostly via test:thread-a' in after['colony-approach']
+        assert (await r.contacts.get('contact-a')).interaction_count == count
+        assert (await r.profiler.refresh_due())['profiled'] == 0
+
+
+@pytest.mark.asyncio
+async def test_retained_later_observation_changes_cached_approach_without_refresh(approach, monkeypatch):
+    r = approach
+    async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
+        await ingest(client, r)
+        await r.profiler.profile('contact-a')
+        assert 'later-source-topic' not in (await relationship_context(client))['colony-approach']
+        async def changed(*args, **kwargs):
+            return {'topics': ['later-source-topic']}
+        monkeypatch.setattr(r.extractor, 'extract_engagement', changed)
+        await ingest(client, r, turn_id='turn-b', session='session-b')
+        assert (await r.profiler.refresh_due())['profiled'] == 0
+        assert 'later-source-topic' in (await relationship_context(client))['colony-approach']
+        assert r.engagement._conn.execute('SELECT count(*) FROM engagement_observations WHERE source_lineage_json IS NOT NULL').fetchone()[0] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('unavailable', ['missing', 'failed_read'])
+async def test_old_cached_advice_is_omitted_when_current_store_unavailable(approach, unavailable, monkeypatch):
+    r = approach
+    async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
+        await ingest(client, r)
+        brief = await r.profiler.profile('contact-a')
+        brief.cautions.append('no contact in 40 days')
+        with r.profiler._conn:
+            r.profiler._conn.execute('UPDATE relationship_briefs SET brief_json=?', (json.dumps(brief.to_dict()),))
+        if unavailable == 'missing':
+            r.profiler._affect = r.profiler._engagement = None
+        else:
+            def failed(*args, **kwargs):
+                raise OSError('controlled source projection unavailable')
+            monkeypatch.setattr(r.affect, 'get_state', failed)
+            monkeypatch.setattr(r.engagement, 'get_profile', failed)
+        after = (await relationship_context(client))['colony-approach']
+        assert 'neutral-source-topic' not in after and 'mood is negative' not in after
+        assert 'Recent mood:' not in after
+        assert 'mostly via test:thread-a' in after and 'no contact in 40 days' in after
 
 
 @pytest.mark.asyncio
