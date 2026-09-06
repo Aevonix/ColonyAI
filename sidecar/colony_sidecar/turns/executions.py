@@ -157,6 +157,8 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000) -
                           or len(group.get('recent', [])) > 1)
         for row in group.get('items', []) + group.get('recent', [])[:1]:
             item = {'source': source}
+            if type(row.get('available')) is bool:
+                item['available'] = row['available']
             for key in keys:
                 value = row.get(key)
                 if isinstance(value, str):

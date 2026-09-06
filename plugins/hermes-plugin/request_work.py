@@ -19,13 +19,13 @@ _UNAVAILABLE = ('Current shared work is unavailable for this model request. '
 
 
 def _owned_message(row):
-    return (isinstance(row, dict) and row.get('role') == 'system'
+    return (isinstance(row, dict) and row.get('role') in ('system', 'developer')
             and isinstance(row.get('content'), str)
             and row['content'].startswith(_OPEN + '\n')
             and row['content'].endswith('\n' + _CLOSE))
 
 
-def replace_context(request, text=None):
+def replace_context(request, text=None, *, api_mode=''):
     """Replace our request-only block without changing user or tool content."""
     result = dict(request)
     for name in ('messages', 'input'):
@@ -52,8 +52,16 @@ def replace_context(request, text=None):
         result['system'] += ('\n\n' if result['system'] else '') + block
     elif isinstance(result.get('system'), list):
         result['system'].append({'type': 'text', 'text': block})
+    elif api_mode == 'anthropic_messages':
+        # Native Anthropic kwargs omit system entirely when it is empty.
+        result['system'] = block
     elif isinstance(result.get('messages'), list):
-        result['messages'].append({'role': 'system', 'content': block})
+        messages = result['messages']
+        # Hermes has already converted the leading system role for models
+        # that use developer instructions before invoking request middleware.
+        role = ('developer' if messages and isinstance(messages[0], dict)
+                and messages[0].get('role') == 'developer' else 'system')
+        messages.append({'role': role, 'content': block})
     return result
 
 
@@ -61,13 +69,13 @@ class RequestWork:
     def __init__(self, client):
         self.client = client
 
-    def __call__(self, request, scope):
+    def __call__(self, request, scope, *, api_mode=''):
         if (scope is None or not scope.valid_participant
                 or not (scope.authority_lane == 'owner'
                         or (scope.authority_lane == 'system'
                             and scope.resolution_status == 'attested_system'))
                 or scope.platform in ('cron', 'background_review')):
-            return replace_context(request)
+            return replace_context(request, api_mode=api_mode)
         text = _UNAVAILABLE
         deadline = time.monotonic() + .25
         try:
@@ -89,4 +97,4 @@ class RequestWork:
             # A temporary work-service failure must not stall a conversation
             # or advertise the previous request's operational state as fresh.
             pass
-        return replace_context(request, text)
+        return replace_context(request, text, api_mode=api_mode)

@@ -2406,7 +2406,8 @@ def register(ctx: Any) -> None:
             task_id=str(kwargs.get('task_id') or ''),
             turn_id=str(kwargs.get('turn_id') or ''))
         result = request_memory(request, scope)
-        result['request'] = request_work(result['request'], scope)
+        result['request'] = request_work(
+            result['request'], scope, api_mode=str(kwargs.get('api_mode') or ''))
         return result
 
     def commitment_work_handler(args=None, **kwargs):

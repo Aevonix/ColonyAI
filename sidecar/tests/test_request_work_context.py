@@ -85,6 +85,34 @@ def test_explicit_local_owner_attestation_is_supported(module):
     assert 'A neutral task is running.' in json.dumps(result)
 
 
+def test_empty_native_anthropic_system_uses_top_level_slot(module):
+    original = {'model': 'fixture/model', 'max_tokens': 100,
+                'messages': [{'role': 'user', 'content': 'Continue.'}]}
+    before = copy.deepcopy(original)
+    refresh = module.RequestWork(SimpleNamespace(get=lambda *a, **k: response()))
+    result = refresh(original, scope(), api_mode='anthropic_messages')
+    assert result['messages'] == before['messages']
+    assert result['system'].startswith('[colony-work-request-v1]\n')
+    assert all(row['role'] != 'system' for row in result['messages'])
+    assert original == before
+    again = refresh(result, scope(), api_mode='anthropic_messages')
+    assert json.dumps(again).count('[colony-work-request-v1]') == 1
+
+
+def test_native_chat_developer_role_is_preserved_and_replaceable(module):
+    original = {'messages': [{'role': 'developer', 'content': 'Stable identity'},
+                             {'role': 'user', 'content': 'Continue.'}]}
+    before = copy.deepcopy(original)
+    refresh = module.RequestWork(SimpleNamespace(get=lambda *a, **k: response()))
+    first = refresh(original, scope(), api_mode='chat_completions')
+    second = refresh(first, scope(), api_mode='chat_completions')
+    assert second['messages'][-1]['role'] == 'developer'
+    assert all(row['role'] != 'system' for row in second['messages'])
+    assert json.dumps(second).count('[colony-work-request-v1]') == 1
+    assert module.replace_context(second) == before
+    assert original == before
+
+
 @pytest.mark.parametrize('failure', ['offline', 'late', 'oversized', 'wrong_schema'])
 def test_no_previous_request_is_advertised_as_fresh_after_failure(module, monkeypatch, failure):
     clock = [0.0]
@@ -118,11 +146,15 @@ def test_projection_retains_operational_evidence_without_task_or_draft_prose():
         'native_cron': {'available': False, 'items': []},
         'reported_worker': {'available': True, 'items': [
             {'label': 'Download', 'state': 'running', 'freshness': 'recent', 'pid': 123,
-             'liveness': 'unverified', 'age_seconds': 2.5, 'path': '/private/status'}]}}
+             'liveness': 'unverified', 'age_seconds': 2.5, 'path': '/private/status'},
+            {'label': 'Offline reporter', 'available': False, 'liveness': 'unverified'}]}}
     result = request_work_context(view)
     text = result['text']
     assert 'completed-1' in text and report_hash in text
     assert 'Download' in text and 'unverified' in text
+    offline = next(json.loads(line) for line in text.splitlines()
+                   if line.startswith('{') and 'Offline reporter' in line)
+    assert offline['available'] is False
     assert 'Unavailable sources: native_cron' in text
     assert result['truncated'] is True and 'Additional operational records omitted' in text
     assert 'Private' not in text and '/private' not in text and '"pid"' not in text
