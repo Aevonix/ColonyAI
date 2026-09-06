@@ -65,12 +65,29 @@ class SourceLinkedStore:
                 and current['message_hashes'] == lineage['message_hashes'])
 
     def _invalid_sources(self, rows, turn_ids=None):
-        invalid = []
+        """Read one canonical snapshot, not a new connection per observation."""
+        from contextlib import closing
+        from colony_sidecar.turns.idempotency import source_message_hash
         selected = set(turn_ids) if turn_ids is not None else None
+        candidates = []
         for row in rows:
             lineage = json.loads(row['source_lineage_json'])
-            if selected is not None and lineage['turn_id'] not in selected:
-                continue
-            if not self._source_visible(row['contact_id'], lineage):
-                invalid.append(row)
-        return invalid
+            if selected is None or lineage['turn_id'] in selected:
+                candidates.append((row, lineage))
+        if not candidates:
+            return []
+        ids = list(dict.fromkeys(lineage['turn_id'] for _, lineage in candidates))
+        current = {}
+        with closing(self._ledger()._connect()) as conn:
+            conn.execute('BEGIN')
+            for start in range(0, len(ids), 400):
+                batch = ids[start:start + 400]
+                sql = ("SELECT turn_id,contact_id,session_id,messages_json FROM turn_sources s "
+                       "WHERE scope='person' AND turn_id IN (" + ','.join('?' for _ in batch) + ") "
+                       "AND NOT EXISTS (SELECT 1 FROM source_projection_erasures e WHERE e.turn_id=s.turn_id)")
+                for source in conn.execute(sql, batch):
+                    current[source['turn_id']] = (source['contact_id'], source['session_id'],
+                        [source_message_hash(source['session_id'], m) for m in json.loads(source['messages_json'])])
+        return [row for row, lineage in candidates
+                if current.get(lineage['turn_id']) !=
+                (row['contact_id'], lineage['session_id'], lineage['message_hashes'])]

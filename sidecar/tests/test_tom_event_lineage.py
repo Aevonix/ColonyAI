@@ -176,3 +176,32 @@ def test_cleanup_and_recomputation_are_atomic_and_read_retries(tmp_path, monkeyp
         assert store._conn.execute('SELECT count(*) FROM '+table).fetchone()[0] == 0
     finally:
         store._conn.close(); facts.close()
+
+
+def test_batched_reads_check_all_sources_with_one_canonical_connection(tmp_path, monkeypatch):
+    ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
+    facts = SharedFactsStore(tmp_path / 'facts.db', source_ledger=ledger)
+    affect = AffectStore(tmp_path / 'affect.db', source_ledger=ledger)
+    events = []
+    for index in range(405):
+        turn = f'event-{index}'
+        lineage = source(ledger, facts, turn)
+        if index == 201:
+            lineage['message_hashes'] = ['incorrect-old-writer-hash']
+        events.append((turn, 'person', .2, .3, 'inferred', 'neutral trigger', '2026-09-01T00:00:00+00:00', turn, json.dumps(lineage)))
+    with affect._conn:
+        affect._conn.executemany('INSERT INTO affect_events(id,contact_id,valence,arousal,source,trigger,timestamp,session_id,source_lineage_json) VALUES(?,?,?,?,?,?,?,?,?)', events)
+        affect._recompute_state('person', commit=False)
+    ledger.erase_sources(contact_id='person', turn_ids=['event-0', 'event-404'])
+    opened, connect = [], ledger._connect
+    def tracked():
+        opened.append(True)
+        return connect()
+    monkeypatch.setattr(ledger, '_connect', tracked)
+    try:
+        state = affect.get_state('person')
+        assert len(opened) == 1
+        assert state['event_count'] == 402
+        assert affect._conn.execute("SELECT count(*) FROM affect_events WHERE id IN ('event-0','event-201','event-404')").fetchone()[0] == 0
+    finally:
+        affect.close(); facts.close()

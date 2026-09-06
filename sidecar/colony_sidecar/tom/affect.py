@@ -135,7 +135,10 @@ class AffectStore(SourceLinkedStore):
         return event
 
     def get_event(self, event_id: str) -> Optional[Dict[str, Any]]:
-        self.purge_erased_sources()
+        owner = self._conn.execute('SELECT contact_id FROM affect_events WHERE id=?', (event_id,)).fetchone()
+        if owner is None:
+            return None
+        self.purge_erased_sources(contact_id=owner['contact_id'])
         row = self._conn.execute(
             "SELECT * FROM affect_events WHERE id = ?", (event_id,)
         ).fetchone()

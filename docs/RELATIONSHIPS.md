@@ -214,3 +214,11 @@ This is source-aware retention, not proof that an inferred trait or note is
 correct. Raw source retention, learned assertions and inferred relationship
 state remain distinct. Existing attribution and authority rules still govern
 which conversations can update these stores.
+
+
+If code is rolled back to a writer that only understands the old engagement
+aggregate, its subsequent aggregate edits have no observation lineage. The
+new reader does not relabel that cache as a new baseline on upgrade; replay of
+retained observations can supersede such rollback-era cache edits. Restore or
+explicitly reconcile those independent edits before treating them as retained
+observations. This limitation is not a source-deletion claim about old data.
