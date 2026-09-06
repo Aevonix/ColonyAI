@@ -958,7 +958,7 @@ def compatible_scopes(method: str, path: str) -> frozenset[str]:
     this route-local alias.
     """
 
-    if (method.upper(), path) in WORK_READ_SURFACE_V1:
+    if (method.upper(), path) in WORK_READ_SURFACE_V1 or (method.upper(), path) == ("POST", "/v1/host/learning/correction"):
         return _API_ACCESS_COMPATIBILITY
     return _NO_COMPATIBILITY_SCOPES
 

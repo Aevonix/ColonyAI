@@ -48,6 +48,18 @@ dependent correction text too while preserving value-free withdrawal records.
 The latest ten processing records are exposed under `judgment_processing`,
 including fixed local validation codes without raw provider responses.
 
+The native `colony_judgments` tool exposes inspection and these controls during
+an ordinary owner conversation. It returns the latest ten views/control records
+with truncation flags; its model arguments contain only the operation, exact
+judgment ID and (for reconsideration) retained source ID. Identity and the
+correction instruction come from the transport-bound owner turn. The instruction
+is retained as an excerpt of up to 1,500 characters. A current turn's source can
+be selected after normal source capture; the tool does not fabricate a source
+to satisfy reconsideration. Scheduled, subagent and internal review turns cannot
+perform owner controls. A built-wheel native fixture exercises actual owner
+conversation tool dispatch over HTTP, guest/scheduled denial and subsequent
+reflection using controlled inference, without adding canonical sources.
+
 The projection and processing records use the canonical source SQLite database.
 Only new attributed owner sources eligible for ordinary claim derivation enqueue
 reflection; historical imports and session-scoped transcript checkpoints do not.
