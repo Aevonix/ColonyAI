@@ -15,7 +15,7 @@ python -m build
 Install the resulting wheel with the Python interpreter that runs Hermes:
 
 ```sh
-python -m pip install dist/colony_hermes-0.1.0-py3-none-any.whl
+python -m pip install dist/colony_hermes-1.0.0-py3-none-any.whl
 ```
 
 The wheel exposes `colony` through `hermes_agent.plugins` and `colony-memory`

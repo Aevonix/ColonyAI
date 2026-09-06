@@ -1,10 +1,11 @@
 name: colony
-version: 0.4.1
+version: 1.0.0
 description: |
-  Governed Colony sidecar adapter for Hermes: transport-attested private reads,
-  immutable mediator-only HermesToolActionIntentV1 effects, one durable exact
-  turn outbox, and text ResponseGuard through transform_llm_output. No voice path, shared event
-  cache, cron autonomy, direct worker, or Hermes core patch is included.
+  Native Hermes adapter for participant-scoped tools, durable turn capture,
+  shared execution observations and native post-turn review. Preserves scope
+  through delegated work and configured cron turns, reconciles forgotten sources
+  before model requests, and integrates evaluated skill proposals with native
+  apply and rollback.
 author: Aevonix
 entry_point: __init__.py
 category: general

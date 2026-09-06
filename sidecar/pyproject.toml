@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "colonyai"
-version = "0.34.0"
+version = "1.0.0"
 description = "Colony intelligence sidecar — harness-agnostic cognition server"
 readme = "README.md"
 license = "MIT"
@@ -27,7 +27,7 @@ dependencies = [
 graph = ["neo4j>=5.18"]
 neo4j = ["neo4j>=5.18"]
 vectors = ["sentence-transformers>=3.0", "pandas>=2.0", "pyarrow>=15.0", "lancedb>=0.10"]
-hermes = ["colony-hermes>=0.1.0,<0.2"]
+hermes = ["colony-hermes>=1.0.0,<2"]
 mcp = ["mcp[cli]>=1.0,<2"]
 lancedb = ["lancedb>=0.6", "pyarrow>=14.0"]
 postgres = ["asyncpg>=0.29"]
