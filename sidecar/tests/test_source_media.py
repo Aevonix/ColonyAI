@@ -46,6 +46,41 @@ class Vision:
 
 
 @pytest.mark.asyncio
+async def test_media_http_reads_require_memory_scope_and_bound_person(source_app, tmp_path):
+    from colony_sidecar.api.middleware import ApiKeyMiddleware
+    from test_scoped_api_authority import _principal, _write_keyring
+    principals = [
+        _principal(principal='reader', secret='reader-key', viewer='contact-a', scopes=['memory:read']),
+        _principal(principal='context', secret='context-key', viewer='contact-a', scopes=['context:read']),
+        _principal(principal='other', secret='other-key', viewer='contact-b', scopes=['memory:read']),
+    ]
+    for principal in principals:
+        principal['allow_unscoped_api'] = False
+    keyring = tmp_path / 'keys.json'; _write_keyring(keyring, principals)
+    source_app.add_middleware(ApiKeyMiddleware, api_key=None, keyring_path=str(keyring))
+    ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
+    ledger.record_source('image', contact_id='contact-a', session_id='s', messages=[message()])
+    asset = hashlib.sha256(image_bytes()).hexdigest()
+    routes = [('/v1/host/memory/sources/assets/' + asset, {'session_id': 'later'}),
+              ('/v1/host/memory/sources/claims/status', {})]
+    async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
+        for path, params in routes:
+            params = {**params, 'contact_id': 'contact-a'}
+            assert (await client.get(path, params=params)).status_code == 401
+            denied = await client.get(path, params=params, headers={'Authorization': 'Bearer context-key'})
+            assert denied.status_code == 403
+            allowed = await client.get(path, params=params, headers={'Authorization': 'Bearer reader-key'})
+            assert allowed.status_code == 200, allowed.text
+            if '/assets/' in path:
+                assert allowed.content == image_bytes()
+            impersonated = await client.get(path, params=params, headers={'Authorization': 'Bearer other-key'})
+            assert impersonated.status_code == 403
+        absent = await client.get(routes[0][0], params={'contact_id': 'contact-b', 'session_id': 's'},
+                                  headers={'Authorization': 'Bearer other-key'})
+        assert absent.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_inline_image_retained_exactly_and_recalled_across_sessions(source_app, tmp_path, monkeypatch):
     data = image_bytes(); original = message(data); asset = hashlib.sha256(data).hexdigest()
     body = {'identity': {'host_id': 'test'}, 'context': {'session_id': 's1', 'contact_id': 'contact-a', 'turn_id': 'image-a', 'channel_id': 'test:a'}, 'user_message': original}
