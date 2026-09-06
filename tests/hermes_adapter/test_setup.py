@@ -68,7 +68,7 @@ agent.close()
 '''
 
 
-def _native_interpreter(tmp_path, wheel, installed_adapter):
+def _native_interpreter(tmp_path, wheel, adapter_installation):
     """Reuse qualified dependencies while controlling actual adapter metadata.
 
     The native subprocess gets a real fresh venv. Symlink dependencies instead
@@ -81,17 +81,21 @@ def _native_interpreter(tmp_path, wheel, installed_adapter):
         if 'colony_hermes' in source.name or source.name in {'colony_memory', '__pycache__'}:
             continue
         (site/source.name).symlink_to(source, target_is_directory=source.is_dir())
-    if installed_adapter:
+    if adapter_installation == 'wheel':
         run_python('-m', 'pip', 'install', '--no-index', '--no-deps', '--target', site, wheel, cwd=tmp_path)
+    elif adapter_installation == 'editable':
+        run_python('-m', 'pip', 'install', '--no-index', '--no-deps', '--no-build-isolation',
+            '--target', site, '-e', ROOT, cwd=tmp_path)
     return target/'bin'/'python'
 
 
-@pytest.mark.parametrize('installed_adapter', [False, True], ids=['separate-interpreter', 'installed-native-entrypoints'])
-def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(artifacts, tmp_path, installed_adapter):
+@pytest.mark.parametrize('adapter_installation', ['absent', 'wheel', 'editable'])
+def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(artifacts, tmp_path, adapter_installation):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Requires qualified native Hermes')
     output, wheel, _, installed = artifacts
-    native_python = _native_interpreter(tmp_path, wheel, installed_adapter)
+    installed_adapter = adapter_installation != 'absent'
+    native_python = _native_interpreter(tmp_path, wheel, adapter_installation)
     def run_native(*args, **kwargs):
         result = subprocess.run([str(native_python), *map(str, args)], text=True, capture_output=True, timeout=120, **kwargs)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -143,6 +147,9 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
         assert manifest['adapter_binding']['mode'] == ('native-installed' if installed_adapter else 'private-directory')
         assert (home/'plugins'/'colony').exists() is not installed_adapter
         assert (home/'plugins'/'colony-memory').exists() is not installed_adapter
+        if adapter_installation == 'editable':
+            assert set(manifest['adapter_binding']['external_modules']) == {
+                'colony_hermes.colony_hostworker.catalog', 'colony_hermes.colony_hostworker.contract'}
         log_path = tmp_path/'sidecar.log'
         with log_path.open('w') as log:
             server = subprocess.Popen([sys.executable, '-I', '-c', SERVER, str(installed), dependency_path],
@@ -176,7 +183,7 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
                    if body.get('stream') for message in body.get('messages', []) if message.get('role') == 'system')
         assert not (home/'colony'/'lancedb').exists()
         assert (home/'colony'/'contacts.db').exists()
-        if installed_adapter:
+        if adapter_installation == 'wheel':
             # A same-version installed package with different code must not be
             # silently selected over the requested artifact on another attach.
             client = Path(manifest['adapter_binding']['sources']['colony_hermes'])/'client.py'

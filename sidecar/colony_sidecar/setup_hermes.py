@@ -114,7 +114,7 @@ if not any(selected):
     sys.exit(0)
 if not all(selected):
     raise ValueError('Both canonical native Colony entry points are required')
-sources, versions = {}, set()
+sources, external_modules, versions = {}, {}, set()
 for ep in selected:
     module = ep.value
     spec = importlib.util.find_spec(module)
@@ -124,16 +124,27 @@ for ep in selected:
     sources[module] = str(root)
     versions.add(ep.dist.version)
     names = {name for name in expected if name.startswith(module+'/')}
-    actual_python = {module+'/'+str(path.relative_to(root)) for path in root.rglob('*.py')}
-    if actual_python != {name for name in names if name.endswith('.py')}:
-        raise ValueError('Installed adapter Python files differ from the selected artifact')
-    for name in names:
+    # Editable installs include source-only ops/examples and resolve the two
+    # shared catalog modules through the existing hostworker namespace bridge.
+    # Verify every packaged module at the path Python will actually import.
+    for name in sorted(names):
         path = root/name.split('/', 1)[1]
+        if name.endswith('.py'):
+            qualified = name[:-3].replace('/', '.')
+            if qualified.endswith('.__init__'):
+                qualified = qualified[:-9]
+            resolved = importlib.util.find_spec(qualified)
+            if resolved is None or not resolved.origin:
+                raise ValueError('Installed adapter module cannot be resolved')
+            path = Path(resolved.origin).resolve()
+            if not path.is_relative_to(root):
+                external_modules[qualified] = str(path)
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected[name]:
             raise ValueError('Installed adapter bytes differ from the selected artifact')
 if len(versions) != 1:
     raise ValueError('Installed adapter entry-point versions disagree')
-print(json.dumps({'mode': 'native-installed', 'version': versions.pop(), 'sources': sources}))
+print(json.dumps({'mode': 'native-installed', 'version': versions.pop(),
+    'sources': sources, 'external_modules': external_modules}))
 '''], input=json.dumps(expected), capture_output=True, text=True, timeout=30)
     if probe.returncode:
         raise ValueError('Hermes has an incomplete or different installed Colony adapter; select its matching artifact, upgrade that package explicitly, or use a separate Hermes interpreter')
