@@ -20,11 +20,11 @@ INSTALL = r'''
 import sys
 sys.path.insert(0, sys.argv[1])
 if sys.argv[2]: sys.path.append(sys.argv[2])
-from colony_sidecar.cli import main
+import runpy
 sys.argv = ['colony', 'init', '--non-interactive', '--hermes-python', sys.argv[7],
     '--hermes-home', sys.argv[3], '--adapter-wheel', sys.argv[4], '--agent-name', 'Orion',
     '--contact-name', 'Fixture Owner', '--model-url', sys.argv[5], '--model', 'fixture', '--port', sys.argv[6]]
-main()
+runpy.run_module('colony_sidecar', run_name='__main__')
 '''
 SERVER = r'''
 import sys, importlib.abc
@@ -35,9 +35,9 @@ class NoOptionalPackages(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] in {'neo4j','torch','sentence_transformers','lancedb','pyarrow','pandas'}:
             raise ImportError('Optional package absent in clean local qualification')
 sys.meta_path.insert(0, NoOptionalPackages())
-from colony_sidecar.cli import main
+import runpy
 sys.argv = ['colony', 'start']  # Discover the same instance from HERMES_HOME.
-main()
+runpy.run_module('colony_sidecar', run_name='__main__')
 '''
 TURN = r'''
 import sys, json, inspect
