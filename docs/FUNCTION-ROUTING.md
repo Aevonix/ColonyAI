@@ -7,6 +7,13 @@ see updates. An active request retains its old model, endpoint, credentials,
 capabilities and fallback order until that request finishes. A later request
 uses the new configuration.
 
+Successful responses include `prior_attempts`: earlier binding/model names,
+`failed` versus `skipped` status, and exception class or cooling-down reason.
+Endpoint addresses, credentials and exception messages are omitted. Ineligible
+candidates are not attempted and do not appear as failures. The returned model
+and binding remain the actual processor; returning a fallback alone does not
+prove that every earlier configured candidate was attempted.
+
 This packet covers OpenAI-compatible chat completions for `chat`, `reasoning`,
 `planning`, `extraction`, `judging`, `vision` and `coding`. It does not replace
 Hermes's primary conversation routing, voice/STT/TTS transports, embeddings or

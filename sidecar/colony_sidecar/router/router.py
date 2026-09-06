@@ -65,6 +65,7 @@ class LLMResponse:
     config_revision: str = ""
     model_revision: str = "unknown"
     binding: str = ""
+    prior_attempts: list[dict[str, str]] = field(default_factory=list)
 
 
 class LLMRouter:
@@ -382,6 +383,7 @@ class LLMRouter:
         role = snapshot.roles[role_name]
         deadline = time.monotonic() + role.deadline_seconds
         failures = []
+        prior_attempts = []
         seen = set()
         for binding in available:
             cfg = binding.config
@@ -397,6 +399,8 @@ class LLMRouter:
             if remaining <= 0: break
             if not self._endpoints.acquire(snapshot, binding, request_id):
                 failures.append('EndpointCoolingDown')
+                prior_attempts.append({'binding': binding.name, 'model': cfg.model_id,
+                                       'status': 'skipped', 'reason': 'EndpointCoolingDown'})
                 continue
             try:
                 async def complete_on_address(pinned_ip):
@@ -410,6 +414,7 @@ class LLMRouter:
                 response.config_revision = snapshot.revision
                 response.model_revision = binding.weight_revision
                 response.binding = binding.name
+                response.prior_attempts = list(prior_attempts)
                 self._endpoints.success(snapshot, binding, response)
                 self._recent_calls.append({'request_id': request_id, 'function_role': role_name,
                     'model_id': cfg.model_id, 'binding': binding.name, 'config_revision': snapshot.revision,
@@ -418,6 +423,8 @@ class LLMRouter:
                 return response
             except Exception as exc:
                 failures.append(type(exc).__name__)
+                prior_attempts.append({'binding': binding.name, 'model': cfg.model_id,
+                                       'status': 'failed', 'reason': type(exc).__name__})
                 if not _retryable(exc):
                     break
                 # An oversized request may use a larger candidate, but says
