@@ -1087,6 +1087,8 @@ def required_scope(method: str, path: str) -> str:
         ("POST", "/v1/host/memory/sources/forget"): "memory:write",
         ("GET", "/v1/host/memory/sources/erasures"): "turns:write",
         ("POST", "/v1/host/context/assemble"): "context:read",
+        ("GET", "/v1/host/executions"): "context:read",
+        ("POST", "/v1/host/executions/observe"): "turns:write",
         ("GET", "/v1/host/context/projection-readiness"): "context:read",
         ("POST", "/v1/host/context/enriched"): "context:read",
         ("GET", "/v1/host/context/temporal"): "context:read",

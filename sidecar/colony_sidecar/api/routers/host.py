@@ -2571,6 +2571,22 @@ async def context_assemble(
         except Exception as exc:
             logger.warning("context_assemble skills failed: %s", exc)
 
+    # --- Scoped execution observations (not a commitment lock) ---
+    try:
+        from colony_sidecar.api.routers.executions import authorized_viewer
+        from colony_sidecar.turns.executions import registry, format_view
+        person, owner = authorized_viewer(request, body.context.contact_id, scope="context:read")
+        # Public/guest turns do not get cross-session activity. The owner view
+        # is sealed from existing exact person grants, never a body owner flag.
+        if owner:
+            work = registry().view(contact_id=person, owner=True, limit=8)
+            if work["items"]:
+                sections.append(ContextSection(id="colony-executions", title="Observed current work", body=format_view(work), priority=73))
+    except HTTPException:
+        pass
+    except Exception:
+        logger.debug("execution observation view unavailable", exc_info=True)
+
     # --- Pending Commitments ---
     contact_id = body.context.contact_id if body.context else None
     if _exact_person_allowed and _commitment_store is not None:

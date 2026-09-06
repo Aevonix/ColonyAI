@@ -157,3 +157,44 @@ distribution, install the wheel outside the checkout, and exercise the actual
 Hermes general and memory loaders. Native-loader tests require Hermes and
 are explicitly skipped when it is absent. No live sidecar, model endpoint,
 production profile, or channel is contacted.
+
+## Shared execution observations
+
+On the qualified Hermes v0.21.0 release (`v2026.8.31`, commit
+`29112bef0992`), set `plugins.colony.execution_registry_enabled: true` to
+publish native turn, API, tool and delegated-child lifecycle observations.
+This is opt-in for existing installations. The adapter credential must already
+have scoped `turns:write` and exact person grants; `context:read` grants access
+to the corresponding view. The legacy global bearer does not attest identities
+for this new surface. To observe trusted agent cron fires, include `cron` in
+the existing `attested_system_platforms` configuration; it is not enabled by
+the adapter's default `cli` binding. No network call is made during registration.
+
+Colony stores only execution IDs, participant/session linkage, channel, phase,
+tool name and observation times in the existing `turn-idempotency.db`. It does
+not copy prompts, tool arguments/results or task descriptions. Each hook has a
+400 ms network deadline and failures do not stop a turn. Ordinary use supplies
+new observations at API/tool boundaries; there is no heartbeat thread. After
+120 seconds without an observation, liveness is **unknown**, including during
+a long model response. A terminal native turn event closes its observation;
+late events cannot reopen it. Metadata older than seven days is hidden from
+the view and removed during subsequent observation writes.
+
+`GET /v1/host/executions?contact_id=<bound-person>&session_id=<session>` returns
+the scoped view with age, coverage and truncation fields. The owner, identified
+by server configuration and an existing exact person grant, can see registered
+turns across sessions. Other people can see only their own selected session;
+public/guest turns receive no automatic registry injection. The owner's normal
+context assembly includes up to eight observations when present.
+
+The native `subagent_start` event binds each executing child to the exact
+observed parent turn. Child observations inherit that participant and cannot
+broaden it. This does not change Hermes toolsets, approval rules or capability
+grants. No model argument selects the writer or owner role.
+
+This packet observes running Hermes turns, including agent cron fires and
+executing subagents. It does not yet cover queued children, script-only cron
+jobs, Colony queue workers, external coding processes or every hardware service.
+It also does not enforce atomic conversational commitments. Existing person
+commitments remain a separate store; seeing concurrent work is a prerequisite
+for coordination, not a guarantee that promises cannot conflict.
