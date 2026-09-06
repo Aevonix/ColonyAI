@@ -289,7 +289,8 @@ def discover_openai_compatible_models(base_url: str, api_key: str = "") -> list[
     """
     import urllib.request
 
-    url = base_url.rstrip("/") + "/v1/models"
+    from .endpoints import models_url
+    url = models_url(base_url)
     req = urllib.request.Request(url, method="GET")
     if api_key:
         req.add_header("Authorization", f"Bearer {api_key}")

@@ -85,6 +85,8 @@ class LLMRouter:
         self._config_lock = threading.RLock()
         self._reload_error = None
         self._recent_calls = deque(maxlen=20)
+        from .endpoints import EndpointRuntime
+        self._endpoints = EndpointRuntime()
         self._scorer = scorer or ComplexityScorer()
         self._fallback = fallback_handler or FallbackHandler()
         self._bus = event_bus
@@ -151,8 +153,70 @@ class LLMRouter:
 
     def routing_status(self):
         self._reload()
-        status = self._snapshot.status() if self._snapshot else {'config_revision': None, 'roles': {}}
+        snapshot = self._snapshot
+        status = snapshot.status() if snapshot else {'config_revision': None, 'roles': {}}
+        if snapshot:
+            status.update(self._endpoints.status(snapshot))
         return {**status, 'reload_error': self._reload_error, 'recent_calls': list(self._recent_calls)}
+
+    async def discover_models(self):
+        """Observe configured pool endpoints without changing their declarations."""
+        self._reload()
+        snapshot = self._snapshot
+        if snapshot is None:
+            return None
+        await self._endpoints.refresh(snapshot, self._probe_models)
+        status = {**snapshot.status(), **self._endpoints.status(snapshot),
+                  'reload_error': self._reload_error, 'recent_calls': list(self._recent_calls)}
+        models = {}
+        for item in status['model_inventory']:
+            if item['available'] and not item['stale']:
+                for model in item['models']:
+                    models.setdefault(model['id'], model)
+        return {'models': list(models.values()), 'routing': status}
+
+    async def _local_address(self, snapshot, binding, timeout=2):
+        from .functions import endpoint_host
+        host = endpoint_host(binding, snapshot)
+        if host is None:
+            return None
+        try:
+            ipaddress.ip_address(host)
+            return host
+        except ValueError:
+            addresses = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(
+                host, None, type=socket.SOCK_STREAM), timeout)
+            if not addresses or any(not any(ipaddress.ip_address(item[4][0]) in net
+                    for net in snapshot.networks) for item in addresses):
+                return None
+            return addresses[0][4][0]
+
+    async def _probe_models(self, snapshot, binding):
+        from .endpoints import models_url
+        pinned = await self._local_address(snapshot, binding)
+        if pinned is None:
+            raise ValueError('Endpoint is not in the configured local pool')
+        headers = {'Authorization': 'Bearer '+binding.config.api_key} if binding.config.api_key else {}
+        async with _local_http_client(binding.config, pinned) as client:
+            async with client.stream('GET', models_url(binding.config.base_url), headers=headers) as response:
+                response.raise_for_status()
+                data = bytearray()
+                async for chunk in response.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > 262144:
+                        raise ValueError('Model listing is too large')
+        rows = json.loads(data).get('data')
+        if not isinstance(rows, list) or len(rows) > 256:
+            raise ValueError('Expected a bounded model listing')
+        models = []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get('id'), str) or not 1 <= len(row['id']) <= 256:
+                continue
+            context = row.get('max_model_len')
+            models.append({'id': row['id'],
+                'owned_by': row.get('owned_by')[:128] if isinstance(row.get('owned_by'), str) else None,
+                'advertised_context_tokens': context if type(context) is int and 0 < context <= 10**9 else None})
+        return models
 
     # ------------------------------------------------------------------
     # Public API
@@ -268,7 +332,7 @@ class LLMRouter:
         return eligible[0].config
 
     async def _call_function(self, snapshot, messages, context, tools, force_tier, stream, request_id):
-        from .functions import TASK_ROLES, candidates, endpoint_host
+        from .functions import TASK_ROLES, candidates
         role_name = context.get('function_role') or TASK_ROLES.get(context.get('task'), 'reasoning')
         if force_tier == ModelTier.VISION:
             role_name = 'vision'
@@ -306,19 +370,13 @@ class LLMRouter:
             seen.add(endpoint_key)
             remaining = deadline - time.monotonic()
             if remaining <= 0: break
+            if not self._endpoints.acquire(snapshot, binding, request_id):
+                failures.append('EndpointCoolingDown')
+                continue
             try:
-                host = endpoint_host(binding, snapshot)
-                pinned_ip = host
-                try:
-                    ipaddress.ip_address(host)
-                except ValueError:
-                    # Hostnames must be declared and every address must be in
-                    # deployment networks. A friendly name alone is no proof.
-                    addresses = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(
-                        host, None, type=socket.SOCK_STREAM), min(2, remaining))
-                    if not addresses or any(not any(ipaddress.ip_address(item[4][0]) in net for net in snapshot.networks) for item in addresses):
-                        continue
-                    pinned_ip = addresses[0][4][0]
+                pinned_ip = await self._local_address(snapshot, binding, min(2, remaining))
+                if pinned_ip is None:
+                    continue
                 response = await asyncio.wait_for(self._litellm_call(
                     request_id=request_id, config=cfg, messages=messages, tools=tools,
                     stream=False, max_output_tokens=context.get('max_output_tokens', context.get('max_tokens')), local_endpoint=True,
@@ -328,6 +386,7 @@ class LLMRouter:
                 response.config_revision = snapshot.revision
                 response.model_revision = binding.weight_revision
                 response.binding = binding.name
+                self._endpoints.success(snapshot, binding, response)
                 self._recent_calls.append({'request_id': request_id, 'function_role': role_name,
                     'model_id': cfg.model_id, 'binding': binding.name, 'config_revision': snapshot.revision,
                     'weight_revision': binding.weight_revision, 'latency_ms': response.latency_ms})
@@ -337,6 +396,9 @@ class LLMRouter:
                 failures.append(type(exc).__name__)
                 if not _retryable(exc):
                     break
+                self._endpoints.failure(snapshot, binding, exc)
+            finally:
+                self._endpoints.release(snapshot, binding, request_id)
         raise RuntimeError('No eligible local model completed function ' + role_name +
                            '; attempts=' + ','.join(failures))
 
@@ -469,19 +531,8 @@ class LLMRouter:
         if local_endpoint:
             # Prevent environment proxy/credential inheritance and HTTP
             # redirects from turning a local fallback into a remote request.
-            import httpx
             from openai import AsyncOpenAI
-            from urllib.parse import urlsplit
-            origin = urlsplit(config.base_url)
-            async def pin_request(request):
-                if request.url.host != origin.hostname:
-                    raise ValueError('Unexpected model request host')
-                if pinned_ip:
-                    request.headers['Host'] = origin.netloc
-                    request.extensions['sni_hostname'] = origin.hostname
-                    request.url = request.url.copy_with(host=pinned_ip)
-            async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
-                                         event_hooks={'request': [pin_request]}) as http_client:
+            async with _local_http_client(config, pinned_ip) as http_client:
                 async with AsyncOpenAI(base_url=config.base_url, api_key=config.api_key or 'local-no-key',
                                        max_retries=0, http_client=http_client) as client:
                     raw = await litellm.acompletion(**kwargs, client=client, num_retries=0)
@@ -568,12 +619,28 @@ def _estimate_cost(config: TierConfig, usage: dict[str, int]) -> float:
     return round(input_cost + output_cost, 8)
 
 
+def _local_http_client(config, pinned_ip):
+    """The same explicit local transport for completion and model observation."""
+    import httpx
+    from urllib.parse import urlsplit
+    origin = urlsplit(config.base_url)
+    async def pin_request(request):
+        if request.url.host != origin.hostname:
+            raise ValueError('Unexpected model request host')
+        if pinned_ip:
+            request.headers['Host'] = origin.netloc
+            request.extensions['sni_hostname'] = origin.hostname
+            request.url = request.url.copy_with(host=pinned_ip)
+    return httpx.AsyncClient(trust_env=False, follow_redirects=False,
+                             event_hooks={'request': [pin_request]})
+
+
 def _retryable(exc):
     """Finite same-role failover, never arbitrary validation/auth retries."""
     if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
         return True
     status = getattr(exc, 'status_code', None)
-    if status in {408, 429, 500, 502, 503, 504}:
+    if status in {404, 408, 429, 500, 502, 503, 504}:
         return True
     name = type(exc).__name__.lower()
     return any(word in name for word in ('timeout', 'connection', 'ratelimit', 'contextwindow'))

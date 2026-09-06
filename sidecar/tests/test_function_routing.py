@@ -14,17 +14,25 @@ from colony_sidecar.router.router import LLMRouter
 
 
 @contextmanager
-def endpoint(*, status=200, delay=0, started=None, release=None, content=None, location=None):
+def endpoint(*, status=200, delay=0, started=None, release=None, content=None, location=None,
+             listing=None, listing_calls=None):
     calls = []
     class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if listing_calls is not None:
+                listing_calls.append({'path': self.path, 'authorization': self.headers.get('Authorization')})
+            self.send_response(200 if self.path == '/v1/models' and listing is not None else 404)
+            self.send_header('Content-Type', 'application/json'); self.end_headers()
+            self.wfile.write(json.dumps({'data': listing or []}).encode())
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             calls.append({'payload': payload, 'authorization': self.headers.get('Authorization')})
             if started: started.set()
             if release: release.wait(3)
             if delay: time.sleep(delay)
-            if status != 200:
-                self.send_response(status)
+            current_status = status() if callable(status) else status
+            if current_status != 200:
+                self.send_response(current_status)
                 if location: self.send_header('Location', location)
                 self.send_header('Content-Type', 'application/json'); self.end_headers()
                 try: self.wfile.write(b'{"error":{"message":"neutral unavailable","type":"server_error"}}')
@@ -84,9 +92,9 @@ async def test_actual_http_same_function_failover_provenance_and_capability_filt
         await complete(r, 'vision')
         assert len(a) == 1 and len(b) == 2  # no modality-blind tier escalation
         with pytest.raises(RuntimeError): await complete(r, 'chat')
-        assert len(a) == 2 and len(b) == 2  # slow candidate violates chat bound
+        assert len(a) == 1 and len(b) == 2  # failed primary cools down; slow fallback violates chat bound
         await complete(r, required_context_tokens=64000)
-        assert len(a) == 2 and len(b) == 3
+        assert len(a) == 1 and len(b) == 3
         status = r.routing_status()
         assert status['recent_calls'][-1]['config_revision'] == response.config_revision
         assert 'neutral-key' not in json.dumps(status) and 'baseUrl' not in json.dumps(status)
@@ -304,3 +312,161 @@ async def test_tool_result_round_trip_accepts_null_assistant_content():
         assert response.function_role == 'reasoning'
         assert calls[0]['payload']['messages'][1].get('content') is None
         assert calls[0]['payload']['messages'][1]['tool_calls'][0]['id'] == 'read-1'
+
+
+@pytest.mark.asyncio
+async def test_model_inventory_normalizes_url_preserves_working_alias_and_declarations(monkeypatch, tmp_path):
+    from colony_sidecar.api.routers import host
+    from colony_sidecar.router.endpoints import EndpointRuntime
+    from colony_sidecar.router.tiers import discover_openai_compatible_models
+    gets = []
+    advertised = [{'id': 'advertised-weight-name', 'owned_by': 'neutral', 'max_model_len': 256000,
+                   'supportsVision': True, 'secret': 'not-metadata'}]
+    with endpoint(listing=advertised, listing_calls=gets) as (address, calls):
+        for base in (address, address+'/', address.removesuffix('/v1')):
+            rows = await asyncio.to_thread(discover_openai_compatible_models, base, 'neutral-key')
+            assert rows == [{'id': 'advertised-weight-name', 'owned_by': 'neutral'}]
+        now = [100.0]
+        r = router(config(address, address))
+        r._endpoints = EndpointRuntime(clock=lambda: now[0], wall=lambda: now[0]+1700000000)
+        monkeypatch.setattr(host, '_llm_router', r)
+        monkeypatch.setattr(host, 'get_state_dir', lambda: tmp_path)
+        result = await host.list_models()
+        assert result.discovered and [m.id for m in result.models] == ['advertised-weight-name']
+        inventory = result.routing['model_inventory']
+        assert len(inventory) == 1 and inventory[0]['bindings'] == ['interactive', 'deliberate']
+        assert inventory[0]['models'][0]['advertised_context_tokens'] == 256000
+        assert result.routing['models']['interactive']['context_tokens'] == 32000
+        assert result.routing['models']['interactive']['supports_vision'] is False
+        assert (await complete(r)).content == 'fast-neutral'  # a working alias need not appear in /models
+        assert calls[0]['payload']['model'] == 'fast-neutral'
+        assert all(row == {'path': '/v1/models', 'authorization': 'Bearer neutral-key'} for row in gets)
+        assert len(gets) == 4
+        await host.list_models()
+        assert len(gets) == 4  # shared endpoint and subsequent reads reuse one observation
+        now[0] += 31
+        stale = r.routing_status()
+        assert stale['model_inventory'][0]['stale'] and stale['completion_observations']['interactive']['stale']
+        assert not stale['inventory_complete']
+        await host.list_models()
+        assert len(gets) == 5 and r.routing_status()['inventory_complete']
+        serialized = json.dumps(r.routing_status())
+        assert 'neutral-key' not in serialized and address not in serialized and 'not-metadata' not in serialized
+
+
+@pytest.mark.asyncio
+async def test_missing_model_listing_does_not_disable_completion():
+    with endpoint() as (address, calls):
+        r = router(config(address, address))
+        result = await r.discover_models()
+        assert not result['models'] and result['routing']['inventory_complete']
+        assert result['routing']['model_inventory'][0]['available'] is False
+        assert (await complete(r)).content == 'fast-neutral' and len(calls) == 1
+        assert r.routing_status()['completion_observations']['interactive']['state'] == 'available'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure_status', [404, 503])
+async def test_actual_failure_cooldown_single_recovery_and_restored_primary(failure_status):
+    from colony_sidecar.router.endpoints import EndpointRuntime
+    now, mode = [100.0], ['failed']
+    started, release = threading.Event(), threading.Event()
+    def primary_status():
+        if mode[0] == 'failed': return failure_status
+        if mode[0] == 'recovery':
+            started.set()
+            assert release.wait(2)
+        return 200
+    with endpoint(status=primary_status) as (first, a), endpoint() as (second, b):
+        r = router(config(first, second))
+        r._endpoints = EndpointRuntime(clock=lambda: now[0])
+        assert (await complete(r)).binding == 'deliberate'
+        assert (await complete(r)).binding == 'deliberate'
+        assert len(a) == 1 and len(b) == 2
+        status = r.routing_status()['completion_observations']['interactive']
+        assert status['state'] == 'cooldown' and status['status_code'] == failure_status
+        now[0] += 16
+        mode[0] = 'recovery'
+        pending = asyncio.create_task(complete(r))
+        assert await asyncio.to_thread(started.wait, 2)
+        assert r.routing_status()['completion_observations']['interactive']['state'] == 'recovering'
+        # A concurrent request proceeds on the fallback instead of joining the recovery attempt.
+        assert (await complete(r)).binding == 'deliberate'
+        assert len(a) == 2 and len(b) == 3
+        release.set()
+        assert (await pending).binding == 'interactive'
+        mode[0] = 'healthy'
+        assert (await complete(r)).binding == 'interactive'
+        assert len(a) == 3 and len(b) == 3
+        status = r.routing_status()['completion_observations']['interactive']
+        assert status['state'] == 'available' and status['served_model'] == 'fast-neutral'
+
+
+@pytest.mark.asyncio
+async def test_endpoint_move_reload_clears_old_failure_and_no_fallback_is_explicit(tmp_path):
+    with endpoint(status=404) as (first, a), endpoint() as (second, b):
+        cfg = config(first, second)
+        cfg['functionRoles']['extraction']['candidates'] = ['interactive']
+        path = tmp_path / 'routing.json'; path.write_text(json.dumps(cfg))
+        r = router(cfg, path)
+        with pytest.raises(RuntimeError, match='No eligible local model'):
+            await complete(r)
+        with pytest.raises(RuntimeError, match='EndpointCoolingDown'):
+            await complete(r)
+        assert len(a) == 1 and not b
+        old_revision = r.routing_status()['config_revision']
+        cfg['modelPool']['interactive']['baseUrl'] = second
+        replacement = tmp_path / 'replacement.json'; replacement.write_text(json.dumps(cfg)); replacement.replace(path)
+        response = await complete(r)
+        assert response.binding == 'interactive' and response.config_revision != old_revision
+        assert len(a) == 1 and len(b) == 1
+
+
+@pytest.mark.asyncio
+async def test_inventory_is_bounded_covers_larger_pool_and_releases_cancelled_reads():
+    from colony_sidecar.router.endpoints import EndpointRuntime
+    cfg = config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1')
+    for i in range(3, 7):
+        cfg['modelPool'][f'candidate{i}'] = {'model': 'neutral', 'baseUrl': f'http://127.0.0.1:{10000+i}/v1'}
+    r = router(cfg)
+    now, active, peak, probed = [100.0], [0], [0], []
+    runtime = EndpointRuntime(clock=lambda: now[0]); r._endpoints = runtime
+    async def probe(snapshot, binding):
+        active[0] += 1; peak[0] = max(peak[0], active[0]); probed.append(binding.name)
+        try:
+            await asyncio.sleep(.01)
+            return [{'id': 'neutral'}]
+        finally: active[0] -= 1
+    await runtime.refresh(r._snapshot, probe)
+    assert len(probed) == 4 and peak[0] == 4 and not runtime.status(r._snapshot)['inventory_complete']
+    now[0] += 31  # even infrequent reads prioritize the previously unobserved endpoints
+    await runtime.refresh(r._snapshot, probe)
+    assert set(probed) == set(r._snapshot.bindings)
+    await runtime.refresh(r._snapshot, probe)
+    assert runtime.status(r._snapshot)['inventory_complete']
+    now[0] += 31
+    waiting = asyncio.Event()
+    async def wait(snapshot, binding):
+        waiting.set()
+        await asyncio.Event().wait()
+    pending = asyncio.create_task(runtime.refresh(r._snapshot, wait))
+    await waiting.wait(); pending.cancel()
+    with pytest.raises(asyncio.CancelledError): await pending
+    assert not runtime._probing
+    await runtime.refresh(r._snapshot, probe)
+    assert peak[0] <= 4
+
+
+def test_cancelled_recovery_releases_its_own_slot_only():
+    from colony_sidecar.router.endpoints import EndpointRuntime
+    now = [100.0]
+    runtime = EndpointRuntime(clock=lambda: now[0])
+    r = router(config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1'))
+    snapshot, binding = r._snapshot, r._snapshot.bindings['interactive']
+    runtime.failure(snapshot, binding, ConnectionError())
+    now[0] += 16
+    assert runtime.acquire(snapshot, binding, 'recovery-1')
+    runtime.release(snapshot, binding, 'older-request')
+    assert not runtime.acquire(snapshot, binding, 'recovery-2')
+    runtime.release(snapshot, binding, 'recovery-1')
+    assert runtime.acquire(snapshot, binding, 'recovery-2')
