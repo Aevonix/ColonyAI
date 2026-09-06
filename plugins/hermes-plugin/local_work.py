@@ -19,11 +19,14 @@ def accept(args, scope, client):
     if (scope is None or not scope.valid_participant or scope.authority_lane not in {'owner', 'system'}
             or scope.platform in {'cron', 'subagent', 'background_review'}
             or not scope.turn_id or not scope.user_message.strip()
-            or set(args) != {'commitment_id', 'question', 'sources'}):
+            or set(args) not in ({'question', 'sources'}, {'commitment_id', 'question', 'sources'})):
         return json.dumps({'error': 'An owner turn accepting this local draft is required'})
     try:
-        identifier = quote(args['commitment_id'], safe='')
-        result = request(client, f"/v1/host/commitments/{identifier}/local-draft", {
+        path = "/v1/host/commitments/local-draft"
+        if 'commitment_id' in args:
+            identifier = quote(args['commitment_id'], safe='')
+            path = f"/v1/host/commitments/{identifier}/local-draft"
+        result = request(client, path, {
             'contact_id': scope.contact_id, 'session_id': scope.session_id, 'turn_id': scope.turn_id,
             'question': args['question'], 'sources': args['sources']})
         return json.dumps(result)
@@ -60,6 +63,11 @@ class Undertaking:
                     or context.get('task_id') != self.task_id):
                 raise ValueError('native_local_work_scope_unavailable')
             self.current()
+            if self.assignment['context']['commitment_id'] is None:
+                # A standalone task is already exclusively assigned to this
+                # native execution. No second obligation or lease is needed.
+                self.bound = True
+                return
             result = json.loads(coordinator.handle({'operation': 'claim',
                 'commitment_id': self.assignment['context']['commitment_id']}, scope, context))
             if result.get('accepted') is not True:
@@ -88,7 +96,11 @@ class Undertaking:
 
     def verify_holder(self):
         self.current()
-        if not self.holder or self.error:
+        if not self.bound or self.error:
+            raise ValueError('undertaking_not_acquired')
+        if self.assignment['context']['commitment_id'] is None:
+            return
+        if not self.holder:
             raise ValueError('undertaking_not_acquired')
         coordinator, _, context = self.holder
         if coordinator.before_tool({**context, 'tool_name': 'colony_read_work_source'}) is not None:

@@ -17,13 +17,25 @@ from conftest import ROOT, run_python
 
 
 INSTALL = r'''
-import sys
+import sys, os
 sys.path.insert(0, sys.argv[1])
 if sys.argv[2]: sys.path.append(sys.argv[2])
 import runpy
+if os.environ.get('COLONY_TEST_LOSE_JOB_OUTPUT'):
+    from colony_sidecar import setup_local_work
+    import subprocess
+    original_run = setup_local_work.subprocess.run
+    def lose_created_output(argv, **kwargs):
+        result = original_run(argv, **kwargs)
+        if any('job=create_job(' in arg for arg in argv):
+            assert result.returncode == 0, result.stderr
+            raise subprocess.TimeoutExpired(argv, 30)
+        return result
+    setup_local_work.subprocess.run = lose_created_output
 sys.argv = ['colony', 'init', '--non-interactive', '--hermes-python', sys.argv[7],
     '--hermes-home', sys.argv[3], '--adapter-wheel', sys.argv[4], '--agent-name', 'Orion',
-    '--contact-name', 'Fixture Owner', '--model-url', sys.argv[5], '--model', 'fixture', '--port', sys.argv[6]]
+    '--contact-name', 'Fixture Owner', '--model-url', sys.argv[5], '--model', 'fixture', '--port', sys.argv[6],
+    *(['--local-work'] if len(sys.argv)>8 and sys.argv[8]=='local-work' else [])]
 runpy.run_module('colony_sidecar', run_name='__main__')
 '''
 SERVER = r'''
@@ -74,6 +86,44 @@ sys.argv = ['colony', 'doctor', '--json']
 runpy.run_module('colony_sidecar', run_name='__main__')
 '''
 
+LOCAL_DRAFT = r'''
+import json,os,sqlite3
+from pathlib import Path
+from dotenv import load_dotenv
+from hermes_constants import get_hermes_home
+from hermes_cli.plugins import get_plugin_manager
+from hermes_cli.lifecycle import invoke_hook
+home=get_hermes_home();state=home/'colony';manifest=json.loads((state/'instance.json').read_text())
+load_dotenv(home/'.env',override=True)
+get_plugin_manager().discover_and_load()
+from model_tools import handle_function_call
+source=home/'neutral-source.txt';source.write_text('The neutral source calls the orchard badge cobalt-716.\n')
+invoke_hook('pre_llm_call',session_id='owner-draft',task_id='owner-draft',turn_id='owner-draft',
+    platform='cli',sender_id='',user_message='Please summarize this selected neutral source in a local draft.')
+accepted=json.loads(handle_function_call('colony_accept_local_draft',
+    {'question':'Summarize the selected source','sources':[str(source)]},session_id='owner-draft',
+    task_id='owner-draft',turn_id='owner-draft',tool_call_id='accept-draft'))
+assert accepted.get('status')=='pending',accepted
+assert accepted['context']['commitment_id'] is None
+from cron.jobs import trigger_job
+from cron.scheduler import tick
+job=manifest['local_work']['job_id'];trigger_job(job);tick(verbose=False,sync=True)
+with sqlite3.connect(home/'cron/executions.db') as db:
+    rows=db.execute('SELECT id,status FROM executions WHERE job_id=?',(job,)).fetchall()
+assert len(rows)==1 and rows[0][1]=='completed',rows
+reports=list((state/'drafts').rglob('report.md'));assert len(reports)==1,reports
+assert 'cobalt-716' in reports[0].read_text()
+receipt=json.loads((reports[0].parent/'draft-receipt.json').read_text())
+assert receipt['native_execution_id']==rows[0][0]
+assert receipt['routing_policy']['role']=='planning'
+with sqlite3.connect(state/'initiatives.db') as db:
+    status=db.execute('SELECT status FROM initiatives WHERE id=?',(accepted['id'],)).fetchone()[0]
+assert status=='completed',status
+with sqlite3.connect((state/'colony-commitments.db').as_uri()+'?mode=ro',uri=True) as db:
+    assert db.execute('SELECT count(*) FROM commitments').fetchone()[0]==0
+print(json.dumps({'standalone_draft_completed':True,'native_execution':rows[0][0]}))
+'''
+
 
 def _native_interpreter(tmp_path, wheel, adapter_installation):
     """Reuse qualified dependencies while controlling actual adapter metadata.
@@ -96,6 +146,46 @@ def _native_interpreter(tmp_path, wheel, adapter_installation):
         run_python('-m', 'pip', 'install', '--no-index', '--no-deps', '--no-build-isolation',
             '--target', site, '-e', ROOT, cwd=tmp_path)
     return target/'bin'/'python'
+
+
+def test_lost_native_creation_output_leaves_no_orphan_job(tmp_path):
+    if importlib.util.find_spec('hermes_cli') is None:
+        pytest.skip('Requires qualified native Hermes')
+    script = r'''
+import json,os,subprocess,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+if sys.argv[2]:sys.path.append(sys.argv[2])
+from colony_sidecar import setup_local_work
+from cron.jobs import create_job,list_jobs
+home=Path(os.environ['HERMES_HOME']);home.mkdir(exist_ok=True);state=home/'colony';state.mkdir()
+manifest={'version':1,'profile':'local','hermes_home':str(home),'hermes_python':sys.executable}
+original=json.dumps(manifest);(state/'instance.json').write_text(original)
+(state/'.env').write_text('COLONY_INSTALL_PROFILE=local\n')
+other=create_job(prompt='Unrelated retained task',schedule='every 1h',name='Existing task',deliver='local')
+before=list_jobs(include_disabled=True)
+run=setup_local_work.subprocess.run
+def lose_output(argv,**kwargs):
+    result=run(argv,**kwargs)
+    if any('job=create_job(' in arg for arg in argv):
+        assert result.returncode==0,result.stderr
+        raise subprocess.TimeoutExpired(argv,30)
+    return result
+setup_local_work.subprocess.run=lose_output
+try:setup_local_work.install(state)
+except subprocess.TimeoutExpired:pass
+else:raise AssertionError('Expected lost child output')
+assert list_jobs(include_disabled=True)==before
+assert not (home/'scripts'/setup_local_work.SCRIPT).exists()
+assert (state/'instance.json').read_text()==original
+assert (state/'.env').read_text()=='COLONY_INSTALL_PROFILE=local\n'
+print('native_registration_recovered')
+'''
+    environment = dict(os.environ, HERMES_HOME=str(tmp_path/'profile'),
+                       HERMES_SKIP_DOTENV='1', HERMES_DISABLE_TELEMETRY='1')
+    result = run_python('-I','-c',script,ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),
+                        cwd=tmp_path,env=environment)
+    assert 'native_registration_recovered' in result.stdout
 
 
 @pytest.mark.parametrize('adapter_installation', ['absent', 'wheel', 'editable'])
@@ -131,14 +221,36 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
                       else 'No retained badge' if 'Which orchard badge' in str(last)
                       else 'Recorded.' if 'Please remember' in str(last)
                       else '{"claims": []}')
+            calls = None
+            choice = body.get('tool_choice')
+            if isinstance(choice, dict) and choice.get('function', {}).get('name') == 'colony_setup_echo':
+                calls = [{'id':'setup-call','type':'function','function':{
+                    'name':'colony_setup_echo','arguments':json.dumps({'token':'colony-ready'})}}]
+            elif 'Produce the explicitly accepted local comparison/summary below.' in str(last):
+                results = [m for m in body['messages'] if m.get('role')=='tool']
+                if not results:
+                    name,args='tool_search',{'queries':['read selected local work source']}
+                elif len(results)==1:
+                    name,args='tool_call',{'name':'colony_read_work_source','arguments':{'source':0}}
+                else:
+                    assert 'cobalt-716' in results[-1]['content']
+                    name,args=None,None
+                    answer=json.dumps({'draft':'The source names orchard badge cobalt-716 [source:0].','sources':[0]})
+                if name:
+                    calls=[{'id':'draft-call-'+str(len(results)),'type':'function',
+                            'function':{'name':name,'arguments':json.dumps(args)}}]
+            message = {'role':'assistant','content':'' if calls else answer}
+            if calls:message['tool_calls']=calls
+            finish = 'tool_calls' if calls else 'stop'
             response = json.dumps({'id': 'fixture', 'object': 'chat.completion', 'created': 1, 'model': 'fixture',
-                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': answer}, 'finish_reason': 'stop'}],
+                'choices': [{'index': 0, 'message': message, 'finish_reason': finish}],
                 'usage': {'prompt_tokens': 20, 'completion_tokens': 4, 'total_tokens': 24}}).encode()
             content_type = 'application/json'
             if body.get('stream'):
                 chunk = {'id': 'fixture', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'fixture',
-                    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': answer}, 'finish_reason': None}]}
-                ending = {**chunk, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]}
+                    'choices': [{'index': 0, 'delta': {**message, **({'tool_calls':[
+                        {'index':i,**call} for i,call in enumerate(calls)]} if calls else {})}, 'finish_reason': None}]}
+                ending = {**chunk, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish}]}
                 response = ('data: '+json.dumps(chunk)+'\n\ndata: '+json.dumps(ending)+'\n\ndata: [DONE]\n\n').encode()
                 content_type = 'text/event-stream'
             self.send_response(200); self.send_header('Content-Type', content_type)
@@ -151,10 +263,23 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
     home = tmp_path/'profile'; bundled = tmp_path/'bundled'; bundled.mkdir()
     env = {key: os.environ[key] for key in ('PATH', 'LANG') if key in os.environ}
     env.update(HOME=str(tmp_path), HERMES_HOME=str(home), HERMES_BUNDLED_PLUGINS=str(bundled),
-               HERMES_DISABLE_TELEMETRY='1', COLONY_GUARD_CHAT_MODE='off', LITELLM_LOCAL_MODEL_COST_MAP='True')
+               HERMES_DISABLE_TELEMETRY='1', COLONY_GUARD_CHAT_MODE='off', LITELLM_LOCAL_MODEL_COST_MAP='True',
+               PYTHONPATH=dependency_path)
     server = None
     try:
-        run_python('-I', '-c', INSTALL, installed, dependency_path, home, wheel, endpoint, port, native_python, cwd=tmp_path, env=env)
+        if adapter_installation == 'absent':
+            failed = subprocess.run([sys.executable, '-I', '-c', INSTALL, str(installed),
+                dependency_path, str(home), str(wheel), endpoint, str(port), str(native_python), 'local-work'],
+                cwd=tmp_path, env=dict(env, COLONY_TEST_LOSE_JOB_OUTPUT='1'),
+                text=True, capture_output=True, timeout=120)
+            assert failed.returncode == 1, failed.stdout + failed.stderr
+            retained = {name: (home/'colony'/name).read_bytes()
+                        for name in ('api-keyring.json', 'contacts.db', '.colony-llm-config.json')}
+            assert 'local_work' not in json.loads((home/'colony'/'instance.json').read_text())
+        run_python('-I', '-c', INSTALL, installed, dependency_path, home, wheel, endpoint, port, native_python,
+                   'local-work' if adapter_installation=='absent' else '', cwd=tmp_path, env=env)
+        if adapter_installation == 'absent':
+            assert all((home/'colony'/name).read_bytes() == raw for name, raw in retained.items())
         manifest = json.loads((home/'colony'/'instance.json').read_text())
         assert manifest['adapter_binding']['mode'] == ('native-installed' if installed_adapter else 'private-directory')
         assert (home/'plugins'/'colony').exists() is not installed_adapter
@@ -201,6 +326,9 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
         names = {row['name'] for row in checks['results']}
         assert 'server-source-memory' in names and 'server-auth' not in names
         assert keyring['principals'][0]['credentials'][0]['secret'] not in diagnostic.stdout
+        if adapter_installation=='absent':
+            draft=run_native('-I','-c',LOCAL_DRAFT,cwd=tmp_path,env=env)
+            assert '"standalone_draft_completed": true' in draft.stdout
         if adapter_installation == 'wheel':
             # Stop extraction from the completed conversations before counting
             # requests from a separate attachment. The model server stays live.

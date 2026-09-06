@@ -66,9 +66,10 @@ class LocalWork:
         digest = hashlib.sha256(encoded({**material, 'session_id':session_id, 'turn_id':turn_id}).encode()).hexdigest()
         key = SOURCE + ':' + digest
         with self.transaction() as db:
-            obligation = self.obligation(db, commitment_id, contact_id)
-            if obligation['status'] not in {'pending', 'overdue'}:
-                raise ValueError('obligation_closed')
+            if commitment_id is not None:
+                obligation = self.obligation(db, commitment_id, contact_id)
+                if obligation['status'] not in {'pending', 'overdue'}:
+                    raise ValueError('obligation_closed')
             previous = db.execute('SELECT * FROM initiatives WHERE dedup_key=?', (key,)).fetchone()
             if previous:
                 return self.view(previous)
@@ -81,7 +82,7 @@ class LocalWork:
                 source_type,source_id,created_by,status,entity_id,delivery_mode,context,max_attempts,timeout_seconds)
                 VALUES(?,?,?,?,?,?,?,?,?,'pending',?,'local',?,2,900)''',
                 (identifier, key, 'RESEARCH_DEEP_DIVE', question, .5,
-                 'Explicitly accepted local draft for an existing owner obligation.',
+                 'Explicitly accepted local draft' + (' for an existing owner obligation.' if commitment_id else '.'),
                  SOURCE, commitment_id, CREATOR, contact_id, encoded(context)))
             self.history(db, identifier, principal_id, 'accepted',
                          {'session_id': session_id, 'turn_id': turn_id, 'task_class': SOURCE})
@@ -92,8 +93,8 @@ class LocalWork:
                          (identifier, CREATOR, SOURCE, contact_id)).fetchone()
         if row is None:
             raise KeyError('unknown_local_work')
-        obligation = self.obligation(db, row['source_id'], contact_id)
-        if obligation['status'] not in {'pending', 'overdue'} and row['status'] in {'pending', 'assigned', 'acknowledged'}:
+        obligation = self.obligation(db, row['source_id'], contact_id) if row['source_id'] else None
+        if obligation is not None and obligation['status'] not in {'pending', 'overdue'} and row['status'] in {'pending', 'assigned', 'acknowledged'}:
             db.execute("UPDATE initiatives SET status='cancelled',cancelled_at=?,cancelled_reason=? WHERE id=?",
                        (stamp(), 'parent_obligation_closed', identifier))
             self.history(db, identifier, contact_id, 'cancelled', {'reason': 'parent_obligation_closed'})

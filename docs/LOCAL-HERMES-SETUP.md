@@ -19,7 +19,7 @@ not need Colony's CLI dependency `typer` or a preinstalled Colony adapter; setup
 can attach the private adapter directly from the Colony environment.
 
 The wizard asks for your name, the agent's name, the model API root and model,
-then whether to start Colony. An API key is prompted without echo. For unattended
+whether to enable accepted local drafts, then whether to start Colony. An API key is prompted without echo. For unattended
 setup use `COLONY_MODEL_API_KEY` in the process environment, never a command-line
 key. A model that requires no key works too.
 
@@ -28,7 +28,7 @@ colony init --non-interactive \
   --hermes-python /path/to/hermes/.venv/bin/python \
   --hermes-home "$HOME/.hermes-orion" \
   --agent-name Orion --contact-name Owner \
-  --model-url http://127.0.0.1:8000/v1 --model my-local-model --start
+  --model-url http://127.0.0.1:8000/v1 --model my-local-model --local-work --start
 ```
 
 `--hermes-home` wins over `HERMES_HOME`, then `~/.hermes`. Only that home is
@@ -67,6 +67,26 @@ the single ordinary writer.
 The selected model supplies the legacy SMALL, MEDIUM and LARGE role bindings.
 Optional named role/capability configuration can refine that later. Fresh homes
 also get that model in native Hermes config. An existing Hermes model is kept.
+
+Accepted local drafts are optional. With `--local-work`, setup checks function
+calling and creates a named `planning` role bound to the selected local model.
+It registers one job with the selected Hermes scheduler, running every five
+minutes. The selected Hermes gateway must be running for scheduled fires.
+The job remains idle until the owner accepts a specific question and local text
+sources through `colony_accept_local_draft`. No existing commitment is required;
+an optional commitment ID associates the draft with a broader obligation.
+
+The worker reads those sources, produces a cited draft and retains its execution
+and report in the instance. It cannot send the draft or change its source files.
+It loads the planning role afresh on each fire, using the Colony interpreter to
+resolve routing and the selected Hermes interpreter for native execution. The
+two environments need no shared dependencies. See
+[accepted local work](ACCEPTED-LOCAL-WORK.md) for limits and cancellation.
+If scheduler registration fails after attachment, rerun the same command with
+`--local-work`. It retries the missing registration using the retained planning
+role, identity and credentials. Restart an already-running Colony instance to
+load the new job binding. An older instance without a planning role or compatible
+adapter needs explicit configuration or an adapter upgrade first.
 
 Graph/vector retrieval, embedding downloads and consequential background workers
 are disabled in this profile. Install `./sidecar[graph,vectors]` only when adding

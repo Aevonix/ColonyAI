@@ -55,6 +55,10 @@ Start a new Hermes session, give it a harmless fact, then ask for that fact in a
 second session. The [setup guide](docs/LOCAL-HERMES-SETUP.md) explains existing
 profiles, unattended flags, startup and recovery. The minimum profile remembers
 and observes. Consequential background execution requires deliberate setup.
+The wizard can also enable [accepted local drafts](docs/ACCEPTED-LOCAL-WORK.md):
+ask for a summary or comparison of selected local text files, and the native
+Hermes scheduler completes it in the background with a retained cited report.
+This requires a local model with function calling and a running Hermes gateway.
 For login startup and automatic process recovery, stop a detached instance and
 run `colony --instance /path/to/private/colony service install`, then
 `colony --instance /path/to/private/colony service start`. Linux systemd user

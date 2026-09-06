@@ -88,6 +88,34 @@ def test_real_plugin_acceptance_requires_current_owner_turn(runtime, local_api, 
     assert 'error' in denied
 
 
+def test_standalone_acceptance_runs_without_manufacturing_an_obligation(local_api, tmp_path):
+    api, commitments, initiatives, _, _ = local_api
+    before = commitments.list()['total']
+    path = '/v1/host/commitments/local-draft'
+    value = body(tmp_path)
+    assert api.post(path, json=value, headers={'Authorization':'Bearer guest-key'}).status_code == 403
+    accepted = post(api, path, value)
+    assert accepted.status_code == 200, accepted.text
+    item = accepted.json()
+    assert item['context']['commitment_id'] is None
+    assert post(api, path, value).json()['id'] == item['id']
+    assert commitments.list()['total'] == before
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assigned = list(pool.map(lambda i: post(api, '/v1/host/commitments/local-work/next', native_run(i)).json()['assignment'], 'ab'))
+    selected = next(row for row in assigned if row is not None)
+    assert sum(row is not None for row in assigned) == 1
+    native = {key:selected['context'][key] for key in ('native_job_id','native_execution_id')}
+    result = {'status':'draft_created','summary':'Unverified standalone draft',
+              'report_path':str(tmp_path/'report.md'),'report_sha256':'a'*64,
+              'sources':{value['sources'][0]:'b'*64}}
+    completed = post(api, '/v1/host/commitments/local-work/'+item['id']+'/finish',
+                     {'contact_id':'cid-owner', **native, 'result':result})
+    assert completed.status_code == 200, completed.text
+    assert completed.json()['status'] == 'completed'
+    assert local_work_view()['recent'][0]['commitment_id'] is None
+    assert commitments.list()['total'] == before
+
+
 def test_terminal_native_reconciliation_transient_retry_and_parent_cancel(local_api, tmp_path):
     api, commitments, initiatives, obligation, native = local_api
     accepted = post(api, '/v1/host/commitments/'+obligation['id']+'/local-draft', body(tmp_path)).json()
