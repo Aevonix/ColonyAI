@@ -280,6 +280,10 @@ class TurnIdempotencyLedger:
         with closing(self._connect()) as conn:
             return self._retained_messages(messages, session_id, self._erasure_rules(conn, contact_id))
 
+    def erasure_watermark(self, contact_id: str) -> int:
+        with closing(self._connect()) as conn:
+            return int(conn.execute("SELECT coalesce(max(sequence), 0) FROM source_erasures WHERE contact_id=?", (contact_id,)).fetchone()[0])
+
     def erasure_feed(self, contact_id: str, after: int = 0, limit: int = 250) -> dict[str, Any]:
         with closing(self._connect()) as conn:
             head = conn.execute("SELECT coalesce(max(sequence), 0) FROM source_erasures WHERE contact_id=?", (contact_id,)).fetchone()[0]

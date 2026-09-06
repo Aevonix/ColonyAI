@@ -50,6 +50,7 @@ from .client import (
 from .slash import SLASH_COMMANDS
 from .executions import ExecutionObserver
 from .commitment_work import CommitmentCoordinator
+from .request_memory import RequestMemory
 
 
 logger = logging.getLogger(__name__)
@@ -2151,6 +2152,7 @@ def register(ctx: Any) -> None:
     runtime_enabled_actions = boundary.enabled_action_tools
     turn_writer_platforms = boundary.turn_writer_platforms
     turn_outbox = boundary.turn_outbox
+    request_memory = RequestMemory(client, turn_outbox)
     execution_observer = (
         ExecutionObserver(client)
         if config.get("execution_registry_enabled") is True else None
@@ -2190,6 +2192,7 @@ def register(ctx: Any) -> None:
             attested_system_platforms=attested_system_platforms,
         )
         _TRANSPORT_SCOPES.put(scope)
+        request_memory.observe(scope, kwargs.get('conversation_history') or [])
         if scope.valid_participant and not review:
             work_coordinator.bind_turn(**kwargs)
         if execution_observer is not None:
@@ -2197,6 +2200,8 @@ def register(ctx: Any) -> None:
         return None
 
     def post_llm_call(**kwargs: Any) -> None:
+        request_memory.finish(task_id=str(kwargs.get('task_id') or ''),
+                              turn_id=str(kwargs.get('turn_id') or ''))
         session_id = str(kwargs.get("session_id") or "")
         scope = _TRANSPORT_SCOPES.for_execution(
             session_id=session_id,
@@ -2357,6 +2362,14 @@ def register(ctx: Any) -> None:
         return _tool_execution_middleware(**{**kwargs, "next_call": observed})
     ctx.register_middleware("tool_execution", observe_tool)
 
+    def reconcile_request(request, **kwargs):
+        _TRANSPORT_SCOPES.bind_current_session(**kwargs)
+        scope = _TRANSPORT_SCOPES.for_execution(
+            session_id=str(kwargs.get('session_id') or ''),
+            task_id=str(kwargs.get('task_id') or ''),
+            turn_id=str(kwargs.get('turn_id') or ''))
+        return request_memory(request, scope)
+
     def commitment_work_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get("session_id", ""),
@@ -2402,6 +2415,7 @@ def register(ctx: Any) -> None:
         _REVIEW_PARENT_SCOPE.set(scope if scope is not None and scope.valid_participant else None)
         return None  # No provider request changes.
     ctx.register_middleware("llm_request", capture_review_parent)
+    ctx.register_middleware('llm_request', reconcile_request)
     ctx.register_hook("transform_llm_output", transform_llm_output)
     ctx.register_hook("post_llm_call", post_llm_call)
     if execution_observer is not None:

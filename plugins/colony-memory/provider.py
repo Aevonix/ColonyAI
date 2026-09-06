@@ -1049,7 +1049,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
     # replaced with a live one every time context is handed to the host).
     _TEMPORAL_TTL_SECS = 15.0
     _TEMPORAL_SECTION_RE = _tre.compile(
-        r"## Current Time \[priority \d+\]\n.*?(?=\n\n## |\n</memory-context>|$)",
+        r"## Current Time \[priority \d+\]\n.*?(?=\n\n## |\n</memory-context>|\n\[/colony-recall-v1\]|$)",
         _tre.DOTALL,
     )
 
@@ -1490,7 +1490,15 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             )
             return ""
         sections = data.get("sections", [])
-        return self._format_sections(sections) if sections else ""
+        if not sections:
+            return ""
+        # Source IDs remain in the evidence body. The whole-packet watermark
+        # also covers relationship/commitment sections with derived state.
+        stamp = json.dumps({"contact_id": bound_contact,
+                            "watermark": data.get("source_erasure_watermark")},
+                           ensure_ascii=True, separators=(",", ":"))
+        return ("[colony-recall-v1 " + stamp + "]\n" + self._format_sections(sections)
+                + "\n[/colony-recall-v1]")
 
     @staticmethod
     def _prefetch_query_check_enabled() -> bool:
