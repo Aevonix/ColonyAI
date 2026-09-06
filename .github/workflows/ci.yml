@@ -20,6 +20,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            sidecar/pyproject.toml
+            .qualification/hermes/pyproject.toml
       - name: Install adapter and pinned native runtime
         run: |
           python -m pip install -e ".[test]"
@@ -38,6 +43,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sidecar/pyproject.toml
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Run tests
