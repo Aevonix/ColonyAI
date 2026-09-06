@@ -8,7 +8,7 @@ acceptance result or a claim that one database or embedding method is best.
 ## Observed results, 2026-09-06
 
 The same 120 neutral sources, captured extraction state, 96 queries and reranker
-cutoff of 0.95 were used before and after `e22398b`. The development set has 72
+cutoff of 0.95 were used before and after the quotation-ranking change. The development set has 72
 queries and the holdout 24. No threshold was adjusted after observing these
 results. The three retrieval arms tied on final scores within each run.
 
