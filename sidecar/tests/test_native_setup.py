@@ -1,6 +1,7 @@
 """Guided native init preserves profiles and creates one private scoped instance."""
 import json
 import os
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -87,6 +88,38 @@ def test_attach_preserves_existing_identity_channels_model_and_unrelated_env(arg
     assert (home/'SOUL.md').read_text() == 'Existing private identity'
     assert (home/'.env').read_text().startswith('OTHER_PRIVATE_KEY=keep\n')
     assert yaml.safe_load((home/'colony/hermes-original/config.yaml').read_text()) == original
+
+
+@pytest.mark.parametrize('address', ['127.0.0.1', '203.0.113.10'])
+def test_selected_hostname_is_bound_for_runtime_routing(args, monkeypatch, address):
+    from colony_sidecar.router.router import LLMRouter
+    args.model_url = 'http://model.lan:8123/v1'
+    monkeypatch.setattr(socket, 'getaddrinfo', lambda *a, **k: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, '', (address, 8123))])
+    result = setup.run_init(None, args)
+    if address != '127.0.0.1':
+        assert result == 1 and not Path(args.hermes_home).exists()
+        return
+    assert result == 0
+    config = json.loads((Path(args.hermes_home)/'colony/.colony-llm-config.json').read_text())
+    assert config['localHosts'] == ['model.lan']
+    router = LLMRouter(tiers={}, self_learner=object())
+    router.configure(config)
+    assert router.function_config(context={'function_role': 'extraction'}).base_url == args.model_url
+
+
+@pytest.mark.parametrize('git_kind', ['directory', 'worktree_file'])
+def test_private_home_cannot_enter_checkout_with_separate_state(args, tmp_path, git_kind):
+    repository = tmp_path/'checkout'; repository.mkdir()
+    if git_kind == 'directory':
+        (repository/'.git').mkdir()
+        (repository/'.git/HEAD').write_text('ref: refs/heads/main\n')
+    else:
+        (repository/'.git').write_text('gitdir: /unused-neutral-worktree\n')
+    args.hermes_home = str(repository/'profile')
+    state = tmp_path/'separate-private-state'
+    assert setup.run_init(str(state), args) == 1
+    assert not (repository/'profile').exists() and not state.exists()
 
 
 @pytest.mark.parametrize('failure', ['endpoint', 'provider', 'artifact', 'malformed_config', 'installed_mismatch'])

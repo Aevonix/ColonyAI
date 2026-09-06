@@ -51,6 +51,18 @@ def _endpoint(value):
     return value.rstrip('/') + ('/v1' if not parsed.path.strip('/') else '')
 
 
+def _verify_local_endpoint(endpoint):
+    """Declare the selected host and reuse the runtime's address check."""
+    from colony_sidecar.router.router import LLMRouter
+    hosts = [urlsplit(endpoint).hostname]
+    router = LLMRouter(tiers={}, self_learner=object())
+    router.configure({'provider': 'local', 'baseUrl': endpoint, 'apiKey': 'local-no-key',
+                      'models': {'small': 'setup-endpoint-check'}, 'localHosts': hosts})
+    if not asyncio.run(router._local_addresses(router._snapshot, router._snapshot.bindings['small'])):
+        raise ValueError('The selected model endpoint must resolve to the configured local networks')
+    return hosts
+
+
 def _interpreter(candidate):
     if not candidate:
         hermes = shutil.which('hermes')
@@ -189,9 +201,10 @@ def run(root_dir=None, args=None):
         if state == home or home.is_relative_to(state):
             raise ValueError('The private Colony directory must not contain the Hermes home')
         # State, credentials and private identity are never written into a checkout.
-        if any((parent/'.git').is_file() or (parent/'.git'/'HEAD').is_file()
-               for parent in (state, *state.parents)):
-            raise ValueError('Choose a private instance directory outside Git checkouts')
+        for destination in (state, home):
+            if any((parent/'.git').is_file() or (parent/'.git'/'HEAD').is_file()
+                   for parent in (destination, *destination.parents)):
+                raise ValueError('Choose a private Hermes home and instance directory outside Git checkouts')
         config_path = home/'config.yaml'
         original, config = setup._read_hermes_config(config_path)
         for section in ('plugins', 'memory', 'compression'):
@@ -232,6 +245,7 @@ def run(root_dir=None, args=None):
         owner_name = ask('Your name', getattr(args, 'contact_name', None) or os.environ.get('USER', 'Owner'), True)
         agent_name = ask('Agent name', getattr(args, 'agent_name', None) or 'Assistant', True)
         endpoint = _endpoint(ask('Local model API root', getattr(args, 'model_url', None), True))
+        local_hosts = _verify_local_endpoint(endpoint)
         model_key = os.environ.get('COLONY_MODEL_API_KEY', '')
         if not noninteractive and not model_key:
             model_key = getpass.getpass('Model API key (blank if not required): ')
@@ -301,7 +315,8 @@ def run(root_dir=None, args=None):
                 'credentials': [{'id': 'initial', 'secret': key, 'status': 'active'}]}
             _private_write(staged/'api-keyring.json', _json({'version': 1, 'principals': [principal]}))
             _private_write(staged/'.colony-llm-config.json', _json({'provider': 'local', 'baseUrl': endpoint,
-                'apiKey': model_key, 'models': {name: model for name in ('small', 'medium', 'large')}}))
+                'apiKey': model_key, 'localHosts': local_hosts,
+                'models': {name: model for name in ('small', 'medium', 'large')}}))
             for name, content in resources.items():
                 _private_write(staged/'adapter'/name, content)
             manifest = {'version': 1, 'hermes_home': str(home), 'hermes_python': str(python),

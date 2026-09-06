@@ -29,8 +29,9 @@ colony init --non-interactive \
 
 `--hermes-home` wins over `HERMES_HOME`, then `~/.hermes`. Only that home is
 inspected. `--dir` selects private Colony state, otherwise `COLONY_STATE_DIR` or
-`<selected Hermes home>/colony` is used. State and credentials cannot be placed
-inside a Git checkout. Select that same Hermes home when launching Hermes:
+`<selected Hermes home>/colony` is used. Both the selected Hermes home and Colony
+state must stay outside Git checkouts, including when `--dir` is separate.
+Select that same Hermes home when launching Hermes:
 
 ```bash
 export HERMES_HOME="$HOME/.hermes-orion"
@@ -43,6 +44,11 @@ configuration conflicts before it writes the private instance. `--adapter-wheel`
 can select an already-built canonical wheel instead of an installed
 `colony-hermes` distribution. This is also usable from built Colony wheels with
 no editable source checkout.
+
+The selected model hostname is recorded for runtime routing, and setup checks
+its addresses with the router's existing local-network rules. A LAN hostname
+can therefore serve extraction as well as the initial chat probe. Runtime calls
+continue to resolve and check that configured host when its address changes.
 
 ## What the local profile enables
 
