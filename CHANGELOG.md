@@ -2,8 +2,9 @@
 
 ## v1.0.2 - scoped self evidence
 
-- Authorized contact-knowledge estimates use query-dependent candidates and the
-  common memory selector/budget instead of an unconditional extra context section.
+- Default native per-turn context assembly uses query-dependent contact-knowledge
+  candidates and the common memory selector/budget instead of an unconditional
+  extra context section. The explicit legacy enriched-context API is unchanged.
   Existing visibility, expiry, source erasure and explicit listing remain intact;
   selected estimates are labeled unverified.
 - Runtime completions, failures and timeouts no longer produce automatic

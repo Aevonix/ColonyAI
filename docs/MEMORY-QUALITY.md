@@ -25,9 +25,12 @@ their model estimates are marked as automatic projections and cannot be copied
 into the graph by a later backfill. Explicitly supplied facts and legacy
 summary-only integrations retain their existing APIs.
 
-Retained contact-knowledge estimates no longer appear in a separate unconditional
-"Known Facts" section. Their existing scoped view checks visibility envelopes,
-expiry and source erasure before retrieval. Up to 512 current records are scanned
+In default native per-turn context assembly (`/v1/host/context/assemble`),
+retained contact-knowledge estimates no longer appear in a separate unconditional
+"Known Facts" section. Candidates come from the authorized legacy or projected
+contact store when available; canonical-only projections still exclude these
+stores. The projected view checks visibility envelopes, expiry and source erasure
+before retrieval. Up to 512 current records are scanned
 with the existing lexical tokenizer, and at most 25 query-matching candidates
 enter the same selector and character budget as source evidence. An empty query
 or one with no matching terms does not inject them, including when the reranker
@@ -38,7 +41,8 @@ with an explicit unverified label; they are not exact canonical quotations.
 This preserves bounded lexical access to useful retained estimates without a new
 index or model. It does not guarantee paraphrase-only recall or coverage beyond
 the current 512-record window. Explicit contact-knowledge listing remains
-available. No retained fact or its source history is deleted by this change.
+available. The explicit legacy `/v1/host/context/enriched` API remains separate
+and is unchanged. No retained fact or its source history is deleted by this change.
 
 Persistent extraction consumers use the provider's completed final answer.
 Reasoning-only and truncated responses are not saved as assertions, affect,

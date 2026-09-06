@@ -5,8 +5,9 @@ candidates as well as lexical candidates. Both enter the existing temporal
 claim handling, reranker and context budget. There is one memory packet per
 turn. A vector ranks potentially relevant evidence; it never determines truth.
 
-Authorized retained contact-knowledge estimates also enter this shared selection
-and budget, using bounded lexical candidates from their existing scoped view.
+In default native per-turn `/v1/host/context/assemble`, authorized retained
+contact-knowledge estimates also enter this shared selection and budget, using
+bounded lexical candidates from their existing scoped view.
 They are labeled unverified estimates, not canonical source quotations. See
 [memory quality](MEMORY-QUALITY.md) for candidate limits and fallback behavior.
 
