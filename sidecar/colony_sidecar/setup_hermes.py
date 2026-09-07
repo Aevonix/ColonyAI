@@ -185,6 +185,110 @@ def _native_environment(original, values):
             '\n'.join(name + '=' + json.dumps(value) for name, value in values.items()) + '\n').encode()
 
 
+def _resource_digest(resources):
+    return hashlib.sha256(b''.join(name.encode()+resources[name] for name in sorted(resources))).hexdigest()
+
+
+def _copied_resources(directory):
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError('Expected this instance\'s copied adapter directory')
+    resources = {}
+    for path in directory.rglob('*'):
+        if '__pycache__' in path.parts:
+            continue
+        if path.is_symlink():
+            raise ValueError('Copied adapter contains a local symlink; reconcile it before refreshing')
+        if path.is_file():
+            resources[str(path.relative_to(directory))] = path.read_bytes()
+    return resources
+
+
+def refresh_adapter(state, args):
+    """Refresh canonical code for one stopped attachment, preserving its data."""
+    from .setup import _atomic_hermes_config_write
+    path = state/'instance.json'; before = path.read_bytes(); manifest = json.loads(before)
+    if (manifest.get('version') != 1 or manifest.get('profile') != 'local'
+            or manifest.get('adapter_binding', {}).get('mode') not in {'native-installed', 'private-directory'}):
+        raise ValueError('Adapter refresh requires a supported local attachment')
+    home = Path(manifest['hermes_home'])
+    python = _interpreter(getattr(args, 'hermes_python', None) or manifest['hermes_python'])
+    resources = _adapter_resources(getattr(args, 'adapter_wheel', None))
+    binding = _adapter_binding(python, resources)
+    old_binding = manifest['adapter_binding']
+    if old_binding['mode'] != binding['mode']:
+        raise ValueError('Adapter loading mode changed; use the original interpreter topology before refreshing')
+    updates = []
+    adapter = state/'adapter'; staged = backup = None
+    old_resources = None
+    if binding['mode'] == 'private-directory':
+        old_resources = _copied_resources(adapter)
+        if _resource_digest(old_resources) != manifest['adapter_sha256']:
+            raise ValueError('Copied adapter was edited locally; retain or reconcile those edits before refreshing')
+        for directory, module in (('colony', 'colony_hermes'), ('colony-memory', 'colony_memory')):
+            forwarder = home/'plugins'/directory/'__init__.py'
+            if forwarder.is_symlink() or forwarder.read_text() != _forwarder(adapter, module, directory == 'colony-memory'):
+                raise ValueError('The selected profile adapter forwarder changed; reconcile it before refreshing')
+            target = home/'plugins'/directory/'plugin.yaml'
+            if target.is_symlink() or target.read_bytes() != old_resources[module+'/plugin.yaml']:
+                raise ValueError('The selected profile adapter manifest changed; reconcile it before refreshing')
+            updates.append((target, target.read_bytes(), resources[module+'/plugin.yaml']))
+        lane = manifest.get('local_work') or {}
+        if lane.get('executor') == 'kanban':
+            from .setup_local_work import native_root
+            worker = native_root(home)/'profiles'/lane['worker_profile']
+            config = yaml.safe_load((worker/'config.yaml').read_text())
+            forwarder = worker/'plugins/colony/__init__.py'
+            target = worker/'plugins/colony/plugin.yaml'
+            if (config['plugins']['colony']['instance_dir'] != str(state)
+                    or forwarder.is_symlink() or forwarder.read_text() != _forwarder(adapter, 'colony_hermes')
+                    or target.is_symlink() or target.read_bytes() != old_resources['colony_hermes/plugin.yaml']):
+                raise ValueError('The recorded draft worker binding changed; reconcile it before refreshing')
+            updates.append((target, target.read_bytes(), resources['colony_hermes/plugin.yaml']))
+    updated = {**manifest, 'hermes_python':str(python), 'sidecar_python':sys.executable,
+        'sidecar_module_root':str(Path(__file__).resolve().parents[1]),
+        'adapter_sha256':_resource_digest(resources), 'adapter_binding':binding}
+    updates.append((path, before, _json(updated).encode()))
+    copied_change = old_resources is not None and old_resources != resources
+    if not copied_change and all(original == after for _, original, after in updates):
+        print('Selected adapter already matches; private instance unchanged.')
+        return
+    completed = []
+    try:
+        if copied_change:
+            staged = Path(tempfile.mkdtemp(prefix='.colony-adapter-', dir=state))
+            for name, content in resources.items():
+                _private_write(staged/name, content)
+            # Hermes and Colony are stopped by the operator's existing lifecycle.
+            # Keep the complete old directory for recovery, including caches.
+            if _copied_resources(adapter) != old_resources or path.read_bytes() != before:
+                raise ValueError('Attachment changed during refresh; retry after reconciling it')
+            backup = Path(tempfile.mkdtemp(prefix='adapter-previous-', dir=state)); backup.rmdir()
+            os.replace(adapter, backup)
+            os.replace(staged, adapter)
+        for target, original, after in updates:
+            if original != after:
+                _atomic_hermes_config_write(target, original, after)
+                completed.append((target, original, after))
+    except Exception:
+        for target, original, after in reversed(completed):
+            if not target.is_symlink() and target.read_bytes() == after:
+                _atomic_hermes_config_write(target, after, original)
+        if backup is not None and backup.exists():
+            if not adapter.exists():
+                os.replace(backup, adapter)
+            elif _copied_resources(adapter) == resources:
+                shutil.rmtree(adapter)
+                os.replace(backup, adapter)
+        raise
+    finally:
+        if staged is not None and staged.exists():
+            shutil.rmtree(staged)
+    print('Selected adapter refreshed ('+binding['mode']+'); identity, configuration and databases retained.')
+    if backup is not None:
+        print('Previous copied adapter retained at '+str(backup))
+    print('Start this Colony instance and new Hermes processes through their existing lifecycle.')
+
+
 def run(root_dir=None, args=None):
     from colony_sidecar import setup
     noninteractive = bool(getattr(args, 'non_interactive', False))
@@ -222,6 +326,8 @@ def run(root_dir=None, args=None):
                 raise ValueError('This instance belongs to another Hermes home')
             if config.get('plugins', {}).get('colony', {}).get('instance_dir') != str(state):
                 raise ValueError('The Hermes binding changed; restore its saved config or select another instance')
+            if getattr(args, 'refresh_adapter', False):
+                refresh_adapter(state, args)
             if getattr(args, 'local_work', False):
                 # A native registration failure can follow successful attachment.
                 # Retry that missing step with the retained role and interpreter.
@@ -237,6 +343,8 @@ def run(root_dir=None, args=None):
             print(f'Existing private instance retained: {state}')
             print(f'Use colony --instance {str(state)!r} start, then status.')
             return 0
+        if getattr(args, 'refresh_adapter', False):
+            raise ValueError('Adapter refresh requires an existing private instance')
         if state.exists() and any(state.iterdir()):
             raise ValueError('The selected directory has existing state; use its existing configuration or a new private directory')
         if (home/'plugins').is_symlink():

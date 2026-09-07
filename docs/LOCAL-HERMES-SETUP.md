@@ -128,6 +128,54 @@ provider requires an explicit wizard choice or `--replace-memory-provider`;
 its data is retained. An existing Colony directory adapter or native JSON config
 requires an explicit upgrade rather than being silently replaced.
 
+## Update an existing attachment
+
+Stop the selected Hermes gateway and its workers using their existing host
+lifecycle, then stop this Colony instance (`colony --instance /private/path stop`,
+or `service stop` for a managed instance). Complete or cancel in-flight work
+through Hermes before stopping it. Keep the private instance and Hermes home.
+
+Update both Colony distributions in the environment that runs Colony, selecting
+the release you intend to use. For a source checkout this is:
+
+```sh
+python -m pip install --upgrade . ./sidecar
+colony init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
+```
+
+For a published release, install its matching `colonyai[hermes]` and
+`colony-hermes` versions instead. A Hermes interpreter with native installed
+Colony entry points also needs that adapter package updated explicitly in its
+own environment before refresh. That package update affects all homes using the
+interpreter. Refresh verifies those installed bytes and records the binding;
+it does not copy a second active adapter or install packages itself.
+Keep the attachment's existing loading mode. Switching between a package
+installed in Hermes and profile-local directory adapters requires a separate
+migration; refresh rejects that change before writing anything.
+
+The ordinary separate-environment attachment uses a copied adapter. Updating
+Python packages alone does not update that copy. `--refresh-adapter` replaces
+it with the selected canonical resources, updates the known profile and draft
+worker manifests, and retains the previous directory as `adapter-previous-*`.
+It retains identity, credentials, config, model roles, databases, native boards
+and worker configuration. Local changes to managed adapter files are reported
+before replacement. Repeating the same refresh leaves matching bytes unchanged.
+The instance records the Colony environment running this command; supply
+`--hermes-python` only when deliberately selecting another supported native
+interpreter. No model probe, service restart or new consent process runs here.
+If the Colony interpreter moved and this instance uses a user service, run the
+existing `service install` command from the new environment while the service
+is stopped, then `service start`. Refresh preserves the old service definition;
+updating the instance manifest alone does not move the service interpreter.
+
+Start Colony and Hermes through their existing lifecycle, then check `status`
+and `doctor` and recall a harmless fact from a new session. A package version
+alone is not evidence that the attached code or retained memory works. On an
+ordinary write failure refresh restores the files it changed. If the process
+itself is interrupted, keep both runtimes stopped and restore the retained
+adapter directory and corresponding `.colony-backup-*` manifest files before
+retrying. Database downgrade or rollback is outside this code-only refresh.
+
 ## Start, observe and recover
 
 ```bash

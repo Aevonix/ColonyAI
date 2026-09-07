@@ -15,7 +15,7 @@ from colony_sidecar.router.router import LLMRouter
 
 @contextmanager
 def endpoint(*, status=200, delay=0, started=None, release=None, content=None, location=None,
-             listing=None, listing_calls=None, error_message='neutral unavailable'):
+             listing=None, listing_calls=None, error_message='neutral unavailable', choice=None):
     calls = []
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -40,7 +40,7 @@ def endpoint(*, status=200, delay=0, started=None, release=None, content=None, l
                 return
             answer = content(payload) if callable(content) else (content or payload['model'])
             result = {'id': 'neutral', 'object': 'chat.completion', 'created': 1, 'model': payload['model'],
-                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': answer}, 'finish_reason': 'stop'}],
+                'choices': [choice or {'index': 0, 'message': {'role': 'assistant', 'content': answer}, 'finish_reason': 'stop'}],
                 'usage': {'prompt_tokens': 10, 'completion_tokens': 2, 'total_tokens': 12}}
             self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
             try: self.wfile.write(json.dumps(result).encode())
@@ -74,6 +74,54 @@ def router(cfg, path=None):
 
 async def complete(r, role='extraction', **context):
     return await r.complete([{'role': 'user', 'content': 'Neutral routing fixture.'}], context={'function_role': role, **context})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('message,finish,reason', [
+    ({'role': 'assistant', 'content': None, 'reasoning_content': 'Private scratch work.'}, 'stop', 'missing_final_answer'),
+    ({'role': 'assistant', 'content': 'Unfinished answer'}, 'length', 'incomplete_final_answer'),
+    ({'role': 'assistant', 'content': ''}, 'stop', 'missing_final_answer'),
+])
+async def test_incomplete_http_completion_uses_fallback_without_endpoint_cooldown(message, finish, reason):
+    from colony_sidecar.util.model_output import final_text
+    events = []
+    with endpoint(choice={'index': 0, 'message': message, 'finish_reason': finish}) as (first, a), endpoint() as (second, b):
+        r = router(config(first, second))
+        r._bus = SimpleNamespace(emit=lambda name, payload: events.append((name, payload)))
+        result = await complete(r)
+        assert result.binding == 'deliberate'
+        assert final_text(result) == 'strong-neutral'
+        assert result.prior_attempts == [{'binding': 'interactive', 'model': 'openai/fast-neutral',
+            'status': 'failed', 'reason': reason}]
+        assert len(a) == len(b) == 1
+        assert r.routing_status()['completion_observations']['interactive']['state'] != 'cooldown'
+        assert len(events) == 2  # Both completed inferences consumed tokens.
+        assert [payload['tokens']['total_tokens'] for _, payload in events] == [12, 12]
+        assert [row['binding'] for row in r.routing_status()['recent_calls']] == ['deliberate']
+        with pytest.raises(RuntimeError, match=reason):
+            await complete(r, allow_fallback=False)
+        assert len(a) == 2 and len(b) == 1  # No retry of the same completed response.
+
+
+@pytest.mark.asyncio
+async def test_requested_tool_completion_remains_usable_but_is_not_final_text():
+    from colony_sidecar.util.model_output import final_text
+    tool = {'type': 'function', 'function': {'name': 'neutral_read', 'description': 'Read a neutral fixture.',
+        'parameters': {'type': 'object', 'properties': {}}}}
+    choice = {'index': 0, 'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'content': None,
+        'tool_calls': [{'id': 'neutral-1', 'type': 'function', 'function': {'name': 'neutral_read', 'arguments': '{}'}}]}}
+    with endpoint(choice=choice) as (first, a), endpoint() as (second, b):
+        r = router(config(first, second))
+        result = await r.complete([{'role': 'user', 'content': 'Read the fixture.'}],
+            context={'function_role': 'extraction'}, tools=[tool])
+        assert result.binding == 'interactive' and result.content == ''
+        assert result.raw.choices[0].message.tool_calls[0].function.name == 'neutral_read'
+        with pytest.raises(ValueError, match='incomplete_final_answer'):
+            final_text(result)
+        assert len(a) == 1 and not b
+        result = await complete(r)  # A text-only caller did not request a tool turn.
+        assert result.binding == 'deliberate'
+        assert len(a) == 2 and len(b) == 1
 
 
 @pytest.mark.asyncio
@@ -170,7 +218,8 @@ async def test_short_role_budget_does_not_suppress_longer_role(monkeypatch, reco
                 await asyncio.Event().wait()
             finally:
                 cancelled.append(model)
-        return SimpleNamespace(content=model, latency_ms=1, raw=SimpleNamespace(model=model))
+        return SimpleNamespace(content=model, latency_ms=1, raw=SimpleNamespace(model=model,
+            choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=model))]))
 
     monkeypatch.setattr(r, '_litellm_call', controlled)
     if allow_fallback:
@@ -203,7 +252,8 @@ async def test_endpoint_failure_still_cools_down_across_roles(monkeypatch, error
         calls.append(model)
         if model == 'openai/strong-neutral':
             raise error_type('endpoint transport failure before caller deadline')
-        return SimpleNamespace(content=model, latency_ms=1, raw=SimpleNamespace(model=model))
+        return SimpleNamespace(content=model, latency_ms=1, raw=SimpleNamespace(model=model,
+            choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=model))]))
 
     monkeypatch.setattr(r, '_litellm_call', controlled)
     first = await complete(r)
