@@ -617,6 +617,8 @@ class GoalResponse(BaseModel):
     person_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    dispatch_unavailable: Optional[str] = None
+    completion_basis: Optional[str] = None
 
 
 class GoalListResponse(BaseModel):

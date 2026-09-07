@@ -66,9 +66,12 @@ async def with_queue_work(view, *, owner, limit=8):
         return view
     import asyncio
     from colony_sidecar.turns.hermes_work import cron_view
-    view['native_cron'] = await asyncio.to_thread(cron_view, limit=limit)
     from colony_sidecar.turns.local_work import local_work_view
-    view['local_work'] = await asyncio.to_thread(local_work_view, limit=limit)
+    from colony_sidecar.turns.hermes_kanban import kanban_view
+    # Independent native ledgers share the request's existing short deadline.
+    view['native_cron'], view['local_work'], view['native_kanban'] = await asyncio.gather(
+        asyncio.to_thread(cron_view, limit=limit), asyncio.to_thread(local_work_view, limit=limit),
+        asyncio.to_thread(kanban_view, limit=limit))
     from colony_sidecar.turns.reported_workers import reported_worker_view
     reported = await asyncio.to_thread(reported_worker_view, limit=limit)
     if reported is not None:

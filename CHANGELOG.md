@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.0.13 - shared native goals and visible memory admission
+
+Owner sessions can observe selected native Hermes Kanban boards through the
+existing current-work context. General tasks expose their native state, current
+attempt, configured goal budget and recent terminal record. Board coverage and
+omissions remain explicit. Hermes retains dispatch, continuation and recovery;
+Colony adds no second task executor. Native dispatcher and delegated worker
+instructions stay out of owner-source capture, including compression and legacy
+sync paths, while their native task and session records remain available.
+
+The legacy goal API can now record reported completion without reaccepting an
+already accepted goal. The response identifies unavailable dispatch and reported
+completion; a status change does not establish an external effect.
+
+Existing source-claim jobs expose bounded admission counts and response
+provenance, including when extraction yields no claims. Empty model output and
+validator rejection are distinguishable without retaining raw model responses.
+Diagnostics follow the job's attempt and erasure lifecycle. Extraction prompts
+and admission rules are unchanged.
+
 ## v1.0.12 - forgetting follows supplied evidence into later answers
 
 Native recollection now records the exact canonical source revisions supplied

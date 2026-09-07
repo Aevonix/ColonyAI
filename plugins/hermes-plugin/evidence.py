@@ -4,10 +4,29 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from .client import ColonyClient, TurnOutbox
+
+
+def native_work_capture_excluded() -> bool:
+    """Dispatcher prompts are task instructions, not an owner's statements.
+
+    Use native execution context as well as the task environment so an
+    in-process cron does not borrow the worker's identity. Native task and
+    session ledgers retain the work; they are not person-source memory.
+    """
+    if not os.environ.get('HERMES_KANBAN_TASK'):
+        return False
+    try:
+        from agent.delegation_context import (
+            is_delegated_child_context, is_dispatcher_owned_worker_context,
+        )
+        return is_dispatcher_owned_worker_context() or is_delegated_child_context()
+    except ImportError:
+        return False
 
 
 def direct_evidence(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

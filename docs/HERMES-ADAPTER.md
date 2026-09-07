@@ -250,6 +250,31 @@ third-party effect. Guests receive no native cron rows. Missing, incompatible
 or unreadable ledgers are explicitly unavailable, and `complete` is always
 false for the combined work view.
 
+The same owner view reads native Kanban tasks, including general `goal_mode`
+work, without dispatching or reconciling them. `COLONY_HERMES_WORK_BOARDS` can
+select up to eight board slugs as a JSON list, for example
+`["default","colony-drafts"]`. Without that setting it follows only the
+selected home's native current board (`HERMES_KANBAN_BOARD`, then
+`kanban/current`, then `default`), including Hermes' lowercase normalization.
+It does not enumerate other boards. Profile
+homes use Hermes' shared root for board paths; conflicting explicit native
+home/database overrides are unavailable.
+
+Each task includes a title capped at 128 characters, quoted as operational
+data, native task/run IDs and states, configured goal mode/turn budget and
+record timestamps. Bodies, arbitrary result prose, claim tokens and worker
+PIDs are excluded. The per-request native work refresh includes these titles
+and states, so another owner session can identify an undertaking and observe
+its later terminal record. Goal budgets describe configured limits, not
+remaining turns or evidence of completion. Running rows retain unknown
+process liveness; terminal rows do not prove an external effect. Missing
+selected boards, partial board coverage and omitted rows remain visible.
+Recent terminal records are bounded to seven days using their actual terminal
+timestamp. Archiving unfinished work uses its native archive event for
+`terminal_record_at` and leaves `completed_at` unset. Guest context receives no
+Kanban board rows. Hermes retains task creation, goal continuation, completion,
+recovery and all execution authority.
+
 An optional private `COLONY_WORKER_STATUS_PATHS` environment value maps neutral
 worker labels to local JSON heartbeat paths, for example
 `{"Local transport":"/private/runtime/transport-heartbeat.json"}`. It is unset

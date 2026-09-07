@@ -4824,6 +4824,8 @@ async def create_goal(body: GoalCreateRequest) -> GoalResponse:
             person_id=None,
             created_at=str(goal.created_at) if goal.created_at else None,
             updated_at=str(goal.updated_at) if goal.updated_at else None,
+            dispatch_unavailable=goal.context.get('dispatch_unavailable'),
+            completion_basis=goal.context.get('completion_basis'),
         )
     except Exception as exc:
         logger.warning("create_goal failed: %s", exc)
@@ -4855,6 +4857,8 @@ async def list_goals(person_id: Optional[str] = None, status_filter: Optional[st
                 person_id=None,
                 created_at=str(g.created_at) if g.created_at else None,
                 updated_at=str(g.updated_at) if g.updated_at else None,
+                dispatch_unavailable=g.context.get('dispatch_unavailable'),
+                completion_basis=g.context.get('completion_basis'),
             ) for g in goals
         ])
     except Exception as exc:
@@ -4889,6 +4893,8 @@ async def get_goal(goal_id: str) -> GoalResponse:
             person_id=None,
             created_at=str(goal.created_at) if goal.created_at else None,
             updated_at=str(goal.updated_at) if goal.updated_at else None,
+            dispatch_unavailable=goal.context.get('dispatch_unavailable'),
+            completion_basis=goal.context.get('completion_basis'),
         )
     except HTTPException:
         raise
@@ -4908,7 +4914,12 @@ async def update_goal(goal_id: str, body: GoalUpdateRequest) -> GoalResponse:
         if body.status:
             status_lower = body.status.lower()
             if status_lower in ("completed", "done"):
-                goal = _goals_store.accept_goal(goal_id)  # must be accepted first if not already
+                # Completion is an explicit report through this API, not a
+                # request to accept or dispatch the goal again.
+                goal = _goals_store.get_goal(goal_id)
+                if not _goals_store.complete_task(goal_id):
+                    raise HTTPException(status_code=409, detail="Goal is already abandoned")
+                goal = _goals_store.get_goal(goal_id)
             elif status_lower == "blocked":
                 goal = _goals_store.block_goal(
                     goal_id, reason=body.notes or "Blocked via API",
@@ -4935,7 +4946,13 @@ async def update_goal(goal_id: str, body: GoalUpdateRequest) -> GoalResponse:
             person_id=None,
             created_at=str(goal.created_at) if goal.created_at else None,
             updated_at=str(goal.updated_at) if goal.updated_at else None,
+            dispatch_unavailable=goal.context.get('dispatch_unavailable'),
+            completion_basis=goal.context.get('completion_basis'),
         )
+    except HTTPException:
+        raise
+    except GoalNotFoundError:
+        raise HTTPException(status_code=404, detail="Goal not found") from None
     except Exception as exc:
         logger.warning("update_goal failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
