@@ -38,6 +38,14 @@ third parties accumulated zero history).
 
 ## Architecture
 
+Turn context shows the contact's recorded interaction count, last interaction
+date and stored contact tier separately. It does not translate the legacy
+`relationship_score` into a closeness label or percentage: that heuristic blends
+contact mood with interaction frequency and recency, which do not establish the
+agent's attachment. The stored score remains available for existing consumers.
+Contact affect describes the contact; agent judgments have their own sourced
+representation. These observations do not grant tool authority.
+
 ### 1. Sender flows with every turn
 
 `TurnSyncRequest` gains an optional `sender`:
