@@ -356,6 +356,52 @@ class TestInitiativeEndpoints:
         assert "initiatives" in data
         assert len(data["initiatives"]) >= 1
 
+    def test_status_filter_finds_active_work_beyond_default_page(
+        self, client: TestClient
+    ) -> None:
+        from colony_sidecar.api.routers import host
+
+        store = host._initiative_store
+        terminal_ids = set()
+        for index in range(50):
+            item = store.create(
+                type="READ_ONLY", description=f"Earlier review {index}", priority=0.9
+            )
+            terminal_ids.add(item.id)
+            if index == 0:
+                store.complete(item.id, agent_id="review-worker")
+                completed_id = item.id
+            else:
+                store.cancel(item.id, cancelled_by="review-worker")
+
+        pending = store.create(type="READ_ONLY", description="Pending review", priority=0.1)
+        assigned = store.create(type="READ_ONLY", description="Assigned review", priority=0.2)
+        store.assign(assigned.id, agent_id="review-worker")
+
+        cases = [
+            ({}, terminal_ids),
+            ({"status": ""}, terminal_ids),
+            ({"status": "pending"}, {pending.id}),
+            ({"status": "assigned"}, {assigned.id}),
+            ({"status": "completed"}, {completed_id}),
+            ({"status": "cancelled"}, terminal_ids - {completed_id}),
+            ({"status": "unknown"}, set()),
+            ({"status": "assigned", "agent_id": "review-worker"}, {assigned.id}),
+            ({"status": "assigned", "agent_id": "another-worker"}, set()),
+        ]
+        for params, expected_ids in cases:
+            response = client.get("/v1/host/initiatives", params=params)
+            assert response.status_code == 200
+            data = response.json()
+            assert {item["id"] for item in data["initiatives"]} == expected_ids, params
+            assert data["total"] == len(expected_ids)
+
+        limited = client.get(
+            "/v1/host/initiatives", params={"status": "cancelled", "limit": 1}
+        ).json()
+        assert limited["total"] == len(limited["initiatives"]) == 1
+        assert limited["initiatives"][0]["id"] in terminal_ids - {completed_id}
+
     def test_get_initiative(self, client: TestClient) -> None:
         """Test GET /initiatives/{id}."""
         # Create an initiative
