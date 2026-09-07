@@ -91,6 +91,11 @@ for native package installations and service bindings.
 - **Evidence that outlives a model.** Original messages, timestamps, provenance
   and derived claims persist independently of inference weights. Corrections
   and conflicting claims remain inspectable. [Source claims](docs/SOURCE-CLAIMS.md)
+- **Corrections that stay with recall.** An attested owner or system turn can
+  use `colony_memory_annotate` on an exact source revision supplied to that turn.
+  Recollection keeps the original and its attributed corrections together;
+  corrections remain evidence, with their author and uncertainty visible.
+  [Source annotations](docs/SOURCE-ANNOTATIONS.md)
 - **Forgetting derived answers.** New native turns retain the canonical source
   revisions supplied to generation. Forgetting a selected source also removes
   linked assistant answers, while preserving independent user evidence. This

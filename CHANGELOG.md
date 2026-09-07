@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.0.19 - source corrections stay with recollection
+
+Authenticated memory writers can append attributed corrections to an exact
+source revision and excerpt. The original source stays unchanged; annotations
+are assistant evidence, with server-recorded authorship and no owner-fact
+promotion. Lexical and semantic recollection carry the original and its
+corrections as one indivisible packet through the existing native provider.
+
+Corrected evidence retains both source dependencies for derived-answer erasure.
+A tight context budget omits the whole packet, and an annotation-only search hit
+does not duplicate a correction already carried by an original excerpt.
+Conflicting corrections remain visible rather than automatically selecting the
+latest claim as truth. See docs/SOURCE-ANNOTATIONS.md for scope and rollback limits.
+
+Corrections follow the recalled message's provenance, so independent messages
+and surviving atomic facts do not inherit a sibling's correction or erasure.
+Corrected graph beliefs retain their underlying identity for recall reinforcement.
+
+The native `colony_memory_annotate` tool lets an attested owner or system turn
+append a correction to a source revision actually supplied to that turn. Identity
+and idempotency come from the existing native context. An unknown acknowledgment
+can be retried with identical arguments in the same turn without another source.
+The source-reference protocol is unchanged; the new tool requires adapter refresh.
+
 ## v1.0.17 - persistent worker ownership and useful review recurrence
 
 Paired Hermes profiles resolve memory and tool ownership from their persisted

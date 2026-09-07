@@ -1056,8 +1056,11 @@ class ColonyGraph:
         """Reinforce only graph records that actually entered turn context."""
         for memory in memories:
             if memory.get("kind", "belief") == "belief" and memory.get("id"):
+                # Annotated packets have a presentation ID, separate from the
+                # graph record whose use should slow subsequent memory decay.
+                memory_id = memory.get("_recall_memory_id") or memory["id"]
                 self._retain_task(asyncio.create_task(
-                    self._touch_memory_safe(memory["id"])))
+                    self._touch_memory_safe(memory_id)))
 
     async def recall(
         self,

@@ -2,6 +2,10 @@
 
 Ordinary attributed turns now retain a small factual assertion projection in the canonical source ledger. Recall can distinguish an explicit correction, a dated change and an unresolved disagreement. This is an incremental memory behavior, not a truth engine or completion of all temporal reasoning.
 
+Machine-authored reports and other retained text quotations can receive an
+[attributed source annotation](SOURCE-ANNOTATIONS.md) without manufacturing a
+USER assertion or rewriting the original evidence.
+
 ## Ingestion and provenance
 
 `TurnIdempotencyLedger.record_source` stores the source and queues its projection in the same transaction. The new `source_claim_jobs` and `source_claims` tables use the existing `turn-idempotency.db`. There is no additional database or vector index. Existing sources are not automatically backfilled. Historical checkpoints remain quotations because their individual messages do not attest the speaker and occurrence time.
