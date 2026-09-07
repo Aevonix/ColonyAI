@@ -120,6 +120,11 @@ for native package installations and service bindings.
   and recent terminal records to that view. Hermes owns their execution and
   continuation. Internal worker instructions stay in native work history instead
   of becoming owner-source memories.
+  Selected generated internal reviews can use that same native dispatcher.
+  Their task association survives repeated review cycles, and shared views
+  distinguish completed reports, exhausted failures and needs-input blocks.
+  Existing profile tools and authority still apply; read-only review admission
+  does not create a sandbox.
   Attested completion summaries can also become retained assistant evidence for
   later recall, with supplied source dependencies and erasure. They remain
   unverified machine reports, not owner facts or proof of an external effect.

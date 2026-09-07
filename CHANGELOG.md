@@ -1,6 +1,14 @@
 # Changelog
 
-## v1.0.15 - guided native tasks and retained completion reports
+## v1.0.15 - native review undertakings and retained completion reports
+
+Selected generated internal reviews can become shared native Hermes tasks
+through `colony_work_initiative`. The existing initiative ledger retains one
+task association across repeated cycles and lost acknowledgments. Native
+completion, exhausted failures and needs-input blocks remain distinct in shared
+work views. These reviews use the default native profile and its existing
+tools; read-only classification specifies their purpose, not a sandbox.
+Effectful actions retain their existing authorization path.
 
 The local setup wizard offers a separate default-no `--native-goals` opt-in on
 the existing Hermes profile. It enables native task tools and selected-board
@@ -17,6 +25,11 @@ Canonical sources supplied to generation remain linked, so source erasure also
 removes dependent retained reports. Worker instructions do not become user facts
 or claim-extraction inputs. This is forward-only callback capture, not a history
 backfill or proof that the worker's reported result is correct.
+
+Relationship context now shows recorded interactions, last interaction and
+contact tier without translating message volume or contact mood into an
+unsupported closeness percentage. Existing scores, state and authority remain
+compatible.
 
 ## v1.0.14 - reject invalid native skill proposals before staging
 
