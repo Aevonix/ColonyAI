@@ -579,20 +579,26 @@ class GoalStore:
     MAX_SNOOZE_COUNT = 3
 
     def complete_task(self, goal_id: str) -> bool:
-        """Mark a goal/task as completed."""
-        try:
-            goal = self.get_goal(goal_id)
-        except GoalNotFoundError:
-            return False
-        goal.status = GoalStatus.COMPLETED
-        goal.completed_at = datetime.now(timezone.utc)
-        goal.updated_at = datetime.now(timezone.utc)
-        self.save_goal(goal)
-        self.log_transition(
-            goal_id, GoalStatus(goal.status.value if hasattr(goal.status, 'value') else goal.status),
-            GoalStatus.COMPLETED, trigger="llm_complete",
-        )
-        return True
+        """Record reported completion, not proof of an external worker's effect."""
+        with self._tx() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status,context_json FROM goals WHERE goal_id=?", (goal_id,)).fetchone()
+            if row is None or row['status'] == 'abandoned':
+                return False
+            if row['status'] == 'completed':
+                return True
+            now = _now_iso()
+            context = json.loads(row['context_json'])
+            context.pop('dispatch_unavailable', None)
+            context['completion_basis'] = 'reported_completion'
+            conn.execute("""UPDATE goals SET status='completed',completed_at=?,updated_at=?,
+                progress_pct=1.0,context_json=? WHERE goal_id=?""",
+                         (now, now, json.dumps(context), goal_id))
+            conn.execute("""INSERT INTO goal_audit_log
+                (goal_id,from_status,to_status,trigger,created_at,metadata_json)
+                VALUES (?,?,'completed','reported_completion',?,'{}')""",
+                         (goal_id, row['status'], now))
+            return True
 
     def snooze_task(self, goal_id: str, hours: int, reason: str = "") -> bool:
         """Snooze a goal/task for N hours.

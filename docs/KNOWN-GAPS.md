@@ -21,6 +21,13 @@ general self-improvement simply by recording a successful review.
   test fixture, never an implicit production fallback. Supplying a queue does
   not establish worker liveness, durable native execution or cancellation of
   an external worker. Historical goal states are not rewritten by this change.
+  Goal API responses expose `dispatch_unavailable` when a binding is missing.
+  Explicit `done`/`completed` updates record reported completion without
+  accepting or dispatching the goal again. Completion and its transition commit
+  together; replay preserves the first completion time. `completion_basis` is
+  `reported_completion`, which is not independent verification of the outcome
+  or a command to stop a separate worker. Hermes owns executable native tasks;
+  do not add a second planner to make the legacy goal templates run.
 - **Mind-model briefing section** — `HealthSnapshot` (sleep/readiness) and
   predicted-load remain a protocol + stub with NO backing data source in the
   system. Deliberately not wired: fabricating health numbers would violate
