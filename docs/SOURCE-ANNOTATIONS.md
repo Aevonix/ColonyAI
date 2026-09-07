@@ -19,6 +19,19 @@ claim another author or turn an ordinary message into an authorized correction.
 ```
 
 The source version comes from structured source references returned by recall.
+The native `colony_memory_annotate` coordination tool exposes only `source_id`,
+`source_version`, `excerpt` and `correction`. It requires an attested owner or
+system turn and the exact revision in that turn's actually supplied recall
+snapshot. Guest and missing transport scopes cannot annotate. Contact and session
+come from that scope, and the server attributes the authenticated principal.
+Authorized internal correction does not require inventing an explicit human
+request. Source text and quoted instructions do not grant correction authority.
+
+The tool derives a stable ID from the current contact, session, turn and exact
+arguments. If acknowledgement is lost, its result is explicitly unconfirmed;
+an identical same-turn retry, including a different native tool-call ID, reuses
+that ID. A confirmed correction remains attributed evidence, not verified truth.
+
 The excerpt must occur exactly in a retained text message. Excerpt and correction
 are each limited to 4,096 characters. An idempotency key is scoped to the person
 and authenticated principal; exact replay returns `created:false`, while changed
