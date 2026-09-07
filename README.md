@@ -111,6 +111,11 @@ login. See the setup guide for status, stop, uninstall and recovery.
   corrections and applied weights. Historical runtime outcomes remain
   inspectable without establishing task quality or current-model competence.
   [Working perspective](docs/WORKING-PERSPECTIVE.md)
+- **Durable communication preferences.** Supported explicit corrections such
+  as "I prefer brief replies" enter dedicated context each turn. Their source,
+  later correction and erasure persist across model changes. Task-specific
+  artifact requests remain ordinary evidence; this parser covers a limited
+  vocabulary rather than every natural-language preference.
 - **Revisable working views.** Attributed owner turns can support fallible agent
   judgments with evidence and history. Owners can inspect, withdraw or request
   reconsideration through the native tool. These views do not establish truth
