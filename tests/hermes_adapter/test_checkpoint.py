@@ -85,6 +85,45 @@ rows = TurnOutbox(path).snapshot()
 ordinary = [row for row in rows if "checkpoint_messages" not in row["payload"]]
 assert len(ordinary) == 1 and ordinary[0]["payload"]["user_message"] == fact
 
+# Generic native workers must not turn generated card/continuation prompts
+# into owner facts, even when they use the ordinary configured profile.
+from agent.delegation_context import delegated_child_context, non_dispatcher_owned_context
+os.environ['HERMES_KANBAN_TASK'] = 't_native_worker'
+before_worker = TurnOutbox(path).snapshot()
+worker_prompt = 'Continue the native task; the owner now prefers fictional schedules.'
+plugins.invoke_hook('pre_llm_call', session_id='worker-session', task_id='worker-task', turn_id='worker-turn', platform='cli', sender_id='', user_message=worker_prompt)
+plugins.invoke_hook('post_llm_call', session_id='worker-session', task_id='worker-task', turn_id='worker-turn', platform='cli', user_message=worker_prompt, assistant_response='Task report retained by Hermes', conversation_history=[], model='processor-a')
+manager.on_pre_compress([{'role':'user', 'content':worker_prompt}], require_checkpoint=True)
+assert provider.get_diagnostics()['checkpoint'] == {'state':'not_applicable', 'reason':'native_worker_instructions'}
+assert TurnOutbox(path).snapshot() == before_worker
+# Explicit legacy writer mode must enforce the same boundary before spawning
+# its background sync thread, including the on_session_end call path.
+writer_mode = provider._turn_writer_mode
+sync_attempt = provider._last_sync_attempt
+provider._turn_writer_mode = 'enabled'
+provider.sync_turn(worker_prompt, 'Task report retained by Hermes', session_id='worker-session')
+assert provider._last_sync_attempt == sync_attempt
+provider.on_session_end([{'role':'user', 'content':worker_prompt}, {'role':'assistant', 'content':'Task report'}])
+assert provider._last_sync_attempt == sync_attempt
+provider._turn_writer_mode = writer_mode
+with delegated_child_context('delegated-worker-session'):
+    assert evidence.native_work_capture_excluded()
+    plugins.invoke_hook('pre_llm_call', session_id='delegated-worker-session', task_id='delegated-worker-task', turn_id='delegated-worker-turn', platform='cli', sender_id='', user_message=worker_prompt)
+    plugins.invoke_hook('post_llm_call', session_id='delegated-worker-session', task_id='delegated-worker-task', turn_id='delegated-worker-turn', platform='cli', user_message=worker_prompt, assistant_response='Delegated task report', conversation_history=[], model='processor-a')
+    manager.on_pre_compress([{'role':'user', 'content':worker_prompt}], require_checkpoint=True)
+    assert provider.get_diagnostics()['checkpoint']['state'] == 'not_applicable'
+    assert TurnOutbox(path).snapshot() == before_worker
+with non_dispatcher_owned_context():
+    assert not evidence.native_work_capture_excluded()
+    # The existing ordinary evidence replay must still reach checkpointing,
+    # even with a Kanban environment inherited by an in-process cron.
+    manager.on_pre_compress(raw, evidence_messages=stored, require_checkpoint=True)
+    assert provider.get_diagnostics()['checkpoint']['state'] == 'pending'
+    assert {row['turn_id']:row['payload'] for row in TurnOutbox(path).snapshot()} == {
+        row['turn_id']:row['payload'] for row in before_worker}
+del os.environ['HERMES_KANBAN_TASK']
+assert not evidence.native_work_capture_excluded()
+
 # Reopen the durable outbox and deliver through the actual client serializer.
 wire = []
 import httpx

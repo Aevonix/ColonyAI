@@ -2256,7 +2256,9 @@ def register(ctx: Any) -> None:
         )
         supplied_sources = request_memory.finish(task_id=str(kwargs.get('task_id') or ''),
             turn_id=str(kwargs.get('turn_id') or ''), contact_id=scope.contact_id if scope else None)
+        from .evidence import native_work_capture_excluded
         if (scope is None or not scope.valid_participant or scope.platform == "background_review"
+                or native_work_capture_excluded()
                 or local_work.ACTIVE.get() is not None
                 or (native_drafts is not None and native_drafts.worker)):
             return None

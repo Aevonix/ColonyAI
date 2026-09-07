@@ -1646,6 +1646,13 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 )
                 self._turn_writer_skip_logged = True
             return
+        try:
+            from colony_hermes.evidence import native_work_capture_excluded
+        except ImportError:
+            pass  # Legacy standalone providers have no native adapter context.
+        else:
+            if native_work_capture_excluded():
+                return
         sid = session_id or self._session_id
         turn_platform, turn_sender, turn_chat = self._turn_sender_context()
         channel_id = (
@@ -2372,6 +2379,10 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         """
         self._rw_mark_compressed(self._session_id)
         try:
+            from colony_hermes.evidence import native_work_capture_excluded
+            if native_work_capture_excluded():
+                self._last_checkpoint = {"state": "not_applicable", "reason": "native_worker_instructions"}
+                return ""
             if not messages:
                 self._last_checkpoint = {"state": "empty", "messages": 0}
                 return ""
