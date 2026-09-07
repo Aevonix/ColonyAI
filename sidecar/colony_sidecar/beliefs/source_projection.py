@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 
-from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_timeout_seconds, norm_value
+from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_diagnostics, extraction_timeout_seconds, norm_value
 from .source_time import MemoryTimeQuery, filter_unstructured
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,8 @@ def initialize(conn):
         timezone TEXT NOT NULL DEFAULT 'UTC', attempts INTEGER NOT NULL DEFAULT 0,
         next_attempt REAL NOT NULL DEFAULT 0, lease_until REAL NOT NULL DEFAULT 0,
         error TEXT, model TEXT, extraction_version TEXT, lease_token TEXT NOT NULL DEFAULT '')''')
+    if 'diagnostics_json' not in {row[1] for row in conn.execute('PRAGMA table_info(source_claim_jobs)')}:
+        conn.execute('ALTER TABLE source_claim_jobs ADD COLUMN diagnostics_json TEXT')
     conn.execute('''CREATE TABLE IF NOT EXISTS source_claims (
         id TEXT PRIMARY KEY, turn_id TEXT NOT NULL, message_hash TEXT NOT NULL,
         subject_key TEXT NOT NULL, predicate TEXT NOT NULL, value_key TEXT NOT NULL, data_json TEXT NOT NULL,
@@ -189,15 +191,19 @@ class SourceClaimProjection:
                          (now + 60, token, job["turn_id"]))
             return dict(job, lease_token=token)
 
-    def finish_job(self, job, *, model=None, error=None):
+    def finish_job(self, job, *, model=None, error=None, diagnostics=None):
+        # claim_job returns the pre-increment count. Older workers can leave
+        # this additive column untouched; never attribute their later attempt
+        # to measurements produced by this worker.
+        encoded = json.dumps(dict(diagnostics, attempt=job['attempts'] + 1), sort_keys=True) if diagnostics is not None else None
         with closing(self.ledger._connect()) as conn, conn:
             if error:
                 delay = min(900, 15 * 2 ** min(job["attempts"], 6))
-                conn.execute("UPDATE source_claim_jobs SET status='pending',error=?,next_attempt=?,lease_until=0 WHERE turn_id=? AND lease_token=?",
-                             (error, time.time() + delay, job["turn_id"], job["lease_token"]))
+                conn.execute("UPDATE source_claim_jobs SET status='pending',error=?,next_attempt=?,lease_until=0,diagnostics_json=? WHERE turn_id=? AND lease_token=?",
+                             (error, time.time() + delay, encoded, job["turn_id"], job["lease_token"]))
             else:
-                conn.execute("UPDATE source_claim_jobs SET status='complete',error=NULL,model=?,extraction_version=?,lease_until=0 WHERE turn_id=? AND lease_token=?",
-                             (model, EXTRACTION_VERSION, job["turn_id"], job["lease_token"]))
+                conn.execute("UPDATE source_claim_jobs SET status='complete',error=NULL,model=?,extraction_version=?,lease_until=0,diagnostics_json=? WHERE turn_id=? AND lease_token=?",
+                             (model, EXTRACTION_VERSION, encoded, job["turn_id"], job["lease_token"]))
 
     def renew_job(self, job, request_timeout):
         """Extend this existing lease for one bounded request and its commit."""
@@ -212,6 +218,7 @@ class SourceClaimProjection:
         if job is None:
             return False
         model = None
+        diagnostics = extraction_diagnostics()
         try:
             for message in json.loads(job["messages_json"]):
                 # Match the text extractor's eligibility before its prior
@@ -224,25 +231,31 @@ class SourceClaimProjection:
                 if not self.renew_job(job, request_timeout):
                     return True  # Forgotten or reclaimed; do not start a stale model call.
                 claims, model = await extract_claims(router, job, message, self.prior(job, message),
-                                                    timezone_name=job["timezone"], request_timeout=request_timeout)
+                                                    timezone_name=job["timezone"], request_timeout=request_timeout,
+                                                    diagnostics=diagnostics)
                 if model == "local_extraction_role_unavailable":
-                    self.finish_job(job, error=model)
+                    self.finish_job(job, error=model, diagnostics=diagnostics)
                     return True
                 self.commit(job, message, claims, model=model, lease_token=job["lease_token"])
-            self.finish_job(job, model=model)
+            self.finish_job(job, model=model, diagnostics=diagnostics)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self.finish_job(job, error=type(exc).__name__)
+            self.finish_job(job, error=type(exc).__name__, diagnostics=diagnostics)
             logger.warning("source claim projection deferred (%s)", type(exc).__name__)
         return True
 
     def status(self, contact_id):
         with closing(self.ledger._connect()) as conn:
-            return [dict(row) for row in conn.execute('''SELECT j.turn_id,j.status,j.attempts,j.error,j.model,j.extraction_version,
+            rows = [dict(row) for row in conn.execute('''SELECT j.turn_id,j.status,j.attempts,j.error,j.model,j.extraction_version,j.diagnostics_json,
                 (SELECT count(*) FROM source_claims c WHERE c.turn_id=j.turn_id) AS claim_count
                 FROM source_claim_jobs j JOIN turn_sources s ON s.turn_id=j.turn_id WHERE s.contact_id=?
                 ORDER BY s.ingested_at DESC LIMIT 20''', (contact_id,))]
+        for row in rows:
+            encoded = row.pop('diagnostics_json')
+            data = json.loads(encoded) if encoded is not None else None
+            row['diagnostics'] = data if data is not None and data['attempt'] == row['attempts'] else None
+        return rows
 
     def prepare_context(self, beliefs, source_hits, *, contact_id, session_id, time_query: MemoryTimeQuery):
         """Expand retrieved keys into complete scoped assertion bundles.

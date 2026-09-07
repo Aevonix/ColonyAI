@@ -67,6 +67,22 @@ delete its source, and retrieval of a source does not certify its contents.
 The ordinary claim-status API exposes extraction version, errors and claim
 counts; accepted claim records retain their quality judgment and provenance.
 
+Claim-job status also exposes bounded `diagnostics` once its current attempt
+finishes. It distinguishes an empty model array from candidates rejected by
+validation, with candidate/accepted/rejected counts and fixed rejection reasons.
+Each rejected candidate records its first failing check; these counts do not
+judge whether an empty result was useful. Malformed arrays remain failed jobs.
+Counts aggregate the attempt's completed text extractions. `accepted_count`
+means validated candidates; the existing `claim_count` reports persisted claims,
+which can differ after deduplication or partial work. `last_model_provenance`
+identifies the last completed extraction response, including a response that
+produced zero claims. It does not describe every response in a multi-message job.
+No quotations, rejected values or raw model drafts enter this diagnostic record.
+Historical jobs and attempts run by predecessor workers without these
+measurements return `diagnostics: null`; an older attempt's counts are not reused.
+The record lives on the existing job row, follows its lease, is replaced by the
+next finished attempt and is removed with source erasure.
+
 This change does not relabel or erase historical memories. Audit a retained
 corpus before making content changes. Keep raw private samples on the deployment,
 separate exact duplicates from distinct supporting evidence, and label model

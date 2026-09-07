@@ -55,14 +55,36 @@ def norm_value(value) -> str:
     return re.sub(r"[\W_]+", " ", unicodedata.normalize("NFKC", str(value or "")).casefold()).strip()
 
 
+def extraction_diagnostics() -> dict:
+    """Counts only; accepted means validated, not necessarily newly committed."""
+    return {"version": "source-claim-diagnostics-v1", "response_count": 0,
+            "candidate_count": 0, "accepted_count": 0, "rejected_count": 0,
+            "empty_array_count": 0, "invalid_array_count": 0,
+            "rejection_counts": {}, "last_model_provenance": None}
+
+
+def _diagnostics(diagnostics):
+    if diagnostics is not None:
+        for key, value in extraction_diagnostics().items():
+            diagnostics.setdefault(key, value)
+
+
 def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: str | None,
-                     timezone_name: str = "UTC") -> list[dict]:
+                     timezone_name: str = "UTC", diagnostics: dict | None = None) -> list[dict]:
     """Accept quoted assertions; malformed extraction remains an unfinished job.
 
     A well-formed empty array or unsupported candidate may yield no claims.
     An invalid response envelope must reach the existing worker failure path
     so it cannot be recorded as successful rejection of low-value information.
     """
+    _diagnostics(diagnostics)
+
+    def reject(reason):
+        if diagnostics is not None:
+            diagnostics["rejected_count"] += 1
+            counts = diagnostics["rejection_counts"]
+            counts[reason] = counts.get(reason, 0) + 1
+
     observed = utc_timestamp(observed_at)
     observed_at = observed.isoformat() if observed else None
     text = raw.strip()
@@ -71,40 +93,59 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
     try:
         values = json.loads(text)
     except (TypeError, ValueError):
+        if diagnostics is not None:
+            diagnostics["invalid_array_count"] += 1
         raise SourceClaimOutputError("invalid_claim_array_json") from None
     if not isinstance(values, list) or len(values) > 6 or any(not isinstance(item, dict) for item in values):
+        if diagnostics is not None:
+            diagnostics["invalid_array_count"] += 1
         raise SourceClaimOutputError("invalid_claim_array_shape")
+    if diagnostics is not None:
+        diagnostics["candidate_count"] += len(values)
+        diagnostics["empty_array_count"] += int(not values)
     prior_by_id = {row["id"]: row for row in prior}
     output = []
     for item in values:
         quality = promotion_metadata(item)
         if quality is None:
+            reject("promotion_metadata")
             continue
         subject, predicate, value, evidence = (item.get(k) for k in ("subject", "predicate", "value", "evidence"))
         if not all(isinstance(v, str) and v.strip() for v in (subject, predicate, value, evidence)):
+            reject("required_fields")
             continue
         if max(len(subject), len(predicate), len(value)) > 160 or len(evidence) > 500:
+            reject("field_length")
             continue
-        if evidence not in message or _SENSITIVE.search(evidence):
+        if evidence not in message:
+            reject("evidence_not_in_source")
+            continue
+        if _SENSITIVE.search(evidence):
+            reject("sensitive_evidence")
             continue
         if subject.lower() == "i":
             if not re.search(r"\b(i|my|mine)\b", evidence, re.I):
+                reject("subject_not_grounded")
                 continue
             # A quoted self-example that the speaker explicitly disclaims is
             # source history, not a personal preference/context assertion.
             # Inspect the full message so clipping the disclaimer cannot
             # transform it into support. Other subjects remain independent.
             if _PERSONAL_DISAVOWAL.search(message):
+                reject("personal_disavowal")
                 continue
             subject_key = "speaker"
         elif subject.casefold() in evidence.casefold():
             subject_key = norm_value(subject)
         else:
+            reject("subject_not_grounded")
             continue
         if value.casefold() not in evidence.casefold():
+            reject("value_not_grounded")
             continue
         predicate_key = norm_value(predicate.replace("_", " "))
         if not subject_key or not predicate_key:
+            reject("empty_identity")
             continue
         previous = prior_by_id.get(item.get("prior_claim_id"))
         if previous and previous["subject_key"] != subject_key:
@@ -134,6 +175,7 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
                 break
             dates.append(parsed)
         if invalid_date:
+            reject("invalid_date")
             continue
         valid_from, valid_to, event_at = dates
         validity_basis = "explicit_date" if valid_from or valid_to else "unspecified"
@@ -145,6 +187,7 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
             else:
                 valid_from, validity_basis = observed_at, "assertion_time"
         if valid_from and valid_to and valid_from >= valid_to:
+            reject("invalid_date_range")
             continue
         output.append({
             "subject_key": subject_key, "subject": subject.strip(), "predicate": predicate_key,
@@ -155,6 +198,8 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
             "event_at": event_at,
             "memory_quality": quality,
         })
+        if diagnostics is not None:
+            diagnostics["accepted_count"] += 1
     return output
 
 
@@ -200,8 +245,9 @@ def extraction_timeout_seconds(router):
 
 
 async def extract_claims(router, source: dict, message: dict, prior: list[dict], *, timezone_name="UTC",
-                         request_timeout=None):
+                         request_timeout=None, diagnostics: dict | None = None):
     """Bounded role-routed extraction; rejected content is never lost."""
+    _diagnostics(diagnostics)
     content = message.get("content")
     if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
         return [], "unsupported_message"
@@ -221,12 +267,17 @@ async def extract_claims(router, source: dict, message: dict, prior: list[dict],
         force_tier=tier, context={"task": "source_claim_extraction", "function_role": "extraction", "max_output_tokens": 1400,
                                   "allow_fallback": functions}),
         timeout=extraction_timeout_seconds(router) if request_timeout is None else request_timeout)
+    provenance = {
+        'function_role': getattr(response, 'function_role', '') or 'extraction',
+        'config_revision': getattr(response, 'config_revision', '') or 'unknown',
+        'weight_revision': getattr(response, 'model_revision', '') or 'unknown',
+        'model_id': response.model_id}
+    if diagnostics is not None:
+        diagnostics['response_count'] += 1
+        diagnostics['last_model_provenance'] = provenance.copy()
     claims = validated_claims(final_text(response), message=content, prior=prior,
-                            observed_at=source["occurred_at"], timezone_name=timezone_name)
+                            observed_at=source["occurred_at"], timezone_name=timezone_name,
+                            diagnostics=diagnostics)
     for claim in claims:
-        claim['model_provenance'] = {
-            'function_role': getattr(response, 'function_role', '') or 'extraction',
-            'config_revision': getattr(response, 'config_revision', '') or 'unknown',
-            'weight_revision': getattr(response, 'model_revision', '') or 'unknown',
-            'model_id': response.model_id}
+        claim['model_provenance'] = provenance.copy()
     return claims, response.model_id
