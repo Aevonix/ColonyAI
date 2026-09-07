@@ -120,6 +120,9 @@ for native package installations and service bindings.
   and recent terminal records to that view. Hermes owns their execution and
   continuation. Internal worker instructions stay in native work history instead
   of becoming owner-source memories.
+  Attested completion summaries can also become retained assistant evidence for
+  later recall, with supplied source dependencies and erasure. They remain
+  unverified machine reports, not owner facts or proof of an external effect.
 - **Replaceable search indexes.** Optional Lance indexes record embedding
   identity and rebuild into a separate generation. Interrupted rebuilds resume;
   incompatible or unknown vectors are not compared. Canonical evidence remains
