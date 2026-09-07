@@ -35,6 +35,11 @@ def stage_skill_change(arguments):
     operations = arguments.get('operations')
     if operations is not None and (not isinstance(operations, list) or not operations):
         return json.dumps({'success':False, 'error':'operations must be a non-empty array.'})
+    if operations is not None and len(operations) > manager._BATCH_MAX_OPS:
+        return json.dumps({'success':False, 'error':f'operations is capped at {manager._BATCH_MAX_OPS} ops per call.'})
+    if operations is not None and len(operations) != 1 and any(
+            isinstance(operation, dict) and operation.get('action') == 'delete' for operation in operations):
+        return json.dumps({'success':False, 'error':'delete must be the sole operation in its call.'})
     steps = operations if operations is not None else [arguments]
     actions = {'create', 'patch', 'delete', 'write_file', 'remove_file'}
     if operations is None:

@@ -158,7 +158,12 @@ try:
     retained=approval.stage_write(approval.SKILLS,{'operations':'[{malformed'},summary='Existing malformed proposal',origin='background_review')
     cases={'malformed_string':'[{malformed','encoded_array':json.dumps([operation]),'empty':[],
            'nonobject':['patch'],'missing_action':[{'name':name}],
-           'missing_name':[{'action':'patch','content':new}]}
+           'missing_name':[{'action':'patch','content':new}],
+           'too_many':[{'action':'create','name':f'neutral-batch-new-{i}',
+                        'content':f'---\nname: neutral-batch-new-{i}\ndescription: Neutral check.\n---\nGuidance.\n'}
+                       for i in range(21)],
+           'mixed_delete':[{'action':'delete','name':name},
+                           {'action':'create','name':'neutral-batch-new','content':new}]}
     before=approval.list_pending(approval.SKILLS)
     ledger_before=ledger.ledger_path().read_bytes()
     if scenario in cases:
@@ -187,7 +192,8 @@ print(json.dumps({'passed':True,'scenario':scenario}))
 
 
 @pytest.mark.parametrize('scenario', ['malformed_string','encoded_array','empty','nonobject',
-                                    'missing_action','missing_name','legacy','legacy_edit','batch','batch_default_name'])
+                                    'missing_action','missing_name','too_many','mixed_delete',
+                                    'legacy','legacy_edit','batch','batch_default_name'])
 def test_native_review_batch_shape_before_staging(artifacts,tmp_path,scenario):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native skill evaluation')
