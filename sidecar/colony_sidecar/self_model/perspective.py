@@ -114,7 +114,8 @@ class SelfPerspective:
         if operational:
             weight = {'prefer': 1.2, 'deprioritize': 0.8, 'use normal priority for': 1.0}[operational[1].lower()]
             return [('initiative.' + operational[2].lower().replace(' ', '_'), weight)]
-        if not re.match(r'^(?:(?:please|actually|from now on|going forward)[,:]?\s+)*(?:be\b|keep\b|use\b|stop\b|skip\b|avoid\b|don.t\b|do not\b|no emoji\b|no emojis\b|i prefer\b|i want\b)', raw, re.I):
+        prefix = re.match(r'^(?:(?:please|actually|from now on|going forward)[,:]?\s+)*(?:be\b|keep\b|use\b|stop\b|skip\b|avoid\b|don.t\b|do not\b|no emoji\b|no emojis\b|i prefer\b|i want\b)', raw, re.I)
+        if not prefix:
             return []
         # Reuse existing style vocabulary, but do not guess the direction of
         # a negated or comparative request from bag-of-words keyword order.
@@ -123,6 +124,14 @@ class SelfPerspective:
             return []
         from colony_sidecar.intelligence.components import preference_learner as vocabulary
         words = set(re.findall(r'\b\w+\b', raw.lower()))
+        if re.search(r'\bi (?:prefer|want)$', prefix[0], re.I):
+            # First-person corrections must name general communication:
+            # "I prefer/want <style> replies/responses/answers". Artifact
+            # requests ("I want a code example") remain ordinary evidence.
+            general = re.fullmatch(r'(.+?)\s+(?:replies|responses|answers)[.!]?', raw[prefix.end():].strip(), re.I)
+            if general is None or set(re.findall(r'\b\w+\b', general[1].lower())) - (vocabulary._STYLE_KEYWORDS | {'and', 'more'}):
+                return []
+            words.discard('i')
         style_words = vocabulary._STYLE_KEYWORDS | vocabulary._DIRECTIVE_CUES | vocabulary._NEGATION | {'and', 'the', 't', 'a', 'an', 'of', 'with', 'so', 'being', 'all', 'future', 'my', 'me', 'actually'}
         if words - style_words:
             return []  # Content/task-specific instructions are not standing style corrections.

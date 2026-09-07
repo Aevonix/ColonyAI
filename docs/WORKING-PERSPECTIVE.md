@@ -14,9 +14,14 @@ turn and message hash, correction time, and supersession reference. Checkpoints,
 other contacts, assistant prose and quoted instructions cannot make these owner
 corrections. Replaying a source does not add another correction.
 
-The first parser deliberately accepts a limited direct style vocabulary, such as
-`Be concise.`, `Actually be detailed and thorough.`, `Use bullet points please.`,
-and `Don't use emoji.` Ambiguous negations, comparisons, questions, reported
+The parser accepts a limited direct style vocabulary, such as `Be concise.`,
+`Actually be detailed and thorough.`, `Use bullet points please.`, and
+`Don't use emoji.` It also accepts explicit general communication preferences:
+`I prefer brief replies.` or `I want detailed answers.` These enter the dedicated
+owner-preference context on subsequent turns without competing for a semantic
+recall slot. First-person requests must name replies, responses or answers;
+`I want a code example.` and ambiguous `I want prose.` remain ordinary evidence.
+Ambiguous negations, comparisons, questions, reported
 speech and task-specific requests stay raw source evidence. This is not a general
 natural-language preference extractor. A longer request can still influence the
 current conversation without becoming a standing preference.

@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.9 - durable first-person reply preferences
+
+Explicit general communication preferences such as "I prefer brief replies"
+now enter the existing sourced preference state through ordinary owner turns.
+Later context includes them independently of semantic recall ranking, with
+source attribution, correction and forgetting preserved across sessions and
+model changes. Requests for a particular artifact remain ordinary evidence.
+
+The parser supports a limited direct vocabulary; it does not infer every
+natural-language preference. Model compliance with supplied guidance remains
+distinct from successful capture and context delivery. No new state store,
+memory service or Hermes patch is required.
+
 ## v1.0.8 - shared undertakings and useful recall capacity
 
 Repeated exact quotations from one known participant no longer occupy multiple
