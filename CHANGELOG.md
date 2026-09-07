@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.19 - source corrections stay with recollection
+
+Authenticated memory writers can append attributed corrections to an exact
+source revision and excerpt. The original source stays unchanged; annotations
+are assistant evidence, with server-recorded authorship and no owner-fact
+promotion. Lexical and semantic recollection carry the original and its
+corrections as one indivisible packet through the existing native provider.
+
+Corrected evidence retains both source dependencies for derived-answer erasure.
+A tight context budget omits the whole packet, and an annotation-only search hit
+does not duplicate a correction already carried by an original excerpt.
+Conflicting corrections remain visible rather than automatically selecting the
+latest claim as truth. See docs/SOURCE-ANNOTATIONS.md for scope and rollback limits.
+
+This is a sidecar feature. The existing native adapter protocol is unchanged.
+
 ## v1.0.17 - persistent worker ownership and useful review recurrence
 
 Paired Hermes profiles resolve memory and tool ownership from their persisted
