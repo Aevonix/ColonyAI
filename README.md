@@ -59,6 +59,11 @@ The wizard can also enable [accepted local drafts](docs/ACCEPTED-LOCAL-WORK.md):
 ask for a summary or comparison of selected local text files, and the native
 Hermes Kanban worker completes it in the background with a retained cited report.
 This requires a local model with function calling and a running Hermes gateway.
+For general persistent tasks, opt in separately with `colony init --native-goals`
+for the selected home. This enables native Kanban tools on the existing profile
+and observes its selected boards. The wizard does not start the Hermes gateway.
+Native task tools and consequential-action consent remain governed by that
+profile; see the [setup guide](docs/LOCAL-HERMES-SETUP.md#persistent-native-tasks).
 For login startup and automatic process recovery, stop a detached instance and
 run `colony --instance /path/to/private/colony service install`, then
 `colony --instance /path/to/private/colony service start`. Linux systemd user

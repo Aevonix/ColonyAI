@@ -75,6 +75,69 @@ sys.argv = ['colony', 'doctor', '--json']
 runpy.run_module('colony_sidecar', run_name='__main__')
 '''
 
+NATIVE_GOALS_CONFIG = r'''
+import json, os, socket, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+if sys.argv[2]: sys.path.append(sys.argv[2])
+def no_network(*a, **kw): raise AssertionError('Native setup configuration check must stay offline')
+socket.socket.connect=no_network; socket.create_connection=no_network
+import yaml
+from colony_sidecar.setup_native_goals import prepare
+from hermes_cli.config import load_config
+from hermes_cli.tools_config import _get_platform_tools
+from hermes_cli.profiles import resolve_profile_env
+from tools import kanban_tools
+from tools.registry import registry
+from agent.auxiliary_client import _resolve_task_provider_model
+home=Path(os.environ['HERMES_HOME']);home.mkdir(parents=True,exist_ok=True)
+config={'model':{'provider':'openai','default':'configured-main','base_url':'http://127.0.0.1:8123/v1'},
+        'toolsets':['file'],'platform_toolsets':{'cli':['file'],'telegram':['web']},
+        'auxiliary':{'goal_judge':{'provider':'auto','timeout':83}}}
+enabled=sys.argv[3]=='enabled'
+if enabled:
+    config,details=prepare(config,home,native_env={},observer_env={},local_work=False)
+    assert resolve_profile_env(details['profile'])==str(home)
+    assert details['boards']==['default']
+(home/'config.yaml').write_text(yaml.safe_dump(config))
+actual=load_config()
+assert kanban_tools._check_kanban_mode() is enabled
+selected=_get_platform_tools(actual,'cli')
+assert 'file' in selected and 'kanban' in selected,selected
+# Native recovers Kanban across platforms, then applies its profile-wide gate.
+assert actual['platform_toolsets']['telegram']==['web']
+assert _get_platform_tools(actual,'telegram')=={'web','kanban'}
+schemas=registry.get_definitions({'kanban_create'},quiet=True)
+assert bool(schemas) is enabled
+if enabled:
+    schema=schemas[0]['function']
+    assert schema['name']=='kanban_create'
+    assert {'goal_mode','goal_max_turns','assignee'}.issubset(schema['parameters']['properties'])
+    provider,model,base,key,mode=_resolve_task_provider_model(task='goal_judge')
+    assert (provider,model,base)==('custom','configured-main','http://127.0.0.1:8123/v1')
+    assert actual['auxiliary']['goal_judge']['timeout']==83
+assert not (home/'kanban.db').exists()
+print(json.dumps({'native_config_checked':True,'enabled':enabled,'network_calls':0}))
+'''
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+@pytest.mark.parametrize('named_profile', [False, True])
+def test_native_goal_setup_config_uses_actual_native_tool_and_role_contract(tmp_path, enabled, named_profile):
+    if importlib.util.find_spec('hermes_cli') is None:
+        pytest.skip('Use the qualified native Hermes interpreter')
+    home=tmp_path/'hermes'
+    if named_profile:
+        home=home/'profiles/orion'
+    env={key:os.environ[key] for key in ('PATH','HOME','LANG') if key in os.environ}
+    env.update(HERMES_HOME=str(home), HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),
+        COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', HERMES_DISABLE_LAZY_INSTALLS='1',
+        HERMES_DISABLE_TELEMETRY='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
+    result=run_python('-I','-c',NATIVE_GOALS_CONFIG,ROOT/'sidecar',
+        os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),'enabled' if enabled else 'disabled',
+        cwd=tmp_path,env=env)
+    assert json.loads(result.stdout.splitlines()[-1])['native_config_checked']
+
 LOCAL_DRAFT = r'''
 import json,os,signal,sqlite3,time
 from pathlib import Path

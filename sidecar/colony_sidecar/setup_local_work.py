@@ -19,6 +19,10 @@ def native_root(home):
     return home.parent.parent if home.parent.name == 'profiles' else home
 
 
+def board_name(home):
+    return BOARD + ('-'+hashlib.sha256(str(home).encode()).hexdigest()[:8] if native_root(home) != home else '')
+
+
 def verify_tools(endpoint, model, key):
     tool = {'type':'function', 'function':{'name':'colony_setup_echo',
         'description':'Return the supplied neutral setup token; no action is executed.',
@@ -31,7 +35,7 @@ def verify_tools(endpoint, model, key):
     choices = response.json().get('choices') or [{}]
     calls = choices[0].get('message', {}).get('tool_calls') or []
     if len(calls) != 1 or calls[0].get('function', {}).get('name') != 'colony_setup_echo':
-        raise ValueError('Local drafts require a model with function calling; choose another model or omit --local-work')
+        raise ValueError('Background tasks require a model with function calling; choose another model or omit --local-work and --native-goals')
     if json.loads(calls[0]['function']['arguments']) != {'token':'colony-ready'}:
         raise ValueError('The local model did not return the requested setup function arguments')
 
@@ -129,8 +133,7 @@ def install(state):
     config = yaml.safe_load(config_before)
     if config.get('kanban', {}).get('dispatch_in_gateway') is False:
         raise ValueError('Enable the selected Hermes gateway dispatcher before installing local drafts')
-    suffix = '-'+hashlib.sha256(str(home).encode()).hexdigest()[:8] if native_root(home) != home else ''
-    board, profile = BOARD+suffix, PROFILE+suffix
+    board = profile = board_name(home)
     worker = native_root(home)/'profiles'/profile
     preparation = state/'local-work-install.json'
     marker = {'hermes_home':str(home), 'worker_profile':profile}
