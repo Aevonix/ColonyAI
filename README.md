@@ -111,6 +111,10 @@ for native package installations and service bindings.
   model request so concurrent completion does not wait for another user message.
   Full memory recollection remains once per turn.
   [Current work within a turn](docs/REQUEST-WORK-CONTEXT.md)
+  Selected native Kanban boards contribute general tasks, attempts, goal budgets
+  and recent terminal records to that view. Hermes owns their execution and
+  continuation. Internal worker instructions stay in native work history instead
+  of becoming owner-source memories.
 - **Replaceable search indexes.** Optional Lance indexes record embedding
   identity and rebuild into a separate generation. Interrupted rebuilds resume;
   incompatible or unknown vectors are not compared. Canonical evidence remains
