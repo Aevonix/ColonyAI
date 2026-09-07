@@ -186,7 +186,18 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
             if unavailable:
                 continue
             if not notes:
-                result.append(original)
+                # An empty correction set is also a selection-time snapshot.
+                # A first note can arrive while ranking awaits; preserve exact
+                # message membership so a sibling's note does not hide this row.
+                row = dict(original)
+                if visited:
+                    row['_annotation_source_refs'] = [{'source_id': identifier,
+                        'source_version': canonical_turn_digest(source(identifier)['messages'])}
+                        for identifier in visited]
+                    row['_annotation_ids'] = ()
+                    row['_annotation_message_hashes'] = {identifier: sorted(hashes)
+                        for identifier, hashes in visited.items()}
+                result.append(row)
                 continue
             row = dict(original)
             if (original.get('kind') == 'belief'
@@ -231,7 +242,7 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
 
 
 def current_candidates(ledger, candidates, *, contact_id, session_id):
-    """Do not publish a stale corrected packet after an awaited rerank."""
+    """Do not publish stale evidence after a correction changes during ranking."""
     required = [ref for row in candidates for ref in row.get('_annotation_source_refs', [])]
     if not required:
         return candidates

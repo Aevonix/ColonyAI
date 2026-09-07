@@ -197,7 +197,10 @@ def test_direct_annotation_applies_only_to_the_recalled_message_and_keeps_its_fr
     first = add(ledger, **ref)
     hit = dict(id='selected', kind='source_quote', role='assistant',
                source_turn_id='two-reports', content=independent)
-    assert expand(ledger, [hit], contact_id='person', session_id='later') == [hit]
+    uncorrected = expand(ledger, [hit], contact_id='person', session_id='later')
+    assert {key: uncorrected[0][key] for key in hit} == hit
+    assert uncorrected[0]['_annotation_ids'] == ()
+    assert current_candidates(ledger, uncorrected, contact_id='person', session_id='later') == uncorrected
     second = add(ledger, **ref, annotation_id='independent-note', excerpt=independent,
                  correction='The marker description is an attributed report, not a visual verification.')
     expanded = expand(ledger, [hit], contact_id='person', session_id='later')
@@ -220,6 +223,7 @@ async def test_correction_is_not_split_by_rerank_and_stale_packet_is_not_publish
     expanded = expand(ledger, [original], contact_id='person', session_id='later')
     assert len(expanded) == 1 and NOTE in expanded[0]['content']
     assert {r['source_id'] for r in expanded[0]['_annotation_source_refs']} == {'report', result['source_id']}
+    changed = []
     class ErasingSelector(RecallSelector):
         async def select_context(self, *args, **kwargs):
             selected, text = await super().select_context(*args, **kwargs)
@@ -228,11 +232,50 @@ async def test_correction_is_not_split_by_rerank_and_stale_packet_is_not_publish
                 ledger.erase_sources(contact_id='person', turn_ids=[result['source_id']])
             else:
                 add(ledger, annotation_id='later-audit', correction='A second attributed observation arrived during selection.')
+            changed.append(change)
             return selected, text
-    monkeypatch.setattr(host, '_context_recall_selector', ErasingSelector())
+    monkeypatch.setattr(host, '_context_recall_selector', (host._reranker, ErasingSelector()))
     async with AsyncClient(transport=ASGITransport(app=app), base_url='http://fixture',
                            headers={'Authorization': 'Bearer write'}) as client:
         assert await context(client) is None
+        assert changed == [change]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('same_message', [True, False])
+async def test_first_annotation_during_selection_cannot_publish_uncorrected_evidence(annotated_app, monkeypatch, same_message):
+    app, ledger = annotated_app
+    from colony_sidecar.api.routers import host
+    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    sibling = 'The independent compass is green.'
+    report = 'Quartz ledger report: ' + REPORT
+    ledger.record_source('mixed-report', contact_id='person', session_id='work', messages=[
+        {'role': 'assistant', 'content': report}, {'role': 'user', 'content': sibling}])
+    ref = ledger.source_references(['mixed-report'], contact_id='person', session_id='later')[0]
+    added = []
+
+    class AnnotatingSelector(RecallSelector):
+        async def select_context(self, *args, **kwargs):
+            selected, text = await super().select_context(*args, **kwargs)
+            assert report in text and NOTE not in text
+            added.append(add(ledger, **ref,
+                excerpt='Verified at 09:14.' if same_message else sibling))
+            return selected, text
+
+    monkeypatch.setattr(host, '_context_recall_selector', (host._reranker, AnnotatingSelector()))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://fixture',
+                           headers={'Authorization': 'Bearer write'}) as client:
+        packet = await context(client, 'quartz ledger')
+        assert len(added) == 1
+        if same_message:
+            assert packet is None
+            monkeypatch.setattr(host, '_context_recall_selector', (host._reranker, RecallSelector()))
+            corrected = await context(client, 'quartz ledger')
+            assert report in corrected['body'] and NOTE in corrected['body']
+            assert {r['source_id'] for r in corrected['citations']} == {'mixed-report', added[0]['source_id']}
+        else:
+            assert report in packet['body'] and NOTE not in packet['body']
+            assert {r['source_id'] for r in packet['citations']} == {'mixed-report'}
 
 
 def test_multiple_attributed_notes_remain_conflicting_evidence_and_metadata_cannot_forge_one(annotated_app):
