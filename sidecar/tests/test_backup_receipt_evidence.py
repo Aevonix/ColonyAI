@@ -9,7 +9,8 @@ import pytest
 from colony_sidecar.initiatives.backup_evidence import backup_review_task
 from colony_sidecar.initiatives.native_work import NativeInitiativeWork
 from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.intelligence.components.initiative_engine import InitiativeConfig, InitiativeEngine
+from colony_sidecar.autonomy.config import AutonomyConfig
+from colony_sidecar.intelligence.components.initiative_engine import InitiativeConfig, InitiativeEngine, InitiativeType
 
 
 def publish(path, captured):
@@ -51,8 +52,8 @@ async def test_actual_loader_replaces_legacy_check_and_keeps_other_operational_c
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('status', ['stale', 'failed'])
-async def test_stale_or_failed_actual_receipt_reaches_registered_native_review(tmp_path, status):
+@pytest.mark.parametrize('status', ['stale', 'failed', 'unavailable'])
+async def test_receipt_problem_reaches_native_review_through_normal_generation(tmp_path, status):
     now = datetime.now(timezone.utc)
     pointer = tmp_path/'latest-attempt.json'
     value, receipt = publish(pointer, now-timedelta(days=8))
@@ -62,9 +63,14 @@ async def test_stale_or_failed_actual_receipt_reaches_registered_native_review(t
         value.update(status='failed', completed_at=now.isoformat(),
                      captured_at=None, receipt_path=None, receipt_sha256=None)
         pointer.write_text(json.dumps(value))
+    elif status == 'unavailable':
+        pointer.unlink()
     engine = InitiativeEngine(None, None, None, config=InitiativeConfig(backup_receipt_path=str(pointer)))
-    await engine._load_operational_tasks()
-    candidate, = await engine._generate_operational_initiatives()
+    # Use the real operational loader and normal filtering, with unrelated
+    # graph/relationship loads excluded from this disposable receipt fixture.
+    engine._load_graph_context = engine._load_operational_tasks
+    candidate, = await engine.generate(types=[InitiativeType.OPERATIONAL],
+        min_priority=AutonomyConfig().initiative_confidence_threshold)
     store = InitiativeStore(tmp_path/'state')
     try:
         row = store.create(type='operational', source_type='operational', created_by='autonomy_loop',
@@ -74,18 +80,20 @@ async def test_stale_or_failed_actual_receipt_reaches_registered_native_review(t
         assert review['action'] == 'operational_review'
         assert 'configured_backup_receipt' in review['body'] and str(pointer) in review['body']
         assert 'legacy .bak' not in candidate.description
-        assert candidate.trigger_data['receipt_status'] == ('captured' if status == 'stale' else 'failed')
+        assert candidate.trigger_data['receipt_status'] == ('captured' if status == 'stale' else status)
         assert candidate.trigger_data.get('age_days', 0) != 999
         if status == 'stale':
             assert candidate.trigger_data['receipt_sha256'] == value['receipt_sha256']
             assert str(receipt) in review['body'] and 'unverified' in candidate.description
-        else:
+        elif status == 'failed':
             assert 'failed' in candidate.description and 'age_days' not in candidate.trigger_data
+        else:
+            assert 'unknown' in candidate.description and 'age_days' not in candidate.trigger_data
     finally:
         store.close()
 
 
-@pytest.mark.parametrize('problem', ['missing', 'malformed', 'hash_mismatch', 'future', 'naive', 'wrong_status'])
+@pytest.mark.parametrize('problem', ['missing', 'malformed', 'hash_mismatch', 'future', 'naive', 'wrong_status', 'incomplete_failure'])
 def test_unavailable_receipt_is_unknown_without_legacy_fallback(tmp_path, problem):
     now = datetime.now(timezone.utc)
     pointer = tmp_path/'latest-attempt.json'
@@ -101,6 +109,8 @@ def test_unavailable_receipt_is_unknown_without_legacy_fallback(tmp_path, proble
             value['completed_at'] = (now+timedelta(days=1)).isoformat()
         elif problem == 'naive':
             value['completed_at'] = now.replace(tzinfo=None).isoformat()
+        elif problem == 'incomplete_failure':
+            value = {'schema_version': 1, 'status': 'failed', 'completed_at': now.isoformat()}
         else:
             value['status'] = 'healthy'
         pointer.write_text(json.dumps(value))

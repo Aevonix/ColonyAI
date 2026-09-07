@@ -50,7 +50,9 @@ def backup_review_task(configured_path: str, now: datetime):
     }
     try:
         _, value = _read(path)
-        if not isinstance(value, dict) or value.get('schema_version') != 1:
+        required = {'schema_version', 'status', 'completed_at', 'captured_at', 'receipt_path', 'receipt_sha256'}
+        if (not isinstance(value, dict) or not required.issubset(value)
+                or value.get('schema_version') != 1):
             raise ValueError('unsupported receipt schema')
         status = value.get('status')
         completed = _time(value.get('completed_at'), now)

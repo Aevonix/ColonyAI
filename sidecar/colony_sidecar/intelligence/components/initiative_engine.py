@@ -2381,6 +2381,9 @@ class InitiativeEngine:
             age_days = task.get("age_days", 0)
 
             priority = min(1.0, 0.4 + age_days / 14)
+            if task.get('evidence_scope') == 'configured_backup_receipt':
+                # Failed/unavailable evidence needs review without inventing age.
+                priority = max(0.7, priority)
 
             initiatives.append(
                 Initiative(
