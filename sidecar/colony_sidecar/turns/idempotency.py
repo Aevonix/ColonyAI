@@ -166,7 +166,14 @@ class TurnIdempotencyLedger:
                 initialize_vectors(conn)
                 from colony_sidecar.self_model.judgments import initialize as initialize_judgments
                 initialize_judgments(conn)
+                from colony_sidecar.turns.source_annotations import initialize as initialize_annotations
+                initialize_annotations(conn)
             self._initialized = True
+
+    def append_source_annotation(self, **kwargs):
+        """Append an attributed correction without rewriting its original source."""
+        from .source_annotations import append
+        return append(self, **kwargs)
 
     def record_source(
         self, turn_id: str, *, contact_id: str, session_id: str,

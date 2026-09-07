@@ -2570,9 +2570,21 @@ async def context_assemble(
                 max_chars = int(os.environ.get("COLONY_RECALL_CONTEXT_MAX_CHARS", "6000"))
             except (TypeError, ValueError):
                 max_chars = 6000
+            if source_ledger is not None:
+                from colony_sidecar.turns.source_annotations import expand as expand_annotations
+                annotation_scope = {'contact_id': body.context.contact_id, 'session_id': body.context.session_id}
+                beliefs = expand_annotations(source_ledger, beliefs, **annotation_scope)
+                quotations = expand_annotations(source_ledger, quotations, covered=beliefs, **annotation_scope)
             selected, body_text = await _memory_context_selector().select_context(
                 query_text, beliefs, quotations, limit=5,
                 max_chars=max(0, min(max_chars, 24000)))
+            if source_ledger is not None:
+                from colony_sidecar.turns.source_annotations import current_candidates
+                retained = current_candidates(source_ledger, selected, **annotation_scope)
+                if len(retained) != len(selected):
+                    from colony_sidecar.intelligence.graph.recall import pack_memory_context
+                    selected, body_text = pack_memory_context(retained, limit=5,
+                        max_chars=max(0, min(max_chars, 24000)))
             if body_text:
                 source_ids = []
                 for memory in selected:
@@ -2585,6 +2597,14 @@ async def context_assemble(
                 citations = (source_ledger.source_references(source_ids,
                     contact_id=body.context.contact_id, session_id=body.context.session_id)
                     if source_ledger is not None else [])
+                # Preserve the checked correction packet's exact revisions.
+                # A subsequent erase is then visible to native request fencing
+                # instead of silently rebinding old text to a surviving revision.
+                citations_by_id = {ref['source_id']: ref for ref in citations}
+                for memory in selected:
+                    for ref in memory.get('_annotation_source_refs', []):
+                        citations_by_id[ref['source_id']] = ref
+                citations = list(citations_by_id.values())
                 sections.append(ContextSection(
                     id="colony-memory", title="Relevant Memories",
                     body=body_text, priority=90, citations=citations or None))
@@ -3630,6 +3650,36 @@ class SourceForgetRequest(BaseModel):
     old_text: str | None = Field(default=None, min_length=1, max_length=131072)
     metadata: dict[str, Any] = Field(default_factory=dict)
     session_id: str | None = Field(default=None, max_length=256)
+
+
+class SourceAnnotationRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    contact_id: str = Field(min_length=1, max_length=256)
+    session_id: str = Field(min_length=1, max_length=256)
+    annotation_id: str = Field(min_length=1, max_length=128)
+    source_id: str = Field(min_length=1, max_length=256)
+    source_version: str = Field(pattern='^[0-9a-f]{64}$')
+    excerpt: str = Field(min_length=1, max_length=4096)
+    correction: str = Field(min_length=1, max_length=4096)
+
+
+@router.post('/memory/sources/annotations')
+async def append_source_annotation(body: SourceAnnotationRequest, request: Request):
+    authority = request_authority(request)
+    if not authority.authenticated or authority.anonymous or not authority.has_scope('memory:write'):
+        raise HTTPException(status_code=403, detail={'code': 'source_annotation_not_authorized'})
+    person = resolve_request_person(request, claimed_person_id=body.contact_id)
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    try:
+        return get_turn_idempotency_ledger(get_state_dir()).append_source_annotation(
+            **{**body.model_dump(), 'contact_id': person}, author_principal=authority.principal_id)
+    except ValueError as exc:
+        code = str(exc)
+        if code not in {'source_erased', 'source_not_found', 'source_version_mismatch',
+                        'source_excerpt_mismatch', 'annotation_id_conflict'}:
+            code = 'invalid_source_annotation'
+        raise HTTPException(status_code=409 if code.endswith(('conflict', 'mismatch')) else 422,
+                            detail={'code': code}) from exc
 
 
 @router.get("/memory/sources/erasures")
