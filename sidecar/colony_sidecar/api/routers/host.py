@@ -13578,12 +13578,12 @@ async def list_initiatives(
     agent_id: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=1000),
 ) -> InitiativeListResponse:
-    """List initiatives with optional filters."""
+    """List initiatives with one optional status; omitted or empty is unfiltered."""
     if _initiative_store is None:
         raise HTTPException(status_code=501, detail="Initiative store not initialized")
 
     initiatives = _initiative_store.list(
-        status=status,
+        status=[status] if status else None,
         assigned_agent_id=agent_id,
         limit=limit,
     )

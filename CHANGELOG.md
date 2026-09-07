@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.16 - initiative status filtering
+
+The existing initiative list endpoint now passes a single requested status to
+the store correctly. Requests for `pending` or `assigned` work no longer return
+an empty list because the status was treated as individual characters. Omitted
+or empty status remains unfiltered, with existing agent and limit behavior.
+This sidecar correction adds no native worker or dispatcher changes.
+
 ## v1.0.15 - native review undertakings and retained completion reports
 
 Selected generated internal reviews can become shared native Hermes tasks
