@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.10 - keep caller deadlines separate from endpoint outages
+
+A model that exceeds one function's request allowance remains eligible for
+another function. Previously, extraction's short timeout could suppress the
+same model for a later reasoning request with a longer allowance. Caller expiry
+now reports `RequestBudgetExceeded` in the existing attempt history and final
+failure reason. Transport timeouts and other genuine endpoint failures retain
+their existing cooldown behavior.
+
+Request limits, finite fallback order and model configuration are unchanged.
+An endpoint that only stalls until the caller's timer expires remains eligible
+for a later request; the router does not infer an outage from that event alone.
+Controlled tests cover cross-role use, an expired recovery slot, cancellation,
+and actual transport failures. No model call or new routing service is required
+to verify this distinction.
+
 ## v1.0.9 - durable first-person reply preferences
 
 Explicit general communication preferences such as "I prefer brief replies"
