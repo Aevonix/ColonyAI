@@ -2120,6 +2120,28 @@ def recover_turn_outbox(
 
 
 def _require_coexistence_latches() -> None:
+    # Wheels expose the provider package; the supported source installer copies
+    # it to the exact sibling directory. Read that same implementation in both
+    # layouts, without depending on plugin discovery order or an older wheel.
+    from pathlib import Path
+    copied_provider = Path(__file__).resolve().parent.parent / "colony-memory" / "provider.py"
+    if copied_provider.is_file():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_colony_profile_provider", copied_provider)
+        provider = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(provider)
+        _active_hermes_home = provider._active_hermes_home
+        general_plugin_memory_ownership = provider.general_plugin_memory_ownership
+    else:
+        from colony_memory.provider import _active_hermes_home, general_plugin_memory_ownership
+
+    ownership = general_plugin_memory_ownership(_active_hermes_home())
+    if ownership is True:
+        return
+    if ownership is False:
+        raise RuntimeError("General Colony plugin is explicitly deselected in this Hermes profile")
+    # Legacy/embedded profiles without the durable native selections retain
+    # their existing strict environment contract. Never enable a second writer.
     values = {
         "COLONY_GENERAL_PLUGIN_ACTIVE": os.environ.get("COLONY_GENERAL_PLUGIN_ACTIVE", ""),
         "COLONY_MEMORY_WORKER_TOOLS": os.environ.get("COLONY_MEMORY_WORKER_TOOLS", ""),

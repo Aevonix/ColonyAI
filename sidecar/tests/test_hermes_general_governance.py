@@ -1897,3 +1897,36 @@ def test_memory_coexistence_latches_fail_closed(monkeypatch):
         module.register(context)
     assert context.tools == {}
     assert context.hooks == {}
+
+
+def test_copied_profile_ownership_and_explicit_deselection(monkeypatch, tmp_path):
+    from colony_sidecar.setup import _hermes_plugin_files
+
+    home = tmp_path / "selected"
+    for content, target in _hermes_plugin_files(PLUGIN_DIR.parents[1], home):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    # The copied layout need not have an installed colony_memory wheel, and
+    # cannot accidentally read one instead of its own sibling implementation.
+    monkeypatch.setattr(sys.modules[__name__], "PLUGIN_DIR", home / "plugins" / "colony")
+    for name in ("COLONY_GENERAL_PLUGIN_ACTIVE", "COLONY_MEMORY_WORKER_TOOLS", "COLONY_MEMORY_TURN_WRITER"):
+        monkeypatch.delenv(name, raising=False)
+    profile = {"memory": {"provider": "colony-memory"}, "plugins": {"enabled": ["colony"]}}
+    path = home / "config.yaml"
+    path.write_text(json.dumps(profile))
+    module = _load_plugin("colony_copied_profile_test")
+    module._require_coexistence_latches()
+    # Deselection remains authoritative even with the complete inherited
+    # legacy environment and an explicitly enabled list alongside disabled.
+    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    for selection in ({"enabled": []}, {"enabled": ["colony"], "disabled": ["colony"]}):
+        profile["plugins"] = selection
+        path.write_text(json.dumps(profile))
+        context = _Context({"url": "http://colony.test"})
+        with pytest.raises(RuntimeError, match="explicitly deselected"):
+            module.register(context)
+        assert context.tools == {}
+        assert context.hooks == {}

@@ -394,6 +394,62 @@ def test_memory_provider_is_read_only_when_general_plugin_is_active(
     assert p.get_diagnostics()["turn_writer"] == "read-only"
 
 
+def test_selected_profile_owns_memory_without_launcher_flags(provider_mod, monkeypatch, tmp_path):
+    monkeypatch.setattr(provider_mod, "_active_hermes_home", lambda: tmp_path)
+    (tmp_path / "config.yaml").write_text(json.dumps({
+        "plugins": {"enabled": ["colony"]}, "memory": {"provider": "colony-memory"}}))
+    # Inherited standalone flags must not reinstate a second writer or tools.
+    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "0")
+    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "1")
+    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "enabled")
+    fake = _FakeHttpx()
+    p = _make_provider(provider_mod, fake, monkeypatch)
+    p.sync_turn("hello", "hi", session_id="s1", turn_id="turn-1")
+    assert p.get_diagnostics()["turn_writer"] == "read-only"
+    assert {s["name"] for s in p.get_tool_schemas()} == set(provider_mod.GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES)
+    assert json.loads(p._tool_colony_claim_task({}))["error"] == "colony worker tools are disabled"
+    assert fake.requests == []
+
+
+@pytest.mark.parametrize("plugins", [{"enabled": []}, {"enabled": ["colony"], "disabled": ["colony"]}])
+def test_profile_deselection_and_existing_instance_are_isolated(provider_mod, monkeypatch, tmp_path, plugins):
+    selected = tmp_path / "selected"
+    root = tmp_path / "root"
+    for home, selection in ((selected, {"enabled": ["colony"]}), (root, plugins)):
+        home.mkdir()
+        (home / "config.yaml").write_text(json.dumps({
+            "plugins": selection, "memory": {"provider": "colony-memory"}}))
+    active = selected
+    monkeypatch.setattr(provider_mod, "_active_hermes_home", lambda: active)
+    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.delenv("COLONY_MEMORY_TURN_WRITER", raising=False)
+    owned = _make_provider(provider_mod, _FakeHttpx(), monkeypatch)
+    active = root
+    standalone = _make_provider(provider_mod, _FakeHttpx(), monkeypatch)
+    assert owned._turn_writer_enabled() is False
+    assert standalone._turn_writer_enabled() is True
+    assert "colony_write_memory" not in {s["name"] for s in owned.get_tool_schemas()}
+    assert "colony_write_memory" in {s["name"] for s in standalone.get_tool_schemas()}
+
+
+def test_profile_ownership_honors_native_json_and_explicit_writer_precedence(provider_mod, monkeypatch, tmp_path):
+    monkeypatch.setattr(provider_mod, "_active_hermes_home", lambda: tmp_path)
+    (tmp_path / "config.yaml").write_text(json.dumps({
+        "plugins": {"enabled": ["colony"]}, "memory": {"provider": "colony-memory",
+        "config": {"turn_writer": "enabled"}}}))
+    with pytest.raises(ValueError, match="owns memory"):
+        provider_mod.ColonyMemoryProvider()
+    native = tmp_path / "colony-memory.json"
+    native.write_text(json.dumps({"turn_writer": "disabled"}))
+    assert provider_mod.ColonyMemoryProvider()._turn_writer_enabled() is False
+    native.write_text(json.dumps({"turn_writer": "enabled"}))
+    with pytest.raises(ValueError, match="owns memory"):
+        provider_mod.ColonyMemoryProvider()
+    assert provider_mod.ColonyMemoryProvider(config={"turn_writer": "disabled"})._turn_writer_enabled() is False
+    with pytest.raises(ValueError, match="owns memory"):
+        provider_mod.ColonyMemoryProvider(config={"turn_writer": "enabled"})
+
+
 def test_general_plugin_handoff_never_advertises_hidden_memory_write_tool(
         provider_mod, monkeypatch, tmp_path):
     monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")

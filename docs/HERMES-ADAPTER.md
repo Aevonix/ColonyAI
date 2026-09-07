@@ -31,8 +31,16 @@ Installing the wheel makes the adapters discoverable. It does not change a
 Hermes profile, select a memory provider, or enable tools. Activation requires
 the existing general-adapter configuration, `plugins.enabled: [colony]`, and
 `memory.provider: colony-memory` in the selected private profile. Preserve
-other enabled plugins when editing that list. The existing coexistence settings
-are also required in the Hermes process environment:
+other enabled plugins when editing that list. These two durable selections make
+the general plugin the canonical writer and keep the memory provider read-only,
+including cold native workers that do not inherit launcher environment flags.
+An explicit `plugins.disabled: [colony]` or an enabled list excluding `colony`
+takes precedence over inherited flags. A contradictory configured provider
+`turn_writer: enabled` is rejected; native `colony-memory.json` settings retain
+their precedence over legacy `memory.config`.
+
+Older embedded profiles without this paired selection still require the existing
+coexistence settings in the Hermes process environment:
 
 ```sh
 COLONY_GENERAL_PLUGIN_ACTIVE=1
