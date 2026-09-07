@@ -157,7 +157,9 @@ belong in deployment adapters rather than public cognition code.
 
 Named model roles choose eligible local endpoints and fallbacks. Runtime reload,
 configured endpoint advertisements and completion availability let later requests
-follow changed bindings. Changing a processor does not replace the agent's
+follow changed bindings. Empty or truncated function responses can use the next
+eligible candidate within the same deadline; requested tool turns remain valid.
+Changing a processor does not replace the agent's
 memories or identity. Automatic fleet enrollment, capacity scheduling and empirical
 model selection remain separate work.
 [Function routing](docs/FUNCTION-ROUTING.md)

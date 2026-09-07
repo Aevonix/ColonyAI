@@ -51,6 +51,10 @@ from colony_sidecar.router.tiers import DEFAULT_TIERS, ModelTier, TierConfig
 logger = logging.getLogger(__name__)
 
 
+class _IncompleteFunctionResponse(ValueError):
+    """A completed inference did not produce the requested usable output."""
+
+
 @dataclass
 class LLMResponse:
     request_id: str
@@ -416,14 +420,18 @@ class LLMRouter:
                 response.model_revision = binding.weight_revision
                 response.binding = binding.name
                 response.prior_attempts = list(prior_attempts)
+                # Even an unusable completion consumed inference. Validate it
+                # inside the finite fallback loop, before recording success.
+                self._emit_cost_event(response)
+                _require_function_output(response, tools)
                 self._endpoints.success(snapshot, binding, response)
                 self._recent_calls.append({'request_id': request_id, 'function_role': role_name,
                     'model_id': cfg.model_id, 'binding': binding.name, 'config_revision': snapshot.revision,
                     'weight_revision': binding.weight_revision, 'latency_ms': response.latency_ms})
-                self._emit_cost_event(response)
                 return response
             except Exception as exc:
-                reason = 'RequestBudgetExceeded' if attempt_timeout.expired() else type(exc).__name__
+                reason = ('RequestBudgetExceeded' if attempt_timeout.expired() else
+                          str(exc) if isinstance(exc, _IncompleteFunctionResponse) else type(exc).__name__)
                 failures.append(reason)
                 prior_attempts.append({'binding': binding.name, 'model': cfg.model_id,
                                        'status': 'failed', 'reason': reason})
@@ -433,7 +441,8 @@ class LLMRouter:
                 # availability for another role. Transport/HTTP failures still
                 # cool down the endpoint when our own timer has not expired.
                 # A stalled endpoint remains eligible if only our timer expired.
-                if not attempt_timeout.expired() and 'contextwindow' not in type(exc).__name__.lower():
+                if (not attempt_timeout.expired() and not isinstance(exc, _IncompleteFunctionResponse)
+                        and 'contextwindow' not in type(exc).__name__.lower()):
                     self._endpoints.failure(snapshot, binding, exc)
             finally:
                 self._endpoints.release(snapshot, binding, request_id)
@@ -673,9 +682,31 @@ def _local_http_client(config, pinned_ip):
                              event_hooks={'request': [pin_request]})
 
 
+def _require_function_output(response, tools):
+    """Keep final text and explicitly requested tool turns, never scratch work.
+
+    Legacy tier routing keeps its compatibility behavior. Function callers get
+    a complete answer or a requested tool turn, within their existing budget.
+    Tool argument validation still belongs to the caller's executor.
+    """
+    choices = getattr(getattr(response, 'raw', None), 'choices', None)
+    if tools and choices:
+        choice = choices[0]
+        message = getattr(choice, 'message', None)
+        if (getattr(choice, 'finish_reason', None) in {None, 'stop', 'tool_calls'}
+                and getattr(message, 'tool_calls', None)):
+            response.content = getattr(message, 'content', None) or ''
+            return
+    from colony_sidecar.util.model_output import final_text
+    try:
+        response.content = final_text(response)
+    except ValueError as exc:
+        raise _IncompleteFunctionResponse(str(exc)) from exc
+
+
 def _retryable(exc):
     """Finite same-role failover, never arbitrary validation/auth retries."""
-    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError, _IncompleteFunctionResponse)):
         return True
     status = getattr(exc, 'status_code', None)
     if status in {404, 408, 429, 500, 502, 503, 504}:

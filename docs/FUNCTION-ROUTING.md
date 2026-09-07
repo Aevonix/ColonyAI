@@ -8,8 +8,8 @@ capabilities and fallback order until that request finishes. A later request
 uses the new configuration.
 
 Successful responses include `prior_attempts`: earlier binding/model names,
-`failed` versus `skipped` status, and exception class, `RequestBudgetExceeded`
-or cooling-down reason.
+`failed` versus `skipped` status, and exception class, `RequestBudgetExceeded`,
+`missing_final_answer`, `incomplete_final_answer` or cooling-down reason.
 Endpoint addresses, credentials and exception messages are omitted. Ineligible
 candidates are not attempted and do not appear as failures. The returned model
 and binding remain the actual processor; returning a fallback alone does not
@@ -115,6 +115,15 @@ No Colony consumer currently requests router streaming. `stream=True` is
 rejected before a function call, and Hermes retains its own streaming behavior.
 
 ## Reload and fallback
+
+Function routing validates final text before accepting a completion. Empty,
+reasoning-only and truncated responses can use the next eligible candidate
+within the same request budget. A requested tool turn remains valid; it does
+not count as final text for a consumer that needs an answer to persist. Failed
+output validation does not put the endpoint into a shared cooldown, and cost
+events still account for its completed inference. This adds neither a retry
+of the same candidate nor another time allowance. The direct legacy tier API
+retains its existing compatibility behavior.
 
 Calls and metadata reads check the configuration file's inode, size and mtime.
 A changed file is parsed and validated into a separate snapshot, then published
