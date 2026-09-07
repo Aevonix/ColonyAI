@@ -14,21 +14,25 @@ from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,sys.argv[1]);sys.path.insert(1,sys.argv[2])
 if sys.argv[3]:sys.path.append(sys.argv[3])
+if sys.argv[4]=='lexical':
+ class WithoutVectorExtras:
+  def find_spec(self,fullname,*args):
+   if fullname.split('.')[0] in {'pyarrow','lancedb'}:
+    raise ModuleNotFoundError('Optional vector dependency absent in native CI')
+ sys.meta_path.insert(0,WithoutVectorExtras())
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from colony_sidecar.api.authority import RequestAuthority
 from colony_sidecar.api.routers import host
 from colony_sidecar.turns import get_turn_idempotency_ledger, canonical_turn_digest
-from colony_sidecar.turns.source_vectors import SourceVectors
-from colony_sidecar.vector.indexes import EmbeddingIdentity, IndexCatalog
-from colony_sidecar.vector.store import VectorStore
 from colony_hermes.client import TurnOutbox
 home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 (home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
  'owner_contact_id':'owner','url':'http://fixture','turn_outbox_path':str(home/'outbox.db'),
- 'turn_outbox_drain_timeout_ms':1000,'turn_writer_platforms':['cli']}},
+ 'turn_outbox_drain_timeout_ms':1000,
+ 'turn_writer_platforms':['api_server','rcs','sms','whatsapp']}},
  'tools':{'tool_search':{'enabled':'off'}},'memory':{'provider':'none'}}))
 app=FastAPI()
 @app.middleware('http')
@@ -91,6 +95,17 @@ pm._hooks.setdefault('kanban_task_completed',[]).append(inspect_context)
 set_session_vars(platform='cli',user_id='',chat_id='',session_id='worker-session')
 provider=ColonyMemoryProvider({'url':'http://fixture','contact_id':'owner','turn_writer':'disabled','default_context_authority':'owner_system'})
 provider.initialize('worker-session',hermes_home=str(home))
+# Production excludes CLI from ordinary conversation capture. Machine worker
+# instructions remain excluded at both turn and compression boundaries, while
+# the separate attested completion report is still eligible below.
+worker_instruction='WORKER-INSTRUCTION-MUST-NOT-BECOME-MEMORY'
+invoke_hook('pre_llm_call',session_id='worker-session',task_id='worker-probe',turn_id='worker-probe',
+ platform='cli',sender_id='',user_message=worker_instruction)
+invoke_hook('post_llm_call',session_id='worker-session',task_id='worker-probe',turn_id='worker-probe',
+ platform='cli',user_message=worker_instruction,assistant_response='Intermediate progress',model='fixture')
+provider.on_pre_compress([{'role':'user','content':worker_instruction}],require_checkpoint=True)
+assert provider.get_diagnostics()['checkpoint']=={'state':'not_applicable','reason':'native_worker_instructions'}
+assert not TurnOutbox(home/'outbox.db').snapshot()
 recalled=provider.prefetch('calibration procedure',session_id='worker-session')
 assert 'report-parent' in recalled,recalled
 prompt='WORKER-CONTINUATION-MUST-NOT-BECOME-MEMORY'
@@ -177,11 +192,14 @@ try:
  report_handler.request_memory(request,scope)
  assert report_handler.request_memory.supplied_snapshot(scope)==payload['assistant_source_refs']
 finally:colony_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
-class Embeddings:
- index_identity=EmbeddingIdentity('completion-fixture','completion-fixture','unknown',3)
- async def embed_batch(self,texts):return [[1.,0.,0.] if 'calibration' in text.lower() else [0.,1.,0.] for text in texts]
- async def embed_query(self,text):return [1.,0.,0.]
 async def semantic():
+ from colony_sidecar.turns.source_vectors import SourceVectors
+ from colony_sidecar.vector.indexes import EmbeddingIdentity, IndexCatalog
+ from colony_sidecar.vector.store import VectorStore
+ class Embeddings:
+  index_identity=EmbeddingIdentity('completion-fixture','completion-fixture','unknown',3)
+  async def embed_batch(self,texts):return [[1.,0.,0.] if 'calibration' in text.lower() else [0.,1.,0.] for text in texts]
+  async def embed_query(self,text):return [1.,0.,0.]
  pipeline=Embeddings();store=VectorStore(str(home/'vectors'),identity=pipeline.index_identity,catalog=IndexCatalog(ledger))
  await store.connect(3);await store.ensure_collections(3)
  projection=SourceVectors(ledger,store,pipeline)

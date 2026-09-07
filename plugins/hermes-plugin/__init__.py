@@ -2527,7 +2527,7 @@ def register(ctx: Any) -> None:
     from .completed_reports import CompletedReports
     ctx.register_hook('kanban_task_completed', CompletedReports(
         client, turn_outbox, _TRANSPORT_SCOPES, request_memory, _TOOL_EXECUTION_CONTEXT.get,
-        platforms=turn_writer_platforms, drain_limit=drain_limit, drain_seconds=drain_timeout_seconds))
+        drain_limit=drain_limit, drain_seconds=drain_timeout_seconds))
     if execution_observer is not None:
         execution_observer.register(ctx)
 

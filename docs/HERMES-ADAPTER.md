@@ -284,6 +284,9 @@ generated citations. Task bodies, worker instructions, continuations and artifac
 files are not forwarded. A missing scope or request-lineage observation leaves
 the report native-only and records a structural log reason; old completions are
 not backfilled.
+This separately scoped assistant-report hook does not depend on which platforms
+enable ordinary conversation capture; excluding CLI user turns still retains
+eligible native completion reports.
 
 The existing outbox and source-only route retain this assistant summary for
 scoped lexical and semantic recall after the seven-day operational window.

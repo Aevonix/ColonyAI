@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 
 class CompletedReports:
     def __init__(self, client, outbox, scopes, request_memory, current_context,
-                 *, platforms=None, drain_limit=16, drain_seconds=.25):
+                 *, drain_limit=16, drain_seconds=.25):
         self.client, self.outbox = client, outbox
         self.scopes, self.request_memory = scopes, request_memory
         self.current_context = current_context
-        self.platforms, self.drain_limit, self.drain_seconds = platforms, drain_limit, drain_seconds
+        self.drain_limit, self.drain_seconds = drain_limit, drain_seconds
 
     @staticmethod
     def _skip(reason):
@@ -32,8 +32,7 @@ class CompletedReports:
             task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
         if (context.get('tool_name') != 'kanban_complete' or scope is None
                 or not scope.valid_participant or scope.authority_lane not in {'owner', 'system'}
-                or scope.platform != 'cli'
-                or self.platforms is not None and scope.platform not in self.platforms):
+                or scope.platform != 'cli'):
             return self._skip('attested_completion_context_missing')
         if (not is_dispatcher_owned_worker_context() or not task_id
                 or os.environ.get('HERMES_KANBAN_TASK') != task_id
