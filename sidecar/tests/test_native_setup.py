@@ -170,6 +170,19 @@ def test_refresh_installed_package_updates_binding_without_another_copy(args, mo
     assert json.loads((state/'instance.json').read_text())['adapter_binding']==binding
 
 
+@pytest.mark.parametrize('original_mode', ['private-directory', 'native-installed'])
+def test_refresh_rejects_changed_loading_topology_without_writing(args, monkeypatch, original_mode):
+    binding={'mode':original_mode}
+    monkeypatch.setattr(setup_hermes,'_adapter_binding',lambda *a:binding)
+    assert setup.run_init(None,args)==0
+    home=Path(args.hermes_home)
+    _changed_adapter(args,monkeypatch)
+    before={str(path.relative_to(home)):path.read_bytes() for path in home.rglob('*') if path.is_file()}
+    binding={'mode':'native-installed' if original_mode=='private-directory' else 'private-directory'}
+    assert setup.run_init(None,args)==1
+    assert before=={str(path.relative_to(home)):path.read_bytes() for path in home.rglob('*') if path.is_file()}
+
+
 @pytest.mark.parametrize('address', ['127.0.0.1', '203.0.113.10'])
 def test_selected_hostname_is_bound_for_runtime_routing(args, monkeypatch, address):
     from colony_sidecar.router.router import LLMRouter

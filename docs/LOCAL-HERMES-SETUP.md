@@ -149,6 +149,9 @@ Colony entry points also needs that adapter package updated explicitly in its
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;
 it does not copy a second active adapter or install packages itself.
+Keep the attachment's existing loading mode. Switching between a package
+installed in Hermes and profile-local directory adapters requires a separate
+migration; refresh rejects that change before writing anything.
 
 The ordinary separate-environment attachment uses a copied adapter. Updating
 Python packages alone does not update that copy. `--refresh-adapter` replaces
@@ -160,6 +163,10 @@ before replacement. Repeating the same refresh leaves matching bytes unchanged.
 The instance records the Colony environment running this command; supply
 `--hermes-python` only when deliberately selecting another supported native
 interpreter. No model probe, service restart or new consent process runs here.
+If the Colony interpreter moved and this instance uses a user service, run the
+existing `service install` command from the new environment while the service
+is stopped, then `service start`. Refresh preserves the old service definition;
+updating the instance manifest alone does not move the service interpreter.
 
 Start Colony and Hermes through their existing lifecycle, then check `status`
 and `doctor` and recall a harmless fact from a new session. A package version

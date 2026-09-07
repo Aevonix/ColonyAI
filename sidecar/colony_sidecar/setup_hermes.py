@@ -215,8 +215,8 @@ def refresh_adapter(state, args):
     resources = _adapter_resources(getattr(args, 'adapter_wheel', None))
     binding = _adapter_binding(python, resources)
     old_binding = manifest['adapter_binding']
-    if old_binding['mode'] == 'native-installed' and binding['mode'] != 'native-installed':
-        raise ValueError('Restore the selected native package before refreshing this installed attachment')
+    if old_binding['mode'] != binding['mode']:
+        raise ValueError('Adapter loading mode changed; use the original interpreter topology before refreshing')
     updates = []
     adapter = state/'adapter'; staged = backup = None
     old_resources = None
