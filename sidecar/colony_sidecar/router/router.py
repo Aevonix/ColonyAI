@@ -397,6 +397,7 @@ class LLMRouter:
             seen.add(endpoint_key)
             remaining = deadline - time.monotonic()
             if remaining <= 0: break
+            attempt_timeout = asyncio.timeout(min(role.timeout_seconds, remaining))
             if not self._endpoints.acquire(snapshot, binding, request_id):
                 failures.append('EndpointCoolingDown')
                 prior_attempts.append({'binding': binding.name, 'model': cfg.model_id,
@@ -408,8 +409,8 @@ class LLMRouter:
                         request_id=request_id, config=cfg, messages=messages, tools=tools,
                         stream=False, max_output_tokens=context.get('max_output_tokens', context.get('max_tokens')),
                         local_endpoint=True, pinned_ip=pinned_ip)
-                response = await asyncio.wait_for(self._at_endpoint(snapshot, binding, complete_on_address),
-                                                  timeout=min(role.timeout_seconds, remaining))
+                async with attempt_timeout:
+                    response = await self._at_endpoint(snapshot, binding, complete_on_address)
                 response.function_role = role_name
                 response.config_revision = snapshot.revision
                 response.model_revision = binding.weight_revision
@@ -427,9 +428,10 @@ class LLMRouter:
                                        'status': 'failed', 'reason': type(exc).__name__})
                 if not _retryable(exc):
                     break
-                # An oversized request may use a larger candidate, but says
-                # nothing about this binding's availability for other requests.
-                if 'contextwindow' not in type(exc).__name__.lower():
+                # A caller's output/context or time budget says nothing about
+                # availability for another role. Transport/HTTP failures still
+                # cool down the endpoint when our own timer has not expired.
+                if not attempt_timeout.expired() and 'contextwindow' not in type(exc).__name__.lower():
                     self._endpoints.failure(snapshot, binding, exc)
             finally:
                 self._endpoints.release(snapshot, binding, request_id)

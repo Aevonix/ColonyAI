@@ -148,6 +148,95 @@ async def test_timeout_and_connection_failover_are_bounded(failure):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('recovering', [False, True])
+async def test_short_role_budget_does_not_suppress_longer_role(monkeypatch, recovering):
+    from colony_sidecar.router.endpoints import EndpointRuntime
+    cfg = config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1',
+                 candidates=['deliberate', 'interactive'], timeoutSeconds=.05, deadlineSeconds=.3)
+    r = router(cfg)
+    now, calls, cancelled = [100.0], [], []
+    r._endpoints = EndpointRuntime(clock=lambda: now[0])
+    binding = r._snapshot.bindings['deliberate']
+    if recovering:
+        r._endpoints.failure(r._snapshot, binding, ConnectionError())
+        now[0] += 16
+
+    async def controlled(**kwargs):
+        model = kwargs['config'].model_id
+        calls.append(model)
+        if len(calls) == 1:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append(model)
+        return SimpleNamespace(content=model, latency_ms=1, raw=SimpleNamespace(model=model))
+
+    monkeypatch.setattr(r, '_litellm_call', controlled)
+    first = await complete(r)
+    assert first.binding == 'interactive'
+    assert first.prior_attempts == [{'binding': 'deliberate', 'model': 'openai/strong-neutral',
+                                     'status': 'failed', 'reason': 'TimeoutError'}]
+    assert cancelled == ['openai/strong-neutral']
+    # Fixed endpoint clock: success must not depend on waiting out a cooldown.
+    second = await complete(r, 'reasoning')
+    assert second.binding == 'deliberate'
+    assert calls == ['openai/strong-neutral', 'openai/fast-neutral', 'openai/strong-neutral']
+    assert second.prior_attempts == []
+    assert r.routing_status()['completion_observations']['deliberate']['state'] == 'available'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('error_type', [ConnectionError, TimeoutError])
+async def test_endpoint_failure_still_cools_down_across_roles(monkeypatch, error_type):
+    cfg = config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1',
+                 candidates=['deliberate', 'interactive'])
+    r, calls = router(cfg), []
+
+    async def controlled(**kwargs):
+        model = kwargs['config'].model_id
+        calls.append(model)
+        if model == 'openai/strong-neutral':
+            raise error_type('endpoint transport failure before caller deadline')
+        return SimpleNamespace(content=model, latency_ms=1, raw=SimpleNamespace(model=model))
+
+    monkeypatch.setattr(r, '_litellm_call', controlled)
+    assert (await complete(r)).binding == 'interactive'
+    assert r.routing_status()['completion_observations']['deliberate']['state'] == 'cooldown'
+    second = await complete(r, 'reasoning')
+    assert second.binding == 'interactive'
+    assert second.prior_attempts == [{'binding': 'deliberate', 'model': 'openai/strong-neutral',
+                                      'status': 'skipped', 'reason': 'EndpointCoolingDown'}]
+    assert calls == ['openai/strong-neutral', 'openai/fast-neutral', 'openai/fast-neutral']
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_does_not_fallback_or_hold_recovery(monkeypatch):
+    from colony_sidecar.router.endpoints import EndpointRuntime
+    r = router(config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1'))
+    now, calls, started = [100.0], [], asyncio.Event()
+    r._endpoints = EndpointRuntime(clock=lambda: now[0])
+    binding = r._snapshot.bindings['deliberate']
+    r._endpoints.failure(r._snapshot, binding, ConnectionError())
+    now[0] += 16
+
+    async def controlled(**kwargs):
+        calls.append(kwargs['config'].model_id)
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(r, '_litellm_call', controlled)
+    pending = asyncio.create_task(complete(r, 'reasoning'))
+    await asyncio.wait_for(started.wait(), 1)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert calls == ['openai/strong-neutral']
+    assert r.routing_status()['completion_observations']['deliberate']['state'] == 'retry_due'
+    assert r._endpoints.acquire(r._snapshot, binding, 'next-request')
+    r._endpoints.release(r._snapshot, binding, 'next-request')
+
+
+@pytest.mark.asyncio
 async def test_private_candidates_never_use_cloud_or_follow_redirects():
     with endpoint(status=307, location='https://untrusted.invalid/leak') as (first, a), endpoint() as (second, b):
         cfg = config(first, second)
