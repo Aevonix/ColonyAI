@@ -174,6 +174,7 @@ class TurnIdempotencyLedger:
         occurred_at: str | None = None,
         timezone_name: str | None = None,
         derive_claims: bool = True,
+        runtime_judgment: bool = False,
     ) -> bool:
         """Atomically retain source JSON and its rebuildable lexical index.
 
@@ -185,6 +186,8 @@ class TurnIdempotencyLedger:
         Reviewed historical imports can set derive_claims=False to retain
         quotations without scheduling assertion learning. Text indexing still
         uses the same source ledger and semantic projection queue.
+        The internal runtime_judgment option queues server-observed execution
+        evidence without ordinary claim extraction; HTTP writers cannot set it.
         """
         if not turn_id or not contact_id or not session_id or not messages:
             raise ValueError("source requires an id, participant, session and messages")
@@ -244,8 +247,10 @@ class TurnIdempotencyLedger:
             from colony_sidecar.beliefs.source_projection import enqueue
             if derive_claims:
                 enqueue(conn, turn_id, messages, scope=scope, timezone_name=timezone_name)
+            if derive_claims or runtime_judgment:
                 from colony_sidecar.self_model.judgments import enqueue as enqueue_judgments
-                enqueue_judgments(conn, turn_id, contact_id, messages, scope=scope)
+                enqueue_judgments(conn, turn_id, contact_id, messages, scope=scope,
+                                  runtime_observation=runtime_judgment)
             from colony_sidecar.turns.source_vectors import enqueue as enqueue_vectors
             enqueue_vectors(conn, turn_id)
         return True

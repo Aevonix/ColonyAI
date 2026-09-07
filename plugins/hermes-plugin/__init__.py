@@ -2216,7 +2216,7 @@ def register(ctx: Any) -> None:
     work_coordinator = CommitmentCoordinator(client)
     native_reviews = NativeReviews(client, owner_contact_id)
     native_config = config.get('native_local_work')
-    native_drafts = (NativeDrafts(native_config, client, owner_contact_id)
+    native_drafts = (NativeDrafts.for_execution(native_config, client, owner_contact_id)
                      if isinstance(native_config, dict) else None)
     mediator = boundary.mediator
     runtime_enabled_actions = boundary.enabled_action_tools
@@ -2475,6 +2475,9 @@ def register(ctx: Any) -> None:
         if name == 'colony_read_work_source':
             return local_work.read_source(args or {}, context,
                 native_drafts.work if native_drafts is not None and native_drafts.worker else None)
+        if isinstance(native_config, dict) and native_drafts is None:
+            return json.dumps({'error': 'Local draft acceptance is unavailable in this native worker',
+                               'execution_created': False})
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
             task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
         return local_work.accept(args or {}, scope, client, native_drafts,

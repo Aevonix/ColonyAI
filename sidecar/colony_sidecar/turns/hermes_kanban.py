@@ -204,6 +204,16 @@ def task_snapshot(identifier, contact_id, native, *, review=False):
                          error=str(latest['error'] or task['last_failure_error'] or '')[:500] if latest else '',
                          summary=str(latest['summary'] or '')[:1600] if latest else '',
                          native_run_id=latest['id'] if latest else None)
+            if latest and latest['outcome'] in {'crashed', 'timed_out', 'spawn_failed', 'gave_up'}:
+                state['runtime_observation'] = {
+                    'outcome': latest['outcome'], 'started_at': latest['started_at'],
+                    'ended_at': latest['ended_at'], 'max_runtime_seconds': latest['max_runtime_seconds'],
+                    'attempt_count': count, 'profile': latest['profile'],
+                    'task_model_override_at_observation': task['model_override'],
+                    'task_provider_override_at_observation': task['provider_override'],
+                    'served_model': 'unknown',
+                    'role': 'native_default_worker',
+                }
         return result, state
 
 

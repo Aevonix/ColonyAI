@@ -1,10 +1,65 @@
 """Actual native completion hook and canonical report recall, without models."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 
 import pytest
 from conftest import ROOT, run_python
+
+
+# Use separate parent and worker processes so dispatcher-side plugin discovery
+# cannot hide a cold worker registration failure.
+DISPATCH = r'''
+import json,os,socket,sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0,sys.argv[1])
+def no_network(*a,**k):raise AssertionError('No network in native dispatcher fixture')
+socket.socket.connect=no_network;socket.create_connection=no_network
+home=Path(os.environ['HERMES_HOME']);home.mkdir()
+Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
+ 'owner_contact_id':'owner','url':'http://fixture','turn_outbox_path':str(home/'outbox.db'),
+ 'turn_outbox_drain_timeout_ms':1000,
+ 'turn_writer_platforms':['api_server','rcs','sms','whatsapp']}},
+ 'tools':{'tool_search':{'enabled':'off'}},'memory':{'provider':'none'}}))
+profile_owned = sys.argv[2] == 'profile'
+if profile_owned:
+ # A native default-profile worker starts from its selected durable profile.
+ # No inherited Colony process latches or synthetic dotenv are supplied.
+ from hermes_cli.profiles import resolve_profile_env
+ assert Path(resolve_profile_env('default')) == home
+ cfg=json.loads((home/'config.yaml').read_text())
+ cfg['memory']={'provider':'colony-memory','config':{
+  'url':'http://fixture','contact_id':'owner','turn_writer':'disabled'}}
+ cfg['plugins']['colony']['native_local_work']={'board':'colony-drafts',
+  'worker_profile':'colony-drafts','destination':str(home/'drafts'),'worker':False}
+ (home/'config.yaml').write_text(json.dumps(cfg))
+ assert not any(name in os.environ for name in (
+  'COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'))
+from hermes_cli import kanban_db as kb
+with patch('hermes_cli.lifecycle.invoke_hook'),patch('hermes_cli.lifecycle.has_hook',return_value=False):
+ db=kb.connect(board='default')
+ tid=kb.create_task(db,title='Retain a useful calibration finding',body='WORKER-INSTRUCTION-MUST-NOT-BECOME-MEMORY',
+  assignee='default',workspace_kind='dir',workspace_path=str(home),board='default')
+ task=kb.claim_task(db,tid)
+assert task
+# Capture the actual dispatcher's selected-profile and board environment,
+# including its DB pin, before a cold plugin load. No process is launched.
+with patch('subprocess.Popen') as spawn:
+ spawn.return_value.pid=123
+ assert kb._default_spawn(task,str(home),board='default')==123
+ worker_env=spawn.call_args.kwargs['env']
+ assert worker_env['HERMES_KANBAN_DB']==str(home/'kanban.db')
+ assert worker_env['HERMES_KANBAN_BOARD']=='default'
+ assert worker_env['HERMES_HOME']==str(home)
+ assert '--accept-hooks' in spawn.call_args.args[0]
+ spawn.call_args.kwargs['stdout'].close()
+worker_env['HERMES_SESSION_ID']='worker-session'
+db.close()
+print(json.dumps(worker_env))
+'''
 
 
 PROBE = r'''
@@ -27,25 +82,8 @@ from colony_sidecar.api.authority import RequestAuthority
 from colony_sidecar.api.routers import host
 from colony_sidecar.turns import get_turn_idempotency_ledger, canonical_turn_digest
 from colony_hermes.client import TurnOutbox
-home=Path(os.environ['HERMES_HOME']);home.mkdir()
-Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
- 'owner_contact_id':'owner','url':'http://fixture','turn_outbox_path':str(home/'outbox.db'),
- 'turn_outbox_drain_timeout_ms':1000,
- 'turn_writer_platforms':['api_server','rcs','sms','whatsapp']}},
- 'tools':{'tool_search':{'enabled':'off'}},'memory':{'provider':'none'}}))
+home=Path(os.environ['HERMES_HOME'])
 profile_owned = sys.argv[5] == 'profile'
-if profile_owned:
- # A native default-profile worker starts from its selected durable profile.
- # No inherited Colony process latches or synthetic dotenv are supplied.
- from hermes_cli.profiles import resolve_profile_env
- assert Path(resolve_profile_env('default')) == home
- cfg=json.loads((home/'config.yaml').read_text())
- cfg['memory']={'provider':'colony-memory','config':{
-  'url':'http://fixture','contact_id':'owner','turn_writer':'disabled'}}
- (home/'config.yaml').write_text(json.dumps(cfg))
- assert not any(name in os.environ for name in (
-  'COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'))
 app=FastAPI()
 @app.middleware('http')
 async def authority(request,next_call):
@@ -84,14 +122,25 @@ from colony_memory.provider import ColonyMemoryProvider
 from gateway.session_context import set_session_vars
 from tools import kanban_tools
 db=kb.connect(board='default')
-tid=kb.create_task(db,title='Retain a useful calibration finding',body='WORKER-INSTRUCTION-MUST-NOT-BECOME-MEMORY',
- assignee='default',workspace_kind='dir',workspace_path=str(home),board='default')
-task=kb.claim_task(db,tid);assert task
-os.environ.update(HERMES_KANBAN_TASK=tid,HERMES_KANBAN_RUN_ID=str(task.current_run_id),
- HERMES_KANBAN_CLAIM_LOCK=task.claim_lock,HERMES_KANBAN_BOARD='default',HERMES_SESSION_ID='worker-session')
+tid=os.environ['HERMES_KANBAN_TASK'];task=kb.get_task(db,tid);assert task
 pm=get_plugin_manager();pm.discover_and_load()
-assert pm._plugins['colony'].enabled
+assert pm._plugins['colony'].enabled,pm._plugins['colony'].error
 import colony_hermes
+if profile_owned:
+ from colony_hermes.native_drafts import NativeDrafts
+ from agent.delegation_context import non_dispatcher_owned_context
+ config=json.loads((home/'config.yaml').read_text())['plugins']['colony']['native_local_work']
+ assert NativeDrafts.for_execution(config,None,'owner') is None
+ # Actual draft workers and nonowned execution retain the board invariant.
+ for guard in ('draft-worker','nonowned'):
+  try:
+   if guard=='draft-worker':NativeDrafts.for_execution({**config,'worker':True},None,'owner')
+   else:
+    with non_dispatcher_owned_context():NativeDrafts.for_execution(config,None,'owner')
+  except ValueError as error:assert str(error)=='selected_native_board_required'
+  else:raise AssertionError('The selected-board invariant was bypassed')
+ assert not any(type(getattr(h,'__self__',None)).__name__=='NativeDrafts'
+                for h in pm._hooks.get('on_kanban_dispatch_tick',[]))
 observed=[]
 report_outcomes=[]
 for index,callback in enumerate(pm._hooks.get('kanban_task_completed',[])):
@@ -120,6 +169,13 @@ provider.initialize('worker-session',hermes_home=str(home))
 worker_instruction='WORKER-INSTRUCTION-MUST-NOT-BECOME-MEMORY'
 invoke_hook('pre_llm_call',session_id='worker-session',task_id='worker-probe',turn_id='worker-probe',
  platform='cli',sender_id='',user_message=worker_instruction)
+if profile_owned:
+ before=list(wire)
+ denied=json.loads(handle_function_call('colony_accept_local_draft',
+  {'question':'Unrelated draft','sources':[str(home/'unrelated.txt')]},
+  session_id='worker-session',task_id='worker-probe',turn_id='worker-probe',tool_call_id='reject-draft'))
+ assert denied.get('execution_created') is False,denied
+ assert wire==before,'Unselected draft controller must not send acceptance or mutate another board'
 invoke_hook('post_llm_call',session_id='worker-session',task_id='worker-probe',turn_id='worker-probe',
  platform='cli',user_message=worker_instruction,assistant_response='Intermediate progress',model='fixture')
 provider.on_pre_compress([{'role':'user','content':worker_instruction}],require_checkpoint=True)
@@ -271,6 +327,8 @@ def test_native_completed_report_source_handoff(artifacts, tmp_path, with_vector
     if ownership == 'profile':
         for key in ('COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'):
             env.pop(key)
+    dispatched = run_python('-I', '-c', DISPATCH, artifacts[3], ownership, cwd=tmp_path, env=env)
+    env = json.loads(dispatched.stdout.splitlines()[-1])
     result = run_python('-I', '-c', PROBE, artifacts[3], ROOT/'sidecar',
         dependencies, 'vectors' if with_vectors else 'lexical', ownership, cwd=tmp_path, env=env)
     assert 'dependent erasure verified' in result.stdout

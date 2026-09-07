@@ -295,6 +295,11 @@ not backfilled.
 This separately scoped assistant-report hook does not depend on which platforms
 enable ordinary conversation capture; excluding CLI user turns still retains
 eligible native completion reports.
+An unrelated dispatcher-owned board worker omits the profile's draft-board
+controller and rejects local-draft acceptance before any handoff. Native's
+worker DB pin stays intact; the selected draft worker still requires its own
+board and profile. General scope, request lineage and completion hooks remain
+available in the ordinary worker.
 
 The existing outbox and source-only route retain this assistant summary for
 scoped lexical and semantic recall after the seven-day operational window.

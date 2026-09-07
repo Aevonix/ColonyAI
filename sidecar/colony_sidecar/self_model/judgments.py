@@ -103,12 +103,22 @@ def initialize(conn):
     conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS self_judgment_correction_id ON self_judgment_revisions(owner_id,correction_id) WHERE correction_id IS NOT NULL')
 
 
-def enqueue(conn, turn_id, contact_id, messages, *, scope):
+def _attribution(message):
+    if message.get('role') == 'user':
+        return 'owner_statement_not_independently_verified'
+    if (message.get('role') == 'assistant' and
+            message.get('_native_runtime_observation') == 'native-runtime-observation-v1'):
+        return 'runtime_recorded_execution_metadata_not_output_verification'
+    return None
+
+
+def enqueue(conn, turn_id, contact_id, messages, *, scope, runtime_observation=False):
     from colony_sidecar.identity import get_owner_contact_id
     owner = get_owner_contact_id()
     if not owner or contact_id != owner or scope != 'person':
         return
-    if not any(m.get('role') == 'user' for m in messages):
+    if not any(m.get('role') == 'user' for m in messages) and not (
+            runtime_observation and len(messages) == 1 and _attribution(messages[0])):
         return
     conn.execute("INSERT OR IGNORE INTO self_judgment_runs(turn_id,owner_id,status) VALUES (?,?,'pending')",
                  (turn_id, owner))
@@ -318,14 +328,15 @@ class SelfJudgments:
     def _prepare(self, job):
         evidence = []
         for message in json.loads(job['messages_json']):
-            if message.get('role') != 'user':
+            attribution = _attribution(message)
+            if attribution is None:
                 continue
             content = _text(message)
             if not content.strip():
                 continue
             message_hash = source_message_hash(job['session_id'], message)
             evidence.append({'handle': _handle(job['turn_id'], message_hash), 'text': content,
-                             'attribution': 'owner_statement_not_independently_verified',
+                             'attribution': attribution,
                              'turn_id': job['turn_id'], 'message_hash': message_hash})
         if not evidence or sum(len(e['text']) for e in evidence) > 16000:
             return None
@@ -364,12 +375,12 @@ class SelfJudgments:
                         continue
                     message = next((m for m in json.loads(source['messages_json']) if
                         source_message_hash(source['session_id'], m) == ref['message_hash']), None)
-                    if message is None or message.get('role') != 'user':
+                    if message is None or _attribution(message) is None:
                         continue
                     content = _text(message)
                     quotes.append(dict(ref, text=content[:1200], text_characters=len(content),
                                        excerpt_characters=min(len(content), 1200),
-                                       attribution='owner_statement_not_independently_verified'))
+                                       attribution=_attribution(message)))
                     seen.add(ref['handle'])
         payload = {'evidence': evidence, 'previous_evidence': quotes, 'previous_judgments': [
             {k: row[k] for k in ('id', 'topic', 'stance', 'reason', 'certainty')} for row in previous]}
@@ -495,8 +506,16 @@ class SelfJudgments:
                     self._finish(conn, job, 'unsupported_source')
                 return True
             payload, previous, heads = prepared
+            system = SYSTEM
+            if any(e['attribution'] == 'runtime_recorded_execution_metadata_not_output_verification'
+                   for e in payload['evidence'] + payload['previous_evidence']):
+                system += ('\nRuntime observations establish only their listed execution outcomes and timing, '
+                    'neither report accuracy nor model competence. A requested model override is not an '
+                    'observed served model; unknown processor identity stays unknown. Do not generalize '
+                    'one failure into a claim about all tasks or processors. Abstention is appropriate '
+                    'when no useful decision beyond the single execution is supported.')
             response = await asyncio.wait_for(router.complete(
-                messages=[{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': _json(payload)}],
+                messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': _json(payload)}],
                 context={'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True}), timeout=deadline)
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (
                 ('model_id', 'model_id'), ('binding', 'binding'), ('config_revision', 'config_revision'),

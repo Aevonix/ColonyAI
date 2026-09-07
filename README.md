@@ -156,7 +156,10 @@ for native package installations and service bindings.
   artifact requests remain ordinary evidence; this parser covers a limited
   vocabulary rather than every natural-language preference.
 - **Revisable working views.** Attributed owner turns can support fallible agent
-  judgments with evidence and history. Owners can inspect, withdraw or request
+  judgments with evidence and history. Newly bound internal reviews can also
+  contribute runtime-recorded failures and timing, separately from unverified
+  assistant reports. Reflection can abstain; this wiring does not establish a
+  learning gain. Owners can inspect, withdraw or request
   reconsideration through the native tool. These views do not establish truth
   or change authority; model grounding remains imperfect.
   [Working judgments and observed limits](docs/SELF-JUDGMENTS.md)
@@ -172,6 +175,9 @@ for native package installations and service bindings.
 
 ## Architecture and extension
 
+Models are interchangeable processors over shared canonical evidence,
+commitments and working views. Hermes owns native task scheduling and execution;
+Colony observes those tasks and supplies context through its existing adapter.
 One sidecar owns canonical state and a bounded context selector. SQLite supports
 the minimum deployment. Neo4j remains the extended deployment's legacy memory
 store; Lance is a replaceable search projection. Legacy graph records are not
