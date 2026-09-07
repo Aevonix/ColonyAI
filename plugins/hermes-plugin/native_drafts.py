@@ -46,6 +46,21 @@ class NativeUndertaking(Undertaking):
 
 
 class NativeDrafts:
+    @classmethod
+    def for_execution(cls, config, client, owner):
+        # A dispatcher pins every worker to its task's DB, even when another
+        # board is explicitly requested. An unrelated worker must not load
+        # the profile's draft controller against that pinned DB. Its general
+        # memory/completion hooks remain independent of draft coordination.
+        if config.get('worker') is not True and all(os.environ.get(key) for key in (
+                'HERMES_KANBAN_TASK', 'HERMES_KANBAN_RUN_ID',
+                'HERMES_KANBAN_CLAIM_LOCK', 'HERMES_KANBAN_BOARD', 'HERMES_KANBAN_DB')):
+            from agent.delegation_context import is_dispatcher_owned_worker_context
+            if (is_dispatcher_owned_worker_context()
+                    and os.environ['HERMES_KANBAN_BOARD'] != str(config.get('board') or 'colony-drafts')):
+                return None
+        return cls(config, client, owner)
+
     def __init__(self, config, client, owner):
         from hermes_cli import kanban_db as kb
         self.config, self.client, self.owner = dict(config), client, owner

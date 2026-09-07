@@ -146,6 +146,10 @@ config['worker']=True
 work_config={'plugins':{'enabled':['colony'],'entries':{'colony':{'allow_tool_override':True}},'colony':{
  'owner_contact_id':'owner','attested_system_platforms':['cli'],'turn_writer_platforms':[],
  'native_local_work':config}},'model':{'default':'fixture/local'},'tools':{'tool_search':{'enabled':'off'}}}
+if mode=='native_agent':
+    work_config['memory']={'provider':'colony-memory','config':{'turn_writer':'disabled'}}
+    for key in ('COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'):
+        os.environ.pop(key,None)
 (worker_home/'config.yaml').write_text(json.dumps(work_config))
 if mode in {'native_agent','shared_undertaking'}:
     import socket,threading,time,uvicorn
