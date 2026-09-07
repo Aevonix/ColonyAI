@@ -149,7 +149,8 @@ async def test_timeout_and_connection_failover_are_bounded(failure):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('recovering', [False, True])
-async def test_short_role_budget_does_not_suppress_longer_role(monkeypatch, recovering):
+@pytest.mark.parametrize('allow_fallback', [False, True])
+async def test_short_role_budget_does_not_suppress_longer_role(monkeypatch, recovering, allow_fallback):
     from colony_sidecar.router.endpoints import EndpointRuntime
     cfg = config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1',
                  candidates=['deliberate', 'interactive'], timeoutSeconds=.05, deadlineSeconds=.3)
@@ -172,15 +173,20 @@ async def test_short_role_budget_does_not_suppress_longer_role(monkeypatch, reco
         return SimpleNamespace(content=model, latency_ms=1, raw=SimpleNamespace(model=model))
 
     monkeypatch.setattr(r, '_litellm_call', controlled)
-    first = await complete(r)
-    assert first.binding == 'interactive'
-    assert first.prior_attempts == [{'binding': 'deliberate', 'model': 'openai/strong-neutral',
-                                     'status': 'failed', 'reason': 'TimeoutError'}]
+    if allow_fallback:
+        first = await complete(r)
+        assert first.binding == 'interactive'
+        assert first.prior_attempts == [{'binding': 'deliberate', 'model': 'openai/strong-neutral',
+                                         'status': 'failed', 'reason': 'RequestBudgetExceeded'}]
+    else:
+        with pytest.raises(RuntimeError, match='attempts=RequestBudgetExceeded$'):
+            await complete(r, allow_fallback=False)
     assert cancelled == ['openai/strong-neutral']
     # Fixed endpoint clock: success must not depend on waiting out a cooldown.
     second = await complete(r, 'reasoning')
     assert second.binding == 'deliberate'
-    assert calls == ['openai/strong-neutral', 'openai/fast-neutral', 'openai/strong-neutral']
+    assert calls == (['openai/strong-neutral', 'openai/fast-neutral', 'openai/strong-neutral']
+                     if allow_fallback else ['openai/strong-neutral', 'openai/strong-neutral'])
     assert second.prior_attempts == []
     assert r.routing_status()['completion_observations']['deliberate']['state'] == 'available'
 
@@ -200,7 +206,10 @@ async def test_endpoint_failure_still_cools_down_across_roles(monkeypatch, error
         return SimpleNamespace(content=model, latency_ms=1, raw=SimpleNamespace(model=model))
 
     monkeypatch.setattr(r, '_litellm_call', controlled)
-    assert (await complete(r)).binding == 'interactive'
+    first = await complete(r)
+    assert first.binding == 'interactive'
+    assert first.prior_attempts == [{'binding': 'deliberate', 'model': 'openai/strong-neutral',
+                                     'status': 'failed', 'reason': error_type.__name__}]
     assert r.routing_status()['completion_observations']['deliberate']['state'] == 'cooldown'
     second = await complete(r, 'reasoning')
     assert second.binding == 'interactive'

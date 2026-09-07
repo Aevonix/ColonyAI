@@ -423,14 +423,16 @@ class LLMRouter:
                 self._emit_cost_event(response)
                 return response
             except Exception as exc:
-                failures.append(type(exc).__name__)
+                reason = 'RequestBudgetExceeded' if attempt_timeout.expired() else type(exc).__name__
+                failures.append(reason)
                 prior_attempts.append({'binding': binding.name, 'model': cfg.model_id,
-                                       'status': 'failed', 'reason': type(exc).__name__})
+                                       'status': 'failed', 'reason': reason})
                 if not _retryable(exc):
                     break
                 # A caller's output/context or time budget says nothing about
                 # availability for another role. Transport/HTTP failures still
                 # cool down the endpoint when our own timer has not expired.
+                # A stalled endpoint remains eligible if only our timer expired.
                 if not attempt_timeout.expired() and 'contextwindow' not in type(exc).__name__.lower():
                     self._endpoints.failure(snapshot, binding, exc)
             finally:
