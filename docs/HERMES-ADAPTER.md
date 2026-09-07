@@ -357,6 +357,10 @@ owner requests retain native behavior. The proposal is not an evaluated or
 activated improvement: an explicit operator or a separately configured task
 evaluator must use the native apply path. Mutation history and rollback remain
 in Hermes' skill ledger. No new consent transport or learning store is added.
+Batch proposals require an actual nonempty array of operation objects with
+supported actions and target names. Encoded or malformed strings are rejected
+before staging; the adapter does not repair them silently. Valid native legacy
+flat operations remain supported. Existing pending records are left intact.
 
 Installed-wheel qualification runs real native automatic review threads with
 controlled inference for owner and guest, including a later-owner race in the
