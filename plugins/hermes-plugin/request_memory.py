@@ -29,6 +29,37 @@ def _content_key(content):
                                     separators=(',', ':')).encode()).hexdigest()
 
 
+def _native_packet(row):
+    """Only the outer packet in a native-appended suffix can attest inputs.
+
+    Literal user markers and markers quoted inside recalled evidence are not
+    provenance. The observed clean content must be an exact prefix.
+    """
+    if not isinstance(row, dict):
+        return None
+    direct, enriched = row.get('content'), row.get('api_content')
+    if isinstance(direct, str) and isinstance(enriched, str) and enriched.startswith(direct):
+        suffix = enriched[len(direct):]
+    elif isinstance(direct, list) and isinstance(enriched, list) and enriched[:len(direct)] == direct:
+        suffix = '\n'.join(part['text'] for part in enriched[len(direct):]
+                           if isinstance(part, dict) and isinstance(part.get('text'), str))
+    else:
+        return None
+    return _PACKET.search(suffix)
+
+
+def _request_texts(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for child in value:
+            yield from _request_texts(child)
+    elif isinstance(value, dict):
+        for key in ('content', 'text', 'messages', 'input', 'instructions', 'output'):
+            if key in value:
+                yield from _request_texts(value[key])
+
+
 def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None):
     """Keep fresh packets and remove exact evidence, preserving tool structure.
 
@@ -140,6 +171,7 @@ class RequestMemory:
         self.client, self.outbox = client, outbox
         self._lock = threading.Lock()
         self._aliases = OrderedDict()
+        self._supplied = {}
 
     def observe(self, scope, messages, *, user_message=None):
         # Native pre_llm_call exposes both clean content and persisted
@@ -157,22 +189,30 @@ class RequestMemory:
             and scope.valid_participant) else None
         key = (scope.contact_id, scope.task_id, scope.turn_id)
         with self._lock:
-            self._aliases[key] = (aliases, current, copy.deepcopy(user_message) if current else None)
+            packets = {match.group() for row in messages if (match := _native_packet(row)) is not None}
+            self._aliases[key] = (aliases, current, copy.deepcopy(user_message) if current else None, packets)
+            self._supplied[key] = {}
             self._aliases.move_to_end(key)
             while len(self._aliases) > 32:
-                self._aliases.popitem(last=False)
+                evicted, _ = self._aliases.popitem(last=False)
+                self._supplied.pop(evicted, None)
 
-    def finish(self, *, task_id, turn_id):
+    def finish(self, *, task_id, turn_id, contact_id=None):
+        refs = {}
         with self._lock:
             for key in list(self._aliases):
                 if key[1:] == (task_id, turn_id):
+                    if key[0] == contact_id:
+                        refs.update(self._supplied.get(key, {}))
                     del self._aliases[key]
+                    self._supplied.pop(key, None)
+        return list(refs.values())
 
     def __call__(self, request, scope):
         contact = scope.contact_id if scope is not None and scope.valid_participant else ''
         with self._lock:
             observed_key = (contact, scope.task_id, scope.turn_id) if scope else None
-            aliases, current, current_input = self._aliases.get(observed_key, ({}, None, None))
+            aliases, current, current_input, packets = self._aliases.get(observed_key, ({}, None, None, set()))
             observed = observed_key in self._aliases
         current_content = current.get('api_content', current.get('content')) if current else None
         deadline = time.monotonic() + .25
@@ -210,5 +250,30 @@ class RequestMemory:
         except Exception:
             filtered = filter_request(request, contact_id=contact, watermark=0, rules=[], fresh=False)
             fresh = False
+        if fresh and observed:
+            actual_texts = list(_request_texts(filtered))
+            current_packet = _native_packet(current)
+            packets = packets | ({current_packet.group()} if current_packet else set())
+            supplied = {}
+            for block in packets:
+                if not any(block in text for text in actual_texts):
+                    continue
+                stamp = _STAMP.match(block)
+                if stamp is None:
+                    continue
+                try:
+                    meta = json.loads(stamp.group(1))
+                    if meta['contact_id'] != contact or meta['watermark'] != watermark:
+                        continue
+                    for ref in meta.get('sources', []):
+                        if (isinstance(ref, dict) and set(ref) == {'source_id', 'source_version'}
+                                and isinstance(ref['source_id'], str) and 1 <= len(ref['source_id']) <= 256
+                                and isinstance(ref['source_version'], str) and re.fullmatch('[0-9a-f]{64}', ref['source_version'])):
+                            supplied[(ref['source_id'], ref['source_version'])] = ref
+                except (ValueError, KeyError, TypeError):
+                    continue
+            with self._lock:
+                if observed_key in self._supplied:
+                    self._supplied[observed_key].update(supplied)
         return {'request': filtered, 'source': 'colony',
                 'reason': 'source_erasure_checked' if fresh else 'source_erasure_unavailable'}

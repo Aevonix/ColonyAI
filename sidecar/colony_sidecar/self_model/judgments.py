@@ -209,7 +209,7 @@ class SelfJudgments:
                 disposition,error,validation_code,next_attempt FROM self_judgment_runs
                 WHERE owner_id=? ORDER BY rowid DESC LIMIT 10''', (self.owner_id,))]
 
-    def brief(self, query):
+    def brief(self, query, *, source_ids=None):
         rows = self.relevant(query, limit=2)
         if not rows:
             return ''
@@ -222,6 +222,9 @@ class SelfJudgments:
                          f"Source turn:{row['source_turn_id']}; supersedes:{row['supersedes']}.")
             if len('\n'.join(lines)) + len(line) + 1 <= 2400:
                 lines.append(line)
+                if source_ids is not None:
+                    source_ids.extend(ref['turn_id'] for ref in row['dependencies'])
+                    source_ids.append(row['source_turn_id'])
         return '\n'.join(lines)
 
     def correct(self, revision_id, *, action, correction_id, reason, source_id=None, control_turn_id=None):

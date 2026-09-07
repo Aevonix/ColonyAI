@@ -70,7 +70,9 @@ async def test_first_person_preference_reaches_later_context_and_can_be_forgotte
         preferences = state.preferences()
         assert [(p['pref_key'], p['value'], p['source_turn_id']) for p in preferences] == [
             ('communication_style.length', 'short', 'first-person')]
-        brief = learner.build_brief()
+        source_ids = []
+        brief = learner.build_brief(source_ids=source_ids)
+        assert source_ids == ['first-person']
         assert 'Keep replies short and to the point.' in brief and 'turn:first-person' in brief
         # The later question contains no style terms: the dedicated section
         # must carry this correction independently of semantic recall.

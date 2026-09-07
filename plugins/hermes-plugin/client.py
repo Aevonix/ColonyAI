@@ -613,21 +613,36 @@ def source_message_hash(session_id: str, message: Mapping[str, Any]) -> str:
 def redact_source_payload(payload: Mapping[str, Any], rules: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
     """Remove exact erased evidence without replaying ordinary turn effects."""
     original = dict(payload)
-    if any(rule["turn_id"] == original.get("turn_id") for rule in rules):
+    if any(rule["turn_id"] == original.get("turn_id") and rule.get('whole_source', True) for rule in rules):
         return None
     session = str(original.get("session_id") or "")
     hashes = {value for rule in rules if rule["session_id"] == session for value in rule["message_hashes"]}
     messages = original.get("checkpoint_messages")
     if messages is None:
         messages = [{"role": role, "content": original[key]} for role, key in (("user", "user_message"), ("assistant", "assistant_message")) if original.get(key)]
-    retained = [message for message in messages if source_message_hash(session, message) not in hashes]
+    erased_dependency = any(ref.get('source_id') == rule.get('source_turn_id', rule['turn_id'])
+        and (rule.get('whole_source', True) or ref.get('source_version') == rule.get('source_version'))
+        for ref in original.get('assistant_source_refs') or [] for rule in rules)
+    retained = [message for message in messages if source_message_hash(session, message) not in hashes
+                and not (message.get('role') == 'assistant' and erased_dependency)]
     if len(retained) == len(messages):
         return original
     if not retained:
         return None
     # A fresh checkpoint stores only survivors. Retiring the old ID avoids
     # mutating an immutable envelope or rerunning its now-unsafe summary/tools.
-    result = {"session_id": session, "contact_id": original["contact_id"], "checkpoint_messages": retained}
+    if original.get('checkpoint_messages') is None and original.get('sender'):
+        result = {'session_id': session, 'contact_id': original['contact_id'],
+                  'sender': original['sender'], 'source_only': True, 'require_source_receipt': True}
+        for message in retained:
+            result[message['role'] + '_message'] = message['content']
+        for name in ('occurred_at', 'timezone_name'):
+            if original.get(name) is not None:
+                result[name] = original[name]
+    else:
+        result = {"session_id": session, "contact_id": original["contact_id"], "checkpoint_messages": retained}
+    if original.get('assistant_source_refs') and any(message['role'] == 'assistant' for message in retained):
+        result['assistant_source_refs'] = original['assistant_source_refs']
     digest = hashlib.sha256(json.dumps(result, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     result["turn_id"] = "checkpoint:" + digest
     return result
@@ -1660,6 +1675,8 @@ class ColonyClient:
         turn_id: str = "",
         sender: Mapping[str, str] | None = None,
         checkpoint_messages: Sequence[Mapping[str, Any]] | None = None,
+        assistant_source_refs: Sequence[Mapping[str, str]] | None = None,
+        source_only: bool | None = None,
         require_source_receipt: bool = False,
         occurred_at: str | None = None,
         timezone_name: str | None = None,
@@ -1711,6 +1728,10 @@ class ColonyClient:
                 payload["assistant_message"] = {
                     "role": "assistant", "content": str(assistant_message),
                 }
+            if assistant_source_refs:
+                payload['assistant_source_refs'] = list(assistant_source_refs)
+            if source_only:
+                payload['source_only'] = True
             if tools_used:
                 payload["tools_used"] = [str(item) for item in tools_used][:50]
             if topics:
@@ -1725,8 +1746,10 @@ class ColonyClient:
                 payload["checkpoint_messages"] = list(checkpoint_messages)
 
             if turn_id:
+                route = ('turns/source-survivors' if source_only else
+                         'turns/source-linked' if assistant_source_refs else 'turns')
                 response = self.put(
-                    f"/v2/host/turns/{quote(str(turn_id), safe='')}",
+                    f"/v2/host/{route}/{quote(str(turn_id), safe='')}",
                     json=payload,
                     timeout=min(timeout, max(0.0, deadline - time.monotonic())),
                     _deadline_monotonic=deadline,

@@ -223,17 +223,19 @@ class SelfPerspective:
                 'judgment_processing': self.judgments.processing(),
                 'opinion_history': self.opinions(history=True), 'automatic_weighting': 'retired', 'attention': attention}
 
-    def brief(self, query=''):
+    def brief(self, query='', *, source_ids=None):
         lines = []
         for pref in self.preferences():
             if pref['pref_key'].startswith('initiative.'):
                 lines.append(f"Owner correction: {pref['pref_key']} priority weight {pref['value']:.2f}; source turn:{pref['source_turn_id']}; applies only to optional research ordering.")
+                if source_ids is not None:
+                    source_ids.append(pref['source_turn_id'])
         state = self.status()['attention']
         if state is not None and not state['historical_only']:
             lines.append(f"Last initiative ranking, {state['age_seconds']:g}s ago: " + ', '.join(state['ordered_ids'][:8]) + '. This is a decision snapshot, not current liveness.')
         if lines:
             lines.append('Only explicit owner preferences adjust these priorities. Runtime history establishes neither output quality nor the competence of the current model; it grants no authority.')
-        judgments = self.judgments.brief(query)
+        judgments = self.judgments.brief(query, source_ids=source_ids)
         if judgments:
             lines.append(judgments)
         return '\n'.join(lines)

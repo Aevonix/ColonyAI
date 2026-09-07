@@ -1494,8 +1494,11 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             return ""
         # Source IDs remain in the evidence body. The whole-packet watermark
         # also covers relationship/commitment sections with derived state.
+        source_refs = [ref for section in sections for ref in section.get('citations') or []
+                       if isinstance(ref, dict) and set(ref) == {'source_id', 'source_version'}]
         stamp = json.dumps({"contact_id": bound_contact,
-                            "watermark": data.get("source_erasure_watermark")},
+                            "watermark": data.get("source_erasure_watermark"),
+                            **({'sources': source_refs} if source_refs else {})},
                            ensure_ascii=True, separators=(",", ":"))
         return ("[colony-recall-v1 " + stamp + "]\n" + self._format_sections(sections)
                 + "\n[/colony-recall-v1]")

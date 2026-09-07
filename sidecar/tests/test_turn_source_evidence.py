@@ -122,7 +122,8 @@ async def test_media_references_retained_but_not_lexically_indexed(source_app, t
 def test_additive_schema_preserves_existing_idempotency_digest():
     payload = TurnSyncRequest.model_validate(envelope("existing-turn"))
     legacy = payload.model_dump(mode="json", exclude_none=False)
-    legacy.pop("checkpoint_messages")
+    for additive in ('checkpoint_messages', 'assistant_source_refs', 'source_only'):
+        legacy.pop(additive)
     expected = hashlib.sha256(json.dumps(
         legacy, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
     ).encode()).hexdigest()

@@ -337,6 +337,7 @@ class SourceClaimProjection:
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
             identifier = hashlib.sha256(json.dumps([contact_id, key, [c["id"] for c in group]]).encode()).hexdigest()
             bundles.append({"id": "assertions:" + identifier, "kind": "source_quote",
+                            "source_turn_ids": list(dict.fromkeys(c['turn_id'] for c in group)),
                             "source_uri": "turn:" + group[0]["turn_id"], "claim_status": status,
                             "epistemic_state": status, "atomic_evidence": True,
                             # Rank the grounded language the user supplied.

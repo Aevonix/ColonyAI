@@ -2574,9 +2574,20 @@ async def context_assemble(
                 query_text, beliefs, quotations, limit=5,
                 max_chars=max(0, min(max_chars, 24000)))
             if body_text:
+                source_ids = []
+                for memory in selected:
+                    source_ids.extend(memory.get('source_turn_ids') or [])
+                    if memory.get('source_turn_id'):
+                        source_ids.append(memory['source_turn_id'])
+                    uri = str(memory.get('source_uri') or '')
+                    if uri.startswith('turn:'):
+                        source_ids.append(uri[5:])
+                citations = (source_ledger.source_references(source_ids,
+                    contact_id=body.context.contact_id, session_id=body.context.session_id)
+                    if source_ledger is not None else [])
                 sections.append(ContextSection(
                     id="colony-memory", title="Relevant Memories",
-                    body=body_text, priority=90))
+                    body=body_text, priority=90, citations=citations or None))
                 record_use = (getattr(_graph, "record_recall_use", None)
                               if not _canonical_only else None)
                 if not _canonical_only and callable(record_use):
@@ -2812,21 +2823,29 @@ async def context_assemble(
         try:
             from colony_sidecar.identity import get_owner_contact_id
             if get_owner_contact_id() == contact_id:
-                _brief = _preference_learner.build_brief()
+                perspective = getattr(_preference_learner, 'perspective', None)
+                preference_sources = []
+                _brief = _preference_learner.build_brief(source_ids=preference_sources)
                 if _brief:
                     sections.append(ContextSection(
                         id="colony-owner-preferences",
                         title="How they want me to communicate",
                         body=_brief,
                         priority=88,
+                        citations=(perspective.ledger.source_references(preference_sources,
+                            contact_id=contact_id, session_id=body.context.session_id)
+                            if perspective is not None else None),
                     ))
-                perspective = getattr(_preference_learner, 'perspective', None)
                 if perspective is not None:
+                    working_sources = []
                     working_brief = perspective.brief(query=(
-                        query_text if _projection.viewer_attested and _projection.viewer_is_owner else ''))
+                        query_text if _projection.viewer_attested and _projection.viewer_is_owner else ''),
+                        source_ids=working_sources)
                     if working_brief:
                         sections.append(ContextSection(id='colony-self-perspective',
-                            title='Current working judgments and attention', body=working_brief, priority=87))
+                            title='Current working judgments and attention', body=working_brief, priority=87,
+                            citations=perspective.ledger.source_references(working_sources,
+                                contact_id=contact_id, session_id=body.context.session_id)))
         except Exception as exc:
             logger.debug("context_assemble owner preferences failed: %s", exc)
 
@@ -3740,7 +3759,10 @@ async def _ingest_turn_idempotently(
             created = ledger.record_source(
                 turn_id, contact_id=body.context.contact_id,
                 session_id=body.context.session_id, scope="session",
-                messages=[message.model_dump(mode="json") for message in body.checkpoint_messages],
+                messages=[dict(message.model_dump(mode="json"), **(
+                    {'_supplied_sources': [ref.model_dump() for ref in body.assistant_source_refs]}
+                    if message.role == 'assistant' and body.assistant_source_refs else {}))
+                    for message in body.checkpoint_messages],
                 occurred_at=(body.context.metadata or {}).get("occurred_at"),
                 timezone_name=body.context.timezone,
             )
@@ -3818,6 +3840,30 @@ async def turns_sync(
     return result
 
 
+@v2_router.put("/turns/source-linked/{turn_id:path}", response_model=TurnSyncResponse)
+async def source_linked_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request = None):
+    """An old backend must not silently drop a new answer's source references."""
+    if body.context.turn_id == 'source-linked/' + turn_id:
+        return await turns_sync_v2(body.context.turn_id, body, response, request)
+    if not body.assistant_source_refs or body.context.turn_id != turn_id:
+        raise HTTPException(status_code=422, detail={'code': 'invalid_linked_source'})
+    return await turns_sync_v2(turn_id, body, response, request)
+
+
+@v2_router.put("/turns/source-survivors/{turn_id:path}", response_model=TurnSyncResponse)
+async def source_survivor_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request = None):
+    """Preserve attributed direct survivors without replaying ordinary effects.
+
+    A predecessor matches its generic turn route and rejects the unequal path
+    and envelope IDs. Hosts must leave the survivor queued, never fall back.
+    """
+    if body.context.turn_id == 'source-survivors/' + turn_id:
+        return await turns_sync_v2(body.context.turn_id, body, response, request)
+    if body.source_only is not True or body.context.turn_id != turn_id:
+        raise HTTPException(status_code=422, detail={'code': 'invalid_source_survivor'})
+    return await turns_sync_v2(turn_id, body, response, request)
+
+
 @v2_router.put("/turns/{turn_id:path}", response_model=TurnSyncResponse)
 async def turns_sync_v2(
     turn_id: str,
@@ -3875,6 +3921,10 @@ async def _process_turn_sync(
     source_messages = [{"role": message.role, "content": message.content}
                        for message in (body.user_message, body.assistant_message)
                        if message is not None and (message.content.strip() if isinstance(message.content, str) else message.content)]
+    if body.assistant_source_refs:
+        for message in source_messages:
+            if message['role'] == 'assistant':
+                message['_supplied_sources'] = [ref.model_dump() for ref in body.assistant_source_refs]
     body = body.model_copy(deep=True)
     for field in ("user_message", "assistant_message"):
         message = getattr(body, field)
@@ -3959,11 +4009,19 @@ async def _process_turn_sync(
             )
         except SourceErased:
             return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")
+        except ValueError as exc:
+            if str(exc) == 'invalid_source_dependency':
+                raise HTTPException(status_code=422, detail={'code': 'invalid_source_dependency'}) from exc
+            raise
         source_recorded = True
         if retained != source_messages or ledger.is_projection_erased(source_id):
             # Preserve unrelated evidence, but never run extractors on an
             # envelope whose summary or tools may repeat erased content.
             return TurnSyncResponse(accepted=False, source_recorded=True, continuity_updated=False, skipped_reason="source_erased")
+        if body.source_only:
+            # record_source still schedules grounded USER claim projection.
+            # Only the ordinary summary/tool/relationship effects are skipped.
+            return TurnSyncResponse(accepted=True, source_recorded=True, continuity_updated=False, skipped_reason='source_survivor_only')
 
     # Conversation presence (L1.1, passive): now that WHO is settled, record
     # the sighting so the environment-risk classifier has a real census. The
