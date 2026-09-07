@@ -59,6 +59,111 @@ async def drain(projection):
 
 
 @pytest.mark.asyncio
+async def test_repeated_semantic_questions_leave_room_for_evidence_and_survive_erasure(tmp_path, monkeypatch):
+    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    from colony_sidecar.beliefs.source_time import MemoryTimeQuery
+    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    ledger, _, _, projection = await setup(tmp_path)
+    query = 'Where is my office and how do I enter?'
+    for i in range(5):
+        ledger.record_source(f'question-{i}', contact_id='c', session_id=f's-{i}',
+                             messages=[{'role': 'user', 'content': query}])
+    useful = [f'The office entrance {i} has step-free access.' for i in range(5)]
+    for i, content in enumerate(useful):
+        ledger.record_source(f'evidence-{i}', contact_id='c', session_id=f'e-{i}',
+                             messages=[{'role': 'user', 'content': content}])
+    await drain(projection)
+    claims = SourceClaimProjection(ledger)
+    calls = []
+    async def rerank(query, documents, top_k):
+        calls.append(documents)
+        return [{'index': i, 'score': 1 if text == query else .5}
+                for i, text in enumerate(documents)]
+    monkeypatch.setenv('COLONY_RECALL_RERANK', 'on')
+    monkeypatch.delenv('COLONY_RECALL_RERANK_MIN_SCORE', raising=False)
+    selector = RecallSelector(rerank)
+    async def recall():
+        lexical = ledger.search_sources(query, contact_id='c', session_id='later', limit=10)
+        semantic, _ = await projection.search(query, contact_id='c', session_id='later', limit=20)
+        hits = merge_source_hits(lexical, semantic)
+        _, rows = claims.prepare_context([], hits, contact_id='c', session_id='later', time_query=MemoryTimeQuery())
+        return rows, await selector.select_context(query, [], rows)
+    rows, (selected, context) = await recall()
+    duplicates = [row for row in rows if row['content'] == query]
+    assert len(duplicates) == 5  # Fusion retains all occurrences for claim/time expansion.
+    assert calls[0].count(query) == 1
+    assert sum(row['content'] in useful for row in selected) == 4
+    retained = next(row for row in selected if row['content'] == query)
+    for key in ('id', 'source_uri', 'source_turn_id', 'source_message_hash', 'occurred_at', 'ingested_at'):
+        assert retained.get(key) == duplicates[0].get(key)
+    erased = retained['source_turn_id']
+    ledger.erase_sources(contact_id='c', turn_ids=[erased])
+    rows, (selected, context) = await recall()
+    assert erased not in {row['source_turn_id'] for row in rows + selected}
+    assert calls[-1].count(query) == 1
+    replacement = next(row for row in selected if row['content'] == query)
+    assert replacement['source_turn_id'] != erased
+    assert replacement['source_message_hash'] != retained['source_message_hash']
+    with ledger._connect() as conn:
+        assert conn.execute('SELECT count(*) FROM turn_sources').fetchone()[0] == 9
+
+
+@pytest.mark.asyncio
+async def test_quote_dedup_preserves_author_role_scope_and_assertion_bundles(tmp_path):
+    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    from colony_sidecar.beliefs.source_time import MemoryTimeQuery
+    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    ledger, _, _, projection = await setup(tmp_path)
+    text = 'My office is beside the orchard.'
+    for turn, contact, role, scope in [('a', 'a', 'user', 'person'), ('a-copy', 'a', 'user', 'person'),
+                                     ('b', 'b', 'user', 'person'), ('assistant', 'a', 'assistant', 'person'),
+                                     ('checkpoint', 'a', 'user', 'session')]:
+        ledger.record_source(turn, contact_id=contact, session_id='s', scope=scope,
+                             messages=[{'role': role, 'content': text}])
+    await drain(projection)
+    claims = SourceClaimProjection(ledger)
+    authorized = []
+    for contact in ('a', 'b'):
+        hits, _ = await projection.search('workplace', contact_id=contact, session_id='s')
+        _, rows = claims.prepare_context([], hits, contact_id=contact, session_id='s', time_query=MemoryTimeQuery())
+        authorized.extend(rows)
+    unknown = dict(authorized[0], id='unknown', contact_id=None)
+    bundle = dict(authorized[0], id='bundle', atomic_evidence=True, epistemic_state='source_assertion')
+    selected, _ = await RecallSelector().select_context('workplace', [], authorized + [unknown, bundle], limit=10)
+    assert len(selected) == 6
+    assert {row['contact_id'] for row in selected if row.get('scope') == 'person'} == {'a', 'b', None}
+    assert {'assistant', 'checkpoint'} <= {row['source_turn_id'] for row in selected}
+    assert {'unknown', 'bundle'} <= {row['id'] for row in selected}
+
+
+@pytest.mark.asyncio
+async def test_dated_repeated_quote_is_filtered_before_deduplication(tmp_path):
+    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    from colony_sidecar.beliefs.source_time import MemoryTimeQuery
+    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    ledger, _, _, projection = await setup(tmp_path)
+    for day in (1, 2):
+        ledger.record_source(f'day-{day}', contact_id='c', session_id=f's-{day}',
+                             occurred_at=f'2026-03-0{day}T09:00:00+00:00',
+                             messages=[{'role': 'user', 'content': 'I visited the office.'}])
+    await drain(projection)
+    hits, _ = await projection.search('office', contact_id='c', session_id='later')
+    assert len(hits) == 2
+    _, rows = SourceClaimProjection(ledger).prepare_context([], hits, contact_id='c', session_id='later',
+        time_query=MemoryTimeQuery('observed_range', '2026-03-02T00:00:00+00:00', '2026-03-03T00:00:00+00:00'))
+    selected, context = await RecallSelector().select_context('office visited March 2', [], rows)
+    assert len(selected) == 1 and selected[0]['source_turn_id'] == 'day-2'
+    assert selected[0]['occurred_at'] == '2026-03-02T09:00:00+00:00'
+    assert 'day-1' not in context
+    # Equal words on separate days are separate relevant events in a range.
+    _, rows = SourceClaimProjection(ledger).prepare_context([], hits, contact_id='c', session_id='later',
+        time_query=MemoryTimeQuery('observed_range', '2026-03-01T00:00:00+00:00', '2026-03-03T00:00:00+00:00'))
+    selected, context = await RecallSelector().select_context('office visits March 1 and 2', [], rows)
+    assert {row['source_turn_id'] for row in selected} == {'day-1', 'day-2'}
+    assert all(row['validity_status'] == 'source_occurrence_only' for row in selected)
+
+
+@pytest.mark.asyncio
 async def test_ordinary_ingest_worker_semantic_context_and_one_abstention(source_app, tmp_path, monkeypatch):
     import colony_sidecar.vector as vectors
     from colony_sidecar.api.routers import host

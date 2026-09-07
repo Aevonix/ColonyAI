@@ -285,6 +285,9 @@ class SourceClaimProjection:
             source = sources.get(hit["turn_id"])
             removed = []
             if source:
+                # Carry canonical attribution through selection. Checkpoint
+                # scope cannot attest the speaker of every historical message.
+                hit.update({name: source[name] for name in ("contact_id", "session_id", "scope")})
                 for message in json.loads(source["messages_json"]):
                     text = message.get("content")
                     if message.get("role") != hit["role"] or not isinstance(text, str):
