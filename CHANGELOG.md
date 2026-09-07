@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.7 - retry incomplete memory extraction
+
+Malformed final extraction output now leaves its projection job pending through
+the existing retry path. Previously an invalid JSON response or non-array
+envelope could silently complete with no claims. Canonical source text remains
+available; a valid empty result still completes without promoting junk memory.
+Recovery tests reopen the ledger, retry extraction and recall the retained
+evidence from a later session. Existing completed projections are not replayed.
+
 ## v1.0.6 - traceable native learning reviews
 
 Native background reviews now carry bounded references to actual failed tool
