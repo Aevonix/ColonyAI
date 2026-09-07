@@ -2769,23 +2769,23 @@ async def context_assemble(
         except Exception as exc:
             logger.warning("context_assemble affect failed: %s", exc)
 
-    # --- Relationship closeness ---
+    # --- Recorded relationship context ---
     if _exact_person_allowed and _contacts_store is not None and contact_id:
         try:
             _rc = await _contacts_store.get(contact_id)
             if _rc is not None:
-                from colony_sidecar.contacts.scoring import closeness_label
-                _rs = float(getattr(_rc, "relationship_score", 0.0) or 0.0)
                 _rt = getattr(_rc, "trust_tier", "") or ""
-                _bits = [f"Closeness: {closeness_label(_rs)} ({_rs:.0%})"]
+                _count = getattr(_rc, "interaction_count", None)
+                _bits = [f"Recorded interactions: {_count}" if _count is not None
+                         else "Interaction count not recorded"]
                 if _rt:
-                    _bits.append(f"standing: {_rt.replace('_', ' ')}")
+                    _bits.append(f"recorded contact tier: {_rt.replace('_', ' ')}")
                 _rl = getattr(_rc, "last_interaction_at", None)
                 if _rl:
-                    _bits.append(f"last talked: {str(_rl)[:10]}")
+                    _bits.append(f"last recorded interaction: {str(_rl)[:10]}")
                 sections.append(ContextSection(
                     id="colony-relationship",
-                    title="Relationship",
+                    title="Recorded relationship context",
                     body=" · ".join(_bits),
                     priority=86,
                 ))

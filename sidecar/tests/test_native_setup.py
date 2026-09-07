@@ -51,6 +51,8 @@ def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args
     assert config['plugins']['enabled'] == ['colony']
     assert config['plugins']['colony']['instance_dir'] == str(state)
     assert config['plugins']['colony']['enabled_action_tools'] == []
+    assert 'toolsets' not in config and 'kanban' not in config
+    assert 'COLONY_HERMES_WORK_BOARDS' not in env
     keyring = json.loads((state/'api-keyring.json').read_text())
     principal = keyring['principals'][0]
     assert principal['allow_unscoped_api'] is False
@@ -88,6 +90,160 @@ def test_attach_preserves_existing_identity_channels_model_and_unrelated_env(arg
     assert (home/'SOUL.md').read_text() == 'Existing private identity'
     assert (home/'.env').read_text().startswith('OTHER_PRIVATE_KEY=keep\n')
     assert yaml.safe_load((home/'colony/hermes-original/config.yaml').read_text()) == original
+
+
+def test_native_goals_opt_in_and_existing_instance_reentry_preserve_state(args, monkeypatch, capsys):
+    from colony_sidecar import setup_local_work
+    monkeypatch.setattr(setup_local_work, 'verify_tools', lambda *a: None)
+    args.native_goals = True
+    assert setup.run_init(None, args) == 0
+    home = Path(args.hermes_home); state = home/'colony'
+    config = yaml.safe_load((home/'config.yaml').read_text())
+    assert config['toolsets'] == ['hermes-cli', 'kanban']
+    assert config['platform_toolsets']['cli'] == ['hermes-cli', 'kanban']
+    assert config['kanban']['dispatch_in_gateway'] is True
+    assert config['auxiliary']['goal_judge'] == {
+        'provider':'openai', 'model':args.model, 'base_url':args.model_url}
+    assert json.loads(setup._load_existing_env(state/'.env')['COLONY_HERMES_WORK_BOARDS']) == ['default']
+    assert not (home/'kanban.db').exists() and not (home/'profiles').exists()
+    assert 'Colony does not start or restart it' in capsys.readouterr().out
+    paths = [home/'config.yaml', home/'SOUL.md', home/'.env', state/'.env', state/'contacts.db',
+             state/'instance.json', state/'api-keyring.json']
+    before = {path:path.read_bytes() for path in paths}
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Reentry made a model call'))
+    assert setup.run_init(None, args) == 0
+    assert all(path.read_bytes() == data for path, data in before.items())
+
+
+@pytest.mark.parametrize('conflict', ['yaml', 'home_env', 'process_env'])
+def test_native_goals_dispatch_conflict_precedes_attachment(args, monkeypatch, conflict):
+    from colony_sidecar import setup_local_work
+    monkeypatch.setattr(setup_local_work, 'verify_tools', lambda *a: None)
+    args.native_goals = True
+    home = Path(args.hermes_home); home.mkdir()
+    (home/'config.yaml').write_text('kanban: {dispatch_in_gateway: false}\n' if conflict == 'yaml' else '{}\n')
+    if conflict == 'home_env':
+        (home/'.env').write_text('HERMES_KANBAN_DISPATCH_IN_GATEWAY=false\n')
+    if conflict == 'process_env':
+        monkeypatch.setenv('HERMES_KANBAN_DISPATCH_IN_GATEWAY', 'off')
+    before = {p:p.read_bytes() for p in home.iterdir()}
+    assert setup.run_init(None, args) == 1
+    assert before == {p:p.read_bytes() for p in home.iterdir()}
+
+
+@pytest.mark.parametrize('location', ['home_env', 'process_env'])
+@pytest.mark.parametrize('variable', ['HERMES_KANBAN_HOME', 'HERMES_KANBAN_DB'])
+@pytest.mark.parametrize('matching', [False, True])
+def test_native_goals_native_path_overrides_match_observation_before_writes(args, monkeypatch, location, variable, matching):
+    assert setup.run_init(None, args) == 0
+    home = Path(args.hermes_home)
+    args.native_goals = True
+    selected = home if variable.endswith('_HOME') else home/'kanban.db'
+    override = str(selected if matching else home.parent/'other-native-ledger')
+    if location == 'home_env':
+        with (home/'.env').open('a') as stream:
+            stream.write(variable+'='+override+'\n')
+    else:
+        monkeypatch.setenv(variable, override)
+    before = {p:p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Existing opt-in made a model call'))
+    assert setup.run_init(None, args) == (0 if matching else 1)
+    if not matching:
+        assert before == {p:p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    else:
+        assert yaml.safe_load((home/'config.yaml').read_text())['kanban']['dispatch_in_gateway'] is True
+        assert not (home/'kanban.db').exists()
+
+
+def test_native_goals_single_database_override_cannot_claim_multiple_boards(tmp_path):
+    from colony_sidecar.setup_native_goals import prepare
+    home = tmp_path/'home'
+    with pytest.raises(ValueError, match='HERMES_KANBAN_DB conflicts'):
+        prepare({}, home, native_env={'HERMES_KANBAN_DB':str(home/'kanban.db')},
+                observer_env={}, local_work=True)
+    _, details = prepare({}, home, native_env={'HERMES_KANBAN_DB':str(home/'kanban.db')},
+        observer_env={'COLONY_HERMES_WORK_BOARDS':'["default","default"]'})
+    assert details['boards'] == ['default']
+    assert not home.exists()
+
+
+def test_native_goals_preserve_explicit_tools_judge_and_board_selection(args, monkeypatch):
+    from colony_sidecar.setup_native_goals import enable
+    assert setup.run_init(None, args) == 0
+    home = Path(args.hermes_home); state = home/'colony'
+    config = yaml.safe_load((home/'config.yaml').read_text())
+    judge = {'provider':'custom:deliberate', 'model':'judge-model', 'timeout':97, 'extra_body':{'mode':'retained'}}
+    config.update(toolsets=['file'], platform_toolsets={'cli':['file'], 'telegram':['web']},
+                  auxiliary={'goal_judge':judge, 'vision':{'provider':'existing'}})
+    (home/'config.yaml').write_text(yaml.safe_dump(config))
+    with (state/'.env').open('a') as stream:
+        stream.write('COLONY_HERMES_WORK_BOARDS=["existing"]\n')
+    paths = [home/'SOUL.md', home/'.env', state/'contacts.db', state/'instance.json', state/'api-keyring.json']
+    before = {path:path.read_bytes() for path in paths}
+    enable(state)
+    after = yaml.safe_load((home/'config.yaml').read_text())
+    assert after['toolsets'] == ['file', 'kanban']
+    assert after['platform_toolsets'] == {'cli':['file', 'kanban'], 'telegram':['web']}
+    assert after['auxiliary'] == config['auxiliary'] and after['model'] == config['model']
+    assert json.loads(setup._load_existing_env(state/'.env')['COLONY_HERMES_WORK_BOARDS']) == ['existing']
+    assert all(path.read_bytes() == data for path, data in before.items())
+
+
+def test_native_goals_select_current_and_exact_draft_board_without_creating_boards(tmp_path):
+    from colony_sidecar.setup_native_goals import prepare
+    from colony_sidecar.setup_local_work import board_name
+    home = tmp_path/'root/profiles/orion'
+    current = tmp_path/'root/kanban/current'; current.parent.mkdir(parents=True)
+    current.write_text('OPERATIONS\n')
+    marker = current.parent/'boards/operations/board.json'; marker.parent.mkdir(parents=True); marker.write_text('{}')
+    config = {'model':{'provider':'custom:local', 'default':'processor'},
+              'auxiliary':{'goal_judge':{'provider':'auto', 'model':'auto', 'timeout':91}}}
+    updated, details = prepare(config, home, native_env={}, observer_env={}, local_work=True)
+    assert details['profile'] == 'orion' and details['boards'] == ['operations', board_name(home)]
+    assert updated['auxiliary']['goal_judge'] == {'provider':'custom:local','model':'processor','timeout':91}
+    assert not home.exists() and not (marker.parent.parent/board_name(home)).exists()
+    _, details = prepare(config, home, native_env={}, observer_env={}, local_work=True,
+                         draft_board='retained-draft-board')
+    assert details['boards'] == ['operations', 'retained-draft-board']
+
+
+def test_native_goals_environment_write_failure_restores_config(args, monkeypatch):
+    from colony_sidecar.setup_native_goals import enable
+    assert setup.run_init(None, args) == 0
+    home = Path(args.hermes_home); state = home/'colony'
+    before = (home/'config.yaml').read_bytes(), (state/'.env').read_bytes()
+    write = setup._atomic_hermes_config_write
+    def fail_environment(path, previous, updated):
+        if path == state/'.env':
+            raise OSError('Disposable write failure')
+        write(path, previous, updated)
+    monkeypatch.setattr(setup, '_atomic_hermes_config_write', fail_environment)
+    with pytest.raises(OSError):
+        enable(state)
+    assert before == ((home/'config.yaml').read_bytes(), (state/'.env').read_bytes())
+
+
+def test_native_goals_detach_yaml_aliases_before_changing_selected_branches(tmp_path):
+    from colony_sidecar.setup_native_goals import prepare
+    config = yaml.safe_load('''
+model: {provider: openai, default: selected-main}
+toolsets: &tools [file]
+platform_toolsets: &platforms {cli: *tools, telegram: *tools}
+other_platforms: *platforms
+kanban: &dispatch {}
+other_dispatch: *dispatch
+auxiliary: &aux {goal_judge: {provider: auto}}
+other_aux: *aux
+''')
+    before = yaml.safe_dump(config)
+    updated, _ = prepare(config, tmp_path/'home', native_env={}, observer_env={})
+    assert updated['toolsets'] == updated['platform_toolsets']['cli'] == ['file', 'kanban']
+    assert updated['platform_toolsets']['telegram'] == ['file']
+    assert updated['other_platforms'] == {'cli':['file'], 'telegram':['file']}
+    assert updated['other_dispatch'] == {}
+    assert updated['other_aux'] == {'goal_judge':{'provider':'auto'}}
+    assert updated['auxiliary']['goal_judge'] == {'provider':'openai','model':'selected-main'}
+    assert yaml.safe_dump(config) == before
 
 
 def _changed_adapter(args, monkeypatch):

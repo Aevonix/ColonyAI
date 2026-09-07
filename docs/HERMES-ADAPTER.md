@@ -275,6 +275,28 @@ timestamp. Archiving unfinished work uses its native archive event for
 Kanban board rows. Hermes retains task creation, goal continuation, completion,
 recovery and all execution authority.
 
+New dispatcher-owned completions can also retain their finalized native run
+summary as explicitly machine-authored, unverified assistant evidence. The
+`kanban_task_completed` hook re-reads the completed native run while the actual
+`kanban_complete` tool still holds its attested CLI participant context. It copies
+the canonical source revisions actually supplied to that request, without using
+generated citations. Task bodies, worker instructions, continuations and artifact
+files are not forwarded. A missing scope or request-lineage observation leaves
+the report native-only and records a structural log reason; old completions are
+not backfilled.
+This separately scoped assistant-report hook does not depend on which platforms
+enable ordinary conversation capture; excluding CLI user turns still retains
+eligible native completion reports.
+
+The existing outbox and source-only route retain this assistant summary for
+scoped lexical and semantic recall after the seven-day operational window.
+They do not run ordinary turn cognition or promote it into a user's claims.
+Repeated callbacks reuse one native-home/board/task/run identity, including after
+a lost acknowledgement. Erasing a supplied parent removes the dependent report;
+native task and session history remain under their existing retention policy.
+Queued delivery is not proof of central availability, and a reported result is
+not independent verification that its claimed effects occurred.
+
 An optional private `COLONY_WORKER_STATUS_PATHS` environment value maps neutral
 worker labels to local JSON heartbeat paths, for example
 `{"Local transport":"/private/runtime/transport-heartbeat.json"}`. It is unset

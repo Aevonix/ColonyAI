@@ -77,6 +77,9 @@ class ActionSpec:
     # The graduated policy resolves it against the contact store to decide
     # whether the target is an authorized individual.
     target_param: Optional[str] = None
+    # Selected internal reviews can use the ordinary native task dispatcher.
+    # This never makes effectful actions eligible or grants source prose authority.
+    native_review: bool = False
 
     @property
     def auto_executable(self) -> bool:
@@ -280,7 +283,10 @@ _SPECS: List[ActionSpec] = [
     # --- SYSTEM ---
     ActionSpec("system_check_health", "terminal",
                "curl http://localhost:7777/health",
-               RiskTier.READ_ONLY, "Check sidecar health", "system"),
+               RiskTier.READ_ONLY, "Check sidecar health", "system", native_review=True),
+    ActionSpec("operational_review", "terminal",
+               "Review the observed local operational evidence and report coverage and unknowns; do not perform maintenance",
+               RiskTier.READ_ONLY, "Review local operational coverage", "operational", native_review=True),
     ActionSpec("system_check_alerts", "terminal",
                "journalctl -p err -n 20 --no-pager",
                RiskTier.READ_ONLY, "Check recent error logs", "system"),

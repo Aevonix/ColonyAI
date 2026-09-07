@@ -326,6 +326,13 @@ def run(root_dir=None, args=None):
                 raise ValueError('This instance belongs to another Hermes home')
             if config.get('plugins', {}).get('colony', {}).get('instance_dir') != str(state):
                 raise ValueError('The Hermes binding changed; restore its saved config or select another instance')
+            if getattr(args, 'native_goals', False):
+                from dotenv import dotenv_values
+                from .setup_native_goals import prepare
+                prepare(config, home, native_env=dotenv_values(home/'.env'),
+                    observer_env=dotenv_values(state/'.env'), local_work=bool(getattr(args, 'local_work', False)
+                        or manifest.get('local_work', {}).get('executor') == 'kanban'),
+                    draft_board=manifest.get('local_work', {}).get('board'))
             if getattr(args, 'refresh_adapter', False):
                 refresh_adapter(state, args)
             if getattr(args, 'local_work', False):
@@ -339,6 +346,9 @@ def run(root_dir=None, args=None):
                 verify_tools(options['base_url'], options['model'], options['api_key'])
                 install(state)
                 print('Accepted local drafts use native Kanban. Restart this Colony instance and Hermes gateway to load the binding.')
+            if getattr(args, 'native_goals', False):
+                from .setup_native_goals import enable
+                enable(state)
             os.environ['COLONY_STATE_DIR'] = str(state)
             print(f'Existing private instance retained: {state}')
             print(f'Use colony --instance {str(state)!r} start, then status.')
@@ -390,7 +400,10 @@ def run(root_dir=None, args=None):
         local_work = bool(getattr(args, 'local_work', False))
         if not noninteractive and not local_work:
             local_work = ask('Run explicitly accepted local summaries in the background? [Y/n]', 'Y').lower() in {'y','yes'}
-        if local_work:
+        native_goals = bool(getattr(args, 'native_goals', False))
+        if not noninteractive and not native_goals:
+            native_goals = ask('Enable persistent tasks using this Hermes profile and its gateway? [y/N]', 'N').lower() in {'y','yes'}
+        if local_work or native_goals:
             from .setup_local_work import verify_tools
             verify_tools(endpoint, model, model_key)
         port = int(getattr(args, 'port', 7777))
@@ -409,6 +422,15 @@ def run(root_dir=None, args=None):
             env_updates['OPENAI_API_KEY'] = model_key
             env_updates['OPENAI_BASE_URL'] = endpoint
         native_env = _native_environment(original_env, env_updates)
+        goal_configuration, goal_details = None, None
+        if native_goals:
+            from dotenv import dotenv_values
+            from .setup_native_goals import prepare
+            selected = dict(config)
+            if fresh_model:
+                selected['model'] = {'provider': 'openai', 'default': model, 'base_url': endpoint}
+            goal_configuration, goal_details = prepare(selected, home,
+                native_env=dotenv_values(home/'.env'), observer_env={}, local_work=local_work)
         # Every runtime/resource/config preflight above occurs before state creation.
         state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         staged = Path(tempfile.mkdtemp(prefix='.colony-init-', dir=state.parent))
@@ -433,6 +455,8 @@ def run(root_dir=None, args=None):
                 'COLONY_EMBED_PROVIDER': 'skip', 'WORLD_MODEL_BACKEND': 'sqlite',
                 'COLONY_AUTONOMY_PRESET': 'passive', 'COLONY_EMBEDDED_WORKER_ENABLED': 'false',
                 'COLONY_SOURCE_CLAIMS': 'on'}
+            if goal_details is not None:
+                values['COLONY_HERMES_WORK_BOARDS'] = json.dumps(goal_details['boards'], separators=(',', ':'))
             _private_write(staged/'.env', '\n'.join(k+'='+v for k,v in values.items())+'\n')
             principal = {'principal': 'hermes-local', 'status': 'active', 'viewer_person_id': owner_id,
                 'audiences': ['viewer'], 'allow_unscoped_api': False, 'turn_ingress_platforms': ['cli'],
@@ -457,7 +481,7 @@ def run(root_dir=None, args=None):
             _private_write(staged/'instance.json', _json(manifest))
             # Prepare the existing config path with the canonical provider helper.
             prepared_path = staged/'config.yaml'
-            candidate = dict(config)
+            candidate = dict(goal_configuration if goal_configuration is not None else config)
             if replace_provider:
                 candidate['memory'] = dict(candidate.get('memory') or {})
                 candidate['memory']['provider'] = 'colony-memory'
@@ -539,6 +563,9 @@ def run(root_dir=None, args=None):
         if local_work:
             print('Accepted local drafts use the native Kanban board and dedicated worker profile.')
             print('Keep the selected Hermes gateway running. Its dispatch ticks refresh the planning role for future attempts.')
+        if goal_details is not None:
+            from .setup_native_goals import describe
+            describe(goal_details)
         print(f'Start: colony --instance {str(state)!r} start --detach')
         print(f'Status: colony --instance {str(state)!r} status')
         print('No existing Hermes process was restarted. Begin a new session to load the adapter.')

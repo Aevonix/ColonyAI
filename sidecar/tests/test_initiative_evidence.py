@@ -93,6 +93,9 @@ async def test_backup_proposal_describes_only_the_observed_legacy_file(tmp_path,
     assert 'Last backup' not in rows[0].description and 'unverified' in rows[0].description
     assert rows[0].trigger_data['evidence_scope']=='legacy_bak_directory_only'
     assert rows[0].trigger_data['latest_file_modified_at']==datetime.fromtimestamp(stamp,timezone.utc).isoformat()
+    from colony_sidecar.initiatives.action_registry import get_action, RiskTier
+    action = get_action(rows[0].action_hint)
+    assert action.name == 'operational_review' and action.risk == RiskTier.READ_ONLY and action.native_review
 
 
 @pytest.mark.asyncio

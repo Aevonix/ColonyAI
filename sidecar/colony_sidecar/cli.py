@@ -52,6 +52,7 @@ def main() -> None:
     init_p.add_argument("--skip-model-download", action="store_true", help="Defer embedding model download to first start")
     init_p.add_argument("--start", action="store_true", help="Start sidecar after init")
     init_p.add_argument("--local-work", action="store_true", help="Enable explicitly accepted local drafts through the selected Hermes scheduler")
+    init_p.add_argument("--native-goals", action="store_true", help="Opt in to native persistent task tools on the existing Hermes profile; its gateway must be running")
 
     # --- start ---
     start_p = sub.add_parser("start", help="Start the sidecar server")

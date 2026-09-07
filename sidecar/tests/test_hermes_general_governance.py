@@ -1382,7 +1382,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     }
     message_only_context = _Context(message_only_config)
     module.register(message_only_context)
-    assert list(message_only_context.tools) == ["colony_accept_local_draft", "colony_commitment_work", "colony_judgments", "colony_memory_forget", "colony_read_work_source", "colony_send_message"]
+    assert list(message_only_context.tools) == ["colony_accept_local_draft", "colony_commitment_work", "colony_judgments", "colony_memory_forget", "colony_read_work_source", "colony_send_message", "colony_work_initiative"]
     message_only_attestation = module.runtime_governance_attestation(
         message_only_config
     )
@@ -1412,6 +1412,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
         "colony_list_goals",
         "colony_queue_stats",
         "colony_send_message",
+        "colony_work_initiative",
     }
     # Read filtering does not rewrite action or message schemas.
     for name in ("colony_create_commitment", "colony_send_message"):

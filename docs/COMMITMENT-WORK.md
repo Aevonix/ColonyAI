@@ -1,5 +1,43 @@
 # Explicit shared undertakings
 
+Generated internal reviews can also become shared native work through
+`colony_work_initiative(initiative_id=...)`. The tool accepts only an existing
+canonical proposal ID from an attested owner or system turn, including a
+configured system cron. Eligibility requires `autonomy_loop` provenance and an
+explicit `native_review` capability in the existing action registry whose risk
+is `READ_ONLY`. Initially these are operational coverage review and sidecar
+health review. Descriptions and observed context are quoted evidence, never
+authority or executable commands. Other actions keep their existing scoped
+authorization path; proposal-only mode and the old executor remain unchanged.
+
+The native task starts blocked, with an idempotency key derived from the
+initiative ID. The adapter verifies and records its association in the existing
+initiative context before making it ready. A lost acknowledgment or repeated
+steward cycle reuses that task, including terminal tasks. The existing native
+dispatch tick reconciles bound tasks; it does not select new proposals. Only a
+native done task with a completed run closes the initiative. Its reported
+summary remains unverified. A native exhausted `gave_up` failure is recorded
+with its actual outcome/error; a needs-input block stays resumable. Owner request views expose both the association
+and native state; guest views do not. This does not mark a broader commitment
+fulfilled or certify an external effect.
+
+These tasks use the ordinary default native profile, goal mode with at most
+four turns, a 480-second runtime bound and no task retry. They have no notifier
+subscription or model override. `READ_ONLY` describes admission and requested
+conduct, not a sandbox or a per-task tool allowlist: native Hermes resolves
+tools from the assigned profile, whose ordinary owner/system authority checks
+still apply. The request permits a local report and excludes input changes,
+backup creation, service changes and messages. Live qualification must inspect
+actual tool effects and preserve source preimages rather than infer conduct
+from the action label.
+
+The retained backup-review generator used the ambiguous hint `Execute
+maintenance task`. Compatibility recognizes only its exact generated
+operational/backup observation fields and `legacy_bak_directory_only` scope;
+it does not parse proposal prose. New proposals name `operational_review`.
+The worker must refresh old observations and distinguish directory metadata
+from unverified backup completeness or restore viability.
+
 Two Hermes sessions can reserve the same existing commitment ID. One wins the
 SQLite transaction and the other receives the current undertaking, including
 the owning session and obligation description. This closes an explicit

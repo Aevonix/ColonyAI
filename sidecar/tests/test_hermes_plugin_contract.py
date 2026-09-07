@@ -18,9 +18,10 @@ from colony_sidecar.api.routers.observations import router as observations_route
 from colony_sidecar.api.routers.task_queue import router as task_queue_router
 from colony_sidecar.api.routers.executions import router as executions_router
 from colony_sidecar.api.routers.commitment_work import router as commitment_work_router
+from colony_sidecar.api.routers.initiative_work import router as initiative_work_router
 
 # Every router the app mounts under /v1/host — the plugin may hit any of them.
-_HOST_ROUTERS = (host_router, task_queue_router, observations_router, executions_router, commitment_work_router)
+_HOST_ROUTERS = (host_router, task_queue_router, observations_router, executions_router, commitment_work_router, initiative_work_router)
 
 _INTEGRATION = pathlib.Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin"
 _HOST_PATH = re.compile(r"/v1/host/(?:[A-Za-z0-9/_.-]|\{[^{}\r\n]*\})*")

@@ -19,7 +19,8 @@ not need Colony's CLI dependency `typer` or a preinstalled Colony adapter; setup
 can attach the private adapter directly from the Colony environment.
 
 The wizard asks for your name, the agent's name, the model API root and model,
-whether to enable accepted local drafts, then whether to start Colony. An API
+whether to enable accepted local drafts, whether to enable general native tasks
+(default no), then whether to start Colony. An API
 key is prompted without echo. For unattended
 setup use `COLONY_MODEL_API_KEY` in the process environment, never a command-line
 key. A model that requires no key works too.
@@ -97,6 +98,54 @@ those services intentionally. Model quality still determines extraction and
 reasoning quality. Lexical retrieval does not promise semantic recall of every
 paraphrase. This setup is a growing local base, not a claim that every autonomous
 behaviour or public channel is ready.
+
+## Persistent native tasks
+
+`--native-goals` is a separate opt-in for general background tasks, including
+native `goal_mode` continuation. It works on a new attachment or an existing
+private instance:
+
+```sh
+colony init --non-interactive --hermes-home "$HOME/.hermes-orion" --native-goals
+```
+
+For a fresh attachment, also supply the interpreter, identity and model options
+shown above. Unattended init without `--native-goals` or `--local-work` retains
+the memory and observation profile. The interactive accepted-draft choice keeps
+its existing default; general native tasks default to no.
+
+Setup adds `kanban` to the existing profile's global toolsets and CLI selection,
+preserving other selections, identity, model and authority configuration. Hermes
+gates Kanban globally: enabling it can expose task tools to authorized turns on
+other channels of the same profile even when those channels have saved tool
+lists. Guest authority remains constrained by the existing Colony middleware.
+This is not blanket consent for consequential external actions.
+
+The agent can use native `kanban_create` with the existing profile as `assignee`,
+`goal_mode: true` and a chosen `goal_max_turns`. Setup prints that profile name
+and selects the current native board plus the exact accepted-draft board, when
+installed. An existing explicit `COLONY_HERMES_WORK_BOARDS` list is retained;
+other boards remain outside the observation view. No board is enumerated or
+created by this opt-in, and no new worker profile or executor is added.
+
+The selected Hermes gateway must be running to dispatch tasks. Colony does not
+start or restart it. Use Hermes' existing host lifecycle after configuration;
+setup reports an explicitly disabled dispatcher configuration or environment
+override instead of silently overriding it. Enabling config is not proof that
+the gateway has acquired native dispatch ownership or completed a task.
+Existing `HERMES_KANBAN_HOME` and `HERMES_KANBAN_DB` overrides must match the
+selected native root and observed board; conflicting paths are rejected before
+configuration changes.
+
+An explicitly configured `auxiliary.goal_judge` is preserved. If its routing is
+unset or automatic and the main provider/model are explicit, setup binds the
+judge to that main configuration snapshot while retaining its limits. Later
+main-model changes do not rewrite this explicit judge role. An implicit main
+binding leaves automatic judging intact and is reported. Existing native
+fallback behavior still applies: this setting does not establish global LAN
+confinement. Use the existing Hermes auxiliary configuration to select another
+judge later. Accepted local drafts keep their separate constrained worker and
+planning role.
 
 ## Identity and authority
 

@@ -172,6 +172,7 @@ class RequestMemory:
         self._lock = threading.Lock()
         self._aliases = OrderedDict()
         self._supplied = {}
+        self._requests_seen = set()
 
     def observe(self, scope, messages, *, user_message=None):
         # Native pre_llm_call exposes both clean content and persisted
@@ -192,10 +193,24 @@ class RequestMemory:
             packets = {match.group() for row in messages if (match := _native_packet(row)) is not None}
             self._aliases[key] = (aliases, current, copy.deepcopy(user_message) if current else None, packets)
             self._supplied[key] = {}
+            self._requests_seen.discard(key)
             self._aliases.move_to_end(key)
             while len(self._aliases) > 32:
                 evicted, _ = self._aliases.popitem(last=False)
                 self._supplied.pop(evicted, None)
+                self._requests_seen.discard(evicted)
+
+    def supplied_snapshot(self, scope):
+        """Copy actual supplied lineage without ending the native turn.
+
+        None means no verified request observation; [] is a verified request
+        with no canonical sources. Completion observers must not conflate them.
+        """
+        key = (scope.contact_id, scope.task_id, scope.turn_id)
+        with self._lock:
+            if key not in self._requests_seen:
+                return None
+            return copy.deepcopy(list(self._supplied[key].values()))
 
     def finish(self, *, task_id, turn_id, contact_id=None):
         refs = {}
@@ -206,6 +221,7 @@ class RequestMemory:
                         refs.update(self._supplied.get(key, {}))
                     del self._aliases[key]
                     self._supplied.pop(key, None)
+                    self._requests_seen.discard(key)
         return list(refs.values())
 
     def __call__(self, request, scope):
@@ -275,5 +291,6 @@ class RequestMemory:
             with self._lock:
                 if observed_key in self._supplied:
                     self._supplied[observed_key].update(supplied)
+                    self._requests_seen.add(observed_key)
         return {'request': filtered, 'source': 'colony',
                 'reason': 'source_erasure_checked' if fresh else 'source_erasure_unavailable'}
