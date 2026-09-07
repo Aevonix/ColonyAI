@@ -14,6 +14,10 @@ does not duplicate a correction already carried by an original excerpt.
 Conflicting corrections remain visible rather than automatically selecting the
 latest claim as truth. See docs/SOURCE-ANNOTATIONS.md for scope and rollback limits.
 
+Corrections follow the recalled message's provenance, so independent messages
+and surviving atomic facts do not inherit a sibling's correction or erasure.
+Corrected graph beliefs retain their underlying identity for recall reinforcement.
+
 The native `colony_memory_annotate` tool lets an attested owner or system turn
 append a correction to a source revision actually supplied to that turn. Identity
 and idempotency come from the existing native context. An unknown acknowledgment
