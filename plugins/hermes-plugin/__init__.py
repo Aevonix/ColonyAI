@@ -2524,6 +2524,10 @@ def register(ctx: Any) -> None:
     ctx.register_middleware('llm_request', reconcile_request)
     ctx.register_hook("transform_llm_output", transform_llm_output)
     ctx.register_hook("post_llm_call", post_llm_call)
+    from .completed_reports import CompletedReports
+    ctx.register_hook('kanban_task_completed', CompletedReports(
+        client, turn_outbox, _TRANSPORT_SCOPES, request_memory, _TOOL_EXECUTION_CONTEXT.get,
+        platforms=turn_writer_platforms, drain_limit=drain_limit, drain_seconds=drain_timeout_seconds))
     if execution_observer is not None:
         execution_observer.register(ctx)
 
