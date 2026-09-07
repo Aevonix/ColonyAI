@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.0.8 - one shared local undertaking
+
+Two sessions accepting local drafts against the same open commitment now share
+one active initiative and native Hermes task, including differently worded
+requests. The response exposes the canonical scope. Historical acceptance
+replays retain their original result; an explicit fresh draft is admitted after
+prior work finishes. Standalone drafts retain their per-turn acceptance identity.
+
+An accepting session hands its exact work lease to the existing native dispatch
+path. Retried acceptance reconciles interrupted persistence without releasing a
+newer worker's token. The attached SQLite databases serialize ordinary acceptance;
+their WAL files are not claimed to commit atomically across a host crash.
+
+Packaged Hermes tests exercise two sessions, one worker, one retained report and
+consistent result replay. These checks establish the execution contract, not
+universal agreement between free-form promises or the quality of a model's draft.
+No new scheduler, service or Hermes core patch is required.
+
 ## v1.0.7 - retry incomplete memory extraction
 
 Malformed final extraction output now leaves its projection job pending through

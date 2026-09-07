@@ -79,8 +79,9 @@ login. See the setup guide for status, stop, uninstall and recovery.
   and derived claims persist independently of inference weights. Corrections
   and conflicting claims remain inspectable. [Source claims](docs/SOURCE-CLAIMS.md)
 - **Selective factual learning.** One extractor promotes useful, quoted
-  assertions. Routine logs remain source history, without duplicate graph
-  summaries or automatic contact-knowledge guesses. Malformed extraction output
+  assertions. It is instructed to leave routine logs as source history; that
+  model judgment remains fallible. Capture adds neither duplicate graph
+  summaries nor automatic contact-knowledge guesses. Malformed extraction output
   retries from retained source instead of silently completing without claims.
   [Memory quality](docs/MEMORY-QUALITY.md)
 - **Images with origins.** Retained image bytes and model-generated descriptions
@@ -90,6 +91,8 @@ login. See the setup guide for status, stop, uninstall and recovery.
 - **Shared work.** Sessions can observe commitments and claim work through one
   persistent registry. Another session sees who holds it. A lease coordinates
   work; it cannot by itself make an external side effect exactly once.
+  Local draft acceptances against one open commitment share an active task and
+  its retained result. An explicit fresh draft can follow completed work.
   [Commitment work](docs/COMMITMENT-WORK.md)
   During a long owner turn, a bounded operational view refreshes before each
   model request so concurrent completion does not wait for another user message.
