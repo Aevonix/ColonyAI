@@ -86,6 +86,11 @@ for native package installations and service bindings.
 - **Evidence that outlives a model.** Original messages, timestamps, provenance
   and derived claims persist independently of inference weights. Corrections
   and conflicting claims remain inspectable. [Source claims](docs/SOURCE-CLAIMS.md)
+- **Forgetting derived answers.** New native turns retain the canonical source
+  revisions supplied to generation. Forgetting a selected source also removes
+  linked assistant answers, while preserving independent user evidence. This
+  does not discover old unlinked copies or erase native transcripts and backups.
+  [Source lifecycle](docs/HERMES-ADAPTER.md)
 - **Selective factual learning.** One extractor promotes useful, quoted
   assertions. It is instructed to leave routine logs as source history; that
   model judgment remains fallible. Capture adds neither duplicate graph
