@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.0.17 - persistent worker ownership and useful review recurrence
+
+Paired Hermes profiles resolve memory and tool ownership from their persisted
+Colony plugin and memory-provider selections. Cold workers can register the
+completion-report callback without inherited launcher flags. The memory provider
+still leaves turn writing and mutation tools to the general plugin. Explicit
+profile deselection and legacy standalone configuration retain their meanings.
+
+Known unchanged backup and service conditions use the existing review intervals
+from native completion, so a completed old proposal does not immediately create
+new work in the current time bucket. Real changes in observed evidence can rearm
+a review sooner; an active review still suppresses concurrent duplicates.
+
+A deployment can optionally supply a local backup-attempt receipt instead of
+using legacy `.bak` file age. Capture time, failure and unavailable evidence stay
+distinct. The detector verifies receipt references, not archive integrity or
+restore readiness. No scheduler, backup executor or memory store is added.
+
 ## v1.0.16 - initiative status filtering
 
 The existing initiative list endpoint now passes a single requested status to

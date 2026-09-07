@@ -34,6 +34,18 @@ Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
  'turn_outbox_drain_timeout_ms':1000,
  'turn_writer_platforms':['api_server','rcs','sms','whatsapp']}},
  'tools':{'tool_search':{'enabled':'off'}},'memory':{'provider':'none'}}))
+profile_owned = sys.argv[5] == 'profile'
+if profile_owned:
+ # A native default-profile worker starts from its selected durable profile.
+ # No inherited Colony process latches or synthetic dotenv are supplied.
+ from hermes_cli.profiles import resolve_profile_env
+ assert Path(resolve_profile_env('default')) == home
+ cfg=json.loads((home/'config.yaml').read_text())
+ cfg['memory']={'provider':'colony-memory','config':{
+  'url':'http://fixture','contact_id':'owner','turn_writer':'disabled'}}
+ (home/'config.yaml').write_text(json.dumps(cfg))
+ assert not any(name in os.environ for name in (
+  'COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'))
 app=FastAPI()
 @app.middleware('http')
 async def authority(request,next_call):
@@ -93,7 +105,14 @@ def inspect_context(**kwargs):
  observed.append((kwargs,context))
 pm._hooks.setdefault('kanban_task_completed',[]).append(inspect_context)
 set_session_vars(platform='cli',user_id='',chat_id='',session_id='worker-session')
-provider=ColonyMemoryProvider({'url':'http://fixture','contact_id':'owner','turn_writer':'disabled','default_context_authority':'owner_system'})
+if profile_owned:
+ from plugins.memory import load_memory_provider
+ provider=load_memory_provider('colony-memory')
+ assert provider is not None and not provider._turn_writer_enabled()
+ assert {row['name'] for row in provider.get_tool_schemas()} == set(__import__(
+  'colony_memory.provider',fromlist=['GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES']).GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES)
+else:
+ provider=ColonyMemoryProvider({'url':'http://fixture','contact_id':'owner','turn_writer':'disabled','default_context_authority':'owner_system'})
 provider.initialize('worker-session',hermes_home=str(home))
 # Production excludes CLI from ordinary conversation capture. Machine worker
 # instructions remain excluded at both turn and compression boundaries, while
@@ -234,7 +253,8 @@ print('native completion context, source-only report, scoped recall and dependen
 
 
 @pytest.mark.parametrize('with_vectors', [False, True], ids=['lexical', 'semantic'])
-def test_native_completed_report_source_handoff(artifacts, tmp_path, with_vectors):
+@pytest.mark.parametrize('ownership', ['legacy-env', 'profile'])
+def test_native_completed_report_source_handoff(artifacts, tmp_path, with_vectors, ownership):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native completion integration')
     dependencies = os.environ.get('COLONY_TEST_DEPENDENCY_PATH', '')
@@ -248,6 +268,9 @@ def test_native_completed_report_source_handoff(artifacts, tmp_path, with_vector
         COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system',
         COLONY_SKIP_DOTENV='1', COLONY_OWNER_CONTACT_ID='owner', COLONY_GUARD_CHAT_MODE='off',
         COLONY_INTROSPECTION_ENABLED='false', LITELLM_LOCAL_MODEL_COST_MAP='True')
+    if ownership == 'profile':
+        for key in ('COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'):
+            env.pop(key)
     result = run_python('-I', '-c', PROBE, artifacts[3], ROOT/'sidecar',
-        dependencies, 'vectors' if with_vectors else 'lexical', cwd=tmp_path, env=env)
+        dependencies, 'vectors' if with_vectors else 'lexical', ownership, cwd=tmp_path, env=env)
     assert 'dependent erasure verified' in result.stdout

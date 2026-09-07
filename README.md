@@ -123,6 +123,9 @@ for native package installations and service bindings.
   Selected generated internal reviews can use that same native dispatcher.
   Their task association survives repeated review cycles, and shared views
   distinguish completed reports, exhausted failures and needs-input blocks.
+  Known unchanged backup and service review conditions wait the existing interval
+  after completion. Changed observed evidence can trigger an earlier review;
+  timestamps and rewritten proposal text alone do not count as changed conditions.
   Initiative listings accept one `status` filter, such as `pending` or
   `assigned`, so active work can be selected independently of terminal records
   filling an unfiltered page. Omitted or empty status leaves the list unfiltered.

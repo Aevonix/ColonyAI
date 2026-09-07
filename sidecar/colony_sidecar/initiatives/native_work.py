@@ -57,6 +57,50 @@ def contract(row):
             'legacy_generated_shape': legacy}
 
 
+def review_condition(row):
+    """Stable, observed condition for the existing registered review producers.
+
+    A new observation time, candidate ID, wording or operator-added reference
+    does not itself change the condition. Unknown evidence remains unclassified.
+    This identity controls repeat work, never admission or tool authority.
+    """
+    try:
+        action = contract(row)['action']
+        context = json.loads(row['context'] or '{}')
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (action == 'operational_review' and context.get('entity_type') == 'backup'
+            and context.get('evidence_scope') == 'legacy_bak_directory_only'
+            and isinstance(context.get('evidence_path'), str)
+            and 'latest_file_modified_at' in context):
+        modified = context['latest_file_modified_at']
+        if modified is not None:
+            try:
+                modified = datetime.fromisoformat(modified.replace('Z', '+00:00'))
+                if modified.tzinfo is None:
+                    return None
+                modified = modified.astimezone(timezone.utc).isoformat()
+            except (AttributeError, TypeError, ValueError):
+                return None
+        return {'action': action, 'entity_id': row['entity_id'],
+                'evidence_scope': context['evidence_scope'],
+                'evidence_path': context['evidence_path'], 'latest_file_modified_at': modified}
+    if (action == 'operational_review' and context.get('entity_type') == 'backup'
+            and context.get('evidence_scope') == 'configured_backup_receipt'
+            and context.get('receipt_status') in {'captured', 'failed', 'unavailable'}):
+        return {'action': action, 'entity_id': row['entity_id'],
+                **{key: context.get(key) for key in (
+                    'evidence_scope', 'evidence_path', 'receipt_status', 'captured_at',
+                    'completed_at', 'receipt_path', 'receipt_sha256', 'receipt_unavailable_reason')}}
+    if action == 'system_check_health':
+        status = str(context.get('status') or '').strip().lower()
+        condition = context.get('review_condition')
+        if condition in {'unhealthy_status', 'elevated_error_rate'}:
+            return {'action': action, 'entity_id': row['entity_id'],
+                    'status': status, 'condition': condition}
+    return None
+
+
 class NativeInitiativeWork:
     def __init__(self, store):
         self.store = store

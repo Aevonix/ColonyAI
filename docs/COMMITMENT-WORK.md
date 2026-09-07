@@ -1,5 +1,28 @@
 # Explicit shared undertakings
 
+Deployments with a different backup producer can set
+`COLONY_INITIATIVE_BACKUP_RECEIPT` to its latest-attempt JSON file. This replaces
+only the legacy `~/.colony/backups/*.bak` check. With no setting, the legacy
+check stays unchanged; other operational checks remain enabled either way.
+The small receipt contract is `schema_version: 1`, `status: "captured"` or
+`"failed"`, and an aware UTC `completed_at`. A captured attempt also contains
+`captured_at`, a relative `receipt_path` beneath the configured file's directory,
+and the SHA256 of that immutable receipt in `receipt_sha256`. The referenced
+JSON must have `status: "captured"` and `at` equal to `captured_at`. A failed
+attempt has null capture/reference fields. Producers publish complete files
+atomically; the reader bounds each file to 64 KiB and verifies the referenced
+receipt bytes. It does not hash the backup archive or perform a restore.
+
+A capture within the existing seven-day interval suppresses the backup warning.
+An older capture or failed attempt produces a scoped, registered read-only
+review. Missing, malformed, future-dated or mismatched receipts instead report
+unavailable evidence with unknown freshness; they do not become fictitious old
+backups or fall back to the legacy directory. Receipt status, actual timestamps
+and immutable reference identify this condition for the existing twelve-hour
+completion-based recurrence rule. Observation time, file mtime and prose do not.
+This reports only the selected producer's evidence, with no recovery-readiness
+claim, extra backup execution, retention policy or effect authorization.
+
 Generated internal reviews can also become shared native work through
 `colony_work_initiative(initiative_id=...)`. The tool accepts only an existing
 canonical proposal ID from an attested owner or system turn, including a
@@ -37,6 +60,19 @@ operational/backup observation fields and `legacy_bak_directory_only` scope;
 it does not parse proposal prose. New proposals name `operational_review`.
 The worker must refresh old observations and distinguish directory metadata
 from unverified backup completeness or restore viability.
+
+For classified backup and system review conditions, the existing 12-hour and
+6-hour review intervals run from native completion rather than the proposal's
+old creation bucket. Stable backup evidence uses the checked path, scope and
+latest file modification time (or an explicitly observed empty directory).
+System evidence uses the generator's existing failure predicate and status,
+not fluctuations in raw telemetry. A meaningful condition change can re-arm
+work sooner; an active review still prevents a second concurrent review of
+the same logical condition. Observation time, age, candidate IDs, prose and
+operator-added references do not themselves restart work. Unknown evidence
+is not assumed equal, and this is not general semantic deduplication. The
+existing initiative rows, native association and completion time retain the
+state; no additional queue or scheduler is introduced.
 
 Two Hermes sessions can reserve the same existing commitment ID. One wins the
 SQLite transaction and the other receives the current undertaking, including

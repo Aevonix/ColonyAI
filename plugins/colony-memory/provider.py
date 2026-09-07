@@ -89,6 +89,38 @@ def _profile_env(name: str, hermes_home: Path) -> str:
     finally:
         reset_hermes_home_override(token)
 
+
+def general_plugin_memory_ownership(
+    hermes_home: Path, config: dict[str, Any] | None = None,
+) -> bool | None:
+    """Resolve selected-profile ownership, retaining an unconfigured legacy lane.
+
+    The native wizard already persists both selections. They remain available
+    in a cold worker without launcher's environment. Explicit deselection wins
+    over inherited process markers; absence of a selection keeps old behavior.
+    """
+    import yaml
+
+    try:
+        path = hermes_home / "config.yaml"
+        profile = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}) if path.exists() else {}
+        plugins = profile.get("plugins") or {}
+        memory = profile.get("memory") or {}
+        enabled, disabled = plugins.get("enabled"), plugins.get("disabled", [])
+        if (enabled is not None and not isinstance(enabled, list)) or not isinstance(disabled, list):
+            raise ValueError("Selected profile has invalid Colony ownership configuration")
+        if "colony" in disabled or (enabled is not None and "colony" not in enabled):
+            return False
+        if memory.get("provider") != "colony-memory" or enabled is None or "colony" not in enabled:
+            return None
+        settings = _profile_config(hermes_home) if config is None else config
+        writer = str(settings.get("turn_writer") or "auto").strip().lower()
+        if writer not in {"auto", "disabled", "off", "false", "0"}:
+            raise ValueError("General Colony plugin owns memory; provider turn_writer must be auto or disabled")
+        return True
+    except (OSError, UnicodeError, AttributeError, TypeError, yaml.YAMLError):
+        raise ValueError("Selected profile has invalid Colony ownership configuration") from None
+
 # Import the ABC if available (Hermes SDK installed).
 try:
     from agent.memory_provider import MemoryProvider as _MemoryProviderABC
@@ -727,6 +759,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
 
     def _configure(self, config: dict[str, Any]) -> None:
         home = Path(self._hermes_home)
+        self._profile_general_owner = general_plugin_memory_ownership(home, config)
         self.sidecar_url = config.get("url") or _profile_env("COLONY_URL", home) or "http://127.0.0.1:7777"
         try:
             url = urlsplit(self.sidecar_url)
@@ -778,15 +811,23 @@ class ColonyMemoryProvider(_MemoryProviderABC):
     def _turn_writer_enabled(self) -> bool:
         """Use the fallback writer only when the general plugin is absent.
 
-        ``COLONY_MEMORY_TURN_WRITER=enabled`` is an explicit standalone
-        override; ``disabled`` forces read-only behavior. The default ``auto``
-        follows the process-local marker set by the canonical general plugin.
+        The selected profile's enabled Colony plugin and memory provider own
+        writes together, without launcher flags. Otherwise an explicit writer
+        mode applies; legacy ``auto`` follows the process marker only when the
+        profile has not selected or deselected general-plugin ownership.
         """
+        if self._profile_general_owner is True:
+            return False
         if self._turn_writer_mode in ("enabled", "on", "true", "1"):
             return True
         if self._turn_writer_mode in ("disabled", "off", "false", "0"):
             return False
-        return os.environ.get("COLONY_GENERAL_PLUGIN_ACTIVE", "") != "1"
+        return not self._general_plugin_active()
+
+    def _general_plugin_active(self) -> bool:
+        if self._profile_general_owner is not None:
+            return self._profile_general_owner
+        return _env_true("COLONY_GENERAL_PLUGIN_ACTIVE")
 
     def _is_circuit_open(self) -> bool:
         if self._circuit_open_until is None:
@@ -1783,7 +1824,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             "COLONY_AGENT_JOB_CLAIMS_ENABLED", "true"
         ).strip().lower() not in {"1", "true", "yes", "on"}:
             return False
-        if _env_true("COLONY_GENERAL_PLUGIN_ACTIVE"):
+        if self._general_plugin_active():
             return tool_name in _READ_CONTEXT_TOOLS
         if tool_name in _QUEUE_MUTATION_TOOLS:
             return _env_true("COLONY_MEMORY_WORKER_TOOLS")

@@ -52,6 +52,9 @@ class InitiativeConfig:
     # this many recorded failures in the recent window generate initiatives)
     capability_gap_failures: int = 3
 
+    # Optional deployment-owned receipt; replaces only the legacy backup check.
+    backup_receipt_path: Optional[str] = None
+
     @classmethod
     def from_env(cls) -> "InitiativeConfig":
         """Load configuration from environment variables."""
@@ -77,6 +80,7 @@ class InitiativeConfig:
             research_task_age_days=_int("COLONY_INITIATIVE_RESEARCH_AGE_DAYS", 1),
             signal_accumulation_threshold=_int("COLONY_INITIATIVE_SIGNAL_THRESHOLD", 10),
             capability_gap_failures=_int("COLONY_CAPABILITY_GAP_FAILURES", 3),
+            backup_receipt_path=os.getenv("COLONY_INITIATIVE_BACKUP_RECEIPT") or None,
         )
 
 
@@ -904,9 +908,14 @@ class InitiativeEngine:
 
         tasks = []
 
-        # Check backup age
+        # A configured producer receipt supersedes the legacy file-age evidence.
         backup_dir = Path(os.path.expanduser("~/.colony/backups"))
-        if backup_dir.exists():
+        if self._config.backup_receipt_path:
+            from colony_sidecar.initiatives.backup_evidence import backup_review_task
+            review = backup_review_task(self._config.backup_receipt_path, datetime.now(timezone.utc))
+            if review is not None:
+                tasks.append(review)
+        elif backup_dir.exists():
             backups = sorted(backup_dir.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
             if backups:
                 newest_age_days = (datetime.now(timezone.utc).timestamp() - backups[0].stat().st_mtime) / 86400
@@ -929,6 +938,7 @@ class InitiativeEngine:
                     "age_days": 999,
                     "evidence_scope": "legacy_bak_directory_only",
                     "evidence_path": str(backup_dir),
+                    "latest_file_modified_at": None,
                     "observed_at": datetime.now(timezone.utc).isoformat(),
                 })
 
@@ -2282,6 +2292,8 @@ class InitiativeEngine:
                     dedup_key=f"system:{entity_id}",
                     expires_at=now + timedelta(hours=2),
                     trigger_data={**{k: v for k, v in item.items() if k != "entity_id"},
+                                  "review_condition": ("unhealthy_status" if status in unhealthy
+                                                       else "elevated_error_rate"),
                                   "context_captured_at": item["observed_at"]},
                 )
             )
@@ -2369,6 +2381,9 @@ class InitiativeEngine:
             age_days = task.get("age_days", 0)
 
             priority = min(1.0, 0.4 + age_days / 14)
+            if task.get('evidence_scope') == 'configured_backup_receipt':
+                # Failed/unavailable evidence needs review without inventing age.
+                priority = max(0.7, priority)
 
             initiatives.append(
                 Initiative(
@@ -2378,7 +2393,7 @@ class InitiativeEngine:
                     priority=priority,
                     rationale=f"Operational hygiene: {entity_type}",
                     action_hint=("operational_review" if entity_type == "backup"
-                                 and task.get("evidence_scope") == "legacy_bak_directory_only"
+                                 and task.get("evidence_scope") in {"legacy_bak_directory_only", "configured_backup_receipt"}
                                  else "Execute maintenance task"),
                     entity_id=entity_id,
                     dedup_key=f"operational:{entity_id}",

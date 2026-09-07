@@ -7,6 +7,7 @@ Provides:
 - Timeout and expiry checks
 """
 
+import hashlib
 import json
 import logging
 import shutil
@@ -261,6 +262,37 @@ class InitiativeStore:
                     dedup_base, active.id,
                 )
                 return active, "deduped_active"
+
+            # A review of an old proposal may complete after its creation
+            # bucket expired. Anchor unchanged-condition re-review to that
+            # actual settlement, not immediately to the current wall bucket.
+            from .native_work import review_condition
+            evidence = review_condition({
+                "type": type, "source_type": source_type, "created_by": created_by,
+                "action_hint": action_hint, "entity_id": entity_id,
+                "description": description, "context": json.dumps(context or {}),
+            })
+            if evidence is not None:
+                from ..intelligence.components.initiative_engine import RECURRENCE_INTERVALS_SECS
+                interval = RECURRENCE_INTERVALS_SECS.get(type)
+                settled = self._db.execute(
+                    "SELECT * FROM initiatives WHERE dedup_base=? AND status='completed' "
+                    "AND completed_at IS NOT NULL "
+                    "AND json_extract(context,'$.native_review') IS NOT NULL "
+                    "ORDER BY completed_at DESC,created_at DESC LIMIT 1", (dedup_base,),
+                ).fetchone()
+                if settled is not None and interval and review_condition(settled) == evidence:
+                    completed = datetime.fromisoformat(settled['completed_at'])
+                    if completed.tzinfo is not None and (
+                            datetime.now(timezone.utc)-completed).total_seconds() < interval:
+                        return StoredInitiative.from_row(dict(settled)), "deduped_terminal"
+                # Stable evidence plus the last settled generation admits a
+                # real change even within one old bucket, and re-arms when due.
+                # Candidate UUIDs, observation time and prose never form this key.
+                material = {"condition": evidence, "period": dedup_key,
+                            "after": settled['id'] if settled is not None else None}
+                digest = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+                dedup_key = f"{dedup_base}:review:{digest}"
 
         # Period-key dedup (at most one row per dedup_key; UNIQUE).
         if dedup_key:
