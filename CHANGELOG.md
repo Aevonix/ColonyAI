@@ -1,6 +1,12 @@
 # Changelog
 
-## v1.0.8 - one shared local undertaking
+## v1.0.8 - shared undertakings and useful recall capacity
+
+Repeated exact quotations from one known participant no longer occupy multiple
+slots in the same undated memory packet. Selection preserves one intact source
+record after claim expansion and time filtering. Different speakers, checkpoint
+text, uncertain attribution, assertion/conflict bundles and time-qualified events
+remain distinct. No canonical sources or stored memories are removed.
 
 Two sessions accepting local drafts against the same open commitment now share
 one active initiative and native Hermes task, including differently worded
