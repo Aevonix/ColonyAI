@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.14 - reject invalid native skill proposals before staging
+
+Background review no longer reports a stored skill proposal for malformed batch
+arguments that native Hermes cannot replay. Batches require a nonempty array,
+supported operations and target names, respect the native 20-operation cap, and
+keep deletion as a sole operation. Valid legacy flat operations remain supported.
+Existing pending proposals and active skills remain unchanged. This corrects
+proposal admission; it does not establish a learned improvement or automatically
+evaluate or activate a proposal.
+
 ## v1.0.13 - shared native goals and visible memory admission
 
 Owner sessions can observe selected native Hermes Kanban boards through the

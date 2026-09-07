@@ -135,3 +135,68 @@ def test_native_measured_proposal_and_recovery(artifacts,tmp_path,scenario):
     _,_,_,installed=artifacts
     result=run_python('-I','-c',PROBE,installed,scenario,cwd=tmp_path,env=environment(tmp_path))
     assert json.loads(result.stdout.splitlines()[-1])['passed']
+
+
+SHAPE_PROBE = r'''
+import json,os,socket,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1]); scenario=sys.argv[2]
+home=Path(os.environ['HERMES_HOME']); home.mkdir()
+Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
+(home/'config.yaml').write_text('skills:\n  ledger: true\n')
+def no_network(*a,**kw): raise AssertionError('Contract fixture must stay offline')
+socket.socket.connect=no_network; socket.create_connection=no_network
+from tools import skill_manager_tool as manager,skill_provenance as provenance,skill_ledger as ledger,write_approval as approval
+from colony_hermes.review import stage_skill_change
+name='neutral-batch-shape'
+old='---\nname: '+name+'\ndescription: Use for neutral batch shape checks.\n---\nOriginal guidance.\n'
+new=old.replace('Original guidance.','Updated guidance.')
+token=provenance.set_current_write_origin('background_review')
+try:
+    assert json.loads(manager.skill_manage('create',name,content=old))['success']
+    operation={'action':'patch','name':name,'content':new}
+    retained=approval.stage_write(approval.SKILLS,{'operations':'[{malformed'},summary='Existing malformed proposal',origin='background_review')
+    cases={'malformed_string':'[{malformed','encoded_array':json.dumps([operation]),'empty':[],
+           'nonobject':['patch'],'missing_action':[{'name':name}],
+           'missing_name':[{'action':'patch','content':new}],
+           'too_many':[{'action':'create','name':f'neutral-batch-new-{i}',
+                        'content':f'---\nname: neutral-batch-new-{i}\ndescription: Neutral check.\n---\nGuidance.\n'}
+                       for i in range(21)],
+           'mixed_delete':[{'action':'delete','name':name},
+                           {'action':'create','name':'neutral-batch-new','content':new}]}
+    before=approval.list_pending(approval.SKILLS)
+    ledger_before=ledger.ledger_path().read_bytes()
+    if scenario in cases:
+        # Actual installed Hermes rejects these shapes before native mutation.
+        native=json.loads(manager.skill_manage('', '', operations=cases[scenario]))
+        assert native['success'] is False and approval.list_pending(approval.SKILLS)==before
+        result=json.loads(stage_skill_change({'operations':cases[scenario]}))
+        assert result['success'] is False and not result.get('staged'),result
+        assert approval.list_pending(approval.SKILLS)==before
+    else:
+        if scenario=='legacy_edit': operation={**operation,'action':'edit'}
+        arguments=operation if scenario in {'legacy','legacy_edit'} else {'operations':[operation]}
+        if scenario=='batch_default_name':
+            arguments={'name':name,'operations':[{k:v for k,v in operation.items() if k!='name'}]}
+        result=json.loads(stage_skill_change(arguments))
+        assert result['success'] and result['staged'],result
+        assert len(approval.list_pending(approval.SKILLS))==len(before)+1
+        stored=approval.get_pending(approval.SKILLS,result['pending_id'])['payload']
+        assert all(stored[k]==v for k,v in arguments.items())
+    assert ledger.ledger_path().read_bytes()==ledger_before
+    assert (manager._find_skill(name)['path']/'SKILL.md').read_text()==old
+    assert approval.get_pending(approval.SKILLS,retained['id'])==retained
+finally: provenance.reset_current_write_origin(token)
+print(json.dumps({'passed':True,'scenario':scenario}))
+'''
+
+
+@pytest.mark.parametrize('scenario', ['malformed_string','encoded_array','empty','nonobject',
+                                    'missing_action','missing_name','too_many','mixed_delete',
+                                    'legacy','legacy_edit','batch','batch_default_name'])
+def test_native_review_batch_shape_before_staging(artifacts,tmp_path,scenario):
+    if importlib.util.find_spec('hermes_cli') is None:
+        pytest.skip('Install qualified Hermes for native skill evaluation')
+    _,_,_,installed=artifacts
+    result=run_python('-I','-c',SHAPE_PROBE,installed,scenario,cwd=tmp_path,env=environment(tmp_path))
+    assert json.loads(result.stdout.splitlines()[-1])['passed']

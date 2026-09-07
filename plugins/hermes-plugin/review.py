@@ -33,12 +33,27 @@ def stage_skill_change(arguments):
     """
     from tools import skill_manager_tool as manager, write_approval as approval
     operations = arguments.get('operations')
-    steps = operations if isinstance(operations, list) else [arguments]
+    if operations is not None and (not isinstance(operations, list) or not operations):
+        return json.dumps({'success':False, 'error':'operations must be a non-empty array.'})
+    if operations is not None and len(operations) > manager._BATCH_MAX_OPS:
+        return json.dumps({'success':False, 'error':f'operations is capped at {manager._BATCH_MAX_OPS} ops per call.'})
+    if operations is not None and len(operations) != 1 and any(
+            isinstance(operation, dict) and operation.get('action') == 'delete' for operation in operations):
+        return json.dumps({'success':False, 'error':'delete must be the sole operation in its call.'})
+    steps = operations if operations is not None else [arguments]
+    actions = {'create', 'patch', 'delete', 'write_file', 'remove_file'}
+    if operations is None:
+        actions.add('edit')  # Native legacy flat-input alias, not a batch action.
     for operation in steps:
         if not isinstance(operation, dict):
             return json.dumps({'success':False, 'error':'Skill operation must be an object'})
+        action = operation.get('action')
+        if not isinstance(action, str) or action not in actions:
+            return json.dumps({'success':False, 'error':'Skill operation requires a supported action'})
         name = operation.get('name') or arguments.get('name', '')
-        denied = manager._background_review_preflight(operation.get('action'), name)
+        if not isinstance(name, str) or not name.strip():
+            return json.dumps({'success':False, 'error':'Skill operation requires a name'})
+        denied = manager._background_review_preflight(action, name)
         if denied is not None:
             return json.dumps(denied)
     summary = ('Review skill operation batch' if operations is not None else
