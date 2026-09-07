@@ -8,7 +8,8 @@ capabilities and fallback order until that request finishes. A later request
 uses the new configuration.
 
 Successful responses include `prior_attempts`: earlier binding/model names,
-`failed` versus `skipped` status, and exception class or cooling-down reason.
+`failed` versus `skipped` status, and exception class, `RequestBudgetExceeded`
+or cooling-down reason.
 Endpoint addresses, credentials and exception messages are omitted. Ineligible
 candidates are not attempted and do not appear as failures. The returned model
 and binding remain the actual processor; returning a fallback alone does not
@@ -127,21 +128,29 @@ loop and tool executor.
 The default timeout is 20 seconds per interaction/extraction/image candidate,
 with a 40-second total deadline. Reasoning/planning/judging/coding default to
 120 seconds per candidate and 180 seconds total. Operators may adjust these
-bounded limits per role. The existing source assertion and image workers also
-have their own 40-second outer bounds. A timeout, connection failure, rate limit,
+bounded limits per role. Source assertion and image workers also enforce their
+own outer bounds. A timeout, connection failure, rate limit,
 context-window exception, completion 404 or transient server error can try the next eligible
 candidate. Authentication, validation and redirects do not trigger blind
 retry. The same endpoint/model/weight generation is not retried under another
 legacy alias. `allow_fallback: false` restricts a call to its first candidate.
 Explicit legacy `force_tier` remains exact and cannot bypass eligibility.
 
-A failed endpoint/model binding now cools down for 15 seconds, so subsequent
+An observed endpoint/model failure cools down for 15 seconds, so subsequent
 requests can use an eligible fallback immediately. After that interval, one
 request attempts recovery while concurrent requests keep using their eligible
 fallbacks. A successful completion restores the primary. Cancellation releases
 the recovery slot. If no eligible fallback is available, the request reports
 that fact. Updating the endpoint or model configuration starts new observations
 without a restart; an in-flight call still retains its original snapshot.
+
+The caller's request deadline does not start that shared cooldown. A short
+extraction allowance says nothing about whether the same model can complete
+a longer reasoning request. Caller expiry is recorded as `RequestBudgetExceeded`;
+an actual transport `TimeoutError` remains an endpoint failure. The fallback
+list is still visited once within the role's total deadline. An endpoint that
+only stalls until the caller timer expires remains eligible for later requests;
+no extra retry, adaptive deadline or throughput estimate is introduced.
 
 A fallback must retain the request's modality and configured capability
 constraints. The existing text token estimator also excludes obviously
