@@ -14,7 +14,11 @@ does not duplicate a correction already carried by an original excerpt.
 Conflicting corrections remain visible rather than automatically selecting the
 latest claim as truth. See docs/SOURCE-ANNOTATIONS.md for scope and rollback limits.
 
-This is a sidecar feature. The existing native adapter protocol is unchanged.
+The native `colony_memory_annotate` tool lets an attested owner or system turn
+append a correction to a source revision actually supplied to that turn. Identity
+and idempotency come from the existing native context. An unknown acknowledgment
+can be retried with identical arguments in the same turn without another source.
+The source-reference protocol is unchanged; the new tool requires adapter refresh.
 
 ## v1.0.17 - persistent worker ownership and useful review recurrence
 
