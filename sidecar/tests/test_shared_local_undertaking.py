@@ -136,20 +136,23 @@ def test_acceptance_handoff_rolls_back_and_replay_preserves_worker_claim(local_a
     assert status['work_state'] == 'held' and status['session_id'] == worker_holder['session_id']
 
 
-@pytest.mark.parametrize('partial', ['acceptance_only', 'release_only', 'release_fresh_generation', 'release_then_new_holder'])
+@pytest.mark.parametrize('partial', ['acceptance_only', 'release_only', 'release_join', 'release_fresh_generation', 'release_then_new_holder'])
 def test_reopened_acceptance_reconciles_exact_partial_handoff(local_api, tmp_path, partial):
     api, commitments, initiatives, obligation, _ = local_api
     path = '/v1/host/commitments/'+obligation['id']+'/local-draft'
     old_count = 0
-    if partial == 'release_fresh_generation':
+    if partial in {'release_join', 'release_fresh_generation'}:
         previous = post(api, path, body(tmp_path)).json()
-        finish(api, previous, tmp_path)
+        if partial == 'release_fresh_generation':
+            finish(api, previous, tmp_path)
         old_count = 1
     holder, held = claim(api, obligation)
     handoff = {key: holder[key] for key in ('session_id', 'task_id', 'turn_id')} | {'claim_id': held['claim_id']}
     value = {**body(tmp_path), 'handoff': handoff}
-    if old_count:
+    if partial == 'release_fresh_generation':
         value.update(turn_id='fresh-draft-turn', new_draft=True)
+    elif partial == 'release_join':
+        value.update(session_id='joining-session', turn_id='joining-turn')
     # Simulate the two persisted WAL boundaries, not a host crash. The mapping
     # and initiative share one file; the lease lives in the other file.
     if partial == 'acceptance_only':
@@ -176,13 +179,49 @@ def test_reopened_acceptance_reconciles_exact_partial_handoff(local_api, tmp_pat
         assert recovered['handoff_released'] is True
         if partial == 'acceptance_only':
             assert recovered['id'] == original['id']
-        if old_count:
+        if partial == 'release_fresh_generation':
             assert recovered['id'] != previous['id']
+        elif partial == 'release_join':
+            assert recovered['id'] == previous['id']
         assert post(api, path, value).json()['id'] == recovered['id']
         assert claim(api, obligation, operation='status')[1]['work_state'] == 'released'
-        expected = 1
+        expected = 0 if partial == 'release_join' else 1
     with sqlite3.connect(initiatives._db_path) as db:
         assert db.execute('SELECT count(*) FROM initiatives').fetchone()[0] == old_count + expected
+
+
+@pytest.mark.parametrize('error_type,attempts,retryable', [
+    ('TimeoutError', 1, True), ('ValueError', 1, False), ('TimeoutError', 2, False)])
+def test_failed_legacy_retry_holds_one_undertaking_until_terminal(local_api, tmp_path, error_type, attempts, retryable):
+    api, commitments, initiatives, obligation, native = local_api
+    path = '/v1/host/commitments/'+obligation['id']+'/local-draft'
+    original = post(api, path, body(tmp_path)).json()
+    for execution in 'ab'[:attempts]:
+        selected = post(api, '/v1/host/commitments/local-work/next', native_run(execution)).json()['assignment']
+        assert selected['id'] == original['id']
+        with sqlite3.connect(native/'cron/executions.db') as db:
+            db.execute("UPDATE executions SET status='failed' WHERE id=?", (execution*32,))
+        failed = post(api, '/v1/host/commitments/local-work/'+original['id']+'/finish', {
+            **native_run(execution), 'result': {'status':'unavailable', 'error_type':error_type}})
+        assert failed.status_code == 200, failed.text
+    work = LocalWork(initiatives, commitments)
+    assert work.native_pending('cid-owner')['legacy_in_flight'] == int(retryable)
+    fresh = post(api, path, {**body(tmp_path), 'turn_id':'fresh-request', 'new_draft':True})
+    if retryable:
+        assert fresh.status_code == 409
+        assert fresh.json()['detail'] == {'reason':'local_draft_in_progress', 'initiative_id':original['id']}
+        joined = post(api, path, {**body(tmp_path), 'session_id':'joining', 'turn_id':'joining',
+                                 'question':'Explain these notes together'}).json()
+        assert joined['id'] == original['id'] and joined['acceptance_matches_request'] is False
+        selected = post(api, '/v1/host/commitments/local-work/next', native_run('c')).json()['assignment']
+        assert selected['id'] == original['id'] and selected['attempt_count'] == 2
+        expected = 1
+    else:
+        assert fresh.status_code == 200, fresh.text
+        assert fresh.json()['id'] != original['id']
+        expected = 2
+    with sqlite3.connect(initiatives._db_path) as db:
+        assert db.execute('SELECT count(*) FROM initiatives').fetchone()[0] == expected
 
 
 @pytest.mark.parametrize('changed', ['session_id', 'task_id', 'turn_id', 'claim_id'])

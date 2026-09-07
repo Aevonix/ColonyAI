@@ -80,6 +80,9 @@ sources are returned with `acceptance_matches_request: false`. The caller must
 report that scope rather than claiming its changed request was performed.
 This association does not deduplicate arbitrary free-text promises or unrelated
 commitment IDs. Existing legacy duplicates are not silently merged.
+A failed legacy cron draft remains active while its existing transient-error
+retry budget remains; a permanent failure or exhausted budget permits a fresh
+draft. Acceptance and legacy reconciliation use the same retry rule.
 
 After work ends, an exact question/source-path match returns the historical
 result. It does not read files again or establish that they are unchanged. A
@@ -105,6 +108,7 @@ persisted acceptance with its exact old held token before confirming release;
 it never releases a newer worker's token. In the inverse partial state, the
 exact original released token and absence of that acceptance permit its draft
 to be recovered, including an explicit fresh generation after older work ended.
+The same recovery restores a missing join to an existing canonical draft.
 A different token is rejected. Existing native
 task association and retained-artifact reconciliation handle later interrupted
 dispatch or completion. There is no additional recovery process.

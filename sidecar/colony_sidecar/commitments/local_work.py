@@ -28,6 +28,13 @@ def stamp():
     return datetime.now(timezone.utc).isoformat()
 
 
+def retryable_legacy(row):
+    return (row['status'] == 'failed'
+            and json.loads(row['context']).get('execution_backend', 'cron') != 'kanban'
+            and json.loads(row['result_metadata'] or '{}').get('error_type') in TRANSIENT
+            and row['attempt_count'] < row['max_attempts'])
+
+
 class LocalWork:
     def __init__(self, initiatives, commitments):
         self.initiatives, self.commitments = initiatives, commitments
@@ -115,7 +122,7 @@ class LocalWork:
                 rows = db.execute('''SELECT * FROM initiatives WHERE created_by=?
                     AND source_type=? AND source_id=? AND entity_id=? ORDER BY rowid DESC''',
                     (CREATOR, SOURCE, commitment_id, contact_id)).fetchall()
-                active = [row for row in rows if row['status'] in ACTIVE]
+                active = [row for row in rows if row['status'] in ACTIVE or retryable_legacy(row)]
                 if len(active) > 1:
                     raise LocalWorkConflict('multiple_active_local_drafts', active[0]['id'])
                 if active:
@@ -177,11 +184,11 @@ class LocalWork:
             if (row is None or row['principal_id'] != principal_id or row['contact_id'] != contact_id
                     or any(row[key] != value for key, value in handoff.items())):
                 raise ValueError('accepting_undertaking_superseded')
-            if row['state'] == 'released' and (replay or creating):
+            if row['state'] == 'released':
                 # Inverse partial commit: the exact old lease was released but
-                # no draft for this acceptance exists. Older terminal drafts
-                # do not prevent an explicit fresh acceptance from recovering;
-                # native dispatch only happens after that acceptance returns.
+                # its acceptance mapping may be missing. Recover either a new
+                # draft or an association with the canonical existing draft.
+                # Exact holder/token checks above exclude any newer claimant.
                 return True
             if row['state'] != 'held':
                 raise ValueError('accepting_undertaking_superseded')
@@ -233,9 +240,7 @@ class LocalWork:
                                      {'from': 'cron', 'to': 'kanban'})
                         row = db.execute('SELECT * FROM initiatives WHERE id=?', (row['id'],)).fetchone()
                     else:
-                        result = json.loads(row['result_metadata'] or '{}')
-                        if (row['status'] != 'failed' or
-                                (result.get('error_type') in TRANSIENT and row['attempt_count'] < row['max_attempts'])):
+                        if row['status'] != 'failed' or retryable_legacy(row):
                             legacy += 1
                         continue
                 if row['status'] != 'failed':
@@ -315,8 +320,7 @@ class LocalWork:
                     return self.view(row) | {'reconcile_only': True}
                 if row['status'] == 'failed':
                     result = json.loads(row['result_metadata'] or '{}')
-                    if (result.get('error_type') not in TRANSIENT or row['attempt_count'] >= row['max_attempts']
-                            or terminal(context) != 'failed'):
+                    if not retryable_legacy(row) or terminal(context) != 'failed':
                         continue
                     self.history(db, row['id'], 'native-cron:'+native['native_execution_id'], 'retry',
                                  {'previous_context': context, 'previous_result': result})
