@@ -50,11 +50,16 @@ assert view['items'][0]['goal_mode'] is True and view['items'][0]['goal_max_turn
 assert view['items'][0]['native_run_id'] == run_id
 assert view['items'][0]['liveness'] == 'unknown'
 assert 'PRIVATE_TASK_BODY' not in json.dumps(view) and 'UNSELECTED_SECRET' not in json.dumps(view)
+kb.set_current_board('default')
+os.environ['HERMES_KANBAN_BOARD'] = ' Operations '
+assert kb.get_current_board() == 'operations'
+assert kanban_view()['boards'][0]['board'] == 'operations'
 os.environ['HERMES_KANBAN_BOARD'] = 'default'
 default = kanban_view()
 assert default['boards'][0]['board'] == 'default' and not default['available']
 assert not (root/'kanban.db').exists(), 'Reader must not initialize the default board'
 del os.environ['HERMES_KANBAN_BOARD']
+kb.set_current_board('operations')
 
 # Explicit missing boards stay visible and are never created by a read.
 os.environ['COLONY_HERMES_WORK_BOARDS'] = json.dumps(['operations','missing'])
@@ -98,6 +103,21 @@ async def observe():
         assert 'Compare current release manifests' in format_view(full)
         assert full['native_kanban']['complete'] is False
 asyncio.run(observe())
+
+# Native archive closes a running attempt without inventing a completion time.
+with kb.connect(board='operations') as db:
+    archived = kb.create_task(db, title='Superseded inspection', assignee='default', board='operations')
+    archive_run = kb.claim_task(db, archived).current_run_id
+    assert kb.archive_task(db, archived)
+    archive_at = db.execute("SELECT created_at FROM task_events WHERE task_id=? AND kind='archived'",
+                            (archived,)).fetchone()[0]
+    assert db.execute('SELECT status FROM task_runs WHERE id=?', (archive_run,)).fetchone()[0] == 'reclaimed'
+view = kanban_view()
+record = next(row for row in view['recent'] if row['native_task_id'] == archived)
+assert record['status'] == 'archived' and record['native_run_id'] is None
+assert record['native_run_status'] is None
+assert record['completed_at'] is None and record['terminal_record_at'] == archive_at
+assert record['liveness'] == 'native_terminal_record' and view['recent_total'] == 2
 
 # Read-only snapshots preserve the actual native file, and expose omissions.
 with kb.connect(board='operations') as db:

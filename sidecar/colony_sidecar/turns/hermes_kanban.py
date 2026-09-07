@@ -44,10 +44,10 @@ def observed_boards():
     else:
         # Match native current-board precedence. Stale native selections fall
         # through to default; explicit observer selections remain unavailable.
-        candidates = [os.environ.get('HERMES_KANBAN_BOARD', '').strip()]
+        candidates = [os.environ.get('HERMES_KANBAN_BOARD', '').strip().lower()]
         pointer = home/'kanban/current'
         if pointer.is_file() and pointer.stat().st_size <= 256:
-            candidates.append(pointer.read_text().strip())
+            candidates.append(pointer.read_text().strip().lower())
         boards = [next((b for b in candidates if _BOARD.fullmatch(b) and
                         (b == 'default' or _board_path(home, b).exists()
                          or (_board_path(home, b).parent/'board.json').exists())), 'default')]
@@ -94,14 +94,21 @@ def kanban_view(*, limit=8, now=None):
                 db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
                 db.execute('BEGIN')
                 terminal = "status IN ('done','cancelled','archived')"
+                # Archiving an unfinished task records an event, not a
+                # completion. Preserve that distinction in the projection.
+                terminal_at = ("CASE WHEN status='archived' THEN "
+                               "(SELECT MAX(e.created_at) FROM task_events e "
+                               "WHERE e.task_id=tasks.id AND e.kind='archived') "
+                               "ELSE completed_at END")
                 active_count = db.execute(f'SELECT count(*) FROM tasks WHERE NOT ({terminal})').fetchone()[0]
-                recent_count = db.execute(f'SELECT count(*) FROM tasks WHERE {terminal} AND completed_at>=?', (now-7*86400,)).fetchone()[0]
+                recent_count = db.execute(f'SELECT count(*) FROM tasks WHERE {terminal} AND ({terminal_at})>=?', (now-7*86400,)).fetchone()[0]
                 columns = ('id,title,status,assignee,goal_mode,goal_max_turns,current_run_id,'
-                           'created_at,started_at,completed_at,last_heartbeat_at')
+                           'created_at,started_at,completed_at,last_heartbeat_at,'
+                           f'{terminal_at} AS terminal_record_at')
                 rows = db.execute(f'SELECT {columns} FROM tasks WHERE NOT ({terminal}) '
                                   'ORDER BY created_at DESC,id LIMIT ?', (limit,)).fetchall()
-                done = db.execute(f'SELECT {columns} FROM tasks WHERE {terminal} AND completed_at>=? '
-                                  'ORDER BY completed_at DESC,id LIMIT ?', (now-7*86400,limit)).fetchall()
+                done = db.execute(f'SELECT {columns} FROM tasks WHERE {terminal} AND ({terminal_at})>=? '
+                                  'ORDER BY terminal_record_at DESC,id LIMIT ?', (now-7*86400,limit)).fetchall()
 
                 def project(row):
                     run = db.execute('SELECT status FROM task_runs WHERE id=? AND task_id=?',
@@ -114,6 +121,7 @@ def kanban_view(*, limit=8, now=None):
                             'native_run_id': row['current_run_id'], 'native_run_status': run['status'] if run else None,
                             'created_at': row['created_at'], 'started_at': row['started_at'],
                             'completed_at': row['completed_at'],
+                            'terminal_record_at': row['terminal_record_at'],
                             'heartbeat_age_seconds': round(max(0., now-heartbeat), 1) if heartbeat else None,
                             'liveness': 'native_terminal_record' if row['status'] in _TERMINAL else 'unknown'}
                 projected, projected_done = [project(r) for r in rows], [project(r) for r in done]
@@ -123,7 +131,7 @@ def kanban_view(*, limit=8, now=None):
         except (OSError, sqlite3.Error, ValueError, TypeError):
             coverage['reason'] = 'native_board_unavailable'
     active.sort(key=lambda r: (-r['created_at'], r['native_board'], r['native_task_id']))
-    recent.sort(key=lambda r: (-r['completed_at'], r['native_board'], r['native_task_id']))
+    recent.sort(key=lambda r: (-r['terminal_record_at'], r['native_board'], r['native_task_id']))
     available = any(b['available'] for b in view['boards'])
     return {**view, 'available': available, 'partial': not all(b['available'] for b in view['boards']),
             **({} if available else {'reason': 'selected_native_boards_unavailable'}),

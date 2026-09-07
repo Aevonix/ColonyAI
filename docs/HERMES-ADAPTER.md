@@ -255,7 +255,8 @@ work, without dispatching or reconciling them. `COLONY_HERMES_WORK_BOARDS` can
 select up to eight board slugs as a JSON list, for example
 `["default","colony-drafts"]`. Without that setting it follows only the
 selected home's native current board (`HERMES_KANBAN_BOARD`, then
-`kanban/current`, then `default`). It does not enumerate other boards. Profile
+`kanban/current`, then `default`), including Hermes' lowercase normalization.
+It does not enumerate other boards. Profile
 homes use Hermes' shared root for board paths; conflicting explicit native
 home/database overrides are unavailable.
 
@@ -268,7 +269,9 @@ its later terminal record. Goal budgets describe configured limits, not
 remaining turns or evidence of completion. Running rows retain unknown
 process liveness; terminal rows do not prove an external effect. Missing
 selected boards, partial board coverage and omitted rows remain visible.
-Recent terminal records are bounded to seven days. Guest context receives no
+Recent terminal records are bounded to seven days using their actual terminal
+timestamp. Archiving unfinished work uses its native archive event for
+`terminal_record_at` and leaves `completed_at` unset. Guest context receives no
 Kanban board rows. Hermes retains task creation, goal continuation, completion,
 recovery and all execution authority.
 
