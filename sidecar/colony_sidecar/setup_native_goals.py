@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 from .setup_local_work import board_name, native_root
-from .turns.hermes_kanban import _BOARD
+from .turns.hermes_kanban import _BOARD, _board_path
 
 
 def prepare(config, home, *, native_env, observer_env, local_work=False, draft_board=None):
@@ -54,6 +54,10 @@ def prepare(config, home, *, native_env, observer_env, local_work=False, draft_b
         judge_mode = 'judge bound to the main provider and model selected at setup'
 
     root = native_root(home)
+    for environment in (os.environ, native_env, observer_env):
+        override = str(environment.get('HERMES_KANBAN_HOME') or '').strip()
+        if override and Path(override).expanduser().resolve() != root:
+            raise ValueError('HERMES_KANBAN_HOME conflicts with the selected native root; reconcile it before --native-goals')
     configured = observer_env.get('COLONY_HERMES_WORK_BOARDS')
     if 'COLONY_HERMES_WORK_BOARDS' in observer_env:
         try:
@@ -63,6 +67,7 @@ def prepare(config, home, *, native_env, observer_env, local_work=False, draft_b
         if (not isinstance(boards, list) or not 1 <= len(boards) <= 8
                 or any(not isinstance(board, str) or not _BOARD.fullmatch(board) for board in boards)):
             raise ValueError('Existing COLONY_HERMES_WORK_BOARDS must select one to eight board slugs')
+        boards = list(dict.fromkeys(boards))
         coverage = 'existing explicit board selection retained'
     else:
         candidates = [str(native_env.get('HERMES_KANBAN_BOARD') or os.environ.get('HERMES_KANBAN_BOARD', '')).strip().lower()]
@@ -80,6 +85,10 @@ def prepare(config, home, *, native_env, observer_env, local_work=False, draft_b
             if selected_draft not in boards:
                 boards.append(selected_draft)
         coverage = 'current board and optional accepted-draft board selected'
+    for environment in (os.environ, native_env, observer_env):
+        override = str(environment.get('HERMES_KANBAN_DB') or '').strip()
+        if override and (len(boards) != 1 or Path(override).expanduser().resolve() != _board_path(root, boards[0])):
+            raise ValueError('HERMES_KANBAN_DB conflicts with the selected observed board; reconcile it before --native-goals')
     details = {'profile': home.name if home.parent.name == 'profiles' else 'default',
                'boards': boards, 'coverage': coverage, 'goal_judge': judge_mode}
     return candidate, details

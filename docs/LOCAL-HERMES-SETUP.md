@@ -133,6 +133,9 @@ start or restart it. Use Hermes' existing host lifecycle after configuration;
 setup reports an explicitly disabled dispatcher configuration or environment
 override instead of silently overriding it. Enabling config is not proof that
 the gateway has acquired native dispatch ownership or completed a task.
+Existing `HERMES_KANBAN_HOME` and `HERMES_KANBAN_DB` overrides must match the
+selected native root and observed board; conflicting paths are rejected before
+configuration changes.
 
 An explicitly configured `auxiliary.goal_judge` is preserved. If its routing is
 unset or automatic and the main provider/model are explicit, setup binds the

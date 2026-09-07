@@ -131,6 +131,42 @@ def test_native_goals_dispatch_conflict_precedes_attachment(args, monkeypatch, c
     assert before == {p:p.read_bytes() for p in home.iterdir()}
 
 
+@pytest.mark.parametrize('location', ['home_env', 'process_env'])
+@pytest.mark.parametrize('variable', ['HERMES_KANBAN_HOME', 'HERMES_KANBAN_DB'])
+@pytest.mark.parametrize('matching', [False, True])
+def test_native_goals_native_path_overrides_match_observation_before_writes(args, monkeypatch, location, variable, matching):
+    assert setup.run_init(None, args) == 0
+    home = Path(args.hermes_home)
+    args.native_goals = True
+    selected = home if variable.endswith('_HOME') else home/'kanban.db'
+    override = str(selected if matching else home.parent/'other-native-ledger')
+    if location == 'home_env':
+        with (home/'.env').open('a') as stream:
+            stream.write(variable+'='+override+'\n')
+    else:
+        monkeypatch.setenv(variable, override)
+    before = {p:p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Existing opt-in made a model call'))
+    assert setup.run_init(None, args) == (0 if matching else 1)
+    if not matching:
+        assert before == {p:p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    else:
+        assert yaml.safe_load((home/'config.yaml').read_text())['kanban']['dispatch_in_gateway'] is True
+        assert not (home/'kanban.db').exists()
+
+
+def test_native_goals_single_database_override_cannot_claim_multiple_boards(tmp_path):
+    from colony_sidecar.setup_native_goals import prepare
+    home = tmp_path/'home'
+    with pytest.raises(ValueError, match='HERMES_KANBAN_DB conflicts'):
+        prepare({}, home, native_env={'HERMES_KANBAN_DB':str(home/'kanban.db')},
+                observer_env={}, local_work=True)
+    _, details = prepare({}, home, native_env={'HERMES_KANBAN_DB':str(home/'kanban.db')},
+        observer_env={'COLONY_HERMES_WORK_BOARDS':'["default","default"]'})
+    assert details['boards'] == ['default']
+    assert not home.exists()
+
+
 def test_native_goals_preserve_explicit_tools_judge_and_board_selection(args, monkeypatch):
     from colony_sidecar.setup_native_goals import enable
     assert setup.run_init(None, args) == 0
