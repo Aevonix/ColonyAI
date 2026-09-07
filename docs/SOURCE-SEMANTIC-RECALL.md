@@ -5,6 +5,15 @@ candidates as well as lexical candidates. Both enter the existing temporal
 claim handling, reranker and context budget. There is one memory packet per
 turn. A vector ranks potentially relevant evidence; it never determines truth.
 
+After scoped claim expansion and time filtering, repeated exact plain quotations
+from the same known participant and role occupy one candidate slot. This prevents
+copies of a past question from crowding useful evidence out of an undated packet.
+The first candidate retains its own complete source handle and timestamps; it
+does not combine occurrences into a new fact. Distinct speakers, checkpoint
+text, unknown attribution, assertion/conflict bundles and time-qualified events
+remain separate. Erasure can expose another surviving occurrence on later recall.
+No source rows or search projections are deleted by selection.
+
 In default native per-turn `/v1/host/context/assemble`, authorized retained
 contact-knowledge estimates also enter this shared selection and budget, using
 bounded lexical candidates from their existing scoped view.

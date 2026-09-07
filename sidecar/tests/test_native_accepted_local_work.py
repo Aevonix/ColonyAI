@@ -233,12 +233,16 @@ def test_parent_cancellation_stops_binding_and_result_acceptance(native_api, tmp
 
 
 def test_pending_legacy_migrates_once_while_active_legacy_drains(native_api, tmp_path, monkeypatch):
-    api, _, initiatives, _, _, _ = native_api
+    api, commitments, initiatives, _, _, _ = native_api
     monkeypatch.setenv('COLONY_LOCAL_WORK_EXECUTOR', 'cron')
     active = accept(native_api, tmp_path, turn_id='active-legacy')
     claimed = post(api, ROOT+'/local-work/next', native_run()).json()['assignment']
     assert claimed['id'] == active['id']
-    waiting = accept(native_api, tmp_path, turn_id='waiting-legacy')
+    # A second existing obligation has independent pending work; duplicate
+    # acceptances of the first obligation now correctly join its active run.
+    second = commitments.create('cid-owner', 'Compare another selected repair')
+    waiting = post(api, ROOT+'/'+second['id']+'/local-draft',
+                   {**body(tmp_path), 'turn_id':'waiting-legacy'}).json()
     monkeypatch.setenv('COLONY_LOCAL_WORK_EXECUTOR', 'kanban')
     migrated = pending(api)
     assert migrated['legacy_in_flight'] == 1

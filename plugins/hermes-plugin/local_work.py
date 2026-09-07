@@ -15,11 +15,13 @@ def request(client, path, body=None):
     return response.json()
 
 
-def accept(args, scope, client, native=None):
+def accept(args, scope, client, native=None, *, coordinator=None, context=None):
     if (scope is None or not scope.valid_participant or scope.authority_lane not in {'owner', 'system'}
             or scope.platform in {'cron', 'subagent', 'background_review'}
             or not scope.turn_id or not scope.user_message.strip()
-            or set(args) not in ({'question', 'sources'}, {'commitment_id', 'question', 'sources'})):
+            or not {'question', 'sources'}.issubset(args)
+            or set(args) - {'commitment_id', 'question', 'sources', 'new_draft'}
+            or ('new_draft' in args and type(args['new_draft']) is not bool)):
         return json.dumps({'error': 'An owner turn accepting this local draft is required'})
     try:
         path = "/v1/host/commitments/local-draft"
@@ -29,17 +31,40 @@ def accept(args, scope, client, native=None):
         body = {
             'contact_id': scope.contact_id, 'session_id': scope.session_id, 'turn_id': scope.turn_id,
             'question': args['question'], 'sources': args['sources']}
+        if 'new_draft' in args:
+            body['new_draft'] = args['new_draft']
+        handoff = coordinator.handoff(args.get('commitment_id'), context or {}) if coordinator else None
+        if handoff:
+            body['handoff'] = handoff
         if native is not None:
             origin = native.origin(scope)
             if origin:
                 body['origin'] = origin
         result = request(client, path, body)
+        if handoff:
+            if result.get('handoff_released') is not True:
+                raise ValueError('acceptance_handoff_unconfirmed')
+            coordinator.detach_handoff(args.get('commitment_id'), context or {}, handoff)
         if result['context'].get('execution_backend') == 'kanban':
             if native is None:
                 raise ValueError('native_local_work_adapter_required')
+            accepted = result
             result = native.ensure_task(result)
+            result.update({key: accepted[key] for key in ('acceptance_matches_request', 'handoff_released')
+                           if key in accepted})
         return json.dumps(result)
-    except Exception:
+    except Exception as error:
+        response = getattr(error, 'response', None)
+        if response is not None and response.status_code == 409:
+            try:
+                detail = response.json()['detail']
+                if (isinstance(detail, dict) and set(detail) == {'reason', 'initiative_id'}
+                        and detail['reason'] in {'multiple_active_local_drafts', 'local_draft_in_progress',
+                                                'local_draft_scope_changed_requires_new_draft'}):
+                    return json.dumps({'error': detail['reason'], 'initiative_id': detail['initiative_id'],
+                                       'execution_created': False})
+            except (ValueError, KeyError, TypeError):
+                pass
         return json.dumps({'error': 'Local draft acceptance unavailable; no execution is confirmed'})
 
 

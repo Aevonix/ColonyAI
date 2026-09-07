@@ -155,5 +155,5 @@ def test_completed_draft_replay_does_not_fulfil_broader_commitment(local_api, tm
     assert commitments.get(obligation['id'])['status'] == 'pending'
     assert local_work_view()['recent'][0]['result']['report_sha256'] == 'a'*64
     later = post(api, '/v1/host/commitments/'+obligation['id']+'/local-draft',
-                 {**body(tmp_path),'turn_id':'later-explicit-acceptance'}).json()
+                 {**body(tmp_path),'turn_id':'later-explicit-acceptance','new_draft':True}).json()
     assert later['id'] != accepted['id'] and later['status'] == 'pending'

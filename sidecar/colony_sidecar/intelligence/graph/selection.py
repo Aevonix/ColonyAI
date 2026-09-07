@@ -19,6 +19,23 @@ class RecallSelector:
         """One rank fusion, reranking pass and budget after authority checks."""
         from .recall import fuse_candidates, pack_memory_context
         beliefs = [dict(row, kind="belief") for row in beliefs]
+        # Semantic retrieval can return the same words from many turns. Collapse
+        # only plain quotations by the same known speaker, after scoped claim
+        # expansion and time filtering. Keep the first occurrence's intact
+        # lineage; assertion/conflict bundles, dated events and uncertain
+        # attribution survive. A time-qualified query may need both occurrences.
+        unique, seen = [], set()
+        for row in quotations:
+            if (row.get("kind") == "source_quote" and row.get("epistemic_state") == "quotation"
+                    and not row.get("atomic_evidence") and row.get("scope") == "person"
+                    and not row.get("validity_status")
+                    and row.get("contact_id") and row.get("role") in {"user", "assistant"}):
+                key = (row["contact_id"], row["role"], row["content"])
+                if key in seen:
+                    continue
+                seen.add(key)
+            unique.append(row)
+        quotations = unique
         # Confidence in a belief and certainty that words were quoted are not
         # comparable truth scores. Preserve them as evidence metadata; select
         # across kinds by rank and semantic relevance alone.

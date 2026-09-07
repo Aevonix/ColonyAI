@@ -69,3 +69,56 @@ does not establish process liveness. Guest views contain no such rows. This is
 operational work context, not an additional factual-memory writer or a grant.
 Ordinary turn context includes active work and only the latest capability result;
 the bounded seven-day result history remains available through the API.
+
+## Sharing an accepted local draft
+
+`colony_accept_local_draft` associates ordinary session requests with one active
+local draft for the same explicit commitment. Concurrent callers receive the
+same initiative and native Kanban task. Paraphrasing the question or reordering
+the source paths joins the existing active request: its canonical question and
+sources are returned with `acceptance_matches_request: false`. The caller must
+report that scope rather than claiming its changed request was performed.
+This association does not deduplicate arbitrary free-text promises or unrelated
+commitment IDs. Existing legacy duplicates are not silently merged.
+A failed legacy cron draft remains active while its existing transient-error
+retry budget remains; a permanent failure or exhausted budget permits a fresh
+draft. Acceptance and legacy reconciliation use the same retry rule.
+
+After work ends, an exact question/source-path match returns the historical
+result. It does not read files again or establish that they are unchanged. A
+fresh draft requires an explicit owner request and `new_draft: true` in a new
+turn; a changed scope without that choice, or a fresh request while work is
+active, returns the existing initiative ID and a scope-conflict reason. Each
+session/turn acceptance retains its original association, so replaying a lost
+response still returns that draft after another fresh draft has started.
+Standalone drafts without a commitment retain their existing per-turn identity.
+
+If the accepting turn holds this commitment, the adapter supplies its exact
+transport-held token with the acceptance and detaches only after the backend
+confirms release. The native worker then uses its existing claim path; it does
+not inherit a lease held by the accepting chat. Model arguments cannot supply
+holder fields or tokens. A different undertaking held by the accepting turn
+must be explicitly released first. Existing child snapshots remain fenced.
+
+The acceptance mapping and initiative share the existing initiative database.
+The attached transaction serializes competing requests and rolls back ordinary
+failures, but the two stores use WAL, so it does **not** promise host-crash
+atomicity across the initiative and commitment files. A replay reconciles a
+persisted acceptance with its exact old held token before confirming release;
+it never releases a newer worker's token. In the inverse partial state, the
+exact original released token and absence of that acceptance permit its draft
+to be recovered, including an explicit fresh generation after older work ended.
+The same recovery restores a missing join to an existing canonical draft.
+A different token is rejected. Existing native
+task association and retained-artifact reconciliation handle later interrupted
+dispatch or completion. There is no additional recovery process.
+
+Focused qualification covers independent authenticated HTTP callers, changed
+wording/source-order collisions, explicit fresh drafts, replay after reopening,
+normal rollback and both simulated persisted handoff boundaries. The packaged
+Hermes test uses two normal sessions' actual tools and a native worker with
+controlled model responses: one task, one retained report, and the same saved
+result on both session replays. Source mutation and interrupted native completion
+retain their existing rejection/reconciliation tests. Completing a draft still
+does not fulfil the broader commitment or authorize delivery. Physical voice
+identity, capture and playback remain separate, unqualified hardware paths.

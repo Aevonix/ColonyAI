@@ -42,6 +42,7 @@ def source_candidates(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "kind": "source_quote", "source_uri": "turn:" + turn,
             "source_turn_id": turn, "role": hit["role"],
             "content": hit["content"], "epistemic_state": "quotation",
+            **{name: hit[name] for name in ("contact_id", "session_id", "scope") if name in hit},
             "occurred_at": hit.get("occurred_at"),
             "ingested_at": hit.get("ingested_at"),
             **({"source_message_hash": hit['source_message_hash']} if hit.get('source_message_hash') else {}),

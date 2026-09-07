@@ -6,8 +6,59 @@ import pytest
 from conftest import ROOT, run_python
 
 
+SESSIONS = r'''
+import json,sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+sys.path.insert(0,sys.argv[1])
+from hermes_cli.plugins import get_plugin_manager
+from hermes_cli.lifecycle import invoke_hook
+from hermes_cli.middleware import run_tool_execution_middleware
+from model_tools import handle_function_call
+manager=get_plugin_manager();manager.discover_and_load()
+assert manager._plugins['colony'].enabled,manager._plugins['colony'].error
+args=json.loads(sys.argv[2]);phase=sys.argv[3]
+sessions=('normal-session-a','normal-session-b')
+for session in sessions:
+    invoke_hook('pre_llm_call',session_id=session,task_id=session,turn_id=session,
+        platform='cli',sender_id='',user_message='Please compare the two selected notes for this commitment.')
+def tool(session,name,arguments):
+    value=json.loads(handle_function_call(name,arguments,session_id=session,task_id=session,
+        turn_id=session,tool_call_id=name+'-'+session))
+    assert 'claim_id' not in value,value
+    return value
+if phase=='accept':
+    claim={'operation':'claim','commitment_id':args['commitment_id']}
+    assert tool(sessions[0],'colony_commitment_work',claim)['accepted'] is True
+    assert tool(sessions[1],'colony_commitment_work',claim)['accepted'] is False
+    barrier=Barrier(2)
+    def accept(session):
+        barrier.wait()
+        return tool(session,'colony_accept_local_draft',args)
+    with ThreadPoolExecutor(max_workers=2) as pool:values=list(pool.map(accept,sessions))
+    assert 'id' in values[0],values
+    # B may arrive before A's handoff commits. This specified status/replay
+    # step covers that contention without launching another undertaking.
+    for session in sessions:
+        status=tool(session,'colony_commitment_work',{'operation':'status','commitment_id':args['commitment_id']})
+        assert status['work_state']=='released',status
+    joined=tool(sessions[1],'colony_accept_local_draft',args)
+    assert joined['id']==values[0]['id'],(values,joined)
+    if 'id' in values[1]:assert values[1]['id']==joined['id']
+    assert run_tool_execution_middleware('read_file',{},lambda args:'detached',
+        session_id=sessions[0],task_id=sessions[0],turn_id=sessions[0])=='detached'
+    values=[values[0],joined]
+else:
+    values=[tool(session,'colony_accept_local_draft',args) for session in sessions]
+    assert all(value['status']=='completed' for value in values),values
+    assert values[0]['result']==values[1]['result']
+assert values[0]['id']==values[1]['id']
+print(json.dumps(values[0]))
+'''
+
+
 PROBE = r'''
-import hashlib,json,os,sys
+import hashlib,json,os,sys,subprocess,sqlite3
 os.umask(0o077)
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -53,16 +104,37 @@ gateway=NativeDrafts(config,client,'owner')
 body={'contact_id':'owner','session_id':'origin-session','turn_id':'origin-turn','question':'Compare both selected notes',
       'sources':[str(p) for p in sources],
       'origin':{'platform':'whatsapp','chat_id':'synthetic-origin','user_id':'synthetic-owner','notifier_profile':'default'}}
-response=client.post('/v1/host/commitments/'+obligation['id']+'/local-draft',json=body)
-assert response.status_code==200,response.text
-accepted=response.json()
+if mode=='shared_undertaking':
+    import socket,threading,time,uvicorn
+    listener=socket.socket();listener.bind(('127.0.0.1',0))
+    url='http://127.0.0.1:'+str(listener.getsockname()[1])
+    server=uvicorn.Server(uvicorn.Config(app,log_level='error',lifespan='off'))
+    thread=threading.Thread(target=server.run,kwargs={'sockets':[listener]},daemon=True);thread.start()
+    deadline=time.monotonic()+10
+    while not server.started and time.monotonic()<deadline:time.sleep(.01)
+    assert server.started
+    (root/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'], 'colony':{
+        'url':url,'owner_contact_id':'owner','attested_system_platforms':['cli'],
+        'turn_writer_platforms':[],'native_local_work':config}}}))
+    normal_env=dict(os.environ)
+    normal_args={'commitment_id':obligation['id'],'question':body['question'],'sources':body['sources']}
+    def normal_sessions(phase):
+        result=subprocess.run([sys.executable,'-I','-c',sys.argv[5],sys.argv[1],json.dumps(normal_args),phase],
+            env=normal_env,text=True,capture_output=True,timeout=30)
+        assert result.returncode==0,result.stdout+result.stderr
+        return json.loads(result.stdout.splitlines()[-1])
+    accepted=normal_sessions('accept')
+else:
+    response=client.post('/v1/host/commitments/'+obligation['id']+'/local-draft',json=body)
+    assert response.status_code==200,response.text
+    accepted=response.json()
 with ThreadPoolExecutor(max_workers=2) as pool:
     values=list(pool.map(lambda _:gateway.ensure_task(accepted),range(2)))
 assert values[0]['context']['native_task_id']==values[1]['context']['native_task_id']
 accepted=values[0];tid=accepted['context']['native_task_id']
 db=kb.connect(board=config['board'])
 assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==1
-assert db.execute('SELECT count(*) FROM kanban_notify_subs').fetchone()[0]==1
+assert db.execute('SELECT count(*) FROM kanban_notify_subs').fetchone()[0]==(0 if mode=='shared_undertaking' else 1)
 assert kb.get_task(db,tid).status=='ready'
 claimed=kb.claim_task(db,tid);assert claimed
 workspace=kb.resolve_workspace(claimed,board=config['board']);kb.set_workspace_path(db,tid,str(workspace))
@@ -75,15 +147,17 @@ work_config={'plugins':{'enabled':['colony'],'entries':{'colony':{'allow_tool_ov
  'owner_contact_id':'owner','attested_system_platforms':['cli'],'turn_writer_platforms':[],
  'native_local_work':config}},'model':{'default':'fixture/local'},'tools':{'tool_search':{'enabled':'off'}}}
 (worker_home/'config.yaml').write_text(json.dumps(work_config))
-if mode=='native_agent':
+if mode in {'native_agent','shared_undertaking'}:
     import socket,threading,time,uvicorn
     calls=[]
-    listener=socket.socket();listener.bind(('127.0.0.1',0))
+    if mode=='native_agent':
+        listener=socket.socket();listener.bind(('127.0.0.1',0))
     work_config['plugins']['colony']['url']='http://127.0.0.1:'+str(listener.getsockname()[1])
     (worker_home/'config.yaml').write_text(json.dumps(work_config))
-    server=uvicorn.Server(uvicorn.Config(app,log_level='error',lifespan='off'))
-    thread=threading.Thread(target=server.run,kwargs={'sockets':[listener]},daemon=True);thread.start()
-    while not server.started:time.sleep(.01)
+    if mode=='native_agent':
+        server=uvicorn.Server(uvicorn.Config(app,log_level='error',lifespan='off'))
+        thread=threading.Thread(target=server.run,kwargs={'sockets':[listener]},daemon=True);thread.start()
+        while not server.started:time.sleep(.01)
     from hermes_cli.plugins import get_plugin_manager
     from run_agent import AIAgent
     from hermes_state import SessionDB
@@ -117,6 +191,15 @@ if mode=='native_agent':
         assert result['completed'] is True,(adapter.error,result)
         agent.close();session_db.close()
     assert calls==[0,1,2,3],calls
+    if mode=='shared_undertaking':
+        saved=client.get(gateway.path(accepted['id'])+'?contact_id=owner').json()
+        # Reuse is explicitly historical: a later source edit does not silently
+        # change the accepted scope or launch a second draft during replay.
+        sources[0].write_text('Changed after this local comparison was retained.\n')
+        observed=normal_sessions('observe')
+        assert observed['id']==accepted['id'] and observed['result']==saved['result'],observed
+        with sqlite3.connect(initiatives._db_path) as ledger:
+            assert ledger.execute('SELECT count(*) FROM initiatives').fetchone()[0]==1
     server.should_exit=True;thread.join(5)
 else:
     from colony_hermes.commitment_work import CommitmentCoordinator
@@ -173,7 +256,7 @@ else:
         assert (report.read_bytes(),receipt.read_bytes())==original
         assert json.loads(recovery.complete({'summary':'Replay'},context,kanban_tools._handle_complete))['replayed'] is True
         assert len(kb.list_runs(db,tid))==2
-if mode in {'native_agent','recovery','publication_interrupted'}:
+if mode in {'native_agent','shared_undertaking','recovery','publication_interrupted'}:
     task=kb.get_task(db,tid);assert task.status=='done',task
     saved=client.get(gateway.path(accepted['id'])+'?contact_id=owner').json()
     assert saved['status']=='completed',saved
@@ -188,7 +271,7 @@ db.close();initiatives.close();selected.stop();selected_board.stop()
 '''
 
 
-@pytest.mark.parametrize('mode', ['native_agent', 'recovery', 'publication_interrupted', 'source_changed', 'missing_reference'])
+@pytest.mark.parametrize('mode', ['native_agent', 'shared_undertaking', 'recovery', 'publication_interrupted', 'source_changed', 'missing_reference'])
 def test_packaged_native_kanban_draft(artifacts, tmp_path, mode):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native task/run integration')
@@ -200,6 +283,6 @@ def test_packaged_native_kanban_draft(artifacts, tmp_path, mode):
         COLONY_SKIP_DOTENV='1',COLONY_LOCAL_WORK_ENABLED='true',COLONY_LOCAL_WORK_EXECUTOR='kanban',
         COLONY_LOCAL_WORK_BOARD='colony-drafts',COLONY_LOCAL_WORK_PROFILE='colony-drafts',
         COLONY_OWNER_CONTACT_ID='owner',COLONY_GUARD_CHAT_MODE='off',LITELLM_LOCAL_MODEL_COST_MAP='True')
-    result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),mode,
+    result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),mode,SESSIONS,
                       cwd=tmp_path,env=env)
     assert '"native_run_contract": true' in result.stdout

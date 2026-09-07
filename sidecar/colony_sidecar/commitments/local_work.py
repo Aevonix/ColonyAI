@@ -4,12 +4,20 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import sqlite3
+import time
 import uuid
 
 CREATOR = 'native_local_work'
 SOURCE = 'owner_local_draft'
 TRANSIENT = {'TimeoutError', 'APITimeoutError', 'APIConnectionError', 'ConnectError',
              'ReadTimeout', 'RateLimitError', 'ServiceUnavailableError'}
+ACTIVE = {'pending', 'assigned', 'acknowledged'}
+
+
+class LocalWorkConflict(ValueError):
+    def __init__(self, reason, initiative_id):
+        super().__init__(reason)
+        self.initiative_id = initiative_id
 
 
 def encoded(value):
@@ -18,6 +26,13 @@ def encoded(value):
 
 def stamp():
     return datetime.now(timezone.utc).isoformat()
+
+
+def retryable_legacy(row):
+    return (row['status'] == 'failed'
+            and json.loads(row['context']).get('execution_backend', 'cron') != 'kanban'
+            and json.loads(row['result_metadata'] or '{}').get('error_type') in TRANSIENT
+            and row['attempt_count'] < row['max_attempts'])
 
 
 class LocalWork:
@@ -62,20 +77,74 @@ class LocalWork:
         return row
 
     def accept(self, commitment_id, *, contact_id, principal_id, session_id, turn_id, question, sources,
-               execution_backend='cron', origin=None):
+               execution_backend='cron', origin=None, new_draft=False, handoff=None):
         material = {'commitment_id': commitment_id, 'question': question, 'sources': sources}
-        # Replay of this owner acceptance is idempotent. A later explicit
-        # acceptance can intentionally request a fresh draft of changed files.
-        digest = hashlib.sha256(encoded({**material, 'session_id':session_id, 'turn_id':turn_id}).encode()).hexdigest()
-        key = SOURCE + ':' + digest
+        legacy_key = SOURCE + ':' + hashlib.sha256(encoded({**material,
+            'session_id': session_id, 'turn_id': turn_id}).encode()).hexdigest()
+        key = SOURCE + ':' + hashlib.sha256(encoded({**material,
+            'contact_id': contact_id, 'principal_id': principal_id,
+            'session_id': session_id, 'turn_id': turn_id, 'new_draft': new_draft}).encode()).hexdigest()
+        handoff_hash = hashlib.sha256(encoded(handoff).encode()).hexdigest() if handoff else ''
         with self.transaction() as db:
+            # Each ordinary acceptance keeps its association across subsequent
+            # fresh drafts, including a caller whose first response was lost.
+            db.execute('''CREATE TABLE IF NOT EXISTS local_draft_acceptances (
+                acceptance_key TEXT PRIMARY KEY, initiative_id TEXT NOT NULL,
+                handoff_hash TEXT NOT NULL DEFAULT '')''')
+            replay = db.execute('SELECT * FROM local_draft_acceptances WHERE acceptance_key=?', (key,)).fetchone()
+            if replay:
+                row = self.row(db, replay['initiative_id'], contact_id)
+                released = False
+                if handoff:
+                    if replay['handoff_hash'] != handoff_hash:
+                        raise ValueError('accepting_undertaking_superseded')
+                    # The stores use WAL: an attached transaction does not
+                    # promise host-crash atomicity across their two files.
+                    # A saved association records release intent, so reconcile
+                    # its exact old token before confirming a replayed handoff.
+                    released = self.release_handoff(db, commitment_id, contact_id,
+                        principal_id, handoff, creating=False, replay=True)
+                return self.acceptance_view(row, material, released)
+
             if commitment_id is not None:
                 obligation = self.obligation(db, commitment_id, contact_id)
                 if obligation['status'] not in {'pending', 'overdue'}:
                     raise ValueError('obligation_closed')
-            previous = db.execute('SELECT * FROM initiatives WHERE dedup_key=?', (key,)).fetchone()
-            if previous:
-                return self.view(previous)
+            elif handoff:
+                raise ValueError('handoff_requires_commitment')
+
+            # Preserve request replay for installed predecessor records. A
+            # newly explicit redraft has no predecessor request equivalent.
+            previous = None if new_draft else db.execute(
+                'SELECT * FROM initiatives WHERE dedup_key=? AND entity_id=?',
+                (legacy_key, contact_id)).fetchone()
+            if previous is None and commitment_id is not None:
+                rows = db.execute('''SELECT * FROM initiatives WHERE created_by=?
+                    AND source_type=? AND source_id=? AND entity_id=? ORDER BY rowid DESC''',
+                    (CREATOR, SOURCE, commitment_id, contact_id)).fetchall()
+                active = [row for row in rows if row['status'] in ACTIVE or retryable_legacy(row)]
+                if len(active) > 1:
+                    raise LocalWorkConflict('multiple_active_local_drafts', active[0]['id'])
+                if active:
+                    if new_draft:
+                        raise LocalWorkConflict('local_draft_in_progress', active[0]['id'])
+                    # One active undertaking per explicit commitment, including
+                    # paraphrased requests and reordered source selections.
+                    previous = active[0]
+                elif rows and not new_draft:
+                    previous = rows[0]
+                    old = json.loads(previous['context'])
+                    if any(old.get(field) != value for field, value in material.items()):
+                        raise LocalWorkConflict('local_draft_scope_changed_requires_new_draft', previous['id'])
+
+            released = self.release_handoff(db, commitment_id, contact_id, principal_id,
+                handoff, creating=previous is None)
+            if previous is not None:
+                db.execute('INSERT INTO local_draft_acceptances VALUES(?,?,?)',
+                           (key, previous['id'], handoff_hash if released else ''))
+                self.history(db, previous['id'], principal_id, 'acceptance_joined',
+                    {'session_id': session_id, 'turn_id': turn_id})
+                return self.acceptance_view(previous, material, released)
             context = {**material, 'contact_id': contact_id, 'accepted_principal_id': principal_id,
                        'accepted_session_id': session_id, 'accepted_turn_id': turn_id,
                        'accepted_at': stamp(), 'task_class': SOURCE,
@@ -92,7 +161,44 @@ class LocalWork:
                  SOURCE, commitment_id, CREATOR, contact_id, encoded(context)))
             self.history(db, identifier, principal_id, 'accepted',
                          {'session_id': session_id, 'turn_id': turn_id, 'task_class': SOURCE})
-            return self.view(db.execute('SELECT * FROM initiatives WHERE id=?', (identifier,)).fetchone())
+            db.execute('INSERT INTO local_draft_acceptances VALUES(?,?,?)',
+                       (key, identifier, handoff_hash if released else ''))
+            return self.acceptance_view(db.execute('SELECT * FROM initiatives WHERE id=?', (identifier,)).fetchone(),
+                                        material, released)
+
+    def acceptance_view(self, row, material, released):
+        value = self.view(row)
+        return value | {'acceptance_matches_request': all(value['context'].get(key) == item
+                    for key, item in material.items()), 'handoff_released': released}
+
+    @staticmethod
+    def release_handoff(db, commitment_id, contact_id, principal_id, handoff, *, creating,
+                        replay=False):
+        exists = db.execute("SELECT 1 FROM obligations.sqlite_master WHERE type='table' AND name='commitment_work'").fetchone()
+        row = db.execute('SELECT * FROM obligations.commitment_work WHERE commitment_id=?',
+                         (commitment_id,)).fetchone() if exists and commitment_id else None
+        if handoff:
+            if replay and (row is None or row['claim_id'] != handoff['claim_id']):
+                # The old token is no longer held. Never release a newer worker.
+                return True
+            if (row is None or row['principal_id'] != principal_id or row['contact_id'] != contact_id
+                    or any(row[key] != value for key, value in handoff.items())):
+                raise ValueError('accepting_undertaking_superseded')
+            if row['state'] == 'released':
+                # Inverse partial commit: the exact old lease was released but
+                # its acceptance mapping may be missing. Recover either a new
+                # draft or an association with the canonical existing draft.
+                # Exact holder/token checks above exclude any newer claimant.
+                return True
+            if row['state'] != 'held':
+                raise ValueError('accepting_undertaking_superseded')
+            now = time.time()
+            db.execute("UPDATE obligations.commitment_work SET state='released',last_observed_at=?,lease_until=? WHERE commitment_id=?",
+                       (now, now, commitment_id))
+            return True
+        if creating and row is not None and row['state'] == 'held' and row['lease_until'] > time.time():
+            raise ValueError('undertaking_held_elsewhere')
+        return False
 
     def row(self, db, identifier, contact_id):
         row = db.execute('SELECT * FROM initiatives WHERE id=? AND created_by=? AND source_type=? AND entity_id=?',
@@ -134,9 +240,7 @@ class LocalWork:
                                      {'from': 'cron', 'to': 'kanban'})
                         row = db.execute('SELECT * FROM initiatives WHERE id=?', (row['id'],)).fetchone()
                     else:
-                        result = json.loads(row['result_metadata'] or '{}')
-                        if (row['status'] != 'failed' or
-                                (result.get('error_type') in TRANSIENT and row['attempt_count'] < row['max_attempts'])):
+                        if row['status'] != 'failed' or retryable_legacy(row):
                             legacy += 1
                         continue
                 if row['status'] != 'failed':
@@ -216,8 +320,7 @@ class LocalWork:
                     return self.view(row) | {'reconcile_only': True}
                 if row['status'] == 'failed':
                     result = json.loads(row['result_metadata'] or '{}')
-                    if (result.get('error_type') not in TRANSIENT or row['attempt_count'] >= row['max_attempts']
-                            or terminal(context) != 'failed'):
+                    if not retryable_legacy(row) or terminal(context) != 'failed':
                         continue
                     self.history(db, row['id'], 'native-cron:'+native['native_execution_id'], 'retry',
                                  {'previous_context': context, 'previous_result': result})
