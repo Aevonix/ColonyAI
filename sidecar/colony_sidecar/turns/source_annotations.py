@@ -116,55 +116,82 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
                     cached[identifier]['messages'] = json.loads(row['messages_json'])
             return cached[identifier]
 
+        def candidate_hashes(candidate, identifier):
+            # Assertion bundles carry canonical claim membership, not a JSON
+            # string to reinterpret. Semantic excerpts already have one hash.
+            if '_source_message_hashes' in candidate:
+                return set(candidate['_source_message_hashes'].get(identifier, []))
+            if candidate.get('source_message_hash'):
+                return {candidate['source_message_hash']}
+            if candidate.get('kind') == 'source_quote' or candidate.get('source_turn_id'):
+                row = source(identifier)
+                text, role = candidate.get('content'), candidate.get('role')
+                return {source_message_hash(row['session_id'], message) for message in row['messages']
+                        if (not role or message.get('role') == role)
+                        and isinstance(text, str) and text
+                        and isinstance(message.get('content'), str) and text in message['content']} if row else set()
+            # Older graph summaries and supplied parent references attest a
+            # whole source version. Do not invent finer ancestry from prose.
+            return None
+
         for original in candidates:
             ids = source_ids(original)
-            pending, visited, notes = list(ids), set(), {}
+            pending = [(identifier, candidate_hashes(original, identifier)) for identifier in ids]
+            visited, notes = {}, {}
             unavailable = False
             while pending:
-                identifier = pending.pop()
-                if identifier in visited:
-                    continue
-                visited.add(identifier)
+                identifier, selected_hashes = pending.pop()
                 row = source(identifier)
                 if row is None:
                     continue
                 version = canonical_turn_digest(row['messages'])
                 hashes = {source_message_hash(row['session_id'], m) for m in row['messages']}
+                selected_hashes = hashes if selected_hashes is None else hashes.intersection(selected_hashes)
+                selected_hashes -= visited.get(identifier, set())
+                if not selected_hashes:
+                    continue
+                visited.setdefault(identifier, set()).update(selected_hashes)
                 for relation in conn.execute('SELECT * FROM source_annotations WHERE target_source_id=?', (identifier,)):
                     # A partial erase can change the source revision while
                     # retaining the annotated message. Its removed correction
                     # still fences that message; unrelated survivors remain.
                     same_version = relation['target_version'] == version
-                    retained_message = hashes.intersection(json.loads(relation['target_message_hashes_json']))
-                    if not same_version and not retained_message:
+                    retained_message = selected_hashes.intersection(json.loads(relation['target_message_hashes_json']))
+                    if not retained_message:
                         continue
-                    if not same_version and identifier in ids and len(ids) == 1 and not original.get('atomic_evidence'):
-                        text = str(original.get('content') or '')
-                        if not any(text in m.get('content', '') for m in row['messages']
-                                   if isinstance(m.get('content'), str)
-                                   and source_message_hash(row['session_id'], m) in retained_message):
-                            continue
                     annotation = source(relation['annotation_source_id'])
                     if annotation is None or not same_version:
                         unavailable = True
                         break
                     data = json.loads(annotation['messages'][0]['content'])
                     notes[relation['annotation_source_id']] = data
-                    pending.append(relation['annotation_source_id'])
+                    pending.append((relation['annotation_source_id'], None))
                 if unavailable:
                     break
+                own_annotation = conn.execute('SELECT * FROM source_annotations WHERE annotation_source_id=?',
+                                              (identifier,)).fetchone()
                 for message in row['messages']:
-                    if message.get('role') == 'assistant':
+                    if (message.get('role') == 'assistant'
+                            and source_message_hash(row['session_id'], message) in selected_hashes):
                         for ref in message.get('_supplied_sources', []):
                             parent = source(ref['source_id'])
                             if parent and canonical_turn_digest(parent['messages']) == ref['source_version']:
-                                pending.append(ref['source_id'])
+                                # Dedicated annotations have exact target message
+                                # membership. Their own source link must not widen
+                                # a selected excerpt back to all sibling messages.
+                                target_hashes = (set(json.loads(own_annotation['target_message_hashes_json']))
+                                    if own_annotation and own_annotation['target_source_id'] == ref['source_id']
+                                    and own_annotation['target_version'] == ref['source_version'] else None)
+                                pending.append((ref['source_id'], target_hashes))
             if unavailable:
                 continue
             if not notes:
                 result.append(original)
                 continue
             row = dict(original)
+            if (original.get('kind') == 'belief'
+                    or 'kind' not in original and not original.get('source_turn_id')):
+                row['_recall_memory_id'] = original.get('_recall_memory_id', original['id'])
             # If the annotation itself matched the query, show its exact
             # target excerpt first instead of presenting an orphan note.
             if len(ids) == 1 and ids[0] in notes:
@@ -183,6 +210,7 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
                 'source_version': canonical_turn_digest(source(identifier)['messages'])}
                 for identifier in row['source_turn_ids'] if source(identifier)]
             row['_annotation_ids'] = tuple(sorted(notes))
+            row['_annotation_message_hashes'] = {identifier: sorted(hashes) for identifier, hashes in visited.items()}
             row['ranking_text'] = str(original.get('ranking_text') or original.get('content') or '') + '\n' + '\n'.join(
                 note['correction'] for note in corrections)
             row['id'] = 'annotated:' + hashlib.sha256(json.dumps([original['id'], list(notes)], sort_keys=True).encode()).hexdigest()
@@ -212,9 +240,11 @@ def current_candidates(ledger, candidates, *, contact_id, session_id):
     notes = {}
     with closing(ledger._connect()) as conn:
         for identifier, version in current.items():
-            notes[identifier] = {row[0] for row in conn.execute('''SELECT annotation_source_id
+            notes[identifier] = {row[0]: set(json.loads(row[1])) for row in conn.execute('''SELECT annotation_source_id,target_message_hashes_json
                 FROM source_annotations WHERE target_source_id=? AND target_version=?''', (identifier, version))}
     return [row for row in candidates if all(current.get(ref['source_id']) == ref['source_version']
             for ref in row.get('_annotation_source_refs', [])) and (
                 not row.get('_annotation_source_refs') or set(row['_annotation_ids']) == set().union(
-                    *(notes.get(ref['source_id'], set()) for ref in row['_annotation_source_refs'])))]
+                    *({identifier for identifier, hashes in notes.get(ref['source_id'], {}).items()
+                       if hashes.intersection(row['_annotation_message_hashes'].get(ref['source_id'], []))}
+                      for ref in row['_annotation_source_refs'])))]

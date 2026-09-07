@@ -161,6 +161,53 @@ async def test_old_derived_answer_and_semantic_only_hit_expand_to_current_correc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('semantic', [False, True])
+async def test_recalled_message_does_not_inherit_its_assistant_siblings_sources(annotated_app, monkeypatch, semantic):
+    app, ledger = annotated_app
+    from colony_sidecar.turns.idempotency import source_message_hash
+    from colony_sidecar.turns.source_vectors import SourceVectors
+    parent = ledger.source_references(['report'], contact_id='person', session_id='later')[0]
+    independent = {'role': 'assistant', 'content': 'The hydrofoil rendezvous marker is cobalt.'}
+    ledger.record_source('mixed-answers', contact_id='person', session_id='previous', messages=[
+        {'role': 'assistant', 'content': 'The earlier verification happened at 09:14.', '_supplied_sources': [parent]},
+        independent])
+    add(ledger)
+    if semantic:
+        monkeypatch.setattr(TurnIdempotencyLedger, 'search_sources', lambda *args, **kwargs: [])
+        async def retrieve(*args, **kwargs):
+            return ([{'turn_id': 'mixed-answers', **independent,
+                      'source_message_hash': source_message_hash('previous', independent),
+                      'retrieval_method': 'semantic'}], [])
+        monkeypatch.setattr(SourceVectors, 'search', retrieve)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://fixture',
+                           headers={'Authorization': 'Bearer write'}) as client:
+        packet = await context(client, 'hydrofoil rendezvous marker')
+    assert independent['content'] in packet['body']
+    assert NOTE not in packet['body'] and '09:14' not in packet['body']
+    assert {ref['source_id'] for ref in packet['citations']} == {'mixed-answers'}
+
+
+def test_direct_annotation_applies_only_to_the_recalled_message_and_keeps_its_frontier(annotated_app):
+    _, ledger = annotated_app
+    from colony_sidecar.turns.source_annotations import expand, current_candidates
+    independent = 'The hydrofoil rendezvous marker is cobalt.'
+    ledger.record_source('two-reports', contact_id='person', session_id='work', messages=[
+        {'role': 'assistant', 'content': REPORT}, {'role': 'assistant', 'content': independent}])
+    ref = ledger.source_references(['two-reports'], contact_id='person', session_id='later')[0]
+    first = add(ledger, **ref)
+    hit = dict(id='selected', kind='source_quote', role='assistant',
+               source_turn_id='two-reports', content=independent)
+    assert expand(ledger, [hit], contact_id='person', session_id='later') == [hit]
+    second = add(ledger, **ref, annotation_id='independent-note', excerpt=independent,
+                 correction='The marker description is an attributed report, not a visual verification.')
+    expanded = expand(ledger, [hit], contact_id='person', session_id='later')
+    assert len(expanded) == 1
+    assert expanded[0]['_annotation_ids'] == (second['source_id'],)
+    assert first['source_id'] not in expanded[0]['source_turn_ids']
+    assert current_candidates(ledger, expanded, contact_id='person', session_id='later') == expanded
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('change', ['erase', 'append'])
 async def test_correction_is_not_split_by_rerank_and_stale_packet_is_not_published(annotated_app, monkeypatch, change):
     app, ledger = annotated_app

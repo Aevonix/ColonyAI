@@ -52,7 +52,15 @@ hit does not repeat an already supplied correction bundle. Multiple corrections
 remain visible without treating the newest one as automatically true.
 
 Selected packets are checked again after ranking for changed source revisions or
-annotations. Native context receives the existing complete section body and exact
+annotations relevant to their actual source messages. Direct quotations retain
+their message identity; atomic claim bundles carry the canonical claim message
+hashes. An independent assistant sibling contributes neither its dependencies nor
+its corrections to the recalled message. Erasure of another message does not hide
+an unaffected claim. Existing supplied parent references and older graph summaries
+remain conservatively bound to whole source versions when no finer provenance was
+recorded. An annotation's own target relation retains its exact message membership.
+
+Native context receives the existing complete section body and exact
 source references for both original and correction. No native adapter protocol
 change is needed. Newly captured answers therefore retain both dependencies.
 
