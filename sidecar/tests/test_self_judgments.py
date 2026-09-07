@@ -107,6 +107,8 @@ async def test_two_processors_revise_with_history_restart_and_relevant_owner_con
             assert ('I favor checkpoints at meaningful stages' in text) is expected
             if expected:
                 assert 'fallible agent judgments' in text and 'Source turn:judgment-b' in text
+                section = next(s for s in response.json()['sections'] if s['id'] == 'colony-self-perspective')
+                assert {ref['source_id'] for ref in section['citations']} == {'judgment-a', 'judgment-b'}
         assert not await reopened.judgments.process_one(second)  # no repeated source vote
         from colony_sidecar.api.routers import host
         unattested = await host.context_assemble(host.ContextAssembleRequest(

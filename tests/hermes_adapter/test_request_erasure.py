@@ -82,8 +82,30 @@ with patch('run_agent.OpenAI',return_value=client), patch('run_agent.get_tool_de
     assert result['final_response']=='BEFORE_OK', result
     import colony_hermes
     assert fact in json.dumps(client.chat.completions.create.call_args_list[0].kwargs['messages']), (wire, list(colony_hermes._TRANSPORT_SCOPES._by_turn.values()), client.chat.completions.create.call_args_list[0].kwargs['messages'])
-    forgotten=api.post('/v1/host/memory/sources/forget',json={'contact_id':'contact-a','source_ids':['native-erasure-source']})
-    assert forgotten.status_code==200 and forgotten.json()['source_erased'], forgotten.text
+    from hermes_cli.lifecycle import invoke_hook
+    from model_tools import handle_function_call
+    invoke_hook('pre_llm_call', session_id='forget-request', task_id='forget-task', turn_id='forget-turn',
+        platform='cli', sender_id='', user_message='Forget the retained orchard badge source and its answer copies.')
+    forgotten=json.loads(handle_function_call('colony_memory_forget', {'source_ids':['native-erasure-source']},
+        session_id='forget-request',task_id='forget-task',turn_id='forget-turn'))
+    assert forgotten['source_erased'], forgotten
+    assert forgotten['source_ids'] == ['native-erasure-source']
+    assert len(forgotten['affected_source_ids']) >= 2, forgotten
+    repeat=json.loads(handle_function_call('colony_memory_forget', {'source_ids':['native-erasure-source']},
+        session_id='forget-request',task_id='forget-task',turn_id='forget-turn'))
+    assert repeat['source_erased'], repeat
+    prior_calls=sum(path.endswith('/memory/sources/forget') for path,code in wire)
+    for args, session, task, turn in [
+        ({'source_ids':['native-erasure-source'],'contact_id':'someone-else'}, 'forget-request','forget-task','forget-turn'),
+        ({'source_ids':['native-erasure-source']}, 'missing','missing','missing'),
+    ]:
+        denied=json.loads(handle_function_call('colony_memory_forget',args,session_id=session,task_id=task,turn_id=turn))
+        assert 'error' in denied, denied
+    invoke_hook('pre_llm_call',session_id='cron-forget',task_id='cron-forget',turn_id='cron-forget',
+        platform='cron',sender_id='',user_message='Forget the badge')
+    denied=json.loads(handle_function_call('colony_memory_forget', {'source_ids':['native-erasure-source']},
+        session_id='cron-forget',task_id='cron-forget',turn_id='cron-forget'))
+    assert 'error' in denied and sum(path.endswith('/memory/sources/forget') for path,code in wire)==prior_calls
     # Reopen native durable history, exactly as a later process resumes it.
     reopened=SessionDB(home/'fixture-state.db').get_messages_as_conversation('original')
     assert fact in json.dumps(reopened)  # documented storage limit, not hidden

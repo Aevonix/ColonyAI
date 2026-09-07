@@ -417,7 +417,7 @@ class PreferenceLearner:
         ("emoji", "on"): "Emoji are fine.",
     }
 
-    def build_brief(self, min_confidence: float = 0.5) -> str:
+    def build_brief(self, min_confidence: float = 0.5, *, source_ids=None) -> str:
         """Render the owner's stated communication preferences as a short brief.
 
         Only ``communication_style`` preferences at or above *min_confidence* are
@@ -441,6 +441,8 @@ class PreferenceLearner:
                 line = self._BRIEF_LINES.get((pref['pref_key'].split('.', 1)[1], pref['value']))
                 if line:
                     lines.append(f"{line} [Owner correction {pref['id']}, source turn:{pref['source_turn_id']}]")
+                    if source_ids is not None:
+                        source_ids.append(pref['source_turn_id'])
         return "\n".join(f"- {ln}" for ln in lines)
 
     def _parse_feedback(self, category: str, feedback: str) -> Tuple[str, Any]:

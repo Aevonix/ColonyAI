@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.0.12 - forgetting follows supplied evidence into later answers
+
+Native recollection now records the exact canonical source revisions supplied
+to generation. Erasing one of those sources also removes later captured
+assistant answers that depended on it, including paraphrases and delayed outbox
+delivery. Independent user messages survive partial erasure. Selected sourced
+preferences and working views contribute their existing canonical dependencies.
+The owner can select exact recalled source IDs through `colony_memory_forget`.
+
+This is conservative, forward-only provenance: an entire assistant answer can
+be removed when any supplied source is erased. It does not discover historical
+unlinked copies or delete native transcripts, backups or external artifacts.
+Downgrading the backend retains new linked envelopes in the outbox instead of
+accepting them without their dependencies. Existing readers retain access to
+surviving user evidence. No Hermes core patch or new memory service is added.
+
+Multimedia sources also skip the text-only prior-claim lookup. Their ordinary
+image and semantic projections continue, while claim jobs finish instead of
+repeatedly failing on list-valued content.
+
+## v1.0.11 - complete function output and explicit adapter refresh
+
+Function routing rejects empty, reasoning-only and truncated responses within
+the existing fallback budget. Requested tool calls remain valid output.
+Repeated identical standing-boundary quotations appear once per polarity in
+context. Explicit `colony init --refresh-adapter` refreshes copied adapters while
+preserving private identity, state and the previous adapter for recovery.
+
 ## v1.0.10 - keep caller deadlines separate from endpoint outages
 
 A model that exceeds one function's request allowance remains eligible for

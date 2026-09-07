@@ -16,6 +16,7 @@ import os
 import re
 import sqlite3
 import threading
+import uuid
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -59,6 +60,10 @@ def canonical_turn_digest(payload: Any) -> str:
     # Preserve digests already stored before the additive checkpoint field.
     if isinstance(payload, dict) and payload.get("checkpoint_messages") is None:
         payload = {key: value for key, value in payload.items() if key != "checkpoint_messages"}
+    if isinstance(payload, dict) and payload.get("assistant_source_refs") is None:
+        payload = {key: value for key, value in payload.items() if key != "assistant_source_refs"}
+    if isinstance(payload, dict) and payload.get("source_only") is None:
+        payload = {key: value for key, value in payload.items() if key != "source_only"}
     canonical = json.dumps(
         payload,
         ensure_ascii=False,
@@ -143,6 +148,15 @@ class TurnIdempotencyLedger:
                         erased_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                     )
                 """)
+                # Keep predecessor tombstone semantics and cursor allocation.
+                # A partial event uses an opaque event ID in source_erasures;
+                # predecessor code still removes its exact message hashes but
+                # does not mistake the surviving source for a whole tombstone.
+                conn.execute('''CREATE TABLE IF NOT EXISTS source_erasure_revisions (
+                    sequence INTEGER PRIMARY KEY, source_turn_id TEXT NOT NULL,
+                    source_version TEXT NOT NULL, source_scope TEXT NOT NULL,
+                    whole_source INTEGER NOT NULL CHECK(whole_source IN (0,1)),
+                    UNIQUE(source_turn_id,source_version,whole_source))''')
                 conn.execute("CREATE TABLE IF NOT EXISTS source_projection_erasures (turn_id TEXT NOT NULL, source_turn_id TEXT NOT NULL, PRIMARY KEY(turn_id, source_turn_id))")
                 from colony_sidecar.beliefs.source_projection import initialize
                 initialize(conn)
@@ -200,10 +214,14 @@ class TurnIdempotencyLedger:
             # below remain scoped to their original contact and session.
             if conn.execute("SELECT 1 FROM source_erasures WHERE turn_id=?", (turn_id,)).fetchone():
                 raise SourceErased("source was erased")
+            self._validate_dependencies(conn, turn_id, contact_id, session_id, messages)
             retained = self._retained_messages(messages, session_id, rules)
             if retained != messages:
-                for rule in rules:
-                    conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (turn_id, rule["turn_id"]))
+                for cause in self._erasure_causes(messages, session_id, rules):
+                    conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (turn_id, cause))
+                self._append_erasure(conn, turn_id=turn_id, contact_id=contact_id,
+                    session_id=session_id, scope=scope, messages=messages,
+                    removed=[message for message in messages if message not in retained], whole=False)
             messages = retained
             if not messages:
                 raise SourceErased("source contains only erased messages")
@@ -259,14 +277,97 @@ class TurnIdempotencyLedger:
     @staticmethod
     def _erasure_rules(conn: sqlite3.Connection, contact_id: str) -> list[dict[str, Any]]:
         return [dict(row) for row in conn.execute(
-            "SELECT * FROM source_erasures WHERE contact_id=?", (contact_id,)
+            '''SELECT e.sequence,e.contact_id,e.session_id,e.message_hashes_json,
+                coalesce(r.source_turn_id,e.turn_id) AS turn_id,
+                coalesce(r.whole_source,1) AS whole_source,r.source_version
+                FROM source_erasures e LEFT JOIN source_erasure_revisions r USING(sequence)
+                WHERE e.contact_id=?''', (contact_id,)
         )]
 
     @staticmethod
     def _retained_messages(messages: list[dict[str, Any]], session_id: str, rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        hashes = {h for rule in rules if rule["session_id"] == session_id
-                  for h in json.loads(rule["message_hashes_json"])}
-        return [message for message in messages if source_message_hash(session_id, message) not in hashes]
+        return [message for message in messages
+                if not TurnIdempotencyLedger._erasure_causes([message], session_id, rules)]
+
+    @staticmethod
+    def _erasure_causes(messages, session_id, rules):
+        causes = set()
+        for message in messages:
+            refs = message.get('_supplied_sources', []) if message.get('role') == 'assistant' else []
+            for rule in rules:
+                exact = (rule['session_id'] == session_id and source_message_hash(session_id, message)
+                         in json.loads(rule['message_hashes_json']))
+                dependent = any(ref.get('source_id') == rule['turn_id'] and (
+                    rule['whole_source'] or ref.get('source_version') == rule['source_version'])
+                    for ref in refs if isinstance(ref, dict))
+                if exact or dependent:
+                    causes.add(rule['turn_id'])
+        return causes
+
+    @staticmethod
+    def _validate_dependencies(conn, turn_id, contact_id, session_id, messages):
+        for message in messages:
+            refs = message.get('_supplied_sources', [])
+            # The complete source envelope already has an 8 MiB bound. A
+            # separate count cap would reject valid long native histories only
+            # after generation, or tempt callers to silently drop dependencies.
+            if not isinstance(refs, list) or (refs and message.get('role') != 'assistant'):
+                raise ValueError('invalid_source_dependency')
+            for ref in refs:
+                if (not isinstance(ref, dict) or set(ref) != {'source_id', 'source_version'}
+                        or not isinstance(ref['source_id'], str) or not 1 <= len(ref['source_id']) <= 256
+                        or ref['source_id'] == turn_id or not isinstance(ref['source_version'], str)
+                        or not re.fullmatch('[0-9a-f]{64}', ref['source_version'])):
+                    raise ValueError('invalid_source_dependency')
+                parent = conn.execute('SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?',
+                                      (ref['source_id'], contact_id)).fetchone()
+                if (parent and (parent['scope'] == 'person' or parent['session_id'] == session_id)
+                        and canonical_turn_digest(json.loads(parent['messages_json'])) == ref['source_version']):
+                    continue
+                # A delayed answer may truthfully reference the exact revision
+                # already erased. Accept its envelope, then redact that answer.
+                erased = conn.execute('''SELECT 1 FROM source_erasures e JOIN source_erasure_revisions r USING(sequence)
+                    WHERE r.source_turn_id=? AND e.contact_id=? AND r.source_version=?
+                    AND (r.source_scope='person' OR e.session_id=?)''',
+                    (ref['source_id'], contact_id, ref['source_version'], session_id)).fetchone()
+                if not erased:
+                    raise ValueError('invalid_source_dependency')
+
+    @staticmethod
+    def _append_erasure(conn, *, turn_id, contact_id, session_id, scope, messages, removed, whole):
+        version = canonical_turn_digest(messages)
+        if conn.execute('''SELECT 1 FROM source_erasure_revisions WHERE
+                source_turn_id=? AND source_version=? AND whole_source=?''', (turn_id, version, int(whole))).fetchone():
+            return
+        hashes = {h for row in conn.execute('''SELECT e.message_hashes_json FROM source_erasures e
+            LEFT JOIN source_erasure_revisions r USING(sequence)
+            WHERE coalesce(r.source_turn_id,e.turn_id)=?''', (turn_id,))
+                  for h in json.loads(row[0])}
+        hashes.update(source_message_hash(session_id, message) for message in removed)
+        event_id = turn_id if whole else 'erased-message:' + uuid.uuid4().hex
+        if not whole:
+            while conn.execute('SELECT 1 FROM turn_sources WHERE turn_id=? UNION SELECT 1 FROM source_erasures WHERE turn_id=?',
+                               (event_id, event_id)).fetchone():
+                event_id = 'erased-message:' + uuid.uuid4().hex
+        cursor = conn.execute('''INSERT OR IGNORE INTO source_erasures
+            (contact_id,turn_id,session_id,message_hashes_json) VALUES (?,?,?,?)''',
+            (contact_id, event_id, session_id, json.dumps(sorted(hashes))))
+        if cursor.rowcount:
+            conn.execute('''INSERT INTO source_erasure_revisions
+                (sequence,source_turn_id,source_version,source_scope,whole_source) VALUES (?,?,?,?,?)''',
+                (cursor.lastrowid, turn_id, version, scope, int(whole)))
+
+    def source_references(self, turn_ids, *, contact_id, session_id):
+        """Structured selected-source revisions, never parsed from generated prose."""
+        refs = []
+        with closing(self._connect()) as conn:
+            for turn_id in dict.fromkeys(turn_ids):
+                row = conn.execute('''SELECT messages_json FROM turn_sources WHERE turn_id=?
+                    AND contact_id=? AND (scope='person' OR session_id=?)''',
+                    (turn_id, contact_id, session_id)).fetchone()
+                if row:
+                    refs.append({'source_id': turn_id, 'source_version': canonical_turn_digest(json.loads(row[0]))})
+        return refs
 
     def is_source_erased(self, turn_id: str, contact_id: str | None = None) -> bool:
         with closing(self._connect()) as conn:
@@ -293,8 +394,14 @@ class TurnIdempotencyLedger:
             head = conn.execute("SELECT coalesce(max(sequence), 0) FROM source_erasures WHERE contact_id=?", (contact_id,)).fetchone()[0]
             if after > head:
                 raise ValueError("erasure cursor exceeds server history; restore requires reconciliation")
-            rows = conn.execute("SELECT * FROM source_erasures WHERE contact_id=? AND sequence>? ORDER BY sequence LIMIT ?", (contact_id, after, max(1, min(limit, 500)))).fetchall()
-            events = [{"sequence": row["sequence"], "turn_id": row["turn_id"], "session_id": row["session_id"], "message_hashes": json.loads(row["message_hashes_json"])} for row in rows]
+            rows = conn.execute('''SELECT e.*,r.source_turn_id,r.source_version,coalesce(r.whole_source,1) AS whole_source
+                FROM source_erasures e LEFT JOIN source_erasure_revisions r USING(sequence)
+                WHERE e.contact_id=? AND e.sequence>? ORDER BY e.sequence LIMIT ?''', (contact_id, after, max(1, min(limit, 500)))).fetchall()
+            events = [{"sequence": row["sequence"], "turn_id": row["turn_id"], "session_id": row["session_id"],
+                       "message_hashes": json.loads(row["message_hashes_json"]),
+                       "whole_source": bool(row['whole_source']), 'source_version': row['source_version'],
+                       'source_turn_id': row['source_turn_id'] or row['turn_id']}
+                      for row in rows]
             through = events[-1]["sequence"] if events else after
             return {"contact_id": contact_id, "head": head, "through": through, "events": events, "complete": through == head}
 
@@ -325,46 +432,61 @@ class TurnIdempotencyLedger:
             if not 1 <= len(selected) <= 100 or any(not item or len(item) > 256 for item in selected):
                 raise ValueError("select 1..100 source IDs")
             existing_rules = self._erasure_rules(conn, contact_id)
-            known_erased = {rule["turn_id"] for rule in existing_rules}
+            known_erased = {rule["turn_id"] for rule in existing_rules if rule["whole_source"]}
             if any(item not in by_id and item not in known_erased for item in selected):
                 raise ValueError("source_not_found")
             for turn_id in selected:
                 row = by_id.get(turn_id)
                 if row is None:
                     continue
-                hashes = [source_message_hash(row["session_id"], message) for message in json.loads(row["messages_json"])]
-                conn.execute("INSERT OR IGNORE INTO source_erasures(contact_id, turn_id, session_id, message_hashes_json) VALUES (?, ?, ?, ?)", (contact_id, turn_id, row["session_id"], json.dumps(hashes)))
-            rules = self._erasure_rules(conn, contact_id)
-            erased_ids = {rule["turn_id"] for rule in rules}
-            affected = []
-            for row in rows:
                 messages = json.loads(row["messages_json"])
-                retained = [] if row["turn_id"] in erased_ids else self._retained_messages(messages, row["session_id"], rules)
-                if retained == messages:
-                    continue
-                from colony_sidecar.beliefs.source_projection import erase_removed
-                erase_removed(conn, row["turn_id"], row["session_id"], retained)
-                from colony_sidecar.turns.media import erase_removed as erase_media
-                erase_media(conn, row["turn_id"], row["session_id"], retained)
-                from colony_sidecar.self_model.perspective import erase_removed as erase_preferences
-                erase_preferences(conn, row["turn_id"], row["session_id"], retained)
-                from colony_sidecar.self_model.judgments import erase_removed as erase_judgments
-                erase_judgments(conn, row["turn_id"], row["session_id"], retained)
-                affected.append(row["turn_id"])
-                for selected_id in selected:
-                    conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (row["turn_id"], selected_id))
-                conn.execute("DELETE FROM turn_source_search WHERE turn_id=?", (row["turn_id"],))
-                if retained:
-                    conn.execute("UPDATE turn_sources SET messages_json=? WHERE turn_id=?", (json.dumps(retained, ensure_ascii=True, sort_keys=True, separators=(",", ":")), row["turn_id"]))
-                    self._index_messages(conn, row["turn_id"], retained)
-                    from colony_sidecar.turns.source_vectors import enqueue as enqueue_vectors
-                    enqueue_vectors(conn, row['turn_id'])
-                else:
-                    conn.execute("DELETE FROM turn_sources WHERE turn_id=?", (row["turn_id"],))
-                    conn.execute('DELETE FROM source_vector_jobs WHERE turn_id=?', (row['turn_id'],))
-                # An ordinary response can carry derived excerpts. Preserve its
-                # digest/state fence, but remove cached content after erasure.
-                conn.execute("UPDATE turn_ingestion SET response_json=NULL, error=NULL WHERE turn_id=?", (row["turn_id"],))
+                self._append_erasure(conn, turn_id=turn_id, contact_id=contact_id,
+                    session_id=row['session_id'], scope=row['scope'], messages=messages,
+                    removed=messages, whole=True)
+            affected = []
+            remaining_rows = {row['turn_id']: dict(row) for row in rows}
+            # Each changed row loses at least one message. This finite closure
+            # follows only recorded supplied-source revisions, never topic text.
+            changed = True
+            while changed:
+                changed = False
+                for row in list(remaining_rows.values()):
+                    rules = self._erasure_rules(conn, contact_id)
+                    erased_ids = {rule['turn_id'] for rule in rules if rule['whole_source']}
+                    messages = json.loads(row["messages_json"])
+                    retained = [] if row["turn_id"] in erased_ids else self._retained_messages(messages, row["session_id"], rules)
+                    if retained == messages:
+                        continue
+                    changed = True
+                    if row['turn_id'] not in erased_ids:
+                        self._append_erasure(conn, turn_id=row['turn_id'], contact_id=contact_id,
+                            session_id=row['session_id'], scope=row['scope'], messages=messages,
+                            removed=[message for message in messages if message not in retained], whole=False)
+                    from colony_sidecar.beliefs.source_projection import erase_removed
+                    erase_removed(conn, row["turn_id"], row["session_id"], retained)
+                    from colony_sidecar.turns.media import erase_removed as erase_media
+                    erase_media(conn, row["turn_id"], row["session_id"], retained)
+                    from colony_sidecar.self_model.perspective import erase_removed as erase_preferences
+                    erase_preferences(conn, row["turn_id"], row["session_id"], retained)
+                    from colony_sidecar.self_model.judgments import erase_removed as erase_judgments
+                    erase_judgments(conn, row["turn_id"], row["session_id"], retained)
+                    affected.append(row["turn_id"])
+                    for selected_id in selected:
+                        conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (row["turn_id"], selected_id))
+                    conn.execute("DELETE FROM turn_source_search WHERE turn_id=?", (row["turn_id"],))
+                    if retained:
+                        row['messages_json'] = json.dumps(retained, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+                        conn.execute("UPDATE turn_sources SET messages_json=? WHERE turn_id=?", (row['messages_json'], row["turn_id"]))
+                        self._index_messages(conn, row["turn_id"], retained)
+                        from colony_sidecar.turns.source_vectors import enqueue as enqueue_vectors
+                        enqueue_vectors(conn, row['turn_id'])
+                    else:
+                        del remaining_rows[row['turn_id']]
+                        conn.execute("DELETE FROM turn_sources WHERE turn_id=?", (row["turn_id"],))
+                        conn.execute('DELETE FROM source_vector_jobs WHERE turn_id=?', (row['turn_id'],))
+                    # Keep the immutable request digest, but invalidate cached
+                    # summaries and turn effects after partial source redaction.
+                    conn.execute("UPDATE turn_ingestion SET response_json=NULL, error=NULL WHERE turn_id=?", (row["turn_id"],))
             # Preserve cleanup targets so a retry after a graph outage also
             # removes copies that disappeared from the source table already.
             for selected_id in selected:

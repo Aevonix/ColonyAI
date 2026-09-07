@@ -104,6 +104,9 @@ engine.
 
 `POST /v1/host/memory/sources/forget` accepts an authenticated contact and 1 to
 100 canonical source IDs. The existing MCP server exposes `colony_forget_sources`.
+The native plugin exposes `colony_memory_forget` for explicit owner requests in
+an attested interactive turn. It accepts source IDs from canonical recalled
+provenance, including older sessions; legacy graph memory IDs are not source IDs.
 Native Hermes committed memory removes also attempt an exact, session-bound
 `old_text` match, including when the general plugin owns ordinary turn writes.
 No match or multiple matches produces an explicit unmapped/ambiguous diagnostic;
@@ -117,15 +120,37 @@ unrelated messages remain. New graph summaries carry `source_uri=turn:<id>` and
 is pending. The response separates source erasure from graph cleanup and host
 reconciliation. A repeated request retries the same derived cleanup targets.
 
+New native answers retain the authorized canonical source revisions supplied in
+their recalled context. Removing one revision also removes recorded dependent
+assistant messages, including chains recalled in later sessions. This records
+conservative input dependency, not proof each source influenced every word: an
+entire assistant message can disappear even if it also contains other useful
+material. Independent user messages remain. After partial erasure their new source
+revision can support future answers. Generated citations and user-typed context
+markers cannot establish these dependencies; historical unlinked paraphrases are
+not reconstructed. Other transports need to forward the same structured references
+before their answer copies have this guarantee.
+
 The host outbox migrates its existing v1 database transactionally to v2 with a
 separate contact-bound erasure watermark. Canonical turn/checkpoint delivery
 fetches `/v1/host/memory/sources/erasures` before PUT. A missing endpoint, outage,
 incomplete page or server history behind the host cursor holds replay. The host
 purges both pending payloads and delivered receipts, preserving unrelated pending
-messages as evidence-only checkpoints. Erased IDs cannot be enqueued again after
+messages as evidence-only checkpoints. Authenticated ordinary survivors retain
+their sender and person scope through a source-only route, which schedules user
+claim projection without replaying summary/tool/relationship effects. A predecessor
+server rejects that dedicated route, so its host must keep the survivor queued.
+Ordinary answers carrying source references also use a dedicated route, preventing
+a predecessor backend from silently accepting an answer while discarding its links.
+Erased IDs cannot be enqueued again after
 reconciliation. This is not a model-generation counter. Generic caller-provided
 outbox delivery callbacks must use `ColonyClient.sync_turn(..., outbox=outbox)`
 to participate in reconciliation.
+
+Partial erasure events retain exact message hashes under opaque event IDs in the
+existing cursor sequence. Predecessor readers still filter those message copies
+without treating surviving user sources as wholly deleted. Downgrading preserves
+completed erasures, but predecessor writers do not record new answer dependencies.
 
 This is scoped source erasure, not a claim of global forgetting. Native Hermes
 transcripts/API context, backups, prior graph records without source lineage,

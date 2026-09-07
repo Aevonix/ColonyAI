@@ -491,6 +491,13 @@ class TurnMessage(HostMessage):
                          and isinstance(block.get("text"), str))
 
 
+class SourceReference(BaseModel):
+    """A supplied canonical revision, not a generated citation or truth claim."""
+    model_config = ConfigDict(extra="forbid")
+    source_id: str = Field(min_length=1, max_length=256)
+    source_version: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class TurnSyncRequest(BaseModel):
     identity: HostIdentity
     context: HostTurnContext
@@ -505,6 +512,8 @@ class TurnSyncRequest(BaseModel):
     # the sidecar runs extraction from the raw messages.
     user_message: Optional[Union[HostMessage, TurnMessage]] = None
     assistant_message: Optional[Union[HostMessage, TurnMessage]] = None
+    assistant_source_refs: Optional[List[SourceReference]] = Field(default=None, min_length=1)
+    source_only: Optional[Literal[True]] = None
     # Model that produced the assistant side of this turn (optional, additive).
     # Lets the mining layer detect provider escalations / cloud failovers from
     # real per-turn metadata instead of guessing from text.
@@ -523,6 +532,14 @@ class TurnSyncRequest(BaseModel):
                 raise ValueError("checkpoint cannot also represent an ordinary turn")
             if not self.context.turn_id:
                 raise ValueError("checkpoint requires an idempotent turn id")
+        def nonempty(message):
+            return message is not None and bool(message.content.strip() if isinstance(message.content, str) else message.content)
+        if self.source_only and (self.checkpoint_messages is not None or not any(
+                nonempty(message) for message in (self.user_message, self.assistant_message))):
+            raise ValueError('source-only delivery requires nonempty direct source messages')
+        if self.assistant_source_refs and not any(message is not None and message.role == 'assistant' and nonempty(message)
+                for message in [self.assistant_message, *(self.checkpoint_messages or [])]):
+            raise ValueError('source references require an assistant message')
         return self
 
 

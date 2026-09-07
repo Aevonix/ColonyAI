@@ -214,7 +214,11 @@ class SourceClaimProjection:
         model = None
         try:
             for message in json.loads(job["messages_json"]):
-                if message.get("role") != "user":
+                # Match the text extractor's eligibility before its prior
+                # lookup. Media sources have independent caption/vector jobs;
+                # their block lists are not text search queries.
+                content = message.get('content')
+                if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
                     continue
                 request_timeout = extraction_timeout_seconds(router)
                 if not self.renew_job(job, request_timeout):
@@ -337,6 +341,7 @@ class SourceClaimProjection:
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
             identifier = hashlib.sha256(json.dumps([contact_id, key, [c["id"] for c in group]]).encode()).hexdigest()
             bundles.append({"id": "assertions:" + identifier, "kind": "source_quote",
+                            "source_turn_ids": list(dict.fromkeys(c['turn_id'] for c in group)),
                             "source_uri": "turn:" + group[0]["turn_id"], "claim_status": status,
                             "epistemic_state": status, "atomic_evidence": True,
                             # Rank the grounded language the user supplied.

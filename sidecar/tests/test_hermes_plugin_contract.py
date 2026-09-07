@@ -23,6 +23,7 @@ from colony_sidecar.api.routers.commitment_work import router as commitment_work
 _HOST_ROUTERS = (host_router, task_queue_router, observations_router, executions_router, commitment_work_router)
 
 _INTEGRATION = pathlib.Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin"
+_HOST_PATH = re.compile(r"/v1/host/(?:[A-Za-z0-9/_.-]|\{[^{}\r\n]*\})*")
 
 
 def _normalize(path: str) -> str:
@@ -34,17 +35,26 @@ def _normalize(path: str) -> str:
 def _plugin_paths() -> set[str]:
     """Every /v1/host/... path the plugin source references, normalized.
 
-    The char class allows braces, brackets and quotes so an f-string segment like
-    {args['initiative_id']} is captured whole, then collapsed to {} by _normalize.
+    Quoted expressions inside f-string braces remain intact, while the closing
+    quote of either a single- or double-quoted path is not part of the URL.
     """
     paths: set[str] = set()
     for f in sorted(_INTEGRATION.glob("*.py")):
         src = f.read_text(encoding="utf-8")
-        for raw in re.findall(r"/v1/host/[A-Za-z0-9/_.\-{}\[\]']*", src):
+        for raw in _HOST_PATH.findall(src):
             if "..." in raw:        # prose ellipsis in a docstring/prompt, not a real path
                 continue
             paths.add(_normalize(raw))
     return paths
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("client.post('/v1/host/memory/sources/forget', timeout=3)", "/v1/host/memory/sources/forget"),
+    ('client.get("/v1/host/autonomy/status")', "/v1/host/autonomy/status"),
+    ('client.post(f"/v1/host/initiatives/{args[\'initiative_id\']}/finish")', "/v1/host/initiatives/{}/finish"),
+])
+def test_path_discovery_keeps_expression_quotes_only(source, expected):
+    assert [_normalize(path) for path in _HOST_PATH.findall(source)] == [expected]
 
 
 def _api_paths() -> set[str]:
