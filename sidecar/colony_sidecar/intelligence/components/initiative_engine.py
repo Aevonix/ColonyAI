@@ -2377,7 +2377,9 @@ class InitiativeEngine:
                     description=description,
                     priority=priority,
                     rationale=f"Operational hygiene: {entity_type}",
-                    action_hint="Execute maintenance task",
+                    action_hint=("operational_review" if entity_type == "backup"
+                                 and task.get("evidence_scope") == "legacy_bak_directory_only"
+                                 else "Execute maintenance task"),
                     entity_id=entity_id,
                     dedup_key=f"operational:{entity_id}",
                     expires_at=datetime.now(timezone.utc) + timedelta(days=1),

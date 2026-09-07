@@ -152,9 +152,15 @@ def selected_board():
     return home, board, profile, path
 
 
-def task_snapshot(identifier, contact_id, native):
+def task_snapshot(identifier, contact_id, native, *, review=False):
     """Verify native provenance and, when supplied, the currently held run."""
-    home, board, profile, path = selected_board()
+    if review:
+        home, boards, _ = observed_boards()
+        if home is None or 'default' not in boards:
+            raise ValueError('selected_native_review_board_required')
+        board, profile, path = 'default', 'default', _board_path(home, 'default')
+    else:
+        home, board, profile, path = selected_board()
     if native['native_board'] != board:
         raise ValueError('selected_native_board_required')
     if not path.is_file():
@@ -164,8 +170,9 @@ def task_snapshot(identifier, contact_id, native):
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
         task = db.execute('SELECT * FROM tasks WHERE id=?', (native['native_task_id'],)).fetchone()
-        if (task is None or task['created_by'] != 'colony-local-work'
-                or task['idempotency_key'] != 'colony-local-work:'+identifier
+        creator = 'colony-initiative' if review else 'colony-local-work'
+        if (task is None or task['created_by'] != creator
+                or task['idempotency_key'] != creator+':'+identifier
                 or task['tenant'] != contact_id or task['assignee'] != profile):
             raise ValueError('accepted_native_task_required')
         result = {'source_home_id': hashlib.sha256(str(home).encode()).hexdigest(),
@@ -182,17 +189,34 @@ def task_snapshot(identifier, contact_id, native):
                     or run['claim_lock'] != native['native_claim_lock']):
                 raise ValueError('current_native_run_required')
             result.update(native_run_id=run['id'], native_claim_lock=run['claim_lock'])
-        return result, {'status': task['status'], 'native_run_id': task['current_run_id'],
-                        'attempt_count': count, 'archived': task['status'] == 'archived'}
+        state = {'status': task['status'], 'native_run_id': task['current_run_id'],
+                 'attempt_count': count, 'archived': task['status'] == 'archived'}
+        if review:
+            latest = db.execute('SELECT * FROM task_runs WHERE task_id=? ORDER BY id DESC LIMIT 1',
+                                (task['id'],)).fetchone()
+            gave_up = bool(latest and db.execute("SELECT 1 FROM task_events WHERE task_id=? "
+                "AND kind='gave_up' AND created_at>=? LIMIT 1", (task['id'], latest['started_at'])).fetchone())
+            state.update(contract_sha256=hashlib.sha256((task['body'] or '').encode()).hexdigest(),
+                         completed_run=bool(latest and latest['outcome'] == 'completed'),
+                         gave_up=gave_up and task['status'] == 'blocked' and latest['outcome'] in
+                                 {'gave_up', 'crashed', 'timed_out', 'spawn_failed'},
+                         run_outcome=latest['outcome'] if latest else None,
+                         error=str(latest['error'] or task['last_failure_error'] or '')[:500] if latest else '',
+                         summary=str(latest['summary'] or '')[:1600] if latest else '',
+                         native_run_id=latest['id'] if latest else None)
+        return result, state
 
 
 def project_accepted(identifier, contact_id, context):
     """Observe only an accepted task, never expose a machine-wide board."""
+    review = context.get('native_review')
+    if review:
+        contact_id, context = review['contact_id'], {**review, 'execution_backend': 'kanban'}
     if context.get('execution_backend') != 'kanban' or not context.get('native_task_id'):
         return None
     try:
         native, state = task_snapshot(identifier, contact_id, {
-            'native_board': context.get('native_board'), 'native_task_id': context['native_task_id']})
+            'native_board': context.get('native_board'), 'native_task_id': context['native_task_id']}, review=bool(review))
         if native['source_home_id'] != context.get('source_home_id'):
             raise ValueError('selected_native_home_changed')
         return {'available': True, **native, **state,

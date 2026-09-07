@@ -967,6 +967,10 @@ def required_scope(method: str, path: str) -> str:
     """Return the exact scope required for a scoped credential."""
 
     key = (method.upper(), path)
+    if method.upper() == 'GET' and re.fullmatch(r'/v1/host/initiative-work(?:/[^/]+)?', path):
+        return 'context:read'
+    if method.upper() == 'POST' and re.fullmatch(r'/v1/host/initiative-work/[^/]+/(?:native-task|observe)', path):
+        return 'turns:write'
     if method.upper() == "POST" and path.startswith("/v1/host/commitments/") and path.endswith("/work"):
         return "turns:write"
     if (method.upper() == 'POST'
