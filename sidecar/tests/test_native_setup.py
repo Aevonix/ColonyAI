@@ -187,6 +187,29 @@ def test_native_goals_environment_write_failure_restores_config(args, monkeypatc
     assert before == ((home/'config.yaml').read_bytes(), (state/'.env').read_bytes())
 
 
+def test_native_goals_detach_yaml_aliases_before_changing_selected_branches(tmp_path):
+    from colony_sidecar.setup_native_goals import prepare
+    config = yaml.safe_load('''
+model: {provider: openai, default: selected-main}
+toolsets: &tools [file]
+platform_toolsets: &platforms {cli: *tools, telegram: *tools}
+other_platforms: *platforms
+kanban: &dispatch {}
+other_dispatch: *dispatch
+auxiliary: &aux {goal_judge: {provider: auto}}
+other_aux: *aux
+''')
+    before = yaml.safe_dump(config)
+    updated, _ = prepare(config, tmp_path/'home', native_env={}, observer_env={})
+    assert updated['toolsets'] == updated['platform_toolsets']['cli'] == ['file', 'kanban']
+    assert updated['platform_toolsets']['telegram'] == ['file']
+    assert updated['other_platforms'] == {'cli':['file'], 'telegram':['file']}
+    assert updated['other_dispatch'] == {}
+    assert updated['other_aux'] == {'goal_judge':{'provider':'auto'}}
+    assert updated['auxiliary']['goal_judge'] == {'provider':'openai','model':'selected-main'}
+    assert yaml.safe_dump(config) == before
+
+
 def _changed_adapter(args, monkeypatch):
     current = setup_hermes._adapter_resources(args.adapter_wheel)
     candidate = {**current, 'colony_hermes/qualified_update.py':b'VALUE = "new release"\n',

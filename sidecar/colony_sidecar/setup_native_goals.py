@@ -16,7 +16,8 @@ def prepare(config, home, *, native_env, observer_env, local_work=False, draft_b
     for key in ('kanban', 'platform_toolsets', 'auxiliary'):
         if key in candidate and not isinstance(candidate[key], dict):
             raise ValueError(f'Hermes {key} must be a mapping before enabling native goals')
-    kanban = candidate.setdefault('kanban', {})
+    # YAML aliases survive deepcopy; detach each branch this opt-in changes.
+    kanban = candidate['kanban'] = dict(candidate.get('kanban', {}))
     disabled = {'0', 'false', 'no', 'off'}
     for environment in (os.environ, native_env):
         if str(environment.get('HERMES_KANBAN_DISPATCH_IN_GATEWAY', '')).strip().lower() in disabled:
@@ -24,16 +25,16 @@ def prepare(config, home, *, native_env, observer_env, local_work=False, draft_b
     if 'dispatch_in_gateway' in kanban and kanban['dispatch_in_gateway'] is not True:
         raise ValueError('kanban.dispatch_in_gateway is explicitly disabled or invalid; enable it in the selected Hermes config before --native-goals')
     kanban['dispatch_in_gateway'] = True
-    tools = candidate.setdefault('toolsets', ['hermes-cli'])
-    platforms = candidate.setdefault('platform_toolsets', {})
-    cli_tools = platforms.setdefault('cli', ['hermes-cli'])
-    for selected in (tools, cli_tools):
+    platforms = candidate['platform_toolsets'] = dict(candidate.get('platform_toolsets', {}))
+    for parent, key, default in ((candidate, 'toolsets', ['hermes-cli']), (platforms, 'cli', ['hermes-cli'])):
+        selected = parent.get(key, default)
         if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):
             raise ValueError('Hermes toolsets and platform_toolsets.cli must be string lists')
+        selected = parent[key] = list(selected)
         if 'kanban' not in selected:
             selected.append('kanban')
 
-    auxiliary = candidate.setdefault('auxiliary', {})
+    auxiliary = candidate['auxiliary'] = dict(candidate.get('auxiliary', {}))
     judge = auxiliary.get('goal_judge', {})
     if not isinstance(judge, dict):
         raise ValueError('Hermes auxiliary.goal_judge must be a mapping')
