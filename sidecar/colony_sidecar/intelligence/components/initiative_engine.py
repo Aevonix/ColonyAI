@@ -929,6 +929,7 @@ class InitiativeEngine:
                     "age_days": 999,
                     "evidence_scope": "legacy_bak_directory_only",
                     "evidence_path": str(backup_dir),
+                    "latest_file_modified_at": None,
                     "observed_at": datetime.now(timezone.utc).isoformat(),
                 })
 
@@ -2282,6 +2283,8 @@ class InitiativeEngine:
                     dedup_key=f"system:{entity_id}",
                     expires_at=now + timedelta(hours=2),
                     trigger_data={**{k: v for k, v in item.items() if k != "entity_id"},
+                                  "review_condition": ("unhealthy_status" if status in unhealthy
+                                                       else "elevated_error_rate"),
                                   "context_captured_at": item["observed_at"]},
                 )
             )

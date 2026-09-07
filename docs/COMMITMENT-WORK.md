@@ -38,6 +38,19 @@ it does not parse proposal prose. New proposals name `operational_review`.
 The worker must refresh old observations and distinguish directory metadata
 from unverified backup completeness or restore viability.
 
+For classified backup and system review conditions, the existing 12-hour and
+6-hour review intervals run from native completion rather than the proposal's
+old creation bucket. Stable backup evidence uses the checked path, scope and
+latest file modification time (or an explicitly observed empty directory).
+System evidence uses the generator's existing failure predicate and status,
+not fluctuations in raw telemetry. A meaningful condition change can re-arm
+work sooner; an active review still prevents a second concurrent review of
+the same logical condition. Observation time, age, candidate IDs, prose and
+operator-added references do not themselves restart work. Unknown evidence
+is not assumed equal, and this is not general semantic deduplication. The
+existing initiative rows, native association and completion time retain the
+state; no additional queue or scheduler is introduced.
+
 Two Hermes sessions can reserve the same existing commitment ID. One wins the
 SQLite transaction and the other receives the current undertaking, including
 the owning session and obligation description. This closes an explicit
