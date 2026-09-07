@@ -65,11 +65,32 @@ view prose, including during inference, without reviving a withdrawn view or
 treating the event reference as quoted evidence.
 
 The projection and processing records use the canonical source SQLite database.
-Only new attributed owner sources eligible for ordinary claim derivation enqueue
+New attributed owner sources eligible for ordinary claim derivation enqueue
 reflection; historical imports and session-scoped transcript checkpoints do not.
 Source erasure removes dependent judgment prose and topic text, including
 superseded history. Opaque head tombstones prevent an older view from reviving.
 Fresh retained evidence can establish a new view later.
+
+Newly attached internal native reviews can also contribute a runtime observation
+when the existing review observer reads an ended crash, timeout, spawn failure
+or exhausted execution from the owned native ledger. This is prospective: old
+bindings and runs are not imported. Normal completion and model-written reports
+are not evidence of factual correctness. The source contains lifecycle outcome,
+elapsed time, configured deadline and attempt identity, with no report or error
+prose. Task model overrides are labeled as configuration at observation time;
+the actual serving processor remains unknown. Later observations preserve the
+first source unchanged even if task configuration changes.
+
+The same source transaction queues the existing reflection worker without
+assertion extraction. It receives explicit runtime attribution and must not turn
+one failed attempt into a global competence or personality claim. It may abstain;
+that leaves the observation retained without inventing a working view. Any view
+uses the existing rate limits, owner controls, source dependencies and erasure
+rules. Its only current effect is relevant working-perspective context, for
+example guidance when considering smaller bounded steps after a timeout. It does
+not automatically change tools, permissions, priorities or model selection.
+Controlled tests establish this wiring, not a measured improvement in subsequent
+native work or a claim that every runtime failure should alter a view.
 
 Focused tests exercise scoped HTTP ingress/context, two controlled processor
 identities, changed views with contrary evidence, persistence, erasure, concurrent

@@ -147,7 +147,7 @@ class NativeInitiativeWork:
             return [self.view(row) for row in rows
                     if json.loads(row['context'] or '{}').get('native_review', {}).get('contact_id') == contact_id][:50]
 
-    def attach(self, identifier, person, native, digest):
+    def attach(self, identifier, person, native, digest, *, prospective=False):
         with self.transaction() as db:
             row = self.row(db, identifier)
             view = self.view(row)
@@ -155,14 +155,19 @@ class NativeInitiativeWork:
                 raise ValueError('review_scope_changed')
             binding = {**native, 'contact_id': person, 'contract_sha256': digest}
             if view['native_work']:
-                if view['native_work'] != binding:
+                existing = {k: v for k, v in view['native_work'].items() if k != 'outcome_learning'}
+                if existing != binding:
                     raise ValueError('native_task_association_changed')
                 return view
             if row['status'] != 'pending' or row['assigned_agent_id'] or row['job_id']:
                 raise ValueError('unassigned_pending_review_required')
             context = json.loads(row['context'] or '{}')
-            context['native_review'] = binding
             now = datetime.now(timezone.utc).isoformat()
+            # Prospective only: existing bindings never acquire this marker on
+            # replay, so installing the observer does not mine old failures.
+            if prospective:
+                binding['outcome_learning'] = {'version': 'native-runtime-observation-v1', 'bound_at': now}
+            context['native_review'] = binding
             db.execute("UPDATE initiatives SET context=?,status='assigned',assigned_agent_id=?,assigned_at=? WHERE id=?",
                        (encoded(context), PREFIX+native['native_task_id'], now, identifier))
             self.history(db, identifier, 'native_task_bound', binding)

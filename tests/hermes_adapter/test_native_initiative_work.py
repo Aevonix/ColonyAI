@@ -111,6 +111,17 @@ failed=reviews[1].work(second.id)
 assert failed['status']=='failed' and failed['result']['run_outcome']=='gave_up',failed
 assert failed['result']['error']=='controlled spawn failure',failed
 reviews[0].reconcile(board='default')
+from colony_sidecar.turns import get_turn_idempotency_ledger
+source_ledger=get_turn_idempotency_ledger(state)
+with source_ledger._connect() as evidence:
+ sources=evidence.execute('SELECT messages_json FROM turn_sources').fetchall()
+ assert len(sources)==1,sources
+ message=json.loads(sources[0][0])[0]
+ assert message['role']=='assistant' and message['_native_runtime_observation']=='native-runtime-observation-v1'
+ assert '"outcome": "gave_up"' in message['content'] and '"served_model": "unknown"' in message['content']
+ assert 'controlled spawn failure' not in message['content']
+ assert evidence.execute('SELECT count(*) FROM self_judgment_runs').fetchone()[0]==1
+ assert evidence.execute('SELECT count(*) FROM source_claim_jobs').fetchone()[0]==0
 with kb.connect(board='default') as db:
  assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==2
  assert kb.unblock_task(db,second_id)

@@ -65,7 +65,8 @@ def attach(initiative_id: str, body: ReviewBinding, request: Request):
         native, state = task_snapshot(initiative_id, person, body.model_dump(), review=True)
         if state['contract_sha256'] != body.contract_sha256:
             raise ValueError('native_review_contract_mismatch')
-        return ledger.attach(initiative_id, person, native, body.contract_sha256)
+        return ledger.attach(initiative_id, person, native, body.contract_sha256,
+                             prospective=state['attempt_count'] == 0)
     return guarded(bind)
 
 
@@ -76,5 +77,8 @@ def observe(initiative_id: str, body: ReviewBinding, request: Request):
         native, state = task_snapshot(initiative_id, person, body.model_dump(), review=True)
         if state['contract_sha256'] != body.contract_sha256:
             raise ValueError('native_review_contract_mismatch')
-        return ledger.reconcile(initiative_id, native, state)
+        value = ledger.reconcile(initiative_id, native, state)
+        from colony_sidecar.self_model.native_outcomes import retain_outcome
+        retain_outcome(value, native, state, person)
+        return value
     return guarded(reconcile)
