@@ -66,6 +66,14 @@ services and macOS LaunchAgents use the selected environment and private state.
 This follows the user session's lifetime, not a guarantee of operation before
 login. See the setup guide for status, stop, uninstall and recovery.
 
+When upgrading an existing attachment, update the matching Colony packages,
+then run `colony init --refresh-adapter` for the selected Hermes home while its
+runtimes are stopped. This refreshes a copied adapter that a package upgrade
+alone would leave behind. It preserves private identity and state and retains
+the previous adapter for recovery. Follow the
+[upgrade procedure](docs/LOCAL-HERMES-SETUP.md#update-an-existing-attachment)
+for native package installations and service bindings.
+
 ## What the active paths provide
 
 - **Automatic recollection.** The native memory provider requests context for
@@ -111,6 +119,9 @@ login. See the setup guide for status, stop, uninstall and recovery.
   corrections and applied weights. Historical runtime outcomes remain
   inspectable without establishing task quality or current-model competence.
   [Working perspective](docs/WORKING-PERSPECTIVE.md)
+  When several standing directives quote the same owner message, context
+  includes that exact quotation once per polarity. Each stored directive
+  continues to participate in action checks.
 - **Durable communication preferences.** Supported explicit corrections such
   as "I prefer brief replies" enter dedicated context each turn. Their source,
   later correction and erasure persist across model changes. Task-specific
