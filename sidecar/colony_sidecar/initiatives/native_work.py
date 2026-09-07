@@ -85,6 +85,13 @@ def review_condition(row):
         return {'action': action, 'entity_id': row['entity_id'],
                 'evidence_scope': context['evidence_scope'],
                 'evidence_path': context['evidence_path'], 'latest_file_modified_at': modified}
+    if (action == 'operational_review' and context.get('entity_type') == 'backup'
+            and context.get('evidence_scope') == 'configured_backup_receipt'
+            and context.get('receipt_status') in {'captured', 'failed', 'unavailable'}):
+        return {'action': action, 'entity_id': row['entity_id'],
+                **{key: context.get(key) for key in (
+                    'evidence_scope', 'evidence_path', 'receipt_status', 'captured_at',
+                    'completed_at', 'receipt_path', 'receipt_sha256', 'receipt_unavailable_reason')}}
     if action == 'system_check_health':
         status = str(context.get('status') or '').strip().lower()
         condition = context.get('review_condition')

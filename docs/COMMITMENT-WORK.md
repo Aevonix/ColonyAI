@@ -1,5 +1,28 @@
 # Explicit shared undertakings
 
+Deployments with a different backup producer can set
+`COLONY_INITIATIVE_BACKUP_RECEIPT` to its latest-attempt JSON file. This replaces
+only the legacy `~/.colony/backups/*.bak` check. With no setting, the legacy
+check stays unchanged; other operational checks remain enabled either way.
+The small receipt contract is `schema_version: 1`, `status: "captured"` or
+`"failed"`, and an aware UTC `completed_at`. A captured attempt also contains
+`captured_at`, a relative `receipt_path` beneath the configured file's directory,
+and the SHA256 of that immutable receipt in `receipt_sha256`. The referenced
+JSON must have `status: "captured"` and `at` equal to `captured_at`. A failed
+attempt has null capture/reference fields. Producers publish complete files
+atomically; the reader bounds each file to 64 KiB and verifies the referenced
+receipt bytes. It does not hash the backup archive or perform a restore.
+
+A capture within the existing seven-day interval suppresses the backup warning.
+An older capture or failed attempt produces a scoped, registered read-only
+review. Missing, malformed, future-dated or mismatched receipts instead report
+unavailable evidence with unknown freshness; they do not become fictitious old
+backups or fall back to the legacy directory. Receipt status, actual timestamps
+and immutable reference identify this condition for the existing twelve-hour
+completion-based recurrence rule. Observation time, file mtime and prose do not.
+This reports only the selected producer's evidence, with no recovery-readiness
+claim, extra backup execution, retention policy or effect authorization.
+
 Generated internal reviews can also become shared native work through
 `colony_work_initiative(initiative_id=...)`. The tool accepts only an existing
 canonical proposal ID from an attested owner or system turn, including a

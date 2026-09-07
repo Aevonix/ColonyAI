@@ -1,6 +1,7 @@
 """A settled native review does not immediately restart an unchanged condition."""
 from datetime import datetime, timedelta, timezone
 import os
+import json
 
 import pytest
 
@@ -163,4 +164,29 @@ async def test_system_condition_uses_existing_predicate_and_six_hour_settlement(
     complete_native(store, changed)
     clock.moment += timedelta(hours=6)
     assert persist(store, await candidate('degraded', .22))[1] == 'created'
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_receipt_failure_completion_suppresses_same_attempt_but_new_attempt_rearms(tmp_path, clock):
+    pointer = tmp_path/'latest-attempt.json'
+    attempt = {'schema_version': 1, 'status': 'failed', 'completed_at': clock.moment.isoformat(),
+               'captured_at': None, 'receipt_path': None, 'receipt_sha256': None}
+    pointer.write_text(json.dumps(attempt))
+    engine = engine_module.InitiativeEngine(None, None, None,
+        config=engine_module.InitiativeConfig(backup_receipt_path=str(pointer)))
+    store = stores.InitiativeStore(tmp_path/'state')
+    first, _ = persist(store, await backup_candidate(engine))
+    complete_native(store, first)
+    clock.moment += timedelta(hours=1)
+    # Observation age, UUID, and pointer mtime do not create a second review.
+    pointer.write_text(json.dumps(attempt))
+    assert persist(store, await backup_candidate(engine))[1] == 'deduped_terminal'
+    attempt['completed_at'] = clock.moment.isoformat()
+    pointer.write_text(json.dumps(attempt))
+    changed, outcome = persist(store, await backup_candidate(engine))
+    assert outcome == 'created' and changed.id != first.id
+    complete_native(store, changed)
+    clock.moment += timedelta(hours=12)
+    assert persist(store, await backup_candidate(engine))[1] == 'created'
     store.close()
