@@ -113,9 +113,10 @@ _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "colony_accept_local_draft",
-        "description": "Accept an explicitly requested owner local comparison or summary. Optionally associate it with an existing commitment. Read only the selected local UTF-8 source files and save an unverified local draft; no sending or input changes. Do not schedule inferred work or a report's suggestions.",
+        "description": "Accept an explicitly requested owner local comparison or summary. With an existing commitment, join its active local draft and report its canonical question/sources even when acceptance_matches_request is false. Matching completed results are historical and do not reread changed files. Set new_draft only when the owner explicitly requests a fresh draft after prior work ends; scope conflicts name the existing initiative. Read only selected local UTF-8 sources and save an unverified local draft; no sending or input changes. Do not schedule inferred work or a report's suggestions.",
         "parameters": _parameters({
             "commitment_id": _identifier_model_schema(),
+            "new_draft": {"type": "boolean", "description": "Explicitly requested fresh draft after the prior undertaking ends; omitted or false reuses existing work."},
             "question": {"type": "string", "minLength": 1, "maxLength": 2000},
             "sources": {"type": "array", "minItems": 1, "maxItems": 8,
                         "items": {"type": "string", "description": "Explicit absolute local source path"}},
@@ -2436,7 +2437,8 @@ def register(ctx: Any) -> None:
                 native_drafts.work if native_drafts is not None and native_drafts.worker else None)
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
             task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
-        return local_work.accept(args or {}, scope, client, native_drafts)
+        return local_work.accept(args or {}, scope, client, native_drafts,
+                                 coordinator=work_coordinator, context=context)
     def judgment_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),

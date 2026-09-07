@@ -7,13 +7,13 @@ from pathlib import Path
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from pydantic import field_validator
 
 from colony_sidecar.api.authority import request_authority
 from colony_sidecar.api.routers.executions import authorized_viewer
 from colony_sidecar.commitments.work import CommitmentWork
-from colony_sidecar.commitments.local_work import LocalWork
+from colony_sidecar.commitments.local_work import LocalWork, LocalWorkConflict
 
 router = APIRouter(prefix='/v1/host/commitments', tags=['commitments'])
 
@@ -42,6 +42,14 @@ def operate(commitment_id: str, body: WorkOperation, request: Request):
         raise HTTPException(404, detail='unknown commitment') from None
 
 
+class LocalDraftHandoff(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    session_id: str = Field(min_length=1, max_length=256)
+    task_id: str = Field(min_length=1, max_length=256)
+    turn_id: str = Field(min_length=1, max_length=256)
+    claim_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+
+
 class LocalDraftAcceptance(BaseModel):
     model_config = ConfigDict(extra='forbid')
     contact_id: str = Field(min_length=1, max_length=256)
@@ -50,6 +58,8 @@ class LocalDraftAcceptance(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     sources: list[str] = Field(min_length=1, max_length=8)
     origin: 'NativeDraftOrigin | None' = None
+    new_draft: StrictBool = False
+    handoff: LocalDraftHandoff | None = None
 
     @field_validator('sources')
     @classmethod
@@ -179,6 +189,8 @@ def _accept_local_draft(commitment_id, body, request):
                             execution_backend=backend)
     except KeyError:
         raise HTTPException(404, detail='unknown_commitment') from None
+    except LocalWorkConflict as error:
+        raise HTTPException(409, detail={'reason': str(error), 'initiative_id': error.initiative_id}) from None
     except ValueError as error:
         raise HTTPException(409, detail=str(error)) from None
 

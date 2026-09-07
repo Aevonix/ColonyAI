@@ -60,6 +60,28 @@ class CommitmentCoordinator:
             raise ValueError('invalid work response')
         return result
 
+    def handoff(self, commitment_id, context):
+        current = self._claim(context)
+        if current is None:
+            return None
+        if current['commitment_id'] != commitment_id:
+            raise ValueError('Release the current undertaking before accepting different work')
+        return {key: current['holder'][key] for key in ('session_id', 'task_id', 'turn_id')} | {
+            'claim_id': current['claim_id']}
+
+    def detach_handoff(self, commitment_id, context, handoff):
+        current = self._claim(context)
+        if (current is not None and current['commitment_id'] == commitment_id
+                and current['claim_id'] == handoff['claim_id']):
+            self._detach(current, context)
+
+    def _detach(self, current, context):
+        with self._lock:
+            for key, value in list(self._claims.items()):
+                if key[1:] == self._key(context)[1:] and value['claim_id'] == current['claim_id']:
+                    self._claims.pop(key, None)
+            self._children.pop(current.get('child_session_id', self._key(context)[0]), None)
+
     def handle(self, args, scope, context):
         if (scope is None or not scope.valid_participant or not all(self._key(context))
                 or set(args) != {'operation', 'commitment_id'}
@@ -93,11 +115,7 @@ class CommitmentCoordinator:
                 # An explicit stop may detach this turn after an authoritative
                 # terminal/stale response; it never releases the new holder.
                 # Children keep their snapshots and must stop independently.
-                with self._lock:
-                    for key, value in list(self._claims.items()):
-                        if key[1:] == self._key(context)[1:] and value['claim_id'] == current['claim_id']:
-                            self._claims.pop(key, None)
-                    self._children.pop(current.get('child_session_id', self._key(context)[0]), None)
+                self._detach(current, context)
                 result['detached'] = True
             # Tokens stay in the adapter; the model sees only work state.
             result.pop('claim_id', None)
@@ -106,7 +124,9 @@ class CommitmentCoordinator:
             return json.dumps({'error': 'Commitment coordination unavailable; no undertaking confirmed'})
 
     def before_tool(self, context):
-        if context.get('tool_name') == 'colony_commitment_work':
+        if context.get('tool_name') in {'colony_commitment_work', 'colony_accept_local_draft'}:
+            # Acceptance validates/releases this exact held token in its transaction;
+            # it must also recover an acceptance whose release reply was lost.
             return None
         current = self._claim(context)
         if current is None:

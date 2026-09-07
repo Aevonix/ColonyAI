@@ -8,6 +8,14 @@ the actual transport. These are not model-selected arguments. An optional
 `commitment_id` associates an existing open obligation. A standalone draft does
 not create one.
 
+For the same explicit commitment, concurrent sessions join one active draft
+and receive its canonical question and sources. Completed matching requests
+reuse the historical result; they do not reread changed files. An explicitly
+requested fresh draft uses `new_draft: true` after the previous draft ends.
+Conflicts return the existing initiative ID. See
+[shared undertaking and handoff semantics](COMMITMENT-WORK.md#sharing-an-accepted-local-draft)
+for replay, changed scope and accepting-session lease behavior.
+
 ## Native execution
 
 `colony init --local-work` verifies function calling and creates a native
