@@ -347,10 +347,13 @@ class DirectiveGuard:
         requires = [d for d in active if d.polarity == Polarity.REQUIRE][:limit]
         if prohibits:
             lines.append("MUST NOT (standing boundaries from the owner):")
-            for d in prohibits:
-                lines.append(f"  - {d.raw_text or d.subject}")
+            # Several extracted clauses can reference the same complete owner
+            # message. Keep every selected quotation, but render it only once
+            # per polarity; action enforcement still consults every directive.
+            for text in dict.fromkeys(d.raw_text or d.subject for d in prohibits):
+                lines.append(f"  - {text}")
         if requires:
             lines.append("MUST (standing obligations from the owner):")
-            for d in requires:
-                lines.append(f"  - {d.raw_text or d.subject}")
+            for text in dict.fromkeys(d.raw_text or d.subject for d in requires):
+                lines.append(f"  - {text}")
         return "\n".join(lines)

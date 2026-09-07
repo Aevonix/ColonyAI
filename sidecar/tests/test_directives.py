@@ -179,6 +179,25 @@ def test_guard_context_brief():
     assert "MUST" in brief and "deploy" in brief
 
 
+def test_shared_source_quotation_is_injected_once_without_losing_boundaries():
+    quotation = "Don't change the billing service or the inventory service."
+    requirement = "Always retain the build report and its source references."
+    g = _guard_with(
+        Directive(subject="billing service", polarity=Polarity.PROHIBIT, raw_text=quotation),
+        Directive(subject="inventory service", polarity=Polarity.PROHIBIT, raw_text=quotation),
+        Directive(subject="build report", polarity=Polarity.REQUIRE, raw_text=requirement),
+        Directive(subject="source references", polarity=Polarity.REQUIRE, raw_text=requirement),
+    )
+    before = [d.to_row() for d in g._store.active()]
+    brief = g.context_brief()
+    assert brief.count(quotation) == 1
+    assert brief.count(requirement) == 1
+    assert [d.to_row() for d in g._store.active()] == before
+    for target in ("billing service", "inventory service"):
+        assert not g.check(Action(kind="directed_action", text="modify " + target)).allowed
+    assert len(g.obligations()) == 2
+
+
 # ---------------------------------------------------------------------------
 # Tiered boundary semantics (ACT vs OBSERVE)
 # ---------------------------------------------------------------------------
