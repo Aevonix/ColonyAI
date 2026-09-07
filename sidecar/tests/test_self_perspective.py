@@ -62,6 +62,42 @@ async def context(client, session, *, headers=None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('statement', ['I prefer brief replies.', 'I want brief replies.'])
+async def test_first_person_preference_reaches_later_context_and_can_be_forgotten(source_app, perspective, statement):
+    state, learner, _ = perspective
+    async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
+        await tell(client, statement, 'first-person')
+        preferences = state.preferences()
+        assert [(p['pref_key'], p['value'], p['source_turn_id']) for p in preferences] == [
+            ('communication_style.length', 'short', 'first-person')]
+        brief = learner.build_brief()
+        assert 'Keep replies short and to the point.' in brief and 'turn:first-person' in brief
+        # The later question contains no style terms: the dedicated section
+        # must carry this correction independently of semantic recall.
+        assert brief in await context(client, 'unrelated-later-session')
+        await tell(client, statement, 'first-person')
+        assert len(state.preferences(history=True)) == 1
+
+        await tell(client, 'Actually, I prefer detailed replies.', 'first-person-correction',
+                   occurred='2026-09-06T12:00:00+00:00')
+        correction = state.preferences()[0]
+        assert correction['value'] == 'long'
+        assert correction['supersedes'] == preferences[0]['id']
+        corrected_brief = learner.build_brief()
+        assert 'Give thorough, detailed replies.' in corrected_brief
+        assert 'turn:first-person-correction' in corrected_brief
+        assert corrected_brief in await context(client, 'corrected-later-session')
+
+        erased = await client.post('/v1/host/memory/sources/forget',
+            headers={'Authorization': 'Bearer owner-key'},
+            json={'contact_id': 'contact-a', 'source_ids': ['first-person-correction']})
+        assert erased.status_code == 200
+        assert state.preferences() == []  # Erasure must not reactivate the earlier preference.
+        assert learner.build_brief() == ''
+        assert await context(client, 'after-forget') == ''
+
+
+@pytest.mark.asyncio
 async def test_ordinary_correction_survives_reopen_and_cannot_be_overwritten_or_resurrected(source_app, perspective, tmp_path, monkeypatch):
     state, learner, sm = perspective
     await learner.learn_directive('be concise')  # a legacy value must not reappear after erase
@@ -211,7 +247,10 @@ def test_legacy_opinions_and_evidence_corrections_remain_inspectable_but_inactiv
 
 @pytest.mark.parametrize('text', ['Stop using bullet points.', 'Be concise and detailed.',
     'Use prose rather than bullets.', 'Alice says be formal.', 'Should you be concise?',
-    'Use the code example to explain this bug.'])
+    'Use the code example to explain this bug.', 'I prefer brief meetings.',
+    'I want detailed answers for this task.', 'I prefer not to use prose.',
+    'I said "I prefer brief replies."', 'I want a code example.',
+    'I want a spreadsheet.', 'I want prose.', 'I want a list of brief replies.'])
 def test_ambiguous_or_reported_directives_remain_evidence(perspective, text):
     state, learner, _ = perspective
     state.ledger.record_source('uncertain', contact_id='contact-a', session_id='s', messages=[{'role': 'user', 'content': text}])
