@@ -185,6 +185,55 @@ def test_ungrounded_value_or_unknown_relative_date_is_not_a_claim():
     assert validated_claims(json.dumps([claim(text, "River", valid_from_text="Today")]), message=text, prior=[], observed_at=None) == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("output", ["[{", '{"claims": []}', '[null]', '[{}, {}, {}, {}, {}, {}, {}]'])
+async def test_malformed_extraction_stays_pending_and_recovers_without_losing_source(tmp_path, output):
+    text = "My office is in River."
+    ledger = TurnIdempotencyLedger(tmp_path / "ledger.db")
+    projection = SourceClaimProjection(ledger)
+    ledger.record_source("source", contact_id="contact-a", session_id="session-a",
+                         messages=[{"role": "user", "content": text}])
+    model = Model({text: claim(text, "River")})
+    model.complete = AsyncMock(return_value=SimpleNamespace(content=output, model_id="fixture-malformed"))
+
+    assert await projection.process_one(model)
+    status = projection.status("contact-a")[0]
+    assert status["status"] == "pending"
+    assert status["error"] == "SourceClaimOutputError"
+    assert status["claim_count"] == 0
+    assert status["model"] is None
+    assert ledger.search_sources("office", contact_id="contact-a", session_id="later")
+    assert not await projection.process_one(model)  # The existing backoff still applies.
+    assert model.complete.await_count == 1
+
+    with sqlite3.connect(ledger.db_path) as conn:
+        conn.execute("UPDATE source_claim_jobs SET next_attempt=0 WHERE turn_id='source'")
+    recovered = SourceClaimProjection(TurnIdempotencyLedger(ledger.db_path))
+    assert await recovered.process_one(Model({text: claim(text, "River")}))
+    assert recovered.status("contact-a")[0]["status"] == "complete"
+    assert recovered.status("contact-a")[0]["claim_count"] == 1
+    assert prepared(recovered)[0]["assertions"][0]["value"] == "River"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("output", ["[]", "```json\n[]\n```", json.dumps([claim("My office is in Lake.", "Lake")])])
+async def test_valid_empty_or_unsupported_extraction_completes_without_a_claim(tmp_path, output):
+    text = "My office is in River."
+    ledger = TurnIdempotencyLedger(tmp_path / "ledger.db")
+    projection = SourceClaimProjection(ledger)
+    ledger.record_source("source", contact_id="contact-a", session_id="session-a",
+                         messages=[{"role": "user", "content": text}])
+    model = Model({text: claim(text, "River")})
+    model.complete = AsyncMock(return_value=SimpleNamespace(content=output, model_id="fixture-complete"))
+    assert await projection.process_one(model)
+    status = projection.status("contact-a")[0]
+    assert status["status"] == "complete"
+    assert status["error"] is None
+    assert status["claim_count"] == 0
+    assert status["model"] == "fixture-complete"
+    assert ledger.search_sources("office", contact_id="contact-a", session_id="later")
+
+
 def test_outbox_captures_once_and_never_dates_checkpoints(tmp_path, monkeypatch):
     module = _load_client("source_time_outbox")
     outbox = module.TurnOutbox(tmp_path / "outbox.sqlite3")

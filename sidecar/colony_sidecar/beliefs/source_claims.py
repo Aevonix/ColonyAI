@@ -46,6 +46,10 @@ _PERSONAL_DISAVOWAL = re.compile(
     r"\s+about\s+(?:me|us)\b", re.I)
 
 
+class SourceClaimOutputError(ValueError):
+    """An extraction response failed its array contract, not a usefulness check."""
+
+
 def norm_value(value) -> str:
     """Unicode-preserving exact normalized equality, never substring agreement."""
     return re.sub(r"[\W_]+", " ", unicodedata.normalize("NFKC", str(value or "")).casefold()).strip()
@@ -53,7 +57,12 @@ def norm_value(value) -> str:
 
 def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: str | None,
                      timezone_name: str = "UTC") -> list[dict]:
-    """Accept only quoted, scoped assertions; ambiguous output remains source text."""
+    """Accept quoted assertions; malformed extraction remains an unfinished job.
+
+    A well-formed empty array or unsupported candidate may yield no claims.
+    An invalid response envelope must reach the existing worker failure path
+    so it cannot be recorded as successful rejection of low-value information.
+    """
     observed = utc_timestamp(observed_at)
     observed_at = observed.isoformat() if observed else None
     text = raw.strip()
@@ -62,14 +71,12 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
     try:
         values = json.loads(text)
     except (TypeError, ValueError):
-        return []
-    if not isinstance(values, list) or len(values) > 6:
-        return []
+        raise SourceClaimOutputError("invalid_claim_array_json") from None
+    if not isinstance(values, list) or len(values) > 6 or any(not isinstance(item, dict) for item in values):
+        raise SourceClaimOutputError("invalid_claim_array_shape")
     prior_by_id = {row["id"]: row for row in prior}
     output = []
     for item in values:
-        if not isinstance(item, dict):
-            continue
         quality = promotion_metadata(item)
         if quality is None:
             continue
