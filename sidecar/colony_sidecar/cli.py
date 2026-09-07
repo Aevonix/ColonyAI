@@ -39,6 +39,7 @@ def main() -> None:
     init_p.add_argument("--model-url", help="One local OpenAI-compatible API root")
     init_p.add_argument("--model", help="Model identifier at that endpoint")
     init_p.add_argument("--adapter-wheel", help="Use this canonical colony-hermes wheel instead of the installed distribution")
+    init_p.add_argument("--refresh-adapter", action="store_true", help="Refresh an existing stopped instance's adapter from the selected package; retain private state")
     init_p.add_argument("--replace-memory-provider", action="store_true", help="Explicitly replace selection of another memory provider; retain its files and a config backup")
     init_p.add_argument("--no-harness", action="store_true", help="Skip all harness setup (standalone mode)")
     # Backward compatibility

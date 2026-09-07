@@ -90,6 +90,86 @@ def test_attach_preserves_existing_identity_channels_model_and_unrelated_env(arg
     assert yaml.safe_load((home/'colony/hermes-original/config.yaml').read_text()) == original
 
 
+def _changed_adapter(args, monkeypatch):
+    current = setup_hermes._adapter_resources(args.adapter_wheel)
+    candidate = {**current, 'colony_hermes/qualified_update.py':b'VALUE = "new release"\n',
+        'colony_hermes/plugin.yaml':current['colony_hermes/plugin.yaml']+b'\n# Selected new release\n'}
+    monkeypatch.setattr(setup_hermes, '_adapter_resources', lambda wheel: candidate)
+    args.refresh_adapter = True
+    return current, candidate
+
+
+def test_explicit_refresh_preserves_state_and_worker_and_is_idempotent(args, monkeypatch):
+    assert setup.run_init(None, args) == 0
+    home = Path(args.hermes_home); state = home/'colony'
+    current, candidate = _changed_adapter(args, monkeypatch)
+    # Existing known worker, with independent config and state, must remain bound.
+    worker = home/'profiles/colony-drafts'; plugin = worker/'plugins/colony'
+    plugin.mkdir(parents=True)
+    (plugin/'__init__.py').write_text(setup_hermes._forwarder(state/'adapter', 'colony_hermes'))
+    (plugin/'plugin.yaml').write_bytes(current['colony_hermes/plugin.yaml'])
+    (worker/'config.yaml').write_text(yaml.safe_dump({'plugins':{'colony':{'instance_dir':str(state)}},
+        'model':{'default':'retain-model'},'unrelated':{'keep':[1,2]}}))
+    manifest = json.loads((state/'instance.json').read_text())
+    manifest['local_work'] = {'executor':'kanban','worker_profile':'colony-drafts','board':'colony-drafts'}
+    (state/'instance.json').write_text(json.dumps(manifest))
+    (state/'retained-memory.db').write_bytes(b'unchanged private fixture state')
+    paths = [home/'SOUL.md', home/'config.yaml', home/'.env', state/'.env',
+        state/'api-keyring.json', state/'retained-memory.db', worker/'config.yaml', plugin/'__init__.py']
+    before = {path:path.read_bytes() for path in paths}
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Refresh made an inference call'))
+    assert setup.run_init(None, args) == 0
+    assert all(path.read_bytes()==raw for path,raw in before.items())
+    assert setup_hermes._copied_resources(state/'adapter') == candidate
+    assert (plugin/'plugin.yaml').read_bytes() == candidate['colony_hermes/plugin.yaml']
+    assert json.loads((state/'instance.json').read_text())['local_work']==manifest['local_work']
+    backups = list(state.glob('adapter-previous-*')); assert len(backups)==1
+    assert setup_hermes._copied_resources(backups[0]) == current
+    manifest_before=(state/'instance.json').read_bytes();mtime=(state/'instance.json').stat().st_mtime_ns
+    assert setup.run_init(None, args)==0
+    assert list(state.glob('adapter-previous-*'))==backups
+    assert (state/'instance.json').read_bytes()==manifest_before
+    assert (state/'instance.json').stat().st_mtime_ns==mtime
+
+
+def test_refresh_rejects_local_edits_before_mutation(args, monkeypatch):
+    assert setup.run_init(None, args)==0
+    home=Path(args.hermes_home);state=home/'colony'
+    _changed_adapter(args, monkeypatch)
+    edited=state/'adapter/colony_hermes/evidence.py';edited.write_bytes(edited.read_bytes()+b'\n# Local change\n')
+    before={str(path.relative_to(home)):path.read_bytes() for path in home.rglob('*') if path.is_file()}
+    assert setup.run_init(None,args)==1
+    assert before=={str(path.relative_to(home)):path.read_bytes() for path in home.rglob('*') if path.is_file()}
+
+
+def test_refresh_write_failure_restores_previous_adapter(args, monkeypatch):
+    assert setup.run_init(None,args)==0
+    home=Path(args.hermes_home);state=home/'colony'
+    current,_=_changed_adapter(args,monkeypatch)
+    before=(state/'instance.json').read_bytes(),(home/'plugins/colony/plugin.yaml').read_bytes()
+    write=setup._atomic_hermes_config_write
+    def fail_manifest(path,original,updated):
+        if path==state/'instance.json':raise OSError('Disposable manifest write failure')
+        write(path,original,updated)
+    monkeypatch.setattr(setup,'_atomic_hermes_config_write',fail_manifest)
+    assert setup.run_init(None,args)==1
+    assert setup_hermes._copied_resources(state/'adapter')==current
+    assert before==((state/'instance.json').read_bytes(),(home/'plugins/colony/plugin.yaml').read_bytes())
+
+
+def test_refresh_installed_package_updates_binding_without_another_copy(args, monkeypatch):
+    binding={'mode':'native-installed','version':'old','sources':{'colony_hermes':'/native/package'}}
+    monkeypatch.setattr(setup_hermes,'_adapter_binding',lambda *a:binding)
+    assert setup.run_init(None,args)==0
+    home=Path(args.hermes_home);state=home/'colony'
+    current,_=_changed_adapter(args,monkeypatch)
+    binding={**binding,'version':'new'}
+    assert setup.run_init(None,args)==0
+    assert setup_hermes._copied_resources(state/'adapter')==current
+    assert not list(state.glob('adapter-previous-*')) and not (home/'plugins').exists()
+    assert json.loads((state/'instance.json').read_text())['adapter_binding']==binding
+
+
 @pytest.mark.parametrize('address', ['127.0.0.1', '203.0.113.10'])
 def test_selected_hostname_is_bound_for_runtime_routing(args, monkeypatch, address):
     from colony_sidecar.router.router import LLMRouter
