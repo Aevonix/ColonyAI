@@ -563,8 +563,8 @@ def test_hung_delivery_does_not_lock_enqueue_and_expired_lease_recovers(tmp_path
         canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode()).hexdigest()
         with server_lock:
-                previous = server.setdefault(value["turn_id"], digest)
-                assert previous == digest
+            previous = server.setdefault(value["turn_id"], digest)
+            assert previous == digest
         if not release.is_set():
             started.set()
             assert expire_callback.wait(1), "fixture did not finish the blocked callback"
