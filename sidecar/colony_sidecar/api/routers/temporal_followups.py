@@ -139,7 +139,7 @@ def value(store, row):
 
 
 @router.post('')
-def register(body: ExpectedReply, request: Request):
+async def register(body: ExpectedReply, request: Request):
     store, person = ledger(request, body.contact_id, write=True)
     def create():
         if source_bindings(body.source_refs, body.source_versions, person=person, session_id=body.session_id):

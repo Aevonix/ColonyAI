@@ -30,7 +30,7 @@ assert manager._plugins['colony'].enabled, manager._plugins['colony'].error
 assert 'colony_judgments' in manager._plugins['colony'].tools_registered
 import colony_hermes
 schema = next(s for s in colony_hermes._TOOL_SCHEMAS if s['name'] == 'colony_judgments')
-assert set(schema['parameters']['properties']) == {'operation', 'judgment_id', 'source_id'}
+assert set(schema['parameters']['properties']) == {'operation', 'judgment_id', 'source_id', 'subject_contact_id', 'appraisal_id'}
 from run_agent import AIAgent
 import run_agent
 # 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.

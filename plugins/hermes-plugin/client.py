@@ -1677,6 +1677,7 @@ class ColonyClient:
         checkpoint_messages: Sequence[Mapping[str, Any]] | None = None,
         assistant_source_refs: Sequence[Mapping[str, str]] | None = None,
         source_only: bool | None = None,
+        instruction_only: bool = False,
         require_source_receipt: bool = False,
         occurred_at: str | None = None,
         timezone_name: str | None = None,
@@ -1746,7 +1747,8 @@ class ColonyClient:
                 payload["checkpoint_messages"] = list(checkpoint_messages)
 
             if turn_id:
-                route = ('turns/source-survivors' if source_only else
+                route = ('turns/task-instruction' if instruction_only else
+                         'turns/source-survivors' if source_only else
                          'turns/source-linked' if assistant_source_refs else 'turns')
                 response = self.put(
                     f"/v2/host/{route}/{quote(str(turn_id), safe='')}",

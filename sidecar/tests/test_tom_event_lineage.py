@@ -126,7 +126,7 @@ async def test_cached_approach_forget_reopen_changes_next_ordinary_context(appro
 
 
 @pytest.mark.asyncio
-async def test_legacy_numeric_observation_is_retained_without_changing_cached_approach(approach, monkeypatch):
+async def test_ordinary_ingress_no_longer_produces_legacy_numeric_observations(approach, monkeypatch):
     r = approach
     async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
         await ingest(client, r)
@@ -138,8 +138,8 @@ async def test_legacy_numeric_observation_is_retained_without_changing_cached_ap
         await ingest(client, r, turn_id='turn-b', session='session-b')
         assert (await r.profiler.refresh_due())['profiled'] == 0
         assert 'later-source-topic' not in (await relationship_context(client))['colony-approach']
-        assert 'later-source-topic' in r.engagement.get_profile('contact-a')['legacy_profile']['qual']['topics']
-        assert r.engagement._conn.execute('SELECT count(*) FROM engagement_observations WHERE source_lineage_json IS NOT NULL').fetchone()[0] == 2
+        assert 'later-source-topic' not in r.engagement.get_profile('contact-a')['legacy_profile']['qual'].get('topics', [])
+        assert r.engagement._conn.execute('SELECT count(*) FROM engagement_observations WHERE source_lineage_json IS NOT NULL').fetchone()[0] == 0
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_ordinary_ingress_forget_removes_text_and_numeric_influence(relati
         history = await client.get('/v1/host/affect/history/contact-a')
         assert any(e.get('evidence_basis') == 'canonical_source' and e.get('source_lineage') for e in history.json()['events'])
         assert r.affect.get_state('contact-a')['current_valence'] < .1
-        assert r.engagement.get_profile('contact-a')['legacy_profile']['dims']['warmth']['v'] == .5
+        assert r.engagement.get_profile('contact-a')['legacy_profile']['dims']['warmth']['v'] == .9
         assert r.engagement.get_profile('contact-a')['dims'] == {}
         assert 'neutral-source-topic' not in await engagement_brief(client)
         result = await forget(client)
@@ -200,22 +200,15 @@ async def test_ordinary_ingress_forget_removes_text_and_numeric_influence(relati
 
 
 @pytest.mark.asyncio
-async def test_forget_while_engagement_model_is_running_drops_late_result(relations, monkeypatch):
-    started, release = asyncio.Event(), asyncio.Event()
-    async def blocked(*args, **kwargs):
-        started.set()
-        await release.wait()
-        return {'style': {'warmth': .1}, 'topics': ['neutral-late-topic']}
-    monkeypatch.setattr(relations.extractor, 'extract_engagement', blocked)
+async def test_ingress_does_not_run_retired_engagement_extractor(relations, monkeypatch):
+    async def retired(*args, **kwargs):
+        raise AssertionError('Numeric engagement extraction is retired')
+    monkeypatch.setattr(relations.extractor, 'extract_engagement', retired)
     async with AsyncClient(transport=ASGITransport(app=relations.app), base_url='http://test') as client:
-        await ingest(client, relations, wait=False)
-        await asyncio.wait_for(started.wait(), 3)
+        await ingest(client, relations)
         assert relations.affect.count_events() == 1
         await forget(client)
-        release.set()
-        await asyncio.wait_for(asyncio.gather(*relations.tasks), 3)
         assert relations.affect.count_events() == 0
-        assert relations.affect.get_state('contact-a')['event_count'] == 0
         assert relations.engagement.get_profile('contact-a')['observation_count'] == 0
         assert await engagement_brief(client) == ''
 

@@ -230,7 +230,7 @@ class TemporalFollowups:
                 parent = db.execute('SELECT made_at FROM commitments WHERE id=?', (row['commitment_id'],)).fetchone()
                 if parent is None or stamp < epoch(parent['made_at']) or stamp > self.clock():
                     continue
-                matches.append({key: item.get(key) for key in ('external_ref', 'reply_to_ref', 'receipt_ref', 'ts', 'channel', 'reaction')})
+                matches.append({key: item.get(key) for key in ('external_ref', 'reply_to_ref', 'provider_reply_to_ref', 'receipt_ref', 'ts', 'channel', 'reaction')})
             if not matches or row['reply'] is not None:
                 return row
             row['reply'] = {'matches': matches, 'recorded_at': self.clock()}

@@ -4146,6 +4146,8 @@ def create_app() -> FastAPI:
     app.include_router(temporal_followups_router.router)
     from colony_sidecar.api.routers import transport as transport_router
     app.include_router(transport_router.router)
+    from colony_sidecar.api.routers import followup_plans
+    app.include_router(followup_plans.router)
 
     # Exact PUT/GET action endpoint.  Middleware maps these methods to
     # actions:execute/actions:verify; the router independently rejects legacy,

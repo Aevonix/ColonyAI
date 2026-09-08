@@ -3972,6 +3972,19 @@ async def source_survivor_sync(turn_id: str, body: TurnSyncRequest, response: Re
     return await turns_sync_v2(turn_id, body, response, request)
 
 
+@v2_router.put('/turns/task-instruction/{turn_id:path}', response_model=TurnSyncResponse)
+async def task_instruction_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request):
+    """Retain a direct owner instruction without duplicating ordinary learning."""
+    from colony_sidecar.api.routers.executions import authorized_viewer
+    _, owner = authorized_viewer(request, body.context.contact_id, scope='turns:write')
+    if (not owner or not turn_id.startswith('task-instruction:') or body.context.turn_id != turn_id
+            or body.source_only is not True or body.user_message is None or body.assistant_message is not None
+            or body.checkpoint_messages is not None or body.assistant_source_refs):
+        raise HTTPException(422, detail='direct_owner_instruction_required')
+    request.state.task_instruction_only = True
+    return await turns_sync_v2(turn_id, body, response, request)
+
+
 @v2_router.put("/turns/{turn_id:path}", response_model=TurnSyncResponse)
 async def turns_sync_v2(
     turn_id: str,
@@ -4114,6 +4127,7 @@ async def _process_turn_sync(
                 session_id=body.context.session_id, messages=source_messages,
                 occurred_at=(body.context.metadata or {}).get("occurred_at"),
                 timezone_name=body.context.timezone,
+                derive_claims=not getattr(getattr(request, 'state', None), 'task_instruction_only', False),
             )
         except SourceErased:
             return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")

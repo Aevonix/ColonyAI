@@ -104,6 +104,16 @@ wait_id=registered['wait_id']
 sources=ledger.source_references(registered['source_refs'],contact_id=owner.contact_id,session_id='owner-task')
 assert len(sources)==1 and sources[0]['source_id'].startswith('task-instruction:')
 assert registered['source_versions']=={r['source_id']:r['source_version'] for r in sources}
+# V4 binds the selected default explicitly while old envelopes keep their bytes.
+base=module.HermesOwnerMessageIntentV1.build(recipient='Fixture colleague',message='Please send the report.',
+    context={'session_id':'owner-task','turn_id':'turn-owner-task','tool_call_id':'prepared-send'})
+old=base.to_dict();assert old['version']==1 and 'channel' not in old
+plan={'channel':'whatsapp','message':'A prepared followup'}
+v4=base.with_followup(plan);assert v4.to_dict()['channel']==v4.to_dict()['followup']['channel']=='whatsapp'
+assert v4.to_dict()['schema']=='HermesContactMessageIntentV4'
+assert v4.delivery_id==base.delivery_id and v4.idempotency_key==base.idempotency_key
+assert v4.intent_digest==base.with_followup(plan).intent_digest
+assert base.to_dict()==old
 with ledger._connect() as db:
  row=db.execute('SELECT * FROM turn_sources WHERE turn_id=?',(sources[0]['source_id'],)).fetchone()
  assert json.loads(row['messages_json'])==[{'role':'user','content':instruction}]

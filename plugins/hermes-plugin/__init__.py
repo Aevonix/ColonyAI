@@ -276,6 +276,14 @@ _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
             "message": {"type": "string", "minLength": 1, "maxLength": 16000},
             "recipient": {"type": "string", "minLength": 1, "maxLength": 160},
+            "followup": _parameters({
+                "commitment_id": {"type": "string"}, "recipient_id": {"type": "string"},
+                "purpose": {"type": "string", "maxLength": 512},
+                "message": {"type": "string", "maxLength": 8000},
+                "expected_after_seconds": {"type": "number", "exclusiveMinimum": 0},
+                "expires_at": {"type": "number", "description": "UTC epoch expiry of this one prepared task nudge"},
+                "timezone_name": {"type": "string"},
+            }, ("commitment_id", "recipient_id", "purpose", "message", "expected_after_seconds", "expires_at")),
         }, ("recipient", "message")),
     },
 ]
@@ -944,6 +952,7 @@ class HermesOwnerMessageIntentV1:
     _message: str
     _channel: str | None
     _initiator_lane: str
+    _followup: dict | None = None
 
     @classmethod
     def build(
@@ -1081,7 +1090,14 @@ class HermesOwnerMessageIntentV1:
             result["channel"] = self._channel
         if self._initiator_lane == "attested_system":
             result["initiator_lane"] = "attested_system"
+        if self._followup is not None:
+            result.update(schema='HermesContactMessageIntentV4', version=4,
+                          initiator_lane=self._initiator_lane, followup=self._followup)
         return result
+
+    def with_followup(self, plan):
+        candidate = replace(self, _channel=plan["channel"], _followup=dict(plan))
+        return replace(candidate, intent_digest=_sha256_json(candidate.to_dict()))
 
 
 def _validated_owner_message_admission(
@@ -1359,6 +1375,8 @@ class _ToolDispatcher:
         enabled_message_tools: Sequence[str] = (),
         enabled_read_tools: Sequence[str] = _READ_TOOL_NAMES,
         scopes: _TransportScopeRegistry | None = None,
+        work_coordinator=None,
+        request_memory=None,
     ):
         self._client = client
         self._mediator = mediator
@@ -1380,6 +1398,8 @@ class _ToolDispatcher:
         )
         self._scopes = scopes or _TRANSPORT_SCOPES
         self._intent_ledger = _ActionIntentLedger()
+        self._work_coordinator = work_coordinator
+        self._request_memory = request_memory
 
     def dispatch(self, name: str, args: Mapping[str, Any], **handler_kwargs: Any) -> str:
         try:
@@ -1507,10 +1527,7 @@ class _ToolDispatcher:
                 "reason": "stable Hermes turn identity is unavailable",
                 "status": "denied",
             })
-        if set(args) not in (
-            {"recipient", "message"},
-            {"recipient", "message", "channel"},
-        ):
+        if not {"recipient", "message"} <= set(args) or set(args) - {"recipient", "message", "channel", "followup"}:
             return _canonical_json({
                 "effect_performed": False,
                 "reason": "owner message arguments are invalid",
@@ -1535,10 +1552,15 @@ class _ToolDispatcher:
                     else "owner"
                 ),
             )
+            if 'followup' in args:
+                plan = followup_tools.prepare_message_plan(args['followup'], scope, self._client,
+                    self._work_coordinator, self._request_memory, context,
+                    intent.delivery_id, args.get('channel') or 'whatsapp')
+                intent = intent.with_followup(plan)
         except (TypeError, ValueError):
             return _canonical_json({
                 "effect_performed": False,
-                "reason": "owner message arguments are invalid",
+                "reason": "owner message arguments or prepared followup are invalid",
                 "status": "denied",
             })
         if not self._intent_ledger.accept(intent):
@@ -2283,6 +2305,8 @@ def register(ctx: Any) -> None:
         enabled_message_tools=tuple(boundary.enabled_message_tools),
         enabled_read_tools=tuple(boundary.enabled_read_tools),
         scopes=_TRANSPORT_SCOPES,
+        work_coordinator=work_coordinator,
+        request_memory=request_memory,
     )
 
     def direct_text(content):

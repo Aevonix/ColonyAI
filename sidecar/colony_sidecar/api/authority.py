@@ -971,9 +971,11 @@ def required_scope(method: str, path: str) -> str:
         return 'context:read'
     if method.upper() == 'POST' and re.fullmatch(r'/v1/host/initiative-work/[^/]+/(?:native-task|observe)', path):
         return 'turns:write'
+    if method.upper() == 'POST' and re.fullmatch(r'/v1/host/temporal-followups/[^/]+/(?:verify-plan|check-plan)', path):
+        return 'transport:write'
     if method.upper() == 'GET' and re.fullmatch(r'/v1/host/temporal-followups(?:/[^/]+)?', path):
         return 'context:read'
-    if method.upper() == 'POST' and re.fullmatch(r'/v1/host/temporal-followups(?:/[^/]+/(?:change|native-task|prepare|observe))?', path):
+    if method.upper() == 'POST' and re.fullmatch(r'/v1/host/temporal-followups(?:/[^/]+/(?:change|native-task|prepare|observe|bind-plan))?', path):
         return 'turns:write'
     if method.upper() == "POST" and path.startswith("/v1/host/commitments/") and path.endswith("/work"):
         return "turns:write"

@@ -23,6 +23,8 @@ class TransportReceipt(BaseModel):
     outbound_ref: str = Field(default='', max_length=256)
     occurred_at: str = Field(min_length=1, max_length=64)
     status: Literal['accepted', 'delivered', 'read', 'received']
+    followup_wait_id: str | None = Field(default=None, min_length=1, max_length=128)
+    action_digest: str | None = Field(default=None, pattern='^[a-f0-9]{64}$')
 
 
 def reconcile_receipts(waits, comms, row):
@@ -58,6 +60,8 @@ async def observe(body: TransportReceipt, request: Request):
         raise HTTPException(403, detail='trusted_transport_producer_required')
     if (body.direction == 'in') != (body.status == 'received'):
         raise HTTPException(422, detail='transport_direction_status_mismatch')
+    if bool(body.followup_wait_id) != bool(body.action_digest) or (body.followup_wait_id and body.direction != 'out'):
+        raise HTTPException(422, detail='followup_receipt_binding_required')
     from colony_sidecar.api.routers import host
     if host._comms_log is None or host._contacts_store is None:
         raise HTTPException(503, detail='communications_unavailable')
@@ -75,6 +79,13 @@ async def observe(body: TransportReceipt, request: Request):
             from colony_sidecar.initiatives.temporal_followup import TemporalFollowups
             from colony_sidecar.api.routers.temporal_followups import refresh_source_bindings
             waits = TemporalFollowups(host._commitment_store)
+            if body.followup_wait_id:
+                child_wait = waits.get(body.followup_wait_id)
+                if (child_wait['contact_id'] != body.contact_id
+                        or child_wait.get('authority_scope', {}).get('plan', {}).get('channel') != body.channel):
+                    raise ValueError('followup_receipt_recipient_mismatch')
+                waits.mark_followup_dispatched(body.followup_wait_id, action_digest=body.action_digest,
+                    receipt_ref=body.receipt_ref)
             for row in waits.list_for_context(contact_id=body.contact_id, limit=100):
                 parent = host._commitment_store.get(row['commitment_id'])
                 row = refresh_source_bindings(waits, row, parent['person_id'])
