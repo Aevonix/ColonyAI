@@ -958,7 +958,10 @@ def compatible_scopes(method: str, path: str) -> frozenset[str]:
     this route-local alias.
     """
 
-    if (method.upper(), path) in WORK_READ_SURFACE_V1 or (method.upper(), path) == ("POST", "/v1/host/learning/correction"):
+    if (method.upper(), path) in WORK_READ_SURFACE_V1 or (method.upper(), path) in {
+        ("POST", "/v1/host/learning/correction"),
+        ("POST", "/v1/host/response-guard/check"),
+    }:
         return _API_ACCESS_COMPATIBILITY
     return _NO_COMPATIBILITY_SCOPES
 
@@ -1099,6 +1102,7 @@ def required_scope(method: str, path: str) -> str:
     exact = {
         ("GET", "/v1/host/admin/auth/status"): "auth:admin",
         ("GET", "/v1/host/contact-policy"): "contacts:policy-read",
+        ("POST", "/v1/host/response-guard/check"): "response-guard:check",
         ("GET", "/v1/host/queue/contract"): "workers:contract",
         ("POST", "/v1/host/memory/read"): "memory:read",
         ("POST", "/v1/host/memory/search"): "memory:search",

@@ -6,10 +6,18 @@ import pytest
 from pydantic import ValidationError
 
 from colony_sidecar.api.routers import host as host_mod
+from colony_sidecar.api.authority import compatible_scopes, required_scope
 from colony_sidecar.api.schemas.host import ResponseGuardCheckRequest
 from colony_sidecar.gate.context_provenance import (
     ContextProvenanceStore, ProvenanceCrossContextGuard)
 from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
+
+
+def test_outbound_evaluator_scope_does_not_grant_guard_audit_access():
+    assert required_scope("POST", "/v1/host/response-guard/check") == "response-guard:check"
+    assert compatible_scopes("POST", "/v1/host/response-guard/check") == frozenset({"api:access"})
+    assert required_scope("GET", "/v1/host/response-guard/audit") == "api:access"
+    assert compatible_scopes("GET", "/v1/host/response-guard/audit") == frozenset()
 
 
 @pytest.mark.asyncio
