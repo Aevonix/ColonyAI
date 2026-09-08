@@ -83,4 +83,11 @@ def test_coverage_requires_connection_watermark_freshness_and_no_activity(tmp_pa
     assert result['reasons'] == ['recipient_activity_requires_review']
     assert store.coverage(producer='bridge',account_id='account',contact_id='other',since=100,now=121)['observed']
     assert not store.coverage(producer='bridge',account_id='account',contact_id='other',since=100,now=126)['observed']
+    # A new, actually observed interval excludes older expired sequence gaps,
+    # while an older since still cannot claim uninterrupted coverage.
+    store.observe_coverage(**(observation | {'watermark':4,'sequence_floor':4,'connected_since':130,'observed_at':140,'now':140}))
+    assert store.coverage(producer='bridge',account_id='account',contact_id='other',since=131,now=141)['observed']
+    assert not store.coverage(producer='bridge',account_id='account',contact_id='other',since=120,now=141)['observed']
+    with pytest.raises(ValueError,match='invalid_ingress_coverage'):
+        store.observe_coverage(**(observation | {'sequence_floor':1}))
     conn.close()

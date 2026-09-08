@@ -29,8 +29,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             producer TEXT NOT NULL, account_id TEXT NOT NULL, epoch TEXT NOT NULL,
             connected_since REAL, observed_at REAL NOT NULL, watermark INTEGER NOT NULL,
             connected INTEGER NOT NULL, unavailable INTEGER NOT NULL,
+            sequence_floor INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY(producer,account_id));
     ''')
+    columns = {row[1] for row in conn.execute('PRAGMA table_info(transport_ingress_coverage)')}
+    if 'sequence_floor' not in columns:
+        conn.execute('ALTER TABLE transport_ingress_coverage ADD COLUMN sequence_floor INTEGER NOT NULL DEFAULT 0')
     conn.commit()
 
 
@@ -192,9 +196,10 @@ class TransportIngress:
         return [{'receipt_id': row['receipt_id'], 'journal_ref': row['journal_ref']} for row in selected]
 
     def observe_coverage(self, *, producer, account_id, epoch, connected_since, observed_at,
-                         watermark, connected, unavailable, now=None):
+                         watermark, connected, unavailable, sequence_floor=0, now=None):
         stamp = time.time() if now is None else float(now)
         if (type(watermark) is not int or watermark < 0 or type(connected) is not bool
+                or type(sequence_floor) is not int or not 0 <= sequence_floor <= watermark
                 or type(unavailable) is not int or unavailable < 0
                 or not 0 < float(observed_at) <= stamp + 1
                 or (connected and (connected_since is None or not 0 < connected_since <= observed_at))):
@@ -204,9 +209,9 @@ class TransportIngress:
         if old and (observed_at < old['observed_at'] or (epoch == old['epoch'] and watermark < old['watermark'])):
             raise ValueError('ingress_coverage_regression')
         with self.conn:
-            self.conn.execute('INSERT OR REPLACE INTO transport_ingress_coverage VALUES (?,?,?,?,?,?,?,?)',
+            self.conn.execute('INSERT OR REPLACE INTO transport_ingress_coverage VALUES (?,?,?,?,?,?,?,?,?)',
                               (producer, account_id, epoch, connected_since, observed_at,
-                               watermark, int(connected), unavailable))
+                               watermark, int(connected), unavailable, sequence_floor))
 
     def coverage(self, *, producer, account_id, contact_id, since, now=None, max_age=5):
         now = time.time() if now is None else now
@@ -219,13 +224,14 @@ class TransportIngress:
             reasons.append('intake_observation_stale')
         if row:
             admitted = self.conn.execute('SELECT COUNT(*) FROM transport_ingress WHERE producer=? '
-                'AND account_id=? AND epoch=? AND sequence<=?',
-                (producer, account_id, row['epoch'], row['watermark'])).fetchone()[0]
-            if admitted != row['watermark'] or row['unavailable']:
+                'AND account_id=? AND epoch=? AND sequence>? AND sequence<=?',
+                (producer, account_id, row['epoch'], row['sequence_floor'], row['watermark'])).fetchone()[0]
+            if admitted != row['watermark'] - row['sequence_floor'] or row['unavailable']:
                 reasons.append('intake_gap')
-        activity = self.conn.execute('SELECT receipt_id,state FROM transport_ingress '
+        activity = self.conn.execute('SELECT receipt_id,state,metadata_json FROM transport_ingress '
             'WHERE producer=? AND account_id=? AND occurred_at>=? AND '
             '(contact_id=? OR contact_id IS NULL)', (producer, account_id, since, contact_id)).fetchall()
+        activity = [item for item in activity if not json.loads(item['metadata_json']).get('from_owner')]
         if activity:
             reasons.append('recipient_activity_requires_review')
         return {'observed': not reasons, 'reasons': reasons, 'observed_through': row['observed_at'] if row else None,
