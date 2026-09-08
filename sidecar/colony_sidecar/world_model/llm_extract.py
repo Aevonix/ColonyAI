@@ -137,13 +137,14 @@ def _parse_obj(content: str) -> Optional[dict]:
 class WorldLLMExtractor:
     def __init__(self, store: Any, *, graph: Any = None,
                  directive_manager: Any = None, journal: Any = None,
-                 self_model: Any = None, source_ledger: Any = None) -> None:
+                 self_model: Any = None, source_ledger: Any = None, router_provider: Any = None) -> None:
         self._store = store
         self._graph = graph
         self._directives = directive_manager
         self._journal = journal
         self._self_model = self_model
         self._source_ledger = source_ledger
+        self._router_provider = router_provider
         self._resolver = None
         if store is not None:
             try:
@@ -192,6 +193,25 @@ class WorldLLMExtractor:
         return "\n---\n".join(t[:600] for t in texts)[:8000]
 
     async def _llm_batch(self, texts: List[str]) -> Optional[dict]:
+        if self._router_provider is not None:
+            # Production uses the same discoverable extraction role as source
+            # learning. Re-read the router each batch so rebinding needs no restart.
+            import asyncio
+            from colony_sidecar.beliefs.source_claims import final_text, extraction_timeout_seconds
+            router = self._router_provider()
+            if getattr(router, 'supports_function_routing', False) is not True:
+                return None
+            prompt = _SYSTEM_PROMPT + (_CAUSAL_PROMPT if causal_extract_mode() != 'off' else '')
+            response = await asyncio.wait_for(router.complete(messages=[
+                {'role': 'system', 'content': prompt}, {'role': 'user', 'content': self._excerpt(texts)}],
+                context={'function_role': 'extraction', 'task': 'world_source_reports',
+                         'max_output_tokens': 900, 'allow_fallback': True}),
+                timeout=extraction_timeout_seconds(router))
+            self.last_report['processor'] = {'function_role': 'extraction',
+                'model_id': getattr(response, 'model_id', None),
+                'model_revision': getattr(response, 'model_revision', None),
+                'config_revision': getattr(response, 'config_revision', None)}
+            return _parse_obj(final_text(response))
         ep = _endpoint()
         if not ep["base"] or not ep["model"]:
             return None

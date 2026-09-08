@@ -2613,13 +2613,13 @@ async def lifespan(app: FastAPI):
                 WorldLLMExtractor, llm_extract_mode,
             )
             from colony_sidecar.api.routers.host import (
-                get_directive_manager as _get_dm3, set_world_llm_extractor,
+                get_directive_manager as _get_dm3, set_world_llm_extractor, get_llm_router,
             )
             _wle = WorldLLMExtractor(
                 world_store, graph=graph, directive_manager=_get_dm3(),
                 journal=getattr(_sm_for_directed, "journal", None),
                 self_model=_sm_for_directed,
-                source_ledger=get_turn_idempotency_ledger(state_dir))
+                source_ledger=get_turn_idempotency_ledger(state_dir), router_provider=get_llm_router)
             set_world_llm_extractor(_wle)
             logger.info("WorldLLMExtractor initialized (mode=%s)",
                         llm_extract_mode())

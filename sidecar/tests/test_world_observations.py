@@ -213,3 +213,25 @@ async def test_dated_report_cannot_become_current_from_receipt_time(store, tmp_p
     result = await worker.run()
     assert not result['property_observations'] and result['property_skipped'] == 1
     assert ledger.search_sources('offline', contact_id='cid-owner', session_id='text')
+
+
+@pytest.mark.asyncio
+async def test_world_batch_uses_current_named_extraction_role():
+    from types import SimpleNamespace
+    from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+    calls=[]
+    class Processor:
+        supports_function_routing=True
+        def function_deadline_seconds(self, **kwargs): return 5
+        async def complete(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(content='{"entities":[],"observations":[]}', raw=None,
+                model_id='local-current', model_revision='weights-a', config_revision='roles-r1')
+    processors=[Processor()]
+    extractor=WorldLLMExtractor(None,router_provider=lambda:processors[0])
+    assert await extractor._llm_batch(['The queue is idle.'])=={'entities':[],'observations':[]}
+    assert calls[0]['context']['function_role']=='extraction'
+    assert extractor.last_report['processor']['model_id']=='local-current'
+    processors[0]=None
+    assert await extractor._llm_batch(['The queue is idle.']) is None
+    assert len(calls)==1
