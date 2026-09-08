@@ -63,9 +63,45 @@ agent = AIAgent(api_key='local-no-key', base_url=sys.argv[1], provider='openai',
 providers = [p for p in agent._memory_manager._providers if type(p).__name__ == 'ColonyMemoryProvider']
 assert len(providers) == 1, 'Native memory provider absent or duplicated'
 assert Path(inspect.getfile(type(providers[0]))).resolve().parent == Path(roots['colony_memory'])
+if len(sys.argv)>3 and sys.argv[3]=='defer-capture':
+    # Exercise the documented durable-pending path deterministically, rather
+    # than depending on whether a CI runner exceeds the 250 ms delivery budget.
+    from colony_hermes.client import ColonyClient
+    ColonyClient.sync_turn = lambda *args, **kwargs: False
 result = agent.run_conversation(sys.argv[2])
 print(json.dumps({'answer': result['final_response'], 'session_id': agent.session_id}))
 agent.close()
+'''
+CAPTURE_RECEIPT = r'''
+import json, os, time
+from dotenv import load_dotenv
+from hermes_constants import get_hermes_home
+from hermes_cli.plugins import get_plugin_manager
+from hermes_cli.config import load_config
+load_dotenv(get_hermes_home()/'.env', override=True)
+get_plugin_manager().discover_and_load()
+from colony_hermes.client import ColonyClient, TurnOutbox
+config=load_config()['plugins']['colony']
+outbox=TurnOutbox(config['turn_outbox_path'])
+before=outbox.snapshot()
+assert len(before)==1,[(row['state'],row['last_error']) for row in before]
+assert before[0]['payload']['require_source_receipt'] is True
+assert 'cobalt-716' in before[0]['payload']['user_message']
+identity=(before[0]['turn_id'],before[0]['envelope_sha256'])
+client=ColonyClient(url=config['url'],api_key=os.environ['COLONY_NATIVE_API_KEY'])
+deadline=time.monotonic()+8
+while time.monotonic()<deadline:
+    rows=outbox.snapshot()
+    assert len(rows)==1 and (rows[0]['turn_id'],rows[0]['envelope_sha256'])==identity
+    if rows[0]['state']=='delivered':break
+    outbox.drain(lambda stored, *, timeout_seconds: client.sync_turn(
+        **stored,outbox=outbox,timeout_seconds=timeout_seconds),limit=1,timeout_seconds=.5)
+    time.sleep(.05)
+else:
+    raise AssertionError('Source capture remained pending: '+repr([
+        (row['state'],row['last_error'],row['attempts']) for row in outbox.snapshot()]))
+print(json.dumps({'source_delivered':True,'replayed_pending':before[0]['state']=='pending',
+                  'stable_turn':True,'stable_envelope':True}))
 '''
 DOCTOR = r'''
 import sys, runpy
@@ -345,7 +381,16 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
             except httpx.HTTPError: pass
             time.sleep(.1)
         else: pytest.fail('Sidecar did not start: '+log_path.read_text()[-12000:])
-        first = run_native('-I', '-c', TURN, endpoint, 'Please remember that my orchard badge is cobalt-716.', cwd=tmp_path, env=env)
+        first = run_native('-I', '-c', TURN, endpoint, 'Please remember that my orchard badge is cobalt-716.',
+            *(['defer-capture'] if adapter_installation=='wheel' else []), cwd=tmp_path, env=env)
+        # Completion guarantees a local durable capture; its short best-effort
+        # flush does not guarantee immediate central availability. Qualify the
+        # existing restart/replay path and exact source ACK before central recall.
+        captured=run_native('-I','-c',CAPTURE_RECEIPT,cwd=tmp_path,env=env)
+        receipt=json.loads(captured.stdout.splitlines()[-1])
+        assert receipt['source_delivered'] and receipt['stable_turn'] and receipt['stable_envelope']
+        if adapter_installation=='wheel':
+            assert receipt['replayed_pending']
         instance = json.loads((home/'colony'/'instance.json').read_text())
         keyring = json.loads((home/'colony'/'api-keyring.json').read_text())
         response = httpx.post(f'http://127.0.0.1:{port}/v1/host/context/assemble',
