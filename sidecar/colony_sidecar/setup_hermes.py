@@ -21,6 +21,7 @@ import sys
 import tempfile
 from urllib.parse import urlsplit
 import zipfile
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import yaml
@@ -37,6 +38,29 @@ def _private_write(path, content):
 
 def _json(value):
     return json.dumps(value, indent=2, ensure_ascii=False) + '\n'
+
+
+def _agent_preferences(ask, args, config):
+    """Private identity and time preferences; no automatic permission grants."""
+    value_text = ask('Guiding values (comma-separated, optional)',
+                     getattr(args, 'agent_values', None) or '')
+    values = list(dict.fromkeys(item.strip() for item in value_text.split(',') if item.strip()))
+    if len(values) > 12 or any(len(value) > 120 for value in values):
+        raise ValueError('Use at most twelve guiding values, each at most 120 characters')
+    timezone_name = ask('Timezone for deadlines and follow-ups',
+                        getattr(args, 'timezone', None) or config.get('timezone') or 'UTC', True)
+    try:
+        ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError('Use a named timezone such as UTC or Europe/Paris') from None
+    quiet = ask('Quiet hours for optional follow-ups (HH:MM-HH:MM, optional)',
+                getattr(args, 'quiet_hours', None) or '')
+    if quiet:
+        times = quiet.split('-')
+        valid_time = re.compile(r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
+        if len(times) != 2 or not all(valid_time.fullmatch(value) for value in times) or times[0] == times[1]:
+            raise ValueError('Quiet hours require two different times, HH:MM-HH:MM')
+    return {'values': values, 'timezone': timezone_name, 'quiet_hours': quiet}
 
 
 def _endpoint(value):
@@ -386,6 +410,7 @@ def run(root_dir=None, args=None):
         binding = _adapter_binding(python, resources)
         owner_name = ask('Your name', getattr(args, 'contact_name', None) or os.environ.get('USER', 'Owner'), True)
         agent_name = ask('Agent name', getattr(args, 'agent_name', None) or 'Assistant', True)
+        agent_preferences = _agent_preferences(ask, args, config)
         endpoint = _endpoint(ask('Local model API root', getattr(args, 'model_url', None), True))
         local_hosts = _verify_local_endpoint(endpoint)
         model_key = os.environ.get('COLONY_MODEL_API_KEY', '')
@@ -468,9 +493,14 @@ def run(root_dir=None, args=None):
                 'COLONY_EMBED_PROVIDER': 'skip', 'WORLD_MODEL_BACKEND': 'sqlite',
                 'COLONY_AUTONOMY_PRESET': 'passive', 'COLONY_EMBEDDED_WORKER_ENABLED': 'false',
                 'COLONY_SOURCE_CLAIMS': 'on'}
+            values.update({
+                'COLONY_AGENT_VALUES': json.dumps(agent_preferences['values'], ensure_ascii=True),
+                'COLONY_AGENT_TIMEZONE': agent_preferences['timezone'],
+                'COLONY_AGENT_QUIET_HOURS': agent_preferences['quiet_hours'],
+            })
             if goal_details is not None:
                 values['COLONY_HERMES_WORK_BOARDS'] = json.dumps(goal_details['boards'], separators=(',', ':'))
-            _private_write(staged/'.env', '\n'.join(k+'='+v for k,v in values.items())+'\n')
+            _private_write(staged/'.env', _native_environment(None, values))
             principal = {'principal': 'hermes-local', 'status': 'active', 'viewer_person_id': owner_id,
                 'audiences': ['viewer'], 'allow_unscoped_api': False, 'turn_ingress_platforms': ['cli'],
                 'scopes': ['context:read', 'memory:read', 'memory:search', 'memory:write', 'turns:write'],
@@ -488,6 +518,7 @@ def run(root_dir=None, args=None):
             manifest = {'version': 1, 'hermes_home': str(home), 'hermes_python': str(python),
                 'sidecar_python': sys.executable, 'sidecar_module_root': str(Path(__file__).resolve().parents[1]),
                 'owner_id': owner_id, 'agent_name': agent_name, 'endpoint': endpoint, 'model': model,
+                'agent_preferences': agent_preferences,
                 'adapter_sha256': hashlib.sha256(b''.join(name.encode()+resources[name] for name in sorted(resources))).hexdigest(),
                 'adapter_binding': binding,
                 'profile': 'local', 'status': 'configured_not_behaviorally_verified'}
@@ -545,7 +576,9 @@ def run(root_dir=None, args=None):
             setup._atomic_hermes_config_write(config_path, original, final_config)
             replaced.append((config_path, original, final_config))
             if not (home/'SOUL.md').exists():
-                create(home/'SOUL.md', f'# {agent_name}\n\nYou are {agent_name}, the personal assistant of {owner_name}.\nUse retained evidence with its provenance; ask about uncertainty.\nOwner consent is required for consequential external actions.\n')
+                guiding = ('Guiding values: ' + ', '.join(agent_preferences['values']) + '.\n'
+                           if agent_preferences['values'] else '')
+                create(home/'SOUL.md', f'# {agent_name}\n\nYou are {agent_name}, the personal assistant of {owner_name}.\n{guiding}Use retained evidence with its provenance; ask about uncertainty.\nYour opinions are revisable interpretations; distinguish them from facts and permissions.\nOwner consent is required for consequential external actions; an existing task-scoped consent covers only its stated scope.\n')
         except Exception:
             # Undo only this installation's exact bytes. Concurrent edits stay
             # intact, with original files still retained in the private state.

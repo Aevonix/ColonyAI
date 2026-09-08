@@ -1382,7 +1382,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     }
     message_only_context = _Context(message_only_config)
     module.register(message_only_context)
-    assert list(message_only_context.tools) == ["colony_accept_local_draft", "colony_commitment_work", "colony_judgments", "colony_memory_annotate", "colony_memory_forget", "colony_read_work_source", "colony_send_message", "colony_work_initiative"]
+    assert list(message_only_context.tools) == sorted([*module._COORDINATION_TOOL_NAMES, 'colony_send_message'])
     message_only_attestation = module.runtime_governance_attestation(
         message_only_config
     )
@@ -1406,6 +1406,8 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     assert set(subset_context.tools) == {
         "colony_accept_local_draft", "colony_read_work_source",
         "colony_commitment_work",
+        "colony_contacts",
+        "colony_followup",
         "colony_judgments",
         "colony_memory_annotate",
         "colony_memory_forget",

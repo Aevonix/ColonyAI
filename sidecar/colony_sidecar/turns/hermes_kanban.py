@@ -152,9 +152,9 @@ def selected_board():
     return home, board, profile, path
 
 
-def task_snapshot(identifier, contact_id, native, *, review=False):
+def task_snapshot(identifier, contact_id, native, *, review=False, followup=False):
     """Verify native provenance and, when supplied, the currently held run."""
-    if review:
+    if review or followup:
         home, boards, _ = observed_boards()
         if home is None or 'default' not in boards:
             raise ValueError('selected_native_review_board_required')
@@ -170,7 +170,7 @@ def task_snapshot(identifier, contact_id, native, *, review=False):
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
         task = db.execute('SELECT * FROM tasks WHERE id=?', (native['native_task_id'],)).fetchone()
-        creator = 'colony-initiative' if review else 'colony-local-work'
+        creator = 'colony-followup' if followup else 'colony-initiative' if review else 'colony-local-work'
         if (task is None or task['created_by'] != creator
                 or task['idempotency_key'] != creator+':'+identifier
                 or task['tenant'] != contact_id or task['assignee'] != profile):
@@ -191,7 +191,14 @@ def task_snapshot(identifier, contact_id, native, *, review=False):
             result.update(native_run_id=run['id'], native_claim_lock=run['claim_lock'])
         state = {'status': task['status'], 'native_run_id': task['current_run_id'],
                  'attempt_count': count, 'archived': task['status'] == 'archived'}
-        if review:
+        if review or followup:
+            state['forecast_configuration'] = {
+                'runtime_budget_seconds': dict(task).get('max_runtime_seconds'),
+                'requested_profile': task['assignee'],
+                'task_model_override_at_observation': dict(task).get('model_override'),
+                'task_provider_override_at_observation': dict(task).get('provider_override'),
+                'served_model': None, 'timestamp_precision_seconds': 1,
+            }
             latest = db.execute('SELECT * FROM task_runs WHERE task_id=? ORDER BY id DESC LIMIT 1',
                                 (task['id'],)).fetchone()
             gave_up = bool(latest and db.execute("SELECT 1 FROM task_events WHERE task_id=? "
@@ -204,13 +211,31 @@ def task_snapshot(identifier, contact_id, native, *, review=False):
                          error=str(latest['error'] or task['last_failure_error'] or '')[:500] if latest else '',
                          summary=str(latest['summary'] or '')[:1600] if latest else '',
                          native_run_id=latest['id'] if latest else None)
+            terminal_at = dict(task).get('completed_at')
+            if task['status'] == 'archived':
+                terminal_at = db.execute("SELECT MAX(created_at) FROM task_events WHERE task_id=? AND kind='archived'", (task['id'],)).fetchone()[0]
+            if latest and latest['ended_at'] is not None:
+                state['duration_observation'] = {
+                    'outcome': latest['outcome'], 'started_at': latest['started_at'],
+                    'ended_at': latest['ended_at'], 'attempt_count': count,
+                    'profile': latest['profile'], 'served_model': None,
+                    'execution_seconds': latest['ended_at'] - latest['started_at'],
+                    'timestamp_precision_seconds': 1,
+                }
+            elif terminal_at is not None and task['status'] in {'done', 'archived', 'cancelled'}:
+                state['duration_observation'] = {
+                    'outcome': task['status'], 'started_at': dict(task).get('started_at'),
+                    'ended_at': terminal_at, 'attempt_count': count,
+                    'profile': task['assignee'], 'served_model': None,
+                    'execution_seconds': None, 'timestamp_precision_seconds': 1,
+                }
             if latest and latest['outcome'] in {'crashed', 'timed_out', 'spawn_failed', 'gave_up'}:
                 state['runtime_observation'] = {
                     'outcome': latest['outcome'], 'started_at': latest['started_at'],
                     'ended_at': latest['ended_at'], 'max_runtime_seconds': latest['max_runtime_seconds'],
                     'attempt_count': count, 'profile': latest['profile'],
-                    'task_model_override_at_observation': task['model_override'],
-                    'task_provider_override_at_observation': task['provider_override'],
+                    'task_model_override_at_observation': dict(task).get('model_override'),
+                    'task_provider_override_at_observation': dict(task).get('provider_override'),
                     'served_model': 'unknown',
                     'role': 'native_default_worker',
                 }

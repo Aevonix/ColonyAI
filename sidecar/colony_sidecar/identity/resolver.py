@@ -97,6 +97,7 @@ class IdentityResolver:
         # Capture explicitly so tests can construct without env mutation.
         self._owner_id = owner_id if owner_id is not None else get_owner_contact_id()
         self._owner_set: Optional[frozenset] = None
+        self._identity_revision = None
         # Small bounded cache of is_owner verdicts (one tick scans ~100
         # contacts; name resolution is a full-table similarity scan).
         self._is_owner_cache: dict = {}
@@ -155,6 +156,13 @@ class IdentityResolver:
         Raises :class:`OwnerIdentityError` if no owner is configured, or if
         the configured value resolves to nothing in the contact store.
         """
+        revision_reader = getattr(self._contact_store, 'identity_revision', None)
+        if revision_reader is not None:
+            revision = await revision_reader()
+            if revision != self._identity_revision:
+                self._owner_set = None
+                self._is_owner_cache.clear()
+                self._identity_revision = revision
         if self._owner_set is not None:
             return self._owner_set
 
@@ -268,6 +276,9 @@ class IdentityResolver:
             try:
                 handles = await self._contact_store.get_handles(contact.contact_id)
                 for handle in handles:
+                    from colony_sidecar.contacts.identity_links import usable_handle
+                    if not usable_handle(handle):
+                        continue
                     address = getattr(handle, "address", None)
                     if address:
                         forms.add(address)

@@ -357,22 +357,14 @@ class SQLiteBackend:
             await self._db.commit()
 
     async def reinforce_entity(self, entity_id: str) -> None:
-        """Repeat mention of an existing entity: touch last_seen, bump
-        mention_count, and nudge confidence (+0.02, capped at 0.95).
-
-        Strictly anti-data-loss: last_seen moves FORWARD and confidence never
-        goes DOWN (an entity already above the cap keeps its confidence), so a
-        repeat-mention can never make an entity more prunable than a single
-        mention would have.
-        """
+        """Record familiarity without treating repetition as corroboration."""
         now = _now_iso()
         await self._db.execute(
             """
             UPDATE wm_entities
-            SET last_seen     = ?,
+            SET last_seen     = MAX(last_seen, ?),
                 updated_at    = ?,
-                mention_count = COALESCE(mention_count, 1) + 1,
-                confidence    = MAX(confidence, MIN(0.95, confidence + 0.02))
+                mention_count = COALESCE(mention_count, 1) + 1
             WHERE id = ?
             """,
             (now, now, entity_id),
@@ -578,6 +570,83 @@ class SQLiteBackend:
         return results
 
     # ── Observations ──────────────────────────────────────────────────────────
+
+    async def put_property_observation(self, data):
+        from ..observations import canonical, SOURCE_PREFIX
+        encoded, marker = canonical(data), SOURCE_PREFIX + data['property_key']
+        await self._db.execute('''INSERT INTO wm_observations
+            (id,entity_id,observation,source) VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING''',
+            (data['observation_id'], data['entity_id'], encoded, marker))
+        await self._db.commit()
+        async with self._db.execute('SELECT observation,source FROM wm_observations WHERE id=?',
+                                    (data['observation_id'],)) as cur:
+            row = await cur.fetchone()
+        if row['observation'] != encoded or row['source'] != marker:
+            raise ValueError('world_observation_id_conflict')
+        return data
+
+    async def current_property_observations(self, entity_id, property_key, *, subject_person_id,
+                                            viewer_scope, shareability, as_of, limit=2001):
+        """Reduce in SQL so regular telemetry does not fill a context window.
+
+        Deduplicate one evidence packet before selecting the latest report per
+        producer. Equal-time contradictory values remain separate candidates.
+        Raw observation history stays in the existing journal.
+        """
+        from ..observations import SOURCE_PREFIX
+        async with self._db.execute('''WITH scoped AS (
+            SELECT id,observation,
+                json_extract(observation,'$.producer') AS producer,
+                json_extract(observation,'$.kind') AS kind,
+                json_extract(observation,'$.observed_at') AS observed_at,
+                json_extract(observation,'$.evidence_refs') AS evidence_refs,
+                json_type(observation,'$.value') AS value_type,
+                json_extract(observation,'$.value') AS value
+            FROM wm_observations WHERE entity_id=? AND source=?
+                AND json_extract(observation,'$.subject_person_id')=?
+                AND json_extract(observation,'$.viewer_scope')=?
+                AND json_extract(observation,'$.shareability')=?
+                AND json_extract(observation,'$.observed_at')<=?
+                AND json_extract(observation,'$.valid_from')<=?
+        ), dedup AS (
+            SELECT *,ROW_NUMBER() OVER (PARTITION BY producer,kind,evidence_refs,value_type,value
+                ORDER BY observed_at,id) AS copy_rank FROM scoped
+        ), latest AS (
+            SELECT *,RANK() OVER (PARTITION BY producer,kind ORDER BY observed_at DESC) AS recency
+                FROM dedup WHERE copy_rank=1
+        ) SELECT observation FROM latest WHERE recency=1 ORDER BY producer,kind,id LIMIT ?''',
+            (entity_id, SOURCE_PREFIX + property_key, subject_person_id, viewer_scope, shareability,
+             as_of, as_of, limit)) as cur:
+            return [json.loads(row['observation']) for row in await cur.fetchall()]
+
+    async def property_keys(self, entity_id, *, subject_person_id, viewer_scope, shareability, limit=16):
+        from ..observations import SOURCE_PREFIX
+        async with self._db.execute('''SELECT DISTINCT substr(source,?) AS property_key
+            FROM wm_observations WHERE entity_id=? AND source LIKE ?
+                AND json_extract(observation,'$.subject_person_id')=?
+                AND json_extract(observation,'$.viewer_scope')=?
+                AND json_extract(observation,'$.shareability')=? ORDER BY property_key LIMIT ?''',
+            (len(SOURCE_PREFIX)+1, entity_id, SOURCE_PREFIX+'%', subject_person_id,
+             viewer_scope, shareability, limit)) as cur:
+            return [row['property_key'] for row in await cur.fetchall()]
+
+    async def erase_property_evidence(self, evidence_refs, *, subject_person_id):
+        from ..observations import SOURCE_PREFIX
+        # Canonical erasure/correction has already selected these exact refs.
+        # Redact derived values, retaining the latest invalidated head so an
+        # older report cannot silently become current after a correction.
+        removed = []
+        for ref in sorted(set(evidence_refs)):
+            async with self._db.execute('''UPDATE wm_observations
+                SET observation=json_set(observation,'$.value',NULL,'$.invalidated',json('true'))
+                WHERE id IN (
+                SELECT o.id FROM wm_observations o,json_each(
+                    CASE WHEN o.source LIKE ? THEN o.observation ELSE '{}' END,'$.evidence_refs') e
+                WHERE o.source LIKE ? AND json_extract(o.observation,'$.subject_person_id')=?
+                AND e.value=?) RETURNING id''', (SOURCE_PREFIX + '%', SOURCE_PREFIX + '%', subject_person_id, ref)) as cur:
+                removed.extend(row['id'] for row in await cur.fetchall())
+        await self._db.commit()
+        return sorted(set(removed))
 
     async def add_observation(
         self,

@@ -2,7 +2,7 @@
 
 Fabrication controls under test:
   * evidence MUST be a case-insensitive verbatim substring of the excerpt;
-  * create confidence <= 0.5; corroboration +0.05 with a 0.75 ceiling;
+  * create confidence <= 0.5; repetition does not increase confidence;
   * effective mode = min(COLONY_CAUSAL_EXTRACT, COLONY_WORLD_LLM_EXTRACT);
   * shadow writes nothing.
 """
@@ -176,23 +176,23 @@ async def test_create_confidence_capped_at_half(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_corroboration_steps_and_ceiling(monkeypatch):
+async def test_repeated_extraction_has_no_confidence_steps(monkeypatch):
     monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
     monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "live")
     world = FakeWorld()
     payload = _payload([_causal_claim("The migration caused the outage")])
-    # first run creates at 0.5; each subsequent run corroborates +0.05
+    # First run creates at 0.5; repeated claims do not add confidence.
     for _ in range(7):
         x = _Extractor(world, payload=payload)
         await x.run(texts=[_TEXT])
     # NOTE: each run creates fresh entity ids, so corroboration is proven
     # against a pinned pair below instead.
     edges = _causal_edges(world)
-    assert all(e.confidence <= 0.75 for e in edges)
+    assert all(e.confidence <= 0.5 for e in edges)
 
 
 @pytest.mark.asyncio
-async def test_corroboration_bumps_existing_edge(monkeypatch):
+async def test_repeated_quote_keeps_existing_edge_and_confidence(monkeypatch):
     monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
     monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "live")
     world = FakeWorld()
@@ -208,5 +208,5 @@ async def test_corroboration_bumps_existing_edge(monkeypatch):
         await x.run(texts=[_TEXT])
     edges = _causal_edges(world)
     assert len(edges) == 1                       # corroborated, not duplicated
-    assert edges[0].confidence == 0.75           # 0.5 + steps, ceiling holds
-    assert edges[0].properties["corroborations"] >= 5
+    assert edges[0].confidence == 0.5            # no artificial corroboration
+    assert "corroborations" not in edges[0].properties

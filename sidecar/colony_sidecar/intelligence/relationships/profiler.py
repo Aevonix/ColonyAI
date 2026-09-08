@@ -1,4 +1,4 @@
-"""RelationshipProfiler -- per-person standing, psyche, and approach guidance.
+"""RelationshipProfiler -- per-person standing and attributed approach guidance.
 
 The analysis half of docs/RELATIONSHIPS.md: once attribution flows (the
 ParticipantResolver), every store already accumulates per-person signal.
@@ -6,9 +6,9 @@ This module composes those signals into one compact RelationshipBrief per
 contact and derives concrete approach guidance the agent can act on
 (preferred channel, best time to reach, engagement style, cautions).
 
-Deliberately deterministic: the LLM already contributes upstream (the ToM
-engagement extractor builds the OCEAN/style psyche profile from real
-observations); the profiler only composes and derives. Briefs are cached in
+The profiler composes source-backed stated preferences and separate contact
+affect. Historical numeric personality and closeness fields do not govern
+approach guidance. Briefs are cached in
 ``colony-relationships.db`` and refreshed by the autonomy phase when a
 contact accrues new interactions.
 """
@@ -248,7 +248,7 @@ class RelationshipProfiler:
             trust_tier=str(contact.trust_tier or "unknown"),
             interaction_count=int(getattr(contact, "interaction_count", 0) or 0),
             last_interaction_at=str(getattr(contact, "last_interaction_at", "") or ""),
-            relationship_score=getattr(contact, "relationship_score", None),
+            relationship_score=None,  # Legacy scalar does not describe this relationship.
             timezone=str(getattr(contact, "timezone", "") or ""),
             profiled_at=time.time(),
         )
@@ -318,6 +318,7 @@ class RelationshipProfiler:
         # Old cache rows can contain copied guidance. Clear it before reading
         # the current stores, so an unavailable source cannot serve old advice.
         brief.affect_valence = None
+        brief.relationship_score = None
         brief.affect_trend = ""
         brief.psyche_guidance = []
         brief.psyche_motivators = []
@@ -339,8 +340,7 @@ class RelationshipProfiler:
                 prof = self._engagement.get_profile(brief.contact_id) or {}
                 guidance = [ln.lstrip("- ").strip()
                             for ln in build_guidance(prof).splitlines() if ln.strip()][:6]
-                motivators = list(((prof.get("qual") or {}).get("motivators") or [])[:4])
-                brief.psyche_guidance, brief.psyche_motivators = guidance, motivators
+                brief.psyche_guidance = guidance
             except Exception:
                 logger.debug("current relationship engagement unavailable", exc_info=True)
 

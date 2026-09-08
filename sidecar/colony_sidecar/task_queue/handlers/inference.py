@@ -52,7 +52,7 @@ def _build_system_prompt(
             or "this contact"
         )
         lines = [f"\nContact context: You are communicating with {name}."]
-        lines.append(f"Trust tier: {contact.trust_tier} | Relationship score: {contact.relationship_score:.2f}")
+        lines.append(f"Recorded standing: {contact.trust_tier}. Follow the request's actual authority boundary.")
         if contact.organization:
             lines.append(f"Organization: {contact.organization}")
         if contact.notes:

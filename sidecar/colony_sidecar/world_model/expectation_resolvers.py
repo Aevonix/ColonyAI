@@ -30,11 +30,8 @@ logger = logging.getLogger(__name__)
 RELATIONSHIP_PREFIX = "world-relationship:"
 PROPERTY_PREFIX = "world-property:"
 
-# H2.6 — causal falsifiability. Every LIVE causal write/boost creates a
-# ``world-causal:<edge_id>`` prediction ("this causal claim still holds at
-# at least its creation confidence in 30 days"). This is the causal layer's
-# OWN falsifiability path — the generic relationship resolver deliberately
-# refuses causal-typed predictions (H2.5 query-only guard).
+# Historical edge-survival bookkeeping is self-consistency, not an
+# independently observed causal outcome. Retain old rows/functions for audit.
 CAUSAL_PREFIX = "world-causal:"
 
 
@@ -113,7 +110,7 @@ def resolve_property_unchanged(prediction: Any) -> Optional[bool]:
 
 
 def resolve_causal_edge(prediction: Any) -> Optional[bool]:
-    """Score a causal claim against its own survival (H2.6).
+    """Historical self-consistency only; never predictive calibration.
 
     HIT: the edge still exists, is active, holds at least the confidence it
     had when the prediction was made, and no opposing edge (H2.3 polarity)
@@ -177,4 +174,4 @@ def register_world_resolvers(engine: Any) -> None:
     engine.register_resolver(RELATIONSHIP_PREFIX,
                              resolve_relationship_still_active)
     engine.register_resolver(PROPERTY_PREFIX, resolve_property_unchanged)
-    engine.register_resolver(CAUSAL_PREFIX, resolve_causal_edge)
+    # Causal edge survival is deliberately not registered as outcome truth.

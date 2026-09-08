@@ -229,8 +229,7 @@ async def test_stale_causal_decay_shadow_does_not_mutate(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_extractor_stamps_last_support_at(monkeypatch):
-    """Create and corroborate both stamp last_support_at, which is what
-    keeps a living edge off the decay path."""
+    """Creation stamps support; repeated claims cannot reset its age."""
     from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
     world = FakeCausalWorld([])
     x = WorldLLMExtractor(world)
@@ -241,11 +240,11 @@ async def test_extractor_stamps_last_support_at(monkeypatch):
     assert len(world.upserts) == 1
     created = world.upserts[0]
     assert created.properties.get("last_support_at")
-    # corroboration restamps
+    # A repeated claim does not restamp support.
     created.properties["last_support_at"] = "2000-01-01T00:00:00+00:00"
     world.edges = [created]
     x._seen_rels = set()
     await x._upsert_causal("we-a", "WM_CAUSES", "we-b", "a caused b again",
                            0.9, "live", report)
-    assert created.properties["last_support_at"] != \
+    assert created.properties["last_support_at"] == \
         "2000-01-01T00:00:00+00:00"

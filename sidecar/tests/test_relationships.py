@@ -183,7 +183,9 @@ class TestProfiler:
         assert brief.affect_valence == -0.4
         assert "woodworking" in brief.rapport_topics
         assert any("mood is negative" in x for x in brief.cautions)
-        assert brief.psyche_motivators == ["shipping fast"]
+        assert brief.psyche_motivators == []
+        assert brief.psyche_guidance == []
+        assert brief.relationship_score is None
         rendered = brief.render()
         assert "Dana" in rendered and "Caution" in rendered
         # cached round-trip
@@ -402,6 +404,7 @@ class TestContactCuration:
         r = await ParticipantResolver(store).resolve(
             platform="whatsapp", user_id="555abc@lid",
             display_name="Robin", group_id="grp-1")
-        assert r.method == "scoped_name" and r.contact_id == keep.contact_id
+        assert r.method == "shadow" and r.contact_id != keep.contact_id
+        assert r.candidate_contact_id == keep.contact_id and r.proposal_filed
         props = await store.list_handle_proposals()
         assert any(p["address"] == "555abc@lid" for p in props)

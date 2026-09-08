@@ -84,6 +84,9 @@ def hydrate(ledger, meta, *, contact_id=None, session_id=None):
         return None
     from colony_sidecar.turns.idempotency import source_message_hash
     with closing(ledger._connect()) as conn:
+        from colony_sidecar.turns.source_attribution import is_invalidated
+        if is_invalidated(conn, meta.get('source_turn_id')):
+            return None
         source = conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (meta.get('source_turn_id'),)).fetchone()
         if source is None or meta.get('contact_id') != source['contact_id'] or meta.get('session_id') != source['session_id']:
             return None

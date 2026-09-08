@@ -61,6 +61,7 @@ class CommsLog:
             "reply_to_ref": "TEXT",
             "reaction": "TEXT",
             "receipt_ref": "TEXT",
+            "outbound_ref": "TEXT",
         }.items():
             if name not in existing:
                 self._conn.execute(
@@ -69,6 +70,34 @@ class CommsLog:
             "CREATE INDEX IF NOT EXISTS idx_comms_reply_ref "
             "ON communications(contact_id,reply_to_ref,ts)")
         self._conn.commit()
+
+    def log_receipt(self, *, event_id, contact_id, channel, direction, external_ref,
+                    receipt_ref, occurred_at, status, reply_to_ref='', outbound_ref=''):
+        """Idempotent metadata from a trusted transport adapter, never prose."""
+        import hashlib
+        stamp = _parse(occurred_at)
+        if stamp is None or stamp > _now() or direction not in {'in', 'out'}:
+            raise ValueError('invalid_transport_observation')
+        identifier = 'transport:' + hashlib.sha256(event_id.encode()).hexdigest()
+        values = (identifier, contact_id, channel, direction, 'Transport '+status, '',
+                  stamp.isoformat(), external_ref, reply_to_ref or None, None,
+                  receipt_ref, outbound_ref or None)
+        columns = 'id,contact_id,channel,direction,summary,session_id,ts,external_ref,reply_to_ref,reaction,receipt_ref,outbound_ref'
+        with self._conn:
+            previous = self._conn.execute('SELECT '+columns+' FROM communications WHERE id=?', (identifier,)).fetchone()
+            if previous:
+                if tuple(previous) != values:
+                    raise ValueError('transport_event_conflict')
+                return False
+            self._conn.execute('INSERT INTO communications ('+columns+') VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', values)
+        return True
+
+    def outbound_receipts(self, *, contact_id, outbound_ref):
+        rows = self._conn.execute('''SELECT * FROM communications WHERE contact_id=?
+            AND direction='out' AND (outbound_ref=? OR external_ref=?)
+            AND receipt_ref IS NOT NULL AND external_ref IS NOT NULL ORDER BY ts,id LIMIT 100''',
+            (contact_id, outbound_ref, outbound_ref)).fetchall()
+        return [dict(row) for row in rows]
 
     def log(self, contact_id: str, *, channel: str = "unknown", direction: str = "in",
             summary: str = "", session_id: str = "",
@@ -146,6 +175,33 @@ class CommsLog:
             [contact_id, since_iso, until_iso, *bounded],
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def match_reply(self, *, contact_id: str, outbound_ref: str, since_iso: str,
+                    until_iso: Optional[str] = None) -> Dict[str, Any]:
+        """Exact receipt-backed reply references for a previously resolved contact.
+
+        A reply link proves which message was addressed, not whether its requested
+        answer or artifact was supplied. The waiting-condition owner checks that.
+        Neither similar text nor an unrelated inbound message counts as a reply.
+        """
+        start, end = _parse(since_iso), _parse(until_iso) if until_iso else _now()
+        if not contact_id or not outbound_ref or start is None or end is None or end < start:
+            raise ValueError('invalid_reply_window')
+        rows = self._conn.execute('''SELECT channel,ts,external_ref,reply_to_ref,reaction,receipt_ref
+            FROM communications WHERE contact_id=? AND direction='in' AND reply_to_ref=?
+            AND external_ref IS NOT NULL AND external_ref!=''
+            AND receipt_ref IS NOT NULL AND receipt_ref!='' ORDER BY ts LIMIT 500''',
+            (contact_id, outbound_ref)).fetchall()
+        matches, seen = [], set()
+        for row in rows:
+            at = _parse(row['ts'])
+            key = (row['external_ref'], row['receipt_ref'])
+            if at is not None and start <= at <= end and key not in seen:
+                matches.append(dict(row))
+                seen.add(key)
+        return {'status': 'matched' if matches else 'unrelated', 'contact_id': contact_id,
+                'outbound_ref': outbound_ref, 'matches': matches,
+                'condition_satisfied': False, 'coverage_limited': len(rows) == 500}
 
     def outbound_between(
         self,

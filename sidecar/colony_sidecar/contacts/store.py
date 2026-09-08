@@ -73,11 +73,10 @@ def _looks_like_phone(address: str) -> bool:
 
 
 def _phone_key(address: str) -> str:
-    """Identity key for a phone number: the national significant digits (last 10), so that +1…, 1…,
-    a bare 10-digit number, and any formatting all collapse to the same key. Matches how the rest of
-    the stack compares numbers (last-10 digits). Falls back to all digits when fewer than 10."""
-    digits = _PHONE_DIGITS.sub("", (address or "").lstrip("+"))
-    return digits[-10:] if len(digits) >= 10 else digits
+    """Canonical phone digits, retaining international country codes."""
+    digits = _PHONE_DIGITS.sub("", (address or "").split('@', 1)[0])
+    # The supported bare NANP form may omit +1; other country codes stay intact.
+    return '1' + digits if len(digits) == 10 and not (address or '').strip().startswith('+') else digits
 
 
 def _name_similarity(a: Optional[str], b: Optional[str]) -> float:
@@ -347,6 +346,35 @@ class SQLiteContactStore(ContactStore):
 
     # ── Read ops ──────────────────────────────────────────────────────────────
 
+    async def propose_handle_link(self, contact_id, gateway, address, *, evidence_refs=(), source='auto:scoped-name'):
+        from .identity_links import propose
+        return await propose(self, contact_id=contact_id, gateway=gateway, address=address,
+                             evidence_refs=evidence_refs, source=source)
+
+    async def correct_handle_identity(self, **kwargs):
+        from .identity_links import correct
+        return await correct(self, **kwargs)
+
+    async def pending_identity_reconciliations(self, *, limit=100):
+        from .identity_links import pending_reconciliations
+        return await pending_reconciliations(self, limit=limit)
+
+    async def mark_sources_reconciled(self, operation_id, source_result):
+        from .identity_links import mark_sources_reconciled
+        return await mark_sources_reconciled(self, operation_id=operation_id, source_result=source_result)
+
+    async def mark_sources_conflicted(self, operation_id, code):
+        from .identity_links import mark_sources_conflicted
+        return await mark_sources_conflicted(self, operation_id=operation_id, code=code)
+
+    async def identity_evidence(self, contact_id):
+        from .identity_links import evidence
+        return await evidence(self, contact_id)
+
+    async def identity_revision(self):
+        async with self._require_db().execute('SELECT coalesce(max(rowid),0) FROM contact_identity_operations') as cur:
+            return int((await cur.fetchone())[0])
+
     async def get(self, contact_id: str) -> Optional[Contact]:
         db = self._require_db()
         async with db.execute(
@@ -366,6 +394,7 @@ class SQLiteContactStore(ContactStore):
             SELECT c.* FROM contacts c
             JOIN contact_handles h ON h.contact_id = c.contact_id
             WHERE h.gateway = ? AND h.address = ? AND c.deleted_at IS NULL
+              AND (h.verified=1 OR h.source!='auto:scoped-name')
             """,
             (gateway, norm),
         ) as cur:
@@ -398,8 +427,12 @@ class SQLiteContactStore(ContactStore):
             sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
                    "WHERE h.gateway = ? AND h.address = ? AND c.deleted_at IS NULL LIMIT 1")
             params = (g, address)
+        # Name-based legacy proposals must never become confirmed attribution.
+        # Multiple matching contacts are ambiguous, even on a normalized phone.
+        sql = sql.replace(' LIMIT 1', '') + " AND (h.verified=1 OR h.source!='auto:scoped-name')"
         async with db.execute(sql, params) as cur:
-            row = await cur.fetchone()
+            rows = await cur.fetchall()
+        row = rows[0] if len({r['contact_id'] for r in rows}) == 1 else None
         return Contact.from_row(dict(row)) if row else None
 
     async def get_handles(self, contact_id: str) -> List[ContactHandle]:
@@ -1269,28 +1302,16 @@ class SQLiteContactStore(ContactStore):
         return await self.get(keep_id)
 
     async def list_handle_proposals(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Handle-link proposals from scoped-name attribution awaiting owner
-        review. Sourced from the audit trail (action='handle_proposed');
-        excludes proposals whose contact was later deleted."""
+        """Pending candidate associations, never installed identity links."""
         db = self._require_db()
-        rows = []
         async with db.execute(
-            "SELECT a.contact_id, a.detail, a.created_at, c.display_name "
-            "FROM contact_audit a JOIN contacts c ON c.contact_id = a.contact_id "
-            "WHERE a.action = 'handle_proposed' AND c.deleted_at IS NULL "
-            "ORDER BY a.created_at DESC LIMIT ?", (limit,)) as cur:
-            async for r in cur:
-                try:
-                    d = json.loads(r["detail"] or "{}")
-                except (json.JSONDecodeError, TypeError):
-                    d = {}
-                rows.append({
-                    "contact_id": r["contact_id"],
-                    "display_name": r["display_name"],
-                    "gateway": d.get("gateway", ""),
-                    "address": d.get("address", ""),
-                    "at": r["created_at"],
-                })
+            "SELECT p.*, c.display_name FROM contact_identity_candidates p "
+            "JOIN contacts c ON c.contact_id=p.contact_id WHERE p.status='pending' "
+            "AND c.deleted_at IS NULL ORDER BY p.created_at DESC LIMIT ?", (max(1, min(100, limit)),)) as cur:
+            rows = [dict(row) for row in await cur.fetchall()]
+        for row in rows:
+            row['at'] = row['created_at']
+            row['evidence_refs'] = json.loads(row.pop('evidence_refs_json'))
         return rows
 
     async def update(self, contact_id: str, **fields) -> Optional[Contact]:

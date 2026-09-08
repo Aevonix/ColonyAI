@@ -35,12 +35,9 @@ _REL_TYPES = {"WM_WORKS_AT", "WM_KNOWS", "WM_PART_OF", "WM_RELATED_TO",
               "WM_LOCATED_IN", "WM_BUILDS"}
 _MIN_CONF = 0.5
 
-# Causal extraction confidence economics (fabrication controls): an edge is
-# born at most half-sure, corroboration nudges it, and it can never exceed
-# the ceiling without falsification machinery vouching for it.
+# Legacy causal extraction is a hypothesis with a conservative creation
+# ceiling. Repeat batches are not independent predictive evidence.
 _CAUSAL_CREATE_CEILING = 0.5
-_CAUSAL_CORROBORATION_STEP = 0.05
-_CAUSAL_CONF_CEILING = 0.75
 
 _SYSTEM_PROMPT = """\
 You extract structured world knowledge from conversation excerpts for a
@@ -62,7 +59,15 @@ Respond with ONLY a JSON object (no prose, no markdown fences):
 "product","location","event","concept"], "confidence": float}],
 "relationships": [{"source": str, "rel": one of ["WM_WORKS_AT","WM_KNOWS",
 "WM_PART_OF","WM_RELATED_TO","WM_LOCATED_IN","WM_BUILDS"], "target": str,
-"confidence": float}]}"""
+"confidence": float}],
+"observations": [{"entity": str, "property": "lowercase_property_key", "value": str, "temporal_status": "current",
+"evidence": "exact verbatim sentence from excerpt containing both entity and value"}]}
+Observations are reported claims only, never proof or direct sensor observations.
+Only unqualified present-tense states belong in observations. Omit future, past,
+dated, conditional or uncertain assertions; receiving a report today does not
+make its described state current. Never clip a date/tense qualifier off a quote.
+Do not infer personality, authority or trust. Omit vague, negated or uncertain claims.
+Never turn a question, example, instruction or an assistant's paraphrase into a fact."""
 
 _CAUSAL_PROMPT = """
 
@@ -132,12 +137,14 @@ def _parse_obj(content: str) -> Optional[dict]:
 class WorldLLMExtractor:
     def __init__(self, store: Any, *, graph: Any = None,
                  directive_manager: Any = None, journal: Any = None,
-                 self_model: Any = None) -> None:
+                 self_model: Any = None, source_ledger: Any = None, router_provider: Any = None) -> None:
         self._store = store
         self._graph = graph
         self._directives = directive_manager
         self._journal = journal
         self._self_model = self_model
+        self._source_ledger = source_ledger
+        self._router_provider = router_provider
         self._resolver = None
         if store is not None:
             try:
@@ -186,6 +193,25 @@ class WorldLLMExtractor:
         return "\n---\n".join(t[:600] for t in texts)[:8000]
 
     async def _llm_batch(self, texts: List[str]) -> Optional[dict]:
+        if self._router_provider is not None:
+            # Production uses the same discoverable extraction role as source
+            # learning. Re-read the router each batch so rebinding needs no restart.
+            import asyncio
+            from colony_sidecar.beliefs.source_claims import final_text, extraction_timeout_seconds
+            router = self._router_provider()
+            if getattr(router, 'supports_function_routing', False) is not True:
+                return None
+            prompt = _SYSTEM_PROMPT + (_CAUSAL_PROMPT if causal_extract_mode() != 'off' else '')
+            response = await asyncio.wait_for(router.complete(messages=[
+                {'role': 'system', 'content': prompt}, {'role': 'user', 'content': self._excerpt(texts)}],
+                context={'function_role': 'extraction', 'task': 'world_source_reports',
+                         'max_output_tokens': 900, 'allow_fallback': True}),
+                timeout=extraction_timeout_seconds(router))
+            self.last_report['processor'] = {'function_role': 'extraction',
+                'model_id': getattr(response, 'model_id', None),
+                'model_revision': getattr(response, 'model_revision', None),
+                'config_revision': getattr(response, 'config_revision', None)}
+            return _parse_obj(final_text(response))
         ep = _endpoint()
         if not ep["base"] or not ep["model"]:
             return None
@@ -310,7 +336,12 @@ class WorldLLMExtractor:
         if mode == "off" or self._store is None:
             return report
         self._seen_rels: set = set()
-        if texts is None:
+        source_batches = None
+        if texts is None and self._source_ledger is not None:
+            from .source_reports import recent_batches
+            source_batches = recent_batches(self._source_ledger)
+            texts = [source['content'] for batch in source_batches for source in batch]
+        elif texts is None:
             texts = await self._recent_memory_texts()
         report["texts"] = len(texts or [])
         if not texts:
@@ -318,9 +349,10 @@ class WorldLLMExtractor:
                         "process", mode)
             return report
 
-        name_to_id: Dict[str, str] = {}
-        for i in range(0, len(texts), 10):
-            batch = texts[i:i + 10]
+        batches = [([source['content'] for source in batch], batch) for batch in source_batches] if source_batches is not None else [
+            (texts[i:i + 10], []) for i in range(0, len(texts), 10)]
+        for batch, sources in batches:
+            name_to_id: Dict[str, str] = {}
             data = await self._llm_batch(batch)
             if not data:
                 continue
@@ -346,6 +378,8 @@ class WorldLLMExtractor:
                 eid = await self._upsert(name, etype, conf, mode, report)
                 if eid:
                     name_to_id[name.lower()] = eid
+            from .source_reports import record_reports
+            await record_reports(self, data.get('observations'), sources, name_to_id, mode, report)
             for r in (data.get("relationships") or []):
                 if not isinstance(r, dict):
                     continue
@@ -458,10 +492,8 @@ class WorldLLMExtractor:
         if mode not in ("live", "supervised"):
             return
         try:
-            # Repeated mentions must corroborate, not duplicate: an existing
-            # edge of the same type between the same pair is left alone in
-            # live mode; the supervised rung corroborates it (a bounded
-            # confidence bump is its one permitted edge operation, H1.5).
+            # Repeated batches do not create another edge or improve its
+            # confidence. Qualified observations own new source evidence.
             try:
                 existing = await self._store.query_relationships(
                     source_id=src_id, target_id=tgt_id,
@@ -469,27 +501,8 @@ class WorldLLMExtractor:
             except Exception:
                 existing = []
             if existing:
-                if mode == "supervised" and self._may_write(
-                        mode, "edge_corroborate", report):
-                    edge = existing[0]
-                    old = float(edge.confidence or 0.0)
-                    new_conf = min(0.7, old + 0.05)
-                    if new_conf > old:
-                        edge.confidence = new_conf
-                        props = dict(edge.properties or {})
-                        props["corroborations"] = int(
-                            props.get("corroborations", 0) or 0) + 1
-                        edge.properties = props
-                        await self._store.upsert_relationship(edge)
-                        report["writes"] = report.get("writes", 0) + 1
-                        self._journal_write(
-                            f"corroborated {src_id} -{rel}-> {tgt_id} "
-                            f"({old:.2f} -> {new_conf:.2f})",
-                            new_conf, edge.id)
                 return
-            # Edge CREATION is deliberately not in the reversible contract:
-            # the supervised rung corroborates what exists, never invents
-            # topology. Creation requires full live.
+            # Creation remains an explicit live-mode operation.
             if not self._may_write(mode, "edge_create", report):
                 return
             from colony_sidecar.world_model.relationships import WorldRelationship
@@ -506,9 +519,11 @@ class WorldLLMExtractor:
     async def _upsert_causal(self, src_id: str, rel: str, tgt_id: str,
                              evidence: str, conf: float, mode: str,
                              report: Dict[str, Any]) -> None:
-        """Evidence-pinned causal edge write with confidence economics:
-        create at <=0.5, corroborate +0.05 per repeat, ceiling 0.75.
-        Shadow mode writes NOTHING (the report is the only output)."""
+        """Retain a reported causal hypothesis without repeat-confidence boosts.
+
+        Repeat extraction does not refresh its support clock. Shadow writes no
+        graph state; independent outcomes belong to the forecast lifecycle.
+        """
         key = (src_id, rel, tgt_id)
         if key in self._seen_rels:
             return
@@ -529,29 +544,7 @@ class WorldLLMExtractor:
             from datetime import datetime, timezone
             now_iso = datetime.now(timezone.utc).isoformat()
             if existing:
-                edge = existing[0]
-                old = float(edge.confidence or 0.0)
-                new_conf = min(_CAUSAL_CONF_CEILING,
-                               old + _CAUSAL_CORROBORATION_STEP)
-                if new_conf > old:
-                    edge.confidence = new_conf
-                    props = dict(edge.properties or {})
-                    props["corroborations"] = int(
-                        props.get("corroborations", 0) or 0) + 1
-                    props.setdefault("evidence", evidence[:300])
-                    # Support stamp: the staleness clock (H2.3) reads this,
-                    # so corroboration — and only corroboration/creation —
-                    # resets it (a decay write never does).
-                    props["last_support_at"] = now_iso
-                    edge.properties = props
-                    await self._store.upsert_relationship(edge)
-                report["causal_corroborated"].append(
-                    {"id": edge.id, "confidence": round(float(edge.confidence), 2)})
-                self._journal_write(
-                    f"corroborated causal {src_id} -{rel}-> {tgt_id}",
-                    float(edge.confidence), edge.id)
-                self._predict_causal(edge.id, src_id, rel, tgt_id,
-                                     float(edge.confidence))
+                report.setdefault("causal_repeated", []).append(existing[0].id)
                 return
             from colony_sidecar.world_model.relationships import WorldRelationship
             create_conf = min(_CAUSAL_CREATE_CEILING, conf)
@@ -563,45 +556,8 @@ class WorldLLMExtractor:
                             "last_support_at": now_iso}))
             self._journal_write(
                 f"causal {src_id} -{rel}-> {tgt_id}", create_conf, src_id)
-            if created is not None and getattr(created, "id", ""):
-                self._predict_causal(created.id, src_id, rel, tgt_id,
-                                     create_conf)
         except Exception:
             logger.debug("llm-extract causal upsert failed", exc_info=True)
-
-    def _predict_causal(self, edge_id: str, src_id: str, rel: str,
-                        tgt_id: str, confidence: float) -> None:
-        """Causal falsifiability (H2.6): every LIVE causal write/boost stakes
-        a scoreable prediction — "this edge still holds at >= this confidence,
-        unopposed, in 30 days". Resolved by resolve_causal_edge; a claim that
-        decays, is deleted, or acquires an opposing edge scores a MISS and
-        feeds the world_causal calibration bucket. Rides COLONY_EXPECTATIONS;
-        never blocks the write path."""
-        try:
-            from colony_sidecar.self_model.expectations import (
-                expectations_enabled,
-            )
-            if not expectations_enabled():
-                return
-            from colony_sidecar.api.routers.host import _expectations
-            if _expectations is None:
-                return
-            import time as _time
-            _expectations.store.create(
-                subject=f"world-causal:{edge_id}", domain="world_causal",
-                expectation=(f"causal claim {src_id} -{rel}-> {tgt_id} "
-                             f"still holds at >= {confidence:.2f} confidence, "
-                             "unopposed, in 30 days"),
-                confidence=confidence,
-                horizon=_time.time() + 30 * 86400,
-                source="llm_causal_extract",
-                dedup_key=f"world-causal:{edge_id}",
-                detail={"edge_id": edge_id, "source_id": src_id,
-                        "target_id": tgt_id, "relationship_type": rel,
-                        "confidence_at_creation": confidence})
-        except Exception:
-            logger.debug("causal falsifiability prediction failed",
-                         exc_info=True)
 
     def _journal_write(self, description: str, conf: float, ref: str) -> None:
         if self._journal is None:

@@ -2678,11 +2678,30 @@ async def context_assemble(
                     f"- [{e.entity_type}] {e.name}" if hasattr(e, 'entity_type') else f"- {e}"
                     for e in entities
                 )
+                from colony_sidecar.turns import get_turn_idempotency_ledger
+                world_ledger = get_turn_idempotency_ledger(get_state_dir())
+                properties = await _world_store.property_views([e.id for e in entities],
+                    subject_person_id=body.context.contact_id,
+                    viewer_scope='person:'+body.context.contact_id, shareability='subject_private',
+                    source_ledger=world_ledger, limit=6)
+                refs = [ref for prop in properties for observation in prop['observations']
+                        if not observation.get('invalidated') for ref in observation.get('source_refs', [])]
+                cited = world_ledger.source_references([r['source_id'] for r in refs],
+                    contact_id=body.context.contact_id, session_id=body.context.session_id)
+                valid = {(r['source_id'], r['source_version']) for r in cited}
+                for prop in properties:
+                    required = [r for observation in prop['observations'] if not observation.get('invalidated')
+                                for r in observation.get('source_refs', [])]
+                    if any((r['source_id'], r['source_version']) not in valid for r in required):
+                        continue
+                    body_text += '\n' + json.dumps({k: prop[k] for k in (
+                        'entity_id', 'property_key', 'state', 'value', 'kind', 'as_of', 'has_disagreement')})
                 sections.append(ContextSection(
                     id="colony-world-model",
                     title="Related Entities",
                     body=body_text,
                     priority=70,
+                    citations=cited,
                 ))
         except Exception as exc:
             logger.warning("context_assemble world model failed: %s", exc)
@@ -2770,6 +2789,46 @@ async def context_assemble(
                 ))
         except Exception as exc:
             logger.warning("context_assemble commitments failed: %s", exc)
+
+    # --- Source-backed appraisals and contact-specific decision guidance ---
+    if _canonical_person_allowed and contact_id:
+        try:
+            from colony_sidecar.api.routers.social_state import appraisal_context
+            from colony_sidecar.api.routers.executions import authorized_viewer
+            person, _ = authorized_viewer(request, contact_id, scope='context:read')
+            social_brief, social_refs = appraisal_context(contact_id=person,
+                session_id=body.context.session_id, query=query_text)
+            if social_brief:
+                sections.append(ContextSection(id='colony-appraisals',
+                    title='Relevant working perspective', body=social_brief,
+                    priority=85, citations=social_refs))
+        except HTTPException:
+            pass
+        except Exception:
+            logger.debug('appraisal context unavailable', exc_info=True)
+
+    if _canonical_person_allowed and contact_id:
+        try:
+            from colony_sidecar.api.routers.executions import authorized_viewer
+            person, owner = authorized_viewer(request, contact_id, scope='context:read')
+            if owner:
+                from colony_sidecar.api.routers.social_state import waiting_context
+                waiting_brief = waiting_context(person)
+                if waiting_brief:
+                    sections.append(ContextSection(id='colony-waiting', title='Expected replies',
+                        body=waiting_brief, priority=74))
+                if _situation_store is not None and re.search(r'\b(hardware|machine|server|model|endpoint|cluster|offline|online|running|doing|status)\b', query_text, re.I):
+                    from colony_sidecar.world_model.observations import compact_situation
+                    snapshot = _situation_store.snapshot(subject_person_id=person, viewer_scope='owner')
+                    current = compact_situation(snapshot, limit=8)
+                    if current['facts'] or current['stale']:
+                        sections.append(ContextSection(id='colony-current-state',
+                            title='Current observed state and stale observations',
+                            body=json.dumps(current, ensure_ascii=False), priority=76))
+        except HTTPException:
+            pass
+        except Exception:
+            logger.debug('temporal and current-state context unavailable', exc_info=True)
 
     # --- Affect State ---
     if _exact_person_allowed and _affect_store is not None and contact_id:
@@ -3429,21 +3488,7 @@ async def signals_ingest(body: SignalIngestRequest) -> SignalIngestResponse:
                 _LooseMessage(body.context.contact_id, incoming.content, now)
             )
             recorded += len(sigs or [])
-            # Fold objective FORM signals (how they actually write) into the same
-            # engagement profile as the LLM's CONTENT-derived style — unified edge.
-            if _engagement_store is not None and body.context and body.context.contact_id and sigs:
-                style = {}
-                for sig in sigs:
-                    st = getattr(sig, "signal_type", "")
-                    if st == "emoji_usage":
-                        style["emoji_ok"] = min(1.0, float(getattr(sig, "normalized_value", 0.0)) / 3.0)
-                    elif st == "message_length":
-                        style["verbosity"] = min(1.0, float(getattr(sig, "raw_value", 0.0)) / 600.0)
-                if style:
-                    try:
-                        _engagement_store.update_from_observation(body.context.contact_id, style=style)
-                    except Exception:
-                        logger.debug("engagement-from-signals failed", exc_info=True)
+            # Form signals remain observations, not inferred communication preferences.
         except Exception as exc:
             logger.warning("signals_ingest collect(incoming) failed: %s", exc)
 
@@ -3765,8 +3810,21 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             graph_cleanup = "complete"
         except Exception:
             logger.warning("source erasure graph cleanup is pending", exc_info=True)
+    world_cleanup = 'unavailable'
+    if _world_store is not None:
+        world_cleanup = 'pending'
+        try:
+            await _world_store.erase_property_evidence(
+                ['source:'+sid for sid in set(result['source_ids'] + result['affected_source_ids'])],
+                subject_person_id=person)
+            world_cleanup = 'complete'
+        except NotImplementedError:
+            world_cleanup = 'unsupported_backend'
+        except Exception:
+            logger.warning('source erasure world report cleanup is pending', exc_info=True)
     return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
-            "shared_facts_cleanup": fact_cleanup, "vector_cleanup": vector_cleanup, **tom_cleanup,
+            "shared_facts_cleanup": fact_cleanup, "vector_cleanup": vector_cleanup,
+            "world_cleanup": world_cleanup, **tom_cleanup,
             "scope": "canonical_turn_sources_and_linked_projections",
             "host_reconciliation": "pending_until_each_host_connects"}
 
@@ -3914,6 +3972,19 @@ async def source_survivor_sync(turn_id: str, body: TurnSyncRequest, response: Re
     return await turns_sync_v2(turn_id, body, response, request)
 
 
+@v2_router.put('/turns/task-instruction/{turn_id:path}', response_model=TurnSyncResponse)
+async def task_instruction_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request):
+    """Retain a direct owner instruction without duplicating ordinary learning."""
+    from colony_sidecar.api.routers.executions import authorized_viewer
+    _, owner = authorized_viewer(request, body.context.contact_id, scope='turns:write')
+    if (not owner or not turn_id.startswith('task-instruction:') or body.context.turn_id != turn_id
+            or body.source_only is not True or body.user_message is None or body.assistant_message is not None
+            or body.checkpoint_messages is not None or body.assistant_source_refs):
+        raise HTTPException(422, detail='direct_owner_instruction_required')
+    request.state.task_instruction_only = True
+    return await turns_sync_v2(turn_id, body, response, request)
+
+
 @v2_router.put("/turns/{turn_id:path}", response_model=TurnSyncResponse)
 async def turns_sync_v2(
     turn_id: str,
@@ -4056,6 +4127,7 @@ async def _process_turn_sync(
                 session_id=body.context.session_id, messages=source_messages,
                 occurred_at=(body.context.metadata or {}).get("occurred_at"),
                 timezone_name=body.context.timezone,
+                derive_claims=not getattr(getattr(request, 'state', None), 'task_instruction_only', False),
             )
         except SourceErased:
             return TurnSyncResponse(accepted=False, continuity_updated=False, skipped_reason="source_erased")
@@ -4377,24 +4449,6 @@ async def _process_turn_sync(
     try:
         if _contacts_store is not None and body.context.contact_id and not _is_system_turn:
             await _contacts_store.record_interaction(body.context.contact_id)
-            # Recompute the contact's relationship closeness from interaction
-            # history + affect (self-sufficient; independent of the behavioral
-            # signal graph, which can be sparse). Keeps every contact's score live.
-            try:
-                from colony_sidecar.contacts.scoring import compute_relationship_score
-                _c = await _contacts_store.get(body.context.contact_id)
-                if _c is not None:
-                    _aff = None
-                    if _affect_store is not None:
-                        try:
-                            _aff = _affect_store.get_state(body.context.contact_id)
-                        except Exception:
-                            _aff = None
-                    _score = compute_relationship_score(_c, _aff)
-                    await _contacts_store.update_relationship_score(
-                        body.context.contact_id, _score)
-            except Exception:
-                logger.debug("relationship score update failed", exc_info=True)
         # Cross-channel communication ledger: record this exchange under the
         # CONVERSATION's channel (group vs DM vs voice provenance), never the
         # contact's primary-handle gateway (which collapsed everything to one
@@ -12721,25 +12775,8 @@ async def _run_tom_extraction(
     # Factual learning has one automatic path: source-grounded assertions.
     # Contact knowledge remains an explicit API, not a duplicate model call
     # that guesses what this participant accepted from the assistant.
-    # Engagement profile (OCEAN + communication style)
-    try:
-        eng = await _tom_extractor.extract_engagement(
-            conversation_text, contact_id, session_id=session_id,
-        )
-        if not source_current():
-            return
-        if eng and _engagement_store is not None:
-            _engagement_store.update_from_observation(
-                contact_id,
-                ocean=eng.get("ocean"),
-                style=eng.get("style"),
-                motivators=eng.get("motivators"),
-                topics=eng.get("topics"),
-                avoid=eng.get("avoid"),
-                source_lineage=lineage,
-            )
-    except Exception:
-        logger.debug("ToM engagement extraction failed", exc_info=True)
+    # Preferences and tentative working styles are now sourced by the canonical
+    # appraisal worker; there is no second personality-extraction request.
 
 
 @router.post("/tom/extract", response_model=TomExtractResponse)

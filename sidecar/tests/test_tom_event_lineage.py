@@ -98,7 +98,7 @@ async def test_cached_approach_forget_reopen_changes_next_ordinary_context(appro
         await ingest(client, r)
         brief = await r.profiler.profile('contact-a')
         before = await relationship_context(client)
-        assert 'neutral-source-topic' in before['colony-approach']
+        assert 'neutral-source-topic' not in before['colony-approach']
         assert 'mood is negative' in before['colony-approach']
         cached = json.loads(r.profiler._conn.execute('SELECT brief_json FROM relationship_briefs').fetchone()[0])
         assert not {'affect_valence', 'affect_trend', 'psyche_guidance', 'psyche_motivators'} & cached.keys()
@@ -118,14 +118,15 @@ async def test_cached_approach_forget_reopen_changes_next_ordinary_context(appro
         after = await relationship_context(client)
         assert 'neutral-source-topic' not in '\n'.join(after.values())
         assert 'mood is negative' not in after['colony-approach']
-        assert 'independent topic' in after['colony-approach']
+        assert 'independent topic' not in after['colony-approach']
+        assert 'independent topic' in r.engagement.get_profile('contact-a')['legacy_profile']['qual']['topics']
         assert 'mostly via test:thread-a' in after['colony-approach']
         assert (await r.contacts.get('contact-a')).interaction_count == count
         assert (await r.profiler.refresh_due())['profiled'] == 0
 
 
 @pytest.mark.asyncio
-async def test_retained_later_observation_changes_cached_approach_without_refresh(approach, monkeypatch):
+async def test_ordinary_ingress_no_longer_produces_legacy_numeric_observations(approach, monkeypatch):
     r = approach
     async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
         await ingest(client, r)
@@ -136,8 +137,9 @@ async def test_retained_later_observation_changes_cached_approach_without_refres
         monkeypatch.setattr(r.extractor, 'extract_engagement', changed)
         await ingest(client, r, turn_id='turn-b', session='session-b')
         assert (await r.profiler.refresh_due())['profiled'] == 0
-        assert 'later-source-topic' in (await relationship_context(client))['colony-approach']
-        assert r.engagement._conn.execute('SELECT count(*) FROM engagement_observations WHERE source_lineage_json IS NOT NULL').fetchone()[0] == 2
+        assert 'later-source-topic' not in (await relationship_context(client))['colony-approach']
+        assert 'later-source-topic' not in r.engagement.get_profile('contact-a')['legacy_profile']['qual'].get('topics', [])
+        assert r.engagement._conn.execute('SELECT count(*) FROM engagement_observations WHERE source_lineage_json IS NOT NULL').fetchone()[0] == 0
 
 
 @pytest.mark.asyncio
@@ -178,15 +180,16 @@ async def test_ordinary_ingress_forget_removes_text_and_numeric_influence(relati
         history = await client.get('/v1/host/affect/history/contact-a')
         assert any(e.get('evidence_basis') == 'canonical_source' and e.get('source_lineage') for e in history.json()['events'])
         assert r.affect.get_state('contact-a')['current_valence'] < .1
-        assert r.engagement.get_profile('contact-a')['dims']['warmth']['value'] == .5
-        assert 'neutral-source-topic' in await engagement_brief(client)
+        assert r.engagement.get_profile('contact-a')['legacy_profile']['dims']['warmth']['v'] == .9
+        assert r.engagement.get_profile('contact-a')['dims'] == {}
+        assert 'neutral-source-topic' not in await engagement_brief(client)
         result = await forget(client)
         assert result['affect_cleanup'] == result['engagement_cleanup'] == 'complete'
         assert r.affect.get_event(linked['id']) is None
         assert r.affect.get_event(explicit['id'])['source_lineage'] is None
         assert r.affect.get_state('contact-a')['current_valence'] == .4
         after = r.engagement.get_profile('contact-a')
-        assert after['dims'] == before['dims'] and after['qual'] == before['qual']
+        assert after['legacy_profile'] == before['legacy_profile']
         assert after['observation_count'] == before['observation_count']
         assert 'neutral-source-topic' not in await engagement_brief(client)
         assert r.engagement._conn.execute('SELECT count(*) FROM engagement_observations WHERE source_lineage_json IS NOT NULL').fetchone()[0] == 0
@@ -197,22 +200,15 @@ async def test_ordinary_ingress_forget_removes_text_and_numeric_influence(relati
 
 
 @pytest.mark.asyncio
-async def test_forget_while_engagement_model_is_running_drops_late_result(relations, monkeypatch):
-    started, release = asyncio.Event(), asyncio.Event()
-    async def blocked(*args, **kwargs):
-        started.set()
-        await release.wait()
-        return {'style': {'warmth': .1}, 'topics': ['neutral-late-topic']}
-    monkeypatch.setattr(relations.extractor, 'extract_engagement', blocked)
+async def test_ingress_does_not_run_retired_engagement_extractor(relations, monkeypatch):
+    async def retired(*args, **kwargs):
+        raise AssertionError('Numeric engagement extraction is retired')
+    monkeypatch.setattr(relations.extractor, 'extract_engagement', retired)
     async with AsyncClient(transport=ASGITransport(app=relations.app), base_url='http://test') as client:
-        await ingest(client, relations, wait=False)
-        await asyncio.wait_for(started.wait(), 3)
+        await ingest(client, relations)
         assert relations.affect.count_events() == 1
         await forget(client)
-        release.set()
-        await asyncio.wait_for(asyncio.gather(*relations.tasks), 3)
         assert relations.affect.count_events() == 0
-        assert relations.affect.get_state('contact-a')['event_count'] == 0
         assert relations.engagement.get_profile('contact-a')['observation_count'] == 0
         assert await engagement_brief(client) == ''
 
@@ -244,15 +240,17 @@ def test_legacy_baseline_survives_and_only_remaining_observations_recompute(tmp_
         # No API cleanup: reopening and reading must reconcile derived state.
         store._conn.close(); store = EngagementStore(path, source_ledger=ledger)
         actual, expected = store.get_profile('person'), reference.get_profile('person')
-        assert actual['dims'] == expected['dims'] and actual['qual'] == expected['qual']
-        assert actual['legacy_unlinked_observations'] == 4 and actual['observation_count'] == 5
+        assert actual['legacy_profile'] == expected['legacy_profile']
+        assert actual['dims'] == {} and actual['qual'] == {}
+        assert actual['legacy_unlinked_observations'] == 4 and actual['legacy_profile']['observation_count'] == 5 and actual['observation_count'] == 0
         assert 'erased topic' not in build_guidance(actual)
         assert store._conn.execute('SELECT evidence_basis FROM engagement_baselines').fetchone()[0] == 'legacy_unlinked'
         assert store._conn.execute('SELECT count(*) FROM engagement_observations').fetchone()[0] == 1
         ledger.erase_sources(contact_id='person', turn_ids=['b'])
         actual = store.get_profile('person')
-        assert actual['dims']['warmth']['value'] == .8 and actual['observation_count'] == 4
-        assert actual['qual'] == {'topics': ['legacy topic']}
+        assert actual['legacy_profile']['dims']['warmth']['v'] == .8 and actual['legacy_profile']['observation_count'] == 4
+        assert actual['legacy_profile']['qual'] == {'topics': ['legacy topic']}
+        assert build_guidance(actual) == ''
     finally:
         store._conn.close(); reference._conn.close(); facts.close()
 
@@ -271,7 +269,7 @@ def test_cleanup_and_recomputation_are_atomic_and_read_retries(tmp_path, monkeyp
         store = EngagementStore(tmp_path / 'engagement.db', source_ledger=ledger)
         store.update_from_observation('person', style={'warmth': .1}, topics=['neutral marker'], source_lineage=lineage)
         method, table = '_recompute_profile', 'engagement_observations'
-        read = lambda: store.get_profile('person')['observation_count']
+        read = lambda: store.get_profile('person')['legacy_profile']['observation_count']
     original = getattr(store, method)
     def fail(*args, **kwargs):
         raise OSError('controlled interrupted projection')

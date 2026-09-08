@@ -133,7 +133,7 @@ async def test_supervised_entity_upsert_and_alias_merge(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_supervised_corroborates_existing_edge_never_creates():
+async def test_supervised_does_not_raise_existing_edge_confidence_or_create_edges():
     existing = WorldRelationship(id="wr-1", source_id="a", target_id="b",
                                  relationship_type="WM_KNOWS",
                                  confidence=0.5)
@@ -141,16 +141,16 @@ async def test_supervised_corroborates_existing_edge_never_creates():
     x = WorldLLMExtractor(world)
     x._seen_rels = set()
     report = _report()
-    # existing edge -> corroborate (bounded bump)
+    # Existing legacy edge is unchanged by another mention.
     await x._upsert_rel("a", "WM_KNOWS", "b", 0.6, "supervised", report)
-    assert existing.confidence == pytest.approx(0.55)
-    assert existing.properties["corroborations"] == 1
-    assert report["writes"] == 1
+    assert existing.confidence == pytest.approx(0.5)
+    assert "corroborations" not in existing.properties
+    assert report["writes"] == 0
     # new edge -> NOT created under supervised
     await x._upsert_rel("a", "WM_WORKS_AT", "c", 0.6, "supervised", report)
     assert all(r.relationship_type != "WM_WORKS_AT"
                for r in world.rel_upserts)
-    assert report["writes"] == 1
+    assert report["writes"] == 0
 
 
 @pytest.mark.asyncio

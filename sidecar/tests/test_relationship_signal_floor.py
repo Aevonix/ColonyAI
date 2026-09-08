@@ -15,11 +15,8 @@ from colony_sidecar.intelligence.relationships import signal_floor as sf
 # Item 1 + 2: provenance (direct interlocutors only) + signal floor
 # ---------------------------------------------------------------------------
 
-def test_identical_score_batch_yields_zero(monkeypatch):
-    """Regression: a batch of contacts sharing one identical score and
-    identical staleness (an ingestion artifact: one event + uniform default
-    decay), even when all are direct interlocutors by count, must be dropped
-    whole. Killed at the floor, not by a hardcode."""
+def test_identical_legacy_scores_cannot_exclude_direct_interlocutors(monkeypatch):
+    """Composite closeness no longer measures relationship usefulness."""
     monkeypatch.delenv("COLONY_RELATIONSHIP_MIN_EXCHANGES", raising=False)
     monkeypatch.delenv("COLONY_RELATIONSHIP_MAX_IDENTICAL", raising=False)
     batch = [
@@ -27,7 +24,10 @@ def test_identical_score_batch_yields_zero(monkeypatch):
          "relationship_score": 0.226}
         for i in range(6)
     ]
-    assert sf.filter_relationship_candidates(batch) == []
+    survivors = sf.filter_relationship_candidates(batch)
+    assert len(survivors) == 6
+    assert all('relationship_score' not in row for row in survivors)
+    assert all('relationship_score' in row for row in batch)
 
 
 def test_passively_observed_third_party_dropped(monkeypatch):
@@ -54,15 +54,16 @@ def test_genuine_direct_interlocutor_survives(monkeypatch):
     assert {c["entity_id"] for c in survivors} == {"real", "real2"}
 
 
-def test_explicit_score_history_floor():
+def test_score_history_is_not_relationship_evidence():
     cands = [
         {"entity_id": "a", "interaction_count": 8, "relationship_score": 0.4,
-         "score_events": 1},   # only one score event -> no variance -> drop
+         "score_events": 1},   # legacy history must not govern selection
         {"entity_id": "b", "interaction_count": 8, "relationship_score": 0.5,
          "score_events": 4},
     ]
     survivors = sf.filter_relationship_candidates(cands)
-    assert {c["entity_id"] for c in survivors} == {"b"}
+    assert {c["entity_id"] for c in survivors} == {"a", "b"}
+    assert all(not {"score_events", "relationship_score"} & row.keys() for row in survivors)
 
 
 def test_enrich_pulls_interaction_count_from_contact_store():

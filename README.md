@@ -38,7 +38,7 @@ python -m pip install . ./sidecar
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
-The wizard selects a Hermes home, asks for your name, agent name and model, and
+The wizard selects a Hermes home, asks for your name, agent name, model, values, timezone and quiet hours, and
 creates private state outside Git. It preserves existing identity, channels and
 model settings. Replacing an incumbent memory provider is an explicit choice.
 It attaches the canonical installed adapter when its bytes match, or installs
@@ -82,6 +82,16 @@ for native package installations and service bindings.
 
 ## What the active paths provide
 
+- **Contacts and working views.** Exact channel handles identify contacts;
+  uncertain matches stay proposals. Owner corrections preserve attribution history.
+  Source-backed preferences, temporary appraisals and narrow opinions supply
+  relevant context without changing permissions. Numeric closeness and inferred
+  Big Five scores no longer govern the active path. [Social state](docs/SOCIAL-STATE.md)
+- **Task anticipation.** Expected replies share the original commitment and begin
+  timing only after a real transport receipt. Native review tasks use the existing
+  Hermes scheduler. Prepared follow-ups require deployment-owned authority and a
+  qualified delivery path. Prospective task forecasts learn from measured outcomes.
+  [Forecasts and waiting](docs/TEMPORAL-FORECASTS.md)
 - **Automatic recollection.** The native memory provider requests context for
   the current participant, session and question before inference. A durable
   outbox captures ordinary turns; retry does not create another source.

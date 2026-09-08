@@ -65,8 +65,10 @@ def attach(initiative_id: str, body: ReviewBinding, request: Request):
         native, state = task_snapshot(initiative_id, person, body.model_dump(), review=True)
         if state['contract_sha256'] != body.contract_sha256:
             raise ValueError('native_review_contract_mismatch')
-        return ledger.attach(initiative_id, person, native, body.contract_sha256,
-                             prospective=state['attempt_count'] == 0)
+        value = ledger.attach(initiative_id, person, native, body.contract_sha256,
+                              prospective=state['attempt_count'] == 0)
+        from colony_sidecar.self_model import runtime_forecasts
+        return {**value, 'forecast': runtime_forecasts.safe(runtime_forecasts.attach, value, native, state, person)}
     return guarded(bind)
 
 
@@ -80,5 +82,6 @@ def observe(initiative_id: str, body: ReviewBinding, request: Request):
         value = ledger.reconcile(initiative_id, native, state)
         from colony_sidecar.self_model.native_outcomes import retain_outcome
         retain_outcome(value, native, state, person)
-        return value
+        from colony_sidecar.self_model import runtime_forecasts
+        return {**value, 'forecast': runtime_forecasts.safe(runtime_forecasts.observe, value, native, state, person)}
     return guarded(reconcile)

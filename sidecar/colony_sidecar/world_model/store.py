@@ -342,7 +342,11 @@ class WorldModelStore:
         property_value: Any,
         confidence: float,
     ) -> None:
-        """Update a single property if the new confidence is higher."""
+        """Update a legacy descriptive property if its confidence is higher.
+
+        This is not current operational truth. New operational consumers use
+        record_property_observation/property_state with explicit provenance.
+        """
         # Capture the pre-update value so a supersession can be audited
         # (item 7 inline hook). Best-effort; never blocks the write.
         old_value, old_conf = None, 0.0
@@ -371,10 +375,10 @@ class WorldModelStore:
         self._emit_change("entity_property_update", entity_id=entity_id, property_key=property_key)
 
     async def reinforce_entity(self, entity_id: str) -> None:
-        """Record a repeat mention of an existing entity (merge / exact-match
-        resolve): last_seen=now, mention_count+1, confidence +0.02 capped 0.95.
-        Anti-data-loss only — never lowers confidence or moves last_seen back.
-        No-op on backends without reinforcement support."""
+        """Record a repeat mention without raising evidential confidence.
+
+        Familiarity updates last_seen/count. No-op on unsupported backends.
+        """
         fn = getattr(self._backend, "reinforce_entity", None)
         if fn is None:
             logger.debug("reinforce_entity unsupported by %s backend",
@@ -422,6 +426,66 @@ class WorldModelStore:
             pass
 
     # ── Observations ─────────────────────────────────────────────────────────
+
+    async def record_property_observation(self, **kwargs):
+        """Append one scoped assertion; producers must supply canonical evidence.
+
+        SQLite is the qualified observation backend in this release. Other
+        adapters remain valid for legacy entities/edges and report unsupported
+        rather than substituting old unqualified property values.
+        """
+        from .observations import observation
+        put = getattr(self._backend, 'put_property_observation', None)
+        if put is None:
+            raise NotImplementedError('typed_world_observations_require_sqlite')
+        data = observation(**kwargs)
+        if await self.get_entity(data['entity_id'], min_confidence=0) is None:
+            raise ValueError('world_observation_entity_not_found')
+        result = await put(data)
+        self._emit_change('property_observed', entity_id=data['entity_id'], observation_id=data['observation_id'])
+        return result
+
+    async def property_state(self, entity_id, property_key, *, subject_person_id,
+                             viewer_scope, shareability, as_of=None, source_ledger=None):
+        from .observations import project, iso
+        reader = getattr(self._backend, 'current_property_observations', None)
+        if reader is None:
+            raise NotImplementedError('typed_world_observations_require_sqlite')
+        moment = iso(as_of if as_of is not None else datetime.now(timezone.utc).isoformat())
+        rows = await reader(entity_id, property_key, subject_person_id=subject_person_id,
+                            viewer_scope=viewer_scope, shareability=shareability, as_of=moment)
+        from .source_reports import validate_reports
+        rows = validate_reports(rows, source_ledger)
+        return project(rows, entity_id=entity_id, property_key=property_key,
+            subject_person_id=subject_person_id, viewer_scope=viewer_scope, shareability=shareability,
+            as_of=moment, coverage_limited=len(rows) >= 2001)
+
+    async def erase_property_evidence(self, evidence_refs, *, subject_person_id):
+        eraser = getattr(self._backend, 'erase_property_evidence', None)
+        if eraser is None:
+            raise NotImplementedError('typed_world_observations_require_sqlite')
+        removed = await eraser(evidence_refs, subject_person_id=subject_person_id)
+        if removed:
+            self._emit_change('property_evidence_invalidated', observation_ids=removed)
+        return removed
+
+    async def property_views(self, entity_ids, *, subject_person_id, viewer_scope, shareability,
+                             as_of=None, source_ledger=None, limit=8):
+        """Bounded scoped facts about already-relevant entities for turn context."""
+        keys = getattr(self._backend, 'property_keys', None)
+        if keys is None:
+            raise NotImplementedError('typed_world_observations_require_sqlite')
+        limit = max(1, min(int(limit), 32))
+        result = []
+        for entity_id in list(dict.fromkeys(entity_ids))[:8]:
+            properties = await keys(entity_id, subject_person_id=subject_person_id, viewer_scope=viewer_scope,
+                                    shareability=shareability, limit=limit)
+            for key in properties:
+                result.append(await self.property_state(entity_id, key, subject_person_id=subject_person_id,
+                    viewer_scope=viewer_scope, shareability=shareability, as_of=as_of, source_ledger=source_ledger))
+                if len(result) >= limit:
+                    return result
+        return result
 
     async def add_observation(
         self,

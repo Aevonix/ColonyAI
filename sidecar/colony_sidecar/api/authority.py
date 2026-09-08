@@ -958,7 +958,10 @@ def compatible_scopes(method: str, path: str) -> frozenset[str]:
     this route-local alias.
     """
 
-    if (method.upper(), path) in WORK_READ_SURFACE_V1 or (method.upper(), path) == ("POST", "/v1/host/learning/correction"):
+    if (method.upper(), path) in WORK_READ_SURFACE_V1 or (method.upper(), path) in {
+        ("POST", "/v1/host/learning/correction"),
+        ("POST", "/v1/host/response-guard/check"),
+    }:
         return _API_ACCESS_COMPATIBILITY
     return _NO_COMPATIBILITY_SCOPES
 
@@ -970,6 +973,12 @@ def required_scope(method: str, path: str) -> str:
     if method.upper() == 'GET' and re.fullmatch(r'/v1/host/initiative-work(?:/[^/]+)?', path):
         return 'context:read'
     if method.upper() == 'POST' and re.fullmatch(r'/v1/host/initiative-work/[^/]+/(?:native-task|observe)', path):
+        return 'turns:write'
+    if method.upper() == 'POST' and re.fullmatch(r'/v1/host/temporal-followups/[^/]+/(?:verify-plan|check-plan)', path):
+        return 'transport:write'
+    if method.upper() == 'GET' and re.fullmatch(r'/v1/host/temporal-followups(?:/[^/]+)?', path):
+        return 'context:read'
+    if method.upper() == 'POST' and re.fullmatch(r'/v1/host/temporal-followups(?:/[^/]+/(?:change|native-task|prepare|observe|bind-plan))?', path):
         return 'turns:write'
     if method.upper() == "POST" and path.startswith("/v1/host/commitments/") and path.endswith("/work"):
         return "turns:write"
@@ -1093,6 +1102,7 @@ def required_scope(method: str, path: str) -> str:
     exact = {
         ("GET", "/v1/host/admin/auth/status"): "auth:admin",
         ("GET", "/v1/host/contact-policy"): "contacts:policy-read",
+        ("POST", "/v1/host/response-guard/check"): "response-guard:check",
         ("GET", "/v1/host/queue/contract"): "workers:contract",
         ("POST", "/v1/host/memory/read"): "memory:read",
         ("POST", "/v1/host/memory/search"): "memory:search",
@@ -1103,6 +1113,11 @@ def required_scope(method: str, path: str) -> str:
         ("GET", "/v1/host/memory/sources/claims/status"): "memory:read",
         ("GET", "/v1/host/preferences"): "context:read",
         ("GET", "/v1/host/self"): "context:read",
+        ("POST", "/v1/host/transport/observe"): "transport:write",
+        ("GET", "/v1/host/social/appraisals"): "context:read",
+        ("POST", "/v1/host/social/appraisals/correct"): "turns:write",
+        ("GET", "/v1/host/social/contacts"): "context:read",
+        ("POST", "/v1/host/social/contacts/correct-identity"): "turns:write",
         ("POST", "/v1/host/preferences/learn"): "memory:write",
         ("POST", "/v1/host/learning/correction"): "memory:write",
         ("POST", "/v1/host/context/assemble"): "context:read",
