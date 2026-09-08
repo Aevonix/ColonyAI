@@ -114,10 +114,8 @@ class StrategyAdjuster:
 
     def __init__(self, graph: "ColonyGraph", params: Any = None):
         self.graph = graph
-        # AdaptiveParamStore: the read-back path for tuning adjustments.
-        # Without it, threshold adjustments have nowhere consumers look and
-        # are refused rather than written into the void.
-        self._params = params
+        # params remains a constructor compatibility argument. Only the
+        # ExperimentEngine owns parameter writes; this detector proposes.
         self._experiment_proposer: Any = None
         self._applied_adjustments: list = []
 
@@ -203,75 +201,6 @@ class StrategyAdjuster:
             "source": f"legacy-cpi-gap:{adjustment.adjustment_type}",
         }
 
-    async def _execute_action(self, action: dict) -> dict:
-        """Compatibility hook: convert every legacy action into a proposal."""
-        action_type = action.get("type")
-        params = action.get("params", {})
-        return {
-            "success": False,
-            "action": action_type,
-            "params": params,
-            "proposal_required": True,
-            "writer": "ExperimentEngine",
-        }
-
-    async def _adjust_threshold(self, threshold: float) -> dict:
-        """Raise/lower the recall relevance floor via the AdaptiveParamStore.
-
-        This replaces a legacy write to a graph Config node that no consumer
-        ever read back. ColonyGraph.recall reads recall.min_relevance at
-        query time, so the adjustment takes effect immediately; the store
-        clamps to [0, 0.5] and journals the change (domain meta_learning).
-        """
-        return self._set_param(
-            "recall.min_relevance", threshold, action="adjust_threshold",
-            reason="semantic_mismatch gap: raise recall relevance floor")
-
-    async def _adjust_consolidation_threshold(self, threshold: float) -> dict:
-        """Adjust the MemoryConsolidator merge threshold (read per run)."""
-        return self._set_param(
-            "consolidation.similarity_threshold", threshold,
-            action="adjust_consolidation_threshold",
-            reason="low_memory_quality gap: tune duplicate-merge threshold")
-
-    def _set_param(self, name: str, value: float, *, action: str,
-                   reason: str) -> dict:
-        return {
-            "success": False,
-            "action": action,
-            "param": name,
-            "requested": float(value),
-            "hypothesis": reason,
-            "proposal_required": True,
-            "writer": "ExperimentEngine",
-        }
-
-    async def _decay_signals(self, factor: float) -> dict:
-        """RETIRED — this action never decayed signals.
-
-        Despite its name it called graph.decay_memories(half_life_days=7/factor),
-        silently compressing the half-life of EVERY memory whenever a
-        'stale_data' gap fired — a second, hidden writer racing the autonomy
-        loop's memory_decay phase. Memory decay has exactly one writer (the
-        loop phase, tuned via COLONY_DECAY_HALF_LIFE_DAYS); this action now
-        refuses and never touches the graph.
-        """
-        return {
-            "success": False,
-            "action": "decay_signals",
-            "error": ("retired: decayed memories, not signals; memory decay "
-                      "is owned solely by the autonomy loop's memory_decay "
-                      "phase"),
-        }
-
-    async def _recalibrate_baselines(self) -> dict:
-        """Retired writer: calibration changes must be controlled experiments."""
-        return {
-            "success": False,
-            "action": "recalibrate_baselines",
-            "proposal_required": True,
-            "writer": "ExperimentEngine",
-        }
 
     def _default_strategy(self) -> dict:
         """Default strategy for unknown gap types."""

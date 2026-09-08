@@ -6,7 +6,7 @@ Locks:
 - fact/semantic memories get their own half-life ONLY when
   COLONY_DECAY_HALF_LIFE_SEMANTIC_DAYS is set (defaults to episodic);
 - the Cypher pass and _compute_decay_factor use the same lambdas;
-- StrategyAdjuster._decay_signals is retired and never touches the graph.
+- StrategyAdjuster emits proposals and never becomes another decay writer.
 """
 
 from __future__ import annotations
@@ -187,7 +187,7 @@ async def test_cypher_and_unit_math_agree(monkeypatch):
     assert unit == pytest.approx(math.exp(-params["lambda_sem"] * 10))
 
 
-# --- StrategyAdjuster._decay_signals retired -------------------------------------
+# A legacy gap must never create a second memory-decay writer.
 
 class _ExplodingGraph:
     async def decay_memories(self, *a, **k):
@@ -195,22 +195,13 @@ class _ExplodingGraph:
 
 
 @pytest.mark.asyncio
-async def test_decay_signals_retired_refuses():
-    from colony_sidecar.intelligence.cognition.strategy_adjuster import (
-        StrategyAdjuster,
-    )
-    adj = StrategyAdjuster(graph=_ExplodingGraph())
-    out = await adj._decay_signals(factor=0.5)
-    assert out["success"] is False
-    assert "retired" in out["error"]
+async def test_stale_data_gap_only_proposes_without_decaying_memories():
+    from types import SimpleNamespace
+    from colony_sidecar.intelligence.cognition.strategy_adjuster import StrategyAdjuster, AdjustmentStatus
 
-
-@pytest.mark.asyncio
-async def test_decay_old_signals_action_refuses_via_dispatch():
-    from colony_sidecar.intelligence.cognition.strategy_adjuster import (
-        StrategyAdjuster,
-    )
-    adj = StrategyAdjuster(graph=_ExplodingGraph())
-    out = await adj._execute_action(
-        {"type": "decay_old_signals", "params": {"factor": 0.5}})
-    assert out["success"] is False
+    adjuster = StrategyAdjuster(graph=_ExplodingGraph())
+    adjustment = await adjuster.generate(SimpleNamespace(gap_type="stale_data"))
+    assert await adjuster.apply(adjustment) is False
+    assert adjustment.status == AdjustmentStatus.PROPOSED
+    assert adjustment.result["successful"] == 0
+    assert adjustment.result["proposals"] > 0

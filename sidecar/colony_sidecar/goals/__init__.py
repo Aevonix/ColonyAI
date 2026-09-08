@@ -1,4 +1,10 @@
-"""Colony Goal Engine — DAG-based goal decomposition and lifecycle management."""
+"""Legacy goal records and optional planner compatibility.
+
+New execution belongs to native runtime tasks and canonical commitments.
+The default GoalEngine stores accepted goals without an execution backend.
+Planner exports remain for existing readers and stored-goal migrations;
+their presence does not establish live execution.
+"""
 
 from .config import GoalEngineConfig
 from .decomposer import DecompositionTemplate, GoalDecomposer, SubtaskSpec

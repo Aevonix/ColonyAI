@@ -77,6 +77,33 @@ async def complete(r, role='extraction', **context):
 
 
 @pytest.mark.asyncio
+async def test_named_functions_never_open_the_legacy_learner_database(tmp_path, monkeypatch):
+    from colony_sidecar.router import self_learning
+    database = tmp_path / 'must-not-create.db'
+    monkeypatch.setattr(self_learning, '_DEFAULT_DB', database)
+    with endpoint() as (url, calls):
+        r = LLMRouter(tiers={})
+        r.configure(config(url, url))
+        result = await complete(r)
+        r.record_outcome(result.request_id, result.tier_used, .9, 12, 1)
+        assert result.binding == 'interactive' and len(calls) == 1
+        assert not database.exists() and r._learner is None
+
+
+def test_legacy_routing_still_records_outcomes_lazily(tmp_path, monkeypatch):
+    from colony_sidecar.router import self_learning
+    from colony_sidecar.router.tiers import ModelTier
+    database = tmp_path / 'legacy.db'
+    monkeypatch.setattr(self_learning, '_DEFAULT_DB', database)
+    r = LLMRouter()
+    assert not database.exists()
+    r.record_outcome('fixture-request', ModelTier.SMALL, .9, 12, 1, prompt='fixture')
+    assert database.exists()
+    assert r._learner._conn.execute('SELECT COUNT(*) FROM outcomes').fetchone()[0] == 1
+    assert r._select_tier('hello', {}) == ModelTier.SMALL
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('message,finish,reason', [
     ({'role': 'assistant', 'content': None, 'reasoning_content': 'Private scratch work.'}, 'stop', 'missing_final_answer'),
     ({'role': 'assistant', 'content': 'Unfinished answer'}, 'length', 'incomplete_final_answer'),

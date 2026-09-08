@@ -429,7 +429,7 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
             # silently selected over the requested artifact on another attach.
             client = Path(manifest['adapter_binding']['sources']['colony_hermes'])/'client.py'
             client.write_bytes(client.read_bytes()+b'\n# Different installed payload\n')
-            other = tmp_path/'mismatch-home'; other.mkdir()
+            other = tmp_path/'mismatch-home'; other.mkdir(mode=0o700)
             (other/'config.yaml').write_text('plugins: {enabled: []}\n')
             (other/'SOUL.md').write_text('Retained identity')
             before = {path.name: path.read_bytes() for path in other.iterdir()}

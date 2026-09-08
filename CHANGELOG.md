@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.0.25 - runtime repairs and removal of unused scaffolding
+
+Native feed tools now use the calling tool context when recording their origin,
+including concurrent calls. Optional review distinguishes a completed review
+from an unavailable or invalid result instead of silently treating every result
+as unflagged. Review remains disabled by default.
+
+The retired context plugin, unused strategy helpers and unsupported worker
+branches have been removed. Source tests live outside shipped packages. Legacy
+planner and persona setup paths are documented as compatibility surfaces; current
+deployment uses durable accepted work and source-backed appraisals. Generated
+harness instructions use the actual feed API and stop requesting automatic
+numeric mood estimates. Existing memory, journals and compatibility readers are
+preserved. This release makes no claim of improved semantic memory admission.
+
+Hermes 0.21.1 remains the qualified runtime. Native installation qualification
+uses the adapter's required private directory permissions.
+
 ## v1.0.24 - current recollection and durable transport receipts
 
 A rejected or uncertain claim on an identified commitment holds ordinary tools

@@ -18,6 +18,10 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
+Version 1.0.25 repairs native feed attribution and removes unused runtime
+scaffolding. The [changelog](CHANGELOG.md) records the remaining compatibility
+surfaces and the limits of this maintenance release.
+
 The lightweight installation starts with memory and observation. Extended
 autonomy loops, public channels, voice systems and hardware need explicit
 deployment integration and their own behavioral checks. Version 1.0 does not

@@ -1,8 +1,8 @@
-"""RouterSelfLearner — persist routing outcomes and improve tier thresholds.
+"""Legacy tier learner; named function routing does not consume these scores.
 
 Stores (complexity_score, tier_used, quality_rating, cost_usd) tuples in
-SQLite. Periodically retrains the scoring thresholds using logistic regression
-on accumulated data.
+SQLite. Periodically adjusts tier thresholds using a quality/cost heuristic
+over accumulated data. This is not a trained prediction model.
 
 Rules:
 - Retrain every 100 new outcome observations.

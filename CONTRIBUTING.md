@@ -25,8 +25,8 @@ stubs them.
 | `sidecar/colony_sidecar/api/` | Pydantic schemas and routers — the single source of truth for the HTTP contract |
 | `sidecar/colony_sidecar/intelligence/` | Graph memory, mind model, cognition components |
 | `sidecar/colony_sidecar/workers/` | Worker daemons (`colony-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
-| `sidecar/tests/` | The test suite (plus co-located tests inside `colony_sidecar/`) |
-| `plugins/` | Host integration plugins: `hermes-plugin` (general adapter), `colony-memory` (memory provider), `hermes-context` (context engine), `feeds-manage` |
+| `sidecar/tests/` | Sidecar test suite, kept out of the installed product package |
+| `plugins/` | Host integration plugins: `hermes-plugin` (general adapter), `colony-memory` (memory provider), `feeds-manage` |
 | `docs/` | Public docs (harness integration, channel framework, feeds, prompts) |
 
 ## Making changes
@@ -41,10 +41,23 @@ stubs them.
 
 ```bash
 cd sidecar
-python -m pytest tests/ colony_sidecar/ -q   # full suite (1,600+ tests)
+python -m pytest tests/ -q                  # sidecar suite
 python -m pytest tests/test_doctor.py -q     # one file
 python -m pytest -x                          # stop on first failure
 ```
+
+From the repo root with the qualified Hermes and sidecar installed, run
+the native adapter, hostworker and source-recall harness contracts separately:
+
+```bash
+python -m pytest tests/hermes_adapter -q
+python -m pytest hostworker/tests -q
+python -m pytest benchmarks/source_recall/test_harness.py -q
+```
+
+Their distinct `conftest.py` modules require separate collection. The harness
+uses a local synthetic HTTP server; it is a storage/transport check, not a
+measurement of model quality or a production smoke test.
 
 ### Commit conventions
 

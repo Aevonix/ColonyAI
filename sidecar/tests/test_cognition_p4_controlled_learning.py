@@ -385,19 +385,6 @@ def test_experiment_engine_is_the_only_p4_parameter_writer(
 
 
 @pytest.mark.asyncio
-async def test_legacy_strategy_adjuster_emits_a_proposal_not_a_write(
-    tmp_path, monkeypatch,
-):
-    _, params, _ = _engine(tmp_path, monkeypatch, mode="live")
-    params.register("recall.min_relevance", 0.1, 0.0, 0.5)
-    adjuster = StrategyAdjuster(graph=object(), params=params)
-    result = await adjuster._adjust_threshold(threshold=0.3)
-    assert result["success"] is False
-    assert result["proposal_required"] is True
-    assert params.get("recall.min_relevance") == pytest.approx(0.1)
-
-
-@pytest.mark.asyncio
 async def test_legacy_gap_detector_can_only_persist_a_typed_proposal(
     monkeypatch,
 ):

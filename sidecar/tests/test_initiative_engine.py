@@ -1,8 +1,7 @@
 """InitiativeEngine active-set accessors: get_active (filters expired) + dismiss.
 
-These live under tests/ so they run in CI, protecting the behaviour against
-regression (the equivalent checks in the in-package test_components.py are not
-on CI's collection path).
+These cover active-set behavior alongside the broader component suite in
+test_intelligence_components.py. Both live under tests/ and run in CI.
 """
 
 from datetime import datetime, timedelta

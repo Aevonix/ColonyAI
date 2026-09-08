@@ -17,9 +17,8 @@ class GateConfig:
     cross_context_lookback_hours: int = 4
 
     # Layer 6 — secondary LLM appropriateness review. Off by default because
-    # it needs an injected reviewer client; enabling it WITHOUT one fails
-    # open (the pipeline warns loudly at construction). Wire a reviewer when
-    # enabling.
+    # it needs an injected reviewer client. Explicitly enabling it without one
+    # returns review_unavailable; this does not enable another approval path.
     enable_secondary_review: bool = False
     secondary_review_model: str = "claude-haiku-4-5-20251001"
 
