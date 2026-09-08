@@ -35,6 +35,8 @@ def test_revision_preserves_original_and_changes_next_actual_horizon(tmp_path):
     original = issue(store)
     revised = issue(store, previous_revision=1, horizon=1250., issued_at=1050.)
     assert revised.detail['supersedes_revision'] == 1
+    assert [p.prediction_id for p in store.pending()] == [revised.prediction_id]
+    assert [p.prediction_id for p in store.projected(subject_person_id='owner',viewer_scope='owner')] == [revised.prediction_id]
     observed(store)
     history = store.forecast_history('one')
     assert [(p['horizon'],p['outcome']) for p in history['forecasts']] == [(1100.,'miss'),(1250.,'hit')]

@@ -224,7 +224,10 @@ class TemporalFollowups:
                     reference(item['receipt_ref'])
                 except (TypeError, ValueError):
                     continue
-                if stamp < (row['dispatch_occurred_at'] or row['created_at']) or stamp > self.clock():
+                # An exact provider parent reference can arrive before our
+                # first retained delivery/read ACK. That ACK is an observed
+                # anchor, not proof the message could not be answered earlier.
+                if stamp < row['created_at'] or stamp > self.clock():
                     continue
                 matches.append({key: item.get(key) for key in ('external_ref', 'reply_to_ref', 'receipt_ref', 'ts', 'channel', 'reaction')})
             if not matches or row['reply'] is not None:

@@ -128,3 +128,15 @@ def test_foreign_context_and_duplicate_condition_bounds(tmp_path):
         ledger.expect_reply(**{**params,'expected_after_seconds':120})
     with pytest.raises(ValueError,match='offset'):
         ledger.acknowledge_dispatch('wait-one',receipt_ref='receipt:sent',occurred_at='2033-05-18T03:33:00')
+
+
+def test_reply_learned_after_later_ack_keeps_earlier_provider_time(tmp_path):
+    now,store,ledger,row,_ = fixture(tmp_path)
+    now[0] += 100
+    ledger.acknowledge_dispatch('wait-one',receipt_ref='receipt:delivery-read',occurred_at=2000000090.)
+    # The accepted ACK was lost. The provider-linked reply happened at t+70,
+    # before the delivery/read receipt we learned first at t+90.
+    resolved = ledger.apply_reply('wait-one',match())
+    assert resolved['state'] == 'resolved'
+    assert resolved['reply']['matches'][0]['ts'] == 2000000070.
+    assert resolved['dispatch_occurred_at'] == 2000000090.

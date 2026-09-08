@@ -192,6 +192,13 @@ def task_snapshot(identifier, contact_id, native, *, review=False, followup=Fals
         state = {'status': task['status'], 'native_run_id': task['current_run_id'],
                  'attempt_count': count, 'archived': task['status'] == 'archived'}
         if review or followup:
+            state['forecast_configuration'] = {
+                'runtime_budget_seconds': task['max_runtime_seconds'],
+                'requested_profile': task['assignee'],
+                'task_model_override_at_observation': task['model_override'],
+                'task_provider_override_at_observation': task['provider_override'],
+                'served_model': None, 'timestamp_precision_seconds': 1,
+            }
             latest = db.execute('SELECT * FROM task_runs WHERE task_id=? ORDER BY id DESC LIMIT 1',
                                 (task['id'],)).fetchone()
             gave_up = bool(latest and db.execute("SELECT 1 FROM task_events WHERE task_id=? "
@@ -204,6 +211,24 @@ def task_snapshot(identifier, contact_id, native, *, review=False, followup=Fals
                          error=str(latest['error'] or task['last_failure_error'] or '')[:500] if latest else '',
                          summary=str(latest['summary'] or '')[:1600] if latest else '',
                          native_run_id=latest['id'] if latest else None)
+            terminal_at = task['completed_at']
+            if task['status'] == 'archived':
+                terminal_at = db.execute("SELECT MAX(created_at) FROM task_events WHERE task_id=? AND kind='archived'", (task['id'],)).fetchone()[0]
+            if latest and latest['ended_at'] is not None:
+                state['duration_observation'] = {
+                    'outcome': latest['outcome'], 'started_at': latest['started_at'],
+                    'ended_at': latest['ended_at'], 'attempt_count': count,
+                    'profile': latest['profile'], 'served_model': None,
+                    'execution_seconds': latest['ended_at'] - latest['started_at'],
+                    'timestamp_precision_seconds': 1,
+                }
+            elif terminal_at is not None and task['status'] in {'done', 'archived', 'cancelled'}:
+                state['duration_observation'] = {
+                    'outcome': task['status'], 'started_at': task['started_at'],
+                    'ended_at': terminal_at, 'attempt_count': count,
+                    'profile': task['assignee'], 'served_model': None,
+                    'execution_seconds': None, 'timestamp_precision_seconds': 1,
+                }
             if latest and latest['outcome'] in {'crashed', 'timed_out', 'spawn_failed', 'gave_up'}:
                 state['runtime_observation'] = {
                     'outcome': latest['outcome'], 'started_at': latest['started_at'],

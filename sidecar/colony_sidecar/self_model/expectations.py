@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 
 OUTCOMES = ("pending", "hit", "miss", "unresolved")
 EXPECTATION_VERSION = 2
+# Superseded predictions stay in history and scoring, but only the newest
+# pending revision governs current context. Apply before the query limit.
+_CURRENT_FORECAST_SQL = """ AND (outcome!='pending' OR prediction_id NOT IN (
+    SELECT old.prediction_id FROM forecast_revisions old
+    WHERE EXISTS (SELECT 1 FROM forecast_revisions newer
+        WHERE newer.forecast_id=old.forecast_id AND newer.revision>old.revision))) """
 _SHAREABILITY = frozenset(
     {"owner_private", "subject_private", "shared", "public"}
 )
@@ -653,6 +659,7 @@ class ExpectationStore:
         self, *, domain: str, cohort: str, subject_person_id: str,
         viewer_scope: str, prior_seconds: float, prior_confidence: float = 0.7,
         now: Optional[float] = None,
+        evidence_is_current: Optional[Callable[[Prediction, Dict[str, Any]], bool]] = None,
     ) -> Dict[str, Any]:
         """Prospective, bounded empirical update from independent durations.
 
@@ -670,6 +677,8 @@ class ExpectationStore:
         receipts = []
         for row in rows:
             observation = json.loads(row["payload"])
+            if evidence_is_current is not None and not evidence_is_current(self._row(row), observation):
+                continue
             origin = json.loads(row["detail"])["origin_at"]
             if observation["status"] == "observed" and observation["observed_at"] >= row["created_at"]:
                 if observation["value"] is True:
@@ -720,7 +729,7 @@ class ExpectationStore:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM predictions WHERE outcome='pending' "
-                "ORDER BY horizon ASC LIMIT ?", (limit,)).fetchall()
+                + _CURRENT_FORECAST_SQL + "ORDER BY horizon ASC LIMIT ?", (limit,)).fetchall()
         return [self._row(r) for r in rows]
 
     def for_subjects(
@@ -944,7 +953,7 @@ class ExpectationStore:
             rows = self._conn.execute(
                 f"SELECT * FROM predictions WHERE subject_person_id=? AND "
                 f"(viewer_scope=? OR shareability='public') AND outcome IN ({marks}) "
-                "ORDER BY created_at DESC LIMIT ?",
+                + _CURRENT_FORECAST_SQL + "ORDER BY created_at DESC LIMIT ?",
                 (person, viewer, *allowed, max(1, min(200, int(limit)))),
             ).fetchall()
         return [self._row(row) for row in rows]
@@ -990,7 +999,7 @@ class ExpectationStore:
             rows = self._conn.execute(
                 f"SELECT * FROM predictions WHERE "
                 f"(viewer_scope=? OR shareability='public') AND outcome IN ({marks}) "
-                "ORDER BY created_at DESC LIMIT ?",
+                + _CURRENT_FORECAST_SQL + "ORDER BY created_at DESC LIMIT ?",
                 (viewer, *allowed, max(1, min(200, int(limit)))),
             ).fetchall()
         return [self._row(row) for row in rows]
