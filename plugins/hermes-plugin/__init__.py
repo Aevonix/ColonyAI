@@ -2499,8 +2499,8 @@ def register(ctx: Any) -> None:
         if not callable(next_call):
             return _tool_execution_middleware(**kwargs)
         def observed(args):
-            # Only turns that explicitly acquired an undertaking incur this
-            # check. A stale holder cannot dispatch more tools under its token.
+            # Only turns that explicitly attempted an undertaking incur this
+            # check. Rejected attempts and stale holders cannot dispatch tools.
             denial = work_coordinator.before_tool(_TOOL_EXECUTION_CONTEXT.get() or {})
             if denial is not None:
                 return denial
