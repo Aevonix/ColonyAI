@@ -52,7 +52,9 @@ or praise with reliability. Prefer abstention to speculative personality judgmen
 Use a stable short topic; text and reason are concise, with reported/inferred
 attribution and contrary evidence preserved. support and contrary are arrays of
 {"handle": "supplied handle", "quote": "exact contiguous source quotation"}.
-Support needs current evidence; previous views are not independent evidence.
+At least one support or contrary citation must be current evidence. Previous
+views are not independent evidence; use their rehydrated prior source quotes
+when retaining a prior interpretation, and preserve contrary evidence.
 intensity is low or moderate (an ordinal modeling choice, not a measurement).
 hint is none, try_different_approach, verify_before_relying, keep_concise,
 allow_more_detail, offer_relevant_topic or warmth. It affects only a relevant
@@ -173,7 +175,7 @@ class AppraisalStore:
     def purge_erased_sources(self, turn_ids=None, *, contact_id=None):
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
-            rows = conn.execute("SELECT * FROM appraisal_records WHERE owner_id=? AND status!='erased'", (self.owner_id,)).fetchall()
+            rows = conn.execute("SELECT * FROM appraisal_records WHERE owner_id=? AND status NOT IN ('erased','invalidated')", (self.owner_id,)).fetchall()
             invalid = [r for r in rows if (not contact_id or r['subject_id'] == contact_id)
                        and (turn_ids is None or any(d['source_id'] in turn_ids for d in json.loads(r['dependencies_json'])))
                        and not self._valid(conn, r)]
@@ -187,7 +189,6 @@ class AppraisalStore:
         selected = set(source_ids)
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
-            rows = conn.execute('SELECT * FROM appraisal_records WHERE owner_id=? AND subject_id=?', (self.owner_id, subject_id)).fetchall()
             return invalidate_source_attribution(conn, selected, subject_id, '')
 
     def _current(self, conn, subject_id):
@@ -203,6 +204,10 @@ class AppraisalStore:
             rows = ([dict(r) for r in conn.execute('SELECT * FROM appraisal_records WHERE owner_id=? AND subject_id=? ORDER BY created_at DESC,id DESC LIMIT 100', (self.owner_id, subject_id))]
                     if history and owner else self._current(conn, subject_id))
             records, refs, hints = [], [], []
+            corrections = ([json.loads(r[0]) for r in conn.execute('''SELECT c.operation_json FROM appraisal_corrections c
+                JOIN appraisal_records r ON r.id=c.record_id WHERE r.owner_id=? AND r.subject_id=?
+                AND c.operation_json!='{}' ORDER BY c.created_at DESC LIMIT 20''', (self.owner_id, subject_id))]
+                if owner and history else [])
             selected = 0
             words = set(re.findall(r'\w{4,}', query.casefold()))
             for row in rows:
@@ -237,7 +242,7 @@ class AppraisalStore:
                     break
         return {'records': records, 'behavior_hints': hints, 'sources': list({_json(r): r for r in refs}.values()),
                 'authority_changed': False, 'contact_affect': 'separate_projection',
-                'chosen_values': chosen_values() if owner else []}
+                'chosen_values': chosen_values() if owner else [], 'corrections': corrections}
 
     def correct(self, record_id, *, action, correction_id, reason, actor_id):
         if actor_id != self.owner_id or not self.owner_id:
@@ -290,13 +295,44 @@ class AppraisalStore:
                 digest = source_message_hash(source['session_id'], message)
                 evidence.append({'handle': digest, 'text': text, 'source_id': source['turn_id'],
                     'source_version': source['version'], 'source_contact_id': source['contact_id'],
-                    'message_hash': digest, 'attribution': 'runtime_observation' if runtime else 'contact_statement'})
+                    'message_hash': digest, 'current': True,
+                    'occurred_at': source['occurred_at'] or source['ingested_at'],
+                    'attribution': 'runtime_observation' if runtime else 'contact_statement'})
             heads = self._current(conn, source['contact_id'])
-            previous = [{'id': r['id'], 'status': r['status'], **json.loads(r['payload_json'])}
-                        for r in heads if r['status'] in {'current', 'withdrawn', 'reconsidering'} and self._valid(conn, r)]
+            previous = []
+            by_handle = {e['handle']: e for e in evidence}
+            # Rehydrate only the already cited source spans, not an unbounded
+            # history or a generated summary presented as corroboration.
+            for row in heads:
+                if len(previous) >= 8:
+                    break
+                if row['status'] not in {'current', 'withdrawn', 'reconsidering'} or not self._valid(conn, row):
+                    continue
+                data = json.loads(row['payload_json'])
+                visible = True
+                deps = {d['message_hash']: d for d in json.loads(row['dependencies_json'])}
+                for ref in data['support'] + data['contrary']:
+                    if ref['handle'] in by_handle and by_handle[ref['handle']]['current']:
+                        continue
+                    dep = deps.get(ref['handle'])
+                    if dep is None or len(by_handle) >= len(evidence) + 12:
+                        visible = False
+                        continue
+                    retained = self._source(conn, dep['source_id'])
+                    message = next((m for m in retained['messages'] if source_message_hash(retained['session_id'], m) == dep['message_hash']), None)
+                    if message is None or ref['quote'] not in _text(message):
+                        visible = False
+                        continue
+                    entry = by_handle.setdefault(ref['handle'], {**dep, 'handle': ref['handle'],
+                        'text': '', 'quotes': [], 'current': False, 'attribution': 'prior_source_quote'})
+                    if ref['quote'] not in entry['quotes']:
+                        entry['quotes'].append(ref['quote'])
+                        entry['text'] = '\n'.join(entry['quotes'])
+                if visible:
+                    previous.append({'id': row['id'], 'status': row['status'], **data})
             corrections = [json.loads(r[0]) for r in conn.execute('''SELECT operation_json FROM appraisal_corrections c
                 JOIN appraisal_records r ON r.id=c.record_id WHERE r.subject_id=? AND r.owner_id=? ORDER BY c.created_at DESC LIMIT 10''', (source['contact_id'], self.owner_id))]
-            return source, {'evidence': evidence, 'previous': previous[:8], 'owner_corrections': corrections,
+            return source, {'evidence': list(by_handle.values()), 'previous': previous, 'owner_corrections': corrections,
                             'chosen_values': chosen_values()}, {r['head_key']: (r['id'], r['status']) for r in heads}
 
     def _validate(self, raw, payload):
@@ -321,11 +357,13 @@ class AppraisalStore:
                         raise ValueError('invalid_appraisal_support')
                     ev = evidence.get(ref['handle'])
                     quote = ref['quote']
-                    if ev is None or not isinstance(quote, str) or not 1 <= len(quote) <= 500 or quote not in ev['text']:
+                    if ev is None or not isinstance(quote, str) or not 1 <= len(quote) <= 500 or not any(quote in text for text in ev.get('quotes', [ev['text']])):
                         raise ValueError('invalid_appraisal_support')
                     dependencies.append({k: ev[k] for k in ('source_id', 'source_version', 'source_contact_id', 'message_hash')})
             repair = item['repairs']
-            if repair is not None and not any(p['id'] == repair and p.get('kind') == 'appraisal' for p in payload['previous']):
+            if not any(evidence[ref['handle']]['current'] for ref in item['support'] + item['contrary']):
+                raise ValueError('appraisal_requires_new_evidence')
+            if repair is not None and not any(p['id'] == repair and p.get('kind') == 'appraisal' and p['status'] == 'current' for p in payload['previous']):
                 raise ValueError('invalid_appraisal_repair')
             result.append((item, list({_json(d): d for d in dependencies}.values())))
         return result
@@ -346,12 +384,18 @@ class AppraisalStore:
                 conn.execute("UPDATE appraisal_runs SET status='pending',next_attempt=?,lease_until=0,disposition='head_changed' WHERE turn_id=?", (self.clock(), job['turn_id'])); return
             written = 0
             reconsider_at = None
+            observed_at = datetime.fromisoformat(source['occurred_at'] or source['ingested_at']).timestamp()
             for item, deps in items:
+                if not self._valid(conn, {'dependencies_json': _json(deps)}):
+                    continue
                 key = canonical_turn_digest([item['kind'], item['dimension'], item['topic'].strip().casefold()])
                 previous = next((r for r in latest if r['head_key'] == key), None)
-                if previous and previous['status'] in {'withdrawn', 'invalidated'}:
+                if previous and previous['status'] == 'withdrawn':
                     continue
-                if previous and previous['status'] == 'current' and json.loads(previous['payload_json']).get('support') == item['support']:
+                if previous and observed_at < json.loads(previous['payload_json']).get('observed_at', 0):
+                    continue
+                if previous and previous['status'] == 'current' and all(
+                        json.loads(previous['payload_json']).get(field) == item[field] for field in ('support', 'contrary')):
                     continue
                 if previous and previous['status'] == 'current' and item['kind'] in {'judgment', 'behavior_hypothesis'} and self.clock() - previous['created_at'] < DURABLE_INTERVAL:
                     reconsider_at = max(reconsider_at or 0, previous['created_at'] + DURABLE_INTERVAL)
@@ -359,7 +403,6 @@ class AppraisalStore:
                 identifier = 'appraisal:' + canonical_turn_digest([source['turn_id'], source['version'], key])
                 if item['repairs']:
                     conn.execute("UPDATE appraisal_records SET status='settled' WHERE id=? AND kind='appraisal' AND subject_id=?", (item['repairs'], source['contact_id']))
-                observed_at = datetime.fromisoformat(source['occurred_at'] or source['ingested_at']).timestamp()
                 expires = observed_at + APPRAISAL_LIFETIME if item['kind'] == 'appraisal' else None
                 if expires is not None and expires <= self.clock():
                     continue
@@ -367,6 +410,8 @@ class AppraisalStore:
                 conn.execute('INSERT OR IGNORE INTO appraisal_records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                     (identifier, self.owner_id, source['contact_id'], key, item['kind'], _json(item), _json(deps),
                      _json(processor), source['turn_id'], source['version'], self.clock(), expires, 'current', previous['id'] if previous else None))
+                if previous and previous['status'] == 'current' and previous['id'] != identifier:
+                    conn.execute("UPDATE appraisal_records SET status='superseded' WHERE id=?", (previous['id'],))
                 conn.execute('INSERT INTO appraisal_heads VALUES (?,?,?,?) ON CONFLICT(owner_id,subject_id,head_key) DO UPDATE SET record_id=excluded.record_id', (self.owner_id, source['contact_id'], key, identifier))
                 written += 1
             if reconsider_at:

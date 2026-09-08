@@ -126,6 +126,8 @@ async def test_withdrawal_and_new_processor_do_not_resurrect_old_view(state):
     await state.process_one(Processor(name='processor-b'))
     assert view(state)['records'] == []
     assert view(state, history=True)['records'][0]['status'] == 'withdrawn'
+    assert view(state, history=True)['corrections'][0]['reason'] == 'This was a fixture issue.'
+    assert not state.view('person', viewer_contact_id='person', history=True)['corrections']
     with pytest.raises(ValueError, match='owner_correction_required'):
         state.correct(record['id'], **(op | {'actor_id': 'person'}))
 
@@ -157,6 +159,7 @@ async def test_attribution_correction_does_not_relabel_old_person_judgment(state
 @pytest.mark.asyncio
 async def test_concurrent_interpretations_cannot_overwrite_newer_head(state):
     source(state, 'slow', 'The export failed on the first attempt.')
+    state.test_clock.value += 60
     source(state, 'fast', 'The export failed after a later attempt.')
     ready, release = asyncio.Event(), asyncio.Event()
     async def pause(_):
@@ -168,6 +171,9 @@ async def test_concurrent_interpretations_cannot_overwrite_newer_head(state):
     assert view(state)['records'][0]['processor']['model_id'] == 'fast'
     with state.ledger._connect() as conn:
         assert conn.execute("SELECT disposition FROM appraisal_runs WHERE turn_id='slow'").fetchone()[0] == 'head_changed'
+    # Durable replay of the older source must not overwrite the later event.
+    await state.process_one(Processor(name='slow-replay'))
+    assert view(state)['records'][0]['processor']['model_id'] == 'fast'
 
 
 @pytest.mark.asyncio
@@ -222,3 +228,60 @@ async def test_retired_numeric_engagement_does_not_call_another_model():
     router = AsyncMock()
     assert await TomExtractor(router).extract_engagement('I prefer concise explanations.', 'person') is None
     assert router.mock_calls == []
+
+
+@pytest.mark.asyncio
+async def test_revision_rehydrates_original_quotes_and_erasure_follows_both_sources(state):
+    decide = lambda p: observation(p, kind='judgment', dimension='skepticism', hint='verify_before_relying')
+    source(state, 'first', 'The export report claimed completion before output existed.')
+    await state.process_one(Processor(decide))
+    state.test_clock.value += module.DURABLE_INTERVAL + 1
+    source(state, 'contrary', 'The next export report matched the output verification.')
+    def revise(payload):
+        current = next(e for e in payload['evidence'] if e['current'])
+        prior = next(e for e in payload['evidence'] if not e['current'])
+        assert prior['text'] == 'The export report claimed completion before output existed.'
+        item = decide(payload)
+        item['support'] = [{'handle': prior['handle'], 'quote': prior['text']}]
+        item['contrary'] = [{'handle': current['handle'], 'quote': current['text']}]
+        item['text'] = 'The earlier report was premature; the later verified report is contrary evidence.'
+        return item
+    await state.process_one(Processor(revise, name='processor-b'))
+    current = view(state)['records'][0]
+    assert {d['source_id'] for d in current['sources']} == {'first', 'contrary'}
+    assert {r['status'] for r in view(state, history=True)['records']} == {'current', 'superseded'}
+    state.ledger.erase_sources(contact_id='person', turn_ids=['first'])
+    assert view(state)['records'] == []
+
+
+@pytest.mark.asyncio
+async def test_old_view_alone_cannot_reinforce_itself_on_a_new_turn(state):
+    source(state, 'first', 'The export has failed again.')
+    await state.process_one(Processor())
+    source(state, 'thanks', 'Thanks for explaining.')
+    def copy_prior(payload):
+        prior = next(e for e in payload['evidence'] if not e['current'])
+        item = observation(payload)
+        item['support'] = [{'handle': prior['handle'], 'quote': prior['text']}]
+        return item
+    await state.process_one(Processor(copy_prior))
+    assert len(view(state, history=True)['records']) == 1
+    with state.ledger._connect() as conn:
+        assert conn.execute("SELECT error FROM appraisal_runs WHERE turn_id='thanks'").fetchone()[0] == 'ValueError'
+
+
+@pytest.mark.asyncio
+async def test_identity_invalidated_view_stays_a_tombstone_but_new_evidence_can_rebuild(state):
+    source(state, 'first', 'The export has failed again.')
+    await state.process_one(Processor())
+    old_id = view(state)['records'][0]['id']
+    with state.ledger._connect() as conn, conn:
+        module.invalidate_source_attribution(conn, ['first'], 'person', 'other')
+    assert view(state, history=True)['records'] == []
+    source(state, 'later', 'My own separate export attempt failed after the retry.')
+    await state.process_one(Processor(name='processor-b'))
+    current = view(state)['records'][0]
+    assert current['sources'][0]['source_id'] == 'later'
+    with state.ledger._connect() as conn:
+        old = conn.execute('SELECT status,payload_json FROM appraisal_records WHERE id=?', (old_id,)).fetchone()
+        assert tuple(old) == ('invalidated', '{}')
