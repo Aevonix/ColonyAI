@@ -46,6 +46,14 @@ Valid time, event time and recording time are different fields. Interval compari
 
 Recognized unsupported ranges, multiple dates and week/month/year relative expressions are labelled unresolved instead of silently selecting the first date. The parser does not understand all natural-language temporal questions. It does not implement historical transaction-time queries such as reconstructing exactly what the system believed before an ingestion date.
 
+Time constraints come from request text outside valid JSON objects/arrays,
+code fences, blockquotes and quoted report passages. A timestamp inside supplied
+evidence does not require the source to have been captured at that instant.
+A quoted date operand, such as `recorded on "2026-03-12"`, still selects that
+window. These syntax rules affect only temporal interpretation; lexical and
+semantic retrieval retain the complete original query. Unmarked narrative and
+malformed or truncated pasted structures can remain ambiguous.
+
 One key expands to at most eight distinct values. A larger group is withheld; repeated identical values do not crowd out a distinct conflicting value. The shared five-result/character budget still applies, and a large atomic group can be omitted. This trades answer coverage for avoiding partial conflict presentation. It is not a universal guarantee that all relevant evidence will be found. Legacy graph memories without source lineage keep their existing behavior.
 
 The memory-provider wrapper now distinguishes persistent state from source evidence, preserves uncertainty and permits clarification when a material contradiction remains.

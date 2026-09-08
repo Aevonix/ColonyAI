@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 import re
 from zoneinfo import ZoneInfo
 
@@ -87,6 +88,38 @@ class MemoryTimeQuery:
         return not claim.get("superseded_by")
 
 
+def _temporal_request_text(text: str) -> str:
+    """Exclude delimited evidence, retaining a quoted date used as an operand.
+
+    This only selects text for temporal interpretation. Retrieval still uses
+    the original query, including every quoted word and structured field.
+    """
+    text = re.sub(r"(?s)```.*?```|~~~.*?~~~", " ", text)
+    text = re.sub(r"(?m)^\s*>[^\n]*", " ", text)
+    decoder = json.JSONDecoder()
+    spans, through = [], 0
+    for match in re.finditer(r"[\[{]", text):
+        if match.start() < through:
+            continue
+        try:
+            value, end = decoder.raw_decode(text, match.start())
+        except ValueError:
+            continue
+        if isinstance(value, (dict, list)):
+            spans.append((match.start(), end))
+            through = end
+    for start, end in reversed(spans):
+        text = text[:start] + " " + text[end:]
+
+    def quoted(match):
+        value = match[0][1:-1].strip()
+        if re.fullmatch(_DATE + "|" + _MONTH_DATE + "|today|yesterday|tomorrow", value, re.I):
+            return value
+        return " "
+
+    return re.sub(r'''"(?:\\.|[^"\\])*"|“[^”]*”|(?<!\w)'(?:\\.|[^'\\])*'(?!\w)|`[^`\n]*`''', quoted, text)
+
+
 def interpret_time_query(text: str, *, now: datetime, timezone_name="UTC") -> MemoryTimeQuery:
     """Calendar days differ from trailing windows and from source ingestion.
 
@@ -94,7 +127,7 @@ def interpret_time_query(text: str, *, now: datetime, timezone_name="UTC") -> Me
     during the day, both intersecting validity intervals remain visible.
     """
     zone = ZoneInfo(timezone_name)
-    text = text[:4096]
+    text = _temporal_request_text(text[:4096])
     mode = "observed_range" if _EVENT.search(text) else "valid_range"
     duration = re.search(r"\blast\s+(\d{1,3})\s+(hours?|days?)\b", text, re.I)
     if duration and mode == "observed_range":
