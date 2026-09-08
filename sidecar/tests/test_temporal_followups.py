@@ -140,3 +140,14 @@ def test_reply_learned_after_later_ack_keeps_earlier_provider_time(tmp_path):
     assert resolved['state'] == 'resolved'
     assert resolved['reply']['matches'][0]['ts'] == 2000000070.
     assert resolved['dispatch_occurred_at'] == 2000000090.
+
+
+def test_exact_reply_before_wait_registration_uses_parent_obligation_origin(tmp_path):
+    now,store,ledger,row,_ = fixture(tmp_path)
+    # The durable parent predates the wait; the provider supplied an exact
+    # parent reference for a fast response learned only after registration.
+    earlier = match(matches=[{'external_ref':'message:fast-reply','reply_to_ref':'message:out',
+        'receipt_ref':'receipt:fast-reply','ts':row['created_at']-1,'channel':'other-channel','reaction':None}])
+    resolved = ledger.apply_reply('wait-one',earlier)
+    assert resolved['state'] == 'resolved'
+    assert resolved['reply']['matches'][0]['ts'] < row['created_at']
