@@ -1533,8 +1533,9 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         sections = data.get("sections", [])
         if not sections:
             return ""
-        # Source IDs remain in the evidence body. The whole-packet watermark
-        # also covers relationship/commitment sections with derived state.
+        # Source IDs remain in the evidence body. The watermark certifies
+        # erasure freshness, not whether social/work projections remain current.
+        # The request adapter removes recall belonging to earlier turns.
         source_refs = [ref for section in sections for ref in section.get('citations') or []
                        if isinstance(ref, dict) and set(ref) == {'source_id', 'source_version'}]
         stamp = json.dumps({"contact_id": bound_contact,

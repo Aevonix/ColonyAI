@@ -61,7 +61,7 @@ def _request_texts(value):
 
 
 def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None):
-    """Keep fresh packets and remove exact evidence, preserving tool structure.
+    """Keep current-turn recall and remove exact evidence, preserving tool structure.
 
     Hashes include original session and speaker. Trying those retained origins
     also removes exact full-message copies carried into a child/new session;
@@ -75,10 +75,10 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
         return any(source_message_hash(session, {'role': role, 'content': content}) in hashes
                    for session, hashes in origins.items() for role in ('user', 'assistant'))
 
-    def packet(match):
+    def packet(match, keep_packet):
         block = match.group()
         stamp = _STAMP.search(block)
-        if not fresh:
+        if not fresh or not keep_packet:
             return ''
         if stamp is None:
             # Old native api_content had no stamp. Preserve it only while the
@@ -93,27 +93,28 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             valid = False
         return block if valid else ''
 
-    def text_content(text, *, current=False):
+    def text_content(text, *, current=False, keep_packet=False):
         clean = _PACKET.sub('', _MEMORY.sub('', text))
         if not current and erased(clean):
             return _ERASED
-        return _PACKET.sub(packet, _MEMORY.sub(packet, text))
+        transform = lambda match: packet(match, keep_packet)
+        return _PACKET.sub(transform, _MEMORY.sub(transform, text))
 
-    def content(value, *, current=False):
+    def content(value, *, current=False, keep_packet=False):
         if current:
             # Preserve the observed input bytes, including any literal markers
             # the person typed. Only native-appended context is recalled data.
             if isinstance(value, str) and isinstance(current_input, str) and value.startswith(current_input):
-                return current_input + text_content(value[len(current_input):])
+                return current_input + text_content(value[len(current_input):], keep_packet=keep_packet)
             if isinstance(value, list) and isinstance(current_input, list) and value[:len(current_input)] == current_input:
-                suffix = content(value[len(current_input):])
+                suffix = content(value[len(current_input):], keep_packet=keep_packet)
                 return current_input + (suffix if isinstance(suffix, list) else [])
             current = False
         original = aliases.get(_content_key(value), value) if origins and aliases else value
         if not current and erased(original):
             return _ERASED
         if isinstance(value, str):
-            return text_content(value, current=current)
+            return text_content(value, current=current, keep_packet=keep_packet)
         if isinstance(value, list):
             # Native multimodal notes can append packet-only text parts. Match
             # the original full list before filtering individual text blocks,
@@ -125,7 +126,7 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
                 and not _PACKET.sub('', _MEMORY.sub('', part['text'])).strip())]
             if not current and erased(direct):
                 return _ERASED
-            return [{**part, 'text': text_content(part['text'], current=current)}
+            return [{**part, 'text': text_content(part['text'], current=current, keep_packet=keep_packet)}
                     if isinstance(part, dict) and isinstance(part.get('text'), str) else part
                     for part in value]
         return value
@@ -152,7 +153,12 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             if 'content' in row:
                 current = (i == latest_user and current_content is not None
                            and row['content'] == current_content)
-                row['content'] = content(row['content'], current=current)
+                # Recollection is a turn-local projection. An unchanged source
+                # erasure watermark does not make old relationship, opinion or
+                # work guidance current after a correction. Preserve dialogue;
+                # only the latest user turn retains automatic recall.
+                row['content'] = content(row['content'], current=current,
+                                         keep_packet=i == latest_user)
             if 'output' in row:  # Responses API function output
                 row['output'] = content(row['output'])
             retained.append(row)
