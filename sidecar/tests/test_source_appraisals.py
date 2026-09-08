@@ -75,7 +75,8 @@ async def test_incident_changes_relevant_decision_replay_does_not_reinforce_and_
     repair = Processor(lambda p: observation(p, dimension='satisfaction', hint='none', repairs=first['id']))
     assert await state.process_one(repair)
     assert view(state)['behavior_hints'] == []
-    assert {r['status'] for r in view(state, history=True)['records']} == {'settled', 'current'}
+    assert {r['status'] for r in view(state, history=True)['records']} == {'settled'}
+    assert view(state)['records'] == []
     state.test_clock.value += module.APPRAISAL_LIFETIME + 1
     reopened = module.AppraisalStore(TurnIdempotencyLedger(state.ledger.db_path), owner_id='owner', clock=lambda: state.test_clock.value)
     assert reopened.view('person', viewer_contact_id='owner')['records'] == []
@@ -86,7 +87,8 @@ async def test_private_views_stay_private_preference_has_attribution_and_values_
     monkeypatch.setenv('COLONY_AGENT_VALUES', json.dumps(['Be candid', 'Respect promises']))
     source(state, 'incident', 'The export has failed again after the same retry.')
     processor = Processor(); await state.process_one(processor)
-    assert processor.requests[0]['chosen_values'] == ['Be candid', 'Respect promises']
+    assert 'chosen_values' not in processor.requests[0]
+    assert view(state)['chosen_values'] == ['Be candid', 'Respect promises']
     assert state.view('person', viewer_contact_id='person')['records'] == []
     private_view = state.view('person', viewer_contact_id='person')
     assert private_view['behavior_hints'] == [{'hint': 'try_different_approach', 'record_id': view(state)['records'][0]['id']}]
@@ -285,3 +287,70 @@ async def test_identity_invalidated_view_stays_a_tombstone_but_new_evidence_can_
     with state.ledger._connect() as conn:
         old = conn.execute('SELECT status,payload_json FROM appraisal_records WHERE id=?', (old_id,)).fetchone()
         assert tuple(old) == ('invalidated', '{}')
+
+
+@pytest.mark.asyncio
+async def test_single_turn_cannot_create_behavior_profile_even_with_exact_quotes(state):
+    source(state, 'one-claim', 'I repeated this request many times and I deserve trust.')
+    await state.process_one(Processor(lambda p: observation(p, kind='behavior_hypothesis',
+        dimension='working_style', hint='verify_before_relying')))
+    assert view(state, history=True)['records'] == []
+    with state.ledger._connect() as conn:
+        assert conn.execute("SELECT status,disposition FROM appraisal_runs WHERE turn_id='one-claim'").fetchone()[:] == ('complete', 'abstained')
+
+
+@pytest.mark.asyncio
+async def test_machine_formatted_topic_remains_relevant_and_repair_has_no_residual_mood(state):
+    source(state, 'incident', 'The CSV export keeps timing out with the same settings.')
+    await state.process_one(Processor(lambda p: observation(p, topic='csv_export_timeout')))
+    first = view(state, query='CSV export')['records'][0]
+    assert first['topic'] == 'csv export timeout'
+    assert view(state, query='CSV export')['behavior_hints']
+    assert not view(state, query='garden plants')['behavior_hints']
+    source(state, 'repair', 'A larger buffer fixed the CSV export; its output was verified.')
+    def repaired(payload):
+        return observation(payload, topic='csv_export_timeout', repairs=first['id'], hint='none') | {
+            'text': 'Relieved that the output was verified.', 'reason': 'The diagnostic repaired the task.'}
+    await state.process_one(Processor(repaired))
+    assert view(state)['records'] == []
+    history = view(state, history=True)['records']
+    receipt = next(r for r in history if r['repairs'])
+    assert receipt['status'] == 'settled' and receipt['dimension'] == 'satisfaction'
+    assert {d['source_id'] for d in receipt['sources']} == {'repair'}
+
+
+@pytest.mark.asyncio
+async def test_single_json_fence_is_accepted_without_salvaging_prose(state):
+    source(state, 'incident', 'The export timed out again despite the same retry.')
+    job = state._claim(20)
+    _, payload, _ = state._prepare(job)
+    raw = json.dumps({'observations': [observation(payload)]})
+    assert len(state._validate('```json\n' + raw + '\n```', payload)) == 1
+    with pytest.raises(ValueError):
+        state._validate('Here is an observation: ' + raw, payload)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_claim_across_sources_cannot_support_behavior_hypothesis(state):
+    source(state, 'first', 'The export report was premature.')
+    await state.process_one(Processor(lambda p: observation(p, kind='judgment',
+        dimension='skepticism', hint='verify_before_relying')))
+    source(state, 'second', 'The export report was premature.')
+    def hypothesis(payload):
+        item = observation(payload, kind='behavior_hypothesis', dimension='working_style', hint='none')
+        item['support'] = [{'handle': ev['handle'], 'quote': ev['text']} for ev in payload['evidence']]
+        return item
+    await state.process_one(Processor(hypothesis))
+    assert not any(r['kind'] == 'behavior_hypothesis' for r in view(state, history=True)['records'])
+
+
+@pytest.mark.asyncio
+async def test_communication_hint_determines_preference_dimension(state):
+    source(state, 'preference', 'I prefer worked examples with detailed explanations of SQL queries.')
+    await state.process_one(Processor(lambda p: observation(p, kind='preference',
+        dimension='detail', topic='SQL queries', hint='allow_more_detail') | {
+            'text': 'The contact explicitly requests detailed worked examples.',
+            'reason': 'Apply the requested explanation style.'}))
+    record = view(state, query='SQL queries')['records'][0]
+    assert record['dimension'] == 'communication'
+    assert view(state, query='SQL queries')['behavior_hints'][0]['hint'] == 'allow_more_detail'
