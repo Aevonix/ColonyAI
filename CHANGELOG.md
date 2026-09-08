@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.0.24 - current recollection and durable transport receipts
+
+A rejected or uncertain claim on an identified commitment holds ordinary tools
+for that turn until explicit detachment. Another holder and unrelated turns keep
+their own state. Automatic recollection removes earlier injected packets before
+supplying the current turn's context, so withdrawn relationship guidance cannot
+survive merely because no source was erased.
+
+Trusted channel adapters can record durable intake metadata in the existing
+communications store. Exact verified handles resolve participants; accepted
+canonical sources settle processing receipts. Pending payloads stay with their
+transport owner, including across unknown handoffs. Source erasure marks linked
+transport receipts for cleanup. Intake, processing and provider effects remain
+separate. Followup review requires a fresh observed connection interval without
+gaps or unresolved recipient activity; original message authority is unchanged.
+
+Existing work views retain independently recorded semantic findings and original
+runtime forecast decisions. Forecast suggestions remain disabled pending measured
+value. This adds no scheduler, payload database or model judge. Hermes 0.21.1
+remains the qualified unmodified runtime target.
+
 ## v1.0.22 - complete native recollection and shared work results
 
 Fresh attachment and explicit adapter refresh align Hermes's supported hook

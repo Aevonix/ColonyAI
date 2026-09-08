@@ -95,6 +95,9 @@ for native package installations and service bindings.
 - **Automatic recollection.** The native memory provider requests context for
   the current participant, session and question before inference. A durable
   outbox captures ordinary turns; retry does not create another source.
+  Older automatically injected packets are removed when the next turn receives
+  fresh context, including withdrawn relationship guidance. Direct conversation
+  remains in the session history.
 - **Scoped source recall.** Authenticated participants can recall their own
   canonical evidence without the legacy graph runtime. Optional semantic
   projections find retained passages and image descriptions, then resolve them
@@ -126,6 +129,8 @@ for native package installations and service bindings.
 - **Shared work.** Sessions can observe commitments and claim work through one
   persistent registry. Another session sees who holds it. A lease coordinates
   work; it cannot by itself make an external side effect exactly once.
+  A rejected or uncertain claim holds ordinary tools in that turn until explicit
+  detachment; it cannot release another session's undertaking.
   Local draft acceptances against one open commitment share an active task and
   its retained result. An explicit fresh draft can follow completed work.
   [Commitment work](docs/COMMITMENT-WORK.md)
