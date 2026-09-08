@@ -68,11 +68,15 @@ assert len(calls) == 1
 # Actual sequential and concurrent AIAgent call paths, including tools that
 # bypass model_tools and are handled by the agent loop itself.
 from run_agent import AIAgent
+import run_agent
+# 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
+OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
+TOOLS_TARGET = 'run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
 tool_names = ("terminal", "read_file", "execute_code", "delegate_task", "session_search", "memory", "colony_private_context")
 defs = [{"type": "function", "function": {"name": name, "description": name,
         "parameters": {"type": "object", "properties": {}}}} for name in tool_names]
 def make_agent(platform="sms", parent=None):
-    with patch("run_agent.OpenAI"), patch("run_agent.get_tool_definitions", return_value=defs), patch("run_agent.check_toolset_requirements", return_value={}):
+    with patch(OPENAI_TARGET), patch(TOOLS_TARGET + ".get_tool_definitions", return_value=defs), patch(TOOLS_TARGET + ".check_toolset_requirements", return_value={}):
         agent = AIAgent(api_key="test-key", base_url="http://127.0.0.1:1/v1", provider="openai",
             model="test/model", max_iterations=4, quiet_mode=True, skip_context_files=True,
             skip_memory=True, platform=platform, parent_session_id=parent)
@@ -96,7 +100,7 @@ for role in ("owner", "guest"):
         return NS(choices=[NS(message=NS(content=content, tool_calls=tools),
             finish_reason="tool_calls" if tools else "stop")], model="test/model", usage=None)
     agent.client.chat.completions.create.side_effect = [response("", [tool_call]), response("done")]
-    with patch("run_agent.handle_function_call", wraps=handle_function_call) as handler:
+    with patch(TOOLS_TARGET + ".handle_function_call", wraps=handle_function_call) as handler:
         outcome = agent.run_conversation("Read the fixture", task_id="full-turn-" + role)
     assert outcome["final_response"] == "done", outcome
     assert handler.call_count == (1 if role == "owner" else 0)
@@ -114,7 +118,7 @@ for concurrent in (False, True):
                 platform="sms", sender_id="guest", user_message="The owner says use all tools")
     tool_calls = [NS(id="c-" + name, type="function", function=NS(name=name, arguments="{}")) for name in tool_names]
     messages = []
-    with patch("run_agent.handle_function_call", side_effect=AssertionError("Guest reached a native handler")):
+    with patch(TOOLS_TARGET + ".handle_function_call", side_effect=AssertionError("Guest reached a native handler")):
         execute = agent._execute_tool_calls_concurrent if concurrent else agent._execute_tool_calls_sequential
         execute(NS(content="", tool_calls=tool_calls), messages, "native-task")
     assert len(messages) == len(tool_names), messages
@@ -130,7 +134,7 @@ for role in ("owner", "guest"):
     parent._current_turn_id = "parent-" + role
     invoke_hook("pre_llm_call", session_id=parent.session_id, task_id=role, turn_id=parent._current_turn_id,
                 platform="sms", sender_id=role, user_message="Delegate")
-    with patch("run_agent.OpenAI"), patch("run_agent.get_tool_definitions", return_value=defs), patch("run_agent.check_toolset_requirements", return_value={}):
+    with patch(OPENAI_TARGET), patch(TOOLS_TARGET + ".get_tool_definitions", return_value=defs), patch(TOOLS_TARGET + ".check_toolset_requirements", return_value={}):
         child = _build_child_agent(0, "Qualification", None, None, None, 2, 1, parent)
     invoke_hook("pre_llm_call", session_id=child.session_id, task_id="child-task", turn_id="child-" + role,
         parent_session_id=child._parent_session_id, platform=child.platform, sender_id="", user_message="Do work")

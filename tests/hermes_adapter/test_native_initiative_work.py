@@ -18,6 +18,10 @@ package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[2]];sys.mod
 def no_network(*a,**kw):raise AssertionError('No network in native review qualification')
 socket.socket.connect=no_network
 from hermes_cli import kanban_db as kb
+try:
+ from hermes_cli.kanban_db_dispatch import _record_task_failure
+except ModuleNotFoundError:
+ from hermes_cli.kanban_db import _record_task_failure
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from colony_sidecar.api.authority import RequestAuthority
@@ -105,7 +109,7 @@ with kb.connect(board='default') as db:
 second_id=second_result['native_work']['native_task_id']
 with kb.connect(board='default') as db:
  claimed=kb.claim_task(db,second_id)
- assert kb._record_task_failure(db,second_id,'controlled spawn failure',outcome='spawn_failed',
+ assert _record_task_failure(db,second_id,'controlled spawn failure',outcome='spawn_failed',
                                 release_claim=True,end_run=True)
 failed=reviews[1].work(second.id)
 assert failed['status']=='failed' and failed['result']['run_outcome']=='gave_up',failed

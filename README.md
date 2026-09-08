@@ -25,7 +25,8 @@ claim complete autonomy, a complete view of every process, or subjective feeling
 
 ## Start with Hermes
 
-The qualified runtime is Hermes 0.21.0. Use its Python interpreter for attachment;
+The current qualification target is Hermes 0.21.1; 0.21.0 attachment remains supported.
+Use the selected Hermes runtime's Python interpreter for attachment;
 Python 3.12 is exercised by native integration CI. One local OpenAI-compatible
 chat endpoint is sufficient. The lightweight profile needs no Docker, Neo4j,
 embedding model or external account.

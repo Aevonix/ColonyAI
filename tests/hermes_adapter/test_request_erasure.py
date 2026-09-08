@@ -65,6 +65,10 @@ db.append_message('original','assistant','Here is the recalled badge.')
 before=db.get_messages_as_conversation('original')
 assert fact in json.dumps(before)
 from run_agent import AIAgent
+import run_agent
+# 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
+OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
+TOOLS_TARGET = 'run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
 from agent.context_compressor import ContextCompressor
 client=MagicMock()
 client.chat.completions.create.side_effect=[
@@ -72,7 +76,7 @@ client.chat.completions.create.side_effect=[
     NS(choices=[NS(message=NS(content='AFTER_OK',tool_calls=None),finish_reason='stop')],model='fixture/model',usage=None),
     NS(choices=[NS(message=NS(content='RETOLD_OK',tool_calls=None),finish_reason='stop')],model='fixture/model',usage=None),
 ]
-with patch('run_agent.OpenAI',return_value=client), patch('run_agent.get_tool_definitions',return_value=[]), patch('run_agent.check_toolset_requirements',return_value={}):
+with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=[]), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
     agent=AIAgent(api_key='fixture',base_url='http://127.0.0.1:1/v1',provider='openai',
         model='fixture/model',quiet_mode=True,skip_context_files=True,skip_memory=True,platform='cli',max_iterations=2)
     assert isinstance(agent.context_compressor, ContextCompressor)

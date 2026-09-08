@@ -99,6 +99,10 @@ get_plugin_manager().discover_and_load()
 assert get_plugin_manager()._plugins['colony'].enabled
 assert Path(colony_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 from run_agent import AIAgent
+import run_agent
+# 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
+OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
+TOOLS_TARGET = 'run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
 from tools.delegate_tool import _build_child_agent
 from model_tools import handle_function_call
 from hermes_cli.lifecycle import invoke_hook
@@ -119,7 +123,7 @@ def make_agent(platform='cli'):
 parent_client=MagicMock(); child_client=MagicMock()
 parent_client.chat.completions.create.side_effect=[reply('',tool('delegate_task',{'goal':'Read the neutral fixture '+str(fixture)})),reply('PARENT_DISPATCHED_CHILD'),reply('PARENT_ACCEPTED_CHILD')]
 child_client.chat.completions.create.side_effect=[reply('',tool('read_file',{'path':str(fixture)})),reply('CHILD_READ_NEUTRAL_FILE')]
-with patch('run_agent.OpenAI',side_effect=[parent_client,child_client]), patch('run_agent.get_tool_definitions',return_value=defs), patch('run_agent.check_toolset_requirements',return_value={}):
+with patch(OPENAI_TARGET,side_effect=[parent_client,child_client]), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=defs), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
     parent=make_agent()
     outcome=parent.run_conversation('Delegate the neutral local read.',task_id='fixture-parent')
     assert outcome['final_response']=='PARENT_DISPATCHED_CHILD', outcome
@@ -158,7 +162,7 @@ assert not registry().view(contact_id='fixture-owner',owner=True)['items'], call
 # inherit the guest binding and never acquire CLI owner's file authority.
 guest_client=MagicMock(); denied_child_client=MagicMock()
 denied_child_client.chat.completions.create.side_effect=[reply('',tool('read_file',{'path':str(fixture)})),reply('GUEST_CHILD_DONE')]
-with patch('run_agent.OpenAI',side_effect=[guest_client,denied_child_client]), patch('run_agent.get_tool_definitions',return_value=defs), patch('run_agent.check_toolset_requirements',return_value={}):
+with patch(OPENAI_TARGET,side_effect=[guest_client,denied_child_client]), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=defs), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
     guest=make_agent('sms'); guest._current_turn_id='guest-parent-turn'
     invoke_hook('pre_llm_call',session_id=guest.session_id,task_id='guest-parent',turn_id=guest._current_turn_id,
         platform='sms',sender_id='fixture-guest-address',user_message='Neutral guest task')

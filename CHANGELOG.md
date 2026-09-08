@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.21 - Hermes 0.21.1 native compatibility
+
+Attachment accepts Hermes 0.21.1 and retains 0.21.0 support. Native task dispatch,
+draft notifications and staged skill changes use the new canonical modules,
+with an old-runtime fallback that does not depend on expiring import shims.
+Native integration fixtures patch the actual client and tool owners after
+upstream's module split. The pinned native CI target is the exact 0.21.1 release.
+
+Existing source memory and adapter configuration require no data migration.
+Install the updated adapter before upgrading Hermes; Colony never changes the
+runtime or restarts a gateway during attachment.
+
 ## v1.0.20 - distinguish time requests from pasted evidence
 
 A timestamp inside a pasted report no longer turns recollection into a request

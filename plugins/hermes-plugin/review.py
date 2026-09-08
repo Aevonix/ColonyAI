@@ -32,11 +32,17 @@ def stage_skill_change(arguments):
     guards still run before staging and when the proposal is eventually applied.
     """
     from tools import skill_manager_tool as manager, write_approval as approval
+    try:
+        from tools.skill_manager_batch import _BATCH_MAX_OPS
+    except ModuleNotFoundError as error:
+        if error.name != 'tools.skill_manager_batch':
+            raise
+        from tools.skill_manager_tool import _BATCH_MAX_OPS  # Hermes 0.21.0
     operations = arguments.get('operations')
     if operations is not None and (not isinstance(operations, list) or not operations):
         return json.dumps({'success':False, 'error':'operations must be a non-empty array.'})
-    if operations is not None and len(operations) > manager._BATCH_MAX_OPS:
-        return json.dumps({'success':False, 'error':f'operations is capped at {manager._BATCH_MAX_OPS} ops per call.'})
+    if operations is not None and len(operations) > _BATCH_MAX_OPS:
+        return json.dumps({'success':False, 'error':f'operations is capped at {_BATCH_MAX_OPS} ops per call.'})
     if operations is not None and len(operations) != 1 and any(
             isinstance(operation, dict) and operation.get('action') == 'delete' for operation in operations):
         return json.dumps({'success':False, 'error':'delete must be the sole operation in its call.'})
