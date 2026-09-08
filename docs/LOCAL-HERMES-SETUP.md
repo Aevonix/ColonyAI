@@ -1,7 +1,7 @@
 # Create or attach a private Hermes agent
 
-The supported lightweight path uses Hermes **0.21.0** (qualified stable commit
-`29112bef099274229cadff79cdff7bf7b99c4b77`), Python 3.11 to 3.13, and one local
+The supported lightweight path uses Hermes **0.21.1** (qualification commit
+`2237be355906fbe6065ce1815711eee52b2d646e`) or **0.21.0**, Python 3.11 to 3.13, and one local
 OpenAI-compatible chat endpoint. Install Hermes separately with its native
 requirements. Colony does not patch or download Hermes, models, containers or
 machine services.

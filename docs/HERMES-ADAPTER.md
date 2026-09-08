@@ -182,8 +182,11 @@ change and qualify the deployment's actual channels and recovery before moving
 that deployment. The scheduled result catches upstream drift; it does not
 establish production readiness or automatically upgrade a running agent.
 
-The qualification target is Hermes v0.21.0, tag `v2026.8.31`, commit
-`29112bef099274229cadff79cdff7bf7b99c4b77`, tested on Python 3.12. The package
+The qualification target is Hermes v0.21.1, tag `v2026.9.7`, commit
+`2237be355906fbe6065ce1815711eee52b2d646e`, tested on Python 3.12. Hermes 0.21.0
+attachment remains supported. The adapter uses canonical 0.21.1 task and skill
+modules, with a narrow fallback when those modules are absent on 0.21.0.
+It does not depend on upstream's temporary deprecated-import shims. The package
 allows Python 3.11 through 3.13; those other interpreters are not yet qualified.
 Other Hermes
 releases are unqualified until the native-loader checks pass against them.
@@ -205,8 +208,8 @@ production profile, or channel is contacted.
 
 ## Shared execution observations
 
-On the qualified Hermes v0.21.0 release (`v2026.8.31`, commit
-`29112bef0992`), set `plugins.colony.execution_registry_enabled: true` to
+On the supported Hermes 0.21.0 and 0.21.1 releases, set
+`plugins.colony.execution_registry_enabled: true` to
 publish native turn, API, tool and delegated-child lifecycle observations.
 This is opt-in for existing installations. The adapter credential must already
 have scoped `turns:write` and exact person grants; `context:read` grants access
