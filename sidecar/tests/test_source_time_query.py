@@ -40,6 +40,7 @@ def test_supplied_report_dates_do_not_filter_observation_time(evidence):
     ('What was recorded at ' + STAMP + '?', 'observed_range', STAMP),
     ('Was a parcel spotted today?', 'observed_range', '2026-03-12T00:00:00+00:00'),
     ('What did the camera record in the last 2 hours?', 'observed_range', '2026-03-12T10:00:00+00:00'),
+    ('What was recorded in the "last 2 hours"?', 'observed_range', '2026-03-12T10:00:00+00:00'),
     ('Where was my office as of March 5, 2026?', 'valid_range', '2026-03-05T00:00:00+00:00'),
     ('What tea should I bring later today?', 'current', NOW.isoformat()),
     ('What was recorded on 2026-03-11? Inspect this report: ' + REPORT,
@@ -58,6 +59,7 @@ def test_explicit_temporal_requests_keep_their_existing_window(query_text, mode,
     'office before 2026-03-12',
     'office between March 1, 2026 and March 5, 2026',
     'office last month',
+    'office "last month"',
 ])
 def test_unsupported_request_time_remains_unresolved(query_text):
     assert interpret_time_query(query_text, now=NOW).mode == 'unresolved_time'

@@ -49,8 +49,9 @@ Recognized unsupported ranges, multiple dates and week/month/year relative expre
 Time constraints come from request text outside valid JSON objects/arrays,
 code fences, blockquotes and quoted report passages. A timestamp inside supplied
 evidence does not require the source to have been captured at that instant.
-A quoted date operand, such as `recorded on "2026-03-12"`, still selects that
-window. These syntax rules affect only temporal interpretation; lexical and
+A quoted time operand, such as `recorded on "2026-03-12"` or `"last 2 hours"`,
+keeps its existing interpretation, including unresolved relative ranges.
+These syntax rules affect only temporal interpretation; lexical and
 semantic retrieval retain the complete original query. Unmarked narrative and
 malformed or truncated pasted structures can remain ambiguous.
 

@@ -113,7 +113,10 @@ def _temporal_request_text(text: str) -> str:
 
     def quoted(match):
         value = match[0][1:-1].strip()
-        if re.fullmatch(_DATE + "|" + _MONTH_DATE + "|today|yesterday|tomorrow", value, re.I):
+        if (re.fullmatch(_DATE + "|" + _MONTH_DATE + "|today|yesterday|tomorrow", value, re.I)
+                or re.fullmatch(r"last\s+\d{1,3}\s+(?:hours?|days?)|"
+                    r"(?:last|next|previous)\s+(?:week|month|year)|"
+                    r"\d+\s+(?:weeks?|months?|years?)\s+ago", value, re.I)):
             return value
         return " "
 
