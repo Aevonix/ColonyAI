@@ -16,6 +16,7 @@ import textwrap
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
@@ -513,24 +514,61 @@ def test_outbox_rejects_unbounded_or_noncanonical_payload(tmp_path):
     assert outbox.snapshot() == []
 
 
-def test_hung_delivery_does_not_lock_enqueue_and_expired_lease_recovers(tmp_path):
+def test_claim_can_exhaust_delivery_budget_before_callback(tmp_path, monkeypatch):
+    module = _load_client("colony_hermes_turn_outbox_claim_budget_test")
+    outbox = module.TurnOutbox(tmp_path / "turn-outbox.sqlite3")
+    outbox.enqueue("turn-1", _payload())
+    clock = [1_000.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], time=time.time,
+    ))
+    claim_one = outbox._claim_one
+
+    def slow_claim(**kwargs):
+        claim = claim_one(**kwargs)  # The real durable claim commits first.
+        clock[0] += 0.10
+        return claim
+
+    monkeypatch.setattr(outbox, "_claim_one", slow_claim)
+    delivered = []
+    assert outbox.drain(
+        lambda value, *, timeout_seconds: delivered.append(value) or True,
+        limit=1, timeout_seconds=0.05, lease_seconds=0.10,
+    ) == 0
+    assert delivered == []
+    row = outbox.snapshot()[0]
+    assert row["state"] == "pending" and row["attempts"] == 1
+    assert row["lease_id"] and row["last_error"] == ""
+
+
+def test_hung_delivery_does_not_lock_enqueue_and_expired_lease_recovers(tmp_path, monkeypatch):
     module = _load_client("colony_hermes_turn_outbox_lease_test")
     database = tmp_path / "turn-outbox.sqlite3"
+    # Exercise the callback phase independently of disk scheduling. Neighboring
+    # lock/HTTP tests keep real clocks and enforce the whole drain wall budget.
+    clock = {"monotonic": 1_000.0, "wall": time.time()}
+    monkeypatch.setattr(module, "time", SimpleNamespace(
+        monotonic=lambda: clock["monotonic"], time=lambda: clock["wall"],
+    ))
     outbox = module.TurnOutbox(database)
     outbox.enqueue("turn-1", _payload())
     started = threading.Event()
     release = threading.Event()
+    expire_callback = threading.Event()
     server: dict[str, str] = {}
     server_lock = threading.Lock()
 
     def exact_idempotent_put(value, *, timeout_seconds):
-        started.set()
+        assert 0 < timeout_seconds <= 0.20
         canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode()).hexdigest()
         with server_lock:
-            previous = server.setdefault(value["turn_id"], digest)
-            assert previous == digest
-        if not release.wait(timeout_seconds):
+                previous = server.setdefault(value["turn_id"], digest)
+                assert previous == digest
+        if not release.is_set():
+            started.set()
+            assert expire_callback.wait(1), "fixture did not finish the blocked callback"
+            clock["monotonic"] += timeout_seconds
             raise TimeoutError("remote outcome unknown at cooperative deadline")
         return True
 
@@ -541,17 +579,19 @@ def test_hung_delivery_does_not_lock_enqueue_and_expired_lease_recovers(tmp_path
         ),
     )
     first.start()
-    assert started.wait(1)
-    began = time.monotonic()
-    outbox.enqueue("turn-2", {**_payload(), "turn_id": "turn-2"})
-    assert time.monotonic() - began < 0.25
-    first.join(1)
+    try:
+        assert started.wait(1)
+        outbox.enqueue("turn-2", {**_payload(), "turn_id": "turn-2"})
+        # Enqueue must finish while delivery is still blocked, not after its
+        # callback has timed out and accidentally released a retained DB lock.
+        assert first.is_alive() and not expire_callback.is_set()
+    finally:
+        expire_callback.set()
+        first.join(1)
     assert not first.is_alive()
     row = {item["turn_id"]: item for item in outbox.snapshot()}["turn-1"]
     assert row["state"] == "pending"
-    # A slow disk may consume the finalization reserve. The pending lease is
-    # the durable recovery contract even when its diagnostic cannot be saved.
-    assert row["last_error"] in {"", "delivery_outcome_unknown"}
+    assert row["last_error"] == "delivery_outcome_unknown"
     assert row["lease_id"]
 
     # The remote may have accepted before its timeout was observed. There is no
@@ -559,10 +599,12 @@ def test_hung_delivery_does_not_lock_enqueue_and_expired_lease_recovers(tmp_path
     # same exact PUT identity/content and cannot create a conflict.
     assert "turn-1" in server
     release.set()
-    deadline = time.time() + 1
-    while time.time() < deadline and row["lease_expires_at"] > time.time():
-        time.sleep(0.005)
     restarted = module.TurnOutbox(database)
+    # Before expiry only the independently enqueued second turn can deliver.
+    assert restarted.drain(exact_idempotent_put, limit=1) == 1
+    assert restarted.drain(exact_idempotent_put, limit=1) == 0
+    assert {item["turn_id"]: item for item in restarted.snapshot()}["turn-1"]["attempts"] == 1
+    clock["wall"] = row["lease_expires_at"] + 0.001
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(
             lambda _index: restarted.drain(
@@ -571,16 +613,13 @@ def test_hung_delivery_does_not_lock_enqueue_and_expired_lease_recovers(tmp_path
             ),
             range(2),
         ))
-    # turn-2 may be claimed before the expired turn-1, but every server write
-    # remains keyed to one canonical turn and no content can diverge.
-    while restarted.snapshot()[0]["state"] != "delivered":
-        assert restarted.drain(
-            exact_idempotent_put, limit=1, timeout_seconds=0.2,
-        ) in {0, 1}
+    # Concurrent recovery claims the expired exact PUT only once.
     final = {item["turn_id"]: item for item in restarted.snapshot()}
     assert final["turn-1"]["state"] == "delivered"
     assert server["turn-1"] == final["turn-1"]["envelope_sha256"]
-    assert sum(results) in {1, 2}
+    assert final["turn-1"]["attempts"] == 2
+    assert final["turn-2"]["state"] == "delivered"
+    assert sum(results) == 1
 
 
 def test_delivery_exception_is_redacted_and_retryable(tmp_path):
