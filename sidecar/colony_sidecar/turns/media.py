@@ -144,7 +144,8 @@ class SourceMedia:
         from colony_sidecar.turns.idempotency import source_message_hash
         rows = conn.execute('''SELECT l.*,s.scope,s.session_id,s.messages_json,s.occurred_at,s.ingested_at
             FROM source_media_links l JOIN turn_sources s ON s.turn_id=l.turn_id
-            WHERE l.asset_hash=? AND s.contact_id=? AND (s.scope='person' OR s.session_id=?)''',
+            WHERE l.asset_hash=? AND s.contact_id=? AND (s.scope='person' OR s.session_id=?)
+            AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)''',
             (asset_hash, contact_id, session_id)).fetchall()
         return [row for row in rows if row['message_hash'] in {
             source_message_hash(row['session_id'], message) for message in json.loads(row['messages_json'])}]

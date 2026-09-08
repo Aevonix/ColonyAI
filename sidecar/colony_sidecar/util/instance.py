@@ -43,10 +43,15 @@ def load_environment():
     for path in paths:
         if path.is_file():
             values = {}
-            for line in path.read_text().splitlines():
-                if line.strip() and not line.lstrip().startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    values[key.strip()] = value.strip()
+            if managed:
+                from dotenv import dotenv_values
+                values = {key: value for key, value in dotenv_values(path, interpolate=False).items()
+                          if value is not None}
+            else:
+                for line in path.read_text().splitlines():
+                    if line.strip() and not line.lstrip().startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        values[key.strip()] = value.strip()
             if managed and (values.get('COLONY_STATE_DIR') != selected
                             or values.get('COLONY_INSTALL_PROFILE') != 'local'):
                 raise ValueError('Selected private environment is incomplete or points to a different instance')

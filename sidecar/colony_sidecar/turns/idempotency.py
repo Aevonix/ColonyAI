@@ -166,6 +166,10 @@ class TurnIdempotencyLedger:
                 initialize_vectors(conn)
                 from colony_sidecar.self_model.judgments import initialize as initialize_judgments
                 initialize_judgments(conn)
+                from colony_sidecar.self_model.appraisals import initialize as initialize_appraisals
+                initialize_appraisals(conn)
+                from colony_sidecar.turns.source_attribution import initialize as initialize_attribution
+                initialize_attribution(conn)
                 from colony_sidecar.turns.source_annotations import initialize as initialize_annotations
                 initialize_annotations(conn)
             self._initialized = True
@@ -258,6 +262,9 @@ class TurnIdempotencyLedger:
                 from colony_sidecar.self_model.judgments import enqueue as enqueue_judgments
                 enqueue_judgments(conn, turn_id, contact_id, messages, scope=scope,
                                   runtime_observation=runtime_judgment)
+                from colony_sidecar.self_model.appraisals import enqueue as enqueue_appraisals
+                enqueue_appraisals(conn, turn_id, contact_id, messages, scope=scope,
+                                   runtime_observation=runtime_judgment)
             from colony_sidecar.turns.source_vectors import enqueue as enqueue_vectors
             enqueue_vectors(conn, turn_id)
         return True
@@ -331,7 +338,9 @@ class TurnIdempotencyLedger:
                         or ref['source_id'] == turn_id or not isinstance(ref['source_version'], str)
                         or not re.fullmatch('[0-9a-f]{64}', ref['source_version'])):
                     raise ValueError('invalid_source_dependency')
-                parent = conn.execute('SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?',
+                parent = conn.execute('''SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?
+                    AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i
+                        WHERE i.source_id=turn_sources.turn_id)''',
                                       (ref['source_id'], contact_id)).fetchone()
                 if (parent and (parent['scope'] == 'person' or parent['session_id'] == session_id)
                         and canonical_turn_digest(json.loads(parent['messages_json'])) == ref['source_version']):
@@ -375,7 +384,9 @@ class TurnIdempotencyLedger:
         with closing(self._connect()) as conn:
             for turn_id in dict.fromkeys(turn_ids):
                 row = conn.execute('''SELECT messages_json FROM turn_sources WHERE turn_id=?
-                    AND contact_id=? AND (scope='person' OR session_id=?)''',
+                    AND contact_id=? AND (scope='person' OR session_id=?)
+                    AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i
+                        WHERE i.source_id=turn_sources.turn_id)''',
                     (turn_id, contact_id, session_id)).fetchone()
                 if row:
                     refs.append({'source_id': turn_id, 'source_version': canonical_turn_digest(json.loads(row[0]))})
@@ -482,6 +493,8 @@ class TurnIdempotencyLedger:
                     erase_preferences(conn, row["turn_id"], row["session_id"], retained)
                     from colony_sidecar.self_model.judgments import erase_removed as erase_judgments
                     erase_judgments(conn, row["turn_id"], row["session_id"], retained)
+                    from colony_sidecar.self_model.appraisals import erase_removed as erase_appraisals
+                    erase_appraisals(conn, row["turn_id"], row["session_id"], retained)
                     affected.append(row["turn_id"])
                     for selected_id in selected:
                         conn.execute("INSERT OR IGNORE INTO source_projection_erasures(turn_id,source_turn_id) VALUES (?,?)", (row["turn_id"], selected_id))
@@ -536,6 +549,7 @@ class TurnIdempotencyLedger:
                 JOIN turn_sources AS s ON s.turn_id=f.turn_id
                 WHERE turn_source_search MATCH ? AND s.contact_id=?
                   AND (s.scope='person' OR s.session_id=?)
+                  AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)
                 ORDER BY bm25(turn_source_search)
                 LIMIT ?
             """, (expression, contact_id, session_id, max(1, min(limit, 10)) * 2)).fetchall()

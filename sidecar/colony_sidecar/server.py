@@ -2618,7 +2618,8 @@ async def lifespan(app: FastAPI):
             _wle = WorldLLMExtractor(
                 world_store, graph=graph, directive_manager=_get_dm3(),
                 journal=getattr(_sm_for_directed, "journal", None),
-                self_model=_sm_for_directed)
+                self_model=_sm_for_directed,
+                source_ledger=get_turn_idempotency_ledger(state_dir))
             set_world_llm_extractor(_wle)
             logger.info("WorldLLMExtractor initialized (mode=%s)",
                         llm_extract_mode())
@@ -4139,6 +4140,12 @@ def create_app() -> FastAPI:
     app.include_router(commitment_work_router.router)
     from colony_sidecar.api.routers import initiative_work as initiative_work_router
     app.include_router(initiative_work_router.router)
+    from colony_sidecar.api.routers import social_state as social_state_router
+    app.include_router(social_state_router.router)
+    from colony_sidecar.api.routers import temporal_followups as temporal_followups_router
+    app.include_router(temporal_followups_router.router)
+    from colony_sidecar.api.routers import transport as transport_router
+    app.include_router(transport_router.router)
 
     # Exact PUT/GET action endpoint.  Middleware maps these methods to
     # actions:execute/actions:verify; the router independently rejects legacy,

@@ -971,6 +971,10 @@ def required_scope(method: str, path: str) -> str:
         return 'context:read'
     if method.upper() == 'POST' and re.fullmatch(r'/v1/host/initiative-work/[^/]+/(?:native-task|observe)', path):
         return 'turns:write'
+    if method.upper() == 'GET' and re.fullmatch(r'/v1/host/temporal-followups(?:/[^/]+)?', path):
+        return 'context:read'
+    if method.upper() == 'POST' and re.fullmatch(r'/v1/host/temporal-followups(?:/[^/]+/(?:change|native-task|prepare|observe))?', path):
+        return 'turns:write'
     if method.upper() == "POST" and path.startswith("/v1/host/commitments/") and path.endswith("/work"):
         return "turns:write"
     if (method.upper() == 'POST'
@@ -1103,6 +1107,11 @@ def required_scope(method: str, path: str) -> str:
         ("GET", "/v1/host/memory/sources/claims/status"): "memory:read",
         ("GET", "/v1/host/preferences"): "context:read",
         ("GET", "/v1/host/self"): "context:read",
+        ("POST", "/v1/host/transport/observe"): "transport:write",
+        ("GET", "/v1/host/social/appraisals"): "context:read",
+        ("POST", "/v1/host/social/appraisals/correct"): "turns:write",
+        ("GET", "/v1/host/social/contacts"): "context:read",
+        ("POST", "/v1/host/social/contacts/correct-identity"): "turns:write",
         ("POST", "/v1/host/preferences/learn"): "memory:write",
         ("POST", "/v1/host/learning/correction"): "memory:write",
         ("POST", "/v1/host/context/assemble"): "context:read",

@@ -161,6 +161,10 @@ def register(body: ExpectedReply, request: Request):
         # Root's trusted task-consent producer may attach a matching scope at
         # initial creation through expect_reply. This route enables local review.
         row = store.expect_reply(wait_id=wait_id, contact_id=body.recipient_id, source_session_id=body.session_id, **fields)
+        from colony_sidecar.api.routers import host
+        if host._comms_log is not None:
+            from colony_sidecar.api.routers.transport import reconcile_receipts
+            row = reconcile_receipts(store, host._comms_log, row)
         return {**row, 'effect_authorized': False}
     try:
         return guarded(create)

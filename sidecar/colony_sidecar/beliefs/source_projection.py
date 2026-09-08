@@ -379,6 +379,8 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
     from colony_sidecar.identity import get_owner_contact_id
     from colony_sidecar.self_model.judgments import SelfJudgments
     judgments = SelfJudgments(ledger, owner_id=get_owner_contact_id())
+    from colony_sidecar.self_model.appraisals import AppraisalStore
+    appraisals = AppraisalStore(ledger, owner_id=get_owner_contact_id())
     from colony_sidecar.turns.media import SourceMedia
     media = SourceMedia(ledger)
     from colony_sidecar.turns.source_vectors import SourceVectors
@@ -389,19 +391,32 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
         media.recover_unowned_files()
     except OSError:
         logger.warning("source media orphan recovery deferred")
-    judgment_task = None
+    reflections = {'judgment': judgments, 'appraisal': appraisals}
+    reflection_tasks = {name: None for name in reflections}
+    next_identity_check = 0.0
     try:
         while True:
             worked = False
-            # One reflection belongs to this existing worker's lifecycle, but
-            # a slow reasoning request must not stall source indexing/captioning.
-            if claims_enabled and (judgment_task is None or judgment_task.done()):
-                if judgment_task is not None:
-                    try:
-                        worked = judgment_task.result()
-                    except Exception as exc:
-                        logger.warning("source judgment deferred (%s)", type(exc).__name__)
-                judgment_task = asyncio.create_task(judgments.process_one(router_provider()))
+            if time.monotonic() >= next_identity_check:
+                next_identity_check = time.monotonic() + 30
+                try:
+                    from colony_sidecar.api.routers.social_state import reconcile_pending_identities
+                    worked = await reconcile_pending_identities(ledger)
+                except Exception as exc:
+                    logger.warning('identity source reconciliation deferred (%s)', type(exc).__name__)
+            # Durable reflection jobs share this worker's lifecycle. Their model
+            # requests must not stall source indexing or media processing.
+            if claims_enabled:
+                for name, projection_worker in reflections.items():
+                    task = reflection_tasks[name]
+                    if task is None or task.done():
+                        if task is not None:
+                            try:
+                                worked = task.result() or worked
+                            except Exception as exc:
+                                logger.warning("source %s deferred (%s)", name, type(exc).__name__)
+                        reflection_tasks[name] = asyncio.create_task(
+                            projection_worker.process_one(router_provider()))
             try:
                 worked = await vectors.process_one() or worked
             except asyncio.CancelledError:
@@ -419,6 +434,7 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
                 logger.warning("source claim worker deferred (%s)", type(exc).__name__)
             await asyncio.sleep(.05 if worked else 2)
     finally:
-        if judgment_task is not None:
-            judgment_task.cancel()
-            await asyncio.gather(judgment_task, return_exceptions=True)
+        tasks = [task for task in reflection_tasks.values() if task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

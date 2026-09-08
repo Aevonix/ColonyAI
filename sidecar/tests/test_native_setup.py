@@ -107,6 +107,36 @@ def test_attach_preserves_existing_identity_channels_model_and_unrelated_env(arg
     assert yaml.safe_load((home/'colony/hermes-original/config.yaml').read_text()) == original
 
 
+def test_guiding_values_and_time_preferences_roundtrip_privately(args, monkeypatch):
+    args.agent_values = 'Be candid, Respect # evidence, Read "carefully", Literal ${TOKEN}'
+    args.timezone = 'Europe/Paris'
+    args.quiet_hours = '22:30-07:15'
+    monkeypatch.setenv('TOKEN', 'must-not-substitute')
+    assert setup.run_init(None, args) == 0
+    home = Path(args.hermes_home); state = home/'colony'
+    env = setup._load_existing_env(state/'.env')
+    expected = ['Be candid', 'Respect # evidence', 'Read "carefully"', 'Literal ${TOKEN}']
+    assert json.loads(env['COLONY_AGENT_VALUES']) == expected
+    assert env['COLONY_AGENT_TIMEZONE'] == 'Europe/Paris'
+    assert env['COLONY_AGENT_QUIET_HOURS'] == '22:30-07:15'
+    assert json.loads((state/'instance.json').read_text())['agent_preferences']['values'] == expected
+    monkeypatch.setenv('HERMES_HOME', str(home))
+    load_environment()
+    assert json.loads(os.environ['COLONY_AGENT_VALUES']) == expected
+    before = (state/'.env').read_bytes(), (home/'SOUL.md').read_bytes()
+    args.agent_values = 'Replacement must not overwrite an existing identity'
+    assert setup.run_init(None, args) == 0
+    assert before == ((state/'.env').read_bytes(), (home/'SOUL.md').read_bytes())
+
+
+@pytest.mark.parametrize('field,value', [('timezone', 'No/Such_Zone'),
+    ('quiet_hours', '25:00-07:00'), ('quiet_hours', '08:00-08:00')])
+def test_invalid_time_preferences_do_not_partially_attach(args, field, value):
+    setattr(args, field, value)
+    assert setup.run_init(None, args) == 1
+    assert not (Path(args.hermes_home)/'colony'/'instance.json').exists()
+
+
 def test_native_goals_opt_in_and_existing_instance_reentry_preserve_state(args, monkeypatch, capsys):
     from colony_sidecar import setup_local_work
     monkeypatch.setattr(setup_local_work, 'verify_tools', lambda *a: None)

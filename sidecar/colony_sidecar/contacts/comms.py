@@ -61,6 +61,7 @@ class CommsLog:
             "reply_to_ref": "TEXT",
             "reaction": "TEXT",
             "receipt_ref": "TEXT",
+            "outbound_ref": "TEXT",
         }.items():
             if name not in existing:
                 self._conn.execute(
@@ -69,6 +70,34 @@ class CommsLog:
             "CREATE INDEX IF NOT EXISTS idx_comms_reply_ref "
             "ON communications(contact_id,reply_to_ref,ts)")
         self._conn.commit()
+
+    def log_receipt(self, *, event_id, contact_id, channel, direction, external_ref,
+                    receipt_ref, occurred_at, status, reply_to_ref='', outbound_ref=''):
+        """Idempotent metadata from a trusted transport adapter, never prose."""
+        import hashlib
+        stamp = _parse(occurred_at)
+        if stamp is None or stamp > _now() or direction not in {'in', 'out'}:
+            raise ValueError('invalid_transport_observation')
+        identifier = 'transport:' + hashlib.sha256(event_id.encode()).hexdigest()
+        values = (identifier, contact_id, channel, direction, 'Transport '+status, '',
+                  stamp.isoformat(), external_ref, reply_to_ref or None, None,
+                  receipt_ref, outbound_ref or None)
+        columns = 'id,contact_id,channel,direction,summary,session_id,ts,external_ref,reply_to_ref,reaction,receipt_ref,outbound_ref'
+        with self._conn:
+            previous = self._conn.execute('SELECT '+columns+' FROM communications WHERE id=?', (identifier,)).fetchone()
+            if previous:
+                if tuple(previous) != values:
+                    raise ValueError('transport_event_conflict')
+                return False
+            self._conn.execute('INSERT INTO communications ('+columns+') VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', values)
+        return True
+
+    def outbound_receipts(self, *, contact_id, outbound_ref):
+        rows = self._conn.execute('''SELECT * FROM communications WHERE contact_id=?
+            AND direction='out' AND (outbound_ref=? OR external_ref=?)
+            AND receipt_ref IS NOT NULL AND external_ref IS NOT NULL ORDER BY ts,id LIMIT 100''',
+            (contact_id, outbound_ref, outbound_ref)).fetchall()
+        return [dict(row) for row in rows]
 
     def log(self, contact_id: str, *, channel: str = "unknown", direction: str = "in",
             summary: str = "", session_id: str = "",

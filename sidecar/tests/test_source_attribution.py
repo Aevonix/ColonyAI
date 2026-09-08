@@ -62,6 +62,13 @@ def test_linked_answer_copies_are_invalidated_without_adopting_or_erasing_them(t
     ledger.record_source('answer-two', contact_id='cid-old', session_id='next', messages=child)
     result = correction(ledger)
     assert result['invalidated_source_ids'] == ['answer-one', 'answer-two']
+    # A delayed answer cannot launder a now-invalidated intermediate source
+    # into fresh recallable evidence after the correction transaction.
+    with pytest.raises(ValueError, match='invalid_source_dependency'):
+        ledger.record_source('delayed-answer', contact_id='cid-old', session_id='after-correction', messages=[{
+            'role': 'assistant', 'content': 'Your bicycle is turquoise.',
+            '_supplied_sources': [{'source_id': 'answer-two', 'source_version': canonical_turn_digest(child)}]}])
+    assert not ledger.search_sources('turquoise', contact_id='cid-old', session_id='after-correction')
     assert not visible_hits(ledger, ledger.search_sources('turquoise', contact_id='cid-old', session_id='later'))
     assert visible_hits(ledger, ledger.search_sources('turquoise', contact_id='cid-new', session_id='later'))
     with ledger._connect() as conn:

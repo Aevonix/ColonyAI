@@ -66,6 +66,8 @@ class SelfPerspective:
             initialize(conn)
         from colony_sidecar.self_model.judgments import SelfJudgments
         self.judgments = SelfJudgments(ledger, owner_id=self.owner_id, clock=clock)
+        from colony_sidecar.self_model.appraisals import AppraisalStore
+        self.appraisals = AppraisalStore(ledger, owner_id=self.owner_id, clock=clock)
 
     def observe_source(self, turn_id, learner):
         """Learn only direct, attributed owner words; replay does not add votes."""
@@ -221,6 +223,8 @@ class SelfPerspective:
                 'corrections': self.preferences(history=True), 'opinions': self.opinions(),
                 'judgments': self.judgments.revisions(), 'judgment_history': self.judgments.revisions(history=True),
                 'judgment_processing': self.judgments.processing(),
+                'appraisals': self.appraisals.view(self.owner_id, viewer_contact_id=self.owner_id,
+                                                  history=True, limit=10),
                 'opinion_history': self.opinions(history=True), 'automatic_weighting': 'retired', 'attention': attention}
 
     def brief(self, query='', *, source_ids=None):

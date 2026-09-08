@@ -1209,15 +1209,11 @@ def _estimate_model_gb(spec) -> float:
 def _load_existing_env(env_path: Path) -> dict[str, str]:
     if not env_path.exists():
         return {}
-    env: dict[str, str] = {}
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip()
-    return env
+    from dotenv import dotenv_values
+    # Setup must read the same quoting as the runtime. Keep literal values;
+    # inspecting an existing instance must not substitute process variables.
+    return {key: value for key, value in dotenv_values(env_path, interpolate=False).items()
+            if value is not None}
 
 
 # ── LLM host config helpers (.colony-llm-config.json) ──────────────────────
