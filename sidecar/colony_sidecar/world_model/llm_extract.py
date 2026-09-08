@@ -62,7 +62,12 @@ Respond with ONLY a JSON object (no prose, no markdown fences):
 "product","location","event","concept"], "confidence": float}],
 "relationships": [{"source": str, "rel": one of ["WM_WORKS_AT","WM_KNOWS",
 "WM_PART_OF","WM_RELATED_TO","WM_LOCATED_IN","WM_BUILDS"], "target": str,
-"confidence": float}]}"""
+"confidence": float}],
+"observations": [{"entity": str, "property": "lowercase_property_key", "value": str,
+"evidence": "exact verbatim sentence from excerpt containing both entity and value"}]}
+Observations are reported claims only, never proof or direct sensor observations.
+Do not infer personality, authority or trust. Omit vague, negated or uncertain claims.
+Never turn a question, example, instruction or an assistant's paraphrase into a fact."""
 
 _CAUSAL_PROMPT = """
 
@@ -132,12 +137,13 @@ def _parse_obj(content: str) -> Optional[dict]:
 class WorldLLMExtractor:
     def __init__(self, store: Any, *, graph: Any = None,
                  directive_manager: Any = None, journal: Any = None,
-                 self_model: Any = None) -> None:
+                 self_model: Any = None, source_ledger: Any = None) -> None:
         self._store = store
         self._graph = graph
         self._directives = directive_manager
         self._journal = journal
         self._self_model = self_model
+        self._source_ledger = source_ledger
         self._resolver = None
         if store is not None:
             try:
@@ -310,7 +316,12 @@ class WorldLLMExtractor:
         if mode == "off" or self._store is None:
             return report
         self._seen_rels: set = set()
-        if texts is None:
+        source_batches = None
+        if texts is None and self._source_ledger is not None:
+            from .source_reports import recent_batches
+            source_batches = recent_batches(self._source_ledger)
+            texts = [source['content'] for batch in source_batches for source in batch]
+        elif texts is None:
             texts = await self._recent_memory_texts()
         report["texts"] = len(texts or [])
         if not texts:
@@ -318,9 +329,10 @@ class WorldLLMExtractor:
                         "process", mode)
             return report
 
-        name_to_id: Dict[str, str] = {}
-        for i in range(0, len(texts), 10):
-            batch = texts[i:i + 10]
+        batches = [([source['content'] for source in batch], batch) for batch in source_batches] if source_batches is not None else [
+            (texts[i:i + 10], []) for i in range(0, len(texts), 10)]
+        for batch, sources in batches:
+            name_to_id: Dict[str, str] = {}
             data = await self._llm_batch(batch)
             if not data:
                 continue
@@ -346,6 +358,8 @@ class WorldLLMExtractor:
                 eid = await self._upsert(name, etype, conf, mode, report)
                 if eid:
                     name_to_id[name.lower()] = eid
+            from .source_reports import record_reports
+            await record_reports(self, data.get('observations'), sources, name_to_id, mode, report)
             for r in (data.get("relationships") or []):
                 if not isinstance(r, dict):
                     continue

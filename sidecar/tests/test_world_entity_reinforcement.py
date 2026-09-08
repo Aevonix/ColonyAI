@@ -4,8 +4,8 @@ A repeat mention of a known entity used to write nothing but (maybe) an
 alias — last_seen stayed frozen, so a frequently-discussed entity aged toward
 prune eligibility exactly like a one-off. reinforce_entity touches
 last_seen=now, mention_count+1 (guarded additive column, migrates existing
-DBs in place) and confidence +0.02 capped 0.95. Strictly anti-data-loss:
-a repeat mention must never make an entity MORE prunable than a single one.
+DBs in place). Confidence is unchanged: repeated mentions are familiarity,
+not additional evidence about whether the entity or its properties are true.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _entity(eid="we-1", name="Alice Chen", confidence=0.5):
                       confidence=confidence)
 
 
-def test_reinforce_touches_last_seen_count_and_confidence():
+def test_reinforce_touches_last_seen_count_without_confidence_boost():
     async def run():
         s = await _store()
         await s.upsert_entity(_entity(confidence=0.5))
@@ -49,12 +49,12 @@ def test_reinforce_touches_last_seen_count_and_confidence():
         row = await _row(backend, "we-1")
         assert row["last_seen"] > "2020-01-01T00:00:00Z"     # moved forward
         assert row["mention_count"] == 2                     # default 1 -> +1
-        assert row["confidence"] == 0.52
+        assert row["confidence"] == 0.5
         await s.close()
     asyncio.run(run())
 
 
-def test_reinforce_caps_at_095_and_never_lowers():
+def test_reinforce_leaves_existing_confidence_unchanged():
     async def run():
         s = await _store()
         await s.upsert_entity(_entity(eid="we-cap", confidence=0.94))
@@ -62,7 +62,7 @@ def test_reinforce_caps_at_095_and_never_lowers():
         await s.reinforce_entity("we-cap")
         await s.reinforce_entity("we-high")
         backend = s._backend
-        assert (await _row(backend, "we-cap"))["confidence"] == 0.95   # capped
+        assert (await _row(backend, "we-cap"))["confidence"] == 0.94   # no repetition boost
         # Anti-data-loss: an entity already above the cap keeps its confidence
         # (never lowered to the cap, which could make it MORE prunable).
         assert (await _row(backend, "we-high"))["confidence"] == 0.98
@@ -114,7 +114,7 @@ def test_live_populate_merge_reinforces():
         after = await _row(backend, eid)
         assert after["mention_count"] == before["mention_count"] + 1
         assert after["last_seen"] > before["last_seen"]
-        assert after["confidence"] >= before["confidence"]   # never more prunable
+        assert after["confidence"] == before["confidence"]   # repetition is not corroboration
         await s.close()
     asyncio.run(run())
 
