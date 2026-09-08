@@ -1,6 +1,15 @@
 # Changelog
 
-## v1.0.22 - shared external work progress and results
+## v1.0.22 - complete native recollection and shared work results
+
+Fresh attachment and explicit adapter refresh align Hermes's supported hook
+spill allowance with Colony's existing memory context, including generated
+draft profiles. The default 10,000-character spill could replace selected
+evidence and its source revisions with a truncated preview. The 65,536-character
+allowance preserves the observed default packet; disabled or larger operator
+settings remain unchanged. Retrieval budgets do not increase, and arbitrary
+larger custom context still needs its own allowance. Existing Hermes processes
+must restart through their normal lifecycle to reload this setting.
 
 Existing local worker reports can retain task and parent identity, measured
 progress, process exit details and result references in the shared owner work
