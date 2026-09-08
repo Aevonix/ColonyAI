@@ -37,14 +37,19 @@ if phase=='accept':
         return tool(session,'colony_accept_local_draft',args)
     with ThreadPoolExecutor(max_workers=2) as pool:values=list(pool.map(accept,sessions))
     assert 'id' in values[0],values
-    # B may arrive before A's handoff commits. This specified status/replay
-    # step covers that contention without launching another undertaking.
+    # A's committed handoff releases shared ownership. B's rejected local
+    # attempt remains fenced until B explicitly stops it, even after status.
     for session in sessions:
         status=tool(session,'colony_commitment_work',{'operation':'status','commitment_id':args['commitment_id']})
         assert status['work_state']=='released',status
+    fenced=tool(sessions[1],'colony_accept_local_draft',args)
+    assert 'error' in fenced and 'id' not in fenced,fenced
+    stopped=tool(sessions[1],'colony_commitment_work',{'operation':'release','commitment_id':args['commitment_id']})
+    assert stopped['detached'] is True and stopped['accepted'] is False,stopped
+    assert stopped['reason']=='no_confirmed_undertaking' and stopped['effect_authorized'] is False,stopped
     joined=tool(sessions[1],'colony_accept_local_draft',args)
     assert joined['id']==values[0]['id'],(values,joined)
-    if 'id' in values[1]:assert values[1]['id']==joined['id']
+    assert 'error' in values[1] and 'id' not in values[1],values
     assert run_tool_execution_middleware('read_file',{},lambda args:'detached',
         session_id=sessions[0],task_id=sessions[0],turn_id=sessions[0])=='detached'
     values=[values[0],joined]

@@ -2830,23 +2830,8 @@ async def context_assemble(
         except Exception:
             logger.debug('temporal and current-state context unavailable', exc_info=True)
 
-    # --- Affect State ---
-    if _exact_person_allowed and _affect_store is not None and contact_id:
-        try:
-            state = _affect_store.get_state(contact_id)
-            if state and (state.get("valence") is not None or state.get("current_valence") is not None):
-                valence = state.get("valence") or state.get("current_valence", 0)
-                arousal = state.get("arousal") or state.get("current_arousal", 0)
-                mood = "positive" if valence > 0.2 else "negative" if valence < -0.2 else "neutral"
-                energy = "high" if arousal > 0.5 else "low" if arousal < 0.3 else "moderate"
-                sections.append(ContextSection(
-                    id="colony-affect",
-                    title="Contact Affect",
-                    body=f"Mood: {mood} (valence: {valence:.2f}), Energy: {energy} (arousal: {arousal:.2f})",
-                    priority=80,
-                ))
-        except Exception as exc:
-            logger.warning("context_assemble affect failed: %s", exc)
+    # Conversation state uses source-cited appraisals and working judgments.
+    # Legacy numeric mood estimates remain inspectable through their explicit API.
 
     # --- Recorded relationship context ---
     if _exact_person_allowed and _contacts_store is not None and contact_id:
@@ -2885,7 +2870,7 @@ async def context_assemble(
                 else:
                     _brief = _relationship_profiler.cached(contact_id)
                 if _brief is not None:
-                    _rendered = _brief.render()
+                    _rendered = _brief.render(include_affect=False)
                     if _rendered:
                         sections.append(ContextSection(
                             id="colony-approach",
@@ -3822,9 +3807,15 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             world_cleanup = 'unsupported_backend'
         except Exception:
             logger.warning('source erasure world report cleanup is pending', exc_info=True)
+    transport_cleanup = 'pending'
+    try:
+        from colony_sidecar.api.routers.transport_ingress_api import forget_sources
+        transport_cleanup = forget_sources(list(dict.fromkeys(result['source_ids'] + result['affected_source_ids'])))
+    except Exception:
+        logger.warning('Source erasure transport cleanup remains pending', exc_info=True)
     return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
             "shared_facts_cleanup": fact_cleanup, "vector_cleanup": vector_cleanup,
-            "world_cleanup": world_cleanup, **tom_cleanup,
+            "world_cleanup": world_cleanup, "transport_cleanup": transport_cleanup, **tom_cleanup,
             "scope": "canonical_turn_sources_and_linked_projections",
             "host_reconciliation": "pending_until_each_host_connects"}
 
@@ -3940,6 +3931,8 @@ async def turns_sync(
         has_sender=body.sender is not None,
     ) or body.context.contact_id
     result, outcome = await _ingest_turn_idempotently(body, request=request)
+    from colony_sidecar.api.routers.transport_ingress_api import reconcile_source
+    reconcile_source(body, result)
     if response is not None:
         response.headers["Idempotency-Status"] = outcome
         if outcome == "in_progress":
@@ -4020,6 +4013,8 @@ async def turns_sync_v2(
         has_sender=body.sender is not None,
     ) or body.context.contact_id
     result, outcome = await _ingest_turn_idempotently(body, request=request)
+    from colony_sidecar.api.routers.transport_ingress_api import reconcile_source
+    reconcile_source(body, result)
     response.headers["Idempotency-Status"] = outcome
     if outcome == "created":
         response.status_code = status.HTTP_201_CREATED
@@ -4383,20 +4378,6 @@ async def _process_turn_sync(
                     logger.debug("world populate failed", exc_info=True)
             _src = getattr(body.context, "turn_id", None) or getattr(body.context, "session_id", None) or "turn"
             _spawn_task(_run_world_populate(_wm_text, _src))
-
-    # ToM LLM extraction (best-effort, non-blocking). Machines are not
-    # people: a system-attributed turn must never mint affect/facts/psyche.
-    try:
-        if (_tom_extractor is not None and _affect_store is not None
-                and _facts_store is not None and not _is_system_turn and source_recorded):
-            _spawn_task(_run_tom_extraction(
-                conversation_text=body.summary or "",
-                contact_id=body.context.contact_id,
-                session_id=body.context.session_id,
-                source_id=source_id,
-            ))
-    except Exception:
-        logger.debug("ToM extraction from turn_sync failed", exc_info=True)
 
     if _telemetry is not None:
         try:
@@ -10940,7 +10921,7 @@ async def enriched_context(
         async def _contact():
             try:
                 c = await _contacts_store.get(contact_id)
-                return ("contact", c)
+                return ("contact", c.to_dict() if hasattr(c, 'to_dict') else c)
             except Exception:
                 return ("contact", None)
         tasks["contact"] = _contact()
@@ -11214,29 +11195,6 @@ async def enriched_context(
                 ))
         except Exception:
             logger.debug("commitment section failed", exc_info=True)
-
-    # Affect (emotional context)
-    if _enriched_exact_person_allowed and _affect_store is not None \
-            and contact_id and features.get("affect", True):
-        try:
-            state = _affect_store.get_state(contact_id)
-            if state["event_count"] > 0:
-                valence = state["current_valence"]
-                trend = state["trend"]
-                trend_label = {"improving": "trending up", "declining": "trending down", "stable": "stable"}.get(trend, trend)
-                body_text = f"Mood: {valence:+.1f} ({trend_label}). Event count: {state['event_count']}."
-                if valence > 0.3:
-                    body_text += " Positive disposition."
-                elif valence < -0.3:
-                    body_text += " Negative disposition — consider tone."
-                sections.append(ContextSection(
-                    id="colony-affect",
-                    title="Emotional Context",
-                    body=body_text,
-                    priority=80,
-                ))
-        except Exception:
-            logger.debug("affect section failed", exc_info=True)
 
     # Shared facts
     if _p8_runtime is None and _facts_store is not None and contact_id \
@@ -12729,55 +12687,6 @@ async def delete_surprise(surprise_id: str):
 # ---------------------------------------------------------------------------
 # ToM LLM Extraction
 # ---------------------------------------------------------------------------
-
-async def _run_tom_extraction(
-    conversation_text: str,
-    contact_id: str,
-    session_id: Optional[str] = None,
-    source_id: Optional[str] = None,
-) -> None:
-    """Project affect and engagement; canonical assertions own factual learning."""
-    if _tom_extractor is None:
-        return
-    lineage = None
-    if source_id is not None:
-        try:
-            lineage, conversation_text = _facts_store.source_input(source_id, contact_id)
-        except Exception:
-            logger.debug('ToM source unavailable; background projection skipped', exc_info=True)
-            return
-    def source_current():
-        return lineage is None or _facts_store._source_visible(contact_id, lineage)
-    # Affect
-    try:
-        affect = await _tom_extractor.extract_affect(
-            conversation_text, contact_id, session_id=session_id,
-        )
-        if not source_current():
-            return
-        if affect and _affect_store is not None:
-            _affect_store.create_event(
-                contact_id=affect["contact_id"],
-                valence=affect["valence"],
-                arousal=affect["arousal"],
-                source="inferred",
-                trigger=affect.get("trigger"),
-                session_id=session_id,
-                source_lineage=lineage,
-            )
-            try:
-                from colony_sidecar.events.broadcaster import emit as _emit
-                _emit("affect.event_created", {"contact_id": contact_id, "source": "inferred"})
-            except Exception:
-                pass
-    except Exception:
-        logger.debug("ToM affect extraction failed", exc_info=True)
-    # Factual learning has one automatic path: source-grounded assertions.
-    # Contact knowledge remains an explicit API, not a duplicate model call
-    # that guesses what this participant accepted from the assistant.
-    # Preferences and tentative working styles are now sourced by the canonical
-    # appraisal worker; there is no second personality-extraction request.
-
 
 @router.post("/tom/extract", response_model=TomExtractResponse)
 async def extract_tom(

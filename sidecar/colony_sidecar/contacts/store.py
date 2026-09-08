@@ -109,6 +109,10 @@ class ContactStore(ABC):
     async def resolve_handle(self, gateway: str, address: str) -> Optional[Contact]:
         """Resolve a gateway handle to a Contact."""
 
+    async def resolve_verified_handles(self, gateway: str, addresses: List[str]) -> Optional[Contact]:
+        """Resolve exact transport aliases only when they identify one verified contact."""
+        raise NotImplementedError
+
     @abstractmethod
     async def create(
         self,
@@ -434,6 +438,18 @@ class SQLiteContactStore(ContactStore):
             rows = await cur.fetchall()
         row = rows[0] if len({r['contact_id'] for r in rows}) == 1 else None
         return Contact.from_row(dict(row)) if row else None
+
+    async def resolve_verified_handles(self, gateway: str, addresses: List[str]) -> Optional[Contact]:
+        values = list(dict.fromkeys(addresses))
+        if not 1 <= len(values) <= 5 or any(not isinstance(v, str) or not 1 <= len(v) <= 512 for v in values):
+            raise ValueError('bounded_exact_transport_aliases_required')
+        db = self._require_db()
+        async with db.execute('SELECT DISTINCT c.* FROM contacts c JOIN contact_handles h '
+            'ON h.contact_id=c.contact_id WHERE c.deleted_at IS NULL AND h.verified=1 '
+            'AND h.gateway=? AND h.address IN (' + ','.join('?' for _ in values) + ')',
+            [gateway, *values]) as cursor:
+            rows = await cursor.fetchall()
+        return Contact.from_row(dict(rows[0])) if len(rows) == 1 else None
 
     async def get_handles(self, contact_id: str) -> List[ContactHandle]:
         db = self._require_db()

@@ -19,6 +19,7 @@ from .expectations import expectations_enabled
 
 logger = logging.getLogger(__name__)
 VERSION = 'native-task-forecast-v1'
+DECISION_VERSION = 'native-task-inspection-shadow-v1'
 
 
 def _digest(value):
@@ -175,6 +176,77 @@ def observe(review, native, state, owner):
         reason=reason,previous_revision=len(history['outcomes']))
     return {'status':'observed','forecast_id':fid,'outcome_status':result['status'],
             'receipt_ref':receipt,'quality_evaluated':False}
+
+
+def project(review, native, state, owner, *, now=None):
+    """Project one existing forecast on a normal work read, without side effects.
+
+    The original horizon, not a revised or recomputed estimate, supplies the
+    shadow inspection decision. No suggestion, polling, retry or notification
+    is enabled by this projection, even when its forecast has many samples.
+    """
+    parts = _parts(review, native, state, owner)
+    if parts is None:
+        return {'status':'disabled_or_unselected'}
+    store, ledger, _, _, fid = parts
+    history = store.forecast_history(fid)
+    if not history['forecasts']:
+        return {'status':'no_prospective_forecast'}
+    prediction = history['forecasts'][0]
+    detail = prediction['detail']
+    if (prediction['subject_person_id'] != owner or prediction['viewer_scope'] != 'owner'
+            or not _current(ledger,prediction['evidence_refs'],detail['source_versions'],owner)):
+        return {'status':'source_unavailable'}
+    stamp = time.time() if now is None else float(now)
+    if not math.isfinite(stamp) or stamp < detail['origin_at']:
+        return {'status':'unqualified_observation_time'}
+    estimate = detail['conditions']['estimate']
+    prior_horizon = detail['origin_at'] + estimate['prior_seconds']
+    recorded_configuration = detail['model_provenance']['capabilities']
+    same_conditions = bool(recorded_configuration) and state.get('forecast_configuration') == recorded_configuration
+    status = state.get('status')
+    active = status in {'ready','running'}
+    latest = history['outcomes'][-1] if history['outcomes'] else None
+    outcome_current = latest is None or _current(ledger,latest['evidence_refs'],latest['source_versions'],owner)
+    if not same_conditions:
+        decision = prior_decision = 'conditions_unknown_or_changed'
+    elif not outcome_current:
+        decision = prior_decision = 'source_unavailable'
+    elif latest and latest['status'] == 'censored':
+        decision = prior_decision = 'censored'
+    elif not active:
+        decision = prior_decision = 'terminal' if status in {'done','archived','cancelled'} else 'not_running'
+    else:
+        decision = 'inspect_recorded_state' if stamp >= prediction['horizon'] else 'continue_waiting'
+        prior_decision = 'inspect_recorded_state' if stamp >= prior_horizon else 'continue_waiting'
+    result = {'status':'shadow','version':DECISION_VERSION,
+        'decision_id':'native-inspection:'+_digest({'forecast_id':fid,'horizon':prediction['horizon']}),
+        'forecast_id':fid,'original_revision':prediction['detail']['revision'],
+        'original_horizon':prediction['horizon'],'prior_horizon':prior_horizon,
+        'observed_at':stamp,'native_status':status,'decision':decision,
+        'prior_decision':prior_decision,'changed_from_prior':decision != prior_decision,
+        'sample_n':estimate['sample_n'],'uncertain':estimate['uncertain'],
+        'configuration_matches':same_conditions,
+        'conditions_comparable':same_conditions and detail['model_provenance']['served_model'] is not None,
+        'served_model':detail['model_provenance']['served_model'],
+        'evidence_refs':prediction['evidence_refs'],'source_versions':detail['source_versions'],
+        'suggestion_enabled':False,'quality_evaluated':False,
+        'enable_criteria':{'cohort_must_be_closed':True,'minimum_comparable_terminal_receipts':10,
+            'lower_mean_absolute_error':True,'no_more_premature_inspections':True,
+            'no_greater_mean_inspection_lateness':True}}
+    if latest and latest['status'] == 'observed' and latest['value'] is True and outcome_current:
+        ended = latest['observed_at']
+        result['comparison'] = {
+            'receipt_ref':latest['receipt_ref'],'outcome_source_versions':latest['source_versions'],
+            'turnaround_seconds':ended-detail['origin_at'],
+            'forecast_absolute_error_seconds':abs(ended-prediction['horizon']),
+            'prior_absolute_error_seconds':abs(ended-prior_horizon),
+            'forecast_premature_inspection':prediction['horizon'] < ended,
+            'prior_premature_inspection':prior_horizon < ended,
+            'forecast_inspection_lateness_seconds':max(0.,prediction['horizon']-ended),
+            'prior_inspection_lateness_seconds':max(0.,prior_horizon-ended),
+            'counterfactual_horizon_comparison':True,'projection_added_status_calls':0}
+    return result
 
 
 def safe(operation, review, native, state, owner):

@@ -22,6 +22,7 @@ from colony_sidecar.turns import TurnIdempotencyLedger
 from colony_sidecar.turns.idempotency import SourceErased
 from test_tom_source_lineage import runtime, ingest, forget
 from test_turn_source_evidence import source_app
+from test_turn_source_evidence import envelope, recalled
 
 
 @pytest.fixture
@@ -90,16 +91,27 @@ async def relationship_context(client):
     return {s['id']: s['body'] for s in response.json()['sections']}
 
 
+def retained_legacy_affect(runtime, turn='turn-a'):
+    """Retained pre-migration evidence remains erasable, without new inference."""
+    lineage, _ = runtime.facts.source_input(turn, 'contact-a')
+    return runtime.affect.create_event(contact_id='contact-a', valence=-.8,
+        arousal=.9, source='inferred', trigger='neutral-source-trigger',
+        session_id='session-a', source_lineage=lineage)
+
+
 @pytest.mark.asyncio
 async def test_cached_approach_forget_reopen_changes_next_ordinary_context(approach, monkeypatch, tmp_path):
     r = approach
     r.engagement.update_from_observation('contact-a', style={'warmth': .9}, topics=['independent topic'])
     async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
         await ingest(client, r)
+        retained_legacy_affect(r)
         brief = await r.profiler.profile('contact-a')
         before = await relationship_context(client)
         assert 'neutral-source-topic' not in before['colony-approach']
-        assert 'mood is negative' in before['colony-approach']
+        assert 'mood is negative' not in before['colony-approach']
+        assert 'Recent mood:' not in before['colony-approach']
+        assert 'mood is negative' in brief.render()  # Explicit inspection remains.
         cached = json.loads(r.profiler._conn.execute('SELECT brief_json FROM relationship_briefs').fetchone()[0])
         assert not {'affect_valence', 'affect_trend', 'psyche_guidance', 'psyche_motivators'} & cached.keys()
         assert 'recent mood is negative; lead carefully' not in cached['cautions']
@@ -166,13 +178,14 @@ async def test_old_cached_advice_is_omitted_when_current_store_unavailable(appro
 
 
 @pytest.mark.asyncio
-async def test_ordinary_ingress_forget_removes_text_and_numeric_influence(relations):
+async def test_retained_legacy_affect_forget_removes_text_and_numeric_influence(relations):
     r = relations
     explicit = r.affect.create_event(contact_id='contact-a', valence=.4, arousal=.3, trigger='independent explicit signal')
     r.engagement.update_from_observation('contact-a', style={'warmth': .9}, topics=['independent topic'])
     before = r.engagement.get_profile('contact-a')
     async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
         await ingest(client, r)
+        retained_legacy_affect(r)
         linked = [e for e in r.affect.list_events() if e['source_lineage']][0]
         assert linked['source_lineage']['turn_id'] == 'turn-a'
         assert len(linked['source_lineage']['message_hashes']) == 2
@@ -206,11 +219,49 @@ async def test_ingress_does_not_run_retired_engagement_extractor(relations, monk
     monkeypatch.setattr(relations.extractor, 'extract_engagement', retired)
     async with AsyncClient(transport=ASGITransport(app=relations.app), base_url='http://test') as client:
         await ingest(client, relations)
-        assert relations.affect.count_events() == 1
+        assert relations.affect.count_events() == 0
         await forget(client)
         assert relations.affect.count_events() == 0
         assert relations.engagement.get_profile('contact-a')['observation_count'] == 0
         assert await engagement_brief(client) == ''
+
+
+@pytest.mark.asyncio
+async def test_badge_turn_keeps_source_learning_without_mood_inference_or_injection(approach, monkeypatch):
+    r = approach
+    monkeypatch.setattr('colony_sidecar.identity.get_owner_contact_id', lambda: 'contact-a')
+    async def forbidden(*args, **kwargs):
+        raise AssertionError('Ordinary badge recall must not infer a mood')
+    monkeypatch.setattr(r.extractor, 'extract_affect', forbidden)
+    async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
+        body = envelope('badge-turn')
+        body['user_message']['content'] = 'Please remember that my orchard badge is cobalt-716.'
+        response = await client.put('/v2/host/turns/badge-turn', json=body)
+        assert response.status_code == 201 and response.json()['source_recorded']
+        assert r.tasks == [] and r.affect.count_events() == 0
+        with r.ledger._connect() as conn:
+            for table in ('source_claim_jobs', 'appraisal_runs', 'self_judgment_runs'):
+                row = conn.execute('SELECT status FROM '+table+' WHERE turn_id=?', ('badge-turn',)).fetchone()
+                assert row and row['status'] == 'pending'
+        assert 'cobalt-716' in await recalled(client, session='new-session', query='orchard badge')
+        # Historical/explicit mood data still exists. Neither ordinary context
+        # surface may promote that numeric interpretation into current guidance.
+        explicit = r.affect.create_event(contact_id='contact-a', valence=-.9, arousal=.9,
+            source='inferred', trigger='old independent estimate')
+        common = {'identity': {'host_id':'test-host'},
+            'context': {'contact_id':'contact-a','session_id':'new-session'}}
+        for path, extra in [
+            ('assemble', {'incoming_message': {'role':'user','content':'orchard badge'}}),
+            ('enriched', {'message':'orchard badge','features':{'affect':True}}),
+        ]:
+            response = await client.post('/v1/host/context/'+path, json=common | extra)
+            assert response.status_code == 200, response.text
+            assert 'colony-affect' not in {section['id'] for section in response.json()['sections']}
+            assert 'valence' not in '\n'.join(section['body'] for section in response.json()['sections'])
+        history = await client.get('/v1/host/affect/history/contact-a')
+        assert history.status_code == 200
+        assert any(event['id'] == explicit['id'] for event in history.json()['events'])
+        assert r.affect.count_events() == 1
 
 
 def source(ledger, facts, turn):

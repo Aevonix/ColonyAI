@@ -40,6 +40,18 @@ class CommitmentCoordinator:
                 match = self._children[key[0]]
             return dict(match) if match else None
 
+    def _remember(self, context, value):
+        key = self._key(context)
+        with self._lock:
+            # Rotation aliases name the same attempt. Updating just one alias
+            # would make later native lookups ambiguous and lose the fence.
+            for alias in list(self._claims):
+                if alias[1:] == key[1:]:
+                    self._claims[alias] = value
+            self._claims[key] = value
+            while len(self._claims) > 2048:
+                self._claims.popitem(last=False)
+
     def bind_turn(self, **context):
         # Native start/pre-API hooks attach inherited tokens to the child turn,
         # so compression or parent detachment cannot drop its fencing check.
@@ -66,6 +78,8 @@ class CommitmentCoordinator:
             return None
         if current['commitment_id'] != commitment_id:
             raise ValueError('Release the current undertaking before accepting different work')
+        if not current['claim_id']:
+            raise ValueError('No undertaking confirmed; stop this attempt before accepting work')
         return {key: current['holder'][key] for key in ('session_id', 'task_id', 'turn_id')} | {
             'claim_id': current['claim_id']}
 
@@ -95,6 +109,21 @@ class CommitmentCoordinator:
                                'commitment_id': current['commitment_id']})
         payload = {key: str(context.get(key) or '') for key in ('session_id', 'task_id', 'turn_id')}
         payload.update(contact_id=scope.contact_id, operation=args['operation'])
+        if args['operation'] == 'claim':
+            # An attempted undertaking is distinct from an unrelated, unclaimed
+            # turn. Keep it fenced while admission is pending, rejected or lost.
+            # Native child/rotation binding carries this same marker.
+            self._remember(context, {
+                    'commitment_id': args['commitment_id'], 'claim_id': '',
+                    'holder': {key: value for key, value in payload.items() if key != 'operation'},
+                    **({'child_session_id': current['child_session_id']}
+                       if current and current.get('child_session_id') else {})})
+        if (args['operation'] == 'release' and current and not current['claim_id']
+                and args['commitment_id'] == current['commitment_id']):
+            # Stop this local attempt without releasing another session's lease.
+            self._detach(current, context)
+            return json.dumps({'commitment_id': args['commitment_id'], 'accepted': False,
+                'reason': 'no_confirmed_undertaking', 'detached': True, 'effect_authorized': False})
         if args['operation'] == 'release' and current:
             payload = {**current['holder'], 'operation': 'release', 'claim_id': current['claim_id']}
         try:
@@ -103,12 +132,9 @@ class CommitmentCoordinator:
                 token = result.get('claim_id')
                 if not isinstance(token, str) or len(token) != 32:
                     raise ValueError('missing undertaking token')
-                with self._lock:
-                    self._claims[self._key(context)] = {'commitment_id': args['commitment_id'],
+                self._remember(context, {'commitment_id': args['commitment_id'],
                         'claim_id': token, 'holder': {key: value for key, value in payload.items() if key != 'operation'},
-                        **({'child_session_id': current['child_session_id']} if current and current.get('child_session_id') else {})}
-                    while len(self._claims) > 2048:
-                        self._claims.popitem(last=False)
+                        **({'child_session_id': current['child_session_id']} if current and current.get('child_session_id') else {})})
             elif (args['operation'] == 'release' and current
                     and args['commitment_id'] == current['commitment_id']
                     and (result['accepted'] or result.get('reason') in {'obligation_closed', 'claim_superseded'})):
@@ -131,6 +157,9 @@ class CommitmentCoordinator:
         current = self._claim(context)
         if current is None:
             return None
+        if not current['claim_id']:
+            return json.dumps({'error': 'This undertaking was not confirmed; inspect its status, retry its claim or release this turn before other work',
+                               'effect_performed': False, 'commitment_id': current['commitment_id']})
         try:
             result = self._request(current['commitment_id'], {**current['holder'],
                 'operation': 'renew', 'claim_id': current['claim_id']})

@@ -30,6 +30,7 @@ fact='My neutral orchard badge is cobalt-716.'
 ledger=get_turn_idempotency_ledger(os.environ['COLONY_STATE_DIR'])
 ledger.record_source('native-erasure-source', contact_id='contact-a', session_id='original',
     messages=[{'role':'user','content':fact}], derive_claims=False)
+original_ref=ledger.source_references(['native-erasure-source'],contact_id='contact-a',session_id='original')[0]
 wire=[]
 original_client=httpx.Client
 def respond(request):
@@ -78,14 +79,33 @@ client.chat.completions.create.side_effect=[
 ]
 with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=[]), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
     agent=AIAgent(api_key='fixture',base_url='http://127.0.0.1:1/v1',provider='openai',
-        model='fixture/model',quiet_mode=True,skip_context_files=True,skip_memory=True,platform='cli',max_iterations=2)
+        model='fixture/model',quiet_mode=True,skip_context_files=True,skip_memory=False,platform='cli',max_iterations=2)
     assert isinstance(agent.context_compressor, ContextCompressor)
     agent._cached_system_prompt='Stable neutral identity.'
     agent._use_prompt_caching=False; agent.save_trajectories=False
-    result=agent.run_conversation('Continue the neutral conversation.', conversation_history=copy.deepcopy(before), task_id='erasure-before')
+    question='What is my orchard badge in the retained neutral source?'
+    # Observe the real automatic turn prefetch; do not manually supply its
+    # answer or mistake historical api_content for current recall consumption.
+    with patch.object(agent._memory_manager,'prefetch_all',wraps=agent._memory_manager.prefetch_all) as automatic:
+        result=agent.run_conversation(question, conversation_history=copy.deepcopy(before), task_id='erasure-before')
+    automatic.assert_called_once_with(question,session_id=agent.session_id)
     assert result['final_response']=='BEFORE_OK', result
-    import colony_hermes
-    assert fact in json.dumps(client.chat.completions.create.call_args_list[0].kwargs['messages']), (wire, list(colony_hermes._TRANSPORT_SCOPES._by_turn.values()), client.chat.completions.create.call_args_list[0].kwargs['messages'])
+    supplied=client.chat.completions.create.call_args_list[0].kwargs['messages']
+    current=next(row for row in reversed(supplied) if row.get('role')=='user')
+    assert question in current['content'] and fact in current['content'],(wire,supplied)
+    packets=[line for row in supplied for line in str(row.get('content','')).splitlines()
+             if line.startswith('[colony-recall-v1 ')]
+    assert len(packets)==1,packets
+    stamp=json.loads(packets[0][len('[colony-recall-v1 '):-1])
+    assert stamp['contact_id']=='contact-a' and stamp['sources']==[original_ref],stamp
+    # Check canonical answer lineage actually emitted by the native post hook.
+    with ledger._connect() as connection:
+        answers=[(row['turn_id'],message) for row in connection.execute(
+            'SELECT turn_id,messages_json FROM turn_sources WHERE contact_id=?',('contact-a',))
+            for message in json.loads(row['messages_json'])
+            if message.get('role')=='assistant' and message.get('content')=='BEFORE_OK']
+    assert len(answers)==1 and answers[0][1].get('_supplied_sources')==[original_ref],answers
+    derived_id=answers[0][0]
     from hermes_cli.lifecycle import invoke_hook
     from model_tools import handle_function_call
     invoke_hook('pre_llm_call', session_id='forget-request', task_id='forget-task', turn_id='forget-turn',
@@ -94,7 +114,13 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
         session_id='forget-request',task_id='forget-task',turn_id='forget-turn'))
     assert forgotten['source_erased'], forgotten
     assert forgotten['source_ids'] == ['native-erasure-source']
-    assert len(forgotten['affected_source_ids']) >= 2, forgotten
+    assert {'native-erasure-source',derived_id} <= set(forgotten['affected_source_ids']),forgotten
+    with ledger._connect() as connection:
+        survivor=connection.execute('SELECT messages_json FROM turn_sources WHERE turn_id=?',(derived_id,)).fetchone()
+    assert survivor is not None
+    retained=json.loads(survivor['messages_json'])
+    assert any(row.get('role')=='user' and row.get('content')==question for row in retained),retained
+    assert all(row.get('role')!='assistant' for row in retained),retained
     repeat=json.loads(handle_function_call('colony_memory_forget', {'source_ids':['native-erasure-source']},
         session_id='forget-request',task_id='forget-task',turn_id='forget-turn'))
     assert repeat['source_erased'], repeat
@@ -146,6 +172,7 @@ filtered=apply_llm_request_middleware({'messages':[{'role':'user','content':enri
     session_id='image-resume',task_id='image-task',turn_id='image-turn').payload
 assert 'neutral-fixture' not in json.dumps(filtered) and 'Neutral original pixels' not in json.dumps(filtered)
 print(json.dumps({'native_compressor':True,'native_persist_resume':True,'before_present':True,
+    'current_automatic_recall_consumed':True,'exact_answer_lineage_erased':True,
     'standard_forget':True,'resumed_request_absent':True,'native_storage_gap_explicit':True,
     'multimodal_whole_source_erased':True,'explicit_retelling_preserved':True,'controlled_inference':True}))
 '''

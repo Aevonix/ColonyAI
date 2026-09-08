@@ -148,6 +148,31 @@ async def test_shared_pixels_keep_other_contacts_owned_source(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_image_forgetting_follows_supplied_revisions_into_derived_transcript(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path/'ledger.db')
+    media = SourceMedia(ledger)
+    ledger.record_source('image', contact_id='person', session_id='text-session', messages=[message()])
+    assert await media.process_one(Vision())
+    reference = ledger.source_references(['image'], contact_id='person', session_id='voice-session')[0]
+    question = {'role': 'user', 'content': 'Also remember that the workshop starts at noon.'}
+    ledger.record_source('voice-transcript', contact_id='person', session_id='voice-session',
+        messages=[question, {'role': 'assistant', 'content': 'The circular shape appears blue in the supplied image.',
+                             '_supplied_sources': [reference]}], derive_claims=False)
+    prior = ledger.source_references(['voice-transcript'], contact_id='person', session_id='later')[0]
+    ledger.erase_sources(contact_id='person', turn_ids=['image'])
+    reopened = TurnIdempotencyLedger(ledger.db_path)
+    with sqlite3.connect(ledger.db_path) as db:
+        stored = json.loads(db.execute('SELECT messages_json FROM turn_sources WHERE turn_id=?',
+                                       ('voice-transcript',)).fetchone()[0])
+    assert stored == [question]
+    current = reopened.source_references(['voice-transcript'], contact_id='person', session_id='later')[0]
+    assert current['source_id'] == prior['source_id'] and current['source_version'] != prior['source_version']
+    assert SourceMedia(reopened).search('blue circle', contact_id='person', session_id='later') == []
+    with pytest.raises(KeyError):
+        SourceMedia(reopened).read(hashlib.sha256(image_bytes()).hexdigest(), contact_id='person', session_id='later')
+
+
+@pytest.mark.asyncio
 async def test_delete_during_description_blocks_late_derived_write(tmp_path):
     ledger = TurnIdempotencyLedger(tmp_path / 'ledger.db'); media = SourceMedia(ledger)
     ledger.record_source('turn', contact_id='c', session_id='s', messages=[message()])

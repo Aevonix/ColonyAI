@@ -45,6 +45,13 @@ It attaches the canonical installed adapter when its bytes match, or installs
 profile directory adapters when no native package is present. It neither
 patches Hermes core nor restarts an existing gateway.
 
+Choose a private `--hermes-home` under directories you control. Before probing
+the model, setup checks the runtime's existing conversation-outbox path rules:
+the immediate `state` directory must be mode 0700, and ancestors cannot be
+group/other writable except root-owned sticky directories such as `/tmp`.
+A private child inside a shared writable directory is insufficient. Setup
+reports the offending path and leaves existing permissions unchanged.
+
 Accept the wizard's startup option, or run:
 
 ```bash
@@ -87,6 +94,8 @@ for native package installations and service bindings.
   Source-backed preferences, temporary appraisals and narrow opinions supply
   relevant context without changing permissions. Numeric closeness and inferred
   Big Five scores no longer govern the active path. [Social state](docs/SOCIAL-STATE.md)
+  Ordinary turns also omit the legacy numeric mood estimator. Existing affect
+  history remains explicitly readable, but those guesses no longer enter recall.
 - **Task anticipation.** Expected replies share the original commitment and begin
   timing only after a real transport receipt. Native review tasks use the existing
   Hermes scheduler. Prepared follow-ups require deployment-owned authority and a
@@ -95,6 +104,9 @@ for native package installations and service bindings.
 - **Automatic recollection.** The native memory provider requests context for
   the current participant, session and question before inference. A durable
   outbox captures ordinary turns; retry does not create another source.
+  Older automatically injected packets are removed when the next turn receives
+  fresh context, including withdrawn relationship guidance. Direct conversation
+  remains in the session history.
 - **Scoped source recall.** Authenticated participants can recall their own
   canonical evidence without the legacy graph runtime. Optional semantic
   projections find retained passages and image descriptions, then resolve them
@@ -126,6 +138,8 @@ for native package installations and service bindings.
 - **Shared work.** Sessions can observe commitments and claim work through one
   persistent registry. Another session sees who holds it. A lease coordinates
   work; it cannot by itself make an external side effect exactly once.
+  A rejected or uncertain claim holds ordinary tools in that turn until explicit
+  detachment; it cannot release another session's undertaking.
   Local draft acceptances against one open commitment share an active task and
   its retained result. An explicit fresh draft can follow completed work.
   [Commitment work](docs/COMMITMENT-WORK.md)

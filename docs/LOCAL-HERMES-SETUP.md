@@ -66,6 +66,11 @@ injects selected evidence before inference. Compression uses Hermes' native
 checkpoint contract with durable local capture. General-plugin turn capture is
 the single ordinary writer.
 
+Ordinary sources also support cited appraisals and revisable working judgments.
+They do not trigger a second legacy mood-analysis call or inject numeric mood
+estimates into conversation context. Existing affect history and explicit affect
+APIs remain available for inspection.
+
 The selected model supplies the legacy SMALL, MEDIUM and LARGE role bindings.
 Optional named role/capability configuration can refine that later. Fresh homes
 also get that model in native Hermes config. An existing Hermes model is kept.

@@ -148,8 +148,8 @@ def test_full_cycle():
 
         check("Commitments in context", "colony-commitments" in section_ids,
               section_titles.get("colony-commitments", "missing"))
-        check("Affect in context", "colony-affect" in section_ids,
-              section_titles.get("colony-affect", "missing"))
+        check("Legacy mood estimates stay out of context", "colony-affect" not in section_ids,
+              "Affect history remains explicitly inspectable")
         check("Facts in context", "colony-shared-facts" in section_ids,
               section_titles.get("colony-shared-facts", "missing"))
         check("Surprises in context", "colony-surprises" in section_ids,

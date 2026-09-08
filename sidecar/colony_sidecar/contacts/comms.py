@@ -70,6 +70,8 @@ class CommsLog:
             "CREATE INDEX IF NOT EXISTS idx_comms_reply_ref "
             "ON communications(contact_id,reply_to_ref,ts)")
         self._conn.commit()
+        from .transport_ingress import ensure_schema
+        ensure_schema(self._conn)
 
     def log_receipt(self, *, event_id, contact_id, channel, direction, external_ref,
                     receipt_ref, occurred_at, status, reply_to_ref='', outbound_ref=''):

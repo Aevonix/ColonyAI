@@ -39,7 +39,10 @@ def test_retained_packets_and_exact_copies_reconcile_after_restart(runtime):
         {'role': 'user', 'content': 'Another topic' + '\n\n' + packet('owner', 0, rt.fact)},
     ]}
     original = copy.deepcopy(request)
-    assert rt.module.filter_request(request, contact_id='owner', watermark=0, rules=[], fresh=True) == original
+    initial = rt.module.filter_request(request, contact_id='owner', watermark=0, rules=[], fresh=True)
+    assert initial['messages'][1]['content'].strip() == rt.fact
+    assert initial['messages'][-1] == original['messages'][-1]
+    assert initial['messages'][2]['content'] == rt.fact
     rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
     rt.outbox.apply_erasure_page('owner', rt.ledger.erasure_feed('owner'))
     watermark, rules = type(rt.outbox)(rt.outbox.path).erasure_state('owner')
@@ -70,6 +73,14 @@ def test_unavailable_feed_returns_current_turn_and_tool_results_without_old_cont
     wire = json.dumps(result['request'])
     assert 'Old' not in wire and 'Continue build' in wire and 'Current tool result' in wire
     assert result['request']['messages'][-1]['tool_call_id'] == 'step'
+
+
+def test_single_responses_input_preserves_current_recollection(runtime):
+    direct = 'Explain this literal <memory-context>example</memory-context>'
+    enriched = direct + '\n' + packet('owner', 0, 'Current relevant memory')
+    result = runtime.module.filter_request({'input': enriched}, contact_id='owner',
+        watermark=0, rules=[], fresh=True, current_content=enriched, current_input=direct)
+    assert result['input'] == enriched
 
 
 def test_partial_feed_never_certifies_freshness_and_makes_bounded_progress(runtime):
