@@ -1,17 +1,7 @@
-"""Contact Engagement Profile — an evolving, per-contact model of HOW the agent
-should communicate and engage with each person, giving it a growing edge in
-relationships.
+"""Read current attributed engagement observations; retain numeric history only.
 
-Fuses two evidence streams into one profile:
-  - psychology (OCEAN / Big Five) inferred from WHAT a contact says
-  - communication style observed from HOW they say it (formality, directness,
-    warmth, verbosity, emoji, humour)
-
-Each dimension is an exponential moving average with a sample count (-> confidence),
-so the profile sharpens as the relationship deepens. From the numeric profile +
-qualitative notes (motivators / engaging topics / things to avoid) it derives a
-concrete, deterministic "how to engage" brief that is surfaced to the agent every
-turn for a known contact.
+Canonical AppraisalStore owns new preference/person interpretation. Legacy
+aggregates remain inspectable but no longer produce psychological certainty.
 """
 from __future__ import annotations
 
@@ -29,7 +19,6 @@ STYLE = ("formality", "directness", "warmth", "verbosity", "emoji_ok", "humor")
 _ALL_DIMS = OCEAN + STYLE
 _QUAL_KEYS = ("motivators", "topics", "avoid")
 _QUAL_CAP = 8
-_CONF_FULL_N = 6  # samples for full confidence
 
 
 def _now() -> str:
@@ -97,20 +86,20 @@ class EngagementStore(SourceLinkedStore):
     def get_profile(self, contact_id: str) -> Dict[str, Any]:
         self.purge_erased_sources(contact_id=contact_id)
         row = self._row(contact_id)
-        if not row:
-            return {"contact_id": contact_id, "dims": {}, "qual": {}, "observation_count": 0}
         baseline = self._conn.execute('SELECT observation_count FROM engagement_baselines WHERE contact_id=?', (contact_id,)).fetchone()
-        dims_raw = json.loads(row["dims_json"] or "{}")
-        dims = {
-            k: {"value": v["v"], "confidence": round(min(1.0, v["n"] / _CONF_FULL_N), 2), "n": v["n"]}
-            for k, v in dims_raw.items()
-        }
+        dims_raw = json.loads(row["dims_json"] or "{}") if row else {}
+        observations = []
+        if self._source_ledger is not None:
+            from colony_sidecar.identity import get_owner_contact_id
+            from colony_sidecar.self_model.appraisals import AppraisalStore
+            observations = AppraisalStore(self._source_ledger, owner_id=get_owner_contact_id()).view(
+                contact_id, viewer_contact_id=contact_id)['records']
         return {
-            "contact_id": contact_id,
-            "dims": dims,
-            "qual": json.loads(row["qual_json"] or "{}"),
-            "observation_count": row["observation_count"],
-            "updated_at": row["updated_at"],
+            "contact_id": contact_id, "dims": {}, "qual": {},
+            "observations": observations, "observation_count": len(observations),
+            "legacy_profile": {"dims": dims_raw, "qual": json.loads(row["qual_json"] or "{}") if row else {},
+                "observation_count": row["observation_count"] if row else 0, "governing": False},
+            "updated_at": row["updated_at"] if row else None,
             "legacy_unlinked_observations": baseline[0] if baseline else 0,
         }
 
@@ -215,71 +204,11 @@ class EngagementStore(SourceLinkedStore):
             self._conn.execute("DELETE FROM engagement_baselines WHERE contact_id=?", (contact_id,))
 
 
-# ---------------------------------------------------------------------------
-# Deterministic "how to engage" brief from a profile (no LLM at surface time).
-# ---------------------------------------------------------------------------
-_HI, _LO, _MINCONF = 0.30, -0.30, 0.30   # OCEAN thresholds + min confidence to assert
-_SHI, _SLO = 0.62, 0.38                   # style thresholds (0..1)
-
-_OCEAN_GUIDANCE = {
-    "openness":          ("They're curious and idea-driven — explore concepts, novelty, the big picture.",
-                          "They're practical — stay concrete, proven, and to-the-point."),
-    "conscientiousness": ("They value reliability and order — be precise, organized, and follow through.",
-                          "They're flexible and spontaneous — don't over-structure; keep it loose."),
-    "extraversion":      ("They're outgoing — match their energy, be warm and conversational.",
-                          "They're reserved — be calm and concise, give them space, don't over-socialize."),
-    "agreeableness":     ("They value harmony — be collaborative and soften disagreement.",
-                          "They're frank and skeptical — be direct and data-driven, don't sugarcoat."),
-    "neuroticism":       ("They run anxious — be reassuring and steady; avoid alarming framing or pressure.",
-                          "They're even-keeled — you can be candid about problems and risks."),
-}
-_STYLE_GUIDANCE = {
-    "formality":  ("Keep it professional and polished.", "Keep it casual and relaxed."),
-    "directness": ("Lead with the bottom line.", "Ease in with a little context before the ask."),
-    "warmth":     ("Use a warm, personable tone.", "Keep the tone neutral and businesslike."),
-    "verbosity":  ("They appreciate detail — you can be expansive.", "Be brief — they want the short version."),
-    "emoji_ok":   ("Emoji and light formatting are welcome.", "Skip emoji; keep it plain."),
-    "humor":      ("Humour and playfulness land well.", "Keep it earnest and straightforward."),
-}
-
-
 def build_guidance(profile: Dict[str, Any]) -> str:
-    """Render a concrete, evolving 'how to engage' brief, or '' if too little evidence."""
-    dims = profile.get("dims", {})
-    if profile.get("observation_count", 0) < 2 and not dims:
-        return ""
-    bullets: List[str] = []
-    for dim in OCEAN:
-        d = dims.get(dim)
-        if not d or d["confidence"] < _MINCONF:
+    """Only current attributed preferences; numeric legacy profiles never govern."""
+    lines = []
+    for item in profile.get('observations', [])[:4]:
+        if item.get('kind') != 'preference' or item.get('status') != 'current' or not item.get('sources'):
             continue
-        v = d["value"]
-        if v >= _HI:
-            bullets.append(_OCEAN_GUIDANCE[dim][0])
-        elif v <= _LO:
-            bullets.append(_OCEAN_GUIDANCE[dim][1])
-    for dim in STYLE:
-        d = dims.get(dim)
-        if not d or d["confidence"] < _MINCONF:
-            continue
-        v = d["value"]
-        if v >= _SHI:
-            bullets.append(_STYLE_GUIDANCE[dim][0])
-        elif v <= _SLO:
-            bullets.append(_STYLE_GUIDANCE[dim][1])
-
-    qual = profile.get("qual", {})
-    tail = []
-    if qual.get("motivators"):
-        tail.append("Motivated by: " + ", ".join(qual["motivators"][-4:]) + ".")
-    if qual.get("topics"):
-        tail.append("Engages on: " + ", ".join(qual["topics"][-4:]) + ".")
-    if qual.get("avoid"):
-        tail.append("Avoid: " + ", ".join(qual["avoid"][-4:]) + ".")
-
-    if not bullets and not tail:
-        return ""
-    out = "\n".join(f"- {b}" for b in bullets)
-    if tail:
-        out += ("\n" if out else "") + " ".join(tail)
-    return out
+        lines.append('Stated preference (attributed, correctable): ' + str(item.get('text', '')))
+    return '\n'.join(lines)

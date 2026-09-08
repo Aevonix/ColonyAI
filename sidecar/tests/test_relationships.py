@@ -183,7 +183,9 @@ class TestProfiler:
         assert brief.affect_valence == -0.4
         assert "woodworking" in brief.rapport_topics
         assert any("mood is negative" in x for x in brief.cautions)
-        assert brief.psyche_motivators == ["shipping fast"]
+        assert brief.psyche_motivators == []
+        assert brief.psyche_guidance == []
+        assert brief.relationship_score is None
         rendered = brief.render()
         assert "Dana" in rendered and "Caution" in rendered
         # cached round-trip

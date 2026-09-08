@@ -203,10 +203,9 @@ class AppraisalStore:
             rows = ([dict(r) for r in conn.execute('SELECT * FROM appraisal_records WHERE owner_id=? AND subject_id=? ORDER BY created_at DESC,id DESC LIMIT 100', (self.owner_id, subject_id))]
                     if history and owner else self._current(conn, subject_id))
             records, refs, hints = [], [], []
+            selected = 0
             words = set(re.findall(r'\w{4,}', query.casefold()))
             for row in rows:
-                if not owner and row['kind'] != 'preference':
-                    continue
                 if row['status'] != 'current' and not (history and owner):
                     continue
                 data = json.loads(row['payload_json'])
@@ -222,15 +221,19 @@ class AppraisalStore:
                 if row['kind'] == 'appraisal' and row['expires_at'] - self.clock() < APPRAISAL_LIFETIME / 2:
                     intensity = 'low'
                 deps = json.loads(row['dependencies_json'])
-                records.append({'id': row['id'], 'subject_id': subject_id, 'kind': row['kind'], **data,
+                if owner or row['kind'] == 'preference':
+                    records.append({'id': row['id'], 'subject_id': subject_id, 'kind': row['kind'], **data,
                                 'intensity': intensity, 'status': 'expired' if expired else row['status'],
                                 'created_at': row['created_at'], 'expires_at': row['expires_at'],
                                 'supersedes': row['supersedes'], 'sources': deps,
-                                'processor': json.loads(row['processor_json']), 'certainty': 'unverified_interpretation'})
-                refs.extend({'source_id': d['source_id'], 'source_version': d['source_version'], 'source_contact_id': d['source_contact_id']} for d in deps)
+                                    'processor': json.loads(row['processor_json']), 'certainty': 'unverified_interpretation'})
                 if data['hint'] != 'none' and row['status'] == 'current' and not expired:
-                    hints.append({'hint': data['hint'], 'topic': data['topic'], 'record_id': row['id']})
-                if len(records) >= max(1, min(limit, 20)):
+                    hints.append({'hint': data['hint'], 'record_id': row['id'],
+                                  **({'topic': data['topic']} if owner else {})})
+                if owner or row['kind'] == 'preference' or data['hint'] != 'none':
+                    refs.extend({'source_id': d['source_id'], 'source_version': d['source_version'], 'source_contact_id': d['source_contact_id']} for d in deps)
+                    selected += 1
+                if selected >= max(1, min(limit, 20)):
                     break
         return {'records': records, 'behavior_hints': hints, 'sources': list({_json(r): r for r in refs}.values()),
                 'authority_changed': False, 'contact_affect': 'separate_projection',
@@ -350,7 +353,7 @@ class AppraisalStore:
                     continue
                 if previous and previous['status'] == 'current' and json.loads(previous['payload_json']).get('support') == item['support']:
                     continue
-                if previous and previous['status'] == 'current' and item['kind'] != 'appraisal' and self.clock() - previous['created_at'] < DURABLE_INTERVAL:
+                if previous and previous['status'] == 'current' and item['kind'] in {'judgment', 'behavior_hypothesis'} and self.clock() - previous['created_at'] < DURABLE_INTERVAL:
                     reconsider_at = max(reconsider_at or 0, previous['created_at'] + DURABLE_INTERVAL)
                     continue
                 identifier = 'appraisal:' + canonical_turn_digest([source['turn_id'], source['version'], key])

@@ -1111,7 +1111,6 @@ class AutonomyLoop:
                             "contact_id": entity_id,
                             "contact_name": contact.get("name"),
                             "days_since_contact": contact.get("days_since_contact", 0),
-                            "relationship_score": contact.get("relationship_score"),
                         }
                     }
             return {}
@@ -3904,68 +3903,12 @@ class AutonomyLoop:
             logger.debug("Phase frustration_update error (non-fatal): %s", exc)
 
     async def _phase_relationships(self) -> None:
-        """Update relationship scores and trust tiers.
+        """Legacy scheduler slot: scalar relationship scoring is retired.
 
-        Two layers:
-          1. Behavioral graph scorer (Neo4j ``Person.score``) — signal-driven,
-             can be sparse.
-          2. Self-sufficient SQLite closeness refresh for **every** contact —
-             recompute closeness from trust tier + recency-decay + frequency +
-             affect (the same ``compute_relationship_score`` used inline on each
-             turn). This is the score every consumer actually reads. Without a
-             periodic recompute it froze at the value from the contact's last
-             turn, so a contact you stopped talking to never decayed toward
-             "distant" (the "scoring starved" symptom). Recomputing here keeps
-             recency decay live even when no turn arrives for that contact.
+        Attributed preferences and appraisals are updated by the canonical
+        source worker. Quiet periods and contact mood cannot lower standing.
         """
-        did_work = False
-        graph = self._registry.graph
-        if graph is not None:
-            try:
-                from colony_sidecar.intelligence.relationships.scorer import RelationshipScorer
-                scorer = RelationshipScorer(graph)
-                if hasattr(scorer, "refresh_all_scores"):
-                    # Pass the SQLite contact store so behavioral scores reverse-sync
-                    # onto contact rows instead of dead-ending in the graph.
-                    changes = await scorer.refresh_all_scores(store=self._registry.contacts)
-                    if changes:
-                        did_work = True
-                        logger.info("Phase relationships: %d behavioral score updates", len(changes))
-            except Exception as exc:
-                self.stats.errors += 1
-                logger.error("Phase relationships (behavioral) error: %s", exc, exc_info=True)
-
-        contacts_store = self._registry.contacts
-        if contacts_store is not None:
-            try:
-                from colony_sidecar.contacts.scoring import compute_relationship_score
-                affect_store = self._registry.affect_store
-                contacts = await contacts_store.list(limit=10000)
-                updated = 0
-                for c in contacts:
-                    try:
-                        aff = None
-                        if affect_store is not None:
-                            try:
-                                aff = affect_store.get_state(c.contact_id)
-                            except Exception:
-                                aff = None
-                        score = compute_relationship_score(c, aff)
-                        prev = getattr(c, "relationship_score", None)
-                        if prev is None or abs(float(prev) - score) >= 1e-4:
-                            await contacts_store.update_relationship_score(c.contact_id, score)
-                            updated += 1
-                    except Exception:
-                        logger.debug("closeness refresh failed for a contact", exc_info=True)
-                if updated:
-                    did_work = True
-                    logger.info("Phase relationships: %d closeness scores refreshed", updated)
-            except Exception as exc:
-                self.stats.errors += 1
-                logger.error("Phase relationships (closeness) error: %s", exc, exc_info=True)
-
-        if did_work:
-            self.stats.scoring_runs += 1
+        return
 
     async def _phase_synthesis(self) -> None:
         """Discover cross-domain connections."""

@@ -88,6 +88,10 @@ async def test_private_views_stay_private_preference_has_attribution_and_values_
     processor = Processor(); await state.process_one(processor)
     assert processor.requests[0]['chosen_values'] == ['Be candid', 'Respect promises']
     assert state.view('person', viewer_contact_id='person')['records'] == []
+    private_view = state.view('person', viewer_contact_id='person')
+    assert private_view['behavior_hints'] == [{'hint': 'try_different_approach', 'record_id': view(state)['records'][0]['id']}]
+    assert private_view['sources'][0]['source_contact_id'] == 'person'
+    assert 'frustration' not in json.dumps(private_view)
     assert state.view('person', viewer_contact_id='stranger')['records'] == []
     source(state, 'preference', 'Please use concise explanations for export diagnostics.')
     await state.process_one(Processor(lambda p: observation(p, kind='preference', dimension='communication', hint='keep_concise')))
@@ -178,3 +182,43 @@ async def test_durable_view_retains_pending_contrary_evidence_until_interval(sta
     state.test_clock.value += module.DURABLE_INTERVAL + 1
     await state.process_one(Processor(decide, name='processor-b'))
     assert view(state)['records'][0]['processor']['model_id'] == 'processor-b'
+
+
+@pytest.mark.asyncio
+async def test_canonical_preference_changes_cached_profiler_and_erasure_removes_it(state, tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from colony_sidecar import identity
+    from colony_sidecar.tom.engagement import EngagementStore
+    from colony_sidecar.intelligence.relationships.profiler import RelationshipProfiler
+    monkeypatch.setattr(identity, 'get_owner_contact_id', lambda: 'owner')
+    engagement = EngagementStore(tmp_path/'engagement.db', source_ledger=state.ledger)
+    contacts = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(
+        display_name='A contact', trust_tier='regular', interaction_count=5)))
+    profiler = RelationshipProfiler(contacts_store=contacts, engagement_store=engagement,
+        db_path=str(tmp_path/'relationships.db'))
+    try:
+        assert 'concise explanations' not in (await profiler.profile('person')).render()
+        source(state, 'preference', 'I prefer concise explanations.')
+        def preference(payload):
+            return observation(payload, kind='preference', dimension='communication',
+                topic='communication', hint='keep_concise') | {
+                    'text': 'The contact explicitly prefers concise explanations.',
+                    'reason': 'Use their stated communication preference.'}
+        await state.process_one(Processor(preference))
+        # No new contact interaction or scheduled profile refresh required.
+        assert 'concise explanations' in profiler.cached('person').render()
+        assert engagement.get_profile('person')['dims'] == {}
+        state.ledger.erase_sources(contact_id='person', turn_ids=['preference'])
+        assert 'concise explanations' not in profiler.cached('person').render()
+    finally:
+        engagement._conn.close()
+        profiler._conn.close()
+
+
+@pytest.mark.asyncio
+async def test_retired_numeric_engagement_does_not_call_another_model():
+    from unittest.mock import AsyncMock
+    from colony_sidecar.tom.extractor import TomExtractor
+    router = AsyncMock()
+    assert await TomExtractor(router).extract_engagement('I prefer concise explanations.', 'person') is None
+    assert router.mock_calls == []
