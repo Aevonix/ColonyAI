@@ -319,10 +319,37 @@ worker labels to local JSON heartbeat paths, for example
 by default. The same owner API and context join expose these as separate
 `reported_worker` entries, never executions or success receipts. Heartbeats
 supply `state` and numeric Unix `updated_at`; optional `detail_code` and
-`release_commit` are included. Other fields and configured paths are omitted.
+`release_commit` are included. Existing heartbeats remain compatible. The reader
+also retains optional `task_id`, `parent_task_id`, `worker_id`, `kind`,
+`started_at`, `finished_at`, and integer `exit_code`. A parent ID is a reported
+binding, not permission to act for that parent. Each row includes `status_sha256`
+to identify the exact observed report bytes. Configured status paths, process
+arguments, environment values, logs and arbitrary result bodies are omitted.
+
+Producers can include up to four measured `progress` records:
+`{"completed":3,"total":8,"unit":"files","source":"pinned_manifest_metadata","observed_at":1234}`.
+`total` is optional; the other fields are required. Counts must be nonnegative
+and finite, and a supplied total cannot be less than the count. The source and
+measurement time must describe the actual observation. Reading artifact progress
+must not refresh an old process heartbeat or imply an unmeasured transfer rate.
+
+Up to four `result_refs` can contain `kind`, an opaque `reference`, and optional
+SHA256 `sha256`, numeric `observed_at`, and a short `verification` description.
+For example, a reference can identify a retained process exit receipt or artifact
+report. The reader never follows those references or verifies the referenced
+content; it reports the producer's stated scope of checking. Explicit result
+locations therefore belong only in operator-selected private reports. Automatic
+request context retains these same bounded work fields and references, subject
+to its existing overall context limit. The complete scoped API remains available.
+
 The reader reports age and marks reports older than 120 seconds stale; future
 timestamps and unreadable/malformed files remain unknown or unavailable.
-States such as `uncertain` are preserved even when stale. Process liveness and
+States such as `uncertain` are preserved even when stale. A task with a valid
+finish timestamp and explicit `exited`, `completed`, `failed`, `interrupted` or
+`cancelled` state is labelled `terminal_report`; otherwise it is a
+`progress_report`. An old terminal report remains intelligible after a session
+disconnect. A stale running report or missing file never becomes completion.
+Process liveness and
 external effects remain unverified. Reads are limited to eight configured
 workers and 16 KiB per heartbeat; no store, heartbeat writer or poller is added.
 Guests receive no configured worker reports.

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import time
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ from colony_sidecar.api.authority import RequestAuthority
 from colony_sidecar.api.routers import executions, host
 from colony_sidecar.api.schemas.host import ContextAssembleRequest
 from colony_sidecar.turns.reported_workers import reported_worker_view
+from colony_sidecar.turns.executions import request_work_context
 
 
 def test_unset_mapping_adds_no_worker_report(monkeypatch):
@@ -35,6 +37,57 @@ def test_uncertainty_survives_freshness_expiry_and_malformed_neighbors(tmp_path,
     assert stale['state']=='uncertain' and stale['freshness']=='stale' and stale['age_seconds']==300
     future=reported_worker_view(now=999)['items'][0]
     assert future['freshness']=='unknown' and future['age_seconds'] is None
+
+
+def test_progress_and_retained_terminal_evidence_reach_request_context(tmp_path, monkeypatch):
+    report = tmp_path/'worker.json'
+    value = {'task_id': 'download-1', 'parent_task_id': 'native-1', 'worker_id': 'transfer-1',
+             'kind': 'download', 'state': 'running', 'started_at': 990, 'updated_at': 1000,
+             'progress': [{'completed': 3, 'total': 8, 'unit': 'files',
+                           'source': 'pinned_manifest_metadata', 'observed_at': 1001}],
+             'argv': ['PRIVATE_ARGUMENT'], 'env': {'KEY': 'PRIVATE_VALUE'}}
+    report.write_text(json.dumps(value))
+    monkeypatch.setenv('COLONY_WORKER_STATUS_PATHS', json.dumps({'Transfer': str(report)}))
+    first = reported_worker_view(now=1002)
+    item = first['items'][0]
+    assert item['progress'] == value['progress'] and item['record_kind'] == 'progress_report'
+    assert item['status_sha256'] == hashlib.sha256(report.read_bytes()).hexdigest()
+    assert item['parent_task_id'] == 'native-1' and item['worker_id'] == 'transfer-1'
+    stale = reported_worker_view(now=1400)['items'][0]
+    assert stale['state'] == 'running' and stale['freshness'] == 'stale'
+    assert stale['record_kind'] == 'progress_report' and stale['liveness'] == 'unverified'
+    value.update(state='exited', finished_at=1100, updated_at=1100, exit_code=0,
+                 result_refs=[{'kind': 'process_exit', 'reference': 'artifact:transfer-1/exit',
+                               'sha256': 'a'*64, 'verification': 'child_process_exit_only'}])
+    report.write_text(json.dumps(value))
+    terminal = reported_worker_view(now=2000)
+    item = terminal['items'][0]
+    assert item['record_kind'] == 'terminal_report' and item['freshness'] == 'stale'
+    assert item['state'] == 'exited' and item['exit_code'] == 0
+    text = request_work_context({'items': [], 'reported_worker': terminal})['text']
+    assert all(fragment in text for fragment in ('download-1', 'native-1', 'transfer-1',
+                                                '"completed": 3', '"unit": "files"',
+                                                'artifact:transfer-1/exit', 'terminal_report'))
+    assert 'PRIVATE_ARGUMENT' not in text and 'PRIVATE_VALUE' not in text
+    assert 'external effects remain unverified' in text
+    # A disappearing file is unavailable, never a synthetic completion.
+    report.unlink()
+    missing = reported_worker_view(now=2001)['items'][0]
+    assert missing['available'] is False and 'state' not in missing
+
+
+def test_invalid_optional_progress_does_not_hide_legacy_status(tmp_path, monkeypatch):
+    report = tmp_path/'worker.json'
+    report.write_text(json.dumps({'state': 'uncertain', 'updated_at': 1000,
+        'task_id': 'bad\nbinding', 'progress': [
+            {'completed': 2, 'total': 1, 'unit': 'files', 'source': 'manifest', 'observed_at': 1000},
+            {'completed': True, 'unit': 'bytes', 'source': 'manifest', 'observed_at': 1000},
+            {'completed': 10**1000, 'unit': 'bytes', 'source': 'manifest', 'observed_at': 1000}],
+        'result_refs': ['unstructured result', {'kind': 'result', 'reference': ''}]}))
+    monkeypatch.setenv('COLONY_WORKER_STATUS_PATHS', json.dumps({'Worker': str(report)}))
+    item = reported_worker_view(now=1001)['items'][0]
+    assert item['available'] and item['state'] == 'uncertain'
+    assert all(key not in item for key in ('task_id', 'progress', 'result_refs', 'record_kind'))
 
 
 @pytest.mark.asyncio
