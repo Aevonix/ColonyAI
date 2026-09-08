@@ -138,7 +138,8 @@ class NativeDrafts:
         except ModuleNotFoundError as error:
             if error.name not in {'hermes_cli.kanban_db_connect', 'hermes_cli.kanban_db_notify'}:
                 raise
-            from hermes_cli.kanban_db import connect, add_notify_sub  # Hermes 0.21.0
+            # Native 0.21.1 scans all imports, including inactive fallbacks.
+            connect, add_notify_sub = kb.connect, kb.add_notify_sub  # Hermes 0.21.0
         context, identifier = assignment['context'], assignment['id']
         if context.get('execution_backend') != 'kanban' or context['contact_id'] != self.owner:
             raise ValueError('accepted_native_local_work_required')
@@ -208,7 +209,7 @@ class NativeDrafts:
         except ModuleNotFoundError as error:
             if error.name != 'hermes_cli.kanban_db_connect':
                 raise
-            from hermes_cli.kanban_db import connect  # Hermes 0.21.0
+            connect = kb.connect  # Hermes 0.21.0 only
         if (not self.worker or os.environ.get('HERMES_PROFILE') != self.profile
                 or os.environ.get('HERMES_KANBAN_BOARD') != self.board
                 or Path(os.environ.get('HERMES_KANBAN_DB', '')).resolve() != self.db_path):

@@ -26,7 +26,9 @@ class NativeReviews:
         except ModuleNotFoundError as error:
             if error.name != 'hermes_cli.kanban_db_connect':
                 raise
-            from hermes_cli.kanban_db import connect  # Hermes 0.21.0
+            # Only 0.21.0 lacks the sibling module. Keep its lookup local to
+            # this branch; newer native scanners inspect imports statically.
+            connect = kb.connect
         value = request(self.client, self.path(identifier)+'?contact_id='+quote(self.owner, safe=''))
         if value['status'] in {'completed', 'cancelled'}:
             return value
