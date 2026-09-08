@@ -59,6 +59,7 @@ class Coverage(BaseModel):
     connected_since: float | None = Field(default=None, gt=0)
     observed_at: float = Field(gt=0)
     watermark: int = Field(ge=0)
+    sequence_floor: int = Field(default=0, ge=0)
     connected: bool
     unavailable: int = Field(ge=0)
 
@@ -219,6 +220,9 @@ def forget_sources(source_ids):
 def followup_coverage(*, principal, contact_id, since, channel):
     if channel != 'whatsapp':
         return {'observed': False, 'reasons': ['durable_channel_coverage_unavailable']}
+    from colony_sidecar.api.routers import host
+    if host._comms_log is None:
+        return {'observed': False, 'reasons': ['communications_unavailable']}
     ingress = store()
     accounts = ingress.conn.execute('SELECT account_id FROM transport_ingress_coverage WHERE producer=?',
                                      (principal,)).fetchall()
