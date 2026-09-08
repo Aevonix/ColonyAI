@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from colony_sidecar.self_model.expectations import ExpectationStore, ExpectationEngine
+from colony_sidecar.self_model import runtime_forecasts
 from colony_sidecar.world_model.expectation_resolvers import register_world_resolvers, CAUSAL_PREFIX
 
 
@@ -120,3 +121,62 @@ def test_causal_self_survival_remains_historical_not_predictive_truth(tmp_path):
     assert engine.calibration() == {}
     assert engine.calibration_report()['resolved_n'] == 0
     assert store.get(prediction.prediction_id).outcome == 'hit'
+
+
+@pytest.fixture
+def inspection(tmp_path, monkeypatch):
+    store = ExpectationStore(str(tmp_path/'inspection.db'))
+    configuration = {'runtime_budget_seconds':200,'requested_profile':'default'}
+    provenance = {'requested_role':'reasoning','served_model':'observed-processor',
+                  'capabilities':configuration}
+    estimate = {'prior_seconds':200,'seconds':100,'sample_n':12,'uncertain':False}
+    issue(store,conditions={'estimate':estimate},model_provenance=provenance)
+    monkeypatch.setattr(runtime_forecasts,'_parts',lambda *a:(store,None,{}, {},'one'))
+    monkeypatch.setattr(runtime_forecasts,'_current',lambda *a:True)
+    return store,{'status':'running','forecast_configuration':configuration}
+
+
+def test_inspection_is_shadow_and_uses_original_horizon_after_revision(inspection):
+    store,state = inspection
+    original = store.forecast_history('one')['forecasts'][0]
+    issue(store,previous_revision=1,horizon=1250,issued_at=1050,
+          conditions=original['detail']['conditions'],model_provenance=original['detail']['model_provenance'])
+    before = store.forecast_history('one')
+    first = runtime_forecasts.project({}, {}, state, 'owner', now=1110)
+    second = runtime_forecasts.project({}, {}, state, 'owner', now=1111)
+    assert first['decision']=='inspect_recorded_state' and first['prior_decision']=='continue_waiting'
+    assert first['original_revision']==1 and first['original_horizon']==1100
+    assert first['changed_from_prior'] and not first['suggestion_enabled']
+    assert first['decision_id']==second['decision_id'] and store.forecast_history('one')==before
+    assert first['enable_criteria']['minimum_comparable_terminal_receipts']==10
+    assert 'comparison' not in first
+
+
+def test_inspection_terminal_outcome_has_independent_counterfactual_comparison(inspection):
+    store,state = inspection
+    observed(store,observed_at=1150,recorded_at=1151)
+    value = runtime_forecasts.project({}, {}, {**state,'status':'done'}, 'owner', now=1300)
+    assert value['decision']=='terminal' and not value['quality_evaluated']
+    score = value['comparison']
+    assert score['forecast_absolute_error_seconds']==score['prior_absolute_error_seconds']==50
+    assert score['forecast_premature_inspection'] and not score['prior_premature_inspection']
+    assert score['forecast_inspection_lateness_seconds']==0 and score['prior_inspection_lateness_seconds']==50
+    assert score['counterfactual_horizon_comparison'] and score['projection_added_status_calls']==0
+
+
+def test_inspection_censor_changed_configuration_unknown_and_erasure(inspection,monkeypatch):
+    store,state = inspection
+    assert runtime_forecasts.project({}, {}, {'status':'running'},'owner',now=1300)['decision']=='conditions_unknown_or_changed'
+    assert runtime_forecasts.project({}, {}, {**state,'status':'blocked'},'owner',now=1300)['decision']=='not_running'
+    observed(store,status='censored',value=None,reason='paused')
+    value=runtime_forecasts.project({}, {}, state,'owner',now=1300)
+    assert value['decision']=='censored' and 'comparison' not in value
+    monkeypatch.setattr(runtime_forecasts,'_current',lambda *a:False)
+    assert runtime_forecasts.project({}, {}, state,'owner',now=1300)=={'status':'source_unavailable'}
+
+
+def test_inspection_rejects_wrong_owner_and_time(inspection):
+    _,state=inspection
+    assert runtime_forecasts.project({}, {}, state,'other',now=1300)=={'status':'source_unavailable'}
+    for now in (999,float('nan'),float('inf')):
+        assert runtime_forecasts.project({}, {}, state,'owner',now=now)=={'status':'unqualified_observation_time'}

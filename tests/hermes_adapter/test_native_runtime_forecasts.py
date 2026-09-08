@@ -23,6 +23,7 @@ from colony_sidecar.initiatives.store import InitiativeStore
 from colony_sidecar.self_model.expectations import ExpectationStore,ExpectationEngine
 from colony_sidecar.self_model import runtime_forecasts
 from colony_sidecar.turns import get_turn_idempotency_ledger
+from colony_sidecar.turns.hermes_kanban import task_snapshot
 from colony_hermes.initiative_work import NativeReviews
 root=Path(os.environ['HERMES_HOME']);root.mkdir()
 (root/'config.yaml').write_text('plugins: {enabled: []}\n')
@@ -61,6 +62,12 @@ assert completed['forecast']['status']=='observed',completed
 first_history=history(started['native_work'])
 assert first_history['outcomes'][0]['status']=='observed'
 assert first_history['forecasts'][0]['outcome']=='hit'
+native,snapshot=task_snapshot(first.id,'owner',started['native_work'],review=True)
+projection=runtime_forecasts.project(started,native,snapshot,'owner')
+assert projection['status']=='shadow' and projection['decision']=='terminal',projection
+assert projection['served_model'] is None and not projection['conditions_comparable']
+assert not projection['suggestion_enabled'] and projection['comparison']['receipt_ref']==first_history['outcomes'][0]['receipt_ref']
+assert runtime_forecasts.project(started,native,snapshot,'other')['status']=='source_unavailable'
 second=proposal('Inspect another local fixture')
 second_value=worker.work(second.id)
 second_prediction=history(second_value['native_work'])['forecasts'][0]
@@ -80,6 +87,7 @@ with sources._connect() as db:
 # Erasing the exact completed outcome stops it influencing the next forecast.
 receipt=first_history['outcomes'][0]['receipt_ref'].removeprefix('receipt:')
 sources.erase_sources(turn_ids=[receipt],contact_id='owner')
+assert runtime_forecasts.project(started,native,snapshot,'owner')['decision']=='source_unavailable'
 third=proposal('Inspect later fixture after erased outcome')
 third_value=worker.work(third.id)
 third_prediction=history(third_value['native_work'])['forecasts'][0]
