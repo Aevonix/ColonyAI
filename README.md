@@ -94,6 +94,8 @@ for native package installations and service bindings.
   Source-backed preferences, temporary appraisals and narrow opinions supply
   relevant context without changing permissions. Numeric closeness and inferred
   Big Five scores no longer govern the active path. [Social state](docs/SOCIAL-STATE.md)
+  Ordinary turns also omit the legacy numeric mood estimator. Existing affect
+  history remains explicitly readable, but those guesses no longer enter recall.
 - **Task anticipation.** Expected replies share the original commitment and begin
   timing only after a real transport receipt. Native review tasks use the existing
   Hermes scheduler. Prepared follow-ups require deployment-owned authority and a

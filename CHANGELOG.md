@@ -21,6 +21,17 @@ runtime forecast decisions. Forecast suggestions remain disabled pending measure
 value. This adds no scheduler, payload database or model judge. Hermes 0.21.1
 remains the qualified unmodified runtime target.
 
+Ordinary turns no longer generate legacy numeric mood estimates or inject them
+into current context. Fresh-install qualification found unsupported mood numbers
+derived from a neutral fact and a request for accurate recall. Source-backed
+appraisals, preferences and working judgments remain the active representation;
+explicit historical affect APIs remain available. Enriched context also accepts
+the actual SQLite contact object instead of assuming a mapping.
+
+Guided attachment checks the selected adapter's existing conversation-storage
+requirements before making its model probe. An unsuitable directory produces an
+actionable setup error without changing shared permissions.
+
 ## v1.0.22 - complete native recollection and shared work results
 
 Fresh attachment and explicit adapter refresh align Hermes's supported hook
