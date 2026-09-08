@@ -96,7 +96,7 @@ def test_native_binding_survives_reply_attachment_race_and_closes_scan(tmp_path)
     ledger.apply_reply('wait-one',match())
     assert ledger.bind_native_task('wait-one',native_task_id='native-one')['state'] == 'resolved'
     assert len(ledger.due()) == 1
-    ledger.observe_native_terminal('wait-one',native_task_id='native-one')
+    ledger.observe_native_terminal('wait-one',native_task_id='native-one',native_status='archived')
     assert ledger.due() == []
 
 

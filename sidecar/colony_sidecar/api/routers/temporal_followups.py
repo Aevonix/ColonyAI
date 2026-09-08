@@ -78,6 +78,36 @@ def owned(store, wait_id, person):
         parent = db.execute('SELECT person_id FROM commitments WHERE id=?', (row['commitment_id'],)).fetchone()
     if not parent or parent['person_id'] != person:
         raise HTTPException(404, detail='unknown_owner_wait')
+    return refresh_source_bindings(store, row, person)
+
+
+def source_bindings(source_refs, source_versions, *, person, session_id):
+    """Current canonical evidence, including changed attribution/corrections."""
+    from colony_sidecar import get_state_dir
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    sources = get_turn_idempotency_ledger(get_state_dir())
+    current = {r['source_id']: r['source_version'] for r in sources.source_references(
+        source_refs, contact_id=person, session_id=session_id)}
+    invalid = {sid for sid in source_refs if current.get(sid) != source_versions.get(sid)
+               or sources.is_projection_erased(sid)}
+    with closing(sources._connect()) as db:
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='source_annotations'").fetchone():
+            for sid in source_refs:
+                # A later correction must join the evidence before it may
+                # govern new work. An erased correction never silently restores
+                # its unqualified original; the durable relation survives.
+                notes = db.execute('SELECT annotation_source_id FROM source_annotations WHERE target_source_id=?', (sid,)).fetchall()
+                if any(note[0] not in source_refs for note in notes):
+                    invalid.add(sid)
+    return invalid
+
+
+def refresh_source_bindings(store, row, person):
+    invalid = source_bindings(row['source_refs'], row['source_versions'], person=person,
+                              session_id=row.get('source_session_id', ''))
+    if invalid:
+        store.invalidate_sources(invalid, evidence_ref='source-binding:'+hashlib.sha256(encoded(sorted(invalid)).encode()).hexdigest())
+        return store.get(row['wait_id'])
     return row
 
 
@@ -102,7 +132,7 @@ def value(store, row):
     home, boards, _ = observed_boards()
     if home is None or 'default' not in boards:
         raise ValueError('selected_native_followup_board_required')
-    return {**row, 'id': row['wait_id'], 'status': 'completed' if row.get('native_terminal_observed') else 'cancelled' if row['state'] in {'cancelled', 'expired'} else 'assigned' if row['native_task_id'] else 'pending',
+    return {**row, 'id': row['wait_id'], 'status': {'done':'completed', 'archived':'cancelled', 'cancelled':'cancelled', 'failed':'failed'}[row['native_terminal_status']] if row.get('native_terminal_observed') else 'cancelled' if row['state'] in {'cancelled', 'expired'} else 'assigned' if row['native_task_id'] else 'pending',
             'review': review_contract(row), 'execution': {'native_board': 'default', 'worker_profile': 'default',
             'source_home_id': hashlib.sha256(str(home).encode()).hexdigest()},
             'effect_authorized': False}
@@ -112,6 +142,8 @@ def value(store, row):
 def register(body: ExpectedReply, request: Request):
     store, person = ledger(request, body.contact_id, write=True)
     def create():
+        if source_bindings(body.source_refs, body.source_versions, person=person, session_id=body.session_id):
+            raise ValueError('current_scoped_source_versions_required')
         # Use the real parent lease, not an independently asserted task name.
         current = CommitmentWork(store.store).operate(body.commitment_id, operation='renew',
             principal_id=request_authority(request).principal_id, contact_id=person,
@@ -128,7 +160,7 @@ def register(body: ExpectedReply, request: Request):
         # Registration deliberately cannot carry an authority_scope/grant.
         # Root's trusted task-consent producer may attach a matching scope at
         # initial creation through expect_reply. This route enables local review.
-        row = store.expect_reply(wait_id=wait_id, contact_id=body.recipient_id, **fields)
+        row = store.expect_reply(wait_id=wait_id, contact_id=body.recipient_id, source_session_id=body.session_id, **fields)
         return {**row, 'effect_authorized': False}
     try:
         return guarded(create)
@@ -143,10 +175,11 @@ def pending(contact_id: str, request: Request):
         items = []
         for row in store.due():
             try:
-                owned(store, row['wait_id'], person)
+                row = owned(store, row['wait_id'], person)
             except HTTPException:
                 continue
-            items.append({'id': row['wait_id'], 'state': row['state']})
+            if row['state'] not in {'resolved', 'cancelled', 'expired'} or row['native_task_id']:
+                items.append({'id': row['wait_id'], 'state': row['state']})
         return {'items': items}
     return guarded(selected)
 
@@ -206,7 +239,7 @@ def observe(wait_id: str, body: ReviewBinding, request: Request):
         if row['native_task_id'] != body.native_task_id:
             raise ValueError('bound_native_followup_required')
         if state['status'] in {'done', 'archived', 'cancelled'} or state.get('gave_up'):
-            row = store.observe_native_terminal(wait_id, native_task_id=body.native_task_id)
+            row = store.observe_native_terminal(wait_id, native_task_id=body.native_task_id, native_status='failed' if state.get('gave_up') else state['status'])
         return {**value(store, row), 'native_observation': state,
                 'result_authority': 'native operational report; external effects unverified'}
     return guarded(reconcile)

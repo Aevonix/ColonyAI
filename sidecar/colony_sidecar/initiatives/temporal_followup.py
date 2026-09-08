@@ -137,7 +137,7 @@ class TemporalFollowups:
                      timezone_name='UTC', quiet_start=None, quiet_end=None,
                      availability_start=None, availability_end=None,
                      forecast_id='', authority_scope=None, promised_at=None,
-                     original_local_text='', source_versions=None):
+                     original_local_text='', source_versions=None, source_session_id=''):
         for value in (wait_id, commitment_id, work_id, contact_id, outbound_ref):
             reference(value)
         refs = sorted({reference(r) for r in source_refs})
@@ -158,7 +158,7 @@ class TemporalFollowups:
             raise ValueError('local interpretation too long')
         material = dict(wait_id=wait_id, commitment_id=commitment_id, work_id=work_id,
                         contact_id=contact_id, outbound_ref=outbound_ref, source_refs=refs,
-                        source_versions=versions, expected_after_seconds=seconds,
+                        source_versions=versions, source_session_id=source_session_id, expected_after_seconds=seconds,
                         expires_at=expiry, timezone_name=timezone_name, quiet_start=quiet_start,
                         quiet_end=quiet_end, availability_start=availability_start,
                         availability_end=availability_end, forecast_id=forecast_id,
@@ -179,7 +179,7 @@ class TemporalFollowups:
                 raise ValueError('reply expectation is already expired')
             row = {**material, 'expected_at': None, 'dispatch_receipt_ref': None,
                    'dispatch_occurred_at': None, 'next_review_at': None,
-                   'native_task_id': None, 'native_terminal_observed': False, 'reply': None, 'resolution_ref': None,
+                   'native_task_id': None, 'native_terminal_observed': False, 'native_terminal_status': None, 'reply': None, 'resolution_ref': None,
                    'followup_receipt_ref': None, 'followup_action_digest': None}
             db.execute('INSERT INTO temporal_followups VALUES (?,?,?,?,?,?,?,?,?,?)',
                        (wait_id, commitment_id, work_id, contact_id, 'open', 1, digest, encoded(row), now, now))
@@ -332,16 +332,40 @@ class TemporalFollowups:
             row['native_task_id'] = native_task_id
             return self._save(db, row)
 
-    def observe_native_terminal(self, wait_id, *, native_task_id):
+    def observe_native_terminal(self, wait_id, *, native_task_id, native_status):
         """Host calls only after independent native done/archive/failure readback."""
+        if native_status not in {'done', 'archived', 'cancelled', 'failed'}:
+            raise ValueError('native terminal observation required')
         with self.transaction() as db:
             row = self._get(db, wait_id)
             if row['native_task_id'] != native_task_id:
                 raise ValueError('native followup association mismatch')
             if not row.get('native_terminal_observed'):
                 row['native_terminal_observed'] = True
+                row['native_terminal_status'] = native_status
                 return self._save(db, row)
             return row
+
+    def bind_authority_scope(self, wait_id, *, scope, evidence_ref):
+        """Trusted host binds its immutable task consent configuration once.
+
+        This grants nothing: preflight still requires the authority store's
+        consumed exact-scope grant at the actual send boundary. It lets a
+        passive wait receive task-scoped consent later without replacing work.
+        """
+        reference(evidence_ref)
+        if not isinstance(scope, dict) or not scope or len(encoded(scope)) > 16000:
+            raise ValueError('bounded task authority configuration required')
+        with self.transaction() as db:
+            row = self._refresh(db, self._get(db, wait_id), self.clock())
+            if row['authority_scope']:
+                if encoded(row['authority_scope']) != encoded(scope):
+                    raise ValueError('task authority configuration is immutable')
+                return row
+            if row['state'] in TERMINAL:
+                raise ValueError('reply wait is already terminal')
+            row.update(authority_scope=scope, authority_configuration_ref=evidence_ref)
+            return self._save(db, row)
 
     def mark_followup_dispatched(self, wait_id, *, action_digest, receipt_ref):
         """Record the selected outbox's receipt, never manufacture a send ACK."""

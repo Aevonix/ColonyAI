@@ -121,9 +121,11 @@ class NativeFollowups(NativeReviews):
 
     @staticmethod
     def terminal(value):
-        return value.get('state') in {'resolved', 'cancelled', 'expired'} or value.get('status') in {'completed', 'cancelled'}
+        return value.get('state') in {'resolved', 'cancelled', 'expired'} or value.get('status') in {'completed', 'cancelled', 'failed'}
 
     def on_terminal(self, identifier, value, kb, connect):
+        if value.get('native_terminal_observed'):
+            return value
         home = kb.kanban_home().resolve()
         if (value['execution'] != {'native_board': 'default', 'worker_profile': 'default',
                                    'source_home_id': hashlib.sha256(str(home).encode()).hexdigest()}
