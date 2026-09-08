@@ -31,7 +31,9 @@ jobs:
           python -m pip install -e ./.qualification/hermes
           python -m pip install ./sidecar
       - name: Qualify built artifacts and profile isolation
-        run: python -m pytest tests/hermes_adapter -q
+        run: |
+          export AEVA_HERMES_TEST_PYTHON="$(command -v python)"
+          python -m pytest tests/hermes_adapter -q
 
   python:
     runs-on: ubuntu-latest

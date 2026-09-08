@@ -64,4 +64,6 @@ jobs:
           python -m pip install -e ./.qualification/hermes
           python -m pip install ./sidecar
       - name: Qualify built artifacts against latest stable Hermes
-        run: python -m pytest tests/hermes_adapter -q
+        run: |
+          export AEVA_HERMES_TEST_PYTHON="$(command -v python)"
+          python -m pytest tests/hermes_adapter -q
