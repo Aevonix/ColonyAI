@@ -91,8 +91,53 @@ def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args
     assert before == ((home/'config.yaml').read_bytes(), (state/'api-keyring.json').read_bytes())
 
 
+def test_writable_ancestor_stops_before_endpoint_probe_or_attachment(args, tmp_path, monkeypatch, capsys):
+    shared = tmp_path/'shared-parent'
+    shared.mkdir(mode=0o775)
+    shared.chmod(0o775)
+    private = shared/'private-child'
+    private.mkdir(mode=0o700)
+    args.hermes_home = str(private/'profile')
+    probe = Mock(side_effect=AssertionError('Model endpoint must not be probed'))
+    binding = Mock(side_effect=AssertionError('Adapter must not be attached'))
+    monkeypatch.setattr(setup_hermes, '_verify_local_endpoint', probe)
+    monkeypatch.setattr(setup_hermes, '_adapter_binding', binding)
+    assert setup.run_init(None, args) == 1
+    output = capsys.readouterr().out
+    assert 'private SQLite ancestor is writable by another principal' in output
+    assert str(shared) in output and '--hermes-home' in output
+    assert 'No permissions were changed' in output
+    probe.assert_not_called()
+    binding.assert_not_called()
+    assert not list(private.iterdir())
+    assert shared.stat().st_mode & 0o777 == 0o775
+    assert private.stat().st_mode & 0o777 == 0o700
+
+
+def test_private_path_preflight_does_not_create_outbox_before_safe_install(args, monkeypatch):
+    home = Path(args.hermes_home)
+    resources = setup_hermes._adapter_resources(args.adapter_wheel)
+    setup_hermes._preflight_outbox(home, resources)
+    assert not home.exists()
+    original_probe = setup_hermes._verify_local_endpoint
+    def probe(endpoint):
+        assert not home.exists(), 'Preflight must not partially attach before a model probe'
+        return original_probe(endpoint)
+    monkeypatch.setattr(setup_hermes, '_verify_local_endpoint', probe)
+    assert setup.run_init(None, args) == 0
+    assert (home/'colony'/'instance.json').is_file()
+    assert not (home/'state'/'colony-turn-outbox.sqlite3').exists()
+    setup_hermes._preflight_outbox(home, resources)
+    from test_hermes_turn_outbox import _load_client
+    client = _load_client('colony_setup_runtime_path_test')
+    path = home/'state'/'colony-turn-outbox.sqlite3'
+    client.TurnOutbox(path).prepare()
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
 def test_attach_preserves_existing_identity_channels_model_and_unrelated_env(args):
-    home = Path(args.hermes_home); home.mkdir()
+    home = Path(args.hermes_home); home.mkdir(mode=0o700)
     original = {'model': {'default': 'existing-model', 'provider': 'existing'},
                 'platforms': {'terminal': {'enabled': True}}, 'plugins': {'enabled': ['other']}}
     (home/'config.yaml').write_text(yaml.safe_dump(original))
@@ -165,7 +210,7 @@ def test_native_goals_dispatch_conflict_precedes_attachment(args, monkeypatch, c
     from colony_sidecar import setup_local_work
     monkeypatch.setattr(setup_local_work, 'verify_tools', lambda *a: None)
     args.native_goals = True
-    home = Path(args.hermes_home); home.mkdir()
+    home = Path(args.hermes_home); home.mkdir(mode=0o700)
     (home/'config.yaml').write_text('kanban: {dispatch_in_gateway: false}\n' if conflict == 'yaml' else '{}\n')
     if conflict == 'home_env':
         (home/'.env').write_text('HERMES_KANBAN_DISPATCH_IN_GATEWAY=false\n')
@@ -464,7 +509,7 @@ def test_private_home_cannot_enter_checkout_with_separate_state(args, tmp_path, 
 
 @pytest.mark.parametrize('failure', ['endpoint', 'provider', 'artifact', 'malformed_config', 'installed_mismatch'])
 def test_preflight_failure_leaves_selected_home_and_state_unchanged(args, monkeypatch, failure):
-    home = Path(args.hermes_home); home.mkdir()
+    home = Path(args.hermes_home); home.mkdir(mode=0o700)
     (home/'SOUL.md').write_text('Keep me')
     (home/'config.yaml').write_text('plugins: {enabled: []}\n')
     if failure == 'endpoint': args.model_url = 'http://localhost:bad'
@@ -480,7 +525,7 @@ def test_preflight_failure_leaves_selected_home_and_state_unchanged(args, monkey
 
 
 def test_explicit_provider_replacement_retains_original(args):
-    home = Path(args.hermes_home); home.mkdir()
+    home = Path(args.hermes_home); home.mkdir(mode=0o700)
     original = b'memory:\n  provider: other\n  config: {private_setting: retained}\n'
     (home/'config.yaml').write_bytes(original)
     args.replace_memory_provider = True
@@ -490,7 +535,7 @@ def test_explicit_provider_replacement_retains_original(args):
 
 
 def test_attachment_failure_restores_exact_existing_home(args, monkeypatch):
-    home = Path(args.hermes_home); home.mkdir()
+    home = Path(args.hermes_home); home.mkdir(mode=0o700)
     original = b'plugins: {enabled: [other]}\n'
     (home/'config.yaml').write_bytes(original)
     (home/'.env').write_bytes(b'EXISTING_KEY=retained\n')

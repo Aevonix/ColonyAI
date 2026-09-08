@@ -45,6 +45,13 @@ It attaches the canonical installed adapter when its bytes match, or installs
 profile directory adapters when no native package is present. It neither
 patches Hermes core nor restarts an existing gateway.
 
+Choose a private `--hermes-home` under directories you control. Before probing
+the model, setup checks the runtime's existing conversation-outbox path rules:
+the immediate `state` directory must be mode 0700, and ancestors cannot be
+group/other writable except root-owned sticky directories such as `/tmp`.
+A private child inside a shared writable directory is insufficient. Setup
+reports the offending path and leaves existing permissions unchanged.
+
 Accept the wizard's startup option, or run:
 
 ```bash

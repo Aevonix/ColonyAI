@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 from urllib.parse import urlsplit
 import zipfile
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -128,6 +129,39 @@ def _adapter_resources(wheel=None):
         if name not in resources:
             raise ValueError('Canonical adapter artifact is incomplete')
     return resources
+
+
+def _preflight_outbox(home, resources):
+    """Check the selected runtime's existing path rules without creating state.
+
+    The adapter may only be supplied as a wheel, so inspect that exact client
+    resource rather than importing a possibly different installed adapter.
+    Runtime descriptor checks still enforce the boundary when the file opens.
+    """
+    name = '_colony_setup_pathcheck'
+    module = types.ModuleType(name)
+    sys.modules[name] = module
+    selected = home/'state'/'colony-turn-outbox.sqlite3'
+    inspected = selected
+    try:
+        exec(compile(resources['colony_hermes/client.py'], '<canonical Colony client>', 'exec'), module.__dict__)
+        boundary = module.PrivateSQLitePath(selected)
+        for inspected in reversed(selected.parents):
+            try:
+                value = inspected.lstat()
+            except FileNotFoundError:
+                continue  # The installer/runtime creates missing directories privately.
+            boundary._validate_directory(value, private_parent=inspected == selected.parent,
+                                         label='ancestor')
+        inspected = selected
+        if selected.exists() or selected.is_symlink():
+            boundary._validate_leaf(selected.lstat())
+    except module.PrivateSQLitePathError as error:
+        raise ValueError(f'Cannot use the Hermes conversation outbox at {inspected}: {error}. '
+            'Choose --hermes-home beneath a directory you own without group/other write access; '
+            'an existing state directory must be mode 0700. No permissions were changed.') from None
+    finally:
+        sys.modules.pop(name, None)
 
 
 def _adapter_binding(python, resources):
@@ -407,6 +441,7 @@ def run(root_dir=None, args=None):
             replace_provider = True
         python = _interpreter(getattr(args, 'hermes_python', None))
         resources = _adapter_resources(getattr(args, 'adapter_wheel', None))
+        _preflight_outbox(home, resources)
         binding = _adapter_binding(python, resources)
         owner_name = ask('Your name', getattr(args, 'contact_name', None) or os.environ.get('USER', 'Owner'), True)
         agent_name = ask('Agent name', getattr(args, 'agent_name', None) or 'Assistant', True)
