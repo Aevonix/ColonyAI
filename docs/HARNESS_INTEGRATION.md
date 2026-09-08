@@ -279,9 +279,14 @@ curl -X POST http://127.0.0.1:7777/v1/host/mind/facts \
 
 **Get context:**
 ```bash
-curl "http://127.0.0.1:7777/v1/host/context/assemble?contact_id=owner" \
-  -H "Authorization: Bearer colony"
+curl -X POST http://127.0.0.1:7777/v1/host/context/assemble \
+  -H "Authorization: Bearer $COLONY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"identity":{"host_id":"example-harness"},"context":{"session_id":"example-session","contact_id":"example-contact"},"incoming_message":{"role":"user","content":"What should I remember for this task?"}}'
 ```
+
+Use the adapter's authenticated viewer context. The body identifiers select
+request context; they do not grant access to another person's memory.
 
 ---
 
