@@ -15,6 +15,9 @@ from urllib.request import Request,urlopen
 sys.path.insert(0,ADAPTER)
 from hermes_cli.config import load_config
 from run_agent import AIAgent
+import run_agent
+# 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
+OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
 from colony_hermes.local_work_runner import main
 home=Path(os.environ['HERMES_HOME'])
 job=next(j for j in json.loads((home/'cron/jobs.json').read_text())['jobs'] if j['script']=='accepted-work.py')
@@ -55,7 +58,7 @@ def initialize(self,*args,**kwargs):
     original(self,*args,**kwargs)
     self._build_system_prompt=lambda *a,**k:'Neutral controlled local source task.'
     self._use_prompt_caching=False;self.compression_enabled=False
-with patch('run_agent.OpenAI',return_value=client),patch.object(AIAgent,'__init__',initialize):
+with patch(OPENAI_TARGET,return_value=client),patch.object(AIAgent,'__init__',initialize):
     try:
         code=main(['--job-id',job['id'],'--provider','fixture','--model','fixture/local','--destination',str(home/'drafts')])
     finally:

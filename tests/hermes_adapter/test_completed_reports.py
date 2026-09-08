@@ -39,6 +39,10 @@ if profile_owned:
  assert not any(name in os.environ for name in (
   'COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'))
 from hermes_cli import kanban_db as kb
+try:
+ from hermes_cli.kanban_db_dispatch import _default_spawn
+except ModuleNotFoundError:
+ from hermes_cli.kanban_db import _default_spawn
 with patch('hermes_cli.lifecycle.invoke_hook'),patch('hermes_cli.lifecycle.has_hook',return_value=False):
  db=kb.connect(board='default')
  tid=kb.create_task(db,title='Retain a useful calibration finding',body='WORKER-INSTRUCTION-MUST-NOT-BECOME-MEMORY',
@@ -49,7 +53,7 @@ assert task
 # including its DB pin, before a cold plugin load. No process is launched.
 with patch('subprocess.Popen') as spawn:
  spawn.return_value.pid=123
- assert kb._default_spawn(task,str(home),board='default')==123
+ assert _default_spawn(task,str(home),board='default')==123
  worker_env=spawn.call_args.kwargs['env']
  assert worker_env['HERMES_KANBAN_DB']==str(home/'kanban.db')
  assert worker_env['HERMES_KANBAN_BOARD']=='default'

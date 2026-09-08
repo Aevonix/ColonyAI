@@ -164,6 +164,9 @@ if mode in {'native_agent','shared_undertaking'}:
         while not server.started:time.sleep(.01)
     from hermes_cli.plugins import get_plugin_manager
     from run_agent import AIAgent
+    import run_agent
+    # 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
+    OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
     from hermes_state import SessionDB
     def completion(**kwargs):
         rows=[r for r in kwargs['messages'] if r.get('role')=='tool'];calls.append(len(rows))
@@ -179,7 +182,7 @@ if mode in {'native_agent','shared_undertaking'}:
         return NS(choices=[NS(message=NS(content='' if tools else 'Unverified local draft retained.',tool_calls=tools),
             finish_reason='tool_calls' if tools else 'stop')],model='fixture/local',usage=None)
     model=MagicMock();model.chat.completions.create.side_effect=completion
-    with patch('run_agent.OpenAI',return_value=model):
+    with patch(OPENAI_TARGET,return_value=model):
         get_plugin_manager().discover_and_load()
         from tools.registry import registry
         assert registry.get_entry('colony_read_work_source') is not None, 'Native plugin did not register'

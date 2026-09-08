@@ -32,13 +32,17 @@ import colony_hermes
 schema = next(s for s in colony_hermes._TOOL_SCHEMAS if s['name'] == 'colony_judgments')
 assert set(schema['parameters']['properties']) == {'operation', 'judgment_id', 'source_id'}
 from run_agent import AIAgent
+import run_agent
+# 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
+OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
+TOOLS_TARGET = 'run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
 def response(content='', args=None, ordinal=0):
     calls = None if args is None else [NS(id='c'+str(ordinal), type='function',
         function=NS(name='colony_judgments', arguments=json.dumps(args)))]
     return NS(choices=[NS(message=NS(content=content, tool_calls=calls),
         finish_reason='tool_calls' if calls else 'stop')], model='controlled/model', usage=None)
 def conversation(text, calls):
-    with patch('run_agent.OpenAI'), patch('run_agent.get_tool_definitions', return_value=[{'type':'function','function':schema}]), patch('run_agent.check_toolset_requirements', return_value={}):
+    with patch(OPENAI_TARGET), patch(TOOLS_TARGET + '.get_tool_definitions', return_value=[{'type':'function','function':schema}]), patch(TOOLS_TARGET + '.check_toolset_requirements', return_value={}):
         agent = AIAgent(api_key='fixture', base_url='http://127.0.0.1:1/v1', provider='openai', model='controlled/model',
             max_iterations=5, quiet_mode=True, skip_context_files=True, skip_memory=True, platform='sms')
     agent._user_id = 'owner'; agent._cached_system_prompt = 'Controlled native tool exercise.'

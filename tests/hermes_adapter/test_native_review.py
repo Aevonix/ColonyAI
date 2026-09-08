@@ -43,6 +43,10 @@ from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
 assert Path(colony_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 from run_agent import AIAgent
+import run_agent
+# 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
+OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
+TOOLS_TARGET = 'run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
 from hermes_cli.lifecycle import invoke_hook
 from agent import background_review
 def reply(content,call=None):
@@ -65,7 +69,7 @@ def delayed_builder(*a,**kw):
     entered.set()
     assert release.wait(10), 'Review release deadline'
     return real_builder(*a,**kw)
-with patch('run_agent.OpenAI',side_effect=[parent_client,review_client]), patch('run_agent.get_tool_definitions',return_value=defs), patch('run_agent.check_toolset_requirements',return_value={}), patch.object(background_review,'build_cache_parity_fork',side_effect=delayed_builder):
+with patch(OPENAI_TARGET,side_effect=[parent_client,review_client]), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=defs), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}), patch.object(background_review,'build_cache_parity_fork',side_effect=delayed_builder):
     parent=AIAgent(api_key='fixture-key',base_url='http://127.0.0.1:1/v1',provider='openai',
         model='fixture/model',max_iterations=4,quiet_mode=True,skip_context_files=True,
         skip_memory=True,platform='sms' if guest else 'cli',enabled_toolsets=['file','skills'])
