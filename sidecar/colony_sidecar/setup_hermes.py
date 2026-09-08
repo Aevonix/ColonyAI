@@ -205,7 +205,7 @@ def _copied_resources(directory):
 
 def refresh_adapter(state, args):
     """Refresh canonical code for one stopped attachment, preserving its data."""
-    from .setup import _atomic_hermes_config_write
+    from .setup import _atomic_hermes_config_write, _read_hermes_config, _align_hermes_memory_spill
     path = state/'instance.json'; before = path.read_bytes(); manifest = json.loads(before)
     if (manifest.get('version') != 1 or manifest.get('profile') != 'local'
             or manifest.get('adapter_binding', {}).get('mode') not in {'native-installed', 'private-directory'}):
@@ -248,6 +248,19 @@ def refresh_adapter(state, args):
         'sidecar_module_root':str(Path(__file__).resolve().parents[1]),
         'adapter_sha256':_resource_digest(resources), 'adapter_binding':binding}
     updates.append((path, before, _json(updated).encode()))
+    config_paths = [home/'config.yaml']
+    lane = manifest.get('local_work') or {}
+    if lane.get('executor') == 'kanban':
+        from .setup_local_work import native_root
+        config_paths.append(native_root(home)/'profiles'/lane['worker_profile']/'config.yaml')
+    for config_path in config_paths:
+        config_before, config = _read_hermes_config(config_path)
+        if config_path != config_paths[0] and config.get('plugins', {}).get('colony', {}).get('instance_dir') != str(state):
+            raise ValueError('The recorded draft worker belongs to another instance')
+        if _align_hermes_memory_spill(config):
+            updates.append((config_path, config_before, yaml.safe_dump(config, sort_keys=False,
+                                                                      allow_unicode=True).encode()))
+            print('Hermes memory prefetch spill allowance: max_chars -> 65536 for '+str(config_path))
     copied_change = old_resources is not None and old_resources != resources
     if not copied_change and all(original == after for _, original, after in updates):
         print('Selected adapter already matches; private instance unchanged.')
@@ -283,7 +296,7 @@ def refresh_adapter(state, args):
     finally:
         if staged is not None and staged.exists():
             shutil.rmtree(staged)
-    print('Selected adapter refreshed ('+binding['mode']+'); identity, configuration and databases retained.')
+    print('Selected adapter refreshed ('+binding['mode']+'); identity and databases retained.')
     if backup is not None:
         print('Previous copied adapter retained at '+str(backup))
     print('Start this Colony instance and new Hermes processes through their existing lifecycle.')
@@ -558,6 +571,7 @@ def run(root_dir=None, args=None):
         print(f'Private agent configured in {home}; state in {state}.')
         print('Adapter loading: ' + binding['mode'] + ' (canonical artifact bytes verified).')
         print('Canonical memory capture and recollection are enabled for new Hermes sessions.')
+        print('Hermes hook output spill allowance is at least 65536 characters or already disabled; retrieval budgets are unchanged.')
         print('Source memory, temporal claims, contacts, commitments and self state persist without a graph.')
         print('Graph/vector recall and consequential background work are optional and currently disabled.')
         if local_work:

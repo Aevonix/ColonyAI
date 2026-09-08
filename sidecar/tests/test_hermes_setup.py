@@ -103,6 +103,7 @@ def test_preserve_nested_values_identity_and_existing_secret(tmp_path, capsys):
     assert setup._setup_hermes_plugin("do-not-copy-key", URL, hermes_home=home)
     after = yaml.safe_load(config_path.read_text())
     before["memory"]["provider"] = "colony-memory"
+    before['hooks'] = {'output_spill': {'max_chars': 65536}}
     assert after == before
     assert (home / "SOUL.md").read_text() == "Existing private identity"
     assert stat.S_IMODE(config_path.stat().st_mode) == 0o640
@@ -111,6 +112,21 @@ def test_preserve_nested_values_identity_and_existing_secret(tmp_path, capsys):
     assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
     assert "existing-secret" not in capsys.readouterr().out
     assert "do-not-copy-key" not in config_path.read_text()
+
+
+@pytest.mark.parametrize('spill,expected', [
+    ({}, {'max_chars':65536}),
+    ({'max_chars':10000,'preview_head':200}, {'max_chars':65536,'preview_head':200}),
+    ({'max_chars':131072}, {'max_chars':131072}),
+    ({'enabled':False,'max_chars':1000}, {'enabled':False,'max_chars':1000}),
+])
+def test_native_memory_spill_alignment_preserves_operator_options(spill, expected):
+    config={'hooks':{'output_spill':spill,'other':{'keep':1}},'alias':spill}
+    original=dict(spill)
+    setup._align_hermes_memory_spill(config)
+    assert config['hooks']=={'output_spill':expected,'other':{'keep':1}}
+    assert config['alias']==original
+    assert setup._align_hermes_memory_spill(config) is False
 
 
 def test_idempotent_staging_does_not_rewrite_or_backup_again(tmp_path):

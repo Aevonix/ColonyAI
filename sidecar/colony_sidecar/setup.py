@@ -897,6 +897,36 @@ def _read_hermes_config(config_path: Path) -> tuple[bytes | None, dict]:
     return original, config
 
 
+HERMES_MEMORY_SPILL_CHARS = 65536
+
+
+def _align_hermes_memory_spill(config: dict) -> bool:
+    """Keep native head/tail previews from cutting Colony's evidence envelope.
+
+    Selected memory is capped at 24k characters; 64 KiB leaves headroom for its
+    citations and other default context sections. This is a
+    transfer allowance, not a larger retrieval budget. Custom larger context
+    producers must align their own limits. Existing disabled/larger spill
+    settings remain the operator's choice.
+    """
+    hooks = config.get('hooks', {})
+    if not isinstance(hooks, dict):
+        raise ValueError('Hermes hooks settings must be a YAML mapping')
+    spill = hooks.get('output_spill', {})
+    if not isinstance(spill, dict):
+        raise ValueError('Hermes hook output_spill settings must be a YAML mapping')
+    if spill.get('enabled') is False:
+        return False
+    try:
+        maximum = int(spill.get('max_chars', 10000))
+    except (ValueError, TypeError, OverflowError):
+        maximum = 10000
+    if maximum >= HERMES_MEMORY_SPILL_CHARS:
+        return False
+    config['hooks'] = {**hooks, 'output_spill': {**spill, 'max_chars': HERMES_MEMORY_SPILL_CHARS}}
+    return True
+
+
 def _prepare_hermes_config(
     config_path: Path, sidecar_url: str, contact_id: str,
 ) -> tuple[bytes | None, bytes]:
@@ -972,8 +1002,10 @@ def _prepare_hermes_config(
             settings["api_key"] = "${COLONY_API_KEY}"
         if settings.get("contact_id") in (None, ""):
             settings["contact_id"] = selected_contact
+    _align_hermes_memory_spill(config)
     # Do not install/select a custom context engine, enable the general plugin,
-    # alter coexistence latches, or rewrite any other existing host setting.
+    # or alter coexistence latches. The supported native spill allowance keeps
+    # the already selected evidence and its source revisions together.
     if original is not None and config == before:
         return original, original
     return original, yaml.safe_dump(config, sort_keys=False, allow_unicode=True).encode("utf-8")

@@ -158,6 +158,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000) -
             'terminal_record_at',
             'execution_id', 'job_id', 'id', 'kind', 'task_class', 'label', 'platform',
             'status', 'state', 'phase', 'tool_name', 'liveness', 'freshness',
+            'status_sha256',
             'observation_age_seconds', 'record_age_seconds', 'age_seconds')
     rows = []
     unavailable = []
@@ -179,6 +180,11 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000) -
                     item[key] = value
                 elif type(value) in (int, float) and math.isfinite(value):
                     item[key] = value
+            if source == 'reported_worker':
+                from colony_sidecar.turns.reported_workers import work_details
+                item.update(work_details(row))
+                if row.get('record_kind') in {'terminal_report', 'progress_report'}:
+                    item['record_kind'] = row['record_kind']
             result = row.get('result')
             if isinstance(result, dict):
                 digest = result.get('report_sha256')
