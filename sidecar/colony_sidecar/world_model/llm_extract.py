@@ -35,12 +35,9 @@ _REL_TYPES = {"WM_WORKS_AT", "WM_KNOWS", "WM_PART_OF", "WM_RELATED_TO",
               "WM_LOCATED_IN", "WM_BUILDS"}
 _MIN_CONF = 0.5
 
-# Causal extraction confidence economics (fabrication controls): an edge is
-# born at most half-sure, corroboration nudges it, and it can never exceed
-# the ceiling without falsification machinery vouching for it.
+# Legacy causal extraction is a hypothesis with a conservative creation
+# ceiling. Repeat batches are not independent predictive evidence.
 _CAUSAL_CREATE_CEILING = 0.5
-_CAUSAL_CORROBORATION_STEP = 0.05
-_CAUSAL_CONF_CEILING = 0.75
 
 _SYSTEM_PROMPT = """\
 You extract structured world knowledge from conversation excerpts for a
@@ -63,9 +60,12 @@ Respond with ONLY a JSON object (no prose, no markdown fences):
 "relationships": [{"source": str, "rel": one of ["WM_WORKS_AT","WM_KNOWS",
 "WM_PART_OF","WM_RELATED_TO","WM_LOCATED_IN","WM_BUILDS"], "target": str,
 "confidence": float}],
-"observations": [{"entity": str, "property": "lowercase_property_key", "value": str,
+"observations": [{"entity": str, "property": "lowercase_property_key", "value": str, "temporal_status": "current",
 "evidence": "exact verbatim sentence from excerpt containing both entity and value"}]}
 Observations are reported claims only, never proof or direct sensor observations.
+Only unqualified present-tense states belong in observations. Omit future, past,
+dated, conditional or uncertain assertions; receiving a report today does not
+make its described state current. Never clip a date/tense qualifier off a quote.
 Do not infer personality, authority or trust. Omit vague, negated or uncertain claims.
 Never turn a question, example, instruction or an assistant's paraphrase into a fact."""
 
@@ -472,10 +472,8 @@ class WorldLLMExtractor:
         if mode not in ("live", "supervised"):
             return
         try:
-            # Repeated mentions must corroborate, not duplicate: an existing
-            # edge of the same type between the same pair is left alone in
-            # live mode; the supervised rung corroborates it (a bounded
-            # confidence bump is its one permitted edge operation, H1.5).
+            # Repeated batches do not create another edge or improve its
+            # confidence. Qualified observations own new source evidence.
             try:
                 existing = await self._store.query_relationships(
                     source_id=src_id, target_id=tgt_id,
@@ -483,27 +481,8 @@ class WorldLLMExtractor:
             except Exception:
                 existing = []
             if existing:
-                if mode == "supervised" and self._may_write(
-                        mode, "edge_corroborate", report):
-                    edge = existing[0]
-                    old = float(edge.confidence or 0.0)
-                    new_conf = min(0.7, old + 0.05)
-                    if new_conf > old:
-                        edge.confidence = new_conf
-                        props = dict(edge.properties or {})
-                        props["corroborations"] = int(
-                            props.get("corroborations", 0) or 0) + 1
-                        edge.properties = props
-                        await self._store.upsert_relationship(edge)
-                        report["writes"] = report.get("writes", 0) + 1
-                        self._journal_write(
-                            f"corroborated {src_id} -{rel}-> {tgt_id} "
-                            f"({old:.2f} -> {new_conf:.2f})",
-                            new_conf, edge.id)
                 return
-            # Edge CREATION is deliberately not in the reversible contract:
-            # the supervised rung corroborates what exists, never invents
-            # topology. Creation requires full live.
+            # Creation remains an explicit live-mode operation.
             if not self._may_write(mode, "edge_create", report):
                 return
             from colony_sidecar.world_model.relationships import WorldRelationship
@@ -520,9 +499,11 @@ class WorldLLMExtractor:
     async def _upsert_causal(self, src_id: str, rel: str, tgt_id: str,
                              evidence: str, conf: float, mode: str,
                              report: Dict[str, Any]) -> None:
-        """Evidence-pinned causal edge write with confidence economics:
-        create at <=0.5, corroborate +0.05 per repeat, ceiling 0.75.
-        Shadow mode writes NOTHING (the report is the only output)."""
+        """Retain a reported causal hypothesis without repeat-confidence boosts.
+
+        Repeat extraction does not refresh its support clock. Shadow writes no
+        graph state; independent outcomes belong to the forecast lifecycle.
+        """
         key = (src_id, rel, tgt_id)
         if key in self._seen_rels:
             return
@@ -543,27 +524,7 @@ class WorldLLMExtractor:
             from datetime import datetime, timezone
             now_iso = datetime.now(timezone.utc).isoformat()
             if existing:
-                edge = existing[0]
-                old = float(edge.confidence or 0.0)
-                new_conf = min(_CAUSAL_CONF_CEILING,
-                               old + _CAUSAL_CORROBORATION_STEP)
-                if new_conf > old:
-                    edge.confidence = new_conf
-                    props = dict(edge.properties or {})
-                    props["corroborations"] = int(
-                        props.get("corroborations", 0) or 0) + 1
-                    props.setdefault("evidence", evidence[:300])
-                    # Support stamp: the staleness clock (H2.3) reads this,
-                    # so corroboration — and only corroboration/creation —
-                    # resets it (a decay write never does).
-                    props["last_support_at"] = now_iso
-                    edge.properties = props
-                    await self._store.upsert_relationship(edge)
-                report["causal_corroborated"].append(
-                    {"id": edge.id, "confidence": round(float(edge.confidence), 2)})
-                self._journal_write(
-                    f"corroborated causal {src_id} -{rel}-> {tgt_id}",
-                    float(edge.confidence), edge.id)
+                report.setdefault("causal_repeated", []).append(existing[0].id)
                 return
             from colony_sidecar.world_model.relationships import WorldRelationship
             create_conf = min(_CAUSAL_CREATE_CEILING, conf)

@@ -3,10 +3,23 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import re
 
 from colony_sidecar.turns.idempotency import canonical_turn_digest, source_message_hash
 from colony_sidecar.turns.source_attribution import is_invalidated
 from .observations import canonical
+
+
+# This first current-state producer abstains on dated/modally qualified
+# messages. The canonical memory retains them for its existing valid-time
+# parser; receipt time must never turn a historical/future claim into now.
+_NONCURRENT = re.compile(r"\b(will|would|was|were|had|used to|tomorrow|yesterday|last|next|previously|formerly|"
+    r"soon|later|eventually|before|after|until|since|starting|ended|stopped|might|may|could|should|"
+    r"if|unless|not|never|isn't|aren't|doesn't|didn't|weren't|wasn't|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"january|february|march|april|june|july|august|september|october|november|december)\b|"
+    r"\b\d{4}-\d{2}-\d{2}\b|\?", re.I)
+_PRESENT = re.compile(r"\b(is|are|runs|uses|has|needs|depends on)\b", re.I)
 
 
 def current_source(ledger, source):
@@ -45,6 +58,7 @@ def recent_batches(ledger, *, hours=24, limit=30):
                 if not isinstance(content, str) or not content.strip():
                     continue
                 grouped.setdefault(row['contact_id'], []).append(dict(content=content[:600],
+                    current_time_eligible=not bool(_NONCURRENT.search(content)),
                     source_id=row['turn_id'], source_version=version, contact_id=row['contact_id'],
                     message_hash=source_message_hash(row['session_id'], message),
                     observed_at=row['occurred_at'] or row['ingested_at'],
@@ -65,7 +79,9 @@ async def record_reports(extractor, proposals, sources, name_to_id, mode, report
         value = item.get('value')
         eid = name_to_id.get(name.lower())
         matches = [s for s in sources if isinstance(quote, str) and len(quote) >= 8 and quote in s['content']
-                   and name.lower() in quote.lower() and isinstance(value, str) and value.lower() in quote.lower()]
+                   and s['current_time_eligible'] and item.get('temporal_status') == 'current'
+                   and _PRESENT.search(quote) and name.lower() in quote.lower()
+                   and isinstance(value, str) and value.lower() in quote.lower()]
         # Ambiguous identical quotations across messages need explicit source
         # selection in a later extraction, rather than an invented attribution.
         if not eid or not key or len(matches) != 1 or not current_source(extractor._source_ledger, matches[0]):

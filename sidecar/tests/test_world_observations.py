@@ -142,7 +142,7 @@ async def test_existing_batch_job_writes_only_quoted_canonical_reports_and_reche
     async def extract(texts):
         seen.extend(texts)
         return {'entities': [{'name': 'Nimbus Router', 'type': 'product', 'confidence': .8}],
-            'observations': [{'entity': 'Nimbus Router', 'property': 'model', 'value': 'model-blue', 'evidence': quote},
+            'observations': [{'entity': 'Nimbus Router', 'property': 'model', 'value': 'model-blue', 'evidence': quote, 'temporal_status': 'current'},
                 {'entity': 'Nimbus Router', 'property': 'model', 'value': 'invented', 'evidence': quote}]}
     worker = WorldLLMExtractor(store, source_ledger=ledger)
     worker._llm_batch = extract
@@ -187,3 +187,29 @@ async def test_legacy_text_batch_has_no_typed_attribution_and_optional_backends_
             await state(store)
     finally:
         store._backend = saved
+
+
+@pytest.mark.parametrize('text', [
+    'Nimbus Router will be offline next Friday.',
+    'Nimbus Router was offline last month.',
+    'Yesterday: Nimbus Router is offline.',
+    'Nimbus Router is offline until 2026-09-15.',
+])
+async def test_dated_report_cannot_become_current_from_receipt_time(store, tmp_path, monkeypatch, text):
+    from colony_sidecar.turns.idempotency import TurnIdempotencyLedger
+    from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+    monkeypatch.setenv('COLONY_WORLD_LLM_EXTRACT', 'live')
+    ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
+    ledger.record_source('dated', contact_id='cid-owner', session_id='text',
+                         messages=[{'role': 'user', 'content': text}])
+    async def extract(texts):
+        # Even a misclassified or clipped model answer cannot bypass source
+        # tense/date checks and use today's ingestion as claim validity.
+        return {'entities': [{'name': 'Nimbus Router', 'type': 'product', 'confidence': .8}],
+                'observations': [{'entity': 'Nimbus Router', 'property': 'status', 'value': 'offline',
+                                  'temporal_status': 'current', 'evidence': text.split(': ')[-1]}]}
+    worker = WorldLLMExtractor(store, source_ledger=ledger)
+    worker._llm_batch = extract
+    result = await worker.run()
+    assert not result['property_observations'] and result['property_skipped'] == 1
+    assert ledger.search_sources('offline', contact_id='cid-owner', session_id='text')
