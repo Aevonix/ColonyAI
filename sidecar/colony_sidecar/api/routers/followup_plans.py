@@ -91,7 +91,7 @@ def bind(wait_id: str, body: BindPlan, request: Request):
     return temporal.guarded(register)
 
 
-def _check(wait_id, body, request):
+def _check(wait_id, body, request, *, require_coverage=False):
     authority = request_authority(request)
     if (not authority.authenticated or authority.anonymous or authority.legacy
             or not authority.has_scope('transport:write')):
@@ -121,12 +121,20 @@ def _check(wait_id, body, request):
     check = store.preflight(wait_id)
     current_sources = not temporal.source_bindings(row['source_refs'], row['source_versions'],
         person=parent['person_id'], session_id=row['source_session_id'])
+    coverage = None
+    if require_coverage:
+        from .transport_ingress_api import followup_coverage
+        coverage = followup_coverage(principal=authority.principal_id, contact_id=row['contact_id'],
+                                     since=row['created_at'], channel=plan['channel'])
+        if not coverage['observed']:
+            check = {**check, 'review_allowed': False, 'reason': 'intake_coverage_unknown'}
     return {'verified': current_sources and row['state'] not in {'cancelled', 'expired'},
             'review_allowed': check['review_allowed'],
             'reason': 'due' if check['review_allowed'] else check['reason'],
             'plan_digest': digest(plan), 'owner_contact_id': scope['owner_contact_id'],
             'owner_evidence_ref': scope['owner_evidence_ref'],
-            'registered_at': scope['registered_at'], 'resolved_contact_id': row['contact_id']}
+            'registered_at': scope['registered_at'], 'resolved_contact_id': row['contact_id'],
+            **({'transport_coverage': coverage} if coverage is not None else {})}
 
 
 @router.post('/{wait_id}/verify-plan')
@@ -136,4 +144,4 @@ async def verify(wait_id: str, body: CheckPlan, request: Request):
 
 @router.post('/{wait_id}/check-plan')
 async def check(wait_id: str, body: CheckPlan, request: Request):
-    return temporal.guarded(lambda: _check(wait_id, body, request))
+    return temporal.guarded(lambda: _check(wait_id, body, request, require_coverage=True))

@@ -94,3 +94,7 @@ async def observe(body: TransportReceipt, request: Request):
         return {'recorded': True, 'created': created, 'waits_checked': count, 'effect_authorized': False}
     except ValueError as exc:
         raise HTTPException(409, detail=str(exc)) from None
+
+
+from .transport_ingress_api import router as ingress_router
+router.include_router(ingress_router)

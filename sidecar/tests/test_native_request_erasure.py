@@ -75,6 +75,14 @@ def test_unavailable_feed_returns_current_turn_and_tool_results_without_old_cont
     assert result['request']['messages'][-1]['tool_call_id'] == 'step'
 
 
+def test_single_responses_input_preserves_current_recollection(runtime):
+    direct = 'Explain this literal <memory-context>example</memory-context>'
+    enriched = direct + '\n' + packet('owner', 0, 'Current relevant memory')
+    result = runtime.module.filter_request({'input': enriched}, contact_id='owner',
+        watermark=0, rules=[], fresh=True, current_content=enriched, current_input=direct)
+    assert result['input'] == enriched
+
+
 def test_partial_feed_never_certifies_freshness_and_makes_bounded_progress(runtime):
     rt = runtime
     rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])

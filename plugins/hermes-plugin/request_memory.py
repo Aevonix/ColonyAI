@@ -135,7 +135,8 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
     for key in ('messages', 'input'):
         messages = request.get(key)
         if isinstance(messages, str):
-            result[key] = content(messages)
+            result[key] = content(messages, keep_packet=True,
+                current=current_content is not None and messages == current_content)
             continue
         if not isinstance(messages, list):
             continue

@@ -3822,9 +3822,15 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             world_cleanup = 'unsupported_backend'
         except Exception:
             logger.warning('source erasure world report cleanup is pending', exc_info=True)
+    transport_cleanup = 'pending'
+    try:
+        from colony_sidecar.api.routers.transport_ingress_api import forget_sources
+        transport_cleanup = forget_sources(list(dict.fromkeys(result['source_ids'] + result['affected_source_ids'])))
+    except Exception:
+        logger.warning('Source erasure transport cleanup remains pending', exc_info=True)
     return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
             "shared_facts_cleanup": fact_cleanup, "vector_cleanup": vector_cleanup,
-            "world_cleanup": world_cleanup, **tom_cleanup,
+            "world_cleanup": world_cleanup, "transport_cleanup": transport_cleanup, **tom_cleanup,
             "scope": "canonical_turn_sources_and_linked_projections",
             "host_reconciliation": "pending_until_each_host_connects"}
 
@@ -3940,6 +3946,8 @@ async def turns_sync(
         has_sender=body.sender is not None,
     ) or body.context.contact_id
     result, outcome = await _ingest_turn_idempotently(body, request=request)
+    from colony_sidecar.api.routers.transport_ingress_api import reconcile_source
+    reconcile_source(body, result)
     if response is not None:
         response.headers["Idempotency-Status"] = outcome
         if outcome == "in_progress":
@@ -4020,6 +4028,8 @@ async def turns_sync_v2(
         has_sender=body.sender is not None,
     ) or body.context.contact_id
     result, outcome = await _ingest_turn_idempotently(body, request=request)
+    from colony_sidecar.api.routers.transport_ingress_api import reconcile_source
+    reconcile_source(body, result)
     response.headers["Idempotency-Status"] = outcome
     if outcome == "created":
         response.status_code = status.HTTP_201_CREATED
