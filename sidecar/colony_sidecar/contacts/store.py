@@ -363,6 +363,10 @@ class SQLiteContactStore(ContactStore):
         from .identity_links import mark_sources_reconciled
         return await mark_sources_reconciled(self, operation_id=operation_id, source_result=source_result)
 
+    async def mark_sources_conflicted(self, operation_id, code):
+        from .identity_links import mark_sources_conflicted
+        return await mark_sources_conflicted(self, operation_id=operation_id, code=code)
+
     async def identity_evidence(self, contact_id):
         from .identity_links import evidence
         return await evidence(self, contact_id)

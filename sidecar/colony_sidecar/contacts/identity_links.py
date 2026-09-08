@@ -152,10 +152,22 @@ async def evidence(store, contact_id):
         candidates = [dict(row) for row in await cur.fetchall()]
     for row in candidates:
         row['evidence_refs'] = json.loads(row.pop('evidence_refs_json'))
+    async with db.execute('''SELECT result_json FROM contact_identity_operations
+        WHERE json_extract(result_json,'$.old_contact_id')=? OR json_extract(result_json,'$.contact_id')=?
+        ORDER BY created_at DESC,operation_id LIMIT 20''', (contact_id, contact_id)) as cur:
+        operations = [json.loads(row['result_json']) for row in await cur.fetchall()]
+    summaries = [{key: op[key] for key in ('operation_id', 'old_contact_id', 'contact_id', 'recorded_at',
+        'source_reconciliation_required')} | {
+            'source_reconciliation_status': op.get('source_reconciliation_status',
+                'pending' if op['source_reconciliation_required'] else 'complete'),
+            'source_count': len(op['affected_source_ids']), 'source_ids': op['affected_source_ids'][:10],
+            'sources_truncated': len(op['affected_source_ids']) > 10,
+            'conflict': op.get('source_reconciliation_conflict')}
+        for op in operations]
     return {'contact_id': contact_id, 'handles': [h.to_dict() | {
         'identity_status': 'confirmed' if h.verified else 'observed' if usable_handle(h) else 'tentative',
         'usable_for_attribution': usable_handle(h)} for h in handles], 'candidates': candidates,
-        'authority_granted': False}
+        'operations': summaries, 'authority_granted': False}
 
 
 async def pending_reconciliations(store, *, limit=100):
@@ -163,6 +175,7 @@ async def pending_reconciliations(store, *, limit=100):
     db = store._require_db()
     async with db.execute('''SELECT result_json FROM contact_identity_operations
         WHERE json_extract(result_json,'$.source_reconciliation_required')=1
+        AND coalesce(json_extract(result_json,'$.source_reconciliation_status'),'pending')!='conflicted'
         ORDER BY created_at,operation_id LIMIT ?''', (max(1, min(int(limit), 500)),)) as cur:
         return [json.loads(row['result_json']) for row in await cur.fetchall()]
 
@@ -191,7 +204,42 @@ async def mark_sources_reconciled(store, *, operation_id, source_result):
             await db.rollback()
             return result
         result['source_reconciliation_required'] = False
+        result['source_reconciliation_status'] = 'complete'
+        result.pop('source_reconciliation_conflict', None)
         result['source_reconciliation'] = summary
+        await db.execute('UPDATE contact_identity_operations SET result_json=? WHERE operation_id=?',
+                         (_json(result), operation_id))
+        await db.commit()
+        return result
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
+
+async def mark_sources_conflicted(store, *, operation_id, code):
+    """Retain a permanent conflict for inspection without retrying it forever."""
+    from .store import _now_iso
+    if code not in {'source_erased', 'source_attribution_preimage_changed'}:
+        raise ValueError('invalid_identity_reconciliation_conflict')
+    db = await store._open_provision_connection()
+    try:
+        await db.execute('BEGIN IMMEDIATE')
+        async with db.execute('SELECT result_json FROM contact_identity_operations WHERE operation_id=?', (operation_id,)) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            raise ValueError('identity_operation_not_found')
+        result = json.loads(row['result_json'])
+        if not result['source_reconciliation_required']:
+            raise ValueError('identity_reconciliation_already_complete')
+        if result.get('source_reconciliation_status') == 'conflicted':
+            if result['source_reconciliation_conflict']['code'] != code:
+                raise ValueError('identity_reconciliation_conflict_changed')
+            await db.rollback()
+            return result
+        result['source_reconciliation_status'] = 'conflicted'
+        result['source_reconciliation_conflict'] = {'code': code, 'recorded_at': _now_iso()}
         await db.execute('UPDATE contact_identity_operations SET result_json=? WHERE operation_id=?',
                          (_json(result), operation_id))
         await db.commit()

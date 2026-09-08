@@ -135,3 +135,37 @@ async def test_pending_correction_reconciles_after_restart_without_another_queue
     assert await store.pending_identity_reconciliations() == []
     assert result == await store.mark_sources_reconciled('resume', corrected)
     assert result == await store.correct_handle_identity(**args)
+
+
+async def test_conflicted_receipt_does_not_block_later_identity_reconciliation(store, tmp_path):
+    from colony_sidecar.turns.idempotency import TurnIdempotencyLedger, SourceErased
+    from colony_sidecar.turns.source_attribution import correct
+    ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
+    old, new = await store.create(display_name='First'), await store.create(display_name='Second')
+    for sid in ('erased', 'survives'):
+        ledger.record_source(sid, contact_id=old.contact_id, session_id='session',
+                             messages=[{'role': 'user', 'content': f'The bicycle label is {sid}.'}])
+        await store.add_handle(old.contact_id, 'email', f'{sid}@example.test')
+        await store.correct_handle_identity(operation_id=sid, performed_by='owner-test', gateway='email',
+            address=f'{sid}@example.test', expected_contact_id=old.contact_id, contact_id=new.contact_id,
+            evidence_refs=['source:confirm'], affected_source_ids=[sid])
+    ledger.erase_sources(contact_id=old.contact_id, turn_ids=['erased'])
+    for op in await store.pending_identity_reconciliations():
+        try:
+            result = correct(ledger, operation_id=op['operation_id'], performed_by=op['performed_by'],
+                old_contact_id=op['old_contact_id'], contact_id=op['contact_id'],
+                source_ids=op['affected_source_ids'], evidence_refs=op['evidence_refs'])
+        except SourceErased:
+            conflict = await store.mark_sources_conflicted(op['operation_id'], 'source_erased')
+        else:
+            await store.mark_sources_reconciled(op['operation_id'], result)
+    await store.close()
+    await store.connect()
+    assert await store.pending_identity_reconciliations() == []
+    assert await store.mark_sources_conflicted('erased', 'source_erased') == conflict
+    assert conflict['source_reconciliation_required'] is True  # unresolved, not false success
+    view = await store.identity_evidence(new.contact_id)
+    statuses = {op['operation_id']: op['source_reconciliation_status'] for op in view['operations']}
+    assert statuses == {'erased': 'conflicted', 'survives': 'complete'}
+    assert ledger.search_sources('survives', contact_id=new.contact_id, session_id='session')
+    assert not ledger.search_sources('erased', contact_id=new.contact_id, session_id='session')
