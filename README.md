@@ -90,7 +90,8 @@ for native package installations and service bindings.
   back to current sources before selection. [Source retrieval](docs/SOURCE-SEMANTIC-RECALL.md)
 - **Evidence that outlives a model.** Original messages, timestamps, provenance
   and derived claims persist independently of inference weights. Corrections
-  and conflicting claims remain inspectable. [Source claims](docs/SOURCE-CLAIMS.md)
+  and conflicting claims remain inspectable. Recollection distinguishes requested
+  time windows from timestamps inside pasted evidence. [Source claims](docs/SOURCE-CLAIMS.md)
 - **Corrections that stay with recall.** An attested owner or system turn can
   use `colony_memory_annotate` on an exact source revision supplied to that turn.
   Recollection keeps the original and its attributed corrections together;

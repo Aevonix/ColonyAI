@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.20 - distinguish time requests from pasted evidence
+
+A timestamp inside a pasted report no longer turns recollection into a request
+for sources recorded at that exact instant. Temporal interpretation excludes
+clearly delimited JSON, code and quoted evidence while ordinary retrieval keeps
+the complete original query. Explicit time operands retain their existing
+precision and supported range behavior.
+
+The native adapter and source-reference protocol are unchanged. This correction
+requires a backend update; an existing 1.0.19 adapter remains compatible.
+
 ## v1.0.19 - source corrections stay with recollection
 
 Authenticated memory writers can append attributed corrections to an exact
