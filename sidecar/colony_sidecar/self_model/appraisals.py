@@ -48,8 +48,8 @@ appraisal means YOUR temporary frustration/annoyance/interest/satisfaction about
 the incident, not the speaker's feelings. preference means the speaker's explicit
 communication or topic preference expressed in a direct request or self-report,
 not a preference inferred from politeness, a fact, praise, or one task request.
-behavior_hypothesis requires support from at least two distinct canonical source
-IDs describing separate experiences. One turn, even claiming repeated behavior,
+behavior_hypothesis requires support from distinct prior and current evidence
+describing separate experiences. One turn, even claiming repeated behavior,
 is insufficient: omit the hypothesis. Never infer personality or Big Five.
 assessment means an
 explicitly reported formal assessment, dimension self_report; never infer Big Five.
@@ -71,6 +71,7 @@ concrete task words from the evidence so relevant queries can find it.
 Text and reason are concise, with reported/inferred
 attribution and contrary evidence preserved. support and contrary are arrays of
 {"handle": "supplied handle", "quote": "exact contiguous source quotation"}.
+Use the exact evidence handle as the citation key.
 At least one support or contrary citation must be current evidence. Previous
 views are not independent evidence; use their rehydrated prior source quotes
 when retaining a prior interpretation, and preserve contrary evidence.
@@ -491,8 +492,15 @@ class AppraisalStore:
                     self._finish(conn, job, 'unsupported_source')
                 return True
             source, payload, heads = prepared
+            # The processor needs one unambiguous citation key. Canonical
+            # contact/source/version IDs stay server-side for exact validation;
+            # exposing several competing IDs caused otherwise correct output
+            # to cite a source ID as if it were a message handle.
+            prompt_payload = {**payload, 'evidence': [
+                {k: evidence[k] for k in ('handle', 'text', 'quotes', 'current', 'occurred_at', 'attribution')
+                 if k in evidence} for evidence in payload['evidence']]}
             response = await asyncio.wait_for(router.complete(messages=[{'role': 'system', 'content': SYSTEM},
-                {'role': 'user', 'content': _json(payload)}], context={'task': 'source_appraisal',
+                {'role': 'user', 'content': _json(prompt_payload)}], context={'task': 'source_appraisal',
                 'function_role': 'extraction', 'allow_fallback': True, 'max_output_tokens': 2200}), deadline + 5)
             items = self._validate(final_text(response), payload)
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (

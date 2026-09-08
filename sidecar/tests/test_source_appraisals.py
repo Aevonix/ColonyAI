@@ -88,6 +88,7 @@ async def test_private_views_stay_private_preference_has_attribution_and_values_
     source(state, 'incident', 'The export has failed again after the same retry.')
     processor = Processor(); await state.process_one(processor)
     assert 'chosen_values' not in processor.requests[0]
+    assert not {'source_id', 'source_version', 'source_contact_id', 'message_hash'} & set(processor.requests[0]['evidence'][0])
     assert view(state)['chosen_values'] == ['Be candid', 'Respect promises']
     assert state.view('person', viewer_contact_id='person')['records'] == []
     private_view = state.view('person', viewer_contact_id='person')
