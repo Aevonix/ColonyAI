@@ -392,7 +392,7 @@ class TestContactCuration:
         assert r.contact_id == c.contact_id
 
     async def test_handle_proposals_surface_from_resolver(self, store):
-        # A scoped-name attribution files a proposal; the store lists it.
+        # A name suggestion files a proposal without attributing the sender.
         keep = await store.create(display_name="Robin", trust_tier="regular")
         # simulate a group scope with Robin as a member
         scope = await store.create_scope(
@@ -402,6 +402,6 @@ class TestContactCuration:
         r = await ParticipantResolver(store).resolve(
             platform="whatsapp", user_id="555abc@lid",
             display_name="Robin", group_id="grp-1")
-        assert r.method == "scoped_name" and r.contact_id == keep.contact_id
+        assert r.method == "shadow" and r.contact_id != keep.contact_id
         props = await store.list_handle_proposals()
         assert any(p["address"] == "555abc@lid" for p in props)

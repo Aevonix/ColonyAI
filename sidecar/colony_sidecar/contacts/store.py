@@ -73,11 +73,10 @@ def _looks_like_phone(address: str) -> bool:
 
 
 def _phone_key(address: str) -> str:
-    """Identity key for a phone number: the national significant digits (last 10), so that +1…, 1…,
-    a bare 10-digit number, and any formatting all collapse to the same key. Matches how the rest of
-    the stack compares numbers (last-10 digits). Falls back to all digits when fewer than 10."""
-    digits = _PHONE_DIGITS.sub("", (address or "").lstrip("+"))
-    return digits[-10:] if len(digits) >= 10 else digits
+    """Canonical phone digits, retaining international country codes."""
+    digits = _PHONE_DIGITS.sub("", (address or "").split('@', 1)[0])
+    # The supported bare NANP form may omit +1; other country codes stay intact.
+    return '1' + digits if len(digits) == 10 and not (address or '').strip().startswith('+') else digits
 
 
 def _name_similarity(a: Optional[str], b: Optional[str]) -> float:
@@ -366,6 +365,7 @@ class SQLiteContactStore(ContactStore):
             SELECT c.* FROM contacts c
             JOIN contact_handles h ON h.contact_id = c.contact_id
             WHERE h.gateway = ? AND h.address = ? AND c.deleted_at IS NULL
+              AND (h.verified=1 OR h.source!='auto:scoped-name')
             """,
             (gateway, norm),
         ) as cur:
@@ -398,8 +398,12 @@ class SQLiteContactStore(ContactStore):
             sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
                    "WHERE h.gateway = ? AND h.address = ? AND c.deleted_at IS NULL LIMIT 1")
             params = (g, address)
+        # Name-based legacy proposals must never become confirmed attribution.
+        # Multiple matching contacts are ambiguous, even on a normalized phone.
+        sql = sql.replace(' LIMIT 1', '') + " AND (h.verified=1 OR h.source!='auto:scoped-name')"
         async with db.execute(sql, params) as cur:
-            row = await cur.fetchone()
+            rows = await cur.fetchall()
+        row = rows[0] if len({r['contact_id'] for r in rows}) == 1 else None
         return Contact.from_row(dict(row)) if row else None
 
     async def get_handles(self, contact_id: str) -> List[ContactHandle]:

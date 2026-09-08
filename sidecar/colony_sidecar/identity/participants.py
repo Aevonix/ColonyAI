@@ -9,9 +9,8 @@ reserved ``system`` sentinel and never touch relationship stores.
 Resolution ladder (first hit wins):
   1. exact / cross-gateway messaging handle (phones unify across sms/rcs/
      whatsapp/signal/imessage via phone_key; emails normalize)
-  2. scoped display-name: the sender's display name uniquely matches ONE
-     member of the group scope this turn came from -> attribute to them AND
-     file a merge PROPOSAL for the new handle (never silently link)
+  2. scoped display-name: propose a candidate in the existing audit trail;
+     never attribute a sender from a name or install a guessed handle
   3. shadow contact (tier unknown, interaction_allowed=false, provenance
      recorded), when COLONY_IDENTITY_SHADOW_CONTACTS (default true)
 """
@@ -100,21 +99,17 @@ class ParticipantResolver:
         if c is not None:
             return Resolution(c.contact_id, "handle")
 
-        # 2. Scoped display-name: unique name match inside this group's scope.
+        # 2. A display name may suggest a link but cannot establish identity.
+        filed = False
         if display_name and group_id:
             match = await self._scoped_name_match(platform, group_id, display_name)
             if match is not None:
                 filed = await self._file_handle_proposal(
                     match, platform, user_id, display_name)
-                logger.info(
-                    "participant %r attributed to %s via scoped name; handle "
-                    "link proposed (%s:%s)", display_name, match, platform,
-                    user_id)
-                return Resolution(match, "scoped_name", proposal_filed=filed)
 
         # 3. Shadow contact.
         if not shadow_contacts_enabled():
-            return Resolution(None, "none")
+            return Resolution(None, "none", proposal_filed=filed)
         try:
             contact = await self._store.create(
                 display_name=display_name or user_id,
@@ -130,7 +125,7 @@ class ParticipantResolver:
             logger.info("Shadow contact %s created for %s:%s (%r)",
                         contact.contact_id, platform, user_id,
                         display_name or "?")
-            return Resolution(contact.contact_id, "shadow", created=True)
+            return Resolution(contact.contact_id, "shadow", created=True, proposal_filed=filed)
         except Exception:
             logger.warning("shadow contact creation failed for %s:%s",
                            platform, user_id, exc_info=True)
@@ -171,13 +166,8 @@ class ParticipantResolver:
 
     async def _file_handle_proposal(self, contact_id: str, platform: str,
                                     user_id: str, display_name: str) -> bool:
-        """Record the probable handle link for owner review: the handle is
-        attached at LOW confidence + unverified (audit-trailed), so the
-        attribution sticks while the owner can still correct it."""
+        """Keep a suggestion in the existing audit, outside usable handles."""
         try:
-            await self._store.add_handle(
-                contact_id, platform, user_id,
-                is_primary=False, confidence=0.6, source="auto:scoped-name")
             await self._store.record_audit(
                 contact_id, action="handle_proposed",
                 detail={"gateway": platform, "address": user_id,
