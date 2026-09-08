@@ -21,6 +21,12 @@ class NativeReviews:
 
     def work(self, identifier):
         from hermes_cli import kanban_db as kb
+        try:
+            from hermes_cli.kanban_db_connect import connect
+        except ModuleNotFoundError as error:
+            if error.name != 'hermes_cli.kanban_db_connect':
+                raise
+            from hermes_cli.kanban_db import connect  # Hermes 0.21.0
         value = request(self.client, self.path(identifier)+'?contact_id='+quote(self.owner, safe=''))
         if value['status'] in {'completed', 'cancelled'}:
             return value
@@ -34,7 +40,7 @@ class NativeReviews:
             raise ValueError('review_contract_mismatch')
         # Use the same default profile and selected root home as ordinary
         # native goal tools. No profile, model override or notifier is created.
-        with closing(kb.connect(board='default')) as db:
+        with closing(connect(board='default')) as db:
             with kb.write_txn(db):
                 row = db.execute('SELECT id FROM tasks WHERE idempotency_key=? ORDER BY created_at LIMIT 1',
                                  (PREFIX+identifier,)).fetchone()

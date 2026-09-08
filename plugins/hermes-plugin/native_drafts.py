@@ -132,6 +132,13 @@ class NativeDrafts:
 
     def ensure_task(self, assignment, *, profile_ready=False):
         from hermes_cli import kanban_db as kb
+        try:
+            from hermes_cli.kanban_db_connect import connect
+            from hermes_cli.kanban_db_notify import add_notify_sub
+        except ModuleNotFoundError as error:
+            if error.name not in {'hermes_cli.kanban_db_connect', 'hermes_cli.kanban_db_notify'}:
+                raise
+            from hermes_cli.kanban_db import connect, add_notify_sub  # Hermes 0.21.0
         context, identifier = assignment['context'], assignment['id']
         if context.get('execution_backend') != 'kanban' or context['contact_id'] != self.owner:
             raise ValueError('accepted_native_local_work_required')
@@ -139,7 +146,7 @@ class NativeDrafts:
             raise ValueError('selected_native_home_required')
         if not profile_ready:
             self.refresh_role()
-        with closing(kb.connect(board=self.board)) as db:
+        with closing(connect(board=self.board)) as db:
             task_id = context.get('native_task_id')
             if task_id:
                 if context.get('native_board') != self.board:
@@ -164,7 +171,7 @@ class NativeDrafts:
                     self.verify_task(kb.get_task(db, task_id), identifier)
             origin = context.get('origin') or {}
             if origin:
-                kb.add_notify_sub(db, task_id=task_id, **origin,
+                add_notify_sub(db, task_id=task_id, **origin,
                     delivery_mode=None if origin['platform'] == 'api_server' else 'notify')
             assignment = request(self.client, self.path(identifier)+'/native-task', {
                 'contact_id': self.owner, 'native_board': self.board, 'native_task_id': task_id})
@@ -196,6 +203,12 @@ class NativeDrafts:
 
     def native_run(self, *, terminal=False):
         from hermes_cli import kanban_db as kb
+        try:
+            from hermes_cli.kanban_db_connect import connect
+        except ModuleNotFoundError as error:
+            if error.name != 'hermes_cli.kanban_db_connect':
+                raise
+            from hermes_cli.kanban_db import connect  # Hermes 0.21.0
         if (not self.worker or os.environ.get('HERMES_PROFILE') != self.profile
                 or os.environ.get('HERMES_KANBAN_BOARD') != self.board
                 or Path(os.environ.get('HERMES_KANBAN_DB', '')).resolve() != self.db_path):
@@ -203,7 +216,7 @@ class NativeDrafts:
         task_id = os.environ.get('HERMES_KANBAN_TASK', '')
         run_id = int(os.environ.get('HERMES_KANBAN_RUN_ID', '0'))
         claim = os.environ.get('HERMES_KANBAN_CLAIM_LOCK', '')
-        with closing(kb.connect(board=self.board)) as db:
+        with closing(connect(board=self.board)) as db:
             task = kb.get_task(db, task_id)
             if task is None or not task.idempotency_key or not task.idempotency_key.startswith(PREFIX):
                 raise ValueError('accepted_native_task_required')
