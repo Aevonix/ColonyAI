@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import re
+import statistics
 import sqlite3
 import threading
 import time
@@ -294,6 +295,23 @@ class ExpectationStore:
                 payload TEXT NOT NULL,
                 ingested_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS forecast_revisions (
+                forecast_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                prediction_id TEXT NOT NULL UNIQUE,
+                material_digest TEXT NOT NULL,
+                PRIMARY KEY (forecast_id, revision)
+            );
+            CREATE TABLE IF NOT EXISTS forecast_outcomes (
+                forecast_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                receipt_ref TEXT NOT NULL,
+                material_digest TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                recorded_at REAL NOT NULL,
+                PRIMARY KEY (forecast_id, revision),
+                UNIQUE (forecast_id, receipt_ref)
+            );
             """
         )
         self._migrate_v2()
@@ -471,6 +489,225 @@ class ExpectationStore:
             cohort=cohort,
         )
 
+    def issue_forecast(
+        self, *, forecast_id: str, subject: str, domain: str, expectation: str,
+        confidence: float, horizon: float, origin_at: float,
+        evidence_refs: Iterable[str], source_versions: Mapping[str, str],
+        source_kind: str, cohort: str, method: str,
+        model_provenance: Mapping[str, Any], subject_person_id: str,
+        viewer_scope: str, shareability: str, previous_revision: int = 0,
+        issued_at: Optional[float] = None, conditions: Optional[Mapping] = None,
+    ) -> Prediction:
+        """Append a prospective revision; never replace an earlier forecast.
+
+        ``issued_at`` is supplied by the trusted producer clock, not model text.
+        Deterministic methods explicitly use served_model=None. Unknown model
+        revision/capabilities remain null instead of borrowing a role's label.
+        """
+        if not _SAFE_REF.fullmatch(forecast_id) or previous_revision < 0:
+            raise ValueError("invalid forecast identity/revision")
+        person, viewer, sharing = _scope(subject_person_id, viewer_scope, shareability)
+        refs = _refs(evidence_refs)
+        if set(source_versions) != set(refs) or any(not isinstance(v, str) or not v for v in source_versions.values()):
+            raise ValueError("forecast requires an exact version for every source")
+        issued = _event_epoch(_now() if issued_at is None else issued_at, "issued_at")
+        origin = _event_epoch(origin_at, "origin_at")
+        deadline = _event_epoch(horizon, "horizon")
+        if origin > issued or deadline <= issued:
+            raise ValueError("forecast must precede its horizon and follow its origin")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not math.isfinite(confidence) or not 0 <= confidence <= 1:
+            raise ValueError("forecast probability must be between 0 and 1")
+        if domain not in {"task_duration", "expected_reply"} or source_kind not in _OUTCOME_SOURCE_KINDS:
+            raise ValueError("unsupported forecast domain/source")
+        if not method or not cohort or not expectation or not subject:
+            raise ValueError("forecast method, cohort, question and subject required")
+        provenance = {key: model_provenance.get(key) for key in (
+            "requested_role", "served_model", "model_revision", "capabilities", "fallback")}
+        detail = {"forecast_id": forecast_id, "revision": previous_revision + 1,
+                  "supersedes_revision": previous_revision or None,
+                  "origin_at": origin, "method": method,
+                  "model_provenance": provenance, "source_versions": dict(source_versions),
+                  "conditions": dict(conditions or {})}
+        material = {"subject": subject, "domain": domain, "expectation": expectation,
+                    "confidence": confidence, "horizon": deadline, "detail": detail,
+                    "source_kind": source_kind, "cohort": cohort,
+                    "subject_person_id": person, "viewer_scope": viewer,
+                    "shareability": sharing, "evidence_refs": list(refs)}
+        digest = _digest(material)
+        revision = previous_revision + 1
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                existing = self._conn.execute(
+                    "SELECT * FROM forecast_revisions WHERE forecast_id=? AND revision=?",
+                    (forecast_id, revision)).fetchone()
+                if existing:
+                    if existing["material_digest"] != digest:
+                        raise ValueError("forecast revision conflict")
+                    row = self._conn.execute("SELECT * FROM predictions WHERE prediction_id=?", (existing["prediction_id"],)).fetchone()
+                    self._conn.commit()
+                    return self._row(row)
+                latest = self._conn.execute(
+                    "SELECT p.* FROM forecast_revisions f JOIN predictions p USING(prediction_id) "
+                    "WHERE forecast_id=? ORDER BY revision DESC LIMIT 1", (forecast_id,)).fetchone()
+                if (latest is None and previous_revision != 0) or (latest is not None and json.loads(latest["detail"])["revision"] != previous_revision):
+                    raise ValueError("forecast revision conflict")
+                if latest is not None and (latest["subject"] != subject or latest["domain"] != domain or latest["subject_person_id"] != person or latest["viewer_scope"] != viewer or latest["shareability"] != sharing or json.loads(latest["detail"])["origin_at"] != origin):
+                    raise ValueError("forecast subject/scope/origin is immutable")
+                if self._conn.execute("SELECT 1 FROM forecast_outcomes WHERE forecast_id=?", (forecast_id,)).fetchone():
+                    raise ValueError("cannot forecast after observing an outcome")
+                pid = "p-" + uuid.uuid4().hex[:12]
+                self._conn.execute(
+                    "INSERT INTO predictions (prediction_id,subject,domain,expectation,confidence,horizon,source,detail,dedup_key,created_at,schema_version,subject_person_id,viewer_scope,shareability,evidence_refs,source_kind,cohort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (pid, subject, domain, expectation, confidence, deadline, method,
+                     _canonical(detail), f"forecast:{forecast_id}:{revision}", issued, 2,
+                     person, viewer, sharing, _canonical(list(refs)), source_kind, cohort))
+                self._conn.execute("INSERT INTO forecast_revisions VALUES (?,?,?,?)", (forecast_id, revision, pid, digest))
+                row = self._conn.execute("SELECT * FROM predictions WHERE prediction_id=?", (pid,)).fetchone()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return self._row(row)
+
+    def forecast_history(self, forecast_id: str) -> Dict[str, Any]:
+        with self._lock:
+            rows = self._conn.execute("SELECT p.* FROM forecast_revisions f JOIN predictions p USING(prediction_id) WHERE forecast_id=? ORDER BY revision", (forecast_id,)).fetchall()
+            outcomes = self._conn.execute("SELECT payload,recorded_at FROM forecast_outcomes WHERE forecast_id=? ORDER BY revision", (forecast_id,)).fetchall()
+        return {"forecasts": [self._row(r).public() for r in rows],
+                "outcomes": [{**json.loads(r["payload"]), "recorded_at": r["recorded_at"]} for r in outcomes]}
+
+    def record_forecast_outcome(
+        self, *, forecast_id: str, receipt_ref: str, evidence_refs: Iterable[str],
+        source_versions: Mapping[str, str], source_kind: str, observed_at: float,
+        subject_person_id: str, viewer_scope: str, shareability: str,
+        status: str = "observed", value: Optional[bool] = None,
+        coverage_until: Optional[float] = None, reason: str = "",
+        previous_revision: int = 0, recorded_at: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Append independent evidence (or its explicit correction), then score.
+
+        A negative observation requires coverage through the forecast horizon.
+        Censored/unavailable work is not a miss. Corrections append evidence;
+        original forecast values and prior outcome payloads remain inspectable.
+        """
+        refs = _refs(evidence_refs)
+        _refs([receipt_ref])
+        if receipt_ref not in refs or set(source_versions) != set(refs) or any(not isinstance(v, str) or not v for v in source_versions.values()):
+            raise ValueError("outcome requires exact receipt/source versions")
+        if source_kind not in {"transport_receipt", "task_receipt", "work_receipt", "commitment_receipt"}:
+            raise ValueError("outcome must come from independent work or transport evidence")
+        if status not in {"observed", "censored", "unresolved"} or (status == "observed" and type(value) is not bool) or (status != "observed" and value is not None):
+            raise ValueError("invalid forecast outcome")
+        if status != "observed" and reason not in {"cancelled", "intervened", "paused", "unavailable", "source_retracted", "unknown"}:
+            raise ValueError("censor/unresolved reason required")
+        observed = _event_epoch(observed_at, "observed_at")
+        recorded = _event_epoch(_now() if recorded_at is None else recorded_at, "recorded_at")
+        coverage = _event_epoch(coverage_until, "coverage_until") if coverage_until is not None else None
+        if observed > recorded or (coverage is not None and coverage > recorded):
+            raise ValueError("outcome cannot observe the future")
+        scope = _scope(subject_person_id, viewer_scope, shareability)
+        payload = {"forecast_id": forecast_id, "revision": previous_revision + 1,
+                   "supersedes_revision": previous_revision or None,
+                   "receipt_ref": receipt_ref, "evidence_refs": list(refs),
+                   "source_versions": dict(source_versions), "source_kind": source_kind,
+                   "observed_at": observed, "coverage_until": coverage,
+                   "status": status, "value": value, "reason": reason,
+                   "subject_person_id": scope[0], "viewer_scope": scope[1], "shareability": scope[2]}
+        digest = _digest(payload)
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                existing = self._conn.execute("SELECT * FROM forecast_outcomes WHERE forecast_id=? AND receipt_ref=?", (forecast_id, receipt_ref)).fetchone()
+                if existing:
+                    if existing["material_digest"] != digest:
+                        raise ValueError("outcome receipt conflict")
+                    self._conn.commit()
+                    return {**json.loads(existing["payload"]), "disposition": "duplicate"}
+                latest = self._conn.execute("SELECT MAX(revision) FROM forecast_outcomes WHERE forecast_id=?", (forecast_id,)).fetchone()[0] or 0
+                if latest != previous_revision:
+                    raise ValueError("outcome correction revision conflict")
+                rows = self._conn.execute("SELECT p.* FROM forecast_revisions f JOIN predictions p USING(prediction_id) WHERE forecast_id=? ORDER BY revision", (forecast_id,)).fetchall()
+                if not rows:
+                    raise ValueError("unknown forecast")
+                if any((r["subject_person_id"], r["viewer_scope"], r["shareability"]) != scope for r in rows):
+                    raise ValueError("outcome scope mismatch")
+                if observed < json.loads(rows[0]["detail"])["origin_at"]:
+                    raise ValueError("outcome precedes task/reply origin")
+                self._conn.execute("INSERT INTO forecast_outcomes VALUES (?,?,?,?,?,?)", (forecast_id, previous_revision + 1, receipt_ref, digest, _canonical(payload), recorded))
+                for row in rows:
+                    # No retrospective prediction credit for revisions issued
+                    # after an event that arrived late at the ledger.
+                    eligible = status == "observed" and row["created_at"] <= observed
+                    if value is False:
+                        eligible = eligible and coverage is not None and coverage >= row["horizon"]
+                    result = "unresolved" if not eligible else "hit" if value and observed <= row["horizon"] else "miss"
+                    self._conn.execute("UPDATE predictions SET outcome=?,resolved_at=?,outcome_observation_id=?,outcome_observed_at=?,outcome_evidence_refs=?,resolution_digest=? WHERE prediction_id=?", (result, recorded, receipt_ref, observed, _canonical(list(refs)), digest, row["prediction_id"]))
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return {**payload, "disposition": "recorded"}
+
+    def estimate_duration(
+        self, *, domain: str, cohort: str, subject_person_id: str,
+        viewer_scope: str, prior_seconds: float, prior_confidence: float = 0.7,
+        now: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Prospective, bounded empirical update from independent durations.
+
+        One sample per original forecast, latest corrected outcome only. A
+        fixed four-sample prior keeps single conversations from flipping the
+        estimate. No response speed is interpreted as relationship/trust.
+        """
+        if not math.isfinite(prior_seconds) or prior_seconds <= 0 or not 0 <= prior_confidence <= 1:
+            raise ValueError("invalid duration prior")
+        stamp = _now() if now is None else now
+        with self._lock:
+            rows = self._conn.execute("SELECT p.*,o.payload,o.recorded_at FROM forecast_revisions f JOIN predictions p USING(prediction_id) JOIN forecast_outcomes o ON o.forecast_id=f.forecast_id WHERE f.revision=1 AND p.domain=? AND p.cohort=? AND p.subject_person_id=? AND p.viewer_scope=? AND o.revision=(SELECT MAX(x.revision) FROM forecast_outcomes x WHERE x.forecast_id=f.forecast_id AND x.recorded_at<=?) AND o.recorded_at<=? ORDER BY o.recorded_at DESC LIMIT 50", (domain, cohort, subject_person_id, viewer_scope, stamp, stamp)).fetchall()
+        samples = []
+        hits = []
+        receipts = []
+        for row in rows:
+            observation = json.loads(row["payload"])
+            origin = json.loads(row["detail"])["origin_at"]
+            if observation["status"] == "observed" and observation["observed_at"] >= row["created_at"]:
+                if observation["value"] is True:
+                    samples.append(observation["observed_at"] - origin)
+                    hits.append(observation["observed_at"] <= row["horizon"])
+                    receipts.append(observation["receipt_ref"])
+                elif observation["coverage_until"] is not None and observation["coverage_until"] >= row["horizon"]:
+                    hits.append(False)
+                    receipts.append(observation["receipt_ref"])
+        n = len(samples)
+        median = statistics.median(samples) if samples else None
+        weight = n / (n + 4)
+        learned = prior_seconds if median is None else prior_seconds + weight * (median - prior_seconds)
+        seconds = max(prior_seconds * .5, min(prior_seconds * 2, learned))
+        confidence = prior_confidence if not hits else (4 * prior_confidence + sum(hits)) / (4 + len(hits))
+        return {"prior_seconds": prior_seconds, "seconds": round(seconds, 3),
+                "prior_confidence": prior_confidence, "confidence": round(max(prior_confidence - .15, min(prior_confidence + .15, confidence)), 4),
+                "sample_n": n, "confidence_sample_n": len(hits), "sample_median_seconds": median,
+                "uncertain": n < 10, "method": "receipt-duration-median-prior4-v1",
+                "evidence_refs": receipts, "as_of": stamp}
+
+    def forecast_coverage(self, *, subject_person_id: str, viewer_scope: str) -> Dict[str, Any]:
+        with self._lock:
+            rows = self._conn.execute("SELECT p.*,o.payload FROM forecast_revisions f JOIN predictions p USING(prediction_id) LEFT JOIN forecast_outcomes o ON o.forecast_id=f.forecast_id AND o.revision=(SELECT MAX(x.revision) FROM forecast_outcomes x WHERE x.forecast_id=f.forecast_id) WHERE f.revision=1 AND p.subject_person_id=? AND p.viewer_scope=?", (subject_person_id, viewer_scope)).fetchall()
+        counts = {"issued": len(rows), "resolved": 0, "censored": 0, "unresolved": 0, "pending": 0, "eligible": 0}
+        groups = {}
+        for row in rows:
+            observation = json.loads(row["payload"]) if row["payload"] else None
+            state = "pending" if not observation else "censored" if observation["status"] == "censored" else "resolved" if row["outcome"] in {"hit", "miss"} else "unresolved"
+            counts[state] += 1
+            counts["eligible"] += int(state == "resolved")
+            detail = json.loads(row["detail"])
+            key = (row["domain"], row["cohort"], ExpectationEngine._horizon_bucket(self._row(row)), detail["model_provenance"].get("served_model") or "unattributed-or-deterministic")
+            item = groups.setdefault(key, {"domain": key[0], "cohort": key[1], "horizon_bucket": key[2], "served_model": detail["model_provenance"].get("served_model"), "issued": 0, "resolved": 0, "censored": 0, "unresolved": 0, "pending": 0})
+            item["issued"] += 1
+            item[state] += 1
+        return {**counts, "unit": "original_forecast", "groups": list(groups.values())}
+
     def due(self, now: Optional[float] = None) -> List[Prediction]:
         now = now or _now()
         with self._lock:
@@ -564,6 +801,8 @@ class ExpectationStore:
                 if prediction_row is None:
                     raise ValueError("outcome references an unknown expectation")
                 prediction = self._row(prediction_row)
+                if prediction.detail.get("forecast_id"):
+                    raise ValueError("versioned forecasts require record_forecast_outcome")
                 if prediction.schema_version != 2:
                     raise ValueError(
                         "receipt-bound resolution requires ExpectationV2",
@@ -981,6 +1220,10 @@ class ExpectationEngine:
         counts = {"hit": 0, "miss": 0, "unresolved": 0}
         point = float(now) if now is not None else _now()
         for p in self.store.due(now=point):
+            if p.detail.get("forecast_id"):
+                # Task/transport producers explicitly declare outcome coverage.
+                # The clock alone is not evidence of absence or failure.
+                continue
             verdict = self._resolve(p)
             if verdict is None:
                 # give it one grace period then mark unresolved so it stops
@@ -1103,7 +1346,8 @@ class ExpectationEngine:
         domains = [domain] if domain else self.store.domains()
         out: Dict[str, Any] = {}
         for d in domains:
-            resolved = self.store.resolved_since(since, domain=d)
+            resolved = [p for p in self.store.resolved_since(since, domain=d)
+                        if self._predictive_score_eligible(p)]
             if not resolved:
                 continue
             brier = sum((p.confidence - (1.0 if p.outcome == "hit" else 0.0)) ** 2
@@ -1155,9 +1399,18 @@ class ExpectationEngine:
                 rows.extend(self.store.resolved_since(start, domain=domain))
         return self._calibration_report_for_rows(rows)
 
+    @staticmethod
+    def _predictive_score_eligible(prediction: Prediction) -> bool:
+        # Retain historical edge-survival rows as self-consistency evidence.
+        # They do not establish that an external causal prediction was right.
+        return (not prediction.subject.startswith("world-causal:")
+                and prediction.detail.get("revision", 1) == 1)
+
     def _calibration_report_for_rows(
         self, rows: Sequence[Prediction],
     ) -> Dict[str, Any]:
+        excluded = len([p for p in rows if not self._predictive_score_eligible(p)])
+        rows = [p for p in rows if self._predictive_score_eligible(p)]
         groups: Dict[tuple[str, str, str, str], list[Prediction]] = {}
         for prediction in rows:
             key = (
@@ -1211,6 +1464,7 @@ class ExpectationEngine:
             "lower_is_better": True,
             "formula": "mean((forecast_probability - observed_binary)^2)",
             "resolved_n": len(rows),
+            "historical_self_consistency_or_revision_excluded_n": excluded,
             "domains": domains,
             "cohorts": cohorts,
         }

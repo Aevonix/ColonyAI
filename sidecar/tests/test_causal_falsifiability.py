@@ -1,8 +1,7 @@
-"""H2.6 — causal falsifiability: every LIVE causal write/boost stakes a
-world-causal:<edge_id> prediction (horizon +30d) that the claim survives at
-its creation confidence, unopposed. Hit = persisted unopposed; miss =
-decayed/deleted/opposed; None = world store unseen. Rides
-COLONY_EXPECTATIONS and registers beside the U24 world resolvers.
+"""Historical edge-survival diagnostics are not causal outcome validation.
+
+Retain historical diagnostic interpretation but retire generation/registration
+as predictive evidence. External forecasts require independent observations.
 """
 
 from __future__ import annotations
@@ -104,7 +103,7 @@ def test_none_when_detail_malformed(monkeypatch):
     assert resolve_causal_edge(p) is None
 
 
-def test_registered_beside_u24_resolvers():
+def test_causal_self_survival_is_not_registered_as_outcome_truth():
     class FakeEngine:
         def __init__(self):
             self.registered = {}
@@ -114,7 +113,7 @@ def test_registered_beside_u24_resolvers():
 
     eng = FakeEngine()
     register_world_resolvers(eng)
-    assert CAUSAL_PREFIX in eng.registered
+    assert CAUSAL_PREFIX not in eng.registered
     assert "world-relationship:" in eng.registered
     assert "world-property:" in eng.registered
 
@@ -137,7 +136,7 @@ def _expectation_engine(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_live_causal_write_creates_prediction(monkeypatch, tmp_path):
+async def test_causal_write_and_boost_do_not_generate_self_validating_predictions(monkeypatch, tmp_path):
     from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
     monkeypatch.setenv("COLONY_EXPECTATIONS", "on")
     eng = _expectation_engine(tmp_path)
@@ -148,21 +147,14 @@ async def test_live_causal_write_creates_prediction(monkeypatch, tmp_path):
     report = {"causal": [], "causal_corroborated": [], "causal_skipped": 0}
     await x._upsert_causal("we-a", "WM_CAUSES", "we-b", "a caused b",
                            0.9, "live", report)
-    pend = eng.store.pending()
-    assert len(pend) == 1
-    p = pend[0]
-    assert p.subject.startswith("world-causal:")
-    assert p.domain == "world_causal"
-    assert p.confidence == pytest.approx(0.5)  # create ceiling
-    assert p.detail["confidence_at_creation"] == pytest.approx(0.5)
-    assert p.detail["relationship_type"] == "WM_CAUSES"
-    # horizon ~ +30d
-    assert abs(p.horizon - (time.time() + 30 * 86400)) < 3600
-    # a boost while one prediction is pending dedups (no second row)
+    assert eng.store.pending() == []
     x._seen_rels = set()
     await x._upsert_causal("we-a", "WM_CAUSES", "we-b", "again",
                            0.9, "live", report)
-    assert len(eng.store.pending()) == 1
+    assert eng.store.pending() == []
+    edges = await store.query_relationships(source_id="we-a", target_id="we-b",
+        relationship_type="WM_CAUSES", min_confidence=0.0, limit=10)
+    assert len(edges) == 1
 
 
 @pytest.mark.asyncio
@@ -189,9 +181,8 @@ async def test_expectations_off_no_prediction_and_write_unaffected(
 
 
 @pytest.mark.asyncio
-async def test_prediction_resolves_end_to_end(monkeypatch, tmp_path):
-    """Due world-causal prediction resolves through the engine: hit while
-    the edge holds, miss after decay below the creation confidence."""
+async def test_historical_pending_causal_prediction_is_not_scored_from_survival(monkeypatch, tmp_path):
+    """An existing edge cannot manufacture an observed causal success."""
     monkeypatch.setenv("COLONY_EXPECTATIONS", "on")
     eng = _expectation_engine(tmp_path)
     register_world_resolvers(eng)
@@ -206,4 +197,5 @@ async def test_prediction_resolves_end_to_end(monkeypatch, tmp_path):
                 "target_id": "we-b", "relationship_type": "WM_CAUSES",
                 "confidence_at_creation": 0.5})
     counts = eng.check()
-    assert counts["hit"] == 1 and counts["miss"] == 0
+    assert counts["hit"] == 0 and counts["miss"] == 0
+    assert eng.calibration() == {}

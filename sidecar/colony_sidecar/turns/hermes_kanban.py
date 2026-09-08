@@ -152,9 +152,9 @@ def selected_board():
     return home, board, profile, path
 
 
-def task_snapshot(identifier, contact_id, native, *, review=False):
+def task_snapshot(identifier, contact_id, native, *, review=False, followup=False):
     """Verify native provenance and, when supplied, the currently held run."""
-    if review:
+    if review or followup:
         home, boards, _ = observed_boards()
         if home is None or 'default' not in boards:
             raise ValueError('selected_native_review_board_required')
@@ -170,7 +170,7 @@ def task_snapshot(identifier, contact_id, native, *, review=False):
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
         task = db.execute('SELECT * FROM tasks WHERE id=?', (native['native_task_id'],)).fetchone()
-        creator = 'colony-initiative' if review else 'colony-local-work'
+        creator = 'colony-followup' if followup else 'colony-initiative' if review else 'colony-local-work'
         if (task is None or task['created_by'] != creator
                 or task['idempotency_key'] != creator+':'+identifier
                 or task['tenant'] != contact_id or task['assignee'] != profile):
@@ -191,7 +191,7 @@ def task_snapshot(identifier, contact_id, native, *, review=False):
             result.update(native_run_id=run['id'], native_claim_lock=run['claim_lock'])
         state = {'status': task['status'], 'native_run_id': task['current_run_id'],
                  'attempt_count': count, 'archived': task['status'] == 'archived'}
-        if review:
+        if review or followup:
             latest = db.execute('SELECT * FROM task_runs WHERE task_id=? ORDER BY id DESC LIMIT 1',
                                 (task['id'],)).fetchone()
             gave_up = bool(latest and db.execute("SELECT 1 FROM task_events WHERE task_id=? "
@@ -220,7 +220,7 @@ def task_snapshot(identifier, contact_id, native, *, review=False):
 def project_accepted(identifier, contact_id, context):
     """Observe only an accepted task, never expose a machine-wide board."""
     review = context.get('native_review')
-    if review:
+    if review or followup:
         contact_id, context = review['contact_id'], {**review, 'execution_backend': 'kanban'}
     if context.get('execution_backend') != 'kanban' or not context.get('native_task_id'):
         return None
