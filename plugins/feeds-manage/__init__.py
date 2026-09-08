@@ -55,12 +55,15 @@ def _session_deliver_target(context):
     """Best-effort delivery target for 'the conversation this request came from'."""
     try:
         from gateway.session_context import get_session_env  # type: ignore
-        env = get_session_env() or {}
-        platform = env.get("HERMES_SESSION_PLATFORM") or env.get("platform")
-        chat_id = env.get("HERMES_SESSION_CHAT_ID") or env.get("chat_id")
+        # Native Hermes binds these values per task. Reading the process
+        # environment (or treating the getter as a mapping) loses isolation
+        # between concurrent conversations.
+        platform = get_session_env("HERMES_SESSION_PLATFORM")
+        chat_id = get_session_env("HERMES_SESSION_CHAT_ID")
         if platform and chat_id:
             return f"{platform}:{chat_id}"
-    except Exception:
+    except ImportError:
+        # CLI use outside the gateway has no native session origin.
         pass
     return "origin"
 

@@ -59,15 +59,13 @@ class ResponseGate:
         self._l6 = secondary_reviewer or SecondaryReviewer(config)
         self._l7 = SendDelayGate(config, dispatch_store)
         self._audit = audit_log
-        # L6 fails OPEN when no review LLM is injected (a configured-but-
-        # erroring client fails closed). That asymmetry is easy to hit by
-        # misconfiguration, so make the unconfigured state loud at boot.
+        # Only explicitly enabled review needs a client. Do not report a
+        # completed review when that optional dependency is unavailable.
         if (getattr(config, "enable_secondary_review", False)
                 and getattr(self._l6, "_llm_client", None) is None):
             logger.warning(
                 "Gate L6 secondary review is ENABLED but no review LLM is "
-                "configured — every message passes L6 unreviewed (fails "
-                "open). Inject a reviewer client or disable "
+                "configured; L6 reports review_unavailable. Inject a client or disable "
                 "enable_secondary_review.")
 
     async def evaluate(self, payload: GatePayload) -> GateDecision:
@@ -143,7 +141,7 @@ class ResponseGate:
                 await self._audit.record(decision)
                 return decision
 
-        # Layer 6: secondary LLM review (soft flag only)
+        # Layer 6: explicitly enabled secondary review.
         l5_result = layer_results.get("layer_5", {})
         injection_suspicious = l5_result.get("suspicious", False) if isinstance(l5_result, dict) else False
 
@@ -154,6 +152,7 @@ class ResponseGate:
             layer_results["layer_6"] = {
                 "flagged": l6_result.flagged,
                 "category": l6_result.category,
+                "status": l6_result.status,
             }
             if l6_result.flagged:
                 decision = GateDecision(
@@ -161,7 +160,8 @@ class ResponseGate:
                     result_code=GateResultCode.BLOCK_REVIEW,
                     blocked=True,
                     blocking_layer=6,
-                    block_reason="secondary_review_flagged",
+                    block_reason=("secondary_review_flagged" if l6_result.status == "reviewed"
+                                  else "secondary_review_" + l6_result.status),
                     flagged_excerpt=None,
                     layer_results=layer_results,
                 )

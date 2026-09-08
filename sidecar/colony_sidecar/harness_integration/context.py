@@ -23,8 +23,6 @@ Colony is a cognitive substrate providing shared memory across your agents and c
 | `colony_create_commitment` | Create a new commitment |
 | `colony_fulfill_commitment` | Mark commitment fulfilled |
 | `colony_cancel_commitment` | Cancel a commitment |
-| `colony_check_affect` | Get affect state for a contact |
-| `colony_record_affect` | Record affect event |
 | `colony_search_world` | Search world model entities |
 | `colony_get_patterns` | Get learned patterns |
 | `colony_record_surprise` | Record a surprise event |
@@ -38,7 +36,7 @@ Base URL: `http://127.0.0.1:7777/v1/host/`
 |----------|--------|---------|
 | `/mind/facts` | GET, POST | List/store facts |
 | `/commitments` | GET, POST | List/create commitments |
-| `/context/assemble` | GET | Get full context |
+| `/context/assemble` | POST | Get context scoped to the authenticated viewer and contact |
 | `/capabilities` | GET | List all capabilities |
 
 Authentication: `Authorization: Bearer {api_key}`
@@ -60,7 +58,9 @@ Authentication: `Authorization: Bearer {api_key}`
 │  └─────────┘ └─────────┘ └─────────┘           │
 └─────────────────────────────────────────────────┘
 
-Facts stored by any harness are immediately visible to all others.
+Harnesses share canonical sources. Retrieval is scoped to the authenticated
+viewer and conversation; private facts are not automatically shared with
+every harness. Corrections and forgetting govern derived recall.
 ```
 
 ## Configuration

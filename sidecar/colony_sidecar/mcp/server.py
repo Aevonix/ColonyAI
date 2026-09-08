@@ -140,7 +140,7 @@ def create_server() -> FastMCP:
         contact_id: str | None = None,
         message: str | None = None,
     ) -> dict:
-        """Get assembled context for a contact. Returns commitments, affect, facts, and more — the same sections the OpenClaw plugin gets. Call at the start of a task or when the user asks what to work on."""
+        """Get context scoped to the authenticated viewer and contact: commitments, relevant evidence and source-backed working perspective. Call at the start of a task or when the user asks what to work on."""
         cid, err = _require_contact(contact_id)
         if err:
             return err
@@ -190,7 +190,7 @@ def create_server() -> FastMCP:
     async def colony_check_affect(
         contact_id: str | None = None,
     ) -> dict:
-        """Get current affect state for a contact. Call before delivering bad news or when deciding how to frame feedback."""
+        """Read legacy explicit affect history for compatibility. This is not measured emotion and must not determine trust or disclosure authority."""
         cid, err = _require_contact(contact_id)
         if err:
             return err
@@ -326,7 +326,7 @@ def create_server() -> FastMCP:
         contact_id: str | None = None,
         arousal: float = 0.5,
     ) -> dict:
-        """Record an emotional state or mood observation. Call when the user expresses frustration or satisfaction, or after successes/failures."""
+        """Legacy explicit affect record. Retained for compatibility; do not infer numeric mood from ordinary conversation or use it to grant authority."""
         cid, err = _require_contact(contact_id)
         if err:
             return err
@@ -432,17 +432,17 @@ def create_server() -> FastMCP:
 
     @mcp.prompt()
     async def daily_briefing() -> str:
-        """Review commitments, affect state, and surprises. Prioritize what to work on today."""
+        """Review commitments, source-backed context, and surprises."""
         cid = _contact_id()
         if not cid:
             return "Set COLONY_MCP_CONTACT_ID to get your daily briefing."
         return (
             f"Review the following for {cid}:\n"
             "1. Check colony_check_commitments for pending and overdue items\n"
-            "2. Check colony_check_affect for current mood\n"
+            "2. Check colony_get_context for relevant source-backed context\n"
             "3. Check colony_get_patterns for workflow patterns\n"
             "4. Check colony://surprises/unresolved for anything unexpected\n"
-            "Then prioritize what to work on today based on deadlines, mood, and surprises."
+            "Then prioritize by deadlines, explicit commitments, and relevant evidence."
         )
 
     @mcp.prompt()
@@ -455,7 +455,7 @@ def create_server() -> FastMCP:
             f"Before starting this task:\n"
             f"1. Call colony_check_commitments to see what {cid} has pending\n"
             f"2. Call colony_lookup_facts to recall relevant context\n"
-            f"3. Call colony_check_affect to gauge current mood\n"
+            f"3. Call colony_get_context for source-backed appraisals and working perspective\n"
             "Use this information to prioritize and tailor your approach."
         )
 
@@ -469,8 +469,8 @@ def create_server() -> FastMCP:
             f"I just completed a task. For {cid}:\n"
             "1. If there was a commitment for this task, call colony_fulfill_commitment\n"
             "2. If anything unexpected happened, call colony_record_surprise\n"
-            "3. If I learned something worth remembering, call colony_remember_fact\n"
-            "4. If the user's mood shifted, call colony_record_affect"
+            "3. If I learned something worth remembering, call colony_remember_fact with its source.\n"
+            "Keep observations separate from inferred opinions; do not manufacture a mood score."
         )
 
     return mcp

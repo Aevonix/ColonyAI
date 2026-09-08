@@ -34,7 +34,9 @@ Colony supports two integration paths:
 - Configured via harness config files
 - On-demand tool access
 
-Both paths read/write the same cognitive stores — facts stored by one harness are immediately visible to the others.
+Both paths use the same canonical sources. Retrieval remains scoped to the
+authenticated viewer and conversation; writing a private fact does not make
+it visible to every harness.
 
 Anything that is neither a Hermes host nor an MCP client can talk to the REST API directly (see [API Endpoints Reference](#api-endpoints-reference)).
 
@@ -46,13 +48,17 @@ Anything that is neither a Hermes host nor an MCP client can talk to the REST AP
 
 [Hermes](https://github.com/NousResearch/hermes-agent) is a memory-augmented agent framework that supports **both plugin and MCP integration**.
 
-Colony ships three Hermes plugins, all in this repo:
+Colony's supported Hermes installation uses these two native adapters:
 
 | Repo path | Installs to | Role |
 |-----------|-------------|------|
 | `plugins/hermes-plugin/` | `~/.hermes/plugins/colony/` | General adapter: native Colony tools, slash commands (`/colony status`, ...), lifecycle hooks (contact resolution, time injection, turn journaling), WebSocket event subscriber, autonomy bridge |
 | `plugins/colony-memory/` | `~/.hermes/plugins/colony-memory/` | Memory provider: injects assembled context before each turn and syncs the turn back for extraction. The single canonical copy of the provider |
-| `plugins/hermes-context/` | `~/.hermes/plugins/context_engine/colony/` | Context engine: replaces the built-in compressor with Colony's cognitive summarization |
+
+The old manual `plugins/hermes-context/` compressor has been removed from this
+repo. Keep Hermes' native context engine. An existing manual
+installation must first identify its selected engine and switch back to the
+native engine; do not remove its files while an active session uses it.
 
 **Setup (plugin path):**
 ```bash
@@ -256,7 +262,7 @@ Authentication: `Authorization: Bearer {api_key}`
 | `/capabilities` | GET | List all capabilities |
 | `/mind/facts` | GET, POST | List/store facts |
 | `/commitments` | GET, POST | List/create commitments |
-| `/context/assemble` | GET | Get full context for a contact |
+| `/context/assemble` | POST | Get context scoped to the authenticated viewer and contact |
 | `/health` | GET | Sidecar health check |
 | `/autonomy/posture` | GET | The resolved autonomy posture of the running process |
 | `/self/params` | GET | Adaptive runtime parameters and their journaled values |
@@ -344,7 +350,7 @@ colony doctor
 
 | Harness | Config File | Skill Directory |
 |---------|-------------|-----------------|
-| Hermes | `~/.hermes/config.yaml` (MCP + plugin) + `~/.hermes/plugins/{colony,colony-memory,context_engine/colony}/` | — |
+| Hermes | Selected `HERMES_HOME/config.yaml` plus the installed `colony-hermes` adapter package | Native context engine |
 | Claude Code | `~/.claude.json` (MCP) | `~/.codex/skills/colony-diagnose/` (shared with Codex) |
 | Codex | `~/.codex/config.toml` (MCP) | `~/.codex/skills/colony-diagnose/` |
 | Crush | `~/.crush.json` (MCP) | `~/.config/crush/skills/colony-diagnose/` |

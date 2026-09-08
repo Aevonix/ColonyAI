@@ -11,12 +11,10 @@ from colony_sidecar.task_queue.handlers.subtask_handler import SubtaskHandler
 from colony_sidecar.task_queue.handlers.system_maintenance import SystemMaintenanceHandler
 
 if TYPE_CHECKING:
-    from colony_sidecar.router.llm_router import LLMRouter
+    from colony_sidecar.router.router import LLMRouter
     from colony_sidecar.world_model.store import WorldModelStore
     from colony_sidecar.contacts.store import ContactStore
     from colony_sidecar.task_queue.handlers.inference import _InferenceGateSessionStore
-    # desktop/browser worker packages do not exist yet (docs/KNOWN-GAPS.md);
-    # their config params stay Any so type checkers don't chase ghost modules.
 
 
 def build_default_handlers(
@@ -38,15 +36,18 @@ def build_default_handlers(
         contact_store: Optional ContactStore for contact resolution.
         response_gate: Optional ResponseGate for outbound response filtering.
         gate_session_store: Session store adapter used by the ResponseGate.
-        desktop_config: Optional DesktopConfig. If provided and enabled,
-                        registers DesktopJobHandler for DESKTOP jobs.
-        browser_config: Optional BrowserConfig. If provided and enabled,
-                        registers BrowserJobHandler for BROWSER jobs.
-        node_id: Worker node identifier, passed to desktop/browser handlers.
+        desktop_config: Retired unsupported parameter; must be None.
+        browser_config: Retired unsupported parameter; must be None.
+        node_id: Legacy compatibility parameter, unused by supported handlers.
 
     Returns:
         Dict mapping JobType → JobHandler instance.
     """
+    if desktop_config is not None or browser_config is not None:
+        raise ValueError(
+            "Desktop/browser queue workers are unsupported. Remove desktop_config "
+            "and browser_config; use the native runtime's registered tools."
+        )
     handlers: Dict[JobType, JobHandler] = {
         JobType.MONITORING: MonitoringHandler(),
         JobType.SYSTEM_MAINTENANCE: SystemMaintenanceHandler(),
@@ -70,31 +71,5 @@ def build_default_handlers(
         # handler makes it impossible for a registry mix-up to run a generic
         # inference payload on the owner-private cognition lane.
         handlers[JobType.THOUGHT] = ThoughtOnlyInferenceHandler(router)
-
-    if desktop_config is not None and desktop_config.enabled:
-        try:
-            from colony_sidecar.desktop.worker import DesktopJobHandler
-            desktop_handler = DesktopJobHandler(desktop_config, node_id=node_id)
-            if response_gate is not None:
-                desktop_handler.set_gate(response_gate)
-            handlers[JobType.DESKTOP] = desktop_handler
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning(
-                "DesktopJobHandler init failed — desktop jobs will not execute: %s", exc
-            )
-
-    if browser_config is not None and browser_config.enabled:
-        try:
-            from colony_sidecar.browser.worker import BrowserJobHandler
-            browser_handler = BrowserJobHandler(browser_config, node_id=node_id)
-            if response_gate is not None:
-                browser_handler.set_gate(response_gate)
-            handlers[JobType.BROWSER] = browser_handler
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning(
-                "BrowserJobHandler init failed — browser jobs will not execute: %s", exc
-            )
 
     return handlers

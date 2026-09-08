@@ -95,12 +95,10 @@ class LLMRouter:
         self._scorer = scorer or ComplexityScorer()
         self._fallback = fallback_handler or FallbackHandler()
         self._bus = event_bus
-        # Self-learner is optional — skip if SQLite is unavailable
-        try:
-            self._learner: RouterSelfLearner | None = self_learner or RouterSelfLearner()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("RouterSelfLearner unavailable: %s", exc)
-            self._learner = None
+        # Only the retained legacy tier selector consumes this learner.
+        # Configuring named functions must not open an unrelated legacy DB.
+        self._learner = self_learner
+        self._learner_initialized = self_learner is not None
 
     @property
     def supports_function_routing(self):
@@ -458,8 +456,11 @@ class LLMRouter:
         latency_ms: int,
         prompt: str = "",
     ) -> None:
-        """Feed outcome back to the self-learner to improve future routing."""
-        if self._learner is None:
+        """Record legacy tier outcomes; named functions do not use tier learning."""
+        if self._snapshot is not None:
+            return
+        learner = self._legacy_learner()
+        if learner is None:
             return
         config = self._tiers.get(tier_used)
         cost = 0.0
@@ -467,15 +468,26 @@ class LLMRouter:
             cost = tokens_used * config.cost_per_1k_output / 1000
 
         score = self._scorer.score(prompt)
-        self._learner.record(score, tier_used, quality_rating, cost)
+        learner.record(score, tier_used, quality_rating, cost)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _legacy_learner(self):
+        with self._config_lock:
+            if not self._learner_initialized:
+                self._learner_initialized = True
+                try:
+                    self._learner = RouterSelfLearner()
+                except Exception as exc:
+                    logger.warning("Legacy RouterSelfLearner unavailable: %s", exc)
+        return self._learner
+
     def _select_tier(self, prompt: str, context: dict) -> ModelTier:
-        if self._learner is not None:
-            small_cutoff, medium_cutoff = self._learner.get_thresholds()
+        learner = self._legacy_learner()
+        if learner is not None:
+            small_cutoff, medium_cutoff = learner.get_thresholds()
         else:
             small_cutoff, medium_cutoff = 0.3, 0.65
 

@@ -33,10 +33,36 @@ general self-improvement simply by recording a successful review.
   system. Deliberately not wired: fabricating health numbers would violate
   the measurement doctrine. Wire only when a real health/wearable source
   feeds the mind model.
-- **Gate Layer 6 secondary review**: without an injected reviewer, it returns
-  an unflagged result. A configured reviewer exception or malformed JSON flags
-  the result as a review error. Neither the unconfigured path nor the separate
-  ResponseGuard shadow mode establishes enforcement.
+- **Gate Layer 6 secondary review**: remains disabled by default. If explicitly
+  enabled, a missing/failed client reports `unavailable`; malformed JSON or an
+  unknown verdict reports `invalid`. Neither is a completed review. Valid
+  `appropriate` and `flag_for_review` verdicts alone report `reviewed`. This
+  repairs the optional contract without adding a reviewer model or consent step.
+  The separate ResponseGuard shadow mode still does not establish enforcement.
+
+## Deprecated compatibility surfaces
+
+- The incompatible manual `plugins/hermes-context/` compressor has been removed.
+  Use the native context engine; identify any selected manual engine
+  before uninstalling it. General and memory-provider adapters remain supported.
+- Desktop/browser task queue workers never shipped. Non-null `desktop_config`
+  or `browser_config` now raises an explicit migration error; use the native
+  runtime's tools. Persisted `desktop` and `browser` job types remain readable.
+- Legacy goal decomposition/replanning is not a new execution path. Keep
+  accepted and historical goal IDs, transitions and reader APIs. Migrate each
+  execution consumer to canonical commitments/native task IDs before removing
+  planner exports. No goal record migration or deletion occurs in this cleanup.
+- Three-tier routing retains its optional learner only when legacy tier
+  selection/outcome recording is used. Named function routing does not create
+  its database or consume its scores. Existing legacy database files remain.
+- SQLite is the supported typed world-observation store. Alternate Neo4j and
+  PostgreSQL adapters support legacy entity/relationship operations only;
+  typed observations explicitly reject those backends. Changing databases is
+  not a remedy for memory admission quality, and existing stores are not moved.
+- `colony persona setup` is a compatibility path for existing manifest
+  deployments. New installations use `colony init`. Keep manifest validation,
+  services, backup and restore until an existing export/restore migration has
+  been demonstrated. Do not discard private identity data to simplify setup.
 - **ResponseGuard applied-output receipts** — guarded candidates now carry an
   exact candidate digest, and the proactive send path honors enforce verdicts,
   but the audit store records evaluations rather than durable proof of the

@@ -29,11 +29,13 @@ jobs:
         run: |
           python -m pip install -e ".[test]"
           python -m pip install -e ./.qualification/hermes
-          python -m pip install ./sidecar
+          python -m pip install './sidecar[lancedb]'
       - name: Qualify built artifacts and profile isolation
         run: |
           export AEVA_HERMES_TEST_PYTHON="$(command -v python)"
           python -m pytest tests/hermes_adapter -q
+          python -m pytest hostworker/tests -q
+          python -m pytest benchmarks/source_recall/test_harness.py -q
 
   python:
     runs-on: ubuntu-latest
@@ -50,7 +52,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Run tests
-        run: pytest tests/ colony_sidecar/ -v
+        run: pytest tests/ -v
 
   docker:
     runs-on: ubuntu-latest

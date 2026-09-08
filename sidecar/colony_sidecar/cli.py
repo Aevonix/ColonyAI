@@ -181,7 +181,7 @@ def main() -> None:
     persona_p = sub.add_parser("persona", help="Manage persona deployment")
     persona_sub = persona_p.add_subparsers(dest="persona_command")
 
-    persona_setup = persona_sub.add_parser("setup", help="Deploy a persona from a manifest repo")
+    persona_setup = persona_sub.add_parser("setup", help="Legacy manifest deployment; use colony init for new installations")
     persona_setup.add_argument("repo", help="Path to persona repo containing persona.yaml")
     persona_setup.add_argument("--config", default=None, help="Variables YAML file (non-interactive)")
 
@@ -2516,6 +2516,8 @@ def _cmd_persona(args) -> None:
         print(f"  Variables: {len(manifest.variables)}")
 
     elif cmd == "setup":
+        print("Legacy persona setup is deprecated for new installations; use colony init. "
+              "Existing manifest deployments and their backup/restore data remain supported.", file=sys.stderr)
         from colony_sidecar.persona.manifest import load_manifest
         try:
             manifest = load_manifest(args.repo)

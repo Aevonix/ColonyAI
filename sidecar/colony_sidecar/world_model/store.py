@@ -1,7 +1,8 @@
 """World Model primary store interface.
 
-Backed by SQLite (default) or PostgreSQL. All callers must use this interface
-and never access the backend directly.
+SQLite is the canonical typed-observation backend. Neo4j and PostgreSQL are
+legacy entity/relationship adapters without typed-observation support.
+All callers must use this interface and never access the backend directly.
 """
 
 import logging
@@ -57,7 +58,10 @@ class WorldModelStats:
 class WorldModelStore:
     """Primary interface to the Colony World Model entity graph.
 
-    Backed by Neo4j when available; falls back to SQLite automatically.
+    SQLite is selected by default. Explicit legacy Neo4j/Postgres configurations
+    may fall back to SQLite when credentials or drivers are missing. Typed
+    observation methods reject an actual legacy backend rather than claiming
+    equivalent provenance, correction, temporal-view or erasure behavior.
     All methods are async. Callers MUST NOT access the backing store directly.
     """
 

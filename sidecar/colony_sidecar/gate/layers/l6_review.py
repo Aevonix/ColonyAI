@@ -1,15 +1,18 @@
-"""Layer 6 — Secondary LLM review (soft flag only). Separate model instance."""
+"""Optional secondary review with explicit completed, invalid and unavailable results."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Protocol
+import json
+import logging
+from typing import Literal, Optional, Protocol
 
 
 @dataclass
 class ReviewResult:
     flagged: bool
     category: Optional[str] = None
+    status: Literal["reviewed", "unavailable", "invalid"] = "reviewed"
 
 
 class SecondaryReviewerProtocol(Protocol):
@@ -23,8 +26,8 @@ class SecondaryReviewer:
     Uses a separate model instance. Has no access to workspace or other sessions.
     Returns binary: appropriate | flag_for_review.
 
-    In production, this calls the Anthropic API with a restricted prompt.
-    For testing/default use, this is a no-op that always passes.
+    The caller must inject a client. This optional layer is disabled by default;
+    enabling it without a client reports unavailable, never a completed review.
     """
 
     def __init__(self, config=None, llm_client=None) -> None:
@@ -33,8 +36,7 @@ class SecondaryReviewer:
 
     async def review(self, payload, injection_suspicious: bool = False) -> ReviewResult:
         if self._llm_client is None:
-            # No LLM configured — pass through
-            return ReviewResult(flagged=False)
+            return ReviewResult(flagged=True, category="review_unavailable", status="unavailable")
 
         trust_tier = payload.trust_tier.value if hasattr(payload.trust_tier, "value") else str(payload.trust_tier)
         communication_policy = getattr(payload, "communication_policy", None)
@@ -64,16 +66,21 @@ class SecondaryReviewer:
 
         try:
             response_text = await self._llm_client.complete(prompt)
-            import json
-            data = json.loads(response_text.strip())
-            if data.get("verdict") == "flag_for_review":
-                return ReviewResult(flagged=True, category=data.get("category"))
-            return ReviewResult(flagged=False)
         except Exception as exc:
-            # Fail-closed: if the review LLM is unavailable or returns malformed
-            # output, block the message rather than silently passing it (SEC-14-H-01)
-            import logging
             logging.getLogger(__name__).warning(
-                "Gate L6 review LLM unavailable — failing closed: %s", exc
+                "Gate L6 review client unavailable: %s", exc
             )
-            return ReviewResult(flagged=True, category="review_error")
+            return ReviewResult(flagged=True, category="review_error", status="unavailable")
+
+        try:
+            data = json.loads(response_text.strip())
+        except (ValueError, TypeError, AttributeError):
+            return ReviewResult(flagged=True, category="review_invalid", status="invalid")
+        if not isinstance(data, dict) or data.get("verdict") not in ("appropriate", "flag_for_review"):
+            return ReviewResult(flagged=True, category="review_invalid", status="invalid")
+        if data["verdict"] == "flag_for_review":
+            category = data.get("category")
+            if category is not None and not isinstance(category, str):
+                return ReviewResult(flagged=True, category="review_invalid", status="invalid")
+            return ReviewResult(flagged=True, category=category)
+        return ReviewResult(flagged=False)
