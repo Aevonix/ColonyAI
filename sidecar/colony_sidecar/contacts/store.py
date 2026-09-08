@@ -355,6 +355,14 @@ class SQLiteContactStore(ContactStore):
         from .identity_links import correct
         return await correct(self, **kwargs)
 
+    async def pending_identity_reconciliations(self, *, limit=100):
+        from .identity_links import pending_reconciliations
+        return await pending_reconciliations(self, limit=limit)
+
+    async def mark_sources_reconciled(self, operation_id, source_result):
+        from .identity_links import mark_sources_reconciled
+        return await mark_sources_reconciled(self, operation_id=operation_id, source_result=source_result)
+
     async def identity_evidence(self, contact_id):
         from .identity_links import evidence
         return await evidence(self, contact_id)

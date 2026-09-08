@@ -156,3 +156,48 @@ async def evidence(store, contact_id):
         'identity_status': 'confirmed' if h.verified else 'observed' if usable_handle(h) else 'tentative',
         'usable_for_attribution': usable_handle(h)} for h in handles], 'candidates': candidates,
         'authority_granted': False}
+
+
+async def pending_reconciliations(store, *, limit=100):
+    """Recover unfinished cross-store corrections from their existing receipts."""
+    db = store._require_db()
+    async with db.execute('''SELECT result_json FROM contact_identity_operations
+        WHERE json_extract(result_json,'$.source_reconciliation_required')=1
+        ORDER BY created_at,operation_id LIMIT ?''', (max(1, min(int(limit), 500)),)) as cur:
+        return [json.loads(row['result_json']) for row in await cur.fetchall()]
+
+
+async def mark_sources_reconciled(store, *, operation_id, source_result):
+    """Finish an exact source correction without introducing a second queue."""
+    db = await store._open_provision_connection()
+    try:
+        await db.execute('BEGIN IMMEDIATE')
+        async with db.execute('SELECT result_json FROM contact_identity_operations WHERE operation_id=?', (operation_id,)) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            raise ValueError('identity_operation_not_found')
+        result = json.loads(row['result_json'])
+        if (source_result.get('schema') != 'SourceAttributionCorrectionV1'
+                or source_result.get('operation_id') != operation_id
+                or source_result.get('old_contact_id') != result['old_contact_id']
+                or source_result.get('contact_id') != result['contact_id']
+                or sorted(source_result.get('source_ids', [])) != sorted(result['affected_source_ids'])):
+            raise ValueError('identity_reconciliation_mismatch')
+        summary = {key: source_result[key] for key in ('operation_id', 'source_ids',
+            'affected_source_ids', 'invalidated_source_ids', 'recorded_at')}
+        if not result['source_reconciliation_required']:
+            if result.get('source_reconciliation') != summary:
+                raise ValueError('identity_reconciliation_conflict')
+            await db.rollback()
+            return result
+        result['source_reconciliation_required'] = False
+        result['source_reconciliation'] = summary
+        await db.execute('UPDATE contact_identity_operations SET result_json=? WHERE operation_id=?',
+                         (_json(result), operation_id))
+        await db.commit()
+        return result
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()

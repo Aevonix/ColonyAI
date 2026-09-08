@@ -109,3 +109,29 @@ async def test_migration_retires_only_name_guesses_and_preserves_candidate_evide
     await store.close()
     await store.connect()
     assert (await store.propose_handle_link(target.contact_id, 'email', 'guess@example.test'))['candidate_id'] == candidate['candidate_id']
+
+
+async def test_pending_correction_reconciles_after_restart_without_another_queue(store, tmp_path):
+    from colony_sidecar.turns.idempotency import TurnIdempotencyLedger
+    from colony_sidecar.turns.source_attribution import correct
+    old, new = await store.create(display_name='First'), await store.create(display_name='Second')
+    await store.add_handle(old.contact_id, 'email', 'reply@example.test')
+    args = dict(operation_id='resume', performed_by='owner-test', gateway='email', address='reply@example.test',
+        expected_contact_id=old.contact_id, contact_id=new.contact_id, evidence_refs=['source:confirm'],
+        affected_source_ids=['direct'])
+    first = await store.correct_handle_identity(**args)
+    await store.close()
+    await store.connect()
+    assert await store.pending_identity_reconciliations() == [first]
+    ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
+    ledger.record_source('direct', contact_id=old.contact_id, session_id='session',
+                         messages=[{'role': 'user', 'content': 'The bicycle is blue.'}])
+    corrected = correct(ledger, operation_id='resume', performed_by='owner-test', old_contact_id=old.contact_id,
+        contact_id=new.contact_id, source_ids=['direct'], evidence_refs=['source:confirm'])
+    with pytest.raises(ValueError, match='reconciliation_mismatch'):
+        await store.mark_sources_reconciled('resume', corrected | {'source_ids': ['wrong']})
+    assert await store.pending_identity_reconciliations() == [first]
+    result = await store.mark_sources_reconciled('resume', corrected)
+    assert await store.pending_identity_reconciliations() == []
+    assert result == await store.mark_sources_reconciled('resume', corrected)
+    assert result == await store.correct_handle_identity(**args)
