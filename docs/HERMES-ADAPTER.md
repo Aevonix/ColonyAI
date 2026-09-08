@@ -1,5 +1,23 @@
 # Native Hermes adapter distribution
 
+Hermes 0.21.1 applies `hooks.output_spill` to external memory-provider output.
+Its default 10,000-character head/tail preview can cut a Colony source envelope
+or remove the middle of an original/correction bundle. Guided attachment and
+explicit `colony init --refresh-adapter` align `hooks.output_spill.max_chars` to
+65,536 characters, retaining an existing larger cap or disabled spill setting.
+The original configuration is backed up and an adjustment is printed during
+refresh. The managed draft profile receives the same alignment at creation,
+role refresh and adapter refresh. Restart the selected Hermes gateway to load
+this provider setting; newly spawned workers load their own profile setting.
+
+This allowance leaves headroom above the selected-memory ceiling of 24,000
+characters for citations and other default context sections. It does not increase
+retrieval budgets, shorten corrections or change model context capacity. This
+is a shared Hermes hook setting: unusually large custom context producers must
+size their own transfer allowance. The aggregate of optional context sections
+has no universal size bound. A native MemoryManager regression verifies a complete envelope
+larger than the old default survives the installed configuration unchanged.
+
 `colony-hermes` packages the existing general adapter and memory provider for
 installation into the Python environment that runs Hermes. The Colony sidecar
 is a separate service. The adapter does not install the sidecar, a context

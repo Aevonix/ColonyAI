@@ -71,22 +71,25 @@ def model_configuration(state, *, configuration_path=None):
 
 def worker_configuration(model, policy, plugin, lane):
     """Native profile bytes shared by the public installer and private stagers."""
+    from .setup import _align_hermes_memory_spill
     worker_plugin = {key:plugin[key] for key in (
         'url','api_key','owner_contact_id','instance_dir','turn_outbox_path') if key in plugin}
     worker_plugin.update(execution_registry_enabled=True, attested_system_platforms=['cli'],
         enabled_action_tools=[], enabled_message_tools=[], enabled_read_tools=[],
         native_local_work={**lane, 'worker':True, 'routing_policy':policy})
-    return {**model, 'agent':{'max_turns':12},
+    config = {**model, 'agent':{'max_turns':12},
         'toolsets':['colony','kanban'], 'platform_toolsets':{'cli':['colony','kanban']},
         'plugins':{'enabled':['colony'], 'colony':worker_plugin,
                    'entries':{'colony':{'allow_tool_override':True}}},
         'memory':{'memory_enabled':False, 'user_profile_enabled':False},
         'kanban':{'dispatch_in_gateway':False, 'auto_decompose':False}}
+    _align_hermes_memory_spill(config)
+    return config
 
 
 def refresh_role(state):
     """Refresh a managed profile before future native worker processes start."""
-    from .setup import _atomic_hermes_config_write
+    from .setup import _atomic_hermes_config_write, _align_hermes_memory_spill
     state = Path(state).resolve()
     manifest = json.loads((state/'instance.json').read_text())
     binding = manifest['local_work']
@@ -102,6 +105,7 @@ def refresh_role(state):
     model, policy = model_configuration(state, configuration_path=manifest.get('model_configuration_path'))
     config.update(model)
     config['plugins']['colony']['native_local_work']['routing_policy'] = policy
+    _align_hermes_memory_spill(config)
     after = yaml.safe_dump(config, sort_keys=False).encode()
     if before != after:
         _atomic_hermes_config_write(path, before, after)

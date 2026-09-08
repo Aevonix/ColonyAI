@@ -280,7 +280,8 @@ def test_explicit_refresh_preserves_state_and_worker_and_is_idempotent(args, mon
     (plugin/'__init__.py').write_text(setup_hermes._forwarder(state/'adapter', 'colony_hermes'))
     (plugin/'plugin.yaml').write_bytes(current['colony_hermes/plugin.yaml'])
     (worker/'config.yaml').write_text(yaml.safe_dump({'plugins':{'colony':{'instance_dir':str(state)}},
-        'model':{'default':'retain-model'},'unrelated':{'keep':[1,2]}}))
+        'model':{'default':'retain-model'},'unrelated':{'keep':[1,2]},
+        'hooks':{'output_spill':{'max_chars':65536}}}))
     manifest = json.loads((state/'instance.json').read_text())
     manifest['local_work'] = {'executor':'kanban','worker_profile':'colony-drafts','board':'colony-drafts'}
     (state/'instance.json').write_text(json.dumps(manifest))
@@ -301,6 +302,51 @@ def test_explicit_refresh_preserves_state_and_worker_and_is_idempotent(args, mon
     assert list(state.glob('adapter-previous-*'))==backups
     assert (state/'instance.json').read_bytes()==manifest_before
     assert (state/'instance.json').stat().st_mtime_ns==mtime
+
+
+def test_explicit_refresh_aligns_old_spill_allowance_without_changing_adapter(args, monkeypatch, capsys):
+    assert setup.run_init(None, args) == 0
+    home=Path(args.hermes_home);state=home/'colony';path=home/'config.yaml'
+    config=yaml.safe_load(path.read_text());config['hooks']={'output_spill':{'max_chars':10000,'preview_tail':200},'retained':{'x':1}}
+    path.write_text(yaml.safe_dump(config));original=path.read_bytes()
+    adapter=setup_hermes._copied_resources(state/'adapter')
+    worker=home/'profiles/colony-drafts';(worker/'plugins/colony').mkdir(parents=True)
+    (worker/'plugins/colony/__init__.py').write_text(setup_hermes._forwarder(state/'adapter','colony_hermes'))
+    (worker/'plugins/colony/plugin.yaml').write_bytes(adapter['colony_hermes/plugin.yaml'])
+    worker_config={'plugins':{'colony':{'instance_dir':str(state)}},'hooks':{'output_spill':{'preview_head':123}}}
+    (worker/'config.yaml').write_text(yaml.safe_dump(worker_config))
+    manifest=json.loads((state/'instance.json').read_text());manifest['local_work']={'executor':'kanban','worker_profile':'colony-drafts'}
+    (state/'instance.json').write_text(json.dumps(manifest))
+    identity=(home/'SOUL.md').read_bytes();args.refresh_adapter=True
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Refresh made an inference call'))
+    assert setup.run_init(None,args)==0
+    changed=yaml.safe_load(path.read_text());config['hooks']['output_spill']['max_chars']=65536
+    assert changed==config and setup_hermes._copied_resources(state/'adapter')==adapter
+    assert (home/'SOUL.md').read_bytes()==identity
+    worker_config['hooks']['output_spill']['max_chars']=65536
+    assert yaml.safe_load((worker/'config.yaml').read_text())==worker_config
+    assert any(p.read_bytes()==original for p in home.glob('.config.yaml.colony-backup-*'))
+    assert 'max_chars -> 65536' in capsys.readouterr().out
+    before=path.read_bytes();assert setup.run_init(None,args)==0 and path.read_bytes()==before
+
+
+def test_worker_profile_creation_and_role_refresh_align_memory_spill(tmp_path, monkeypatch):
+    from colony_sidecar import setup_local_work as local
+    state=tmp_path/'colony';state.mkdir();home=tmp_path/'hermes'
+    worker=home/'profiles/colony-drafts';worker.mkdir(parents=True)
+    config=local.worker_configuration({}, {}, {'instance_dir':str(state)}, {})
+    assert config['hooks']['output_spill']['max_chars']==65536
+    config['hooks']={'output_spill':{'max_chars':10000,'preview_head':321}}
+    path=worker/'config.yaml';path.write_text(yaml.safe_dump(config))
+    (state/'instance.json').write_text(json.dumps({'hermes_home':str(home),'local_work':{'executor':'kanban','worker_profile':'colony-drafts'}}))
+    monkeypatch.setattr(local,'model_configuration',lambda *a,**k: ({'model':{'default':'changed'}},{'role':'planning'}))
+    local.refresh_role(state)
+    after=yaml.safe_load(path.read_text())
+    assert after['hooks']['output_spill']=={'max_chars':65536,'preview_head':321}
+    assert after['model']=={'default':'changed'}
+    after['hooks']['output_spill']={'enabled':False,'max_chars':10000}
+    path.write_text(yaml.safe_dump(after));local.refresh_role(state)
+    assert yaml.safe_load(path.read_text())==after
 
 
 def test_refresh_rejects_local_edits_before_mutation(args, monkeypatch):
