@@ -147,6 +147,33 @@ class CommsLog:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def match_reply(self, *, contact_id: str, outbound_ref: str, since_iso: str,
+                    until_iso: Optional[str] = None) -> Dict[str, Any]:
+        """Exact receipt-backed reply references for a previously resolved contact.
+
+        A reply link proves which message was addressed, not whether its requested
+        answer or artifact was supplied. The waiting-condition owner checks that.
+        Neither similar text nor an unrelated inbound message counts as a reply.
+        """
+        start, end = _parse(since_iso), _parse(until_iso) if until_iso else _now()
+        if not contact_id or not outbound_ref or start is None or end is None or end < start:
+            raise ValueError('invalid_reply_window')
+        rows = self._conn.execute('''SELECT channel,ts,external_ref,reply_to_ref,reaction,receipt_ref
+            FROM communications WHERE contact_id=? AND direction='in' AND reply_to_ref=?
+            AND external_ref IS NOT NULL AND external_ref!=''
+            AND receipt_ref IS NOT NULL AND receipt_ref!='' ORDER BY ts LIMIT 500''',
+            (contact_id, outbound_ref)).fetchall()
+        matches, seen = [], set()
+        for row in rows:
+            at = _parse(row['ts'])
+            key = (row['external_ref'], row['receipt_ref'])
+            if at is not None and start <= at <= end and key not in seen:
+                matches.append(dict(row))
+                seen.add(key)
+        return {'status': 'matched' if matches else 'unrelated', 'contact_id': contact_id,
+                'outbound_ref': outbound_ref, 'matches': matches,
+                'condition_satisfied': False, 'coverage_limited': len(rows) == 500}
+
     def outbound_between(
         self,
         contact_id: str,

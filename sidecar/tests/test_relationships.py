@@ -402,6 +402,7 @@ class TestContactCuration:
         r = await ParticipantResolver(store).resolve(
             platform="whatsapp", user_id="555abc@lid",
             display_name="Robin", group_id="grp-1")
-        assert r.method == "scoped_name" and r.contact_id == keep.contact_id
+        assert r.method == "shadow" and r.contact_id != keep.contact_id
+        assert r.candidate_contact_id == keep.contact_id and r.proposal_filed
         props = await store.list_handle_proposals()
         assert any(p["address"] == "555abc@lid" for p in props)
