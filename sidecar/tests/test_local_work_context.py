@@ -11,7 +11,7 @@ from colony_sidecar.api.authority import RequestAuthority
 from colony_sidecar.api.routers import executions, host
 from colony_sidecar.initiatives.store import InitiativeStore
 from colony_sidecar.turns.local_work import local_work_view
-from colony_sidecar.turns.executions import format_view
+from colony_sidecar.turns.executions import format_view, request_work_context
 
 
 @pytest.mark.asyncio
@@ -75,3 +75,55 @@ def test_turn_context_includes_active_work_and_only_latest_result():
     assert 'LATEST_BRIEFING' in rendered and 'OLDER_BRIEFING' not in rendered
     assert 'active' in rendered
     assert len(view['local_work']['recent'])==2
+
+
+def test_current_work_projects_known_semantic_issue_without_private_review_text(tmp_path,monkeypatch):
+    monkeypatch.setenv('COLONY_STATE_DIR',str(tmp_path))
+    assessment={'assessment_sha256':'b'*64,'detection':'reviewer_seeded',
+        'assessment':{'report_sha256':'a'*64,'reviewer':'PRIVATE_REVIEWER',
+            'findings':[{'excerpt':'PRIVATE_RAW_CLAIM','reason':'PRIVATE_REVIEW_REASON'}]}}
+    store=InitiativeStore(tmp_path)
+    work=store.create(type='RESEARCH_DEEP_DIVE',description='Capability briefing',
+        source_type='installed_capabilities',created_by='native_local_work',
+        context={'briefing_semantic_assessment':assessment})
+    store.assign(work.id,'native-cron:fixture')
+    store.complete(work.id,'native-cron:fixture',result_metadata={
+        'status':'briefing_created','report_sha256':'a'*64,'report_path':'/private/report.md'})
+    store.close()
+    view=local_work_view()
+    review=view['recent'][0]['semantic_review']
+    assert review['status']=='unresolved_findings' and review['finding_count']==1
+    assert review['assessment_sha256']=='b'*64 and review['quality_credit'] is False
+    request=request_work_context({'items':[],'local_work':view})
+    assert 'unsupported capability claims' in request['text']
+    assert all(value not in json.dumps(view)+request['text'] for value in
+               ('PRIVATE_REVIEWER','PRIVATE_RAW_CLAIM','PRIVATE_REVIEW_REASON'))
+    assert '/private/report.md' not in request['text']
+    with sqlite3.connect(tmp_path/'initiatives.db') as db:
+        db.execute('UPDATE initiatives SET result_metadata=?',(json.dumps({'report_sha256':'c'*64}),))
+    changed=local_work_view()['recent'][0]['semantic_review']
+    assert changed['status']=='source_changed' and changed['finding_count'] is None
+
+
+def test_request_forecast_is_observation_without_action_or_private_processor_configuration():
+    view={'items':[],'truncated':False,'local_work':{'available':True,'recent':[],'items':[{'initiative_id':'review','forecast':{
+        'status':'shadow','original_horizon':100,'prior_horizon':200,'sample_n':12,'uncertain':False,
+        'conditions_comparable':False,'decision':'inspect_recorded_state','suggestion_enabled':False,
+        'source_versions':{'PRIVATE_SOURCE':'private-revision'},'model_configuration':'PRIVATE_CONFIGURATION',
+        'comparison':{'forecast_absolute_error_seconds':50}}}]}}
+    projected=request_work_context(view)
+    assert 'shadow observation only' in projected['text']
+    assert '"suggestion_enabled": false' in projected['text']
+    assert all(value not in projected['text'] for value in
+        ('inspect_recorded_state','PRIVATE_SOURCE','PRIVATE_CONFIGURATION','forecast_absolute_error_seconds'))
+    initial=format_view(view)
+    assert 'shadow observation only' in initial
+    assert all(value not in initial for value in
+        ('inspect_recorded_state','PRIVATE_SOURCE','PRIVATE_CONFIGURATION','forecast_absolute_error_seconds'))
+
+
+def test_review_contract_mismatch_does_not_project_a_forecast():
+    from colony_sidecar.turns.local_work import _review_forecast
+    context={'native_review':{'contract_sha256':'old'}}
+    assert _review_forecast({},context,{'available':True,'contract_sha256':'new'},now=100)=={
+        'status':'review_contract_changed','suggestion_enabled':False}
