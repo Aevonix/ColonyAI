@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.22 - shared external work progress and results
+
+Existing local worker reports can retain task and parent identity, measured
+progress, process exit details and result references in the shared owner work
+view and automatic request context. Old heartbeat records remain compatible.
+Stale running reports remain uncertain; explicitly reported terminal results
+retain their original times and never imply independently verified effects.
+
+References are bounded metadata and are not followed by the reader. Private
+producers continue to own their local reports; no worker, scheduler, queue or
+authority path is added. This backend update remains compatible with the
+existing 1.0.21 native adapter and Hermes 0.21.1.
+
 ## v1.0.21 - Hermes 0.21.1 native compatibility
 
 Attachment accepts Hermes 0.21.1 and retains 0.21.0 support. Native task dispatch,
