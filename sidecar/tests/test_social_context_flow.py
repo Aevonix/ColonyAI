@@ -1,5 +1,6 @@
 """Ordinary source capture reaches scoped guidance and owner correction."""
 import json
+import importlib
 
 from httpx import ASGITransport, AsyncClient
 import pytest
@@ -11,6 +12,8 @@ from test_canonical_scoped_context import context, headers
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_appraisals import Processor, observation
 from test_turn_source_evidence import source_app
+from test_hermes_turn_outbox import _load_plugin
+from test_native_request_erasure import packet
 
 
 @pytest.mark.asyncio
@@ -58,3 +61,39 @@ async def test_capture_reflection_recall_correction_and_erasure(source_app, tmp_
         assert store.view('person', viewer_contact_id='owner', history=True)['records'] == []
         with ledger._connect() as conn:
             assert all(json.loads(r[0]) == {} for r in conn.execute('SELECT operation_json FROM appraisal_corrections'))
+
+
+@pytest.mark.asyncio
+async def test_withdrawn_social_hint_is_not_replayed_as_current_request_guidance(source_app, tmp_path, monkeypatch):
+    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
+    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
+    text = 'Please keep export explanations concise.'
+    ledger.record_source('preference', contact_id='person', session_id='earlier',
+                         messages=[{'role': 'user', 'content': text}])
+    store = social_state.appraisal_store()
+    from colony_sidecar.self_model import appraisals
+    with ledger._connect() as db, db:
+        appraisals.enqueue(db, 'preference', 'person', [{'role': 'user', 'content': text}], scope='person')
+    await store.process_one(Processor(lambda p: observation(p, kind='preference',
+        dimension='communication', hint='keep_concise')))
+    prior, sources = social_state.appraisal_context(contact_id='person', session_id='earlier', query='export task')
+    hint = 'Keep relevant explanations concise.'
+    assert hint in prior and sources
+    watermark = ledger.erasure_feed(contact_id='person', after=0)['head']
+    request = {'messages': [
+        {'role': 'user', 'content': 'Earlier export request\n' + packet('person', watermark, prior)},
+        {'role': 'assistant', 'content': 'Earlier response.'},
+        {'role': 'user', 'content': 'New export request'}]}
+    record = store.view('person', viewer_contact_id='owner')['records'][0]
+    store.correct(record['id'], action='withdraw', correction_id='withdraw-preference',
+                  reason='The earlier preference applied only to one task.', actor_id='owner')
+    current, _ = social_state.appraisal_context(contact_id='person', session_id='another', query='export task')
+    assert hint not in current
+    plugin = _load_plugin('social_withdrawn_history')
+    module = importlib.import_module(plugin.__name__ + '.request_memory')
+    feed = ledger.erasure_feed(contact_id='person', after=0)
+    filtered = module.filter_request(request, contact_id='person', watermark=feed['head'],
+                                     rules=feed['events'], fresh=True)
+    assert 'Earlier export request' in json.dumps(filtered)
+    assert hint not in json.dumps(filtered), 'withdrawn social hint survived in a historical memory packet'
