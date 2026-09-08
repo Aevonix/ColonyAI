@@ -131,7 +131,7 @@ async def test_ordinary_contact_knowledge_has_lineage_without_becoming_world_fac
         assert record["source_lineage"]["turn_id"] == "turn-a"
         assert len(record["source_lineage"]["message_hashes"]) == 2
         assert record["metadata"]["model_provenance"]["model_id"] == "old-neutral-model"
-        assert FACT in runtime.extractor.texts[0] and "Tuesday" not in runtime.extractor.texts[0]
+        assert runtime.extractor.texts == []
         # A later backfill must not reclassify this estimate as a world fact.
         estimate = dict(record, metadata={"automatic_projection": True})
         assert not await host._mirror_fact_to_graph(FACT, "contact-a", "told_by_contact", 0.8, record=estimate)
@@ -144,19 +144,17 @@ async def test_ordinary_contact_knowledge_has_lineage_without_becoming_world_fac
         assert await recalled(client, session="voice-session") == ""
         replay = await client.put("/v2/host/turns/turn-a", json=body)
         assert replay.json()["skipped_reason"] == "source_erased"
-        await host._run_tom_extraction(FACT, "contact-a", source_id="turn-a")
+        with pytest.raises(SourceErased):
+            runtime.facts.source_input("turn-a", "contact-a")
         assert runtime.facts.list_facts()["total"] == 0 and runtime.graph.rows == {}
 
 
 @pytest.mark.asyncio
-async def test_forget_during_actual_ingress_background_extraction(runtime):
-    runtime.extractor.release = asyncio.Event()
+async def test_ordinary_ingress_does_not_start_retired_affect_extraction(runtime):
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url="http://test") as client:
         await ingest(client, runtime, wait=False)
-        await asyncio.wait_for(runtime.extractor.started.wait(), 3)
+        assert runtime.tasks == [] and runtime.extractor.texts == []
         await forget(client)
-        runtime.extractor.release.set()
-        await asyncio.wait_for(asyncio.gather(*runtime.tasks), 3)
         assert runtime.facts.list_facts()["total"] == 0
         assert runtime.graph.rows == {}
         assert await recalled(client, session="voice-session") == ""

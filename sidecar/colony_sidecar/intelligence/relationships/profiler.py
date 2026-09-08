@@ -69,7 +69,7 @@ class RelationshipBrief:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-    def render(self, *, include_approach: bool = True) -> str:
+    def render(self, *, include_approach: bool = True, include_affect: bool = True) -> str:
         """Compact prompt-injectable text form."""
         lines: List[str] = []
         head = f"{self.display_name or self.contact_id} ({self.trust_tier})"
@@ -79,7 +79,7 @@ class RelationshipBrief:
         if self.preferred_channel:
             stats += f", mostly via {self.preferred_channel}"
         lines.append(f"{head}: {stats}.")
-        if self.affect_trend or self.affect_valence is not None:
+        if include_affect and (self.affect_trend or self.affect_valence is not None):
             mood = []
             if self.affect_valence is not None:
                 mood.append(f"valence {self.affect_valence:+.2f}")
@@ -97,7 +97,7 @@ class RelationshipBrief:
                 hrs = ", ".join(f"{h:02d}:00" for h in self.best_hours_local[:2])
                 tzs = f" ({self.timezone})" if self.timezone else ""
                 lines.append(f"Usually reachable around {hrs}{tzs}.")
-            for c in self.cautions[:2]:
+            for c in [item for item in self.cautions if include_affect or item != _MOOD_CAUTION][:2]:
                 lines.append("Caution: " + c)
         return "\n".join(lines)
 

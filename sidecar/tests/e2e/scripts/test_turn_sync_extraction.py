@@ -192,8 +192,8 @@ def test_turn_sync_extraction():
         log(f"  Sections: {section_ids}")
         if "colony-commitments" in section_ids:
             log("  Commitments in context", "✅")
-        if "colony-affect" in section_ids:
-            log("  Affect in context", "✅")
+        if "colony-affect" not in section_ids:
+            log("  Legacy mood estimates omitted from ordinary context", "✅")
         if "colony-shared-facts" in section_ids:
             log("  Shared facts in context", "✅")
         if "colony-surprises" in section_ids:
