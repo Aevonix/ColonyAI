@@ -224,8 +224,10 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
                 for identifier in row['source_turn_ids'] if source(identifier)]
             row['_annotation_ids'] = tuple(sorted(notes))
             row['_annotation_message_hashes'] = {identifier: sorted(hashes) for identifier, hashes in visited.items()}
-            row['ranking_text'] = str(original.get('ranking_text') or original.get('content') or '') + '\n' + '\n'.join(
-                note['correction'] for note in corrections)
+            row['ranking_text'] = '\n'.join(
+                'Attributed correction (not independently verified):\n' + note['correction']
+                for note in corrections) + '\nOriginal evidence:\n' + str(
+                    original.get('ranking_text') or original.get('content') or '')
             row['id'] = 'annotated:' + hashlib.sha256(json.dumps([original['id'], list(notes)], sort_keys=True).encode()).hexdigest()
             result.append(row)
     # A lexical/semantic annotation hit adds no evidence when an original
