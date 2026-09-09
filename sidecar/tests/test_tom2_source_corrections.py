@@ -96,3 +96,31 @@ async def test_unlinked_self_unawareness_does_not_create_content_free_prior(worl
     response = await host.context_assemble(_req(READER))
     assert not any(s.id == 'colony-tom2-l1' for s in response.sections)
     assert world.facts.get_fact(old['id']) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change', ['erase', 'replace', 'append'])
+async def test_p8_cached_tom2_fact_does_not_survive_source_change_during_final_await(contact_context, monkeypatch, change):
+    runtime = contact_context
+    monkeypatch.setenv('COLONY_TOM2_CONTEXT', '1')
+    fact = runtime.add('The hydrofoil gate is violet.')
+    tom2 = Tom2Store()
+    monkeypatch.setattr(host, '_tom2_store', tom2)
+    tom2.record_inference(contact_id='contact-b', kind='unaware_of', fact_ref=fact['id'], confidence=.4)
+    class Telemetry:
+        async def touch(self, _):
+            source = fact['source_lineage']['turn_id']
+            if change == 'erase':
+                runtime.ledger.erase_sources(contact_id='contact-a', turn_ids=[source])
+            else:
+                with runtime.ledger._connect() as conn:
+                    conn.execute('UPDATE turn_sources SET messages_json=? WHERE turn_id=?',
+                        (json.dumps(([{'role':'user','content':fact['fact']}] if change == 'append' else [])
+                            + [{'role':'user','content':'The gate is amber.'}]), source))
+    monkeypatch.setattr(host, '_telemetry', Telemetry())
+    async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url='http://test') as client:
+        response = await client.post('/v1/host/context/assemble', headers={'Authorization':'Bearer owner-key'}, json={
+            'identity':{'host_id':'native-fixture'}, 'context':{'contact_id':'contact-a','session_id':'s1'},
+            'incoming_message':{'role':'user','content':'hello'}})
+    assert response.status_code == 200, response.text
+    assert not any(section['id'] == 'colony-tom2' for section in response.json()['sections'])

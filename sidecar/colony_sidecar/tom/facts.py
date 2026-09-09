@@ -286,7 +286,7 @@ class AutomaticFactsView:
         return self._store.list_facts(**{**kwargs, 'source_linked_only': True})
 
 
-class InferenceFactsView:
+class InferenceFactsView(SourceLinkedStore):
     """ToM2 cannot reuse an old knowledge inference across a source correction.
 
     Ordinary recall can bundle attributed corrections with the original. The
@@ -295,7 +295,7 @@ class InferenceFactsView:
     """
 
     def __init__(self, view, ledger):
-        self._view, self._ledger = view, ledger
+        self._view, self._source_ledger = view, ledger
         self._read = {}
 
     def get_fact(self, fact_id):
@@ -303,14 +303,17 @@ class InferenceFactsView:
         try:
             row = self._view.get_fact(fact_id)
             lineage = (row or {}).get('source_lineage') or {}
-            if not lineage.get('message_hashes'):
+            # Projected views can cache authorized rows. Recheck canonical
+            # membership independently, including all hashes and source scope.
+            if not lineage.get('message_hashes') or not self._source_visible(row['contact_id'], lineage):
                 return None
             source = lineage['turn_id']
-            packet = expand(self._ledger, [{
+            packet = expand(self._ledger(), [{
                 'id': fact_id, 'content': row['fact'], 'source_turn_id': source,
                 '_source_message_hashes': {source: lineage['message_hashes']},
             }], contact_id=row['contact_id'], session_id=lineage['session_id'])
-            if len(packet) != 1 or packet[0].get('_annotation_ids'):
+            if (len(packet) != 1 or packet[0].get('_annotation_ids')
+                    or source not in {ref['source_id'] for ref in packet[0].get('_annotation_source_refs', [])}):
                 return None
             self._read.setdefault(fact_id, row)
             return row
