@@ -7,6 +7,36 @@ from test_self_judgments import Processor, admit_source, judgments, run_row, sou
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('kind,text', [
+    ('personal_context', 'The orchard notebook is in the blue drawer. Did you forget where it is?'),
+    ('preference', 'I prefer green tea after lunch.'),
+    ('relationship', 'Mira is my sister.'),
+])
+async def test_other_memory_kinds_remain_memories_without_creating_a_stance(judgments, kind, text):
+    state, _ = judgments
+    source(state, memory_kind=kind, text=text)
+    processor = Processor()  # Would invent a stance if asked.
+    assert await state.process_one(processor)
+    assert processor.requests == [] and state.revisions(history=True) == []
+    assert run_row(state, 'first')['disposition'] == 'unsupported_source'
+    with state.ledger._connect() as conn:
+        assert conn.execute('SELECT COUNT(*) FROM source_claims').fetchone()[0] == 1
+        assert text in conn.execute('SELECT messages_json FROM turn_sources').fetchone()[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['decision', 'procedure', 'substantive_event'])
+async def test_admitted_decision_sources_can_supply_a_stance(judgments, kind):
+    state, _ = judgments
+    source(state, memory_kind=kind)
+    processor = Processor()
+    assert await state.process_one(processor)
+    assert len(processor.requests) == 1 and len(state.revisions()) == 1
+    premises = processor.requests[0]['evidence'][0]['admitted_premises']
+    assert [p['memory_quality']['memory_kind'] for p in premises] == [kind]
+
+
+@pytest.mark.asyncio
 async def test_question_waits_for_admission_without_spending_attempts_then_skips(judgments):
     state, _ = judgments
     source(state, 'question', 'Which orchard badge did I ask you to remember?', admitted=False)

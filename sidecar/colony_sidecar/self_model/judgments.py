@@ -187,6 +187,8 @@ class SelfJudgments:
     def _premises(self, conn, turn_id, message_hash):
         """Existing admitted assertions qualify a quote, without another judge.
 
+        Ordinary facts, preferences and relationships use their own projections;
+        only decisions, procedures and substantive events invite a new stance.
         A request is not an observation of its outcome. Raw historical claims,
         revoked attribution and corrected interpretations cannot supply premises.
         Admission remains an unverified model judgment, not factual authority.
@@ -198,6 +200,7 @@ class SelfJudgments:
             AND j.status='complete' AND c.superseded_by IS NULL AND c.retracted_by IS NULL
             AND json_extract(c.data_json,'$.admission_review.version')='source-claim-review-v1'
             AND json_extract(c.data_json,'$.admission_review.basis')='model_judgment_unverified'
+            AND json_extract(c.data_json,'$.memory_quality.memory_kind') IN ('decision','procedure','substantive_event')
             AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)
             AND NOT EXISTS (SELECT 1 FROM source_projection_erasures e WHERE e.turn_id=s.turn_id)
             AND NOT EXISTS (SELECT 1 FROM source_annotations a,json_each(a.target_message_hashes_json) h

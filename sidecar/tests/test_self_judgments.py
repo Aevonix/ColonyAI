@@ -61,7 +61,7 @@ def judgments(tmp_path, monkeypatch):
     return SelfJudgments(ledger, owner_id='contact-a', clock=clock), clock
 
 
-def admit_source(judgments, turn):
+def admit_source(judgments, turn, *, memory_kind='substantive_event'):
     """Controlled completed upstream admission for judgment-only fixtures."""
     from colony_sidecar.beliefs.source_claims import validated_claims
     from colony_sidecar.beliefs.source_projection import SourceClaimProjection
@@ -73,7 +73,8 @@ def admit_source(judgments, turn):
         if message.get('role') != 'user' or not isinstance(text, str):
             continue
         first = text.split()[0].strip('.,')
-        claims = validated_claims(json.dumps([claim(text, first, subject=first, predicate='reported context')]),
+        claims = validated_claims(json.dumps([claim(text, first, subject=first, predicate='reported context',
+            memory_kind=memory_kind)]),
             message=text, prior=[], observed_at=None)
         assert claims
         for candidate in claims:
@@ -87,10 +88,11 @@ def admit_source(judgments, turn):
 
 def source(judgments, turn='first', text='Long local work lost progress after an interruption. Checkpoints could help.', **kwargs):
     admitted = kwargs.pop('admitted', True)
+    memory_kind = kwargs.pop('memory_kind', 'substantive_event')
     judgments.ledger.record_source(turn, contact_id=kwargs.pop('contact_id', 'contact-a'), session_id='session-' + turn,
         messages=[{'role': 'user', 'content': text}], **kwargs)
     if admitted:
-        admit_source(judgments, turn)
+        admit_source(judgments, turn, memory_kind=memory_kind)
 
 
 def run_row(judgments, turn):
