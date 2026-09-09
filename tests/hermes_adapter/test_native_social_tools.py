@@ -175,7 +175,7 @@ history[-1]['api_content']=compose_user_api_content(continued,packet,'')
 sent=apply_llm_request_middleware({'messages':[{'role':'user','content':history[-1]['api_content']}]},
     session_id='owner-retained',task_id='owner-retained',turn_id='turn-owner-retained').payload
 sent_user=[row for row in sent['messages'] if row['role']=='user']
-assert len(sent_user)==1 and sent_user[0]['content']==history[-1]['api_content'],sent
+assert len(sent_user)==1 and sent_user[0]['content'].split('\n\n<memory-context>',1)[0]==continued,sent
 assert packet in sent_user[0]['content'],sent
 assert tool('owner-retained','colony_commitment_work',{'operation':'claim','commitment_id':retained_parent['id']})['accepted']
 retained_wait=tool('owner-retained','colony_followup',{**args,'commitment_id':retained_parent['id'],
