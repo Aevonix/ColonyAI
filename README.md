@@ -18,11 +18,13 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.32 lets an authenticated host carry already captured human input
+Version 1.0.33 lets an authenticated host carry already captured human input
 into a native task through exact source references. Derived task instructions
 do not become duplicate human testimony; assistant replies retain the original
 input and source dependencies through the existing erasure checks. See the
 [host-input contract](plugins/hermes-plugin/SUPPLIED-INPUT.md).
+These dependent replies are retained even when the native platform is excluded
+from ordinary conversation capture; ordinary excluded turns remain excluded.
 
 Attributed corrections appear first when ranking source evidence,
 while keeping the full original and correction packet intact. The changed input

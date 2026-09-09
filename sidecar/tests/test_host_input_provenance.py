@@ -24,7 +24,7 @@ def handoff(source_app, tmp_path, monkeypatch):
     keyring.write_text(json.dumps({'version':1, 'principals':[{
         'principal':'native-fixture', 'status':'active', 'scopes':['turns:write','context:read','memory:read'],
         'person_ids':['owner'], 'viewer_person_id':'owner', 'audiences':['viewer'],
-        'allow_unscoped_api':False, 'turn_ingress_platforms':['cli'],
+        'allow_unscoped_api':False, 'turn_ingress_platforms':['rcs','whatsapp'],
         'credentials':[{'id':'fixture','secret':'fixture-key','status':'active'}]}]}))
     keyring.chmod(0o600)
     source_app.add_middleware(ApiKeyMiddleware, api_key=None, keyring_path=str(keyring))
@@ -60,12 +60,13 @@ def handoff(source_app, tmp_path, monkeypatch):
     parents = [{'source_id':'original-input', 'input_message_hash': source_hash('voice-source', original)}]
     outbox = tmp_path/'native-outbox.db'
     ctx = _Context({'url':'http://testserver', 'api_key':'fixture-key', 'owner_contact_id':'owner',
-                    'turn_outbox_path':str(outbox), 'turn_outbox_drain_timeout_ms':1000})
+                    'turn_outbox_path':str(outbox), 'turn_outbox_drain_timeout_ms':1000,
+                    'turn_writer_platforms':['api_server','rcs','sms','whatsapp']})
     module.register(ctx)
-    def start(session='native', task='task', turn='turn'):
+    def start(session='native', task='task', turn='turn', platform='cli'):
         message = {'role':'user', 'content':'Read the maintenance record, then summarize the task.'}
         ctx.hooks['pre_llm_call'](session_id=session, task_id=task, turn_id=turn,
-            platform='cli', sender_id='', user_message=message['content'], conversation_history=[message])
+            platform=platform, sender_id='', user_message=message['content'], conversation_history=[message])
         return ctx.middleware['llm_request']({'messages':[message], 'tools':[{'type':'function'}]},
             session_id=session, task_id=task, turn_id=turn)
     def finish(session='native', task='task', turn='turn'):
@@ -129,6 +130,26 @@ def test_wrong_contact_cannot_gain_native_authority_from_supplied_input(handoff)
         h.finish()
         assert supplied.result is None
     assert h.outbox.snapshot()==[]
+
+
+def test_ordinary_cli_turn_remains_excluded_without_supplied_input(handoff):
+    h = handoff
+    h.start()
+    h.finish()
+    assert h.outbox.snapshot() == []
+    with sqlite3.connect(h.ledger.db_path) as db:
+        assert db.execute('SELECT COUNT(*) FROM turn_sources').fetchone()[0] == 2
+
+
+def test_unattested_caller_cannot_use_parents_to_enable_capture(handoff):
+    h = handoff
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents) as supplied:
+        result = h.start(platform='discord')
+        assert result['reason'] == 'source_input_unavailable'
+        h.finish()
+        assert supplied.result is None
+    assert h.outbox.snapshot() == []
 
 
 def test_context_exception_reset_and_closed_thread_copy_do_not_borrow_later_input(handoff):
