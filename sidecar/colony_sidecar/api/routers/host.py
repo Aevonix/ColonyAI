@@ -3863,6 +3863,18 @@ async def _ingest_turn_idempotently(
     ledger = get_turn_idempotency_ledger(get_state_dir())
     if ledger.is_source_erased(turn_id, body.context.contact_id):
         return TurnSyncResponse(accepted=False, source_recorded=False, continuity_updated=False, skipped_reason="source_erased"), "erased"
+    if body.assistant_input_refs:
+        from colony_sidecar.turns.idempotency import SourceInputPending
+        try:
+            ledger.resolve_input_dependencies(contact_id=body.context.contact_id,
+                session_id=body.context.session_id, turn_id=turn_id,
+                refs=[ref.model_dump() for ref in body.assistant_input_refs])
+        except SourceInputPending:
+            # Ordinary outbox retry, with no reserved or ambiguous effect row.
+            return TurnSyncResponse(accepted=False, source_recorded=False, continuity_updated=False,
+                                    skipped_reason='source_input_parent_pending'), 'in_progress'
+        except ValueError as exc:
+            raise HTTPException(422, detail={'code': 'invalid_source_input_dependency'}) from exc
     if body.checkpoint_messages is not None:
         # One atomic source+index commit, no ordinary conversation effects.
         # A retry after an interrupted response can safely repeat this write.
@@ -3951,6 +3963,16 @@ async def turns_sync(
             response.status_code = status.HTTP_202_ACCEPTED
             response.headers["Retry-After"] = "1"
     return result
+
+
+@v2_router.put('/turns/source-linked/input-parent/{turn_id:path}', response_model=TurnSyncResponse)
+async def source_input_linked_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request = None):
+    """Older linked-source routes reject this suffix before persisting anything."""
+    if body.context.turn_id == 'source-linked/input-parent/' + turn_id:
+        return await turns_sync_v2(body.context.turn_id, body, response, request)
+    if not body.assistant_input_refs or body.context.turn_id != turn_id:
+        raise HTTPException(422, detail={'code': 'invalid_input_linked_source'})
+    return await turns_sync_v2(turn_id, body, response, request)
 
 
 @v2_router.put("/turns/source-linked/{turn_id:path}", response_model=TurnSyncResponse)
@@ -4053,6 +4075,10 @@ async def _process_turn_sync(
         for message in source_messages:
             if message['role'] == 'assistant':
                 message['_supplied_sources'] = [ref.model_dump() for ref in body.assistant_source_refs]
+    if body.assistant_input_refs:
+        for message in source_messages:
+            if message['role'] == 'assistant':
+                message['_supplied_inputs'] = [ref.model_dump() for ref in body.assistant_input_refs]
     body = body.model_copy(deep=True)
     for field in ("user_message", "assistant_message"):
         message = getattr(body, field)

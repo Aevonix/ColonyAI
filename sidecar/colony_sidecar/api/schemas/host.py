@@ -519,6 +519,13 @@ class SourceReference(BaseModel):
     source_version: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class SourceInputReference(BaseModel):
+    """Exact admitted input before canonical media normalization."""
+    model_config = ConfigDict(extra="forbid")
+    source_id: str = Field(min_length=1, max_length=256)
+    input_message_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class TurnSyncRequest(BaseModel):
     identity: HostIdentity
     context: HostTurnContext
@@ -534,6 +541,7 @@ class TurnSyncRequest(BaseModel):
     user_message: Optional[Union[HostMessage, TurnMessage]] = None
     assistant_message: Optional[Union[HostMessage, TurnMessage]] = None
     assistant_source_refs: Optional[List[SourceReference]] = Field(default=None, min_length=1)
+    assistant_input_refs: Optional[List[SourceInputReference]] = Field(default=None, min_length=1)
     source_only: Optional[Literal[True]] = None
     # Model that produced the assistant side of this turn (optional, additive).
     # Lets the mining layer detect provider escalations / cloud failovers from
@@ -558,9 +566,11 @@ class TurnSyncRequest(BaseModel):
         if self.source_only and (self.checkpoint_messages is not None or not any(
                 nonempty(message) for message in (self.user_message, self.assistant_message))):
             raise ValueError('source-only delivery requires nonempty direct source messages')
-        if self.assistant_source_refs and not any(message is not None and message.role == 'assistant' and nonempty(message)
+        if (self.assistant_source_refs or self.assistant_input_refs) and not any(message is not None and message.role == 'assistant' and nonempty(message)
                 for message in [self.assistant_message, *(self.checkpoint_messages or [])]):
             raise ValueError('source references require an assistant message')
+        if self.assistant_input_refs and (not self.context.turn_id or self.checkpoint_messages is not None):
+            raise ValueError('input parents require an identified direct assistant source')
         return self
 
 
