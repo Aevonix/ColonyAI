@@ -51,6 +51,10 @@ not a preference inferred from politeness, a fact, praise, or one task request.
 behavior_hypothesis requires support from distinct prior and current evidence
 describing separate experiences. One turn, even claiming repeated behavior,
 is insufficient: omit the hypothesis. Never infer personality or Big Five.
+When rehydrated prior evidence and the current source do describe separate
+incidents with the same practical difficulty, consider a narrow working-style
+hypothesis useful for the next similar task, not only a temporary feeling.
+Keep it limited to that activity and acknowledge that the reports are fallible.
 assessment means an
 explicitly reported formal assessment, dimension self_report; never infer Big Five.
 judgment is YOUR fallible person/topic affinity, skepticism, domain-specific
