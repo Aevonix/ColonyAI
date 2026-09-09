@@ -1,4 +1,4 @@
-"""Owned image evidence and fallible descriptions in the canonical source ledger."""
+"""Owned image/audio originals and fallible derivatives in the source ledger."""
 from __future__ import annotations
 
 import asyncio
@@ -35,6 +35,8 @@ def initialize(conn):
         lease_until REAL NOT NULL DEFAULT 0,lease_token TEXT NOT NULL DEFAULT '')''')
     if 'model_provenance_json' not in {row[1] for row in conn.execute('PRAGMA table_info(source_media)')}:
         conn.execute('ALTER TABLE source_media ADD COLUMN model_provenance_json TEXT')
+    if 'media_metadata_json' not in {row[1] for row in conn.execute('PRAGMA table_info(source_media)')}:
+        conn.execute('ALTER TABLE source_media ADD COLUMN media_metadata_json TEXT')
     conn.execute('''CREATE TABLE IF NOT EXISTS source_media_links (
         turn_id TEXT NOT NULL,message_hash TEXT NOT NULL,asset_hash TEXT NOT NULL,
         block_index INTEGER NOT NULL,role TEXT NOT NULL,
@@ -77,9 +79,42 @@ def normalize_messages(conn, store, turn_id, session_id, messages):
             result.append(dict(message))
             continue
         original_hash = canonical_turn_digest({'session_id': session_id, 'role': message.get('role'), 'content': content})
-        blocks, changed = [], False
+        blocks, changed, consumed = [], False, set()
         for index, block in enumerate(content):
+            if index in consumed:
+                continue
             kind = block.get('type') if isinstance(block, dict) else None
+            if kind == 'input_audio':
+                from colony_sidecar.turns.audio import decode_audio, transcript
+                changed = True
+                try:
+                    data, metadata = decode_audio(block)
+                except Exception:
+                    blocks.append({'type': 'audio_unretained', 'reason': 'unsupported_or_oversized_audio',
+                                   'reference_sha256': hashlib.sha256(json.dumps(block, sort_keys=True).encode()).hexdigest()})
+                    continue
+                asset = store.store_source_audio(data)
+                conn.execute('''INSERT INTO source_media(asset_hash,mime_type,size_bytes,width,height,status,media_metadata_json)
+                    VALUES (?,'audio/wav',?,0,0,'complete',?) ON CONFLICT(asset_hash) DO UPDATE SET
+                    status=CASE WHEN source_media.status='orphan' THEN 'complete' ELSE source_media.status END''',
+                    (asset, len(data), json.dumps(metadata, sort_keys=True)))
+                conn.execute('''INSERT OR IGNORE INTO source_media_links
+                    (turn_id,message_hash,asset_hash,block_index,role) VALUES (?,?,?,?,?)''',
+                    (turn_id, original_hash, asset, index, message['role']))
+                blocks.append({'type': 'audio', 'asset_id': 'sha256:' + asset, 'mime_type': 'audio/wav', **metadata})
+                following = content[index + 1] if index + 1 < len(content) else None
+                if isinstance(following, dict) and following.get('type') == 'audio_transcript':
+                    consumed.add(index + 1)
+                    try:
+                        blocks.append(transcript(following, data, metadata['duration_ms']))
+                    except Exception:
+                        blocks.append({'type': 'audio_transcript_unretained', 'reason': 'invalid_audio_transcript'})
+                continue
+            if kind in {'audio_transcript', 'audio_url', 'input_video', 'video_url'}:
+                changed = True
+                blocks.append({'type': 'media_unretained', 'reason': 'unsupported_or_unpaired_media',
+                               'reference_sha256': hashlib.sha256(json.dumps(block, sort_keys=True).encode()).hexdigest()})
+                continue
             url = None
             if kind == 'image_url':
                 item = block.get('image_url')
@@ -278,7 +313,7 @@ class SourceMedia:
     def status(self, contact_id):
         with closing(self.ledger._connect()) as conn:
             return [dict(row) for row in conn.execute('''SELECT DISTINCT m.asset_hash,m.status,m.error,m.attempts,
-                m.model,m.model_provenance_json,m.description_version,m.mime_type,m.size_bytes
+                m.model,m.model_provenance_json,m.description_version,m.mime_type,m.size_bytes,m.media_metadata_json
                 FROM source_media m JOIN source_media_links l ON l.asset_hash=m.asset_hash
                 JOIN turn_sources s ON s.turn_id=l.turn_id WHERE s.contact_id=? LIMIT 20''', (contact_id,))]
 

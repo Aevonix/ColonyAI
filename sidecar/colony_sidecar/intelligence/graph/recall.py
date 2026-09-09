@@ -41,7 +41,9 @@ def source_candidates(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "id": "source-excerpt:" + digest,
             "kind": "source_quote", "source_uri": "turn:" + turn,
             "source_turn_id": turn, "role": hit["role"],
-            "content": hit["content"], "epistemic_state": "quotation",
+            "content": hit["content"], "epistemic_state": (
+                'derived_unverified' if hit.get('source_modality') == 'audio_transcript' else 'quotation'),
+            **({'source_modality': 'audio_transcript'} if hit.get('source_modality') == 'audio_transcript' else {}),
             **{name: hit[name] for name in ("contact_id", "session_id", "scope") if name in hit},
             "occurred_at": hit.get("occurred_at"),
             "ingested_at": hit.get("ingested_at"),
@@ -60,7 +62,7 @@ def render_memory_context(memories: list[dict[str, Any]]) -> str:
                   "kind": memory.get("kind", "belief"),
                   "source": str(memory.get("source_uri") or ""),
                   "state": str(memory.get("epistemic_state") or "inferred")}
-        for name in ("source_turn_id", "source_message_hash", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source", "history_anchor"):
+        for name in ("source_turn_id", "source_message_hash", "source_modality", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source", "history_anchor"):
             if memory.get(name) is not None:
                 source[name] = memory[name]
         if memory.get("effective_confidence") is not None:

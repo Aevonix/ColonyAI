@@ -345,9 +345,8 @@ class SourceClaimProjection:
                 for message in json.loads(source["messages_json"]):
                     text = message.get("content")
                     if isinstance(text, list):
-                        text = "\n".join(block["text"] for block in text if isinstance(block, dict)
-                            and block.get("type") in {"text", "input_text", "output_text"}
-                            and isinstance(block.get("text"), str))
+                        from colony_sidecar.turns.audio import source_text
+                        text = source_text(text)
                     if message.get("role") != hit["role"] or not isinstance(text, str):
                         continue
                     message_claims = by_hash.get(source_message_hash(source["session_id"], message), [])

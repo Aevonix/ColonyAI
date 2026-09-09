@@ -61,7 +61,7 @@ class LocalImageStore:
             directory.chmod(0o700)
 
     def _original_path(self, image_hash: str, mime_type: str) -> Path:
-        ext = {"image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}.get(mime_type, "png")
+        ext = {"image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "audio/wav": "wav"}.get(mime_type, "png")
         return self._originals_dir / f"{image_hash}.{ext}"
 
     def _thumbnail_path(self, image_hash: str) -> Path:
@@ -102,12 +102,27 @@ class LocalImageStore:
         return StoredImage(image_hash, str(original), str(thumbnail) if thumbnail.exists() else "",
                            image.mime_type, image.width, image.height, len(image.data))
 
+    def store_source_audio(self, data: bytes) -> str:
+        """Use the existing canonical original namespace without a thumbnail.
+
+        The caller validates WAV bounds and holds the source ownership lock.
+        Legacy image/vector storage does not accept audio through this method.
+        """
+        if self._base_dir.name != 'sources':
+            raise ValueError('audio requires canonical source ownership')
+        self._ensure_dirs()
+        digest = hashlib.sha256(data).hexdigest()
+        path = self._original_path(digest, 'audio/wav')
+        if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            self._write_durable(path, data)
+        return digest
+
     def delete_original(self, image_hash: str) -> bool:
         """Delete an owned original and thumbnail after ledger reference checks."""
         if len(image_hash) != 64 or any(c not in "0123456789abcdef" for c in image_hash):
             raise ValueError("invalid image hash")
         deleted = False
-        for directory, extensions in ((self._originals_dir, ("jpg", "png", "jpeg", "webp", "gif")),
+        for directory, extensions in ((self._originals_dir, ("jpg", "png", "jpeg", "webp", "gif", "wav")),
                                       (self._thumbs_dir, ("jpg",))):
             for ext in extensions:
                 path = directory / f"{image_hash}.{ext}"
