@@ -167,6 +167,7 @@ async def test_single_configured_endpoint_can_extract_and_review_without_distinc
     assert len(rows) == 1 and len(calls) == 2
     assert {call['payload']['model'] for call in calls} == {'fast-neutral'}
     assert calls[1]['payload']['response_format']['json_schema']['schema'] == review_response_schema(2)['schema']
+    assert calls[0]['payload']['max_tokens'] == 4096
     assert calls[1]['payload']['max_tokens'] == 1400
 
 
@@ -178,6 +179,44 @@ def test_exact_keys_and_duplicate_keys_are_required_without_repair():
     with pytest.raises(SourceClaimOutputError):
         validated_review('{"0":{"keep":true,"reason":"a"},"0":{"keep":true,"reason":"b"}}', 2)
     assert projection_timeout_seconds(SimpleNamespace()) == 40
+
+
+LONG_EXPLANATION = (
+    'Full procedure preserved: steps (check battery icon, ten-second test recording, '
+    'listen before interview), limit (battery icon alone does not reveal muted mic), '
+    'and conditional rule (disconnect external power if connected) all match source; '
+    'subject field recorder correct; event_time before the interview unresolved as reported'
+)
+
+
+@pytest.mark.asyncio
+async def test_complete_explanation_survives_admission_without_changing_decision(tmp_path):
+    assert len(LONG_EXPLANATION) == 326
+    ledger, projection = prepared(tmp_path)
+    decision = json.loads(review(True, False))
+    decision['0']['reason'] = LONG_EXPLANATION
+    model = ReviewedModel(json.dumps(decision))
+    await projection.process_one(model)
+    assert len(model.calls) == 2
+    assert projection.status('person')[0]['status'] == 'complete'
+    with sqlite3.connect(ledger.db_path) as conn:
+        rows = [json.loads(row[0]) for row in conn.execute('SELECT data_json FROM source_claims')]
+    assert len(rows) == 1 and rows[0]['value'] == 'shelf'
+    assert rows[0]['admission_review']['reason'] == LONG_EXPLANATION
+
+
+@pytest.mark.parametrize('length,valid', [(326, True), (1024, True), (1025, False)])
+def test_review_explanation_bound_matches_wire_contract_without_truncation(length, valid):
+    value = {'0': {'keep': False, 'reason': 'r' * length}}
+    validator = Draft202012Validator(review_response_schema(1)['schema'])
+    if valid:
+        validator.validate(value)
+        assert validated_review(json.dumps(value), 1) == value
+    else:
+        with pytest.raises(ValidationError):
+            validator.validate(value)
+        with pytest.raises(SourceClaimOutputError):
+            validated_review(json.dumps(value), 1)
 
 
 @pytest.mark.asyncio
