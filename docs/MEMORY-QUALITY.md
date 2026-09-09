@@ -12,6 +12,20 @@ is stored as `memory_quality` and explicitly labeled unverified. It is neither a
 truth score nor permission to act. Corrections, changes and conflicting reports
 keep the existing source and time rules.
 
+The `source-claims-v3` extractor stores a procedure's exact evidence passage as
+its value, including its conditions and subsequent steps, within the existing
+500-character evidence limit. It does not ask the model to generate a second
+version of those instructions. Other values retain their 160-character limit.
+Existing stored claims remain readable and are not rewritten.
+
+On a binding with verified [structured-output support](FUNCTION-ROUTING.md), a
+source of at most 500 characters uses its complete message as constrained
+evidence. This preserves trailing dates, reporter wording and qualifications.
+Longer messages retain bounded exact-span selection. Each request owns its
+schema; source text never becomes shared routing configuration. Full-message
+evidence also includes neighboring clauses, and the existing sensitive-evidence
+filter can reject the whole short passage. The original source remains retained.
+
 Routine status, build/test progress, acknowledgments, boilerplate, hypothetical
 examples and debugging output should remain source history. Short and mutable
 facts can still matter: a key location, an appointment or a reusable repair
@@ -50,6 +64,13 @@ engagement or image descriptions. Image descriptions remain fallible derived
 evidence tied to the original asset; they have a 160-word limit and a separate
 output budget for reasoning models. The job status exposes failed attempts so
 an unavailable or unsuitable model is distinguishable from an empty result.
+
+Repeated reports keep their distinct source identities through lexical retrieval,
+so date filtering and correction expansion can select the right occurrence.
+Shortened lexical and semantic excerpts are marked as incomplete. A successful
+rerank must score every submitted candidate; partial or malformed output keeps
+the original ordering with an unavailable status instead of mixing incompatible
+scores. Selection remains bounded by the common item and character budgets.
 
 ## Evaluation and limits
 

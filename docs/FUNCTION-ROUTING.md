@@ -27,7 +27,7 @@ model benchmark.
 The existing state-directory `.colony-llm-config.json` remains authoritative.
 Existing `provider`, `baseUrl`, `apiKey` and `models.small/medium/large` bindings
 work for supported local OpenAI-compatible endpoints. Object specs may declare
-`supportsTools`, `supportsVision`, `contextTokens`, `latencyMs`,
+`supportsTools`, `supportsVision`, `supportsJsonSchema`, `contextTokens`, `latencyMs`,
 `tokensPerSecond`, `concurrency` and `weightRevision`. Existing
 `usefulContextTokens` remains a compatible context hint.
 
@@ -104,6 +104,20 @@ Existing tier bindings preserve unknown tool capability for compatibility;
 status marks these `legacy_unknown_tools_allowed: true`. After a real successful
 tool exercise, the deployment can replace the unknown with an explicit
 capability. There is no unknown-capability exception for vision.
+
+After verifying a serving endpoint's strict JSON-schema support, declare
+`supportsJsonSchema: true` on that binding. Memory formation then supplies its
+output schema with the individual request. Other calls keep their normal output
+format. This declaration defaults to false and is not inferred from the model's
+name or an HTTP success alone. The schema must actually constrain the output,
+including arrays and the object alternatives used by the memory consumers.
+
+A prompt-only fallback receives the original task without an unsupported schema;
+its context budget excludes that unsent schema. Every response still passes the
+consumer's source, field, scope and revision checks. Structured output improves
+format reliability, not the truth or usefulness of a memory. A server rejecting
+a declared schema with a nonretryable HTTP error remains an explicit failed
+attempt; the router does not silently strip the contract and retry that endpoint.
 
 Only declared OpenAI-compatible transport is supported by this function path.
 An existing Ollama deployment must explicitly declare `protocol: "openai-chat"`
