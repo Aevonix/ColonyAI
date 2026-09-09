@@ -96,12 +96,16 @@ async def test_response_schema_reaches_only_declared_binding_and_only_requested_
 
 @pytest.mark.asyncio
 async def test_response_schema_fallback_preserves_prompt_without_assuming_server_capability():
-    schema = {'name': 'neutral', 'schema': {'type': 'object', 'properties': {}}}
+    schema = {'name': 'neutral', 'schema': {'type': 'object', 'properties': {},
+                                          'description': 'Neutral schema description. ' * 40}}
     with endpoint(status=503) as (first, a), endpoint(content='{}') as (second, b):
         cfg = config(first, second, timeoutSeconds=10, deadlineSeconds=20)
         cfg['modelPool']['interactive']['supportsJsonSchema'] = True
+        # This prompt-only fallback fits the actual prompt and answer, but
+        # would not fit a schema it never receives.
+        cfg['modelPool']['deliberate']['contextTokens'] = 100
         r = router(cfg)
-        result = await complete(r, response_schema=schema)
+        result = await complete(r, response_schema=schema, max_output_tokens=20)
         assert result.binding == 'deliberate'
         assert a[0]['payload']['response_format']['json_schema']['schema'] == schema['schema']
         assert 'response_format' not in b[0]['payload']

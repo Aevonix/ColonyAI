@@ -386,7 +386,8 @@ class LLMRouter:
         text = '\n'.join(m['content'] if isinstance(m.get('content'), str) else '\n'.join(
             b.get('text', '') for b in (m.get('content') or []) if isinstance(b, dict) and isinstance(b.get('text'), str)) for m in messages)
         schema_tokens = estimate_tokens(json.dumps(response_format)) if response_format else 0
-        selection_context = {**context, 'estimated_input_tokens': estimate_tokens(text) + 8 * len(messages) + schema_tokens}
+        selection_context = {**context, 'estimated_input_tokens': estimate_tokens(text) + 8 * len(messages),
+                             'response_schema_tokens': schema_tokens}
         available = candidates(snapshot, role_name, selection_context, has_images=has_images, has_tools=bool(tools))
         if force_tier is not None:
             # Explicit legacy tier selection remains exact, but must still

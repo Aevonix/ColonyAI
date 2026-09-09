@@ -216,7 +216,10 @@ def candidates(snapshot, role_name, context, *, has_images, has_tools):
         # Reuse the existing text estimator to avoid an obviously undersized
         # fallback. Image token accounting is model-specific and remains unknown.
         requested_output = context.get('max_output_tokens', context.get('max_tokens', b.config.max_tokens))
-        if b.context_tokens and context.get('estimated_input_tokens', 0) + min(b.config.max_tokens, int(requested_output)) > b.context_tokens: continue
+        input_tokens = context.get('estimated_input_tokens', 0)
+        if b.supports_json_schema:
+            input_tokens += context.get('response_schema_tokens', 0)
+        if b.context_tokens and input_tokens + min(b.config.max_tokens, int(requested_output)) > b.context_tokens: continue
         if role.max_latency_ms and (not b.latency_ms or b.latency_ms > role.max_latency_ms): continue
         if b.tokens_per_second < role.min_tokens_per_second or b.concurrency < role.min_concurrency: continue
         if endpoint_host(b, snapshot) is None: continue
