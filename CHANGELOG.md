@@ -46,6 +46,13 @@ retain up to 1024 characters. Existing role deadlines and attempt limits are
 unchanged. The repair preserves useful completed responses without admitting
 truncated output or silently rewriting review decisions.
 
+Partial-message procedures now recall one complete current source-message unit
+instead of independently ranked property fragments. A condition elsewhere in that
+message cannot disappear while its steps remain. Changed, conflicting or oversized
+procedures require the existing full-source and history readers; budgeting does
+not convert a partial procedure into complete instructions. This preserves source
+quotation, current scope, annotations and erasure without re-extracting old claims.
+
 ## v1.0.28 - complete source opening and coherent current state
 
 The native source reader opens exact scoped revisions and paginates long text
