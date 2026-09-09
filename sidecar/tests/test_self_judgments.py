@@ -61,9 +61,36 @@ def judgments(tmp_path, monkeypatch):
     return SelfJudgments(ledger, owner_id='contact-a', clock=clock), clock
 
 
+def admit_source(judgments, turn):
+    """Controlled completed upstream admission for judgment-only fixtures."""
+    from colony_sidecar.beliefs.source_claims import validated_claims
+    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    from test_source_claim_projection import claim
+    with judgments.ledger._connect() as conn:
+        row = dict(conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (turn,)).fetchone())
+    for message in json.loads(row['messages_json']):
+        text = message.get('content')
+        if message.get('role') != 'user' or not isinstance(text, str):
+            continue
+        first = text.split()[0].strip('.,')
+        claims = validated_claims(json.dumps([claim(text, first, subject=first, predicate='reported context')]),
+            message=text, prior=[], observed_at=None)
+        assert claims
+        for candidate in claims:
+            candidate['admission_review'] = {'version': 'source-claim-review-v1',
+                'basis': 'model_judgment_unverified', 'reason': 'Controlled source-admission fixture.',
+                'model_provenance': {'model_id': 'fixture-reviewer'}}
+        assert SourceClaimProjection(judgments.ledger).commit(row, message, claims, model='fixture-extractor')
+    with judgments.ledger._connect() as conn:
+        conn.execute("UPDATE source_claim_jobs SET status='complete' WHERE turn_id=?", (turn,))
+
+
 def source(judgments, turn='first', text='Long local work lost progress after an interruption. Checkpoints could help.', **kwargs):
+    admitted = kwargs.pop('admitted', True)
     judgments.ledger.record_source(turn, contact_id=kwargs.pop('contact_id', 'contact-a'), session_id='session-' + turn,
         messages=[{'role': 'user', 'content': text}], **kwargs)
+    if admitted:
+        admit_source(judgments, turn)
 
 
 def run_row(judgments, turn):
@@ -79,11 +106,13 @@ async def test_two_processors_revise_with_history_restart_and_relevant_owner_con
     first = Processor('model-a')
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
         await tell(client, 'Long local work lost progress after interruption; checkpoints restored it.', 'judgment-a')
+        admit_source(state.judgments, 'judgment-a')
         assert await state.judgments.process_one(first)
         assert len(state.judgments.revisions()) == 1
         assert state.preferences() == []
         clock.value += 86401
         await tell(client, 'For short local work, frequent checkpoints doubled run time without preventing any lost progress.', 'judgment-b')
+        admit_source(state.judgments, 'judgment-b')
         second = Processor('model-b', decide=lambda p: revise(p, stance='I favor checkpoints at meaningful stages, rather than after every short operation.', contrary=True))
         assert await state.judgments.process_one(second)
         assert second.requests[0]['previous_evidence'][0]['text'] == 'Long local work lost progress after interruption; checkpoints restored it.'
@@ -360,6 +389,7 @@ async def test_owner_api_withdraw_reconsider_restart_and_correction_history(sour
     state.judgments.clock = Clock()
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
         await tell(client, 'Long local work checkpoints recovered lost progress.', 'original')
+        admit_source(state.judgments, 'original')
         await state.judgments.process_one(Processor())
         original = state.judgments.revisions()[0]
         body = {'identity': {'host_id': 'fixture'}, 'context': {'contact_id': 'contact-a', 'session_id': 'correction'},
@@ -380,6 +410,7 @@ async def test_owner_api_withdraw_reconsider_restart_and_correction_history(sour
                                      json=body | {'correction': 'Changed operation under an old ID'})
         assert conflict.status_code == 409 and conflict.json()['detail'] == 'judgment_correction_id_conflict'
         await tell(client, 'Another local work checkpoint observation is available.', 'fresh')
+        admit_source(state.judgments, 'fresh')
         await state.judgments.process_one(Processor())
         assert run_row(state.judgments, 'fresh')['disposition'] == 'owner_withdrawn'
         reopened = SelfJudgments(TurnIdempotencyLedger(state.ledger.db_path), owner_id='contact-a', clock=state.judgments.clock)
@@ -462,6 +493,7 @@ async def test_later_captured_control_turn_erases_its_copied_reason_only(source_
     state, _, _ = perspective
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
         await tell(client, 'Long local work benefited from checkpoints.', 'basis')
+        admit_source(state.judgments, 'basis')
         await state.judgments.process_one(Processor())
         target = state.judgments.revisions()[0]['id']
         instruction = 'Withdraw the checkpoint view; my correction must remain separate from your opinion.'

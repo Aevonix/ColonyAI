@@ -18,7 +18,7 @@ import uuid
 from colony_sidecar.turns.idempotency import source_message_hash
 from colony_sidecar.util.model_output import final_text
 
-VERSION = 'agent-judgment-v1'
+VERSION = 'agent-judgment-v2'
 
 
 class JudgmentValidationError(ValueError):
@@ -184,6 +184,66 @@ class SelfJudgments:
         with closing(ledger._connect()) as conn, conn:
             initialize(conn)
 
+    def _premises(self, conn, turn_id, message_hash):
+        """Existing admitted assertions qualify a quote, without another judge.
+
+        A request is not an observation of its outcome. Raw historical claims,
+        revoked attribution and corrected interpretations cannot supply premises.
+        Admission remains an unverified model judgment, not factual authority.
+        """
+        rows = conn.execute('''SELECT c.id,c.data_json FROM source_claims c
+            JOIN source_claim_jobs j ON j.turn_id=c.turn_id
+            JOIN turn_sources s ON s.turn_id=c.turn_id
+            WHERE c.turn_id=? AND c.message_hash=? AND s.contact_id=? AND s.scope='person'
+            AND j.status='complete' AND c.superseded_by IS NULL AND c.retracted_by IS NULL
+            AND json_extract(c.data_json,'$.admission_review.version')='source-claim-review-v1'
+            AND json_extract(c.data_json,'$.admission_review.basis')='model_judgment_unverified'
+            AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)
+            AND NOT EXISTS (SELECT 1 FROM source_projection_erasures e WHERE e.turn_id=s.turn_id)
+            AND NOT EXISTS (SELECT 1 FROM source_annotations a,json_each(a.target_message_hashes_json) h
+                            WHERE a.target_source_id=s.turn_id AND h.value=c.message_hash)
+            ORDER BY c.id''', (turn_id, message_hash, self.owner_id)).fetchall()
+        result = []
+        for row in rows:
+            claim = json.loads(row['data_json'])
+            result.append({'claim_id': row['id'], **{key: claim[key] for key in (
+                'subject', 'predicate', 'value', 'evidence', 'memory_quality', 'model_provenance') if key in claim},
+                'admission': {key: claim['admission_review'][key] for key in
+                    ('version', 'basis', 'model_provenance') if key in claim['admission_review']}})
+        return result
+
+    def _supported(self, conn, ref):
+        source = conn.execute("SELECT session_id,messages_json FROM turn_sources WHERE turn_id=? AND contact_id=? AND scope='person'",
+                              (ref['turn_id'], self.owner_id)).fetchone()
+        if source is None:
+            return False
+        message = next((m for m in json.loads(source['messages_json']) if
+                        source_message_hash(source['session_id'], m) == ref['message_hash']), None)
+        if message is None:
+            return False
+        if _attribution(message) == 'runtime_recorded_execution_metadata_not_output_verification':
+            return True
+        expected = ref.get('premise_claim_ids') or [p['claim_id'] for p in ref.get('admitted_premises', [])]
+        current = {p['claim_id'] for p in self._premises(conn, ref['turn_id'], ref['message_hash'])}
+        # Legacy message-only refs cannot identify which interpretation governed
+        # the view. Keep their history, without certifying a different surviving
+        # claim in that same message as a replacement premise.
+        return bool(expected) and set(expected) <= current
+
+    def _reconsidered(self, conn, row):
+        control = conn.execute('''SELECT payload_json FROM self_judgment_revisions
+            WHERE id=? AND owner_id=? AND correction_id IS NOT NULL''',
+            (row['supersedes'], self.owner_id)).fetchone()
+        operation = json.loads(control[0]).get('owner_correction', {}) if control else {}
+        return operation.get('action') == 'reconsider' and operation.get('source_id') == row['source_turn_id']
+
+    def _view_supported(self, conn, row):
+        view = json.loads(row['payload_json'])
+        support = view.get('support', [])
+        reconsidered = self._reconsidered(conn, row)
+        return bool(support) and all(self._supported(conn, ref) or
+            reconsidered and not ref.get('premise_claim_ids') for ref in support + view.get('contrary', []))
+
     def _retained(self, conn, refs):
         seen = {}
         for ref in refs:
@@ -197,7 +257,9 @@ class SelfJudgments:
                     return False
                 continue
             if turn_id not in seen:
-                source = conn.execute("SELECT session_id,messages_json FROM turn_sources WHERE turn_id=? AND contact_id=? AND scope='person'",
+                source = conn.execute("""SELECT session_id,messages_json FROM turn_sources s
+                    WHERE turn_id=? AND contact_id=? AND scope='person' AND NOT EXISTS
+                    (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)""",
                                       (turn_id, self.owner_id)).fetchone()
                 seen[turn_id] = set() if source is None else {
                     source_message_hash(source['session_id'], m) for m in json.loads(source['messages_json'])}
@@ -226,6 +288,13 @@ class SelfJudgments:
                     if history:
                         result.append({'id': row['id'], 'topic': row['topic'], 'status': 'erased', 'supersedes': row['supersedes']})
                     continue
+                view = json.loads(row['payload_json'])
+                if not self._view_supported(conn, row):
+                    if history:
+                        result.append({k: row[k] for k in ('id', 'topic', 'supersedes', 'created_at', 'source_turn_id')} |
+                                      view | {'status': 'unsupported_premise', 'dependencies': refs,
+                                              'processor': json.loads(row['processor_json'])})
+                    continue
                 result.append({k: row[k] for k in ('id', 'topic', 'supersedes', 'created_at', 'source_turn_id')} |
                               json.loads(row['payload_json']) | {'processor': json.loads(row['processor_json']),
                               'dependencies': refs, 'status': 'fallible_agent_judgment',
@@ -244,7 +313,10 @@ class SelfJudgments:
     def processing(self):
         with closing(self.ledger._connect()) as conn:
             return [dict(row) for row in conn.execute('''SELECT turn_id,status,attempts,
-                disposition,error,validation_code,next_attempt FROM self_judgment_runs
+                CASE WHEN status='pending' AND reconsider_revision_id IS NULL AND EXISTS
+                    (SELECT 1 FROM source_claim_jobs c WHERE c.turn_id=self_judgment_runs.turn_id AND c.status!='complete')
+                    THEN 'waiting_source_claims' ELSE disposition END AS disposition,
+                error,validation_code,next_attempt FROM self_judgment_runs
                 WHERE owner_id=? ORDER BY rowid DESC LIMIT 10''', (self.owner_id,))]
 
     def brief(self, query, *, source_ids=None):
@@ -336,6 +408,8 @@ class SelfJudgments:
             row = conn.execute('''SELECT j.*,s.session_id,s.messages_json FROM self_judgment_runs j
                 JOIN turn_sources s ON s.turn_id=j.turn_id WHERE j.owner_id=? AND s.contact_id=? AND s.scope='person'
                 AND j.attempts<3 AND ((j.status='pending' AND j.next_attempt<=?) OR (j.status='running' AND j.lease_until<=?))
+                AND (j.reconsider_revision_id IS NOT NULL OR NOT EXISTS
+                    (SELECT 1 FROM source_claim_jobs c WHERE c.turn_id=j.turn_id AND c.status!='complete'))
                 ORDER BY s.ingested_at,j.turn_id LIMIT 1''', (self.owner_id, self.owner_id, now, now)).fetchone()
             if row is None:
                 return None
@@ -355,17 +429,22 @@ class SelfJudgments:
 
     def _prepare(self, job):
         evidence = []
-        for message in json.loads(job['messages_json']):
-            attribution = _attribution(message)
-            if attribution is None:
-                continue
-            content = _text(message)
-            if not content.strip():
-                continue
-            message_hash = source_message_hash(job['session_id'], message)
-            evidence.append({'handle': _handle(job['turn_id'], message_hash), 'text': content,
-                             'attribution': attribution,
-                             'turn_id': job['turn_id'], 'message_hash': message_hash})
+        with closing(self.ledger._connect()) as conn:
+            for message in json.loads(job['messages_json']):
+                attribution = _attribution(message)
+                if attribution is None:
+                    continue
+                content = _text(message)
+                if not content.strip():
+                    continue
+                message_hash = source_message_hash(job['session_id'], message)
+                premises = self._premises(conn, job['turn_id'], message_hash)
+                if (attribution == 'owner_statement_not_independently_verified' and
+                        not job.get('reconsider_revision_id') and not premises):
+                    continue
+                evidence.append({'handle': _handle(job['turn_id'], message_hash), 'text': content,
+                                 'attribution': attribution, 'admitted_premises': premises,
+                                 'turn_id': job['turn_id'], 'message_hash': message_hash})
         if not evidence or sum(len(e['text']) for e in evidence) > 16000:
             return None
         previous = self.relevant(' '.join(e['text'] for e in evidence), limit=3)
@@ -476,6 +555,15 @@ class SelfJudgments:
             if not self._retained(conn, refs):
                 self._finish(conn, job, 'source_erased', processor)
                 return 'source_erased'
+            if not job.get('reconsider_revision_id') and not all(
+                    self._supported(conn, ref) for ref in payload['evidence']):
+                self._finish(conn, job, 'premise_changed', processor)
+                return 'premise_changed'
+            supported = set(result.get('support', []) + result.get('contrary', []))
+            if any(e['handle'] in supported and (e.get('premise_claim_ids') or e.get('admitted_premises'))
+                   and not self._supported(conn, e) for e in payload['evidence'] + payload['previous_evidence']):
+                self._finish(conn, job, 'premise_changed', processor)
+                return 'premise_changed'
             for prior in previous:
                 live = conn.execute('SELECT revision_id FROM self_judgment_heads WHERE owner_id=? AND topic=?',
                                     (self.owner_id, _topic_key(prior['topic']))).fetchone()
@@ -488,12 +576,13 @@ class SelfJudgments:
                 self._finish(conn, job, 'abstained', processor)
                 return 'abstained'
             topic_key = _topic_key(result['topic'])
-            head = conn.execute('''SELECT r.id,r.created_at,r.status FROM self_judgment_heads h
+            head = conn.execute('''SELECT r.* FROM self_judgment_heads h
                 JOIN self_judgment_revisions r ON r.id=h.revision_id WHERE h.owner_id=? AND h.topic=?''',
                 (self.owner_id, topic_key)).fetchone()
             expected = heads.get(topic_key)
             if (head['id'] if head else None) != expected or (
-                    head and head['status'] == 'current' and result['supersedes'] != expected):
+                    head and head['status'] == 'current' and self._view_supported(conn, head)
+                    and result['supersedes'] != expected):
                 return self._head_changed(conn, job, processor)
             if result['action'] == 'retain':
                 self._finish(conn, job, 'retained', processor)
@@ -502,7 +591,7 @@ class SelfJudgments:
                     job.get('reconsider_revision_id') != head['id'])):
                 self._finish(conn, job, 'owner_withdrawn', processor)
                 return 'owner_withdrawn'
-            if head and head['status'] != 'reconsidering' and self.clock() - head['created_at'] < _interval():
+            if head and head['status'] != 'reconsidering' and self._view_supported(conn, head) and self.clock() - head['created_at'] < _interval():
                 # Preserve the source as eligible for reconsideration after
                 # the topic interval, including contrary evidence.
                 conn.execute("UPDATE self_judgment_runs SET status='pending',attempts=0,disposition='topic_rate_limited',next_attempt=?,lease_until=0,processor_json=? WHERE turn_id=? AND lease_token=?",
@@ -510,9 +599,16 @@ class SelfJudgments:
                 return 'topic_rate_limited'
             stored = {k: result[k] for k in ('stance', 'reason', 'certainty', 'support', 'contrary')}
             stored['update_interval_seconds'] = _interval()
+            stored['premise_basis'] = ('owner_reconsideration' if job.get('reconsider_revision_id')
+                else 'retained_reviewed_claim_or_runtime_observation')
             evidence = {e['handle']: e for e in payload['evidence'] + payload['previous_evidence']}
             for field in ('support', 'contrary'):
                 stored[field] = [{k: evidence[handle][k] for k in ('handle', 'turn_id', 'message_hash')} for handle in result[field]]
+                for ref, handle in zip(stored[field], result[field]):
+                    source = evidence[handle]
+                    ids = source.get('premise_claim_ids') or [p['claim_id'] for p in source.get('admitted_premises', [])]
+                    if ids:
+                        ref['premise_claim_ids'] = ids
             cur = conn.execute('''INSERT INTO self_judgment_revisions
                 (owner_id,topic,payload_json,dependency_json,supersedes,processor_json,created_at,status,source_turn_id,version)
                 VALUES (?,?,?,?,?,?,?,'current',?,?)''', (self.owner_id, result['topic'], _json(stored), _json(refs),
