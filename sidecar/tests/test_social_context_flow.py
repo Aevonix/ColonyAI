@@ -10,7 +10,7 @@ from colony_sidecar.api.routers import social_state
 from colony_sidecar.turns import TurnIdempotencyLedger
 from test_canonical_scoped_context import context, headers
 from test_scoped_api_authority import _principal, _write_keyring
-from test_source_appraisals import Processor, observation
+from test_source_appraisals import admitted_preference
 from test_turn_source_evidence import source_app
 from test_hermes_turn_outbox import _load_plugin
 from test_native_request_erasure import packet
@@ -30,17 +30,18 @@ async def test_capture_reflection_recall_correction_and_erasure(source_app, tmp_
         captured = await client.put('/v2/host/turns/explicit-preference', headers=headers('person'), json={
             'identity': {'host_id': 'fixture'},
             'context': {'contact_id': 'person', 'session_id': 'first', 'turn_id': 'explicit-preference'},
-            'user_message': {'role': 'user', 'content': 'Please keep export explanations concise.'}})
+            'user_message': {'role': 'user', 'content': 'I prefer concise explanations for export diagnostics.'}})
         assert captured.status_code == 201, captured.text
         store = social_state.appraisal_store()
-        await store.process_one(Processor(lambda p: observation(p, kind='preference',
-            dimension='communication', hint='keep_concise')))
+        from types import SimpleNamespace
+        store.test_clock = SimpleNamespace(value=store.clock())
+        admitted_preference(store, 'explicit-preference')
         recalled = await client.post('/v1/host/context/assemble', headers=headers('person'),
                                      json=context('person', 'export task', session='later-channel'))
         assert recalled.status_code == 200, recalled.text
         sections = {s['id']: s for s in recalled.json()['sections']}
         section = sections['colony-appraisals']
-        assert 'Keep relevant explanations concise' in section['body']
+        assert 'I prefer concise explanations for export diagnostics.' in section['body']
         assert section['citations'][0]['source_id'] == 'explicit-preference'
         # Inspection permits the owner, while other contacts cannot select this person.
         inspected = await client.get('/v1/host/social/appraisals', headers=headers('owner'),
@@ -68,17 +69,15 @@ async def test_withdrawn_social_hint_is_not_replayed_as_current_request_guidance
     monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
     monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
     ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
-    text = 'Please keep export explanations concise.'
+    text = 'I prefer concise explanations for export diagnostics.'
     ledger.record_source('preference', contact_id='person', session_id='earlier',
                          messages=[{'role': 'user', 'content': text}])
     store = social_state.appraisal_store()
-    from colony_sidecar.self_model import appraisals
-    with ledger._connect() as db, db:
-        appraisals.enqueue(db, 'preference', 'person', [{'role': 'user', 'content': text}], scope='person')
-    await store.process_one(Processor(lambda p: observation(p, kind='preference',
-        dimension='communication', hint='keep_concise')))
+    from types import SimpleNamespace
+    store.test_clock = SimpleNamespace(value=store.clock())
+    admitted_preference(store, 'preference')
     prior, sources = social_state.appraisal_context(contact_id='person', session_id='earlier', query='export task')
-    hint = 'Keep relevant explanations concise.'
+    hint = text
     assert hint in prior and sources
     watermark = ledger.erasure_feed(contact_id='person', after=0)['head']
     request = {'messages': [

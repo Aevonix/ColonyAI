@@ -1,6 +1,6 @@
 """Read current attributed engagement observations; retain numeric history only.
 
-Canonical AppraisalStore owns new preference/person interpretation. Legacy
+Canonical source claims own preferences; AppraisalStore projects them. Legacy
 aggregates remain inspectable but no longer produce psychological certainty.
 """
 from __future__ import annotations

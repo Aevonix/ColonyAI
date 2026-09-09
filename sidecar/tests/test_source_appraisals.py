@@ -61,6 +61,28 @@ def view(store, **kwargs):
     return store.view('person', viewer_contact_id='owner', **kwargs)
 
 
+def admitted_preference(store, name, *, value='concise explanations', prior=None, operation='assert'):
+    """Controlled canonical admission, through the real validator and commit."""
+    from colony_sidecar.beliefs.source_claims import validated_claims
+    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    with store.ledger._connect() as conn:
+        row = dict(conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (name,)).fetchone())
+    message = json.loads(row['messages_json'])[0]
+    claims = validated_claims(json.dumps([{'subject': 'I', 'predicate': 'explanation preference',
+        'value': value, 'evidence': message['content'], 'operation': operation,
+        'prior_claim_id': prior['id'] if prior else None,
+        'memory_kind': 'preference', 'recall_reason': 'A stated recurring explanation preference.',
+        'valid_from_text': None, 'valid_to_text': None, 'event_at_text': None}]),
+        message=message['content'], prior=[prior] if prior else [], observed_at=row['occurred_at'])
+    assert len(claims) == 1
+    claims[0]['admission_review'] = {'version': 'source-claim-review-v1',
+        'basis': 'model_judgment_unverified', 'reason': 'The source supports a standing preference.',
+        'model_provenance': {'model_id': 'controlled-reviewer'}}
+    projection = SourceClaimProjection(store.ledger)
+    assert projection.commit(row, message, claims, model='controlled-extractor') == 1
+    return projection.preferences(row['contact_id'], now=store.test_clock.value)[0]
+
+
 @pytest.mark.asyncio
 async def test_incident_changes_relevant_decision_replay_does_not_reinforce_and_repair_settles(state):
     assert view(state)['behavior_hints'] == []
@@ -97,8 +119,8 @@ async def test_private_views_stay_private_preference_has_attribution_and_values_
     assert private_view['sources'][0]['source_contact_id'] == 'person'
     assert 'frustration' not in json.dumps(private_view)
     assert state.view('person', viewer_contact_id='stranger')['records'] == []
-    source(state, 'preference', 'Please use concise explanations for export diagnostics.')
-    await state.process_one(Processor(lambda p: observation(p, kind='preference', dimension='communication', hint='keep_concise')))
+    source(state, 'preference', 'I prefer concise explanations for export diagnostics.')
+    admitted_preference(state, 'preference')
     allowed = state.view('person', viewer_contact_id='person')
     assert len(allowed['records']) == 1 and allowed['records'][0]['kind'] == 'preference'
     assert allowed['sources'][0]['source_contact_id'] == 'person'
@@ -209,12 +231,7 @@ async def test_canonical_preference_changes_cached_profiler_and_erasure_removes_
     try:
         assert 'concise explanations' not in (await profiler.profile('person')).render()
         source(state, 'preference', 'I prefer concise explanations.')
-        def preference(payload):
-            return observation(payload, kind='preference', dimension='communication',
-                topic='communication', hint='keep_concise') | {
-                    'text': 'The contact explicitly prefers concise explanations.',
-                    'reason': 'Use their stated communication preference.'}
-        await state.process_one(Processor(preference))
+        admitted_preference(state, 'preference')
         # No new contact interaction or scheduled profile refresh required.
         assert 'concise explanations' in profiler.cached('person').render()
         assert engagement.get_profile('person')['dims'] == {}
@@ -347,12 +364,88 @@ async def test_duplicate_claim_across_sources_cannot_support_behavior_hypothesis
 
 
 @pytest.mark.asyncio
-async def test_communication_hint_determines_preference_dimension(state):
+async def test_canonical_preference_retains_recurring_scope_without_generated_hint(state):
     source(state, 'preference', 'I prefer worked examples with detailed explanations of SQL queries.')
-    await state.process_one(Processor(lambda p: observation(p, kind='preference',
-        dimension='detail', topic='SQL queries', hint='allow_more_detail') | {
-            'text': 'The contact explicitly requests detailed worked examples.',
-            'reason': 'Apply the requested explanation style.'}))
+    admitted_preference(state, 'preference', value='worked examples with detailed explanations of SQL queries')
     record = view(state, query='SQL queries')['records'][0]
-    assert record['dimension'] == 'communication'
-    assert view(state, query='SQL queries')['behavior_hints'][0]['hint'] == 'allow_more_detail'
+    assert record['text'] == 'I prefer worked examples with detailed explanations of SQL queries.'
+    assert record['authorship'] == 'canonical_source_claim'
+    assert view(state, query='SQL queries')['behavior_hints'] == []
+    assert view(state, query='garden planning')['records'] == []
+
+
+@pytest.mark.asyncio
+async def test_appraisal_cannot_create_permanent_artifact_preference(state):
+    source(state, 'caption', 'Make this one caption short.')
+    await state.process_one(Processor(lambda p: observation(p, kind='preference',
+        dimension='communication', topic='caption', hint='keep_concise')))
+    assert not view(state)['records'] and not view(state)['behavior_hints']
+    with state.ledger._connect() as conn:
+        assert conn.execute('SELECT count(*) FROM appraisal_records').fetchone()[0] == 0
+        assert conn.execute('SELECT error FROM appraisal_runs').fetchone()[0] == 'ValueError'
+
+
+def test_canonical_preference_owner_correction_is_remembered_and_not_resurrected(state):
+    source(state, 'preference', 'I prefer concise explanations for SQL queries.')
+    pref = admitted_preference(state, 'preference')
+    with pytest.raises(ValueError, match='owner_correction_required'):
+        state.correct(pref['id'], action='withdraw', correction_id='fix', reason='Wrong scope', actor_id='person')
+    args = dict(action='withdraw', correction_id='fix', reason='Only the weekly query review', actor_id='owner')
+    correction = state.correct(pref['id'], **args)
+    assert correction['created'] is True
+    assert state.correct(pref['id'], **args)['created'] is False
+    assert view(state)['records'] == []
+    with state.ledger._connect() as conn:
+        retained = conn.execute('SELECT messages_json FROM turn_sources WHERE turn_id=?', (correction['source_id'],)).fetchone()[0]
+        assert 'Only the weekly query review' in retained
+    state.ledger.erase_sources(contact_id='person', turn_ids=[correction['source_id']])
+    assert view(state)['records'] == []
+
+
+def test_current_canonical_preference_correction_replaces_claim_and_no_cross_person_view(state):
+    source(state, 'old', 'I prefer concise explanations for SQL queries.')
+    old = admitted_preference(state, 'old')
+    state.test_clock.value += 1
+    source(state, 'new', 'Correction: I prefer worked examples for SQL queries, not concise explanations.')
+    admitted_preference(state, 'new', value='worked examples', prior=old, operation='correct')
+    records = view(state)['records']
+    assert len(records) == 1 and records[0]['value'] == 'worked examples'
+    assert state.view('person', viewer_contact_id='stranger')['records'] == []
+    state.ledger.erase_sources(contact_id='person', turn_ids=['new'])
+    assert view(state)['records'] == []
+
+
+@pytest.mark.parametrize('change', ['unreviewed', 'reassigned', 'future', 'expired'])
+def test_unqualified_canonical_preference_never_governs(state, change):
+    source(state, 'preference', 'I prefer concise explanations.')
+    pref = admitted_preference(state, 'preference')
+    with state.ledger._connect() as conn, conn:
+        if change == 'unreviewed':
+            data = json.loads(conn.execute('SELECT data_json FROM source_claims WHERE id=?', (pref['id'],)).fetchone()[0])
+            del data['admission_review']
+            conn.execute('UPDATE source_claims SET data_json=? WHERE id=?', (json.dumps(data), pref['id']))
+        elif change == 'reassigned':
+            conn.execute('UPDATE turn_sources SET contact_id=? WHERE turn_id=?', ('other', 'preference'))
+            conn.execute('INSERT INTO source_attribution_invalidations VALUES (?,?,?)', ('preference', 'person', 'other'))
+        else:
+            field, offset = ('valid_from', 60) if change == 'future' else ('valid_to', -60)
+            stamp = datetime.fromtimestamp(state.test_clock.value + offset, timezone.utc).isoformat()
+            conn.execute(f'UPDATE source_claims SET {field}=? WHERE id=?', (stamp, pref['id']))
+    assert view(state)['records'] == []
+    assert state.view('other', viewer_contact_id='other')['records'] == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_preference_is_history_only_and_owner_withdrawal_still_fences_source(state, monkeypatch):
+    source(state, 'preference', 'I prefer concise explanations for SQL queries.')
+    with monkeypatch.context() as old:
+        old.setattr(module, 'KINDS', module.KINDS | {'preference'})
+        old.setattr(module, 'DIMENSIONS', {**module.DIMENSIONS, 'preference': {'communication'}})
+        await state.process_one(Processor(lambda p: observation(p, kind='preference',
+            dimension='communication', hint='keep_concise')))
+    assert view(state)['records'] == [] and view(state)['behavior_hints'] == []
+    history = view(state, history=True)['records']
+    assert len(history) == 1 and history[0]['governing'] is False
+    state.correct(history[0]['id'], action='withdraw', correction_id='legacy-fix', reason='Incorrect interpretation', actor_id='owner')
+    admitted_preference(state, 'preference')
+    assert view(state)['records'] == []

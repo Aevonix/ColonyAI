@@ -18,11 +18,10 @@ from datetime import datetime
 from colony_sidecar.turns.idempotency import canonical_turn_digest, source_message_hash
 from colony_sidecar.util.model_output import final_text
 
-VERSION = 'source-appraisals-v2'
-KINDS = {'appraisal', 'preference', 'behavior_hypothesis', 'assessment', 'judgment'}
+VERSION = 'source-appraisals-v3'
+KINDS = {'appraisal', 'behavior_hypothesis', 'assessment', 'judgment'}
 DIMENSIONS = {
     'appraisal': {'frustration', 'annoyance', 'interest', 'satisfaction'},
-    'preference': {'communication', 'topic'},
     'behavior_hypothesis': {'communication', 'working_style'},
     'assessment': {'self_report'},
     'judgment': {'affinity', 'skepticism', 'reliability', 'like', 'dislike'},
@@ -38,20 +37,15 @@ the turn. Return at most four observations, each with exactly: kind, dimension,
 topic, text, reason, support, contrary, intensity, hint, repairs.
 Use only these exact kind:dimension combinations:
 appraisal: frustration, annoyance, interest, satisfaction;
-preference: communication, topic;
 behavior_hypothesis: communication, working_style;
 assessment: self_report;
 judgment: affinity, skepticism, reliability, like, dislike.
-For example "Keep future troubleshooting explanations concise" is a preference
-with dimension communication and hint keep_concise. "Make this one caption short"
-is a requirement of that artifact, not a preference observation, even if its topic
-and text repeat the one-time limitation accurately.
+Standing preferences belong to the separate canonical source-claim admission
+path. Do not emit or paraphrase a preference as an appraisal, assessment or
+behavior hypothesis. "Make this one caption short" is a requirement of that
+artifact, not an enduring view or future communication hint.
 appraisal means YOUR temporary frustration/annoyance/interest/satisfaction about
-the incident, not the speaker's feelings. preference means the speaker's explicit
-communication or topic preference expressed in a direct request or self-report,
-not a preference inferred from politeness, a fact, praise, or one task request.
-A standing preference can be limited to one recurring activity; it need not apply
-to every conversation or have repeated evidence. Preserve its actual scope.
+the incident, not the speaker's feelings.
 behavior_hypothesis requires support from distinct prior and current evidence
 describing separate experiences. One turn, even claiming repeated behavior,
 is insufficient: omit the hypothesis. Never infer personality or Big Five.
@@ -284,7 +278,33 @@ class AppraisalStore:
                 if owner and history else [])
             selected = 0
             words = _topic_words(query)
+            from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+            withdrawn = [json.loads(r['dependencies_json']) for r in self._current(conn, subject_id)
+                         if r['kind'] == 'preference' and r['status'] in {'withdrawn', 'reconsidering'}]
+            for claim in SourceClaimProjection(self.ledger).preferences(subject_id, session_id, now=self.clock()):
+                if any(d['source_id'] == claim['turn_id'] and d['message_hash'] == claim['message_hash']
+                       for deps in withdrawn for d in deps):
+                    continue
+                if words and not words & _topic_words(claim['evidence']):
+                    continue
+                records.append({'id': claim['id'], 'subject_id': subject_id, 'kind': 'preference',
+                    'topic': claim['predicate'], 'text': claim['evidence'], 'value': claim['value'],
+                    'status': 'current', 'sources': claim['sources'], 'governing': True,
+                    'certainty': 'admitted_speaker_statement_unverified',
+                    'admission_review': claim['admission_review'], 'authorship': 'canonical_source_claim'})
+                refs.extend({k: d[k] for k in ('source_id', 'source_version', 'source_contact_id')}
+                            for d in claim['sources'])
+                selected += 1
+                if selected >= max(1, min(limit, 20)):
+                    break
             for row in rows:
+                if selected >= max(1, min(limit, 20)):
+                    break
+                # Previous preference interpretations stay inspectable. They
+                # cannot compete with reviewed canonical claims or emit hints.
+                legacy_preference = row['kind'] == 'preference'
+                if legacy_preference and not (history and owner):
+                    continue
                 if row['status'] != 'current' and not (history and owner):
                     continue
                 data = json.loads(row['payload_json'])
@@ -306,7 +326,8 @@ class AppraisalStore:
                                 'created_at': row['created_at'], 'expires_at': row['expires_at'],
                                 'supersedes': row['supersedes'], 'sources': deps,
                                     'processor': json.loads(row['processor_json']), 'certainty': 'unverified_interpretation'})
-                if data['hint'] != 'none' and row['status'] == 'current' and not expired:
+                    records[-1]['governing'] = not legacy_preference
+                if not legacy_preference and data['hint'] != 'none' and row['status'] == 'current' and not expired:
                     hints.append({'hint': data['hint'], 'record_id': row['id'],
                                   **({'topic': data['topic']} if owner else {})})
                 if owner or row['kind'] == 'preference' or data['hint'] != 'none':
@@ -325,6 +346,24 @@ class AppraisalStore:
             raise ValueError('invalid_appraisal_correction')
         if not isinstance(correction_id, str) or not 1 <= len(correction_id) <= 192:
             raise ValueError('invalid_appraisal_correction')
+        if record_id.startswith('claim:'):
+            # Correct the single canonical source, not a duplicate social
+            # record. The existing annotation transaction owns replay/erasure.
+            from colony_sidecar.turns.source_annotations import append
+            with closing(self.ledger._connect()) as conn:
+                row = conn.execute('SELECT * FROM source_claims WHERE id=?', (record_id,)).fetchone()
+                data = json.loads(row['data_json']) if row else {}
+                source = self._source(conn, row['turn_id']) if row else None
+                if (source is None or row['subject_key'] != 'speaker'
+                        or data.get('memory_quality', {}).get('memory_kind') != 'preference'
+                        or data.get('admission_review', {}).get('version') != 'source-claim-review-v1'):
+                    raise ValueError('appraisal_unavailable')
+            annotation = append(self.ledger, contact_id=source['contact_id'], session_id=source['session_id'],
+                annotation_id=canonical_turn_digest(correction_id), source_id=source['turn_id'],
+                source_version=source['version'], excerpt=data['evidence'],
+                correction=f'Owner {action} of preference interpretation {record_id}: {reason}',
+                author_principal=actor_id)
+            return {**annotation, 'status': 'withdrawn' if action == 'withdraw' else 'reconsidering'}
         op = {'record_id': record_id, 'action': action, 'reason': reason, 'actor_id': actor_id}
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -378,6 +417,8 @@ class AppraisalStore:
             # Rehydrate only the already cited source spans, not an unbounded
             # history or a generated summary presented as corroboration.
             for row in heads:
+                if row['kind'] == 'preference':
+                    continue
                 if len(previous) >= 8:
                     break
                 if row['status'] not in {'current', 'withdrawn', 'reconsidering'} or not self._valid(conn, row):
@@ -423,11 +464,6 @@ class AppraisalStore:
         for item in value['observations']:
             if not isinstance(item, dict) or set(item) != {'kind', 'dimension', 'topic', 'text', 'reason', 'support', 'contrary', 'intensity', 'hint', 'repairs'}:
                 raise ValueError('invalid_appraisal_record')
-            if item['kind'] == 'preference' and item['hint'] in {'keep_concise', 'allow_more_detail'}:
-                # The bounded behavior already defines this dimension. Asking
-                # the processor to classify it again only loses useful requests
-                # to redundant labels such as "format" or "detail".
-                item = {**item, 'dimension': 'communication'}
             if item['kind'] not in KINDS or item['dimension'] not in DIMENSIONS[item['kind']] or item['hint'] not in HINTS or item['intensity'] not in {'low', 'moderate'}:
                 raise ValueError('invalid_appraisal_record')
             if any(not isinstance(item[k], str) or not 1 <= len(item[k].strip()) <= maximum for k, maximum in [('topic', 80), ('text', 360), ('reason', 360)]):

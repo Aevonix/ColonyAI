@@ -257,6 +257,42 @@ class SourceClaimProjection:
             row['diagnostics'] = data if data is not None and data['attempt'] == row['attempts'] else None
         return rows
 
+    def preferences(self, contact_id, session_id='', *, now=None, limit=20):
+        """Read admitted speaker preferences without authoring another profile.
+
+        Keep the full quotation, including a recurring activity or condition.
+        A correction makes an interpretation unsuitable as automatic guidance;
+        ordinary source recall still presents the original and its annotation.
+        """
+        from datetime import datetime, timezone
+        from colony_sidecar.turns.idempotency import canonical_turn_digest
+        stamp = datetime.fromtimestamp(time.time() if now is None else now, timezone.utc).isoformat()
+        with closing(self.ledger._connect()) as conn:
+            ids = [r[0] for r in conn.execute('''SELECT c.id FROM source_claims c
+                JOIN turn_sources s ON s.turn_id=c.turn_id
+                WHERE s.contact_id=? AND (s.scope='person' OR s.session_id=?)
+                AND c.subject_key='speaker' AND c.superseded_by IS NULL AND c.retracted_by IS NULL
+                AND json_extract(c.data_json,'$.memory_quality.memory_kind')='preference'
+                AND json_extract(c.data_json,'$.admission_review.version')='source-claim-review-v1'
+                AND json_extract(c.data_json,'$.admission_review.basis')='model_judgment_unverified'
+                AND (c.valid_from IS NULL OR c.valid_from<=?) AND (c.valid_to IS NULL OR c.valid_to>?)
+                AND NOT EXISTS (SELECT 1 FROM source_projection_erasures e WHERE e.turn_id=s.turn_id)
+                AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)
+                ORDER BY s.ingested_at DESC,c.id LIMIT ?''',
+                (contact_id, session_id, stamp, stamp, max(1, min(limit, 100))))]
+            result = []
+            for claim in self._rows(conn, contact_id, session_id, ids=ids, limit=len(ids) or 1):
+                annotations = conn.execute('SELECT target_message_hashes_json FROM source_annotations WHERE target_source_id=?',
+                                           (claim['turn_id'],)).fetchall()
+                if any(claim['message_hash'] in json.loads(r[0]) for r in annotations):
+                    continue
+                source = conn.execute('SELECT session_id,messages_json FROM turn_sources WHERE turn_id=?', (claim['turn_id'],)).fetchone()
+                result.append({**claim, 'session_id': source['session_id'], 'sources': [{
+                    'source_id': claim['turn_id'], 'source_contact_id': contact_id,
+                    'source_version': canonical_turn_digest(json.loads(source['messages_json'])),
+                    'message_hash': claim['message_hash']}]})
+        return result
+
     def prepare_context(self, beliefs, source_hits, *, contact_id, session_id, time_query: MemoryTimeQuery):
         """Expand retrieved keys into complete scoped assertion bundles.
 
