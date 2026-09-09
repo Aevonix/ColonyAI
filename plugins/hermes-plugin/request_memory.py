@@ -259,6 +259,7 @@ class RequestMemory:
         self._supplied = {}
         self._requests_seen = set()
         self._read_receipts = {}
+        self._host_inputs = {}
 
     def observe(self, scope, messages, *, user_message=None):
         # Native pre_llm_call exposes both clean content and persisted
@@ -281,12 +282,35 @@ class RequestMemory:
             self._supplied[key] = {}
             self._read_receipts[key] = {}
             self._requests_seen.discard(key)
+            self._host_inputs.pop(key, None)
             self._aliases.move_to_end(key)
             while len(self._aliases) > 32:
                 evicted, _ = self._aliases.popitem(last=False)
                 self._supplied.pop(evicted, None)
                 self._requests_seen.discard(evicted)
                 self._read_receipts.pop(evicted, None)
+                self._host_inputs.pop(evicted, None)
+
+    def observe_host_input(self, scope, messages, request_input, *, text, sources, watermark):
+        """Record typed host provenance, not marker text parsed from a quotation.
+
+        Hermes may persist original human text separately from a derived host
+        request. Retain the actual current row so native composition can fill
+        api_content after this hook. The host's exact appended block must then
+        reach the request before its structured handles count as supplied.
+        """
+        key = (scope.contact_id, scope.task_id, scope.turn_id)
+        if not scope.valid_participant or not isinstance(request_input, str) or not messages:
+            return
+        current = messages[-1]
+        if not isinstance(current, dict) or current.get('role') != 'user':
+            return
+        with self._lock:
+            if key not in self._aliases:
+                return
+            aliases, _, _, packets = self._aliases[key]
+            self._aliases[key] = aliases, current, request_input, packets
+            self._host_inputs[key] = {'text': text, 'sources': copy.deepcopy(sources), 'watermark': watermark}
 
     def register_source_read(self, scope, tool_call_id, text, result):
         """Register authentic output; it counts as supplied only at dispatch."""
@@ -322,6 +346,7 @@ class RequestMemory:
                     self._supplied.pop(key, None)
                     self._requests_seen.discard(key)
                     self._read_receipts.pop(key, None)
+                    self._host_inputs.pop(key, None)
         return list(refs.values())
 
     def __call__(self, request, scope):
@@ -331,6 +356,7 @@ class RequestMemory:
             aliases, current, current_input, packets = self._aliases.get(observed_key, ({}, None, None, set()))
             observed = observed_key in self._aliases
             read_receipts = copy.deepcopy(self._read_receipts.get(observed_key, {}))
+            host_input = copy.deepcopy(self._host_inputs.get(observed_key))
         current_content = current.get('api_content', current.get('content')) if current else None
         deadline = time.monotonic() + .25
         watermark, rules, fresh = 0, [], False
@@ -374,6 +400,14 @@ class RequestMemory:
             current_packet = _native_packet(current)
             packets = packets | ({current_packet.group()} if current_packet else set())
             supplied = {}
+            if host_input and host_input['watermark'] == watermark and host_input['text']:
+                enriched = current.get('api_content') if current else None
+                if (isinstance(enriched, str) and isinstance(current_input, str)
+                        and enriched.startswith(current_input)
+                        and host_input['text'] in enriched[len(current_input):]
+                        and any(host_input['text'] in value for value in actual_texts)):
+                    for ref in host_input['sources']:
+                        supplied[(ref['source_id'], ref['source_version'])] = ref
             for name in ('messages', 'input'):
                 for row in filtered.get(name, []) if isinstance(filtered.get(name), list) else []:
                     receipt = _read_receipt(row, read_receipts) if isinstance(row, dict) else None

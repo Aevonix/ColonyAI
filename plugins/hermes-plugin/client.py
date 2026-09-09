@@ -1538,6 +1538,19 @@ class TurnOutbox:
                 break
         return delivered_count
 
+    def lookup(self, turn_id: str) -> dict[str, Any] | None:
+        """Read one exact queued source without decoding unrelated history."""
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT turn_id, payload_json, state FROM turn_outbox WHERE turn_id=?",
+                (turn_id,),
+            ).fetchone()
+            return ({"turn_id": row["turn_id"], "payload": json.loads(row["payload_json"]),
+                     "state": row["state"]} if row is not None else None)
+        finally:
+            connection.close()
+
     def snapshot(self) -> list[dict[str, Any]]:
         connection = self._connect()
         try:

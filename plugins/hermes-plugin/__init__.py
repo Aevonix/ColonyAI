@@ -42,6 +42,7 @@ from . import followups as followup_tools
 from . import source_forget
 from . import source_annotate
 from . import source_read
+from . import input_provenance
 
 from .colony_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS as _CATALOG_ACTION_MODEL_TOOL_SCHEMAS,
@@ -725,6 +726,11 @@ def _tool_execution_middleware(**kwargs: Any) -> Any:
             if reason:
                 return _canonical_json({'error': 'Current participant authority could not be confirmed',
                     'status': 'unavailable', 'reason': reason, 'effect_performed': False, 'approval_created': False})
+        validate_input = kwargs.get('revalidate_input')
+        if callable(validate_input) and not validate_input(scope):
+            return _canonical_json({'error': 'The admitted source input is no longer available',
+                'status': 'unavailable', 'reason': 'source_input_unavailable',
+                'effect_performed': False, 'approval_created': False})
         if not governed:
             if scope is None or not scope.valid_participant:
                 return _canonical_json({"error": "Native tool withheld: exact participant authority is unavailable",
@@ -2375,6 +2381,9 @@ def register(ctx: Any) -> None:
             attested_system_platforms=attested_system_platforms,
         )
         _TRANSPORT_SCOPES.put(scope)
+        supplied_input = input_provenance.current()
+        if supplied_input is not None:
+            supplied_input.bind(scope, str(kwargs.get('parent_session_id') or ''))
         native_context = (native_drafts.bind(scope, work_coordinator, kwargs)
                           if native_drafts is not None else None)
         if native_drafts is None or not native_drafts.worker:
@@ -2386,6 +2395,15 @@ def register(ctx: Any) -> None:
             local_work.bind_selected(scope, work_coordinator, kwargs)
         if execution_observer is not None:
             execution_observer.start(scope, review_parent=parent if review else None, **kwargs)
+        if supplied_input is not None and check_supplied_input(scope):
+            watermark, _ = turn_outbox.erasure_state(scope.contact_id)
+            inherited = supplied_input.context(watermark)
+            _, inherited_sources = supplied_input.parents()
+            request_memory.observe_host_input(scope, kwargs.get('conversation_history') or [],
+                kwargs.get('user_message'), text=inherited, sources=inherited_sources, watermark=watermark)
+            if inherited:
+                existing = native_context.get('context', '') if isinstance(native_context, dict) else (native_context or '')
+                native_context = {'context': '\n\n'.join(filter(None, (existing, inherited)))}
         return native_context
 
     def post_llm_call(**kwargs: Any) -> None:
@@ -2395,10 +2413,12 @@ def register(ctx: Any) -> None:
             task_id=str(kwargs.get("task_id") or ""),
             turn_id=str(kwargs.get("turn_id") or ""),
         )
+        supplied_input = input_provenance.current()
+        input_allowed = check_supplied_input(scope)
         supplied_sources = request_memory.finish(task_id=str(kwargs.get('task_id') or ''),
             turn_id=str(kwargs.get('turn_id') or ''), contact_id=scope.contact_id if scope else None)
         from .evidence import native_work_capture_excluded
-        if (scope is None or not scope.valid_participant or scope.platform == "background_review"
+        if (not input_allowed or scope is None or not scope.valid_participant or scope.platform == "background_review"
                 or native_work_capture_excluded()
                 or local_work.ACTIVE.get() is not None
                 or (native_drafts is not None and native_drafts.worker)):
@@ -2437,6 +2457,16 @@ def register(ctx: Any) -> None:
             "model": str(kwargs.get("model") or ""),
             "sender": {"platform": scope.platform, "user_id": scope.sender_id},
         }
+        if supplied_input is not None:
+            # The host already admitted the human input. This native turn is
+            # derived work, not another human statement containing its task
+            # wrapper. Normal backend admission validates these exact parents.
+            parents, inherited_sources = supplied_input.parents()
+            payload.pop('user_message')
+            payload['summary'] = ''
+            payload['assistant_input_refs'] = parents
+            supplied_sources = list({(ref['source_id'], ref['source_version']): ref
+                for ref in [*inherited_sources, *supplied_sources]}.values())
         if assistant_message and supplied_sources:
             payload['assistant_source_refs'] = supplied_sources
         if kwargs.get("occurred_at"):
@@ -2461,6 +2491,8 @@ def register(ctx: Any) -> None:
                 "durable Hermes turn enqueue failed (%s)", type(error).__name__,
             )
             return None
+        if supplied_input is not None:
+            supplied_input.completed(scope, stable_turn_id, supplied_sources)
         if receipt.get("state") == "pending":
             try:
                 def deliver_turn(
@@ -2537,6 +2569,18 @@ def register(ctx: Any) -> None:
             # transport interruptions; shadow remains observational.
             return _GUARD_WITHHELD_TEXT if mode == "enforce" else None
 
+    def check_supplied_input(scope, outcome=None):
+        supplied_input = input_provenance.current()
+        if supplied_input is None:
+            return True
+        try:
+            outcome = outcome or request_memory({'messages': []}, scope)
+            _, rules = turn_outbox.erasure_state(supplied_input.contact_id)
+            return supplied_input.allowed(scope,
+                fresh=outcome['reason'] == 'source_erasure_checked', rules=rules)
+        except Exception:
+            return supplied_input.allowed(scope, fresh=False, rules=[])
+
     # Register the context carrier before any model-visible handler.
     def observe_tool(**kwargs):
         next_call = kwargs.get("next_call")
@@ -2562,7 +2606,8 @@ def register(ctx: Any) -> None:
                 })
             return next_call(args)
         return _tool_execution_middleware(**{**kwargs, "next_call": observed,
-            'revalidate_participant': lambda scope: _current_participant(client, scope)})
+            'revalidate_participant': lambda scope: _current_participant(client, scope),
+            'revalidate_input': check_supplied_input})
     ctx.register_middleware("tool_execution", observe_tool)
 
     def reconcile_request(request, **kwargs):
@@ -2575,6 +2620,9 @@ def register(ctx: Any) -> None:
             task_id=str(kwargs.get('task_id') or ''),
             turn_id=str(kwargs.get('turn_id') or ''))
         result = request_memory(request, scope)
+        if not check_supplied_input(scope, result):
+            result['request'] = input_provenance.withheld_request(result['request'])
+            result['reason'] = 'source_input_unavailable'
         result['request'] = describe(result['request'])
         result['request'] = request_work(
             result['request'], scope, api_mode=str(kwargs.get('api_mode') or ''))

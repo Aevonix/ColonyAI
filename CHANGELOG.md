@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.0.32 - captured input through native tasks
+
+An authenticated host can bind already captured input to the existing native
+agent loop using exact input hashes and source revisions. Participant binding
+remains a consistency check, not an authority grant. The host may display the
+original human message while sending a derived task instruction; the canonical
+writer records the assistant reply with its dependencies without adding that
+instruction as another human statement.
+
+Inherited handles become available to the scoped source reader only after the
+host's exact appended block reaches the native request. Source quotations cannot
+introduce additional handles. Existing erasure checks run before requests,
+tools and the final writer, and copied host contexts close when their owning
+call exits. A new indexed outbox lookup reads one exact source without decoding
+unrelated history. Hosts receive output dependencies for revalidation before
+delayed delivery or further effects; native transcripts and historical unlinked
+paraphrases remain outside the canonical erasure guarantee.
+
+The memory provider now describes its own four interfaces without claiming
+they are the only tools on a surface that also loads the native adapter. The
+sidecar runtime is unchanged. Both packages remain version-aligned. See the
+[adapter guide](docs/HERMES-ADAPTER.md) and
+[supplied-input contract](plugins/hermes-plugin/SUPPLIED-INPUT.md).
+
 ## v1.0.31 - attributed corrections in evidence ranking
 
 The existing reranker receives attributed source corrections before the original
