@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.0.26 - explicit legacy compatibility boundaries
+
+Goal record imports no longer eagerly load optional decomposition, inference and
+replanning modules. Explicit legacy exports retain their original class identity.
+In live native cognition mode, the deprecated goal-creation endpoint returns a
+conflict with a current acceptance hint instead of accepting work without native
+execution authority. Historical goal reads, updates and reported completion remain
+available; off and shadow modes keep their legacy creation contract. Existing
+goals are neither deleted nor automatically adopted into native tasks.
+
+Legacy persona setup reports that host identity, configuration overlays and
+plugins were not installed by its logging-only host step. Its service, channel
+and saved-manifest compatibility remains. New installations use `colony init`.
+Existing manifests and configured graph stores still need proven export/restore
+migrations before their compatibility paths can be retired.
+
+This release does not change semantic memory admission or claim a memory-quality
+increase. Hermes 0.21.1 remains the qualified runtime.
+
 ## v1.0.25 - runtime repairs and removal of unused scaffolding
 
 Native feed tools now use the calling tool context when recording their origin,

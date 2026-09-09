@@ -124,7 +124,11 @@ class PersonaEngine:
 
         if self._manifest.host:
             self._apply_host_config()
-            summary["steps"].append("host_config")
+            summary["warnings"] = [
+                "Host settings were not applied: legacy persona setup only logs "
+                "identity, config overlay and plugin paths. Use the host's setup "
+                "to install those settings."
+            ]
 
         if self._manifest.colony:
             self._apply_colony_config()
@@ -226,6 +230,7 @@ class PersonaEngine:
     # ── Host config ──────────────────────────────────────────────────────
 
     def _apply_host_config(self) -> None:
+        """Log declared host paths; legacy setup does not install host settings."""
         host = self._manifest.host
         if not host:
             return

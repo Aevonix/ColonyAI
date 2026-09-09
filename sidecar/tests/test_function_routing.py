@@ -83,7 +83,9 @@ async def test_named_functions_never_open_the_legacy_learner_database(tmp_path, 
     monkeypatch.setattr(self_learning, '_DEFAULT_DB', database)
     with endpoint() as (url, calls):
         r = LLMRouter(tiers={})
-        r.configure(config(url, url))
+        # This checks learner isolation, not timeout failover. Allow a cold
+        # HTTP client and a busy CI runner without expiring the first attempt.
+        r.configure(config(url, url, timeoutSeconds=10, deadlineSeconds=20))
         result = await complete(r)
         r.record_outcome(result.request_id, result.tier_used, .9, 12, 1)
         assert result.binding == 'interactive' and len(calls) == 1

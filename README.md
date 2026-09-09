@@ -18,9 +18,10 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.25 repairs native feed attribution and removes unused runtime
-scaffolding. The [changelog](CHANGELOG.md) records the remaining compatibility
-surfaces and the limits of this maintenance release.
+Version 1.0.26 separates legacy goal readers from planner imports and directs
+new work in live native mode through current acceptance. Legacy persona setup
+reports host settings that it cannot apply. The [changelog](CHANGELOG.md) records
+the retained compatibility surfaces and the limits of this maintenance release.
 
 The lightweight installation starts with memory and observation. Extended
 autonomy loops, public channels, voice systems and hardware need explicit

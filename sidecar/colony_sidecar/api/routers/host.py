@@ -4886,8 +4886,26 @@ def set_goals_engine(engine) -> None:
     _goals_store = engine
 
 
-@router.post("/goals", response_model=GoalResponse)
+@router.post("/goals", response_model=GoalResponse, deprecated=True)
 async def create_goal(body: GoalCreateRequest) -> GoalResponse:
+    """Create a legacy goal only outside live native cognition.
+
+    Historical goal records remain readable and updatable in every mode. This
+    request does not carry the current owner/session/turn acceptance required
+    to adopt work into the native path.
+    """
+    from colony_sidecar.cognition.goal_spine import cognition_spine_exclusive
+
+    if cognition_spine_exclusive():
+        raise HTTPException(status_code=409, detail={
+            "reason": "legacy_goal_creation_unavailable",
+            "next_action": (
+                "For a local draft, use /v1/host/commitments/local-draft through "
+                "the current owner session with an explicit acceptance turn "
+                "and source paths. Other work requires its current supported "
+                "acceptance flow; a legacy goal cannot supply that authority."
+            ),
+        })
     if _goals_store is None:
         raise HTTPException(status_code=501, detail=_NOT_WIRED)
     try:

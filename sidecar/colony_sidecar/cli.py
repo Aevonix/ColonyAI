@@ -2557,7 +2557,12 @@ def _cmd_persona(args) -> None:
             for err in summary["errors"]:
                 print(f"    - {err}")
             raise SystemExit(1)
-        print(f"  Persona '{manifest.name}' setup complete")
+        if summary.get("warnings"):
+            print(f"  Persona '{manifest.name}' setup finished with unapplied settings")
+            for warning in summary["warnings"]:
+                print(f"  {warning}")
+        else:
+            print(f"  Persona '{manifest.name}' setup complete")
         print(f"  Steps: {', '.join(summary.get('steps', []))}")
 
     elif cmd == "services":
