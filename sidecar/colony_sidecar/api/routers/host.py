@@ -2924,6 +2924,16 @@ async def context_assemble(
         except Exception as exc:
             logger.debug("context_assemble owner preferences failed: %s", exc)
 
+    # ToM2 stores knowledge inferences about these facts, not interpretations
+    # of later corrections. Keep ordinary annotated recall separate.
+    _tom2_facts = None
+    if _tom2_store is not None and _tom_context_facts is not None and _facts_store is not None:
+        try:
+            from colony_sidecar.tom.facts import InferenceFactsView
+            _tom2_facts = InferenceFactsView(_tom_context_facts, _facts_store._ledger())
+        except Exception:
+            logger.debug('ToM2 canonical ledger unavailable', exc_info=True)
+
     # --- Second-order theory of mind (owner ONLY, H3.3) ---
     # Who knows / is unaware of what is the owner's lens on their own world.
     # Double-keyed: COLONY_TOM2_CONTEXT (default off) turns the section on,
@@ -2931,7 +2941,7 @@ async def context_assemble(
     # widen the audience, so a non-owner context stays tom2-free even with
     # the flag set (test-locked).
     if _tom2_store is not None and contact_id \
-            and _tom_context_facts is not None:
+            and _tom2_facts is not None:
         try:
             from colony_sidecar.tom.asymmetry import tom2_context_enabled
             from colony_sidecar.identity import get_owner_contact_id
@@ -2939,8 +2949,7 @@ async def context_assemble(
             if (tom2_context_enabled() and _owner_cid
                     and contact_id == _owner_cid):
                 _tom2_body = _render_tom2_context(
-                    facts_store=_tom_context_facts,
-                    strict_projection=_p8_runtime is not None,
+                    facts_store=_tom2_facts,
                 )
                 if _tom2_body:
                     sections.append(ContextSection(
@@ -2954,11 +2963,11 @@ async def context_assemble(
 
     # --- Leveled cross-contact tom2 (L4.2) — NON-owner readers only. ---
     # The flip point of the leveled system (docs/TOM2-LEVELS.md). The H3.3
-    # owner block above is untouched and test-locked. This block is
+    # owner audience above remains separate and test-locked. This block is
     # default-inert: COLONY_TOM2_LEVEL=0 (shipped) skips it entirely — the
     # same variable is the single-var kill switch — and fail-closed: ANY
     # error anywhere inside renders no section (lowest level wins).
-    if _tom2_store is not None and _tom_context_facts is not None \
+    if _tom2_store is not None and _tom2_facts is not None \
             and contact_id:
         try:
             from colony_sidecar.tom.levels import (
@@ -2975,7 +2984,7 @@ async def context_assemble(
                     contacts_store=_contacts_store)
                 if _lres.level >= 1:
                     from colony_sidecar.tom.leveled import render_level1
-                    _l1_body = render_level1(_tom2_store, _tom_context_facts,
+                    _l1_body = render_level1(_tom2_store, _tom2_facts,
                                              contact_id)
                     if _l1_body:
                         sections.append(ContextSection(
@@ -2994,7 +3003,7 @@ async def context_assemble(
                         _tom2_store.list_inferences(limit=100), limit=3,
                         reader_contact_id=contact_id,
                         conversation_key=_conv_key,
-                        facts_store=_tom_context_facts,
+                        facts_store=_tom2_facts,
                         contacts_store=_contacts_store,
                         presence_store=_presence_store,
                         approval_check=(_reg.is_approved
@@ -3031,7 +3040,7 @@ async def context_assemble(
                                 fact_ref=str(_row.get("fact_ref") or ""),
                                 kind=str(_row.get("kind") or ""))
                             _booked.append(_row)
-                    _l2_body = render_level2(_booked, _tom_context_facts,
+                    _l2_body = render_level2(_booked, _tom2_facts,
                                              contact_id, limit=3)
                     if _l2_body:
                         sections.append(ContextSection(
@@ -3149,6 +3158,10 @@ async def context_assemble(
             await _telemetry.touch("last_prefetch_at")
         except Exception:
             pass
+
+    if _tom2_facts is not None and not _tom2_facts.current():
+        sections = [s for s in sections if s.id not in {
+            'colony-tom2', 'colony-tom2-l1', 'colony-tom2-l2'}]
 
     return ContextAssembleResponse(
         sections=sections,
@@ -7499,7 +7512,6 @@ def _render_tom2_context(
     max_lines: int = 8,
     *,
     facts_store: Any = _DEFAULT_TOM_FACTS_STORE,
-    strict_projection: bool = False,
 ) -> str:
     """Compact owner-context rendering of the freshest asymmetries.
 
@@ -7508,20 +7520,18 @@ def _render_tom2_context(
     owner's context — the caller enforces that."""
     if _tom2_store is None:
         return ""
-    resolved_facts = (
-        _facts_store
-        if facts_store is _DEFAULT_TOM_FACTS_STORE else facts_store
-    )
+    resolved_facts = facts_store
+    if facts_store is _DEFAULT_TOM_FACTS_STORE:
+        from colony_sidecar.tom.facts import InferenceFactsView
+        resolved_facts = (InferenceFactsView(_facts_store.automatic_view(), _facts_store._ledger())
+                          if _facts_store is not None else None)
     rows = _tom2_store.list_inferences(kind="unaware_of", limit=50)
     lines = []
-    candidates = rows if strict_projection else rows[:max_lines]
-    for r in candidates:
+    for r in rows:
         subject = ""
         if resolved_facts is not None:
             try:
-                refs = [r.get("fact_ref")]
-                if strict_projection:
-                    refs += list(r.get("evidence_refs") or [])
+                refs = [r.get("fact_ref")] + list(r.get("evidence_refs") or [])
                 visible = [
                     resolved_facts.get_fact(str(ref or ""))
                     for ref in refs
@@ -7532,9 +7542,7 @@ def _render_tom2_context(
             except Exception:
                 subject = ""
         if not subject:
-            if strict_projection:
-                continue
-            subject = f"a shared fact ({r.get('fact_ref')})"
+            continue
         lines.append(
             f"- {r.get('contact_id')} appears unaware of: {subject} "
             f"(confidence {float(r.get('confidence') or 0):.2f})")
@@ -7542,9 +7550,6 @@ def _render_tom2_context(
             break
     if not lines:
         return ""
-    if not strict_projection and len(rows) > max_lines:
-        lines.append(f"... and {len(rows) - max_lines} more "
-                     "(GET /v1/host/tom2/report)")
     return "\n".join(lines)
 
 

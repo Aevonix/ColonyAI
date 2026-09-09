@@ -60,6 +60,12 @@ def render_level1(tom2_store: Any, facts_store: Any, reader_contact_id: str,
             continue                                # never a third party
         kind = row.get("kind")
         if kind == "unaware_of":
+            try:
+                refs = [row.get('fact_ref')] + list(row.get('evidence_refs') or [])
+                if any(facts_store.get_fact(str(ref or '')) is None for ref in refs):
+                    continue
+            except Exception:
+                continue
             saw_unaware = True                      # content-free, collapsed
             continue
         if kind != "knows":

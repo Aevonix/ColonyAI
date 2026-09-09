@@ -18,6 +18,7 @@ from colony_sidecar.api.schemas.host import (
 from colony_sidecar.tom.asymmetry import tom2_context_enabled
 from colony_sidecar.tom.facts import SharedFactsStore
 from colony_sidecar.tom.tom2 import Tom2Store
+from colony_sidecar.turns import TurnIdempotencyLedger
 
 OWNER = "cid-owner-test"
 
@@ -33,11 +34,16 @@ def _req(cid):
 @pytest.fixture()
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", OWNER)
-    facts = SharedFactsStore(db_path=str(tmp_path / "facts.db"))
+    ledger = TurnIdempotencyLedger(tmp_path / "turns.db")
+    ledger.record_source("fixture-source", contact_id="cid-alice", session_id="s1",
+        messages=[{"role": "user", "content": "the release slipped to next month"}],
+        derive_claims=False)
+    facts = SharedFactsStore(db_path=str(tmp_path / "facts.db"), source_ledger=ledger)
+    lineage, _ = facts.source_input("fixture-source", "cid-alice")
     tom2 = Tom2Store(db_path=str(tmp_path / "tom2.db"))
     f = facts.create_fact(contact_id="cid-alice",
                           fact="the release slipped to next month",
-                          confidence=0.9)
+                          confidence=0.9, source_lineage=lineage)
     tom2.record_inference(contact_id="cid-bob", kind="unaware_of",
                           fact_ref=f["id"], confidence=0.4)
     tom2.record_inference(contact_id="cid-alice", kind="knows",

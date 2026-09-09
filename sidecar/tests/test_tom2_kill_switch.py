@@ -28,6 +28,7 @@ from colony_sidecar.tom.facts import SharedFactsStore
 from colony_sidecar.tom.levels import (
     clear_level_cache, resolve_effective_level, set_evidence_probe)
 from colony_sidecar.tom.tom2 import Tom2Store
+from colony_sidecar.turns import TurnIdempotencyLedger
 
 OWNER = "cid-owner-test"
 READER = "cid-alice"
@@ -82,8 +83,13 @@ def _reset():
 @pytest.fixture()
 def world(monkeypatch, tmp_path):
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", OWNER)
-    facts = SharedFactsStore(db_path=str(tmp_path / "facts.db"))
-    f = facts.create_fact(contact_id=READER, fact=FACT_TEXT, confidence=0.9)
+    ledger = TurnIdempotencyLedger(tmp_path / "turns.db")
+    ledger.record_source("fixture-source", contact_id=READER, session_id="s1",
+        messages=[{"role": "user", "content": FACT_TEXT}], derive_claims=False)
+    facts = SharedFactsStore(db_path=str(tmp_path / "facts.db"), source_ledger=ledger)
+    lineage, _ = facts.source_input("fixture-source", READER)
+    f = facts.create_fact(contact_id=READER, fact=FACT_TEXT, confidence=0.9,
+                          source_lineage=lineage)
     tom2 = Tom2Store(db_path=str(tmp_path / "tom2.db"))
     tom2.record_inference(contact_id=SUBJECT, kind="unaware_of",
                           fact_ref=f["id"], confidence=0.4)

@@ -284,3 +284,40 @@ class AutomaticFactsView:
 
     def list_facts(self, **kwargs):
         return self._store.list_facts(**{**kwargs, 'source_linked_only': True})
+
+
+class InferenceFactsView:
+    """ToM2 cannot reuse an old knowledge inference across a source correction.
+
+    Ordinary recall can bundle attributed corrections with the original. The
+    compact knowledge renderers cannot represent that packet, so omit the
+    inference while retaining its fact and correction for explicit inspection.
+    """
+
+    def __init__(self, view, ledger):
+        self._view, self._ledger = view, ledger
+        self._read = {}
+
+    def get_fact(self, fact_id):
+        from colony_sidecar.turns.source_annotations import expand
+        try:
+            row = self._view.get_fact(fact_id)
+            lineage = (row or {}).get('source_lineage') or {}
+            if not lineage.get('message_hashes'):
+                return None
+            source = lineage['turn_id']
+            packet = expand(self._ledger, [{
+                'id': fact_id, 'content': row['fact'], 'source_turn_id': source,
+                '_source_message_hashes': {source: lineage['message_hashes']},
+            }], contact_id=row['contact_id'], session_id=lineage['session_id'])
+            if len(packet) != 1 or packet[0].get('_annotation_ids'):
+                return None
+            self._read.setdefault(fact_id, row)
+            return row
+        except Exception:
+            logger.debug('ToM2 source correction check unavailable', exc_info=True)
+            return None
+
+    def current(self):
+        """Recheck after other context producers may have awaited work."""
+        return all(self.get_fact(key) == row for key, row in list(self._read.items()))
