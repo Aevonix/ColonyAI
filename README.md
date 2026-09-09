@@ -18,12 +18,12 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.28 opens complete canonical sources when recollection is partial,
-preserves uncertain event times and gives lasting preferences one source of
-authorship. Native tools recheck a sender's current identity before execution.
-Forecast outcomes retain observed processor provenance, and a memory-only
-recovery path preserves surviving current corrections and erasures.
-The [memory guide](docs/MEMORY-QUALITY.md), [recovery guide](docs/SOURCE-MEMORY-RECOVERY.md)
+Version 1.0.29 adds bounded original audio and attributed transcript segments to
+the existing source ledger. Reviewed transcript claims retain their exact audio
+parent and recognition uncertainty through recall, correction, erasure and
+recovery. Capture remains a deployment choice; Colony does not start a microphone
+or assume that recognized words are correct.
+The [audio source guide](docs/SOURCE-AUDIO.md), [memory guide](docs/MEMORY-QUALITY.md)
 and [changelog](CHANGELOG.md) explain these behaviors and their limits.
 
 The lightweight installation starts with memory and observation. Extended

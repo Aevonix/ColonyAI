@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.0.29 - owned audio and reviewed transcript memory
+
+Bounded PCM WAV clips use the existing canonical original-asset storage, scoped
+source reader, backup and erasure paths. Paired transcripts retain segment ranges,
+recognizer provenance and distinct capture and receipt clocks. Text processors
+receive labelled transcript evidence; original audio stays behind the scoped
+asset API. Updated clients use a versioned ingestion path that older backends
+reject before accepting unsupported media.
+
+The existing extraction and admission-review jobs can form claims from exact
+retained transcript spans. Commit rechecks the current source and asset owner.
+Claims remain recognition-derived and unverified, including after correction or
+later recall. Receipt time cannot resolve an unknown speech date. Segment labels,
+unrelated text and incomplete required conditions cannot become admitted claims.
+Appraisal and personality extraction remain outside this audio path.
+
+No additional store, worker, model or Hermes patch is introduced. The bounded
+semantic qualification retained three useful sources and excluded three noise or
+fiction cases using actual extraction and review requests. Those results measure
+transcript formation, not recognition accuracy or physical voice capture.
+Deployments must qualify their own recognizer and capture adapter before enabling
+audio where they previously supplied text. See [audio sources](docs/SOURCE-AUDIO.md).
+
 ## v1.0.28 - complete source opening and coherent current state
 
 The native source reader opens exact scoped revisions and paginates long text
