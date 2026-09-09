@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.31 - attributed corrections in evidence ranking
+
+The existing reranker receives attributed source corrections before the original
+evidence, with an explicit unverified label. The supplied memory packet still
+contains the complete original, every attributed correction, unresolved conflicts
+and current source references. Ranking order does not determine which assertion
+is true. Scope, atomic packing and erasure behavior are unchanged.
+
+The candidate input format has a new calibration version. An older stamp cannot
+authorize a cutoff for the changed representation. Deployments must qualify
+useful corrected evidence and no-memory controls, then select matching code and
+calibration metadata together. No global cutoff, provider task instruction,
+additional model request or source migration is introduced. See
+[calibrated recall](docs/RECALL-HYBRID.md).
+
 ## v1.0.30 - source-linked automatic contact recall
 
 Automatic contact-knowledge context now requires a current canonical source

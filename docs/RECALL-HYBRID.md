@@ -31,8 +31,8 @@ unavailable backend searched successfully.
 
 The cutoff applies only when `COLONY_RECALL_RERANK_CALIBRATION` matches the
 SHA-256 configuration fingerprint supplied by the active reranker registration.
-The fingerprint uses the provider, model, endpoint, prompt format, optional
-weight revision, embedding configuration and optional index generation. Changing
+The fingerprint uses the provider, model, endpoint, prompt format, candidate
+input format, optional weight revision, embedding configuration and optional index generation. Changing
 those values invalidates the cutoff. Custom rerank functions can supply current
 metadata through `set_rerank_fn(..., calibration_metadata=...)`.
 
@@ -49,6 +49,22 @@ There is no universal cosine or reranker threshold. A deployment should freeze
 representative positive, paraphrased, corrected and no-answer queries, select a
 cutoff on its development subset, then test its held-out subset once. Keep that
 deployment's calibration values outside generic defaults.
+
+Version 1.0.31 identifies its candidate format as
+`grounded-quotation-bundles-v2-corrections-first`. Attributed corrections precede
+the original evidence in ranking text; all members remain in the complete output
+packet. This changes the configuration fingerprint even when the provider and
+numerical cutoff stay the same. Before selecting this version, test the intended
+cutoff against useful corrections, other useful evidence and genuine no-memory
+queries, preserving any earlier failures. A configuration match alone is not
+quality qualification, and irrelevant competitors inside useful queries do not
+replace whole-query abstention controls.
+
+Select the qualified code and its matching calibration metadata together.
+Keeping an older stamp invokes the existing mismatch fallback, which disables
+the cutoff; that is not a successful calibrated upgrade. Recovery must likewise
+pair the previous representation with its previous stamp while retaining current
+source and erasure state. No threshold fitting occurs automatically.
 
 ## Qualification
 

@@ -72,6 +72,14 @@ the evidence's topic in the reranker. The candidate input format is part of the
 calibration stamp, so changing this representation invalidates an older stamp;
 the public code does not lower or choose a global relevance threshold.
 
+For an attributed source-annotation packet, ranking text presents every exact
+correction first, labelled as not independently verified, followed by the exact
+original evidence. The output still preserves the complete original, attribution,
+all corrections and their current source references. This ordering neither
+selects a winning correction nor rewrites the source. The versioned format must
+be qualified with useful evidence and no-memory queries before selecting its
+matching calibration stamp; see [calibrated recall](RECALL-HYBRID.md).
+
 `test_source_vectors.py` exercises ordinary HTTP ingestion, the actual worker,
 cross-session context, one rerank pass, scoped prefiltering with more than 200
 foreign chunks, current-source hydration, partial and late erasure, equal-width

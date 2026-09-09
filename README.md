@@ -18,7 +18,12 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.30 requires current source evidence for automatic contact recall.
+Version 1.0.31 supplies attributed corrections first when ranking source evidence,
+while keeping the full original and correction packet intact. The changed input
+format requires matching, deployment-qualified calibration metadata; it does not
+choose or lower a global relevance cutoff.
+
+Automatic contact recall requires current source evidence.
 Historical estimates remain inspectable, but unlinked facts and their graph
 mirrors no longer enter each turn. Corrections stay attached in enriched context;
 relationship inferences with missing, changed or corrected premises are omitted.
