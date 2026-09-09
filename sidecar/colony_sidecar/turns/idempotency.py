@@ -292,12 +292,8 @@ class TurnIdempotencyLedger:
             # Media references remain in source JSON. Only explicit text
             # blocks are indexed; URLs, tool metadata and API wrappers are not.
             if isinstance(content, list):
-                content = "\n".join(
-                    block.get("text", "") for block in content
-                    if isinstance(block, dict)
-                    and block.get("type") in {"text", "input_text", "output_text"}
-                    and isinstance(block.get("text"), str)
-                )
+                from colony_sidecar.turns.audio import source_text
+                content = source_text(content)
             if not isinstance(content, str) or not content.strip():
                 continue
             # Overlap avoids losing a phrase at a chunk boundary. The full
@@ -603,7 +599,7 @@ class TurnIdempotencyLedger:
         with closing(self._connect()) as conn:
             rows = conn.execute("""
                 SELECT f.turn_id, f.role, f.content, s.session_id, s.scope,
-                       s.occurred_at, s.ingested_at
+                       s.occurred_at, s.ingested_at, s.messages_json
                 FROM turn_source_search AS f
                 JOIN turn_sources AS s ON s.turn_id=f.turn_id
                 WHERE turn_source_search MATCH ? AND s.contact_id=?
@@ -621,7 +617,13 @@ class TurnIdempotencyLedger:
             if key in seen:
                 continue
             seen.add(key)
-            result.append(dict(row))
+            value = dict(row)
+            messages = json.loads(value.pop('messages_json'))
+            from colony_sidecar.turns.audio import evidence_metadata
+            for message in messages:
+                if message.get('role') == value['role']:
+                    value.update(evidence_metadata(message))
+            result.append(value)
             if len(result) >= limit:
                 break
         return result

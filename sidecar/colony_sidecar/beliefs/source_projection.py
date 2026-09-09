@@ -129,7 +129,8 @@ class SourceClaimProjection:
         return rows[:limit]
 
     def commit(self, source, message, claims, *, model, lease_token=None):
-        from colony_sidecar.turns.idempotency import source_message_hash
+        from colony_sidecar.turns.idempotency import source_message_hash, canonical_turn_digest
+        from colony_sidecar.turns.audio import claim_message, claim_basis
         message_hash = source_message_hash(source["session_id"], message)
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -137,10 +138,17 @@ class SourceClaimProjection:
                 "SELECT 1 FROM source_claim_jobs WHERE turn_id=? AND status='running' AND lease_token=?",
                 (source["turn_id"], lease_token)).fetchone():
                 return 0
-            current = conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (source["turn_id"],)).fetchone()
-            if current is None or message_hash not in {
-                source_message_hash(current["session_id"], m) for m in json.loads(current["messages_json"])
-            }:
+            current = conn.execute('''SELECT * FROM turn_sources s WHERE turn_id=? AND NOT EXISTS
+                (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)''',
+                (source["turn_id"],)).fetchone()
+            if current is None:
+                return 0
+            current_messages = json.loads(current['messages_json'])
+            original = next((m for m in current_messages
+                if source_message_hash(current['session_id'], m) == message_hash), None)
+            current_view = claim_message(original) if original is not None else None
+            if (current_view is None or current_view.get('content') != message.get('content')
+                    or current_view.get('_audio_segments') != message.get('_audio_segments')):
                 return 0
             ids = list({claim["prior_claim_id"] for claim in claims if claim.get("prior_claim_id")})
             prior = {row["id"]: row for row in self._rows(conn, current["contact_id"], current["session_id"], ids=ids)}
@@ -149,8 +157,23 @@ class SourceClaimProjection:
                 claim = dict(raw)
                 # Validation occurs against exact current message bytes again,
                 # after model execution and after any concurrent source erase.
-                if message["content"][claim["span_start"]:claim["span_end"]] != claim["evidence"]:
+                if current_view["content"][claim["span_start"]:claim["span_end"]] != claim["evidence"]:
                     continue
+                if '_audio_segments' in current_view:
+                    basis = claim_basis(current_view, claim['span_start'], claim['span_end'])
+                    review = claim.get('admission_review', {})
+                    if (basis is None or basis != claim.get('evidence_basis')
+                            or review.get('version') != 'source-claim-review-v1'
+                            or review.get('basis') != 'model_judgment_unverified'):
+                        continue
+                    if not conn.execute('''SELECT 1 FROM source_media_links l JOIN source_media m USING(asset_hash)
+                        WHERE l.turn_id=? AND l.message_hash=? AND l.asset_hash=?
+                        AND m.mime_type='audio/wav' AND m.status='complete' ''',
+                        (source['turn_id'], message_hash, basis['segment']['asset_id'][7:])).fetchone():
+                        continue
+                    claim.update(epistemic_state='derived_unverified', source_modality='audio_transcript',
+                        evidence_basis={**basis, 'source_message_hash': message_hash,
+                            'source_version_at_formation': canonical_turn_digest(current_messages)})
                 basis = [source["turn_id"], message_hash, claim["subject_key"], claim["predicate"], claim["value"], claim["evidence"]]
                 cid = "claim:" + hashlib.sha256(json.dumps(basis, ensure_ascii=False).encode()).hexdigest()
                 if conn.execute('SELECT 1 FROM source_claims WHERE id=?', (cid,)).fetchone():
@@ -222,9 +245,12 @@ class SourceClaimProjection:
         diagnostics = extraction_diagnostics()
         try:
             for message in json.loads(job["messages_json"]):
-                # Match the text extractor's eligibility before its prior
-                # lookup. Media sources have independent caption/vector jobs;
-                # their block lists are not text search queries.
+                # Retained ASR has a deterministic derived view. Other media
+                # remains in its existing caption/source recall path.
+                from colony_sidecar.turns.audio import claim_message
+                message = claim_message(message)
+                if message is None:
+                    continue
                 content = message.get('content')
                 if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
                     continue
@@ -301,6 +327,7 @@ class SourceClaimProjection:
         unresolved conflict or reintroduce text from a corrected assertion.
         """
         from colony_sidecar.turns.idempotency import source_message_hash
+        from colony_sidecar.turns.audio import source_text
         from colony_sidecar.intelligence.graph.recall import source_candidates
         turn_ids = list(dict.fromkeys(
             [row["turn_id"] for row in source_hits] + [str(row["source_uri"])[5:] for row in beliefs
@@ -313,9 +340,9 @@ class SourceClaimProjection:
                 + ",".join("?" for _ in turn_ids) + ")", (contact_id, session_id, *turn_ids))}
             hashes = {source_message_hash(source["session_id"], message)
                       for source in sources.values() for message in json.loads(source["messages_json"])
-                      if isinstance(message.get("content"), str) and any(
+                      if any(
                           hit["turn_id"] == source["turn_id"] and hit["role"] == message.get("role")
-                          and hit["content"] in message["content"] for hit in source_hits)}
+                          and hit["content"] in source_text(message.get('content')) for hit in source_hits)}
             claims = self._rows(conn, contact_id, session_id, turn_ids=turn_ids, message_hashes=hashes, limit=512)
         by_turn, by_hash = {}, {}
         for claim in claims:
@@ -345,9 +372,7 @@ class SourceClaimProjection:
                 for message in json.loads(source["messages_json"]):
                     text = message.get("content")
                     if isinstance(text, list):
-                        text = "\n".join(block["text"] for block in text if isinstance(block, dict)
-                            and block.get("type") in {"text", "input_text", "output_text"}
-                            and isinstance(block.get("text"), str))
+                        text = source_text(text)
                     if message.get("role") != hit["role"] or not isinstance(text, str):
                         continue
                     message_claims = by_hash.get(source_message_hash(source["session_id"], message), [])
@@ -358,6 +383,14 @@ class SourceClaimProjection:
                     if offset >= 0 and hit["content"] != text:
                         hit["excerpt_truncated"] = True
                     while offset >= 0:
+                        procedures = [c for c in message_claims
+                            if c.get('memory_quality', {}).get('memory_kind') == 'procedure']
+                        if procedures:
+                            # Its unclaimed remainder may also contain a
+                            # required condition. Select the owning message,
+                            # never an independently ranked leftover fragment.
+                            keys.extend((c['subject_key'], c['predicate']) for c in procedures)
+                            removed.append((0, len(hit['content'])))
                         for claim in message_claims:
                             start = max(0, claim["span_start"] - offset)
                             end = min(len(hit["content"]), claim["span_end"] - offset)
@@ -375,10 +408,53 @@ class SourceClaimProjection:
                         retained_hits.append(dict(hit, content=fragment,
                             excerpt_truncated=bool(removed) or bool(hit.get("excerpt_truncated"))))
                 cursor = max(cursor, end)
-        bundles = []
+        bundles, procedure_sources, emitted_procedures, groups = [], {}, set(), {}
+
+        def current_group(key):
+            if key not in groups:
+                with closing(self.ledger._connect()) as conn:
+                    groups[key] = self._rows(conn, contact_id, session_id, key=key,
+                        time_query=time_query, distinct_values=True, limit=9)
+            return groups[key]
+
+        def procedure_source(claim):
+            """A property card cannot certify completeness of its procedure.
+
+            Keep the owning message together when it is still current. A
+            changed message needs the existing source/history readers instead
+            of reviving obsolete instructions from its original quotation.
+            """
+            if claim.get('memory_quality', {}).get('memory_kind') != 'procedure':
+                return None
+            identity = (claim['turn_id'], claim['message_hash'])
+            if identity not in procedure_sources:
+                with closing(self.ledger._connect()) as conn:
+                    source = conn.execute('''SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?
+                        AND (scope='person' OR session_id=?)''',
+                        (claim['turn_id'], contact_id, session_id)).fetchone()
+                    message = next((m for m in json.loads(source['messages_json'])
+                        if source_message_hash(source['session_id'], m) == claim['message_hash']), None) if source else None
+                    ids = [row['id'] for row in conn.execute(
+                        'SELECT id FROM source_claims WHERE turn_id=? AND message_hash=? LIMIT 513', identity)]
+                    all_claims = self._rows(conn, contact_id, session_id, ids=ids, limit=513)
+                    current = self._rows(conn, contact_id, session_id, ids=ids,
+                        time_query=time_query, limit=513)
+                text = source_text(message.get('content')) if message else ''
+                complete = bool(text and all_claims and len(ids) < 513
+                    and {c['id'] for c in all_claims} == {c['id'] for c in current}
+                    and not any(c['superseded_by'] or c['retracted_by'] for c in all_claims)
+                    and all(len(current_group((c['subject_key'], c['predicate']))) == 1 for c in all_claims))
+                procedure_sources[identity] = {'source': dict(source) if source else None,
+                    'message': message, 'text': text, 'complete': complete, 'claims': all_claims}
+            value = procedure_sources[identity]
+            # A complete one-message assertion keeps its existing property
+            # semantics. This boundary concerns partial-message procedures.
+            if value['complete'] and claim['evidence'].strip() == value['text'].strip():
+                return None
+            return value
+
         for key in dict.fromkeys(keys):
-            with closing(self.ledger._connect()) as conn:
-                group = self._rows(conn, contact_id, session_id, key=key, time_query=time_query, distinct_values=True, limit=9)
+            group = current_group(key)
             if not group:
                 continue
             overflow = len(group) > 8
@@ -396,18 +472,21 @@ class SourceClaimProjection:
                         "event_at": c.get("event_at"), "event_time": c.get("event_time", {
                             "status": "legacy_precision_unknown" if c.get("event_at") else "unknown"}),
                         "reported_at": c["observed_at"], "validity_basis": c["validity_basis"],
-                        "operation": c["operation"], "prior_claim_id": c.get("prior_claim_id")}
+                        "operation": c["operation"], "prior_claim_id": c.get("prior_claim_id"),
+                        **{k: c[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality') if k in c}}
                        for c in group]
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
             identifier = hashlib.sha256(json.dumps([contact_id, key, [c["id"] for c in group]]).encode()).hexdigest()
-            bundles.append({"id": "assertions:" + identifier, "kind": "source_quote",
+            bundle = {"id": "assertions:" + identifier, "kind": "source_quote",
                             "history_anchor": {"source_id": group[0]['turn_id'], "claim_id": group[0]['id']},
                             "source_turn_ids": list(dict.fromkeys(c['turn_id'] for c in group)),
                             "_source_message_hashes": {turn: list(dict.fromkeys(
                                 c['message_hash'] for c in group if c['turn_id'] == turn))
                                 for turn in dict.fromkeys(c['turn_id'] for c in group)},
                             "source_uri": "turn:" + group[0]["turn_id"], "claim_status": status,
-                            "epistemic_state": status, "atomic_evidence": True,
+                            "epistemic_state": ('derived_unverified' if any(c.get('evidence_basis') for c in group) else status),
+                            **({'source_modality': 'audio_transcript'} if any(c.get('evidence_basis') for c in group) else {}),
+                            "atomic_evidence": True,
                             # Rank the grounded language the user supplied.
                             # Administrative IDs/timestamps in the output JSON
                             # are provenance, not the passage's semantic topic.
@@ -421,7 +500,41 @@ class SourceClaimProjection:
                                 "subject": group[0]['subject'], "predicate": key[1],
                                 "status": "incomplete_assertion_history", "distinct_values_at_least": len(values),
                                 "instruction": "Open assertion history before resolving this property; no value selected."},
-                                ensure_ascii=False)} if overflow else {})})
+                                ensure_ascii=False)} if overflow else {})}
+            contexts = [(claim, procedure_source(claim)) for claim in group]
+            contexts = [(claim, context) for claim, context in contexts if context is not None]
+            if contexts:
+                bundle['source_anchors'] = [{'source_id': turn} for turn in
+                    dict.fromkeys(claim['turn_id'] for claim in group)]
+                if len(group) == 1 and contexts[0][1]['complete']:
+                    claim, context = contexts[0]
+                    identity = (claim['turn_id'], claim['message_hash'])
+                    if identity in emitted_procedures:
+                        continue
+                    emitted_procedures.add(identity)
+                    source, message = context['source'], context['message']
+                    bundle.update(id='procedure-source:' + hashlib.sha256(json.dumps(identity).encode()).hexdigest(),
+                        content=context['text'], ranking_text=context['text'],
+                        procedure_context='complete_source_message_text',
+                        claim_status='source_procedure_context',
+                        epistemic_state='derived_unverified' if claim.get('evidence_basis') else 'quotation',
+                        source_turn_id=claim['turn_id'], source_message_hash=claim['message_hash'],
+                        role=message['role'], contact_id=source['contact_id'], session_id=source['session_id'],
+                        scope=source['scope'], occurred_at=source['occurred_at'], ingested_at=source['ingested_at'])
+                else:
+                    # A conflicting or changed procedure remains discoverable,
+                    # but its partial assertion is not sufficient instructions.
+                    # Opening only the selected property's history could miss
+                    # the sibling whose correction made this message unsafe.
+                    anchors = {(c['turn_id'], c['subject_key'], c['predicate']): {
+                        'source_id': c['turn_id'], 'claim_id': c['id']}
+                        for _, context in contexts for c in context['claims']}
+                    bundle.update(procedure_context='full_source_required', excerpt_truncated=True,
+                        procedure_history_anchors=list(anchors.values()),
+                        content='Incomplete procedure context. Open the full sources in source_anchors '
+                            'using their recalled source versions and inspect each procedure_history_anchors entry before '
+                            'following the procedure. Property history alone may omit its conditions.')
+            bundles.append(bundle)
         return (filter_unstructured(retained_beliefs, time_query),
                 bundles + filter_unstructured(source_candidates(retained_hits), time_query))
 

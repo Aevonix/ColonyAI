@@ -1,5 +1,58 @@
 # Changelog
 
+## v1.0.29 - owned audio and admitted opinion premises
+
+Bounded PCM WAV clips use the existing canonical original-asset storage, scoped
+source reader, backup and erasure paths. Paired transcripts retain segment ranges,
+recognizer provenance and distinct capture and receipt clocks. Text processors
+receive labelled transcript evidence; original audio stays behind the scoped
+asset API. Updated clients use a versioned ingestion path that older backends
+reject before accepting unsupported media.
+
+The existing extraction and admission-review jobs can form claims from exact
+retained transcript spans. Commit rechecks the current source and asset owner.
+Claims remain recognition-derived and unverified, including after correction or
+later recall. Receipt time cannot resolve an unknown speech date. Segment labels
+and unrelated text do not supply quoted transcript evidence. Admission remains
+fallible, and one extracted procedure claim may omit another source condition.
+Appraisal and personality extraction remain outside this audio path.
+
+No additional store, worker, model or Hermes patch is introduced. The bounded
+semantic qualification retained three useful sources and excluded three noise or
+fiction cases using actual extraction and review requests. Those results measure
+transcript formation, not recognition accuracy or physical voice capture.
+Deployments must qualify their own recognizer and capture adapter before enabling
+audio where they previously supplied text. See [audio sources](docs/SOURCE-AUDIO.md).
+
+Automatic persistent judgments are experimental and off by default. Exact
+`COLONY_SELF_JUDGMENTS_ENABLED=1` opts in after a deployment qualifies its reasoning
+model. Disabled generation leaves sources, history and correction controls intact;
+pending judgments stay held and no working views enter automatic context.
+
+When enabled, ordinary judgments wait for the existing source-admission job and
+require reviewed decisions, procedures or substantive events from their exact
+source messages. Facts, preferences and relationships use their existing memory
+projections without another opinion request. A plain recall
+question with no admitted premise finishes without another judgment request.
+Supporting and contrary claim IDs remain bound through commit and later context,
+so a corrected premise cannot be replaced by an unrelated surviving claim.
+Recorded runtime observations and explicit owner reconsideration retain their
+existing paths. Historical views without these bindings remain inspectable and
+correctable, but no longer enter automatic guidance. This narrows eligibility;
+admission and generated opinions still require semantic quality evaluation.
+
+The bounded extraction batch now has a 4096-token output allowance; review reasons
+retain up to 1024 characters. Existing role deadlines and attempt limits are
+unchanged. The repair preserves useful completed responses without admitting
+truncated output or silently rewriting review decisions.
+
+Partial-message procedures now recall one complete current source-message unit
+instead of independently ranked property fragments. A condition elsewhere in that
+message cannot disappear while its steps remain. Changed, conflicting or oversized
+procedures require the existing full-source and history readers; budgeting does
+not convert a partial procedure into complete instructions. This preserves source
+quotation, current scope, annotations and erasure without re-extracting old claims.
+
 ## v1.0.28 - complete source opening and coherent current state
 
 The native source reader opens exact scoped revisions and paginates long text

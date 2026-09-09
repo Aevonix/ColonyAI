@@ -12,15 +12,19 @@ is stored as `memory_quality` and explicitly labeled unverified. It is neither a
 truth score nor permission to act. Corrections, changes and conflicting reports
 keep the existing source and time rules.
 
-The extractor stores a procedure's exact evidence passage as
-its value, including its conditions and subsequent steps, within the existing
-500-character evidence limit. It does not ask the model to generate a second
-version of those instructions. Other values retain their 160-character limit.
-Existing stored claims remain readable and are not rewritten.
+The extractor stores a procedure's selected exact evidence passage as its value,
+within the existing 500-character evidence limit. It asks for conditions and
+subsequent steps together, but extraction and admission review can still split
+one instruction into several claims. An individual claim does not establish
+conditional completeness. The model does not generate a second version of the
+stored instructions. Other values retain their 160-character limit. Existing
+stored claims remain readable and are not rewritten.
 
 On a binding with verified [structured-output support](FUNCTION-ROUTING.md), a
-source of at most 500 characters uses its complete message as constrained
-evidence. This preserves trailing dates, reporter wording and qualifications.
+source of at most 500 characters requests its complete message as constrained
+evidence, including trailing dates, reporter wording and qualifications.
+Local quotation validation checks exact spans; it does not independently prove
+that the provider honored the complete-message constraint.
 Longer messages retain bounded exact-span selection. Each request owns its
 schema; source text never becomes shared routing configuration. Full-message
 evidence also includes neighboring clauses, and the existing sensitive-evidence
@@ -74,6 +78,21 @@ Shortened lexical and semantic excerpts are marked as incomplete. A successful
 rerank must score every submitted candidate; partial or malformed output keeps
 the original ordering with an unavailable status instead of mixing incompatible
 scores. Selection remains bounded by the common item and character budgets.
+
+A procedure extracted from part of a message recalls that complete current
+message as one quoted evidence unit, including unclaimed conditions. Ranking
+and character packing cannot select its separate property fragments. If the
+unit does not fit, recall supplies a full-source prerequisite when space permits,
+or omits it. Opening one property's assertion history alone may omit sibling
+conditions. If a source claim was corrected, retracted, expired or conflicts
+with another current assertion, recall requires source and history inspection
+instead of reviving obsolete instructions from the original message. Attributed
+source corrections retain their existing indivisible evidence and erasure links.
+
+This preserves message completeness, not the correctness of the procedure or
+instructions in other messages. Text from retained audio remains an unverified
+machine transcript with its original source ownership; raw audio is not injected
+into a text-only request.
 
 The shared memory header preserves the distinction between actual observations,
 reports, fiction and hypotheses. On qualified native Hermes, the existing request
@@ -133,6 +152,11 @@ searchable in either case. One captured outer deadline and owned job lease cover
 both requests; the router also keeps each role's deadline. Review therefore adds
 background work and latency, with a 1400-token output cap per batch.
 
+Extraction has a 4096-token output allowance for its bounded proposal batch.
+Review explanations can contain up to 1024 characters and are retained intact;
+overlong or truncated responses remain invalid. These output bounds do not
+extend the existing role deadlines, job lease or allowed attempts.
+
 Kept records preserve the proposal's fields and add `admission_review`, containing
 version `source-claim-review-v1`, a bounded reason and the actual review processor's
 provenance. Its basis is `model_judgment_unverified`: a supported source assertion
@@ -158,6 +182,8 @@ claim to erase unsupported descendants.
 Original source images also require a recoverable backup, not only retained
 captions. See [source memory recovery](SOURCE-MEMORY-RECOVERY.md) for the existing
 backup command's source-image coverage and its remaining recovery limits.
-The text-claim worker skips non-text message blocks before prior lookup; their
+The claim worker skips unsupported non-text blocks before prior lookup; their
 original media, stable capture metadata and independent media/vector jobs remain
-retained. Completing that text job does not claim the image's semantics were learned.
+retained. Supported attributed audio transcripts use their exact recognition-derived
+segments for extraction and review. Completing a text job does not claim that an
+image's semantics were learned or that recognized speech was independently verified.

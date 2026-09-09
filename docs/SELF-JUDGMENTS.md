@@ -1,11 +1,43 @@
 # Revisable working judgments
 
+Automatic working judgments are experimental and **off by default**. Only the
+exact setting `COLONY_SELF_JUDGMENTS_ENABLED=1` enables them. Qualify the configured
+reasoning model before opting in; the system does not infer that a new model is
+qualified. A bounded evaluation of the default single-model installation still
+produced an unsupported cost comparison after source-premise admission checks.
+That result does not establish the quality of every other available processor.
+
+While disabled, ordinary turns and typed runtime observations retain their
+canonical sources but enqueue no judgment reflection. Existing pending work is
+held without consuming attempts, and no judgments enter automatic context.
+Memory formation, recall, preferences and appraisals remain active. History,
+withdrawal and correction controls remain available; explicit reconsideration
+may queue work, which stays held until opt-in. `/v1/host/self` exposes
+`judgments_enabled` and a `held` flag on pending processing records. No retained
+judgment or source is deleted by this switch.
+
+The following describes the opt-in behavior.
+
 An ordinary attributed owner turn can now produce a durable agent judgment:
 a topic, stance, reason, supporting and contrary source references, stated
 certainty, predecessor revision and actual model/configuration provenance.
 The existing source worker performs this reflection using the configured
 `reasoning` role. It owns one in-flight reflection while continuing source
 indexing, claim extraction and image captioning; no additional service is needed.
+
+Ordinary reflection waits for the existing source-claim job to complete without
+spending a reflection attempt. Only current reviewed `decision`, `procedure` and
+`substantive_event` claims supply premises. Personal facts, preferences and
+relationships remain in their existing memory and relationship projections.
+A question with no qualifying claim does not invoke the judgment model. This
+reuses the fallible admission category; it adds no classifier or semantic judge.
+
+Supporting and contrary references bind exact admitted claim IDs. Correction,
+retraction, attribution invalidation and erasure are checked again before commit
+and automatic context use. A different surviving claim in the same message
+cannot replace a corrected premise. Older message-only views remain inspectable
+as `unsupported_premise` history, without automatic injection. Explicit owner
+reconsideration and typed native execution observations retain their paths.
 
 The model is asked to abstain on transient logistics, copied preferences,
 unsupported generalizations and views without lasting use. This is an inference

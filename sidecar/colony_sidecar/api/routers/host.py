@@ -3975,6 +3975,19 @@ async def source_input_linked_sync(turn_id: str, body: TurnSyncRequest, response
     return await turns_sync_v2(turn_id, body, response, request)
 
 
+@v2_router.put('/turns/source-media/audio/{turn_id:path}', response_model=TurnSyncResponse)
+async def audio_source_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request = None):
+    """An older generic turn route must not persist unowned audio bytes."""
+    if body.context.turn_id == 'source-media/audio/' + turn_id:
+        return await turns_sync_v2(body.context.turn_id, body, response, request)
+    messages = [body.user_message, body.assistant_message, *(body.checkpoint_messages or [])]
+    if body.context.turn_id != turn_id or not any(message and isinstance(message.content, list)
+            and any(isinstance(block, dict) and block.get('type') == 'input_audio' for block in message.content)
+            for message in messages):
+        raise HTTPException(422, detail={'code': 'invalid_audio_source'})
+    return await turns_sync_v2(turn_id, body, response, request)
+
+
 @v2_router.put("/turns/source-linked/{turn_id:path}", response_model=TurnSyncResponse)
 async def source_linked_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request = None):
     """An old backend must not silently drop a new answer's source references."""

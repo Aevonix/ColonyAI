@@ -1760,7 +1760,12 @@ class ColonyClient:
                 payload["checkpoint_messages"] = list(checkpoint_messages)
 
             if turn_id:
-                route = ('turns/source-linked/input-parent' if assistant_input_refs else
+                audio_source = any(isinstance(message, dict) and isinstance(message.get('content'), list)
+                    and any(isinstance(block, dict) and block.get('type') == 'input_audio' for block in message['content'])
+                    for message in [payload.get('user_message'), payload.get('assistant_message'),
+                                    *(payload.get('checkpoint_messages') or [])])
+                route = ('turns/source-media/audio' if audio_source else
+                         'turns/source-linked/input-parent' if assistant_input_refs else
                          'turns/task-instruction' if instruction_only else
                          'turns/source-survivors' if source_only else
                          'turns/source-linked' if assistant_source_refs else 'turns')

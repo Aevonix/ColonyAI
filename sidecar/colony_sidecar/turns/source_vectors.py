@@ -41,14 +41,8 @@ def _scope_key(scope, contact_id, session_id):
 
 
 def _text(message):
-    content = message.get('content')
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return '\n'.join(block['text'] for block in content if isinstance(block, dict)
-                         and block.get('type') in {'text', 'input_text', 'output_text'}
-                         and isinstance(block.get('text'), str))
-    return ''
+    from colony_sidecar.turns.audio import source_text
+    return source_text(message.get('content'))
 
 
 def _metadata(source, message_hash, *, kind, text, **extra):
@@ -104,6 +98,8 @@ def hydrate(ledger, meta, *, contact_id=None, session_id=None):
         common = {'turn_id': source['turn_id'], 'role': message['role'], 'session_id': source['session_id'],
                   'scope': source['scope'], 'occurred_at': source['occurred_at'], 'ingested_at': source['ingested_at'],
                   'source_message_hash': meta['source_message_hash'], 'retrieval_method': 'semantic'}
+        from colony_sidecar.turns.audio import evidence_metadata
+        common.update(evidence_metadata(message))
         if meta.get('kind') == 'source_quote':
             start = meta.get('start')
             if not isinstance(start, int) or start < 0 or start % STRIDE:

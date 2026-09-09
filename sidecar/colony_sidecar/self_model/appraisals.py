@@ -291,6 +291,7 @@ class AppraisalStore:
                     'topic': claim['predicate'], 'text': claim['evidence'], 'value': claim['value'],
                     'status': 'current', 'sources': claim['sources'], 'governing': True,
                     'certainty': 'admitted_speaker_statement_unverified',
+                    **{k: claim[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality') if k in claim},
                     'admission_review': claim['admission_review'], 'authorship': 'canonical_source_claim'})
                 refs.extend({k: d[k] for k in ('source_id', 'source_version', 'source_contact_id')}
                             for d in claim['sources'])

@@ -77,6 +77,8 @@ def test_native_owner_judgment_control(artifacts, tmp_path, monkeypatch):
         pytest.skip('Install qualified Hermes to exercise native judgment controls')
     monkeypatch.syspath_prepend(str(ROOT / 'sidecar'))
     monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
+    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
     from colony_sidecar.self_model.judgments import SelfJudgments
     from colony_sidecar.turns import TurnIdempotencyLedger
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
@@ -89,12 +91,35 @@ def test_native_owner_judgment_control(artifacts, tmp_path, monkeypatch):
         def function_deadline_seconds(self, **kwargs): return 60
         async def complete(self, **kwargs):
             payload = json.loads(kwargs['messages'][-1]['content'])
+            task = kwargs['context']['task']
+            if task == 'source_claim_extraction':
+                text = payload['message']
+                claim = {'subject': 'local exports' if 'local exports' in text else 'local export',
+                    'predicate': 'checkpoint outcome', 'value': text, 'evidence': text,
+                    'operation': 'assert', 'prior_claim_id': None, 'memory_kind': 'substantive_event',
+                    'recall_reason': 'Use the reported outcome when considering export checkpoints.',
+                    'valid_from_text': None, 'valid_to_text': None, 'event_at_text': None}
+                return SimpleNamespace(content=json.dumps([claim]), raw=None, model_id='fixture-extractor')
+            if task == 'source_claim_review':
+                decision = {str(row['index']): {'keep': True,
+                    'reason': 'Controlled admission of the quoted export outcome.'}
+                    for row in payload['proposals']}
+                return SimpleNamespace(content=json.dumps(decision), raw=None, model_id='fixture-reviewer')
+            assert task == 'self_judgment'
             prior = payload['previous_judgments']
             return SimpleNamespace(content=json.dumps({'action':'revise','topic':'checkpointing',
                 'supersedes':prior[0]['id'] if prior else None, 'stance':'I favor phase checkpoints for long work.',
                 'reason':'The reported recovery supports their use when overhead is modest.',
                 'certainty':'tentative','support':[payload['evidence'][0]['handle']],'contrary':[]}),raw=None)
-    asyncio.run(state.process_one(Processor()))
+    # Native control starts with genuinely admitted premises. Raw source alone
+    # intentionally leaves an ordinary judgment waiting for its upstream job.
+    projection = SourceClaimProjection(ledger)
+    for _ in range(2):
+        assert asyncio.run(projection.process_one(Processor()))
+    assert all(row['status'] == 'complete' and row['claim_count'] == 1
+               for row in projection.status('owner'))
+    assert asyncio.run(state.process_one(Processor()))
+    assert state.revisions()[0]['support'][0]['premise_claim_ids']
     calls = []
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args): pass

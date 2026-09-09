@@ -20,6 +20,7 @@ def initialize(conn):
 def append(ledger, *, contact_id, session_id, annotation_id, source_id, source_version,
            excerpt, correction, author_principal):
     from .idempotency import canonical_turn_digest, source_message_hash, SourceErased
+    from .audio import source_text
     for value, maximum in ((contact_id, 256), (session_id, 256), (annotation_id, 128),
                            (source_id, 256), (excerpt, 4096), (correction, 4096),
                            (author_principal, 256)):
@@ -47,7 +48,7 @@ def append(ledger, *, contact_id, session_id, annotation_id, source_id, source_v
         if canonical_turn_digest(messages) != source_version:
             raise ValueError('source_version_mismatch')
         matched = [source_message_hash(row['session_id'], m) for m in messages
-                   if isinstance(m.get('content'), str) and excerpt in m['content']]
+                   if excerpt in source_text(m.get('content'))]
         if not matched:
             raise ValueError('source_excerpt_mismatch')
         if prior:
@@ -103,6 +104,7 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
     remain attributed evidence; the newest note does not automatically win.
     """
     from .idempotency import canonical_turn_digest, source_message_hash
+    from .audio import source_text
     result = []
     with closing(ledger._connect()) as conn:
         cached = {}
@@ -129,7 +131,7 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
                 return {source_message_hash(row['session_id'], message) for message in row['messages']
                         if (not role or message.get('role') == role)
                         and isinstance(text, str) and text
-                        and isinstance(message.get('content'), str) and text in message['content']} if row else set()
+                        and text in source_text(message.get('content'))} if row else set()
             # Older graph summaries and supplied parent references attest a
             # whole source version. Do not invent finer ancestry from prose.
             return None
