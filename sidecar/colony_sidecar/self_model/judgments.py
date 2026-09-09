@@ -45,6 +45,9 @@ An isolated observation or another party's untested claim remains useful as
 attributed source memory. Do not invent a purchase, replacement, critical use,
 comparison or established baseline to turn that report into a decision.
 Generic "verify before relying" advice alone is not a new substantive judgment.
+Restating a reported status with cautious wording is still source memory, not
+a judgment. One successful observation does not by itself support a forecast
+of success next time; adding "if needed" or "tentative" does not supply that basis.
 A concrete constraint, reusable experience or substantive argument can support
 a conditional approach even from one source; repeated trials are not required
 for every opinion. Explain the actual tradeoff or argument in reason, and keep

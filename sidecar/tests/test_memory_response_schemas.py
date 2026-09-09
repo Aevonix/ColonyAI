@@ -18,14 +18,15 @@ def validator(module):
 def test_claim_schema_preserves_procedure_and_empty_output_but_not_unquoted_content():
     check = validator(source_claims)
     check.validate([])
-    check.validate([procedure()])
-    fabricated = {**procedure(), 'subject': 'invented device'}
+    wire = {k: v for k, v in procedure().items() if k != 'value'}
+    check.validate([wire])
+    fabricated = {**wire, 'subject': 'invented device'}
     check.validate([fabricated])  # Schema validity cannot establish source grounding.
     assert source_claims.validated_claims(json.dumps([fabricated]), message=PROCEDURE,
                                         prior=[], observed_at=None) == []
-    for bad in [[{**procedure(), 'memory_kind': 'personal_context'}],
-                [procedure()] * 7, [{**procedure(), 'extra': True}],
-                [{k: v for k, v in procedure().items() if k != 'prior_claim_id'}]]:
+    for bad in [[{**procedure(), 'memory_kind': 'personal_context'}], [procedure()],
+                [wire] * 7, [{**wire, 'extra': True}],
+                [{k: v for k, v in wire.items() if k != 'prior_claim_id'}]]:
         with pytest.raises(ValidationError):
             check.validate(bad)
 
@@ -58,9 +59,15 @@ def test_appraisal_schema_retains_all_kinds_and_limits_without_semantic_claims()
     for kind, dimensions in appraisals.DIMENSIONS.items():
         for dimension in dimensions:
             check.validate({'observations': [{**item, 'kind': kind, 'dimension': dimension}]})
+    repair = {**item, 'kind': 'appraisal', 'dimension': 'satisfaction',
+              'hint': 'none', 'repairs': 'previous-frustration'}
+    check.validate({'observations': [repair]})
     for bad in [{'observations': [item] * 5},
                 {'observations': [{**item, 'dimension': 'format'}]},
                 {'observations': [{**item, 'intensity': 'strong'}]},
-                {'observations': [{**item, 'support': []}]}]:
+                {'observations': [{**item, 'support': []}]},
+                {'observations': [{**repair, 'hint': 'try_different_approach'}]},
+                {'observations': [{**repair, 'dimension': 'frustration'}]},
+                {'observations': [{**item, 'repairs': 'previous-frustration'}]}]:
         with pytest.raises(ValidationError):
             check.validate(bad)

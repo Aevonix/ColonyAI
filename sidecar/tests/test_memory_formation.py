@@ -25,14 +25,20 @@ def procedure(text=PROCEDURE, **changes):
 
 
 @pytest.mark.asyncio
-async def test_complete_procedure_survives_commit_restart_and_scoped_projection(tmp_path):
+@pytest.mark.parametrize('draft_value', [None, 'Open the paper tray; separate and reseat the stack.'])
+async def test_complete_procedure_survives_commit_restart_and_scoped_projection(tmp_path, draft_value):
     assert 160 < len(PROCEDURE) <= 500
     path = tmp_path / 'sources.db'
     ledger = TurnIdempotencyLedger(path)
     ledger.record_source('scanner', contact_id='contact-a', session_id='first',
                          messages=[{'role': 'user', 'content': PROCEDURE}])
     projection = SourceClaimProjection(ledger)
-    model = Model({PROCEDURE: procedure()})
+    candidate = procedure()
+    if draft_value is None:
+        candidate.pop('value')
+    else:
+        candidate['value'] = draft_value
+    model = Model({PROCEDURE: candidate})
     assert await projection.process_one(model)
     assert len(model.calls) == 1
     assert model.calls[0][1]['context']['response_schema'] == RESPONSE_SCHEMA
@@ -51,7 +57,6 @@ async def test_complete_procedure_survives_commit_restart_and_scoped_projection(
 @pytest.mark.parametrize('changes', [
     {'subject': 'document scanner stack'},
     {'subject': 'unrelated scanner'},
-    {'value': 'Replace the feed motor.'},
     {'evidence': 'Keep the stack below the marked line.'},
     {'memory_kind': 'personal_context'},
 ])
@@ -65,6 +70,22 @@ def test_procedure_still_requires_a_bounded_contiguous_source_passage():
     text = PROCEDURE + ' Continue checking the page alignment.' * 12
     assert len(text) > 500
     assert validated_claims(json.dumps([procedure(text)]), message=text,
+                            prior=[], observed_at=None) == []
+
+
+def test_legacy_procedure_value_cannot_replace_source_instruction():
+    candidate = {**procedure(), 'value': 'Replace the feed motor.'}
+    accepted = validated_claims(json.dumps([candidate]), message=PROCEDURE,
+                                prior=[], observed_at=None)
+    assert len(accepted) == 1
+    assert accepted[0]['value'] == PROCEDURE
+    assert 'feed motor' not in accepted[0]['value']
+
+
+def test_ordinary_claim_still_requires_its_value_to_be_quoted():
+    text = 'My office is in Alder.'
+    candidate = claim(text, 'Cedar', subject='I', predicate='office location')
+    assert validated_claims(json.dumps([candidate]), message=text,
                             prior=[], observed_at=None) == []
 
 

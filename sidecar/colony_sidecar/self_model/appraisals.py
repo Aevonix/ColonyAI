@@ -42,12 +42,16 @@ preference: communication, topic;
 behavior_hypothesis: communication, working_style;
 assessment: self_report;
 judgment: affinity, skepticism, reliability, like, dislike.
-For example an explicit request for concise explanations is preference with
-dimension communication and hint keep_concise, NOT dimension format.
+For example "Keep future troubleshooting explanations concise" is a preference
+with dimension communication and hint keep_concise. "Make this one caption short"
+is a requirement of that artifact, not a preference observation, even if its topic
+and text repeat the one-time limitation accurately.
 appraisal means YOUR temporary frustration/annoyance/interest/satisfaction about
 the incident, not the speaker's feelings. preference means the speaker's explicit
 communication or topic preference expressed in a direct request or self-report,
 not a preference inferred from politeness, a fact, praise, or one task request.
+A standing preference can be limited to one recurring activity; it need not apply
+to every conversation or have repeated evidence. Preserve its actual scope.
 behavior_hypothesis requires support from distinct prior and current evidence
 describing separate experiences. One turn, even claiming repeated behavior,
 is insufficient: omit the hypothesis. Never infer personality or Big Five.
@@ -82,10 +86,14 @@ when retaining a prior interpretation, and preserve contrary evidence.
 intensity is low or moderate (an ordinal modeling choice, not a measurement).
 hint is none, try_different_approach, verify_before_relying, keep_concise,
 allow_more_detail, offer_relevant_topic or warmth. It affects only a relevant
-decision, never helpfulness, authorization or consent. Repairs is null, or the ID
+decision, never helpfulness, authorization or consent. Use none unless the evidence
+supports that specific behavior: an ordering preference does not imply more detail,
+and a short artifact does not imply concise explanations in later conversation.
+Repairs is null, or the ID
 of an existing temporary appraisal whose incident this evidence actually resolves.
 A repair must cite the new repair evidence, not a generic apology. Consider
 prior evidence when updating; don't turn recency or repetition into corroboration.
+Recurring difficulty is not a repair: leave repairs null when the problem persists.
 When the task is repaired, emit appraisal with dimension satisfaction, hint none,
 and repairs set to the old frustration ID. This is a settlement receipt: it clears
 the old frustration, without creating a new frustration or performed mood.
@@ -103,7 +111,7 @@ _APPRAISAL_PROPERTIES = {
     'contrary': {'type': 'array', 'maxItems': 3, 'items': _CITATION_SCHEMA},
     'intensity': {'type': 'string', 'enum': ['low', 'moderate']},
     'hint': {'type': 'string', 'enum': sorted(HINTS)},
-    'repairs': {'type': ['string', 'null']},
+    'repairs': {'type': 'null'},
 }
 RESPONSE_SCHEMA = {'name': 'source_appraisal', 'schema': {
     'type': 'object', 'additionalProperties': False, 'required': ['observations'],
@@ -114,6 +122,14 @@ RESPONSE_SCHEMA = {'name': 'source_appraisal', 'schema': {
                         'dimension': {'type': 'string', 'enum': sorted(dimensions)},
                         **_APPRAISAL_PROPERTIES}}
         for kind, dimensions in DIMENSIONS.items()
+    ] + [
+        {'type': 'object', 'additionalProperties': False,
+         'required': ['kind', 'dimension', *_APPRAISAL_PROPERTIES],
+         'properties': {**_APPRAISAL_PROPERTIES,
+                        'kind': {'type': 'string', 'const': 'appraisal'},
+                        'dimension': {'type': 'string', 'const': 'satisfaction'},
+                        'hint': {'type': 'string', 'const': 'none'},
+                        'repairs': {'type': 'string', 'minLength': 1}}}
     ]}}}}}
 
 
