@@ -585,9 +585,10 @@ GENERAL_PLUGIN_FORBIDDEN_TOOL_NAMES = tuple(sorted(
 ))
 
 _GENERAL_PLUGIN_SYSTEM_PROMPT = (
-    "Colony cognitive context is active in read-only mode. The only Colony "
-    "tools available on this surface are colony_check_commitments, "
-    "colony_get_affect, colony_get_facts, and colony_timeline. Their person "
+    "Colony cognitive context is active in read-only mode. This memory provider "
+    "exposes colony_check_commitments, "
+    "colony_get_affect, colony_get_facts, and colony_timeline. Refer to the current "
+    "tool declarations for other available tools. These provider tools' person "
     "scope is bound to the current transport-attested participant; never ask "
     "for or invent a contact override. Direct tool calls are available only "
     "on the configured owner/system lane; guest turns use the scoped assembled "
