@@ -18,7 +18,13 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.31 supplies attributed corrections first when ranking source evidence,
+Version 1.0.32 lets an authenticated host carry already captured human input
+into a native task through exact source references. Derived task instructions
+do not become duplicate human testimony; assistant replies retain the original
+input and source dependencies through the existing erasure checks. See the
+[host-input contract](plugins/hermes-plugin/SUPPLIED-INPUT.md).
+
+Attributed corrections appear first when ranking source evidence,
 while keeping the full original and correction packet intact. The changed input
 format requires matching, deployment-qualified calibration metadata; it does not
 choose or lower a global relevance cutoff.

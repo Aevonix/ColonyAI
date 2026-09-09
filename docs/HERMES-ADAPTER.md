@@ -33,7 +33,7 @@ python -m build
 Install the resulting wheel with the Python interpreter that runs Hermes:
 
 ```sh
-python -m pip install dist/colony_hermes-1.0.0-py3-none-any.whl
+python -m pip install dist/colony_hermes-1.0.32-py3-none-any.whl
 ```
 
 The wheel exposes `colony` through `hermes_agent.plugins` and `colony-memory`
@@ -125,6 +125,27 @@ because the native history does not guarantee old per-message speaker
 attribution. Media references remain source data; only text is indexed. This
 is direct evidence recall, not an embedding migration or a belief contradiction
 engine.
+
+## Already captured host input
+
+From 1.0.32, a host that has already admitted the human input can wrap the
+existing native conversation in `colony_hermes.input_provenance.supplied_input`.
+The host validates its participant, source hashes and current revisions first.
+The native participant resolver and tool authority remain authoritative; the
+supplied contact does not grant capabilities.
+
+Hermes may retain the original message for display while sending a derived
+task request. The adapter records the resulting assistant source with exact
+input and source dependencies, without recording the task wrapper as another
+human statement. Inherited source handles are labelled as unopened evidence
+and become usable only after their exact host block reaches the actual native
+request. Existing request, tool and writer erasure checks still apply.
+
+The context exposes the durably queued result's dependencies for the host to
+revalidate before delayed delivery or further effects. It does not confirm
+backend delivery or reconstruct unlinked historical paraphrases. See the
+[supplied-input contract](../plugins/hermes-plugin/SUPPLIED-INPUT.md), also
+included as `colony_hermes/SUPPLIED-INPUT.md` in the adapter package.
 
 ## Source erasure and replay
 
