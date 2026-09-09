@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.29 - owned audio and reviewed transcript memory
+## v1.0.29 - owned audio and admitted opinion premises
 
 Bounded PCM WAV clips use the existing canonical original-asset storage, scoped
 source reader, backup and erasure paths. Paired transcripts retain segment ranges,
@@ -22,6 +22,16 @@ fiction cases using actual extraction and review requests. Those results measure
 transcript formation, not recognition accuracy or physical voice capture.
 Deployments must qualify their own recognizer and capture adapter before enabling
 audio where they previously supplied text. See [audio sources](docs/SOURCE-AUDIO.md).
+
+Ordinary persistent judgments now wait for the existing source-admission job and
+require current reviewed claims from their exact source messages. A plain recall
+question with no admitted premise finishes without another judgment request.
+Supporting and contrary claim IDs remain bound through commit and later context,
+so a corrected premise cannot be replaced by an unrelated surviving claim.
+Recorded runtime observations and explicit owner reconsideration retain their
+existing paths. Historical views without these bindings remain inspectable and
+correctable, but no longer enter automatic guidance. This narrows eligibility;
+admission and generated opinions still require semantic quality evaluation.
 
 ## v1.0.28 - complete source opening and coherent current state
 
