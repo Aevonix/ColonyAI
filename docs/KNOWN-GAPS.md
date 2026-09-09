@@ -51,7 +51,10 @@ general self-improvement simply by recording a successful review.
 - Legacy goal decomposition/replanning is not a new execution path. Keep
   accepted and historical goal IDs, transitions and reader APIs. Migrate each
   execution consumer to canonical commitments/native task IDs before removing
-  planner exports. No goal record migration or deletion occurs in this cleanup.
+  planner exports. Exports now load only when requested. In live native mode,
+  the deprecated creation endpoint returns a conflict directing callers to
+  current acceptance; existing goal reads and updates remain available. No
+  goal record migration or deletion occurs in this cleanup.
 - Three-tier routing retains its optional learner only when legacy tier
   selection/outcome recording is used. Named function routing does not create
   its database or consume its scores. Existing legacy database files remain.
@@ -62,7 +65,9 @@ general self-improvement simply by recording a successful review.
 - `colony persona setup` is a compatibility path for existing manifest
   deployments. New installations use `colony init`. Keep manifest validation,
   services, backup and restore until an existing export/restore migration has
-  been demonstrated. Do not discard private identity data to simplify setup.
+  been demonstrated. Its host step only logs configured identity/overlay/plugin
+  paths, and setup now reports those settings as unapplied. Do not discard
+  private identity data to simplify setup.
 - **ResponseGuard applied-output receipts** — guarded candidates now carry an
   exact candidate digest, and the proactive send path honors enforce verdicts,
   but the audit store records evaluations rather than durable proof of the
