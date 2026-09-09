@@ -58,6 +58,26 @@ async def drain(projection):
     raise AssertionError('neutral jobs did not finish')
 
 
+def test_semantic_hydration_marks_chunks_without_changing_source_or_projection(tmp_path):
+    from colony_sidecar.turns.source_vectors import chunks, hydrate
+    ledger = TurnIdempotencyLedger(tmp_path / 'ledger.db')
+    text = 'The office labeler reset has three steps. ' + 'Inspect its amber indicator. ' * 100
+    for turn, content in [('long', text), ('short', 'The office labeler is ready.')]:
+        ledger.record_source(turn, contact_id='c', session_id='s',
+                             messages=[{'role': 'user', 'content': content}])
+        with ledger._connect() as conn:
+            source = conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (turn,)).fetchone()
+            projections = list(chunks(conn, source))
+        for excerpt, metadata in projections:
+            row = hydrate(ledger, metadata, contact_id='c', session_id='later')
+            assert row['content'] == excerpt
+            assert bool(row.get('excerpt_truncated')) == (turn == 'long')
+            assert 'excerpt_truncated' not in metadata
+        with ledger._connect() as conn:
+            retained = json.loads(conn.execute('SELECT messages_json FROM turn_sources WHERE turn_id=?', (turn,)).fetchone()[0])
+        assert retained[0]['content'] == content
+
+
 @pytest.mark.asyncio
 async def test_repeated_semantic_questions_leave_room_for_evidence_and_survive_erasure(tmp_path, monkeypatch):
     from colony_sidecar.beliefs.source_projection import SourceClaimProjection

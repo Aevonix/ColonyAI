@@ -77,6 +77,58 @@ async def complete(r, role='extraction', **context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('declared', [False, True])
+async def test_response_schema_reaches_only_declared_binding_and_only_requested_turn(declared):
+    schema = {'name': 'neutral_observations', 'schema': {'type': 'array', 'items': {'type': 'string'}}}
+    with endpoint(content='[]') as (url, calls):
+        cfg = config(url, url, timeoutSeconds=10, deadlineSeconds=20)
+        cfg['modelPool']['interactive']['supportsJsonSchema'] = declared
+        r = router(cfg)
+        await complete(r, response_schema=schema)
+        body = calls[0]['payload']
+        assert body['messages'] == [{'role': 'user', 'content': 'Neutral routing fixture.'}]
+        assert body.get('response_format') == (
+            {'type': 'json_schema', 'json_schema': {**schema, 'strict': True}} if declared else None)
+        assert r.routing_status()['models']['interactive']['supports_json_schema'] is declared
+        await complete(r)
+        assert 'response_format' not in calls[1]['payload']
+
+
+@pytest.mark.asyncio
+async def test_response_schema_fallback_preserves_prompt_without_assuming_server_capability():
+    schema = {'name': 'neutral', 'schema': {'type': 'object', 'properties': {},
+                                          'description': 'Neutral schema description. ' * 40}}
+    with endpoint(status=503) as (first, a), endpoint(content='{}') as (second, b):
+        cfg = config(first, second, timeoutSeconds=10, deadlineSeconds=20)
+        cfg['modelPool']['interactive']['supportsJsonSchema'] = True
+        # This prompt-only fallback fits the actual prompt and answer, but
+        # would not fit a schema it never receives.
+        cfg['modelPool']['deliberate']['contextTokens'] = 100
+        r = router(cfg)
+        result = await complete(r, response_schema=schema, max_output_tokens=20)
+        assert result.binding == 'deliberate'
+        assert a[0]['payload']['response_format']['json_schema']['schema'] == schema['schema']
+        assert 'response_format' not in b[0]['payload']
+        assert a[0]['payload']['messages'] == b[0]['payload']['messages']
+        assert len(a) == len(b) == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_output_contract_and_capability_fail_before_dispatch():
+    with endpoint() as (url, calls):
+        cfg = config(url, url)
+        cfg['modelPool']['interactive']['supportsJsonSchema'] = 'true'
+        with pytest.raises(ValueError, match='supportsJsonSchema'):
+            router(cfg)
+        del cfg['modelPool']['interactive']['supportsJsonSchema']
+        r = router(cfg)
+        for invalid in ({'schema': {}}, {'name': 'neutral', 'schema': []}, 'json'):
+            with pytest.raises(ValueError, match='response_schema'):
+                await complete(r, response_schema=invalid)
+        assert not calls
+
+
+@pytest.mark.asyncio
 async def test_named_functions_never_open_the_legacy_learner_database(tmp_path, monkeypatch):
     from colony_sidecar.router import self_learning
     database = tmp_path / 'must-not-create.db'
@@ -371,9 +423,14 @@ async def test_real_source_claim_flow_retains_role_generation_and_scoped_evidenc
     from colony_sidecar.beliefs.source_projection import SourceClaimProjection
     from test_source_claim_projection import claim
     text = 'My office is in Alder.'
-    answer = json.dumps([claim(text, 'Alder')])
+    def answer(payload):
+        if 'proposals' in json.loads(payload['messages'][1]['content']):
+            return json.dumps({'0': {'keep': True, 'reason': 'Controlled valid location.'}})
+        return json.dumps([claim(text, 'Alder')])
     with endpoint(status=503) as (first, a), endpoint(content=answer) as (second, b):
-        r = router(config(first, second))
+        cfg = config(first, second)
+        cfg['functionRoles']['judging'] = ['deliberate']
+        r = router(cfg)
         ledger = TurnIdempotencyLedger(tmp_path / 'turns.db')
         ledger.record_source('neutral-source', contact_id='person', session_id='sms', messages=[{'role': 'user', 'content': text}])
         projection = SourceClaimProjection(ledger)
@@ -384,8 +441,9 @@ async def test_real_source_claim_flow_retains_role_generation_and_scoped_evidenc
             assert rows[0]['model_provenance']['function_role'] == 'extraction'
             assert rows[0]['model_provenance']['config_revision'] == r.routing_status()['config_revision']
             assert rows[0]['model_provenance']['weight_revision'] == 'fixture-revision-b'
+            assert rows[0]['admission_review']['model_provenance']['function_role'] == 'judging'
             assert projection._rows(conn, 'stranger', 'voice') == []
-        assert len(a) == len(b) == 1
+        assert len(a) == 1 and len(b) == 2
 
 
 @pytest.mark.asyncio

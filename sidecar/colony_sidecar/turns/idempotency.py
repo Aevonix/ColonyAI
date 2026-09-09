@@ -555,8 +555,10 @@ class TurnIdempotencyLedger:
             """, (expression, contact_id, session_id, max(1, min(limit, 10)) * 2)).fetchall()
         result, seen = [], set()
         for row in rows:
-            # Ordinary-turn and checkpoint copies do not crowd out other hits.
-            key = (row["role"], row["content"])
+            # Equal words from different turns can describe different events
+            # or have different corrections. Retain their lineage until the
+            # context selector has expanded claims and applied time filters.
+            key = (row["turn_id"], row["role"], row["content"])
             if key in seen:
                 continue
             seen.add(key)

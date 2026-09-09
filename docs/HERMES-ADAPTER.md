@@ -210,6 +210,25 @@ Other Hermes
 releases are unqualified until the native-loader checks pass against them.
 Hermes is installed separately; this package does not select or upgrade it.
 
+Hermes 0.21.1 wraps provider recollection in a note calling it authoritative
+reference data. Colony's supported `llm_request` middleware replaces that outer
+note only in an observed, current, source-stamped native memory suffix. It keeps
+the person’s input, quoted source bytes, source revisions and erasure checks
+unchanged. Recollection retains its speaker, time and factual, reported,
+fictional or hypothetical scope; finding a quotation does not verify its claim.
+The shared memory section header carries this guidance to direct consumers such
+as voice adapters that do not use the Hermes envelope. Unknown envelope formats
+are unchanged. The native request test exercises the actual upstream wrapper,
+so a framing change requires renewed qualification rather than a core patch.
+
+System/developer instructions and Responses instructions may document the generic
+`<memory-context>` fence. That markup alone is not a recalled packet there, even
+when the example omits a closing tag. Exact forgotten source copies and explicit
+Colony lineage packets still reconcile in these fields. Legacy untagged fenced
+instruction text is preserved unless it is an exact erased source or observed
+alias; substring and paraphrase erasure are not promised. Native automatic
+recollection continues to reconcile in its appended user-content boundary.
+
 Install test dependencies into an isolated environment with the target Hermes
 checkout available, then run:
 

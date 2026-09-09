@@ -108,10 +108,12 @@ def hydrate(ledger, meta, *, contact_id=None, session_id=None):
             start = meta.get('start')
             if not isinstance(start, int) or start < 0 or start % STRIDE:
                 return None
-            text = _text(message)[start:start + CHUNK]
+            message_text = _text(message)
+            text = message_text[start:start + CHUNK]
             if not text.strip() or _hash(text) != meta.get('content_hash'):
                 return None
-            return {**common, 'content': text}
+            return {**common, 'content': text,
+                    **({'excerpt_truncated': True} if text != message_text else {})}
         if meta.get('kind') == 'media_description':
             asset = conn.execute('''SELECT m.* FROM source_media m JOIN source_media_links l ON l.asset_hash=m.asset_hash
                 WHERE l.turn_id=? AND l.message_hash=? AND m.asset_hash=? AND m.status='complete' LIMIT 1''',

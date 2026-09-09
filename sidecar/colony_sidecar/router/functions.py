@@ -45,6 +45,7 @@ class Binding:
     concurrency: int = 0
     weight_revision: str = 'unknown'
     legacy: bool = False
+    supports_json_schema: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class RoutingSnapshot:
                 'models': {name: {'model_id': b.config.model_id, 'weight_revision': b.weight_revision,
                     'context_tokens': b.context_tokens, 'supports_vision': b.config.supports_vision,
                     'supports_tools': b.supports_tools, 'latency_ms': b.latency_ms,
+                    'supports_json_schema': b.supports_json_schema,
                     'tokens_per_second': b.tokens_per_second, 'concurrency': b.concurrency,
                     'legacy_unknown_tools_allowed': b.legacy and b.supports_tools is None}
                     for name, b in self.bindings.items()}}
@@ -90,10 +92,13 @@ def _binding(name, config, spec, *, legacy=False):
     tools = spec.get('supportsTools')
     if tools is not None and type(tools) is not bool:
         raise ValueError('supportsTools must be an explicit boolean')
+    structured = spec.get('supportsJsonSchema', False)
+    if type(structured) is not bool:
+        raise ValueError('supportsJsonSchema must be an explicit boolean')
     return Binding(name, config,
         int(number(spec.get('contextTokens', config.useful_context_tokens))), tools,
         int(number(spec.get('latencyMs', 0))), float(number(spec.get('tokensPerSecond', 0))),
-        int(number(spec.get('concurrency', 0))), str(spec.get('weightRevision') or 'unknown')[:160], legacy)
+        int(number(spec.get('concurrency', 0))), str(spec.get('weightRevision') or 'unknown')[:160], legacy, structured)
 
 
 def _transport(config, host, spec):
@@ -211,7 +216,10 @@ def candidates(snapshot, role_name, context, *, has_images, has_tools):
         # Reuse the existing text estimator to avoid an obviously undersized
         # fallback. Image token accounting is model-specific and remains unknown.
         requested_output = context.get('max_output_tokens', context.get('max_tokens', b.config.max_tokens))
-        if b.context_tokens and context.get('estimated_input_tokens', 0) + min(b.config.max_tokens, int(requested_output)) > b.context_tokens: continue
+        input_tokens = context.get('estimated_input_tokens', 0)
+        if b.supports_json_schema:
+            input_tokens += context.get('response_schema_tokens', 0)
+        if b.context_tokens and input_tokens + min(b.config.max_tokens, int(requested_output)) > b.context_tokens: continue
         if role.max_latency_ms and (not b.latency_ms or b.latency_ms > role.max_latency_ms): continue
         if b.tokens_per_second < role.min_tokens_per_second or b.concurrency < role.min_concurrency: continue
         if endpoint_host(b, snapshot) is None: continue

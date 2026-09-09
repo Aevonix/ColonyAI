@@ -28,6 +28,10 @@ class Model:
     async def complete(self, messages, **kwargs):
         payload = json.loads(messages[-1]["content"])
         self.calls.append((payload, kwargs))
+        if kwargs.get('context', {}).get('task') == 'source_claim_review':
+            return SimpleNamespace(content=json.dumps({str(row['index']): {
+                'keep': True, 'reason': 'Controlled review accepts this source-grounded fixture.'}
+                for row in payload['proposals']}), model_id=self.model)
         result = dict(self.outputs[payload["message"]])
         if result.pop("match_prior", False):
             result["prior_claim_id"] = payload["prior_assertions"][0]["id"]

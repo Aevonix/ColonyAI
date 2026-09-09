@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 
-from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_diagnostics, extraction_timeout_seconds, norm_value
+from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_diagnostics, projection_timeout_seconds, norm_value
 from .source_time import MemoryTimeQuery, filter_unstructured
 
 logger = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ class SourceClaimProjection:
                              (model, EXTRACTION_VERSION, encoded, job["turn_id"], job["lease_token"]))
 
     def renew_job(self, job, request_timeout):
-        """Extend this existing lease for one bounded request and its commit."""
+        """Extend this lease for bounded extraction, review and their commit."""
         with closing(self.ledger._connect()) as conn, conn:
             updated = conn.execute('''UPDATE source_claim_jobs SET lease_until=?
                 WHERE turn_id=? AND status='running' AND lease_token=?''',
@@ -227,7 +227,7 @@ class SourceClaimProjection:
                 content = message.get('content')
                 if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
                     continue
-                request_timeout = extraction_timeout_seconds(router)
+                request_timeout = projection_timeout_seconds(router)
                 if not self.renew_job(job, request_timeout):
                     return True  # Forgotten or reclaimed; do not start a stale model call.
                 claims, model = await extract_claims(router, job, message, self.prior(job, message),
@@ -307,6 +307,10 @@ class SourceClaimProjection:
                 hit.update({name: source[name] for name in ("contact_id", "session_id", "scope")})
                 for message in json.loads(source["messages_json"]):
                     text = message.get("content")
+                    if isinstance(text, list):
+                        text = "\n".join(block["text"] for block in text if isinstance(block, dict)
+                            and block.get("type") in {"text", "input_text", "output_text"}
+                            and isinstance(block.get("text"), str))
                     if message.get("role") != hit["role"] or not isinstance(text, str):
                         continue
                     message_claims = by_hash.get(source_message_hash(source["session_id"], message), [])
@@ -314,6 +318,8 @@ class SourceClaimProjection:
                     # every matching chunk occurrence; never depend on an entire
                     # corrected quotation fitting inside one retrieved chunk.
                     offset = text.find(hit["content"])
+                    if offset >= 0 and hit["content"] != text:
+                        hit["excerpt_truncated"] = True
                     while offset >= 0:
                         for claim in message_claims:
                             start = max(0, claim["span_start"] - offset)
@@ -329,7 +335,8 @@ class SourceClaimProjection:
                 if start > cursor:
                     fragment = hit["content"][cursor:start]
                     if fragment.strip(" .,:;\n\t"):
-                        retained_hits.append(dict(hit, content=fragment, excerpt_truncated=bool(removed)))
+                        retained_hits.append(dict(hit, content=fragment,
+                            excerpt_truncated=bool(removed) or bool(hit.get("excerpt_truncated"))))
                 cursor = max(cursor, end)
         bundles = []
         for key in dict.fromkeys(keys):
@@ -391,7 +398,7 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
         media.recover_unowned_files()
     except OSError:
         logger.warning("source media orphan recovery deferred")
-    reflections = {'judgment': judgments, 'appraisal': appraisals}
+    reflections = {'judgment': judgments, 'appraisal': appraisals, 'claim': projection}
     reflection_tasks = {name: None for name in reflections}
     next_identity_check = 0.0
     try:
@@ -404,7 +411,7 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
                     worked = await reconcile_pending_identities(ledger)
                 except Exception as exc:
                     logger.warning('identity source reconciliation deferred (%s)', type(exc).__name__)
-            # Durable reflection jobs share this worker's lifecycle. Their model
+            # Durable model projections share this worker's lifecycle. Their
             # requests must not stall source indexing or media processing.
             if claims_enabled:
                 for name, projection_worker in reflections.items():
@@ -425,9 +432,8 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
                 logger.warning("source semantic projection deferred (%s)", type(exc).__name__)
             try:
                 if claims_enabled:
-                    claim_worked = await projection.process_one(router_provider())
                     media_worked = await media.process_one(router_provider())
-                    worked = worked or claim_worked or media_worked
+                    worked = worked or media_worked
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

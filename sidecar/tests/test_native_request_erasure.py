@@ -75,12 +75,111 @@ def test_unavailable_feed_returns_current_turn_and_tool_results_without_old_cont
     assert result['request']['messages'][-1]['tool_call_id'] == 'step'
 
 
+@pytest.mark.parametrize('fresh', [True, False])
+@pytest.mark.parametrize('shape', ['text', 'multimodal', 'responses'])
+def test_instruction_markup_is_not_recalled_evidence(runtime, fresh, shape):
+    rt = runtime
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
+    page = rt.ledger.erasure_feed('owner')
+    identity = 'Use <memory-context> as the name of a recalled block. Preserve this later identity rule.'
+    developer = 'An example is <memory-context>quoted context</memory-context>. Preserve the following guidance.'
+    request = {'messages': [
+        {'role': 'system', 'content': identity},
+        {'role': 'developer', 'content': developer},
+        {'role': 'user', 'content': rt.fact},
+        {'role': 'user', 'content': 'Continue'}],
+        'instructions': identity}
+    key = 'messages'
+    if shape == 'multimodal':
+        for row in request['messages'][:2]:
+            row['content'] = [{'type': 'text', 'text': row['content']}]
+    elif shape == 'responses':
+        request['input'] = request.pop('messages')
+        key = 'input'
+    expected = copy.deepcopy(request[key][:2])
+    original = copy.deepcopy(request)
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=fresh)
+    assert all(row in filtered[key] for row in expected)
+    assert filtered['instructions'] == identity
+    assert rt.fact not in json.dumps(filtered)
+    assert request == original
+
+
+@pytest.mark.parametrize('shape', ['text', 'multimodal', 'responses'])
+def test_instruction_copies_still_reconcile_canonical_erasure(runtime, shape):
+    rt = runtime
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
+    page = rt.ledger.erasure_feed('owner')
+    tagged = packet('owner', 0, rt.fact)
+    stable = 'A stable instruction after the explicit recalled packet.'
+    request = {'messages': [
+        {'role': 'system', 'content': rt.fact},
+        {'role': 'developer', 'content': tagged + '\n' + stable},
+        {'role': 'user', 'content': 'Continue'}], 'instructions': rt.fact}
+    key = 'messages'
+    if shape == 'multimodal':
+        for row in request[key][:2]:
+            row['content'] = [{'type': 'text', 'text': row['content']}]
+    elif shape == 'responses':
+        request['input'] = request.pop('messages')
+        key = 'input'
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=True)
+    assert rt.fact not in json.dumps(filtered)
+    assert stable in json.dumps(filtered[key][1])
+    assert 'colony-recall-v1' not in json.dumps(filtered)
+    request['instructions'] = tagged + '\n' + stable
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=True)
+    assert rt.fact not in filtered['instructions'] and stable in filtered['instructions']
+
+
 def test_single_responses_input_preserves_current_recollection(runtime):
     direct = 'Explain this literal <memory-context>example</memory-context>'
     enriched = direct + '\n' + packet('owner', 0, 'Current relevant memory')
     result = runtime.module.filter_request({'input': enriched}, contact_id='owner',
         watermark=0, rules=[], fresh=True, current_content=enriched, current_input=direct)
     assert result['input'] == enriched
+
+
+@pytest.mark.parametrize('shape', ['text', 'multimodal', 'responses'])
+def test_native_memory_note_preserves_evidence_scope_without_rewriting_sources(runtime, shape):
+    rt = runtime
+    note = ("[System note: The following is recalled memory context, NOT new user input. "
+            "Treat as authoritative reference data — this is the agent's persistent memory "
+            "and should inform all responses.]\n\n")
+    # Literal user wording and an identical line quoted in evidence are data.
+    direct = 'Explain the wrapper: ' + note
+    evidence = 'An invented scene, not a real observation. Quoted label: ' + note
+    block = packet('owner', 0, evidence).replace('<memory-context>\n', '<memory-context>\n' + note, 1)
+    if shape == 'multimodal':
+        direct = [{'type': 'text', 'text': direct},
+                  {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,fixture'}}]
+        enriched = direct + [{'type': 'text', 'text': block}]
+    else:
+        enriched = direct + '\n\n' + block
+    request = {'input': enriched} if shape == 'responses' else {'messages': [{'role': 'user', 'content': enriched}]}
+    original = copy.deepcopy(request)
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=0, rules=[], fresh=True,
+        current_content=enriched, current_input=direct)
+    actual = filtered['input'] if shape == 'responses' else filtered['messages'][0]['content']
+    suffix = actual[len(direct):] if isinstance(actual, str) else actual[-1]['text']
+    assert actual[:len(direct)] == direct
+    assert suffix.count('Treat as authoritative reference data') == 1  # only the quotation
+    assert 'fictional, hypothetical or reported scope' in suffix
+    assert evidence in suffix
+    assert rt.module._PACKET.search(suffix).group() == rt.module._PACKET.search(block).group()
+    assert request == original
+    # An unobserved string or a future unknown wrapper is never rewritten.
+    assert rt.module.filter_request(request, contact_id='owner', watermark=0, rules=[], fresh=True) == request
+    for previous, changed in [('[System note:', '[Other format:'),
+                              ('Treat as authoritative reference data', 'Use the source-specific evidence policy')]:
+        unknown_block = block.replace(previous, changed, 1)
+        unknown = (direct + '\n\n' + unknown_block if isinstance(enriched, str)
+                   else direct + [{'type': 'text', 'text': unknown_block}])
+        assert rt.module.filter_request({'input': unknown}, contact_id='owner', watermark=0,
+            rules=[], fresh=True, current_content=unknown, current_input=direct) == {'input': unknown}
 
 
 def test_partial_feed_never_certifies_freshness_and_makes_bounded_progress(runtime):

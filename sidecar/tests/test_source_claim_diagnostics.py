@@ -22,8 +22,8 @@ def setup(tmp_path, messages=None):
     return ledger, SourceClaimProjection(ledger)
 
 
-def response(output, *, model='local-model', revision='config-a'):
-    return SimpleNamespace(content=output, model_id=model, function_role='extraction',
+def response(output, *, model='local-model', revision='config-a', role='extraction'):
+    return SimpleNamespace(content=output, model_id=model, function_role=role,
                            config_revision=revision, model_revision='weights-a')
 
 
@@ -37,7 +37,8 @@ async def test_empty_rejected_and_accepted_have_distinct_durable_receipts(
         tmp_path, output, candidates, accepted, rejected, empty):
     ledger, projection = setup(tmp_path)
     model = Model({})
-    model.complete = AsyncMock(return_value=response(output))
+    model.complete = AsyncMock(side_effect=[response(output), response(json.dumps({
+        '0': {'keep': True, 'reason': 'Controlled valid location.'}}), role='judging')])
     assert await projection.process_one(model)
     row = SourceClaimProjection(TurnIdempotencyLedger(ledger.db_path)).status('person')[0]
     assert row['status'] == 'complete' and row['claim_count'] == accepted
@@ -47,6 +48,8 @@ async def test_empty_rejected_and_accepted_have_distinct_durable_receipts(
     assert data['rejected_count'] == rejected
     assert data['empty_array_count'] == empty
     assert data['response_count'] == 1 and data['invalid_array_count'] == 0
+    assert data['review_response_count'] == accepted
+    assert model.complete.await_count == 1 + accepted
     assert data['rejection_counts'] == ({'value_not_grounded': 1} if rejected else {})
     assert data['last_model_provenance'] == {
         'function_role': 'extraction', 'model_id': 'local-model',
@@ -66,6 +69,7 @@ async def test_multi_message_counts_aggregate_and_last_completed_binding_is_expl
     model = Model({})
     model.complete = AsyncMock(side_effect=[
         response(json.dumps([claim(TEXT, 'River'), claim(TEXT, 'Lake')])),
+        response(json.dumps({'0': {'keep': True, 'reason': 'Controlled valid location.'}}), role='judging'),
         response('[]', model='other-local-model', revision='config-b'),
     ])
     assert await projection.process_one(model)

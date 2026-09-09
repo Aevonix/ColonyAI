@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.self_model.judgments import SelfJudgments
+from colony_sidecar.self_model.judgments import RESPONSE_SCHEMA, SelfJudgments
 from colony_sidecar.turns import TurnIdempotencyLedger
 from test_self_perspective import perspective, tell
 from test_turn_source_evidence import source_app
@@ -32,7 +32,8 @@ class Processor:
         return self.deadline
 
     async def complete(self, *, messages, context):
-        assert context == {'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True}
+        assert context == {'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True,
+                           'response_schema': RESPONSE_SCHEMA}
         payload = json.loads(messages[-1]['content'])
         self.requests.append(payload)
         if self.before_return:
@@ -263,6 +264,61 @@ async def test_existing_worker_indexes_while_reasoning_is_in_flight_and_cancels_
     worker.cancel()
     with pytest.raises(asyncio.CancelledError):
         await worker
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_slow_claim_keeps_media_and_vector_work_moving_and_cancels(judgments, monkeypatch):
+    state, _ = judgments
+    from colony_sidecar.beliefs import source_projection
+    from colony_sidecar.self_model import appraisals
+    from colony_sidecar.turns import media, source_vectors
+    entered, indexed_again, described, cancelled = (asyncio.Event() for _ in range(4))
+    calls = 0
+
+    async def slow_claim(*_args):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def no_work(*_args):
+        return False
+
+    async def describe(*_args):
+        if entered.is_set():
+            described.set()
+        return True
+
+    class Vectors:
+        def __init__(self, *_args):
+            self.calls = 0
+        def backfill(self):
+            pass
+        async def process_one(self):
+            self.calls += 1
+            await asyncio.sleep(0)
+            if entered.is_set() and self.calls >= 2:
+                indexed_again.set()
+            return True
+
+    monkeypatch.setattr(source_vectors, 'SourceVectors', Vectors)
+    monkeypatch.setattr(source_projection.SourceClaimProjection, 'process_one', slow_claim)
+    monkeypatch.setattr(type(state), 'process_one', no_work)
+    monkeypatch.setattr(appraisals.AppraisalStore, 'process_one', no_work)
+    monkeypatch.setattr(media.SourceMedia, 'process_one', describe)
+    monkeypatch.setattr(media.SourceMedia, 'recover_unowned_files', lambda _self: None)
+    worker = asyncio.create_task(source_projection.run_source_claim_worker(state.ledger, lambda: None))
+    try:
+        await asyncio.wait_for(asyncio.gather(indexed_again.wait(), described.wait()), 2)
+        assert calls == 1  # No duplicate claim consumer while its request waits.
+    finally:
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await worker
     assert cancelled.is_set()
 
 

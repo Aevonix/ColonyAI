@@ -33,6 +33,7 @@ import ipaddress
 import socket
 import threading
 from collections import deque
+from copy import deepcopy
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
@@ -368,12 +369,25 @@ class LLMRouter:
             raise ValueError('Unknown function role')
         if stream:
             raise ValueError('Function routing currently returns complete responses')
+        # This is a caller's output contract, applied only to explicitly
+        # capable bindings. Consumer validation remains necessary on every
+        # binding, including prompt-only fallbacks and legacy transports.
+        response_format = None
+        if context.get('response_schema') is not None:
+            schema = deepcopy(context['response_schema'])
+            if (not isinstance(schema, dict) or set(schema) != {'name', 'schema'}
+                    or not isinstance(schema['name'], str) or not 1 <= len(schema['name']) <= 64
+                    or not isinstance(schema['schema'], dict)):
+                raise ValueError('response_schema requires a name and JSON schema object')
+            response_format = {'type': 'json_schema', 'json_schema': {**schema, 'strict': True}}
         has_images = any(isinstance(m.get('content'), list) and any(
             isinstance(b, dict) and b.get('type') in {'image_url', 'input_image'} for b in m['content']) for m in messages)
         from colony_sidecar.contextgate import estimate_tokens
         text = '\n'.join(m['content'] if isinstance(m.get('content'), str) else '\n'.join(
             b.get('text', '') for b in (m.get('content') or []) if isinstance(b, dict) and isinstance(b.get('text'), str)) for m in messages)
-        selection_context = {**context, 'estimated_input_tokens': estimate_tokens(text) + 8 * len(messages)}
+        schema_tokens = estimate_tokens(json.dumps(response_format)) if response_format else 0
+        selection_context = {**context, 'estimated_input_tokens': estimate_tokens(text) + 8 * len(messages),
+                             'response_schema_tokens': schema_tokens}
         available = candidates(snapshot, role_name, selection_context, has_images=has_images, has_tools=bool(tools))
         if force_tier is not None:
             # Explicit legacy tier selection remains exact, but must still
@@ -407,10 +421,11 @@ class LLMRouter:
                 continue
             try:
                 async def complete_on_address(pinned_ip):
+                    output = {'response_format': response_format} if response_format and binding.supports_json_schema else {}
                     return await self._litellm_call(
                         request_id=request_id, config=cfg, messages=messages, tools=tools,
                         stream=False, max_output_tokens=context.get('max_output_tokens', context.get('max_tokens')),
-                        local_endpoint=True, pinned_ip=pinned_ip)
+                        local_endpoint=True, pinned_ip=pinned_ip, **output)
                 async with attempt_timeout:
                     response = await self._at_endpoint(snapshot, binding, complete_on_address)
                 response.function_role = role_name
@@ -562,6 +577,7 @@ class LLMRouter:
         max_output_tokens: int | None = None,
         local_endpoint: bool = False,
         pinned_ip: str | None = None,
+        response_format: dict | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": config.model_id,
@@ -573,6 +589,8 @@ class LLMRouter:
         }
         if tools:
             kwargs["tools"] = tools
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         if stream:
             kwargs["stream"] = True
         # Per-tier endpoint overrides — different tiers may live on

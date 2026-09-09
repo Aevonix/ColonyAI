@@ -135,15 +135,23 @@ class RecallSelector:
             return memories
 
         scores: Dict[int, float] = {}
-        for r in results or []:
-            idx = r.get("index") if isinstance(r, dict) else getattr(r, "index", None)
-            score = r.get("score") if isinstance(r, dict) else getattr(r, "score", None)
-            if idx is not None and score is not None:
-                idx, score = int(idx), float(score)
-                if 0 <= idx < len(submitted) and math.isfinite(score):
-                    scores[idx] = score
-        if not scores:
-            self._warn_rerank_failure(RuntimeError("reranker returned no scores"))
+        try:
+            for r in results or []:
+                idx = r.get("index") if isinstance(r, dict) else getattr(r, "index", None)
+                score = r.get("score") if isinstance(r, dict) else getattr(r, "score", None)
+                if not isinstance(idx, int) or isinstance(idx, bool) or idx in scores:
+                    raise ValueError("reranker returned an invalid or duplicate index")
+                score = float(score)
+                if not 0 <= idx < len(submitted) or not math.isfinite(score):
+                    raise ValueError("reranker returned an invalid score")
+                scores[idx] = score
+            # We requested every submitted document. A partial response cannot
+            # mix cross-encoder scores with original rank-fusion/ANN scores, or
+            # silently treat missing relevance judgments as abstention.
+            if len(scores) != len(submitted):
+                raise ValueError("reranker returned incomplete scores")
+        except (TypeError, ValueError, OverflowError) as exc:
+            self._warn_rerank_failure(exc)
             for memory in memories:
                 memory["rerank_status"] = "unavailable"
             return memories
@@ -164,14 +172,11 @@ class RecallSelector:
                 limit, moved)
             return memories
 
-        # mode == "on": rerank score replaces the vector score in the blend;
-        # a document the reranker didn't score keeps its ANN relevance.
+        # mode == "on": rerank score replaces the vector score in the blend.
         # The unsubmitted tail has no comparable model score and cannot enter
         # a successfully reranked packet.
         memories = submitted
         for i, mem in enumerate(memories):
-            if i not in scores:
-                continue
             effective_confidence = (float(
                 mem.get("effective_confidence", mem.get("strength", 1.0)))
                 if confidence_weighting else 1.0)
