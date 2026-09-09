@@ -137,3 +137,40 @@ async def test_empty_checkpoint_is_rejected_without_storing_garbage(source_app, 
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url="http://test") as client:
         assert (await client.put("/v2/host/turns/empty-source", json=body)).status_code == 422
     assert not (tmp_path / "turn-idempotency.db").exists()
+
+
+@pytest.mark.asyncio
+async def test_repeated_event_keeps_its_date_until_context_time_selection(source_app, monkeypatch):
+    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    text = "The camera spotted a crate by the loading door."
+    async with AsyncClient(transport=ASGITransport(app=source_app), base_url="http://test") as client:
+        for turn, day in (("earlier-event", "2026-03-01"), ("later-event", "2026-03-03")):
+            body = envelope(turn)
+            body["user_message"]["content"] = text
+            body["context"]["metadata"] = {"occurred_at": day + "T09:00:00+00:00"}
+            assert (await client.put(f"/v2/host/turns/{turn}", json=body)).status_code == 201
+        for day, expected, excluded in (("2026-03-01", "earlier-event", "later-event"),
+                                        ("2026-03-03", "later-event", "earlier-event")):
+            context = await recalled(client, session="voice-session", query=f"What did the camera spot on {day}?")
+            assert text in context
+            assert f'"source": "turn:{expected}"' in context
+            assert f'"source": "turn:{excluded}"' not in context
+        # Ordinary recall can still collapse repeated words by the same known
+        # speaker after it has retained their canonical lineage for time checks.
+        context = await recalled(client, query="camera crate")
+        assert context.count(text) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("multimodal", [False, True])
+async def test_long_source_excerpt_is_marked_incomplete_before_packet_packing(source_app, multimodal):
+    body = envelope("long-procedure")
+    text = "Labeler reset procedure: disconnect the power. " + "Read the status indicator. " * 100
+    text += "Only reconnect after the amber light stops blinking."
+    body["user_message"]["content"] = ([{"type": "text", "text": text}] if multimodal else text)
+    async with AsyncClient(transport=ASGITransport(app=source_app), base_url="http://test") as client:
+        assert (await client.put("/v2/host/turns/long-procedure", json=body)).status_code == 201
+        context = await recalled(client, query="labeler reset disconnect")
+    assert "Labeler reset procedure" in context
+    assert "Only reconnect" not in context
+    assert '"excerpt_truncated": true' in context

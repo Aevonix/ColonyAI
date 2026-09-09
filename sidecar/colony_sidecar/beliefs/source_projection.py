@@ -307,6 +307,10 @@ class SourceClaimProjection:
                 hit.update({name: source[name] for name in ("contact_id", "session_id", "scope")})
                 for message in json.loads(source["messages_json"]):
                     text = message.get("content")
+                    if isinstance(text, list):
+                        text = "\n".join(block["text"] for block in text if isinstance(block, dict)
+                            and block.get("type") in {"text", "input_text", "output_text"}
+                            and isinstance(block.get("text"), str))
                     if message.get("role") != hit["role"] or not isinstance(text, str):
                         continue
                     message_claims = by_hash.get(source_message_hash(source["session_id"], message), [])
@@ -314,6 +318,8 @@ class SourceClaimProjection:
                     # every matching chunk occurrence; never depend on an entire
                     # corrected quotation fitting inside one retrieved chunk.
                     offset = text.find(hit["content"])
+                    if offset >= 0 and hit["content"] != text:
+                        hit["excerpt_truncated"] = True
                     while offset >= 0:
                         for claim in message_claims:
                             start = max(0, claim["span_start"] - offset)
@@ -329,7 +335,8 @@ class SourceClaimProjection:
                 if start > cursor:
                     fragment = hit["content"][cursor:start]
                     if fragment.strip(" .,:;\n\t"):
-                        retained_hits.append(dict(hit, content=fragment, excerpt_truncated=bool(removed)))
+                        retained_hits.append(dict(hit, content=fragment,
+                            excerpt_truncated=bool(removed) or bool(hit.get("excerpt_truncated"))))
                 cursor = max(cursor, end)
         bundles = []
         for key in dict.fromkeys(keys):

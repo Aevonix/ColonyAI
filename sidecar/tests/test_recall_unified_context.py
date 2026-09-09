@@ -237,3 +237,25 @@ async def test_one_result_limit_covers_sources_and_beliefs(monkeypatch):
     rows, text = await RecallSelector().select_context("q", beliefs, sources, limit=5)
     assert len(rows) == 5 and len(text) <= 6000
     assert {row["kind"] for row in rows} == {"belief", "source_quote"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("results", [
+    [{"index": 0, "score": .001}],
+    [{"index": 0, "score": .001}, {"index": 1, "score": "invalid"}],
+    [{"index": 0, "score": .001}, {"index": 1, "score": float("nan")}],
+    [{"index": 0, "score": .001}, {"index": 0, "score": .999}],
+])
+async def test_partial_or_malformed_reranking_preserves_one_comparable_fallback(monkeypatch, results):
+    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
+    monkeypatch.delenv("COLONY_RECALL_RERANK_MIN_SCORE", raising=False)
+    rank = AsyncMock(return_value=results)
+    rows = [{**belief(f"Passage {i}"), "id": f"b{i}", "relevance": .02 - i / 10000}
+            for i in range(6)]
+    before = [row["relevance"] for row in rows]
+    output = await RecallSelector(rank).rerank("q", rows, 5)
+    assert output is rows
+    assert [row["relevance"] for row in output] == before
+    assert all(row["rerank_status"] == "unavailable" for row in output)
+    assert all("rerank_score" not in row for row in output)
+    rank.assert_awaited_once()
