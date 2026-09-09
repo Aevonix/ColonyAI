@@ -1,6 +1,7 @@
 """Acceptance survives restart without pretending an unbound queue executes."""
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+import pytest
 
 from colony_sidecar.api.routers import host
 from colony_sidecar.goals.config import GoalEngineConfig
@@ -9,7 +10,9 @@ from colony_sidecar.goals.models import Goal, GoalDAG, GoalStatus, Subtask, Subt
 from colony_sidecar.goals.queue_bridge import GoalQueueBridge, InMemoryQueueBackend
 
 
-async def test_api_acceptance_survives_restart_without_fake_dispatch(tmp_path, monkeypatch):
+@pytest.mark.parametrize('mode', ['off', 'shadow'])
+async def test_api_acceptance_survives_restart_without_fake_dispatch(tmp_path, monkeypatch, mode):
+    monkeypatch.setenv('COLONY_COGNITION_SPINE', mode)
     config = GoalEngineConfig(db_path=str(tmp_path / 'goals.db'), inference_enabled=False)
     engine = GoalEngine(config=config)
     monkeypatch.setattr(host, '_goals_store', engine)
@@ -40,7 +43,45 @@ async def test_api_acceptance_survives_restart_without_fake_dispatch(tmp_path, m
         assert len(replacement.get_audit_trail(goal_id)) == 1
 
 
+async def test_live_native_mode_rejects_new_legacy_goal_but_retains_history(tmp_path, monkeypatch):
+    config = GoalEngineConfig(db_path=str(tmp_path / 'goals.db'), inference_enabled=False)
+    engine = GoalEngine(config=config)
+    old = engine.propose_goal('Previously accepted project comparison')
+    engine.accept_goal(old.goal_id)
+    engine.activate_goal(old.goal_id)
+    monkeypatch.setenv('COLONY_COGNITION_SPINE', 'live')
+    monkeypatch.setattr(host, '_goals_store', engine)
+    app = FastAPI()
+    app.include_router(host.router)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        response = await client.post('/v1/host/goals', json={
+            'identity': {'host_id': 'test'}, 'title': 'New unattested native work',
+        })
+        assert response.status_code == 409
+        assert response.json()['detail']['reason'] == 'legacy_goal_creation_unavailable'
+        assert '/v1/host/commitments/local-draft' in response.json()['detail']['next_action']
+        assert [goal.goal_id for goal in engine.list_goals()] == [old.goal_id]
+        assert len(engine.get_audit_trail(old.goal_id)) == 1
+        assert engine.get_dag(old.goal_id) is None
+
+        url = '/v1/host/goals/' + old.goal_id
+        assert (await client.get(url)).json()['status'] == 'accepted'
+        assert [goal['id'] for goal in (await client.get('/v1/host/goals')).json()['goals']] == [old.goal_id]
+        result = await client.patch(url, json={'identity': {'host_id': 'test'}, 'status': 'done'})
+        assert result.status_code == 200
+        assert result.json()['completion_basis'] == 'reported_completion'
+
+    engine._store.close()
+    retained = GoalEngine(config=config)
+    assert [goal.goal_id for goal in retained.list_goals()] == [old.goal_id]
+    assert retained.get_goal(old.goal_id).status == GoalStatus.COMPLETED
+    assert len(retained.get_audit_trail(old.goal_id)) == 2
+    assert retained.get_dag(old.goal_id) is None
+    retained._store.close()
+
+
 async def test_reported_completion_closes_accepted_goal_and_survives_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv('COLONY_COGNITION_SPINE', 'off')
     config = GoalEngineConfig(db_path=str(tmp_path / 'goals.db'), inference_enabled=False)
     engine = GoalEngine(config=config)
     monkeypatch.setattr(host, '_goals_store', engine)
