@@ -91,6 +91,57 @@ def add(ledger, **changes):
     return ledger.append_source_annotation(**payload(ledger, **changes), author_principal='operator')
 
 
+def test_correction_ranking_preserves_complete_attributed_output_and_all_notes(annotated_app):
+    from colony_sidecar.intelligence.graph.recall import source_candidates
+    from colony_sidecar.turns.source_annotations import expand
+    _, ledger = annotated_app
+    first = add(ledger)
+    conflicting = 'A separate report says 09:14 was measured. This conflicts with the first correction.'
+    second = add(ledger, annotation_id='audit-2', correction=conflicting)
+    original = source_candidates([{'turn_id': 'report', 'role': 'assistant', 'content': REPORT}])[0]
+    rows = expand(ledger, [original], contact_id='person', session_id='later')
+    assert len(rows) == 1
+    row = rows[0]
+    assert row['ranking_text'] == (
+        'Attributed correction (not independently verified):\n' + NOTE
+        + '\nAttributed correction (not independently verified):\n' + conflicting
+        + '\nOriginal evidence:\n' + REPORT)
+    packet = json.loads(row['content'])
+    assert packet['original']['content'] == REPORT
+    assert [note['correction'] for note in packet['corrections']] == [NOTE, conflicting]
+    assert all(note['author_principal'] == 'operator' for note in packet['corrections'])
+    assert row['atomic_evidence'] is True and row['epistemic_state'] == 'correction_evidence'
+    assert {ref['source_id'] for ref in row['_annotation_source_refs']} == {
+        'report', first['source_id'], second['source_id']}
+    ledger.erase_sources(contact_id='person', turn_ids=[second['source_id']])
+    assert expand(ledger, [original], contact_id='person', session_id='later') == []
+
+
+@pytest.mark.asyncio
+async def test_correction_representation_invalidates_previous_cutoff(monkeypatch):
+    from colony_sidecar.intelligence.graph.recall import calibration_fingerprint, provider_calibration_metadata
+    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    class Provider:
+        def calibration_metadata(self):
+            return {'provider': 'fixture', 'model': 'fixture', 'weights_revision': 'fixed'}
+    metadata = provider_calibration_metadata(Provider())
+    old_metadata = dict(metadata, candidate_format='grounded-quotation-bundles-v1')
+    monkeypatch.setenv('COLONY_RECALL_RERANK', 'on')
+    monkeypatch.setenv('COLONY_RECALL_RERANK_MIN_SCORE', '0.7')
+    monkeypatch.setenv('COLONY_RECALL_RERANK_CALIBRATION', calibration_fingerprint(old_metadata))
+    calls = []
+    async def rerank(query, docs, top_k):
+        calls.append(docs)
+        return [{'index': i, 'score': 0.6} for i in range(len(docs))]
+    selector = RecallSelector(rerank, calibration_metadata=lambda: metadata)
+    source = {'id': 'source', 'content': REPORT, 'ranking_text': NOTE + '\n' + REPORT}
+    unchanged = await selector.rerank('archive', [dict(source)], 5)
+    assert unchanged[0]['rerank_calibration'] == 'mismatch' and calls == []
+    monkeypatch.setenv('COLONY_RECALL_RERANK_CALIBRATION', calibration_fingerprint(metadata))
+    assert await selector.rerank('archive', [dict(source)], 5) == []
+    assert calls == [[source['ranking_text']]]
+
+
 def test_append_failure_is_atomic_and_session_scope_cannot_widen(annotated_app, monkeypatch):
     _, ledger = annotated_app
     from colony_sidecar.turns import source_vectors

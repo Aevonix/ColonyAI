@@ -25,7 +25,7 @@ def provider_calibration_metadata(provider) -> dict[str, Any]:
         "embedding_model": os.environ.get("COLONY_EMBED_MODEL", ""),
         "embedding_dimensions": os.environ.get("COLONY_EMBED_DIMS", ""),
         "index_generation": os.environ.get("COLONY_RECALL_INDEX_GENERATION", "unverified"),
-        "candidate_format": "grounded-quotation-bundles-v1",
+        "candidate_format": "grounded-quotation-bundles-v2-corrections-first",
     }
 
 
