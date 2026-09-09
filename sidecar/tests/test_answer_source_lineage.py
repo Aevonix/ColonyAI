@@ -169,7 +169,9 @@ def test_actual_native_hooks_capture_only_trusted_delivered_selection(tmp_path, 
     request = {'messages': [{'role': 'user', 'content': history[0]['api_content']}]}
     middleware = context.middleware['llm_request']
     result = middleware(request=request, session_id='fresh', task_id='task', turn_id='turn')
-    assert result['request']['messages'][0]['content'] == history[0]['api_content']
+    # The request has no tools, so the adapter adds its factual capability
+    # note. The user's evidence bytes and attributed capture remain intact.
+    assert [row for row in result['request']['messages'] if row['role'] == 'user'] == request['messages']
     context.hooks['post_llm_call'](**kwargs, conversation_history=history, assistant_response='A useful paraphrase.', model='fixture')
     assert Client.instances[-1].synced[-1]['assistant_source_refs'] == [ref]
 
