@@ -109,6 +109,49 @@ def _interpreter(candidate):
     return python
 
 
+def _profile_homes(python):
+    """Ask the selected native runtime for live profile paths, without reading their config."""
+    probe = subprocess.run([str(python), '-I', '-B', '-c',
+        'import json; from hermes_cli.profiles import list_profile_names,profile_exists,get_profile_dir; '
+        'print(json.dumps([{ "name":name,"path":str(get_profile_dir(name))} '
+        'for name in list_profile_names() if profile_exists(name) '
+        'and (get_profile_dir(name)/"config.yaml").is_file()]))'],
+        capture_output=True, text=True, timeout=10)
+    try:
+        rows = json.loads(probe.stdout.splitlines()[-1]) if probe.returncode == 0 else None
+        if not isinstance(rows, list):
+            raise ValueError()
+        result = []
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {'name', 'path'}:
+                raise ValueError()
+            if not all(isinstance(row[key], str) and row[key] and not any(ord(c) < 32 for c in row[key])
+                       for key in ('name', 'path')) or not Path(row['path']).is_absolute():
+                raise ValueError()
+            path = Path(row['path']).resolve()
+            if path not in [item['path'] for item in result]:
+                result.append({'name': row['name'], 'path': path})
+        return result
+    except (ValueError, IndexError, TypeError):
+        raise ValueError('Could not list native Hermes profiles; select one with --hermes-home') from None
+
+
+def _select_home(args, ask):
+    from colony_sidecar import setup
+    explicit = getattr(args, 'hermes_home', None) or os.environ.get('HERMES_HOME')
+    if explicit or getattr(args, 'non_interactive', False):
+        return setup._resolve_hermes_home(explicit), None
+    python = _interpreter(getattr(args, 'hermes_python', None))
+    homes = _profile_homes(python)
+    if homes:
+        print('Existing Hermes profiles:')
+        for row in homes:
+            print(f"  {row['name']}: {row['path']}")
+    default = str(homes[0]['path']) if homes else str(setup._resolve_hermes_home())
+    selected = ask('Hermes home to attach (one profile)', default, True)
+    return setup._resolve_hermes_home(selected), python
+
+
 def _adapter_resources(wheel=None):
     packages = ('colony_hermes/', 'colony_memory/')
     if wheel:
@@ -371,7 +414,7 @@ def run(root_dir=None, args=None):
             raise ValueError('Configuration values must fit on one line')
         return result
     try:
-        home = setup._resolve_hermes_home(getattr(args, 'hermes_home', None))
+        home, selected_python = _select_home(args, ask)
         state = Path(root_dir or os.environ.get('COLONY_STATE_DIR') or home/'colony').expanduser().resolve()
         if state == home or home.is_relative_to(state):
             raise ValueError('The private Colony directory must not contain the Hermes home')
@@ -439,7 +482,7 @@ def run(root_dir=None, args=None):
             if noninteractive or ask('Another memory provider is selected. Replace only its selection and retain its files? [y/N]', 'N').lower() not in {'y', 'yes'}:
                 raise ValueError('Existing provider retained; choose another --hermes-home or explicitly request --replace-memory-provider')
             replace_provider = True
-        python = _interpreter(getattr(args, 'hermes_python', None))
+        python = selected_python or _interpreter(getattr(args, 'hermes_python', None))
         resources = _adapter_resources(getattr(args, 'adapter_wheel', None))
         _preflight_outbox(home, resources)
         binding = _adapter_binding(python, resources)

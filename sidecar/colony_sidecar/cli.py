@@ -33,7 +33,7 @@ def main() -> None:
     # Harness configuration (new approach)
     init_p.add_argument("--mcp-harnesses", help="Connect coding harnesses via MCP (comma-separated: claude-code,codex,crush,opencode)")
     init_p.add_argument("--agent-harness", choices=["hermes"], help="Connect agent harness via plugin (OpenClaw support was removed in v0.21.14)")
-    init_p.add_argument("--hermes-home", default=None, help="Selected Hermes profile/home (default: HERMES_HOME or ~/.hermes)")
+    init_p.add_argument("--hermes-home", default=None, help="Selected Hermes home; guided setup lists native profiles, noninteractive defaults to HERMES_HOME or ~/.hermes")
     init_p.add_argument("--hermes-python", help="Python interpreter of an existing supported Hermes installation")
     init_p.add_argument("--agent-name", help="Name for a new private identity; existing SOUL is preserved")
     init_p.add_argument("--agent-values", help="Comma-separated guiding values for a new private agent")

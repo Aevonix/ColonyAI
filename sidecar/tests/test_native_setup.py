@@ -30,6 +30,47 @@ def test_native_interpreter_requires_a_supported_runtime(version, supported, mon
     assert probe.call_args.kwargs['timeout'] == 30
 
 
+def test_guided_setup_selects_one_native_profile_before_reading_configuration(tmp_path, monkeypatch):
+    monkeypatch.delenv('HERMES_HOME', raising=False)
+    primary, selected = tmp_path/'default', tmp_path/'named'
+    discovery = Mock(return_value=[{'name': 'default', 'path': primary}, {'name': 'work', 'path': selected}])
+    monkeypatch.setattr(setup_hermes, '_interpreter', lambda value: Path('/selected/python'))
+    monkeypatch.setattr(setup_hermes, '_profile_homes', discovery)
+    ask = Mock(return_value=str(selected))
+    home, python = setup_hermes._select_home(SimpleNamespace(), ask)
+    assert home == selected and python == Path('/selected/python')
+    assert ask.call_args.args[1] == str(primary)
+    assert not primary.exists() and not selected.exists()
+
+
+@pytest.mark.parametrize('selection', ['argument', 'environment', 'noninteractive'])
+def test_explicit_or_noninteractive_home_does_not_discover_other_profiles(selection, tmp_path, monkeypatch):
+    monkeypatch.delenv('HERMES_HOME', raising=False)
+    args = SimpleNamespace(non_interactive=selection == 'noninteractive')
+    home = tmp_path/'selected'
+    if selection == 'argument': args.hermes_home = str(home)
+    elif selection == 'environment': monkeypatch.setenv('HERMES_HOME', str(home))
+    discovery = Mock(side_effect=AssertionError('Do not inspect unrelated profiles'))
+    monkeypatch.setattr(setup_hermes, '_profile_homes', discovery)
+    ask = Mock(side_effect=AssertionError('Selection is already explicit'))
+    selected, interpreter = setup_hermes._select_home(args, ask)
+    assert selected == (setup._resolve_hermes_home() if selection == 'noninteractive' else home)
+    assert interpreter is None
+    discovery.assert_not_called()
+
+
+def test_profile_discovery_uses_native_live_listing_and_rejects_invalid_output(tmp_path, monkeypatch):
+    probe = Mock(return_value=SimpleNamespace(returncode=0, stdout=json.dumps([
+        {'name': 'default', 'path': str(tmp_path)}, {'name': 'alias', 'path': str(tmp_path)}])))
+    monkeypatch.setattr(setup_hermes.subprocess, 'run', probe)
+    assert setup_hermes._profile_homes('/native/python') == [{'name': 'default', 'path': tmp_path}]
+    assert probe.call_args.args[0][:4] == ['/native/python', '-I', '-B', '-c']
+    assert 'profile_exists(name)' in probe.call_args.args[0][-1]
+    probe.return_value.stdout = json.dumps([{'name': 'work', 'path': 'relative/path'}])
+    with pytest.raises(ValueError, match='--hermes-home'):
+        setup_hermes._profile_homes('/native/python')
+
+
 def artifact(tmp_path):
     root = Path(__file__).resolve().parents[2]
     wheel = tmp_path/'adapter.whl'
