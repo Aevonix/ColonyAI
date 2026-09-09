@@ -33,7 +33,7 @@ python -m build
 Install the resulting wheel with the Python interpreter that runs Hermes:
 
 ```sh
-python -m pip install dist/colony_hermes-1.0.32-py3-none-any.whl
+python -m pip install dist/colony_hermes-1.0.33-py3-none-any.whl
 ```
 
 The wheel exposes `colony` through `hermes_agent.plugins` and `colony-memory`
@@ -140,6 +140,11 @@ input and source dependencies, without recording the task wrapper as another
 human statement. Inherited source handles are labelled as unopened evidence
 and become usable only after their exact host block reaches the actual native
 request. Existing request, tool and writer erasure checks still apply.
+
+From 1.0.33, validated supplied-input replies are retained even on a native
+platform excluded from automatic ordinary turn capture. The exception writes
+only the dependent assistant source. Ordinary excluded CLI turns and callers
+without valid native participant authority remain excluded.
 
 The context exposes the durably queued result's dependencies for the host to
 revalidate before delayed delivery or further effects. It does not confirm

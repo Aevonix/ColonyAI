@@ -2426,6 +2426,7 @@ def register(ctx: Any) -> None:
         if (
             turn_writer_platforms is not None
             and scope.platform not in turn_writer_platforms
+            and supplied_input is None
         ):
             return None
         user_message = kwargs.get("user_message") or scope.user_message or ""

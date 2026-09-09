@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.33 - retain replies to supplied input on excluded platforms
+
+An authenticated host's validated supplied-input task now retains its
+assistant-only reply when the native platform is excluded from automatic
+ordinary turn capture. Previously, the platform filter also discarded that
+dependent reply, leaving the host without a source receipt despite a completed
+native answer. Ordinary excluded CLI turns remain excluded, and supplied
+parents do not grant participant or tool authority. Existing source ownership,
+exact parent validation and erasure checks remain in force.
+
+The sidecar runtime is unchanged; both packages remain version-aligned.
+See the [supplied-input contract](plugins/hermes-plugin/SUPPLIED-INPUT.md).
+
 ## v1.0.32 - captured input through native tasks
 
 An authenticated host can bind already captured input to the existing native

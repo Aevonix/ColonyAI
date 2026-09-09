@@ -18,6 +18,10 @@ The host may use Hermes's `persist_user_message` to display the original human
 input while the actual request contains a derived task. The adapter records
 only the assistant source, with the original input dependencies and inherited
 source dependencies. It does not add the task wrapper as human testimony.
+From 1.0.33, this validated assistant-only output is retained even when the
+native platform is excluded from automatic ordinary turn capture. The platform
+filter still excludes ordinary turns without supplied input; the exception
+does not grant participant or tool authority.
 Inherited handles are labelled as unopened evidence and become available to
 the scoped source reader only after their exact host-appended block reaches
 the actual native request. Quoted marker text cannot add host handles.
