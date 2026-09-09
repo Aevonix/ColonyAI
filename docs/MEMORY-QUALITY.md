@@ -68,7 +68,12 @@ This preserves bounded lexical access to useful retained estimates without a new
 index or model. It does not guarantee paraphrase-only recall or coverage beyond
 the current 512-record window. Explicit contact-knowledge listing remains
 available. The legacy `/v1/host/context/enriched` route and automatic ToM context
-use the same source eligibility rule. Old unlinked facts, including hand-entered
+use the same source eligibility rule. Enriched contact estimates also require
+query overlap and carry the existing attributed-correction packet and exact
+source references. The complete packet must fit the recall character budget;
+if later section compression changes it, the section is omitted. Source and
+correction revisions are rechecked after compression. Explicit history remains
+available when an automatic packet cannot fit. Old unlinked facts, including hand-entered
 ones, remain available through explicit fact/history APIs but are not injected
 automatically. Their historical source enum and free-form metadata do not
 reliably distinguish owner curation from automated extraction. No curation or

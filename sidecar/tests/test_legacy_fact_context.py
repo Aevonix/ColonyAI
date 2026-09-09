@@ -139,3 +139,86 @@ async def test_linked_estimate_keeps_current_correction_and_exact_source_refs(co
         contact_id='contact-a', session_id='later')
     assert {r['source_id']: r['source_version'] for r in section['citations']} == {
         r['source_id']: r['source_version'] for r in expected}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('p8_enabled', [False, True])
+@pytest.mark.parametrize('compression', ['off', 'balanced'])
+async def test_enriched_estimate_keeps_correction_refs_and_never_revives_erased_note(
+        contact_context, monkeypatch, p8_enabled, compression):
+    runtime = contact_context
+    if not p8_enabled:
+        monkeypatch.setattr(host, '_p8_runtime', None)
+    original = 'The hydrofoil gate is violet.'
+    runtime.ledger.record_source('enriched-origin', contact_id='contact-a', session_id='prior',
+        messages=[{'role': 'user', 'content': original}], derive_claims=False)
+    lineage, _ = runtime.facts.source_input('enriched-origin', 'contact-a')
+    fact = runtime.add(original, source_lineage=lineage)
+    reference = runtime.ledger.source_references(['enriched-origin'], contact_id='contact-a', session_id='later')[0]
+    correction = annotate_source(runtime.ledger, contact_id='contact-a', session_id='later',
+        annotation_id='enriched-correction', source_id='enriched-origin', source_version=reference['source_version'],
+        excerpt=original, correction='The earlier gate color was mistaken; the gate is amber.',
+        author_principal='fixture-owner')
+    payload = {'identity': {'host_id': 'native-fixture'},
+        'context': {'contact_id': 'contact-a', 'session_id': 'later'},
+        'message': 'hydrofoil gate', 'compression': compression}
+    async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url='http://test') as client:
+        response = await client.post('/v1/host/context/enriched',
+            headers={'Authorization': 'Bearer owner-key'}, json=payload)
+        assert response.status_code == 200, response.text
+        section = next(s for s in response.json()['sections'] if s['id'] == 'colony-shared-facts')
+        assert 'amber' in section['body'] and 'attributed_correction' in section['body']
+        assert 'shared-fact:'+fact['id'] in section['body']
+        expected = runtime.ledger.source_references(['enriched-origin', correction['source_id']],
+            contact_id='contact-a', session_id='later')
+        assert {r['source_id']: r['source_version'] for r in section['citations']} == {
+            r['source_id']: r['source_version'] for r in expected}
+        runtime.ledger.erase_sources(contact_id='contact-a', turn_ids=[correction['source_id']])
+        after = await client.post('/v1/host/context/enriched',
+            headers={'Authorization': 'Bearer owner-key'}, json=payload)
+        assert after.status_code == 200, after.text
+        assert not any(s['id'] == 'colony-shared-facts' for s in after.json()['sections'])
+    assert runtime.facts.get_fact(fact['id'])['fact'] == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change', ['unrelated_query', 'packet_budget', 'compression_budget', 'new_correction'])
+async def test_enriched_omits_irrelevant_incomplete_or_changed_source_packet(
+        contact_context, monkeypatch, change):
+    from colony_sidecar import compression
+    runtime = contact_context
+    original = 'The hydrofoil gate is violet.'
+    fact = runtime.add(original)
+    origin = fact['source_lineage']['turn_id']
+    reference = runtime.ledger.source_references([origin], contact_id='contact-a', session_id='later')[0]
+    def correct(identifier, text):
+        return annotate_source(runtime.ledger, contact_id='contact-a', session_id='later',
+            annotation_id=identifier, source_id=origin, source_version=reference['source_version'],
+            excerpt=original, correction=text, author_principal='fixture-owner')
+    correct('initial-correction', 'The gate is amber; the earlier color was mistaken.')
+    query = 'hydrofoil gate'
+    if change == 'unrelated_query':
+        query = 'telescope calibration'
+    elif change == 'packet_budget':
+        monkeypatch.setenv('COLONY_RECALL_CONTEXT_MAX_CHARS', '500')
+    elif change == 'compression_budget':
+        monkeypatch.setenv('COLONY_COMPRESSION_MAX_TOKENS', '25')
+    else:
+        compress = compression.compress_sections
+        calls = []
+        def compress_then_correct(**kwargs):
+            result = compress(**kwargs)
+            calls.append(correct('later-correction', 'A second observer reports a copper gate; resolve the disagreement.'))
+            return result
+        monkeypatch.setattr(compression, 'compress_sections', compress_then_correct)
+    async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url='http://test') as client:
+        response = await client.post('/v1/host/context/enriched',
+            headers={'Authorization': 'Bearer owner-key'}, json={
+                'identity': {'host_id': 'native-fixture'},
+                'context': {'contact_id': 'contact-a', 'session_id': 'later'},
+                'message': query, 'compression': 'balanced'})
+    assert response.status_code == 200, response.text
+    assert not any(s['id'] == 'colony-shared-facts' for s in response.json()['sections'])
+    if change == 'new_correction':
+        assert len(calls) == 1
+    assert runtime.facts.get_fact(fact['id'])['fact'] == original

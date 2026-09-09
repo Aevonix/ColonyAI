@@ -11090,23 +11090,41 @@ async def enriched_context(
                 return ("cognition", None)
         tasks["cognition"] = _cognition()
 
-    # 11. P8 shared facts: authorization and freshness happen before content
-    # reaches the parallel result set or any renderer.
-    if _p8_runtime is not None and _enriched_p8_viewer is not None \
-            and features.get("shared_facts", True):
-        async def _p8_facts():
+    # 11. Use the same source-linked estimate and correction packet as native
+    # assembly. A P8 visibility envelope is an additional audience check, not
+    # a replacement for current source membership or attributed corrections.
+    if _facts_store is not None and contact_id and features.get("shared_facts", True) \
+            and (_p8_runtime is None or _enriched_p8_viewer is not None):
+        async def _shared_facts():
             try:
-                batch = _p8_runtime.project_shared_facts(
-                    _enriched_p8_viewer,
-                    now=datetime.now(timezone.utc),
-                    subject_person_id=contact_id,
-                    max_facts=5,
-                    source_linked_only=True,
-                )
-                return ("p8_shared_facts", batch.facts)
+                from colony_sidecar.intelligence.graph.recall import contact_fact_candidates, pack_memory_context
+                from colony_sidecar.turns.source_annotations import expand, current_candidates
+                store = _p8_runtime.facts_store if _p8_runtime is not None else _facts_store
+                view = (_p8_runtime.projected_facts_view(_enriched_p8_viewer,
+                    now=datetime.now(timezone.utc), source_linked_only=True)
+                    if _p8_runtime is not None else store.automatic_view())
+                result = view.list_facts(contact_id=contact_id, limit=512)
+                facts = result if isinstance(result, list) else result.get('facts', [])
+                ledger = store._ledger()
+                scope = {'contact_id': contact_id, 'session_id': body.context.session_id}
+                candidates = expand(ledger, contact_fact_candidates(msg, facts), **scope)
+                # An erase/revision between the fact read and expansion must
+                # not leave an unbound estimate in the automatic packet.
+                candidates = [row for row in candidates if any(
+                    ref['source_id'] == row.get('source_turn_id')
+                    for ref in row.get('_annotation_source_refs', []))]
+                candidates = current_candidates(ledger, candidates, **scope)
+                try:
+                    max_chars = int(os.environ.get('COLONY_RECALL_CONTEXT_MAX_CHARS', '6000'))
+                except (TypeError, ValueError):
+                    max_chars = 6000
+                selected, text = pack_memory_context(candidates, limit=5,
+                    max_chars=max(0, min(max_chars, 24000)))
+                return ('shared_facts', (ledger, selected, text))
             except Exception:
-                return ("p8_shared_facts", ())
-        tasks["p8_shared_facts"] = _p8_facts()
+                logger.debug('enriched source-linked facts unavailable', exc_info=True)
+                return ('shared_facts', None)
+        tasks['shared_facts'] = _shared_facts()
 
     # Run all tasks in parallel
     results = {}
@@ -11127,16 +11145,17 @@ async def enriched_context(
         )
         sections.append(ContextSection(id="colony-memory", title="Relevant Memories", body=body_text, priority=90))
 
-    if results.get("p8_shared_facts"):
-        facts = results["p8_shared_facts"]
-        body_text = "\n".join(
-            f"- [{fact.confidence:.0%}] {fact.content}" for fact in facts)
-        sections.append(ContextSection(
-            id="colony-shared-facts",
-            title="Known Facts About Contact",
-            body=body_text,
-            priority=70,
-        ))
+    shared_section = None
+    shared_packet = results.get('shared_facts')
+    if shared_packet:
+        _, selected, body_text = shared_packet
+        if body_text:
+            refs = {ref['source_id']: ref for row in selected
+                for ref in row['_annotation_source_refs']}
+            shared_section = ContextSection(id='colony-shared-facts',
+                title='Relevant Contact Knowledge Estimates', body=body_text,
+                priority=70, citations=list(refs.values()))
+            sections.append(shared_section)
 
     if results.get("contact"):
         c = results["contact"]
@@ -11265,25 +11284,6 @@ async def enriched_context(
         except Exception:
             logger.debug("commitment section failed", exc_info=True)
 
-    # Shared facts
-    if _p8_runtime is None and _facts_store is not None and contact_id \
-            and features.get("shared_facts", True):
-        try:
-            result = _facts_store.automatic_view().list_facts(contact_id=contact_id, limit=10)
-            if result["total"] > 0:
-                lines = []
-                for f in result["facts"]:
-                    source_label = {"told_by_contact": "They told us", "told_to_contact": "We told them", "shared_context": "Shared", "inferred": "Inferred"}.get(f["source"], f["source"])
-                    lines.append(f"- [{source_label}] {f['fact']}")
-                sections.append(ContextSection(
-                    id="colony-shared-facts",
-                    title=f"Shared Knowledge with {contact_id}",
-                    body="\n".join(lines),
-                    priority=70,
-                ))
-        except Exception:
-            logger.debug("shared facts section failed", exc_info=True)
-
     # Surprises (noteworthy observations)
     if _enriched_legacy_global_allowed and _surprise_store is not None \
             and contact_id and features.get("surprises", True):
@@ -11301,6 +11301,28 @@ async def enriched_context(
                 ))
         except Exception:
             logger.debug("surprises section failed", exc_info=True)
+
+    def current_sections(items):
+        if shared_section is None:
+            return items
+        from colony_sidecar.turns.source_annotations import current_candidates
+        ledger, selected, _ = shared_packet
+        try:
+            current = current_candidates(ledger, selected, contact_id=contact_id,
+                session_id=body.context.session_id)
+        except Exception:
+            logger.debug('enriched source-linked packet recheck unavailable', exc_info=True)
+            current = []
+        # Generic section compression can drop citations, cut off a correction,
+        # or summarize it. Only publish this bounded packet byte-for-byte, with
+        # its checked revisions, or omit it entirely. Recheck after async work.
+        result = []
+        for item in items:
+            if item.id != 'colony-shared-facts':
+                result.append(item)
+            elif len(current) == len(selected) and item.body == shared_section.body:
+                result.append(shared_section)
+        return result
 
     # Adaptive compression
     compression_mode_str = None
@@ -11333,14 +11355,14 @@ async def enriched_context(
             )
         compressed = [ContextSection(**s) for s in result["sections"]]
         return EnrichedContextResponse(
-            sections=compressed,
+            sections=current_sections(compressed),
             contact_id=contact_id,
             metadata=result.get("metadata"),
         )
     except Exception:
         logger.debug("compression failed, returning uncompressed", exc_info=True)
 
-    return EnrichedContextResponse(sections=sections, contact_id=contact_id)
+    return EnrichedContextResponse(sections=current_sections(sections), contact_id=contact_id)
 
 
 # ---------------------------------------------------------------------------

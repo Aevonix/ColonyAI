@@ -11,6 +11,8 @@ is excluded or removed. Other graph memories and explicit fact APIs remain.
 
 Selected linked estimates carry exact source membership into the existing
 correction and request-erasure paths. They remain labelled unverified estimates.
+The enriched-context route uses the same query-matching, annotated source
+packet; compression cannot turn a corrected estimate back into a bare claim.
 No source, historical record or graph mirror is deleted, and no new judge,
 store, approval step or Hermes patch is introduced.
 

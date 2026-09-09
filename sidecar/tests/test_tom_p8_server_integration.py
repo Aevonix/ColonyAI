@@ -1652,7 +1652,7 @@ async def test_enriched_context_never_falls_through_to_raw_legacy_facts(
             contact_id="alice", session_id="session:1",
             channel_id="body-claimed-channel",
         ),
-        message="hello",
+        message="authorized enriched fact",
     ), request=request)
     rendered = "\n".join(section.body for section in response.sections)
     assert "authorized enriched fact" in rendered
