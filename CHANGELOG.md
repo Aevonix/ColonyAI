@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.0.28 - complete source opening and coherent current state
+
+The native source reader opens exact scoped revisions and paginates long text
+or assertion history through the existing memory API. Opened tool results join
+the request's source lineage and erasure checks. Oversized histories retain an
+opening handle. Optional event uncertainty no longer discards otherwise grounded
+claims; required validity conditions remain strict, and report clocks stay
+distinct from event time.
+
+Canonical reviewed preferences now own lasting guidance. Appraisals consume
+their current scoped view; legacy preference records remain inspectable without
+independently governing behavior. Native review outcomes record provider-reported
+model observations without rewriting original forecasts or guessing missing
+processor identities. Timing guidance still requires its prospective evidence.
+
+Native tool dispatch rechecks the externally resolved participant, including
+inherited child contexts, so a corrected handle or revoked host credential
+cannot keep the old turn's access. Requests with no available tools receive a
+factual capability note while retaining supplied evidence and ordinary answers.
+This does not guarantee the truth of all model-generated explanations.
+
+Guided setup discovers native profiles before selecting one private attachment.
+Memory-only recovery selects a surviving current canonical ledger and its owned
+original images, preserving current corrections, scope and erasure ancestry.
+It excludes old runtime authority and effects. Full archive reconstruction no
+longer implies that recovered services are ready to start.
+
+These changes use existing stores and Hermes extension points. No new service,
+approval flow or Hermes core patch is introduced. Hermes 0.21.1 remains the
+qualification target; real deployment and model results require their own
+behavioral checks.
+
 ## v1.0.27 - source-grounded formation and recollection
 
 Memory formation can use strict JSON schemas on model bindings whose serving
