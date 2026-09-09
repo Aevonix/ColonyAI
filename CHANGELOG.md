@@ -9,6 +9,12 @@ opening handle. Optional event uncertainty no longer discards otherwise grounded
 claims; required validity conditions remain strict, and report clocks stay
 distinct from event time.
 
+Delayed direct replies can bind to an exact admitted user input before its
+canonical media normalization completes. The existing outbox waits for that
+parent, and canonical ingestion resolves its current source revision atomically.
+Erasure removes the linked reply; an older backend cannot silently store it
+without its parent dependency.
+
 Canonical reviewed preferences now own lasting guidance. Appraisals consume
 their current scoped view; legacy preference records remain inspectable without
 independently governing behavior. Native review outcomes record provider-reported
