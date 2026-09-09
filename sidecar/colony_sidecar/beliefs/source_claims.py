@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import ipaddress
 import json
 import os
@@ -71,6 +72,19 @@ RESPONSE_SCHEMA = {'name': 'source_claims', 'schema': {
              {'value': {'type': 'string', 'minLength': 1, 'maxLength': 160}}),
             (['procedure'], {})]
     ]}}}
+
+
+def claim_response_schema(message: str) -> dict:
+    """Keep short source context intact instead of generating a clipped quote.
+
+    Longer messages still need bounded exact-span selection. Each request owns
+    its schema; no source text is retained in the shared contract or router.
+    """
+    schema = deepcopy(RESPONSE_SCHEMA)
+    if len(message) <= 500:
+        for branch in schema['schema']['items']['anyOf']:
+            branch['properties']['evidence']['const'] = message
+    return schema
 
 _CORRECT = re.compile(r"\b(correction|correct(?:ing)? that|i misspoke|i was wrong|actually|not .{1,80} but)\b", re.I)
 _CHANGE = re.compile(r"\b(now|moved|changed|starting|no longer|from .{1,40} onward|instead)\b", re.I)
@@ -308,7 +322,7 @@ async def extract_claims(router, source: dict, message: dict, prior: list[dict],
         messages=[{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
         force_tier=tier, context={"task": "source_claim_extraction", "function_role": "extraction", "max_output_tokens": 1400,
-                                  "allow_fallback": functions, "response_schema": RESPONSE_SCHEMA}),
+                                  "allow_fallback": functions, "response_schema": claim_response_schema(content)}),
         timeout=extraction_timeout_seconds(router) if request_timeout is None else request_timeout)
     provenance = {
         'function_role': getattr(response, 'function_role', '') or 'extraction',
