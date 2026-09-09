@@ -1154,16 +1154,14 @@ def _p8_tool_actor_policy(
 def _p8_filter_graph_recall(
     rows: List[Mapping[str, Any]],
 ) -> List[Mapping[str, Any]]:
-    """Remove SharedFacts graph mirrors while P8 owns fact rendering.
+    """Remove SharedFacts graph mirrors from automatic context in every mode.
 
     Current writes and the legacy backfill both use the exact source URI.
     The bounded metadata check covers older mirrors that retained only the
-    marker.  Those memories are rendered through the typed P8 projection
-    instead, so an unavailable/unauthorized envelope stays absent.
+    marker. Contact knowledge estimates use the current source-linked store
+    view, with P8 audience checks in addition when enabled. A stale graph copy
+    must not revive a deleted, unlinked or outdated estimate.
     """
-
-    if _p8_runtime is None:
-        return rows
 
     def _is_shared_fact_mirror(row: Mapping[str, Any]) -> bool:
         if str(row.get("source_uri") or "") == "tom:shared_fact":
@@ -2405,11 +2403,12 @@ async def context_assemble(
     # guest. Exact subject identity does not make those observations shareable.
     _exact_person_allowed = not _canonical_only and _p8_exact_person_context_allowed(_p8_viewer)
     _canonical_person_allowed = _canonical_only or _exact_person_allowed
-    _tom_context_facts = None if _canonical_only else _facts_store
+    _tom_context_facts = (None if _canonical_only or _facts_store is None
+                          else _facts_store.automatic_view())
     if _p8_runtime is not None:
         _tom_context_facts = (
             _p8_runtime.projected_facts_view(
-                _p8_viewer, now=datetime.now(timezone.utc))
+                _p8_viewer, now=datetime.now(timezone.utc), source_linked_only=True)
             if _p8_viewer is not None else None
         )
     # Context assembly pulls from identity + memory + goals + contacts + world model + skills
@@ -2501,7 +2500,7 @@ async def context_assemble(
                     "limit": 25 if callable(candidates_fn) else 5,
                     "person_id": body.context.contact_id if body.context else None,
                 }
-                if _p8_runtime is not None:
+                if _p8_runtime is not None or callable(candidates_fn):
                     recall_kwargs["exclude_source_uris"] = ["tom:shared_fact"]
                 recall_fn = candidates_fn if callable(candidates_fn) else _graph.recall
                 beliefs = _p8_filter_graph_recall(await recall_fn(**recall_kwargs))
@@ -10974,7 +10973,7 @@ async def enriched_context(
                     "limit": 5,
                     "person_id": contact_id,
                 }
-                if _p8_runtime is not None:
+                if _p8_runtime is not None or callable(getattr(_graph, 'recall_candidates', None)):
                     recall_kwargs["exclude_source_uris"] = [
                         "tom:shared_fact"]
                 results = await _graph.recall(**recall_kwargs)
@@ -11102,6 +11101,7 @@ async def enriched_context(
                     now=datetime.now(timezone.utc),
                     subject_person_id=contact_id,
                     max_facts=5,
+                    source_linked_only=True,
                 )
                 return ("p8_shared_facts", batch.facts)
             except Exception:
@@ -11269,7 +11269,7 @@ async def enriched_context(
     if _p8_runtime is None and _facts_store is not None and contact_id \
             and features.get("shared_facts", True):
         try:
-            result = _facts_store.list_facts(contact_id=contact_id, limit=10)
+            result = _facts_store.automatic_view().list_facts(contact_id=contact_id, limit=10)
             if result["total"] > 0:
                 lines = []
                 for f in result["facts"]:

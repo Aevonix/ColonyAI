@@ -135,10 +135,13 @@ class P8ProjectedFactsView:
         runtime: "P8Runtime",
         viewer: ViewerContextV1,
         now: datetime | str,
+        source_linked_only: bool = False,
     ) -> None:
         if not isinstance(viewer, ViewerContextV1) or not viewer.attested:
             raise ValueError("projected facts view requires attested viewer")
         self._runtime = runtime
+        self._facts_store = (runtime.facts_store.automatic_view()
+                             if source_linked_only else runtime.facts_store)
         self._viewer = viewer
         self._now = _as_utc(now, field="now")
         self._cache: dict[str, Optional[dict[str, Any]]] = {}
@@ -170,12 +173,13 @@ class P8ProjectedFactsView:
             "created_at": str(record.get("created_at") or ""),
             "expires_at": record.get("expires_at"),
             "metadata": None,
+            **({'source_lineage': record['source_lineage']} if record.get('source_lineage') else {}),
         }
 
     def get_fact(self, fact_id: str) -> Optional[dict[str, Any]]:
         key = str(fact_id or "")
         if key not in self._cache:
-            record = self._runtime.facts_store.get_fact(key)
+            record = self._facts_store.get_fact(key)
             self._cache[key] = (
                 None if record is None else self._project_record(record))
         row = self._cache[key]
@@ -192,7 +196,7 @@ class P8ProjectedFactsView:
     ) -> dict[str, Any]:
         bounded_limit = max(1, min(int(limit), MAX_SHARED_FACT_ROWS))
         bounded_offset = max(0, int(offset))
-        result = self._runtime.facts_store.list_facts(
+        result = self._facts_store.list_facts(
             contact_id=contact_id,
             source=source,
             min_confidence=0.0,
@@ -322,8 +326,9 @@ class P8Runtime:
         self.visibility_store.append(candidate)
         return candidate
 
-    def _rows_for_person(self, person_id: str) -> tuple[Mapping[str, Any], ...]:
-        result = self.facts_store.list_facts(
+    def _rows_for_person(self, person_id: str, *, source_linked_only=False) -> tuple[Mapping[str, Any], ...]:
+        store = self.facts_store.automatic_view() if source_linked_only else self.facts_store
+        result = store.list_facts(
             contact_id=person_id,
             limit=MAX_SHARED_FACT_ROWS,
             offset=0,
@@ -335,11 +340,12 @@ class P8Runtime:
         self,
         *,
         subject_person_id: str,
+        source_linked_only: bool = False,
     ) -> tuple[FactCandidateV1, ...]:
         """Rejoin current content to its immutable envelope; legacy misses skip."""
 
         candidates: list[FactCandidateV1] = []
-        for record in self._rows_for_person(subject_person_id):
+        for record in self._rows_for_person(subject_person_id, source_linked_only=source_linked_only):
             candidate = self._candidate_for_record(record)
             if candidate is not None:
                 candidates.append(candidate)
@@ -367,9 +373,10 @@ class P8Runtime:
         viewer: ViewerContextV1,
         *,
         now: datetime | str,
+        source_linked_only: bool = False,
     ) -> P8ProjectedFactsView:
         return P8ProjectedFactsView(
-            runtime=self, viewer=viewer, now=now)
+            runtime=self, viewer=viewer, now=now, source_linked_only=source_linked_only)
 
     def project_shared_facts(
         self,
@@ -380,11 +387,12 @@ class P8Runtime:
         max_facts: int = 5,
         max_total_chars: int = 8_000,
         min_confidence: Optional[float] = None,
+        source_linked_only: bool = False,
     ) -> FactProjectionBatchV1:
         subject = str(
             subject_person_id or viewer.viewer_person_id or "").strip()
         return project_facts(
-            self.fact_candidates(subject_person_id=subject),
+            self.fact_candidates(subject_person_id=subject, source_linked_only=source_linked_only),
             viewer,
             now=now,
             min_confidence=_projection_min_confidence(min_confidence),

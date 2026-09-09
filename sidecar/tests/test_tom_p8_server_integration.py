@@ -42,6 +42,18 @@ from colony_sidecar.tom.facts import SharedFactsStore
 from colony_sidecar.tom.integration import P8Runtime
 from colony_sidecar.tom.leveled import render_level1
 from colony_sidecar.tom.tom2 import Tom2Store
+from colony_sidecar.turns import TurnIdempotencyLedger
+
+
+def current_fact_source(facts, tmp_path, person, text):
+    """Actual canonical support for automatic-context fixture positives."""
+    import uuid
+    ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
+    facts._source_ledger = ledger
+    turn = 'fact-support-' + uuid.uuid4().hex
+    ledger.record_source(turn, contact_id=person, session_id='prior',
+        messages=[{'role': 'user', 'content': text}], derive_claims=False)
+    return facts.source_input(turn, person)[0]
 
 
 P8_FILES = (
@@ -1414,7 +1426,8 @@ async def test_context_renders_only_authenticated_enveloped_facts(
 
     included = facts.create_fact(
         contact_id="alice", fact="allowed alice context",
-        confidence=0.9)
+        confidence=0.9, source_lineage=current_fact_source(
+            facts, tmp_path, 'alice', 'allowed alice context'))
     runtime.append_shared_fact(included, producer=alice, origin="server")
     facts.create_fact(
         contact_id="alice", fact="legacy row must not render",
@@ -1556,7 +1569,8 @@ async def test_p8_fact_view_is_the_only_tom2_context_content_path(
         confidence=0.99)
     scoped = facts.create_fact(
         contact_id="alice", fact="authorized typed Tom2 fact",
-        confidence=0.9)
+        confidence=0.9, source_lineage=current_fact_source(
+            facts, tmp_path, 'alice', 'authorized typed Tom2 fact'))
     runtime.append_shared_fact(scoped, producer=alice, origin="server")
 
     tom2 = Tom2Store(str(tmp_path / "tom2.db"))
@@ -1626,7 +1640,8 @@ async def test_enriched_context_never_falls_through_to_raw_legacy_facts(
     request = _request(_authority("alice"))
     viewer = host._p8_viewer_for_request(request, "alice")
     scoped = facts.create_fact(
-        contact_id="alice", fact="authorized enriched fact", confidence=0.9)
+        contact_id="alice", fact="authorized enriched fact", confidence=0.9,
+        source_lineage=current_fact_source(facts, tmp_path, 'alice', 'authorized enriched fact'))
     runtime.append_shared_fact(scoped, producer=viewer, origin="server")
     facts.create_fact(
         contact_id="alice", fact="raw legacy enriched leak", confidence=1.0)

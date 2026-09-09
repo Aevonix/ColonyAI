@@ -31,6 +31,7 @@ class SharedFactsStore(SourceLinkedStore):
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
         self._conn.create_function('source_fact_visible', 2, self._source_visible)
+        self._conn.create_function('source_fact_automatic', 2, self._automatic_visible)
 
     def _create_tables(self) -> None:
         self._conn.executescript("""
@@ -57,6 +58,20 @@ class SharedFactsStore(SourceLinkedStore):
 
     def source_visible(self, record: dict) -> bool:
         return self._source_visible(record['contact_id'], record.get('source_lineage'))
+
+    def automatic_view(self):
+        """Current source-linked estimates only; explicit history stays intact."""
+        return AutomaticFactsView(self)
+
+    def _automatic_visible(self, contact_id, raw) -> bool:
+        if not raw:
+            return False
+        try:
+            lineage = json.loads(raw) if isinstance(raw, str) else raw
+            return bool(isinstance(lineage, dict) and lineage.get('message_hashes')
+                        and self._source_visible(contact_id, lineage))
+        except (ValueError, KeyError, TypeError):
+            return False
 
     def purge_erased_sources(self, turn_ids: Optional[List[str]] = None) -> int:
         """Physical cleanup follows durable tombstones; unknown origins stay intact."""
@@ -144,6 +159,7 @@ class SharedFactsStore(SourceLinkedStore):
         min_confidence: float = 0.0,
         limit: int = 50,
         offset: int = 0,
+        source_linked_only: bool = False,
     ) -> Dict[str, Any]:
         """List shared facts with optional filters.
 
@@ -164,7 +180,13 @@ class SharedFactsStore(SourceLinkedStore):
 
         # Filter out expired facts.
         clauses.append("(expires_at IS NULL OR expires_at > ?)")
-        clauses.append('source_fact_visible(contact_id,source_lineage_json)')
+        if source_linked_only:
+            # Apply before the window so recent legacy noise cannot crowd out
+            # older supported estimates. Visibility still checks exact current
+            # contact, session and message hashes in the canonical ledger.
+            clauses.append('source_fact_automatic(contact_id,source_lineage_json)')
+        else:
+            clauses.append('source_fact_visible(contact_id,source_lineage_json)')
         params.append(datetime.now(timezone.utc).isoformat())
 
         where = f" WHERE {' AND '.join(clauses)}"
@@ -242,3 +264,23 @@ class SharedFactsStore(SourceLinkedStore):
 
     def close(self) -> None:
         self._conn.close()
+
+
+class AutomaticFactsView:
+    """Existing read interface with canonical eligibility, never a new store."""
+
+    def __init__(self, store):
+        self._store = store
+
+    def get_fact(self, fact_id):
+        record = self._store.get_fact(fact_id)
+        if record is None or not self._store._automatic_visible(
+                record['contact_id'], record.get('source_lineage')):
+            return None
+        expires = record.get('expires_at')
+        if expires and expires <= datetime.now(timezone.utc).isoformat():
+            return None
+        return record
+
+    def list_facts(self, **kwargs):
+        return self._store.list_facts(**{**kwargs, 'source_linked_only': True})

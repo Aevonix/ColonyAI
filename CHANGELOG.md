@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.30 - source-linked automatic contact recall
+
+Automatic contact-knowledge context now requires a current canonical source
+link, checked before pagination. Unlinked historical and hand-entered facts
+remain explicitly inspectable but no longer fill per-turn context. Optional
+P8 audience envelopes remain additional checks, not substitutes for evidence.
+Shared-fact graph mirrors cannot bypass this boundary after the original record
+is excluded or removed. Other graph memories and explicit fact APIs remain.
+
+Selected linked estimates carry exact source membership into the existing
+correction and request-erasure paths. They remain labelled unverified estimates.
+No source, historical record or graph mirror is deleted, and no new judge,
+store, approval step or Hermes patch is introduced.
+
 ## v1.0.29 - owned audio and admitted opinion premises
 
 Bounded PCM WAV clips use the existing canonical original-asset storage, scoped

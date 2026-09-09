@@ -164,7 +164,7 @@ def lexical_query(text: str, max_terms: int = 16) -> str:
 
 
 def contact_fact_candidates(query: str, facts: list[dict[str, Any]], *, limit: int = 25) -> list[dict[str, Any]]:
-    """Lexical candidates from an already authorized current contact-fact view.
+    """Lexical candidates from an authorized, current source-linked fact view.
 
     This small scan reuses the existing tokenizer, not a new index or model.
     Stored knowledge estimates are not canonical quotations or verified beliefs.
@@ -175,6 +175,8 @@ def contact_fact_candidates(query: str, facts: list[dict[str, Any]], *, limit: i
         return []
     matches = []
     for fact in facts[:512]:
+        if not fact.get('source_lineage'):
+            continue
         content = str(fact.get('fact') or '')
         overlap = len(terms.intersection(word.casefold() for word in _WORDS.findall(content[:4000])))
         if overlap and fact.get('id'):
@@ -183,6 +185,8 @@ def contact_fact_candidates(query: str, facts: list[dict[str, Any]], *, limit: i
     return [{'id': 'shared-fact:' + str(fact['id']), 'source_uri': 'shared-fact:' + str(fact['id']),
              'kind': 'contact_knowledge_estimate', 'epistemic_state': 'unverified',
              'content': content, 'recorded_source': str(fact.get('source') or 'unknown'),
+             'source_turn_id': fact['source_lineage']['turn_id'],
+             '_source_message_hashes': {fact['source_lineage']['turn_id']: fact['source_lineage']['message_hashes']},
              'created_at': fact.get('created_at'), 'relevance': 1 / (60 + rank), 'retrieval_method': 'lexical'}
             for rank, (_, fact, content) in enumerate(matches[:max(0, min(limit, 25))], 1)]
 
