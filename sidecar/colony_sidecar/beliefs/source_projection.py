@@ -398,7 +398,7 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
         media.recover_unowned_files()
     except OSError:
         logger.warning("source media orphan recovery deferred")
-    reflections = {'judgment': judgments, 'appraisal': appraisals}
+    reflections = {'judgment': judgments, 'appraisal': appraisals, 'claim': projection}
     reflection_tasks = {name: None for name in reflections}
     next_identity_check = 0.0
     try:
@@ -411,7 +411,7 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
                     worked = await reconcile_pending_identities(ledger)
                 except Exception as exc:
                     logger.warning('identity source reconciliation deferred (%s)', type(exc).__name__)
-            # Durable reflection jobs share this worker's lifecycle. Their model
+            # Durable model projections share this worker's lifecycle. Their
             # requests must not stall source indexing or media processing.
             if claims_enabled:
                 for name, projection_worker in reflections.items():
@@ -432,9 +432,8 @@ async def run_source_claim_worker(ledger, router_provider, *, claims_enabled=Tru
                 logger.warning("source semantic projection deferred (%s)", type(exc).__name__)
             try:
                 if claims_enabled:
-                    claim_worked = await projection.process_one(router_provider())
                     media_worked = await media.process_one(router_provider())
-                    worked = worked or claim_worked or media_worked
+                    worked = worked or media_worked
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
