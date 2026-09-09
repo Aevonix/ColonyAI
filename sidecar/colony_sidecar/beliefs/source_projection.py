@@ -129,7 +129,8 @@ class SourceClaimProjection:
         return rows[:limit]
 
     def commit(self, source, message, claims, *, model, lease_token=None):
-        from colony_sidecar.turns.idempotency import source_message_hash
+        from colony_sidecar.turns.idempotency import source_message_hash, canonical_turn_digest
+        from colony_sidecar.turns.audio import claim_message, claim_basis
         message_hash = source_message_hash(source["session_id"], message)
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -137,10 +138,17 @@ class SourceClaimProjection:
                 "SELECT 1 FROM source_claim_jobs WHERE turn_id=? AND status='running' AND lease_token=?",
                 (source["turn_id"], lease_token)).fetchone():
                 return 0
-            current = conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (source["turn_id"],)).fetchone()
-            if current is None or message_hash not in {
-                source_message_hash(current["session_id"], m) for m in json.loads(current["messages_json"])
-            }:
+            current = conn.execute('''SELECT * FROM turn_sources s WHERE turn_id=? AND NOT EXISTS
+                (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)''',
+                (source["turn_id"],)).fetchone()
+            if current is None:
+                return 0
+            current_messages = json.loads(current['messages_json'])
+            original = next((m for m in current_messages
+                if source_message_hash(current['session_id'], m) == message_hash), None)
+            current_view = claim_message(original) if original is not None else None
+            if (current_view is None or current_view.get('content') != message.get('content')
+                    or current_view.get('_audio_segments') != message.get('_audio_segments')):
                 return 0
             ids = list({claim["prior_claim_id"] for claim in claims if claim.get("prior_claim_id")})
             prior = {row["id"]: row for row in self._rows(conn, current["contact_id"], current["session_id"], ids=ids)}
@@ -149,8 +157,23 @@ class SourceClaimProjection:
                 claim = dict(raw)
                 # Validation occurs against exact current message bytes again,
                 # after model execution and after any concurrent source erase.
-                if message["content"][claim["span_start"]:claim["span_end"]] != claim["evidence"]:
+                if current_view["content"][claim["span_start"]:claim["span_end"]] != claim["evidence"]:
                     continue
+                if '_audio_segments' in current_view:
+                    basis = claim_basis(current_view, claim['span_start'], claim['span_end'])
+                    review = claim.get('admission_review', {})
+                    if (basis is None or basis != claim.get('evidence_basis')
+                            or review.get('version') != 'source-claim-review-v1'
+                            or review.get('basis') != 'model_judgment_unverified'):
+                        continue
+                    if not conn.execute('''SELECT 1 FROM source_media_links l JOIN source_media m USING(asset_hash)
+                        WHERE l.turn_id=? AND l.message_hash=? AND l.asset_hash=?
+                        AND m.mime_type='audio/wav' AND m.status='complete' ''',
+                        (source['turn_id'], message_hash, basis['segment']['asset_id'][7:])).fetchone():
+                        continue
+                    claim.update(epistemic_state='derived_unverified', source_modality='audio_transcript',
+                        evidence_basis={**basis, 'source_message_hash': message_hash,
+                            'source_version_at_formation': canonical_turn_digest(current_messages)})
                 basis = [source["turn_id"], message_hash, claim["subject_key"], claim["predicate"], claim["value"], claim["evidence"]]
                 cid = "claim:" + hashlib.sha256(json.dumps(basis, ensure_ascii=False).encode()).hexdigest()
                 if conn.execute('SELECT 1 FROM source_claims WHERE id=?', (cid,)).fetchone():
@@ -222,9 +245,12 @@ class SourceClaimProjection:
         diagnostics = extraction_diagnostics()
         try:
             for message in json.loads(job["messages_json"]):
-                # Match the text extractor's eligibility before its prior
-                # lookup. Media sources have independent caption/vector jobs;
-                # their block lists are not text search queries.
+                # Retained ASR has a deterministic derived view. Other media
+                # remains in its existing caption/source recall path.
+                from colony_sidecar.turns.audio import claim_message
+                message = claim_message(message)
+                if message is None:
+                    continue
                 content = message.get('content')
                 if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
                     continue
@@ -301,6 +327,7 @@ class SourceClaimProjection:
         unresolved conflict or reintroduce text from a corrected assertion.
         """
         from colony_sidecar.turns.idempotency import source_message_hash
+        from colony_sidecar.turns.audio import source_text
         from colony_sidecar.intelligence.graph.recall import source_candidates
         turn_ids = list(dict.fromkeys(
             [row["turn_id"] for row in source_hits] + [str(row["source_uri"])[5:] for row in beliefs
@@ -313,9 +340,9 @@ class SourceClaimProjection:
                 + ",".join("?" for _ in turn_ids) + ")", (contact_id, session_id, *turn_ids))}
             hashes = {source_message_hash(source["session_id"], message)
                       for source in sources.values() for message in json.loads(source["messages_json"])
-                      if isinstance(message.get("content"), str) and any(
+                      if any(
                           hit["turn_id"] == source["turn_id"] and hit["role"] == message.get("role")
-                          and hit["content"] in message["content"] for hit in source_hits)}
+                          and hit["content"] in source_text(message.get('content')) for hit in source_hits)}
             claims = self._rows(conn, contact_id, session_id, turn_ids=turn_ids, message_hashes=hashes, limit=512)
         by_turn, by_hash = {}, {}
         for claim in claims:
@@ -345,7 +372,6 @@ class SourceClaimProjection:
                 for message in json.loads(source["messages_json"]):
                     text = message.get("content")
                     if isinstance(text, list):
-                        from colony_sidecar.turns.audio import source_text
                         text = source_text(text)
                     if message.get("role") != hit["role"] or not isinstance(text, str):
                         continue
@@ -395,7 +421,8 @@ class SourceClaimProjection:
                         "event_at": c.get("event_at"), "event_time": c.get("event_time", {
                             "status": "legacy_precision_unknown" if c.get("event_at") else "unknown"}),
                         "reported_at": c["observed_at"], "validity_basis": c["validity_basis"],
-                        "operation": c["operation"], "prior_claim_id": c.get("prior_claim_id")}
+                        "operation": c["operation"], "prior_claim_id": c.get("prior_claim_id"),
+                        **{k: c[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality') if k in c}}
                        for c in group]
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
             identifier = hashlib.sha256(json.dumps([contact_id, key, [c["id"] for c in group]]).encode()).hexdigest()
@@ -406,7 +433,9 @@ class SourceClaimProjection:
                                 c['message_hash'] for c in group if c['turn_id'] == turn))
                                 for turn in dict.fromkeys(c['turn_id'] for c in group)},
                             "source_uri": "turn:" + group[0]["turn_id"], "claim_status": status,
-                            "epistemic_state": status, "atomic_evidence": True,
+                            "epistemic_state": ('derived_unverified' if any(c.get('evidence_basis') for c in group) else status),
+                            **({'source_modality': 'audio_transcript'} if any(c.get('evidence_basis') for c in group) else {}),
+                            "atomic_evidence": True,
                             # Rank the grounded language the user supplied.
                             # Administrative IDs/timestamps in the output JSON
                             # are provenance, not the passage's semantic topic.

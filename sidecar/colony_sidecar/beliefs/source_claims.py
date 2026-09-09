@@ -14,7 +14,7 @@ from .source_time import parse_source_date, source_event_time, utc_timestamp
 from .promotion import MEMORY_KINDS, PROMOTION_PROMPT, promotion_metadata
 from colony_sidecar.util.model_output import final_text
 
-EXTRACTION_VERSION = "source-claims-v5"
+EXTRACTION_VERSION = "source-claims-v6"
 SYSTEM = '''Extract the user's attributed assertions about the actual world from
 one USER message. Facts true only inside fiction, role-play, an invented example
 or a counterfactual are not actual-world assertions, even when useful for writing.
@@ -86,14 +86,21 @@ RESPONSE_SCHEMA = {'name': 'source_claims', 'schema': {
     ]}}}
 
 
-def claim_response_schema(message: str) -> dict:
+def claim_response_schema(message: str, *, audio_segments=None) -> dict:
     """Keep short source context intact instead of generating a clipped quote.
 
     Longer messages still need bounded exact-span selection. Each request owns
     its schema; no source text is retained in the shared contract or router.
     """
     schema = deepcopy(RESPONSE_SCHEMA)
-    if len(message) <= 500:
+    if audio_segments is not None:
+        # Short segment context has the same preservation guarantee as a
+        # short text message, without forcing generated labels into evidence.
+        spans = [message[s['source_start']:s['source_end']] for s in audio_segments]
+        if spans and all(len(span) <= 500 for span in spans):
+            for branch in schema['schema']['items']['anyOf']:
+                branch['properties']['evidence']['enum'] = list(dict.fromkeys(spans))
+    elif len(message) <= 500:
         for branch in schema['schema']['items']['anyOf']:
             branch['properties']['evidence']['const'] = message
     return schema
@@ -431,13 +438,31 @@ async def _extract_claims(router, source: dict, message: dict, prior: list[dict]
         return [], "local_extraction_role_unavailable"
     payload = {"message": content, "source_occurred_at": source["occurred_at"],
                "timezone": timezone_name, "prior_assertions": [
-                   {k: row[k] for k in ("id", "subject_key", "subject", "predicate", "value", "evidence")}
+                   {k: row[k] for k in ("id", "subject_key", "subject", "predicate", "value", "evidence",
+                                       "evidence_basis") if k in row}
                    for row in prior[:16]]}
+    derived_audio = '_audio_segments' in message
+    assertion_clock = source['occurred_at']
+    if derived_audio:
+        captures = {s['captured_at'] for s in message['_audio_segments']}
+        assertion_clock = next(iter(captures)) if len(captures) == 1 else None
+        payload['source_evidence'] = {
+            'epistemic_state': 'derived_unverified', 'source_modality': 'audio_transcript',
+            'segments': message['_audio_segments'],
+            'relative_date_anchor': assertion_clock,
+            'guidance': 'Machine recognition can be wrong. Interpret the complete surrounding source, '
+                        'but quote only actual words within one supplied transcript segment, never its label. '
+                        'Retain the complete assertion and its condition or correction cue. Do not extract '
+                        'an assertion whose required context cannot fit that segment. The review checks '
+                        'what the transcript asserts, not whether speech or external facts are verified. '
+                        'Only the supplied capture timestamp, when known and common to the segments, '
+                        'anchors relative dates in speech. Receipt time and clip offsets do not. '
+                        'None of these clocks independently establishes the described event time.'}
     response = await asyncio.wait_for(router.complete(
         messages=[{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
         force_tier=tier, context={"task": "source_claim_extraction", "function_role": "extraction", "max_output_tokens": 1400,
-                                  "allow_fallback": functions, "response_schema": claim_response_schema(content)}),
+                                  "allow_fallback": functions, "response_schema": claim_response_schema(content, audio_segments=message.get('_audio_segments'))}),
         timeout=extraction_timeout_seconds(router))
     provenance = {
         'function_role': getattr(response, 'function_role', '') or 'extraction',
@@ -448,8 +473,27 @@ async def _extract_claims(router, source: dict, message: dict, prior: list[dict]
         diagnostics['response_count'] += 1
         diagnostics['last_model_provenance'] = provenance.copy()
     claims = validated_claims(final_text(response), message=content, prior=prior,
-                            observed_at=source["occurred_at"], timezone_name=timezone_name,
+                            observed_at=assertion_clock, timezone_name=timezone_name,
                             diagnostics=diagnostics)
+    if derived_audio:
+        from colony_sidecar.turns.audio import claim_basis
+        grounded = []
+        for claim in claims:
+            # An identical quotation can also occur in an adjacent text block.
+            # Bind it to the first exact owned ASR occurrence, never a label.
+            for segment in message['_audio_segments']:
+                offset = content.find(claim['evidence'], segment['source_start'], segment['source_end'])
+                if offset >= 0:
+                    claim = {**claim, 'span_start': offset, 'span_end': offset + len(claim['evidence'])}
+                    break
+            basis = claim_basis(message, claim['span_start'], claim['span_end'])
+            if basis is not None:
+                grounded.append({**claim, 'evidence_basis': basis})
+            elif diagnostics is not None:
+                diagnostics['rejected_count'] += 1
+                counts = diagnostics['rejection_counts']
+                counts['audio_segment_grounding'] = counts.get('audio_segment_grounding', 0) + 1
+        claims = grounded
     for claim in claims:
         claim['model_provenance'] = provenance.copy()
     claims = await _review_claims(router, payload, claims, tier=tier, functions=functions,

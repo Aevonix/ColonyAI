@@ -64,21 +64,66 @@ def transcript(block, data, duration_ms):
             'confidence': None}
 
 
-def source_text(content):
-    """Text-only recall of retained evidence; raw audio never enters prompts."""
+def _render(content):
+    """One rendering for source indexing, exact claim spans and recall."""
     if isinstance(content, str):
-        return content
-    parts = []
-    for block in content if isinstance(content, list) else []:
+        return content, []
+    parts, segments, length = [], [], 0
+
+    def append(text):
+        nonlocal length
+        start = length + bool(parts)
+        parts.append(text)
+        length = start + len(text)
+        return start
+
+    blocks = content if isinstance(content, list) else []
+    for index, block in enumerate(blocks):
         if not isinstance(block, dict):
             continue
         if block.get('type') in {'text', 'input_text', 'output_text'} and isinstance(block.get('text'), str):
-            parts.append(block['text'])
+            append(block['text'])
         elif block.get('type') == 'audio_transcript' and block.get('epistemic_state') == 'derived_unverified':
-            for segment in block.get('segments', []):
-                parts.append(f"Unverified machine transcript [{segment['start_ms'] / 1000:.3f}.."
-                             f"{segment['end_ms'] / 1000:.3f}s of {block['asset_id']}]: {segment['text']}")
-    return '\n'.join(parts)
+            parent = blocks[index - 1] if index else {}
+            owned = (isinstance(parent, dict) and parent.get('type') == 'audio'
+                     and parent.get('asset_id') == block['asset_id'])
+            for segment_index, segment in enumerate(block.get('segments', [])):
+                prefix = (f"Unverified machine transcript [{segment['start_ms'] / 1000:.3f}.."
+                          f"{segment['end_ms'] / 1000:.3f}s of {block['asset_id']}]: ")
+                start = append(prefix + segment['text']) + len(prefix)
+                if owned:
+                    segments.append({'block_index': index, 'segment_index': segment_index,
+                        'asset_id': block['asset_id'], 'start_ms': segment['start_ms'], 'end_ms': segment['end_ms'],
+                        'source_start': start, 'source_end': start + len(segment['text']),
+                        **{key: block[key] for key in ('recognizer', 'received_at', 'captured_at',
+                                                      'timing_basis', 'confidence')}})
+    return '\n'.join(parts), segments
+
+
+def source_text(content):
+    """Text-only recall of retained evidence; raw audio never enters prompts."""
+    return _render(content)[0]
+
+
+def claim_message(message):
+    """An internal extraction view, never a second canonical user message.
+
+    Complete surrounding text remains available to interpret narrative scope.
+    Only retained, paired ASR word ranges become eligible derived evidence.
+    """
+    if isinstance(message.get('content'), str):
+        return message
+    text, segments = _render(message.get('content'))
+    return {**message, 'content': text, '_audio_segments': segments} if segments else None
+
+
+def claim_basis(message, start, end):
+    for segment in message.get('_audio_segments', []):
+        if segment['source_start'] <= start < end <= segment['source_end']:
+            return {'epistemic_state': 'derived_unverified', 'source_modality': 'audio_transcript',
+                    'segment': {**segment, 'evidence_start': start - segment['source_start'],
+                                'evidence_end': end - segment['source_start']}}
+    return None
 
 
 def evidence_metadata(message):

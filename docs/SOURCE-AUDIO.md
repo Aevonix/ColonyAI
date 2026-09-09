@@ -28,12 +28,42 @@ revision/cursor, and `/v1/host/memory/sources/assets/{sha256}` serves original
 bytes only to the currently authorized participant/session. No static file
 route or filesystem path is injected into the model.
 
-Multimodal source messages continue to bypass direct-text assertion extraction.
-They remain source evidence for recall; this packet does not treat a machine
-transcript as independently verified user speech. A deployment should qualify
-derived speech formation before enabling this capture for every turn that
-previously produced ordinary text claims. It can select original-audio capture
-for a particular surface while retaining the ordinary text path elsewhere.
+Retained, paired transcripts use the existing source-claim job, extraction
+role and admission review. The internal extraction view is exactly the labelled
+text used by source recall. Actual transcript words have deterministic character
+ranges; labels, other blocks and quotations crossing segment boundaries cannot
+become ASR claims. Short segments retain their complete wording in the output
+schema. Surrounding source text is still supplied to both processors to preserve
+fiction, conditions and attribution. Other media formats remain source evidence
+outside this extractor.
+
+An admitted claim remains `derived_unverified`, with its immutable input-message
+hash, source revision at formation, original asset, segment index/range, recognizer
+and capture/receipt clocks. Segment indices are local to that source revision.
+Commit reconstructs the current canonical view after inference and verifies the
+same exact span and ownership. Review cannot rewrite it or certify the speech.
+An unavailable reviewer leaves the existing job pending; a negative review keeps
+the source without creating the claim. No new job, store or inference role exists.
+
+Receipt time is not the speech clock. Relative dates use an explicitly supplied
+capture timestamp only when it is known and common to the message's segments.
+Otherwise an optional event date remains unresolved and an unresolved required
+validity condition prevents admission. Absolute dates retain the normal parser.
+Review and recall continue to distinguish source reporting time from event time.
+
+Current assertion bundles, source opening, corrections and preference reads
+retain derived provenance. A typed correction can correct a recognition-derived
+claim; deleting that correction does not revive the old value. An attributed
+annotation can target the recognized words in their exact source revision.
+Ordinary appraisal and self-judgment extraction do not consume ASR blocks, and
+this path neither grants trust nor infers emotion from speech.
+
+This is a bounded per-segment formation path, not a guarantee of transcription
+accuracy or useful model output. A dependent procedure split across segments,
+or a message beyond the existing 12000-character extraction limit, remains
+source evidence for opening rather than an automatically completed assertion.
+A deployment must qualify its recognizer, extraction/review roles and actual
+voice capture before enabling this for turns that previously used text claims.
 
 The existing turn API has a `source-media/audio` variant. Updated clients use
 it for audio source payloads; predecessors reject its path/body ID mismatch

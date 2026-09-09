@@ -62,8 +62,11 @@ async def test_audio_http_recall_and_full_source_preserve_derived_clock_lineage(
         assert transcript['confidence'] is None and transcript['epistemic_state'] == 'derived_unverified'
         assert SourceMedia(ledger).claim_job() is None  # Audio is never sent to the image model.
         class NoModel:
-            async def complete(self, **kwargs): pytest.fail('Audio transcript became direct text assertion learning')
+            async def complete(self, **kwargs): pytest.fail('An unavailable configured role was invoked')
         assert await SourceClaimProjection(ledger).process_one(NoModel())
+        # Recognition remains usable source evidence while semantic formation
+        # waits for its existing configured extraction/review roles.
+        assert SourceClaimProjection(ledger).status('contact-a')[0]['status'] == 'pending'
         asset_url = '/v1/host/memory/sources/assets/' + asset
         response = await client.get(asset_url, params={'contact_id': 'contact-a', 'session_id': 'later'})
         assert response.content == data and response.headers['content-type'] == 'audio/wav'
