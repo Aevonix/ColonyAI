@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator, ValidationError
 import pytest
 
 from colony_sidecar.beliefs.source_claims import (
-    extract_claims, projection_timeout_seconds,
+    EXTRACTION_VERSION, extract_claims, projection_timeout_seconds,
     review_response_schema, validated_review, SourceClaimOutputError,
 )
 from colony_sidecar.beliefs.source_projection import SourceClaimProjection
@@ -72,7 +72,7 @@ async def test_review_keeps_original_claim_bytes_and_records_distinct_judgment(t
     assert metadata['model_provenance']['function_role'] == 'judging'
     assert data['model_provenance']['function_role'] == 'extraction'
     status = projection.status('person')[0]
-    assert status['status'] == 'complete' and status['extraction_version'] == 'source-claims-v4'
+    assert status['status'] == 'complete' and status['extraction_version'] == EXTRACTION_VERSION
     assert status['claim_count'] == 1
     diagnostic = status['diagnostics']
     assert diagnostic['accepted_count'] == diagnostic['reviewed_count'] == 2

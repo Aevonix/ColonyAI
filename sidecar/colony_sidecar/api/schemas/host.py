@@ -99,10 +99,31 @@ class MemoryReadRequest(BaseModel):
     person_id: Optional[str] = None
     audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
     limit: Optional[int] = None
+    source_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    source_version: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
+    session_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    source_view: Literal['source', 'assertions'] = 'source'
+    claim_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    offset: int = Field(default=0, ge=0, le=10000000)
+    read_revision: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
+
+    @model_validator(mode='after')
+    def canonical_read_selector(self):
+        if self.source_id:
+            if not self.source_version or not self.session_id or self.memory_id:
+                raise ValueError('canonical reads require source version/session and no graph memory ID')
+            if (self.source_view == 'assertions') != bool(self.claim_id):
+                raise ValueError('assertion history requires its source claim ID')
+            if self.offset and not self.read_revision:
+                raise ValueError('continuation requires the preceding read revision')
+        elif self.source_version or self.claim_id or self.offset or self.read_revision or self.source_view != 'source':
+            raise ValueError('canonical read fields require a source ID')
+        return self
 
 
 class MemoryReadResponse(BaseModel):
     entries: List[MemoryEntry] = []
+    source: Optional[Dict[str, Any]] = None
 
 
 class MemoryWriteRequest(BaseModel):

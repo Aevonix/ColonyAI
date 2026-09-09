@@ -1321,6 +1321,18 @@ async def memory_read(
         audience=body.audience,
     )
     body.person_id = person_id
+    if body.source_id:
+        if not person_id:
+            raise HTTPException(status_code=403, detail='canonical source reads require a scoped person')
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        from colony_sidecar.turns.source_read import read
+        try:
+            return MemoryReadResponse(source=read(get_turn_idempotency_ledger(get_state_dir()),
+                contact_id=person_id, session_id=body.session_id, source_id=body.source_id,
+                source_version=body.source_version, view=body.source_view, claim_id=body.claim_id,
+                offset=body.offset, read_revision=body.read_revision))
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
     if _graph is None:
         return MemoryReadResponse(entries=[])
     try:

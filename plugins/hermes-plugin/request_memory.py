@@ -73,7 +73,31 @@ def _request_texts(value):
                 yield from _request_texts(value[key])
 
 
-def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None):
+def _read_receipt(row, receipts):
+    if row.get('role') != 'tool' and row.get('type') != 'function_call_output':
+        return None
+    receipt = receipts.get(row.get('tool_call_id') or row.get('call_id'))
+    value = row.get('output') if row.get('type') == 'function_call_output' else row.get('content')
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict):
+        value = value[0].get('text')
+    return receipt if receipt and value == receipt['text'] else None
+
+
+def _historical_source_read(row):
+    if row.get('role') != 'tool' and row.get('type') != 'function_call_output':
+        return False
+    value = row.get('output') if row.get('type') == 'function_call_output' else row.get('content')
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict):
+        value = value[0].get('text')
+    try:
+        payload = json.loads(value)
+        return isinstance(payload, dict) and payload.get('colony_source_read_v1') is True
+    except (TypeError, ValueError):
+        return False
+
+
+def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None,
+                   read_receipts=None):
     """Keep current-turn recall and remove exact evidence, preserving tool structure.
 
     Hashes include original session and speaker. Trying those retained origins
@@ -189,6 +213,15 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             if not isinstance(original, dict):
                 continue
             row = dict(original)
+            receipt = _read_receipt(row, read_receipts or {})
+            if receipt or _historical_source_read(row):
+                # Only the exact output registered by our native source-read
+                # handler is eligible. Quoted markers inside its JSON are data.
+                if not receipt or not fresh or receipt['watermark'] != watermark:
+                    field = 'output' if row.get('type') == 'function_call_output' else 'content'
+                    row[field] = '[Opened source withheld; read again after memory freshness is restored.]'
+                retained.append(row)
+                continue
             if row.get('role') in ('system', 'developer'):
                 if 'content' in row:
                     row['content'] = instruction_content(row['content'])
@@ -225,6 +258,7 @@ class RequestMemory:
         self._aliases = OrderedDict()
         self._supplied = {}
         self._requests_seen = set()
+        self._read_receipts = {}
 
     def observe(self, scope, messages, *, user_message=None):
         # Native pre_llm_call exposes both clean content and persisted
@@ -245,12 +279,25 @@ class RequestMemory:
             packets = {match.group() for row in messages if (match := _native_packet(row)) is not None}
             self._aliases[key] = (aliases, current, copy.deepcopy(user_message) if current else None, packets)
             self._supplied[key] = {}
+            self._read_receipts[key] = {}
             self._requests_seen.discard(key)
             self._aliases.move_to_end(key)
             while len(self._aliases) > 32:
                 evicted, _ = self._aliases.popitem(last=False)
                 self._supplied.pop(evicted, None)
                 self._requests_seen.discard(evicted)
+                self._read_receipts.pop(evicted, None)
+
+    def register_source_read(self, scope, tool_call_id, text, result):
+        """Register authentic output; it counts as supplied only at dispatch."""
+        key = (scope.contact_id, scope.task_id, scope.turn_id)
+        with self._lock:
+            if key not in self._requests_seen or not tool_call_id:
+                return False
+            self._read_receipts[key][tool_call_id] = {
+                'text': text, 'watermark': result['watermark'],
+                'sources': copy.deepcopy(result['source_refs'])}
+            return True
 
     def supplied_snapshot(self, scope):
         """Copy actual supplied lineage without ending the native turn.
@@ -274,6 +321,7 @@ class RequestMemory:
                     del self._aliases[key]
                     self._supplied.pop(key, None)
                     self._requests_seen.discard(key)
+                    self._read_receipts.pop(key, None)
         return list(refs.values())
 
     def __call__(self, request, scope):
@@ -282,6 +330,7 @@ class RequestMemory:
             observed_key = (contact, scope.task_id, scope.turn_id) if scope else None
             aliases, current, current_input, packets = self._aliases.get(observed_key, ({}, None, None, set()))
             observed = observed_key in self._aliases
+            read_receipts = copy.deepcopy(self._read_receipts.get(observed_key, {}))
         current_content = current.get('api_content', current.get('content')) if current else None
         deadline = time.monotonic() + .25
         watermark, rules, fresh = 0, [], False
@@ -314,15 +363,23 @@ class RequestMemory:
         try:
             filtered = filter_request(request, contact_id=contact, watermark=watermark,
                                       rules=rules, fresh=fresh, aliases=aliases,
-                                      current_content=current_content, current_input=current_input)
+                                      current_content=current_content, current_input=current_input,
+                                      read_receipts=read_receipts)
         except Exception:
-            filtered = filter_request(request, contact_id=contact, watermark=0, rules=[], fresh=False)
+            filtered = filter_request(request, contact_id=contact, watermark=0, rules=[], fresh=False,
+                                      read_receipts=read_receipts)
             fresh = False
         if fresh and observed:
             actual_texts = list(_request_texts(filtered))
             current_packet = _native_packet(current)
             packets = packets | ({current_packet.group()} if current_packet else set())
             supplied = {}
+            for name in ('messages', 'input'):
+                for row in filtered.get(name, []) if isinstance(filtered.get(name), list) else []:
+                    receipt = _read_receipt(row, read_receipts) if isinstance(row, dict) else None
+                    if receipt and receipt['watermark'] == watermark:
+                        for ref in receipt['sources']:
+                            supplied[(ref['source_id'], ref['source_version'])] = ref
             for block in packets:
                 if not any(block in text for text in actual_texts):
                     continue

@@ -60,7 +60,8 @@ class SourceClaimProjection:
     def _rows(self, conn, contact_id, session_id, *, turn_ids=None, message_hashes=None, ids=None,
               key=None, time_query=None, distinct_values=False, limit=256):
         from colony_sidecar.turns.idempotency import source_message_hash
-        where = ["s.contact_id=?", "(s.scope='person' OR s.session_id=?)"]
+        where = ["s.contact_id=?", "(s.scope='person' OR s.session_id=?)",
+                 "NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)"]
         args = [contact_id, session_id]
         if ids is not None:
             if not ids:
@@ -378,8 +379,9 @@ class SourceClaimProjection:
         for key in dict.fromkeys(keys):
             with closing(self.ledger._connect()) as conn:
                 group = self._rows(conn, contact_id, session_id, key=key, time_query=time_query, distinct_values=True, limit=9)
-            if not group or len(group) > 8:
+            if not group:
                 continue
+            overflow = len(group) > 8
             group.sort(key=lambda c: (c["valid_from"] or "", c["recorded_at"], c["id"]))
             # Exact value equality only; substring containment is not agreement.
             values = {norm_value(c["value"]) for c in group}
@@ -391,12 +393,15 @@ class SourceClaimProjection:
             members = [{"claim_id": c["id"], "source": "turn:" + c["turn_id"], "role": c["role"],
                         "value": c["value"], "quote": c["evidence"], "observed_at": c["observed_at"],
                         "recorded_at": c["recorded_at"], "valid_from": c["valid_from"], "valid_to": c["valid_to"],
-                        "event_at": c.get("event_at"), "validity_basis": c["validity_basis"],
+                        "event_at": c.get("event_at"), "event_time": c.get("event_time", {
+                            "status": "legacy_precision_unknown" if c.get("event_at") else "unknown"}),
+                        "reported_at": c["observed_at"], "validity_basis": c["validity_basis"],
                         "operation": c["operation"], "prior_claim_id": c.get("prior_claim_id")}
                        for c in group]
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
             identifier = hashlib.sha256(json.dumps([contact_id, key, [c["id"] for c in group]]).encode()).hexdigest()
             bundles.append({"id": "assertions:" + identifier, "kind": "source_quote",
+                            "history_anchor": {"source_id": group[0]['turn_id'], "claim_id": group[0]['id']},
                             "source_turn_ids": list(dict.fromkeys(c['turn_id'] for c in group)),
                             "_source_message_hashes": {turn: list(dict.fromkeys(
                                 c['message_hash'] for c in group if c['turn_id'] == turn))
@@ -411,7 +416,12 @@ class SourceClaimProjection:
                             **({"validity_status": "query_time_unresolved"} if time_query.mode == "unresolved_time" else {}),
                             "contradiction_count": len(values) - 1 if conflict else 0, "relevance": 1 / (61 + len(bundles)),
                             "content": json.dumps({"subject": group[0]["subject"], "predicate": key[1],
-                                                   "status": status, "assertions": members}, ensure_ascii=False)})
+                                                   "status": status, "assertions": members}, ensure_ascii=False),
+                            **({"excerpt_truncated": True, "content": json.dumps({
+                                "subject": group[0]['subject'], "predicate": key[1],
+                                "status": "incomplete_assertion_history", "distinct_values_at_least": len(values),
+                                "instruction": "Open assertion history before resolving this property; no value selected."},
+                                ensure_ascii=False)} if overflow else {})})
         return (filter_unstructured(retained_beliefs, time_query),
                 bundles + filter_unstructured(source_candidates(retained_hits), time_query))
 
