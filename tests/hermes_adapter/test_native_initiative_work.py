@@ -124,7 +124,7 @@ with source_ledger._connect() as evidence:
  assert message['role']=='assistant' and message['_native_runtime_observation']=='native-runtime-observation-v1'
  assert '"outcome": "gave_up"' in message['content'] and '"served_model": "unknown"' in message['content']
  assert 'controlled spawn failure' not in message['content']
- assert evidence.execute('SELECT count(*) FROM self_judgment_runs').fetchone()[0]==1
+ assert evidence.execute('SELECT count(*) FROM self_judgment_runs').fetchone()[0]==int(os.environ.get('COLONY_SELF_JUDGMENTS_ENABLED')=='1')
  assert evidence.execute('SELECT count(*) FROM source_claim_jobs').fetchone()[0]==0
 with kb.connect(board='default') as db:
  assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==2
@@ -140,7 +140,8 @@ print(json.dumps({'independent_cycles_one_task':True,'actual_native_completion':
 '''
 
 
-def test_actual_native_initiative_handoff_and_reconciliation(tmp_path):
+@pytest.mark.parametrize('judgments_enabled', [False, True])
+def test_actual_native_initiative_handoff_and_reconciliation(tmp_path, judgments_enabled):
     python = os.environ.get('AEVA_HERMES_TEST_PYTHON')
     if not python:
         if importlib.util.find_spec('hermes_cli') is None:
@@ -154,6 +155,8 @@ def test_actual_native_initiative_handoff_and_reconciliation(tmp_path):
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),PYTHONDONTWRITEBYTECODE='1',
         HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
         COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
+    if judgments_enabled:
+        env['COLONY_SELF_JUDGMENTS_ENABLED'] = '1'
     result = subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
         str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH','')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
