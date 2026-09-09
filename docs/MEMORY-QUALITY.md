@@ -182,6 +182,8 @@ claim to erase unsupported descendants.
 Original source images also require a recoverable backup, not only retained
 captions. See [source memory recovery](SOURCE-MEMORY-RECOVERY.md) for the existing
 backup command's source-image coverage and its remaining recovery limits.
-The text-claim worker skips non-text message blocks before prior lookup; their
+The claim worker skips unsupported non-text blocks before prior lookup; their
 original media, stable capture metadata and independent media/vector jobs remain
-retained. Completing that text job does not claim the image's semantics were learned.
+retained. Supported attributed audio transcripts use their exact recognition-derived
+segments for extraction and review. Completing a text job does not claim that an
+image's semantics were learned or that recognized speech was independently verified.
