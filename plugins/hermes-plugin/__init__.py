@@ -2521,14 +2521,16 @@ def register(ctx: Any) -> None:
     ctx.register_middleware("tool_execution", observe_tool)
 
     def reconcile_request(request, **kwargs):
+        from .request_capabilities import describe
         if native_drafts is not None and native_drafts.worker:
-            return {'request': request}
+            return {'request': describe(request)}
         _TRANSPORT_SCOPES.bind_current_session(**kwargs)
         scope = _TRANSPORT_SCOPES.for_execution(
             session_id=str(kwargs.get('session_id') or ''),
             task_id=str(kwargs.get('task_id') or ''),
             turn_id=str(kwargs.get('turn_id') or ''))
         result = request_memory(request, scope)
+        result['request'] = describe(result['request'])
         result['request'] = request_work(
             result['request'], scope, api_mode=str(kwargs.get('api_mode') or ''))
         return result
