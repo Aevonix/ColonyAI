@@ -114,7 +114,9 @@ second_value=worker.work(second.id)
 second_prediction=history(second_value['native_work'])['forecasts'][0]
 estimate=second_prediction['detail']['conditions']['estimate']
 assert estimate['sample_n']==1 and estimate['seconds']<480,estimate
-assert second_prediction['horizon']-second_prediction['detail']['origin_at']==estimate['seconds']
+# Check the absolute timestamp: subtracting an epoch-sized origin can lose
+# fractional seconds from the learned estimate through float cancellation.
+assert second_prediction['horizon']==second_prediction['detail']['origin_at']+estimate['seconds']
 assert second_prediction['detail']['model_provenance']['served_model'] is None
 # Confirm the canonical record is runtime-origin source-only, not owner facts.
 with sources._connect() as db:
