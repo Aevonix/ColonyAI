@@ -77,6 +77,54 @@ async def complete(r, role='extraction', **context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('declared', [False, True])
+async def test_response_schema_reaches_only_declared_binding_and_only_requested_turn(declared):
+    schema = {'name': 'neutral_observations', 'schema': {'type': 'array', 'items': {'type': 'string'}}}
+    with endpoint(content='[]') as (url, calls):
+        cfg = config(url, url, timeoutSeconds=10, deadlineSeconds=20)
+        cfg['modelPool']['interactive']['supportsJsonSchema'] = declared
+        r = router(cfg)
+        await complete(r, response_schema=schema)
+        body = calls[0]['payload']
+        assert body['messages'] == [{'role': 'user', 'content': 'Neutral routing fixture.'}]
+        assert body.get('response_format') == (
+            {'type': 'json_schema', 'json_schema': {**schema, 'strict': True}} if declared else None)
+        assert r.routing_status()['models']['interactive']['supports_json_schema'] is declared
+        await complete(r)
+        assert 'response_format' not in calls[1]['payload']
+
+
+@pytest.mark.asyncio
+async def test_response_schema_fallback_preserves_prompt_without_assuming_server_capability():
+    schema = {'name': 'neutral', 'schema': {'type': 'object', 'properties': {}}}
+    with endpoint(status=503) as (first, a), endpoint(content='{}') as (second, b):
+        cfg = config(first, second, timeoutSeconds=10, deadlineSeconds=20)
+        cfg['modelPool']['interactive']['supportsJsonSchema'] = True
+        r = router(cfg)
+        result = await complete(r, response_schema=schema)
+        assert result.binding == 'deliberate'
+        assert a[0]['payload']['response_format']['json_schema']['schema'] == schema['schema']
+        assert 'response_format' not in b[0]['payload']
+        assert a[0]['payload']['messages'] == b[0]['payload']['messages']
+        assert len(a) == len(b) == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_output_contract_and_capability_fail_before_dispatch():
+    with endpoint() as (url, calls):
+        cfg = config(url, url)
+        cfg['modelPool']['interactive']['supportsJsonSchema'] = 'true'
+        with pytest.raises(ValueError, match='supportsJsonSchema'):
+            router(cfg)
+        del cfg['modelPool']['interactive']['supportsJsonSchema']
+        r = router(cfg)
+        for invalid in ({'schema': {}}, {'name': 'neutral', 'schema': []}, 'json'):
+            with pytest.raises(ValueError, match='response_schema'):
+                await complete(r, response_schema=invalid)
+        assert not calls
+
+
+@pytest.mark.asyncio
 async def test_named_functions_never_open_the_legacy_learner_database(tmp_path, monkeypatch):
     from colony_sidecar.router import self_learning
     database = tmp_path / 'must-not-create.db'
