@@ -113,6 +113,41 @@ measurements return `diagnostics: null`; an older attempt's counts are not reuse
 The record lives on the existing job row, follows its lease, is replaced by the
 next finished attempt and is removed with source erasure.
 
+New claim jobs use `source-claims-v4`: after the existing quote, subject, value
+and date checks, one batched `source_claim_review` request uses the configured
+`judging` role to assess whether each proposal preserves the source's relation,
+attribution, negation, modality and memory category. Exact required proposal
+keys avoid asking the model to generate matching indices. Runtime validation
+still rejects missing, duplicate or invalid decisions, including on bindings
+that do not declare strict JSON schema support. There is no review call for an
+empty validated proposal set. Useful reports, temporary knowledge, standing
+conditional preferences and actual reusable procedures remain eligible.
+
+Review is the default admission path for new nonempty proposals. A local
+installation can assign extraction and judging to the same model; older local
+tier adapters use the same local tier for both requests. No separate processor
+is required. Function routing honors the existing configured judging candidates
+and fallback policy. An unavailable or malformed review leaves the job pending;
+a valid rejection completes without that claim. The original source remains
+searchable in either case. One captured outer deadline and owned job lease cover
+both requests; the router also keeps each role's deadline. Review therefore adds
+background work and latency, with a 1400-token output cap per batch.
+
+Kept records preserve the proposal's fields and add `admission_review`, containing
+version `source-claim-review-v1`, a bounded reason and the actual review processor's
+provenance. Its basis is `model_judgment_unverified`: a supported source assertion
+is not independently verified truth, and the review reason is not a new fact.
+The existing extraction provenance remains separate. Review text is excluded
+from the recall assertion member projection. Historical records are unchanged.
+
+`accepted_count` continues to mean candidates that passed the mechanical
+extraction checks. `reviewed_count`, `review_kept_count`, `review_rejected_count`,
+`review_response_count` and `invalid_review_count` describe the subsequent stage;
+`last_review_provenance` identifies its last completed response. `claim_count`
+remains the number actually persisted. A positive extraction acceptance count
+does not mean review succeeded or a claim committed. Review reasons are stored
+only with kept claims, not in the job diagnostic record.
+
 This change does not relabel or erase historical memories. Audit a retained
 corpus before making content changes. Keep raw private samples on the deployment,
 separate exact duplicates from distinct supporting evidence, and label model

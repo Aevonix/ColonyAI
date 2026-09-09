@@ -423,9 +423,14 @@ async def test_real_source_claim_flow_retains_role_generation_and_scoped_evidenc
     from colony_sidecar.beliefs.source_projection import SourceClaimProjection
     from test_source_claim_projection import claim
     text = 'My office is in Alder.'
-    answer = json.dumps([claim(text, 'Alder')])
+    def answer(payload):
+        if 'proposals' in json.loads(payload['messages'][1]['content']):
+            return json.dumps({'0': {'keep': True, 'reason': 'Controlled valid location.'}})
+        return json.dumps([claim(text, 'Alder')])
     with endpoint(status=503) as (first, a), endpoint(content=answer) as (second, b):
-        r = router(config(first, second))
+        cfg = config(first, second)
+        cfg['functionRoles']['judging'] = ['deliberate']
+        r = router(cfg)
         ledger = TurnIdempotencyLedger(tmp_path / 'turns.db')
         ledger.record_source('neutral-source', contact_id='person', session_id='sms', messages=[{'role': 'user', 'content': text}])
         projection = SourceClaimProjection(ledger)
@@ -436,8 +441,9 @@ async def test_real_source_claim_flow_retains_role_generation_and_scoped_evidenc
             assert rows[0]['model_provenance']['function_role'] == 'extraction'
             assert rows[0]['model_provenance']['config_revision'] == r.routing_status()['config_revision']
             assert rows[0]['model_provenance']['weight_revision'] == 'fixture-revision-b'
+            assert rows[0]['admission_review']['model_provenance']['function_role'] == 'judging'
             assert projection._rows(conn, 'stranger', 'voice') == []
-        assert len(a) == len(b) == 1
+        assert len(a) == 1 and len(b) == 2
 
 
 @pytest.mark.asyncio

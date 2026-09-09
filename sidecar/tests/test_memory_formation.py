@@ -40,7 +40,7 @@ async def test_complete_procedure_survives_commit_restart_and_scoped_projection(
         candidate['value'] = draft_value
     model = Model({PROCEDURE: candidate})
     assert await projection.process_one(model)
-    assert len(model.calls) == 1
+    assert len(model.calls) == 2
     requested = model.calls[0][1]['context']['response_schema']
     assert requested['name'] == 'source_claims'
     assert all(branch['properties']['evidence']['const'] == PROCEDURE

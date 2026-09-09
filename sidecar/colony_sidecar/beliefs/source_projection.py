@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 
-from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_diagnostics, extraction_timeout_seconds, norm_value
+from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_diagnostics, projection_timeout_seconds, norm_value
 from .source_time import MemoryTimeQuery, filter_unstructured
 
 logger = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ class SourceClaimProjection:
                              (model, EXTRACTION_VERSION, encoded, job["turn_id"], job["lease_token"]))
 
     def renew_job(self, job, request_timeout):
-        """Extend this existing lease for one bounded request and its commit."""
+        """Extend this lease for bounded extraction, review and their commit."""
         with closing(self.ledger._connect()) as conn, conn:
             updated = conn.execute('''UPDATE source_claim_jobs SET lease_until=?
                 WHERE turn_id=? AND status='running' AND lease_token=?''',
@@ -227,7 +227,7 @@ class SourceClaimProjection:
                 content = message.get('content')
                 if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
                     continue
-                request_timeout = extraction_timeout_seconds(router)
+                request_timeout = projection_timeout_seconds(router)
                 if not self.renew_job(job, request_timeout):
                     return True  # Forgotten or reclaimed; do not start a stale model call.
                 claims, model = await extract_claims(router, job, message, self.prior(job, message),

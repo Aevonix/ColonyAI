@@ -52,5 +52,5 @@ async def test_image_claim_job_completes_without_inference_and_keeps_stable_meta
     text = 'My office is in River.'
     ledger.record_source('text', contact_id='contact-a', session_id='later', messages=[{'role': 'user', 'content': text}])
     model = Model({text: claim(text, 'River')})
-    assert await projection.process_one(model) and len(model.calls) == 1
+    assert await projection.process_one(model) and len(model.calls) == 2
     assert next(row for row in projection.status('contact-a') if row['turn_id'] == 'text')['claim_count'] == 1

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.beliefs.source_claims import extraction_timeout_seconds, extract_claims
+from colony_sidecar.beliefs.source_claims import extraction_timeout_seconds, projection_timeout_seconds, extract_claims
 from colony_sidecar.beliefs.source_projection import SourceClaimProjection
 from colony_sidecar.turns.idempotency import TurnIdempotencyLedger
 from test_function_routing import config, endpoint, router
@@ -25,12 +25,19 @@ async def test_actual_role_request_uses_configured_outer_deadline(monkeypatch):
         return await original_wait_for(awaitable, timeout)
 
     monkeypatch.setattr(asyncio, 'wait_for', inspect_wait_for)
-    with endpoint(content=json.dumps([claim(text, 'Alder')])) as (url, requests):
-        r = router(config(url, url, deadlineSeconds=80))
+    def answer(payload):
+        if 'proposals' in json.loads(payload['messages'][1]['content']):
+            return json.dumps({'0': {'keep': True, 'reason': 'Controlled valid location.'}})
+        return json.dumps([claim(text, 'Alder')])
+    with endpoint(content=answer) as (url, requests):
+        cfg = config(url, url, deadlineSeconds=80)
+        cfg['functionRoles']['judging'] = ['interactive']
+        r = router(cfg)
         rows, _ = await extract_claims(r, {'occurred_at': None}, {'role': 'user', 'content': text}, [])
-        assert len(rows) == len(requests) == 1
-        assert observed == [85]
+        assert len(rows) == 1 and len(requests) == 2
+        assert observed == [85, 185]
         assert extraction_timeout_seconds(r) == 85
+        assert projection_timeout_seconds(r) == 270
         r.configure(config(url, url, deadlineSeconds=120))
         assert extraction_timeout_seconds(r) == 125
 
@@ -71,8 +78,8 @@ async def test_long_multi_message_job_renews_after_role_reload(tmp_path, monkeyp
 
     model = SlowModel({first: claim(first, 'Alder'), second: claim(second, 'Birch')})
     assert await projection.process_one(model)
-    assert waits == [85, 125]
-    assert leases == [1115, 1216]
+    assert waits == [270, 85, 185, 310, 125, 185]
+    assert leases == [1300, 1300, 1462, 1462]
     assert projection.status('person')[0]['status'] == 'complete'
     assert projection.status('person')[0]['claim_count'] == 2
 
