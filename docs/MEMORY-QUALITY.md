@@ -12,7 +12,7 @@ is stored as `memory_quality` and explicitly labeled unverified. It is neither a
 truth score nor permission to act. Corrections, changes and conflicting reports
 keep the existing source and time rules.
 
-The `source-claims-v3` extractor stores a procedure's exact evidence passage as
+The extractor stores a procedure's exact evidence passage as
 its value, including its conditions and subsequent steps, within the existing
 500-character evidence limit. It does not ask the model to generate a second
 version of those instructions. Other values retain their 160-character limit.

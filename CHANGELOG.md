@@ -9,6 +9,13 @@ complete short quotations and stores a procedure's evidence directly as its
 value. Its task distinguishes actual-world assertions from narrative details,
 while retaining reported real events, physical props and conditional procedures.
 
+New source claims receive one batched admission review through the existing
+judging role after mechanical grounding. The review selects supported proposals
+without rewriting them, retains separate unverified provenance, and leaves
+unavailable or malformed reviews pending. Original sources remain searchable.
+The existing worker runs claim projection as one bounded task alongside its
+other projection tasks, so a slow review does not stall image or vector work.
+
 Appraisal output distinguishes durable scoped preferences from artifact requests,
 and repair records require the supported satisfaction transition. New working
 judgments normalize an absent predecessor only when no prior head exists.
@@ -19,6 +26,11 @@ instead of mixing score types. The native request middleware corrects Hermes
 0.21.1's qualified authoritative-memory note without changing quoted evidence,
 source revisions or erasure checks. Shared context guidance also reaches direct
 consumers such as voice adapters.
+
+Literal memory markup in trusted system or developer instructions no longer
+discards the remaining instruction text. Exact erased-source copies and explicit
+Colony lineage packets still follow the existing erasure boundary, including
+Responses instructions and multimodal text parts.
 
 No historical memory is rewritten, no database migration is needed, and no new
 model or approval service is introduced. Structural checks do not establish

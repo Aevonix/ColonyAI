@@ -20,8 +20,9 @@ configuration still determine their results.
 
 Version 1.0.27 improves memory formation and the presentation of recalled
 evidence. Optional structured output preserves complete short quotations and
-procedure steps; recollection retains source scope and uncertainty across native
-and direct consumers. The [memory guide](docs/MEMORY-QUALITY.md) explains the
+procedure steps. One batched review checks grounded proposals before admission;
+recollection retains source scope and uncertainty across native and direct
+consumers. The [memory guide](docs/MEMORY-QUALITY.md) explains the
 behavior and its limits, and the [changelog](CHANGELOG.md) records the changes.
 
 The lightweight installation starts with memory and observation. Extended
@@ -131,9 +132,10 @@ for native package installations and service bindings.
   linked assistant answers, while preserving independent user evidence. This
   does not discover old unlinked copies or erase native transcripts and backups.
   [Source lifecycle](docs/HERMES-ADAPTER.md)
-- **Selective factual learning.** One extractor promotes useful, quoted
-  assertions. It is instructed to leave routine logs as source history; that
-  model judgment remains fallible. Capture adds neither duplicate graph
+- **Selective factual learning.** One extractor proposes useful, quoted
+  assertions, followed by one batched review through the existing judging role.
+  Both judgments remain fallible; a rejected proposal leaves its source
+  searchable. Capture adds neither duplicate graph
   summaries nor automatic contact-knowledge guesses. Malformed extraction output
   retries from retained source instead of silently completing without claims.
   [Memory quality](docs/MEMORY-QUALITY.md)
