@@ -62,7 +62,7 @@ def render_memory_context(memories: list[dict[str, Any]]) -> str:
                   "kind": memory.get("kind", "belief"),
                   "source": str(memory.get("source_uri") or ""),
                   "state": str(memory.get("epistemic_state") or "inferred")}
-        for name in ("source_turn_id", "source_message_hash", "source_modality", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source", "history_anchor", "source_anchors", "procedure_context"):
+        for name in ("source_turn_id", "source_message_hash", "source_modality", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source", "history_anchor", "source_anchors", "procedure_context", "procedure_history_anchors"):
             if memory.get(name) is not None:
                 source[name] = memory[name]
         if memory.get("effective_confidence") is not None:
@@ -119,7 +119,7 @@ def pack_memory_context(
                     row['procedure_context'] = 'full_source_required'
                     row['content'] = ('Incomplete procedure context. Open the full sources in source_anchors '
                         'using their recalled source versions before following the procedure. '
-                        'Property history alone may omit its conditions.')
+                        'Inspect procedure_history_anchors when present; one property history may omit its conditions.')
                 else:
                     row['content'] = 'Incomplete assertion history. Open history_anchor using its recalled source version before resolving it.'
                 rendered = render_memory_context([row])

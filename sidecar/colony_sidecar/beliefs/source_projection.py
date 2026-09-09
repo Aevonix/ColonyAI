@@ -445,7 +445,7 @@ class SourceClaimProjection:
                     and not any(c['superseded_by'] or c['retracted_by'] for c in all_claims)
                     and all(len(current_group((c['subject_key'], c['predicate']))) == 1 for c in all_claims))
                 procedure_sources[identity] = {'source': dict(source) if source else None,
-                    'message': message, 'text': text, 'complete': complete}
+                    'message': message, 'text': text, 'complete': complete, 'claims': all_claims}
             value = procedure_sources[identity]
             # A complete one-message assertion keeps its existing property
             # semantics. This boundary concerns partial-message procedures.
@@ -524,9 +524,15 @@ class SourceClaimProjection:
                 else:
                     # A conflicting or changed procedure remains discoverable,
                     # but its partial assertion is not sufficient instructions.
+                    # Opening only the selected property's history could miss
+                    # the sibling whose correction made this message unsafe.
+                    anchors = {(c['turn_id'], c['subject_key'], c['predicate']): {
+                        'source_id': c['turn_id'], 'claim_id': c['id']}
+                        for _, context in contexts for c in context['claims']}
                     bundle.update(procedure_context='full_source_required', excerpt_truncated=True,
+                        procedure_history_anchors=list(anchors.values()),
                         content='Incomplete procedure context. Open the full sources in source_anchors '
-                            'using their recalled source versions and inspect assertion history before '
+                            'using their recalled source versions and inspect each procedure_history_anchors entry before '
                             'following the procedure. Property history alone may omit its conditions.')
             bundles.append(bundle)
         return (filter_unstructured(retained_beliefs, time_query),

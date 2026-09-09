@@ -114,7 +114,19 @@ async def test_corrected_or_retracted_sibling_never_reappears_as_complete_origin
     rows = candidates(projection)
     _, body = pack_memory_context(rows, max_chars=6000)
     assert replacement in body and STEPS not in body
-    assert any(row.get('procedure_context') == 'full_source_required' for row in rows)
+    guard = next(row for row in rows if row.get('procedure_context') == 'full_source_required')
+    assert 'procedure_history_anchors' in body
+    # The selected unchanged condition alone would not expose the correction
+    # to the first step. Every supplied anchor opens through the actual reader.
+    histories = []
+    for anchor in guard['procedure_history_anchors']:
+        ref = ledger.source_references([anchor['source_id']], contact_id='person', session_id='later')[0]
+        opened = read(ledger, contact_id='person', session_id='later', **ref,
+                      view='assertions', claim_id=anchor['claim_id'])
+        assert opened['complete']
+        histories.extend(json.loads(opened['content'])['assertions'])
+    assert any(c['evidence'] == replacement for c in histories)
+    assert any(c['evidence'] == STEPS and c['retracted_by'] for c in histories)
     # Erasing the correction must not revive its retracted predecessor.
     ledger.erase_sources(contact_id='person', turn_ids=['correction'])
     _, body = pack_memory_context(candidates(projection), max_chars=6000)
