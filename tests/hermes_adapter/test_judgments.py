@@ -77,6 +77,7 @@ def test_native_owner_judgment_control(artifacts, tmp_path, monkeypatch):
         pytest.skip('Install qualified Hermes to exercise native judgment controls')
     monkeypatch.syspath_prepend(str(ROOT / 'sidecar'))
     monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
+    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
     from colony_sidecar.beliefs.source_projection import SourceClaimProjection
     from colony_sidecar.self_model.judgments import SelfJudgments
     from colony_sidecar.turns import TurnIdempotencyLedger
