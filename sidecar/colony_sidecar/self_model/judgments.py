@@ -406,6 +406,12 @@ class SelfJudgments:
         if payload.get('owner_correction') and (result['topic'] != previous[0]['topic'] or result['action'] == 'retain'):
             raise JudgmentValidationError('invalid_judgment_reconsideration')
         old = next((r for r in previous if r['topic'] == result['topic']), None)
+        # A new topic has no predecessor to choose. Preserve the canonical
+        # null field even when the processor omits this redundant bookkeeping.
+        # Existing topics still require their exact supplied revision, and
+        # commit checks the live head again before writing.
+        if result['action'] == 'revise' and old is None and 'supersedes' not in result:
+            result['supersedes'] = None
         if type(result.get('supersedes')) not in (int, type(None)) or result.get('supersedes') != (old['id'] if old else None):
             raise JudgmentValidationError('invalid_judgment_predecessor')
         if result['action'] == 'retain':
