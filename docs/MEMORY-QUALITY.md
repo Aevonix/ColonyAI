@@ -48,22 +48,47 @@ summary-only integrations retain their existing APIs.
 
 In default native per-turn context assembly (`/v1/host/context/assemble`),
 retained contact-knowledge estimates no longer appear in a separate unconditional
-"Known Facts" section. Candidates come from the authorized legacy or projected
-contact store when available; canonical-only projections still exclude these
-stores. The projected view checks visibility envelopes, expiry and source erasure
-before retrieval. Up to 512 current records are scanned
+"Known Facts" section. Automatic candidates require a canonical source link
+whose contact, session and complete message-hash membership still match the
+current source ledger. Expiry and erasure checks apply before the 512-record
+window. An optional P8 visibility envelope is an additional audience boundary;
+it does not substitute for source support. Canonical-only projections still
+exclude contact stores. Up to 512 eligible current records are scanned
 with the existing lexical tokenizer, and at most 25 query-matching candidates
 enter the same selector and character budget as source evidence. An empty query
 or one with no matching terms does not inject them, including when the reranker
 is disabled or unavailable. Stored confidence does not determine relevance.
-Selected estimates retain their record handle, time and recorded source type,
-with an explicit unverified label; they are not exact canonical quotations.
+Selected estimates retain their record handle, time, recorded source type and
+canonical source dependency, with an explicit unverified label. Their source
+links allow existing correction bundles and request-time erasure checks to
+govern the packet. A link does not prove that an estimate correctly interprets
+the source, and estimates are not exact canonical quotations.
 
 This preserves bounded lexical access to useful retained estimates without a new
 index or model. It does not guarantee paraphrase-only recall or coverage beyond
 the current 512-record window. Explicit contact-knowledge listing remains
-available. The explicit legacy `/v1/host/context/enriched` API remains separate
-and is unchanged. No retained fact or its source history is deleted by this change.
+available. The legacy `/v1/host/context/enriched` route and automatic ToM context
+use the same source eligibility rule. Enriched contact estimates also require
+query overlap and carry the existing attributed-correction packet and exact
+source references. The complete packet must fit the recall character budget;
+if later section compression changes it, the section is omitted. Source and
+correction revisions are rechecked after compression. Explicit history remains
+available when an automatic packet cannot fit. Automatic relationship inferences
+also require current supporting facts. A correction suppresses the old inference
+rather than interpreting it again; missing source membership cannot produce a
+UUID-only fallback. Cached audience views and context assembly recheck the current
+source after other asynchronous work. Explicit inference history remains readable.
+Old unlinked facts, including hand-entered
+ones, remain available through explicit fact/history APIs but are not injected
+automatically. Their historical source enum and free-form metadata do not
+reliably distinguish owner curation from automated extraction. No curation or
+canonical source is invented for those records.
+
+Automatic context also excludes `tom:shared_fact` graph copies and older copies
+marked with shared-fact metadata. A mirror cannot bypass an expired, deleted,
+unlinked or outdated contact estimate. Unrelated graph memories keep their
+existing behavior. No retained fact, mirror or original source is deleted or
+migrated by this selection change.
 
 Persistent extraction consumers use the provider's completed final answer.
 Reasoning-only and truncated responses are not saved as assertions, affect,

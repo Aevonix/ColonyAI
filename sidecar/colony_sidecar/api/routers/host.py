@@ -1154,16 +1154,14 @@ def _p8_tool_actor_policy(
 def _p8_filter_graph_recall(
     rows: List[Mapping[str, Any]],
 ) -> List[Mapping[str, Any]]:
-    """Remove SharedFacts graph mirrors while P8 owns fact rendering.
+    """Remove SharedFacts graph mirrors from automatic context in every mode.
 
     Current writes and the legacy backfill both use the exact source URI.
     The bounded metadata check covers older mirrors that retained only the
-    marker.  Those memories are rendered through the typed P8 projection
-    instead, so an unavailable/unauthorized envelope stays absent.
+    marker. Contact knowledge estimates use the current source-linked store
+    view, with P8 audience checks in addition when enabled. A stale graph copy
+    must not revive a deleted, unlinked or outdated estimate.
     """
-
-    if _p8_runtime is None:
-        return rows
 
     def _is_shared_fact_mirror(row: Mapping[str, Any]) -> bool:
         if str(row.get("source_uri") or "") == "tom:shared_fact":
@@ -2405,11 +2403,12 @@ async def context_assemble(
     # guest. Exact subject identity does not make those observations shareable.
     _exact_person_allowed = not _canonical_only and _p8_exact_person_context_allowed(_p8_viewer)
     _canonical_person_allowed = _canonical_only or _exact_person_allowed
-    _tom_context_facts = None if _canonical_only else _facts_store
+    _tom_context_facts = (None if _canonical_only or _facts_store is None
+                          else _facts_store.automatic_view())
     if _p8_runtime is not None:
         _tom_context_facts = (
             _p8_runtime.projected_facts_view(
-                _p8_viewer, now=datetime.now(timezone.utc))
+                _p8_viewer, now=datetime.now(timezone.utc), source_linked_only=True)
             if _p8_viewer is not None else None
         )
     # Context assembly pulls from identity + memory + goals + contacts + world model + skills
@@ -2501,7 +2500,7 @@ async def context_assemble(
                     "limit": 25 if callable(candidates_fn) else 5,
                     "person_id": body.context.contact_id if body.context else None,
                 }
-                if _p8_runtime is not None:
+                if _p8_runtime is not None or callable(candidates_fn):
                     recall_kwargs["exclude_source_uris"] = ["tom:shared_fact"]
                 recall_fn = candidates_fn if callable(candidates_fn) else _graph.recall
                 beliefs = _p8_filter_graph_recall(await recall_fn(**recall_kwargs))
@@ -2925,6 +2924,16 @@ async def context_assemble(
         except Exception as exc:
             logger.debug("context_assemble owner preferences failed: %s", exc)
 
+    # ToM2 stores knowledge inferences about these facts, not interpretations
+    # of later corrections. Keep ordinary annotated recall separate.
+    _tom2_facts = None
+    if _tom2_store is not None and _tom_context_facts is not None and _facts_store is not None:
+        try:
+            from colony_sidecar.tom.facts import InferenceFactsView
+            _tom2_facts = InferenceFactsView(_tom_context_facts, _facts_store._ledger())
+        except Exception:
+            logger.debug('ToM2 canonical ledger unavailable', exc_info=True)
+
     # --- Second-order theory of mind (owner ONLY, H3.3) ---
     # Who knows / is unaware of what is the owner's lens on their own world.
     # Double-keyed: COLONY_TOM2_CONTEXT (default off) turns the section on,
@@ -2932,7 +2941,7 @@ async def context_assemble(
     # widen the audience, so a non-owner context stays tom2-free even with
     # the flag set (test-locked).
     if _tom2_store is not None and contact_id \
-            and _tom_context_facts is not None:
+            and _tom2_facts is not None:
         try:
             from colony_sidecar.tom.asymmetry import tom2_context_enabled
             from colony_sidecar.identity import get_owner_contact_id
@@ -2940,8 +2949,7 @@ async def context_assemble(
             if (tom2_context_enabled() and _owner_cid
                     and contact_id == _owner_cid):
                 _tom2_body = _render_tom2_context(
-                    facts_store=_tom_context_facts,
-                    strict_projection=_p8_runtime is not None,
+                    facts_store=_tom2_facts,
                 )
                 if _tom2_body:
                     sections.append(ContextSection(
@@ -2955,11 +2963,11 @@ async def context_assemble(
 
     # --- Leveled cross-contact tom2 (L4.2) — NON-owner readers only. ---
     # The flip point of the leveled system (docs/TOM2-LEVELS.md). The H3.3
-    # owner block above is untouched and test-locked. This block is
+    # owner audience above remains separate and test-locked. This block is
     # default-inert: COLONY_TOM2_LEVEL=0 (shipped) skips it entirely — the
     # same variable is the single-var kill switch — and fail-closed: ANY
     # error anywhere inside renders no section (lowest level wins).
-    if _tom2_store is not None and _tom_context_facts is not None \
+    if _tom2_store is not None and _tom2_facts is not None \
             and contact_id:
         try:
             from colony_sidecar.tom.levels import (
@@ -2976,7 +2984,7 @@ async def context_assemble(
                     contacts_store=_contacts_store)
                 if _lres.level >= 1:
                     from colony_sidecar.tom.leveled import render_level1
-                    _l1_body = render_level1(_tom2_store, _tom_context_facts,
+                    _l1_body = render_level1(_tom2_store, _tom2_facts,
                                              contact_id)
                     if _l1_body:
                         sections.append(ContextSection(
@@ -2995,7 +3003,7 @@ async def context_assemble(
                         _tom2_store.list_inferences(limit=100), limit=3,
                         reader_contact_id=contact_id,
                         conversation_key=_conv_key,
-                        facts_store=_tom_context_facts,
+                        facts_store=_tom2_facts,
                         contacts_store=_contacts_store,
                         presence_store=_presence_store,
                         approval_check=(_reg.is_approved
@@ -3032,7 +3040,7 @@ async def context_assemble(
                                 fact_ref=str(_row.get("fact_ref") or ""),
                                 kind=str(_row.get("kind") or ""))
                             _booked.append(_row)
-                    _l2_body = render_level2(_booked, _tom_context_facts,
+                    _l2_body = render_level2(_booked, _tom2_facts,
                                              contact_id, limit=3)
                     if _l2_body:
                         sections.append(ContextSection(
@@ -3150,6 +3158,10 @@ async def context_assemble(
             await _telemetry.touch("last_prefetch_at")
         except Exception:
             pass
+
+    if _tom2_facts is not None and not _tom2_facts.current():
+        sections = [s for s in sections if s.id not in {
+            'colony-tom2', 'colony-tom2-l1', 'colony-tom2-l2'}]
 
     return ContextAssembleResponse(
         sections=sections,
@@ -7500,7 +7512,6 @@ def _render_tom2_context(
     max_lines: int = 8,
     *,
     facts_store: Any = _DEFAULT_TOM_FACTS_STORE,
-    strict_projection: bool = False,
 ) -> str:
     """Compact owner-context rendering of the freshest asymmetries.
 
@@ -7509,20 +7520,18 @@ def _render_tom2_context(
     owner's context — the caller enforces that."""
     if _tom2_store is None:
         return ""
-    resolved_facts = (
-        _facts_store
-        if facts_store is _DEFAULT_TOM_FACTS_STORE else facts_store
-    )
+    resolved_facts = facts_store
+    if facts_store is _DEFAULT_TOM_FACTS_STORE:
+        from colony_sidecar.tom.facts import InferenceFactsView
+        resolved_facts = (InferenceFactsView(_facts_store.automatic_view(), _facts_store._ledger())
+                          if _facts_store is not None else None)
     rows = _tom2_store.list_inferences(kind="unaware_of", limit=50)
     lines = []
-    candidates = rows if strict_projection else rows[:max_lines]
-    for r in candidates:
+    for r in rows:
         subject = ""
         if resolved_facts is not None:
             try:
-                refs = [r.get("fact_ref")]
-                if strict_projection:
-                    refs += list(r.get("evidence_refs") or [])
+                refs = [r.get("fact_ref")] + list(r.get("evidence_refs") or [])
                 visible = [
                     resolved_facts.get_fact(str(ref or ""))
                     for ref in refs
@@ -7533,9 +7542,7 @@ def _render_tom2_context(
             except Exception:
                 subject = ""
         if not subject:
-            if strict_projection:
-                continue
-            subject = f"a shared fact ({r.get('fact_ref')})"
+            continue
         lines.append(
             f"- {r.get('contact_id')} appears unaware of: {subject} "
             f"(confidence {float(r.get('confidence') or 0):.2f})")
@@ -7543,9 +7550,6 @@ def _render_tom2_context(
             break
     if not lines:
         return ""
-    if not strict_projection and len(rows) > max_lines:
-        lines.append(f"... and {len(rows) - max_lines} more "
-                     "(GET /v1/host/tom2/report)")
     return "\n".join(lines)
 
 
@@ -10974,7 +10978,7 @@ async def enriched_context(
                     "limit": 5,
                     "person_id": contact_id,
                 }
-                if _p8_runtime is not None:
+                if _p8_runtime is not None or callable(getattr(_graph, 'recall_candidates', None)):
                     recall_kwargs["exclude_source_uris"] = [
                         "tom:shared_fact"]
                 results = await _graph.recall(**recall_kwargs)
@@ -11091,22 +11095,41 @@ async def enriched_context(
                 return ("cognition", None)
         tasks["cognition"] = _cognition()
 
-    # 11. P8 shared facts: authorization and freshness happen before content
-    # reaches the parallel result set or any renderer.
-    if _p8_runtime is not None and _enriched_p8_viewer is not None \
-            and features.get("shared_facts", True):
-        async def _p8_facts():
+    # 11. Use the same source-linked estimate and correction packet as native
+    # assembly. A P8 visibility envelope is an additional audience check, not
+    # a replacement for current source membership or attributed corrections.
+    if _facts_store is not None and contact_id and features.get("shared_facts", True) \
+            and (_p8_runtime is None or _enriched_p8_viewer is not None):
+        async def _shared_facts():
             try:
-                batch = _p8_runtime.project_shared_facts(
-                    _enriched_p8_viewer,
-                    now=datetime.now(timezone.utc),
-                    subject_person_id=contact_id,
-                    max_facts=5,
-                )
-                return ("p8_shared_facts", batch.facts)
+                from colony_sidecar.intelligence.graph.recall import contact_fact_candidates, pack_memory_context
+                from colony_sidecar.turns.source_annotations import expand, current_candidates
+                store = _p8_runtime.facts_store if _p8_runtime is not None else _facts_store
+                view = (_p8_runtime.projected_facts_view(_enriched_p8_viewer,
+                    now=datetime.now(timezone.utc), source_linked_only=True)
+                    if _p8_runtime is not None else store.automatic_view())
+                result = view.list_facts(contact_id=contact_id, limit=512)
+                facts = result if isinstance(result, list) else result.get('facts', [])
+                ledger = store._ledger()
+                scope = {'contact_id': contact_id, 'session_id': body.context.session_id}
+                candidates = expand(ledger, contact_fact_candidates(msg, facts), **scope)
+                # An erase/revision between the fact read and expansion must
+                # not leave an unbound estimate in the automatic packet.
+                candidates = [row for row in candidates if any(
+                    ref['source_id'] == row.get('source_turn_id')
+                    for ref in row.get('_annotation_source_refs', []))]
+                candidates = current_candidates(ledger, candidates, **scope)
+                try:
+                    max_chars = int(os.environ.get('COLONY_RECALL_CONTEXT_MAX_CHARS', '6000'))
+                except (TypeError, ValueError):
+                    max_chars = 6000
+                selected, text = pack_memory_context(candidates, limit=5,
+                    max_chars=max(0, min(max_chars, 24000)))
+                return ('shared_facts', (ledger, selected, text))
             except Exception:
-                return ("p8_shared_facts", ())
-        tasks["p8_shared_facts"] = _p8_facts()
+                logger.debug('enriched source-linked facts unavailable', exc_info=True)
+                return ('shared_facts', None)
+        tasks['shared_facts'] = _shared_facts()
 
     # Run all tasks in parallel
     results = {}
@@ -11127,16 +11150,17 @@ async def enriched_context(
         )
         sections.append(ContextSection(id="colony-memory", title="Relevant Memories", body=body_text, priority=90))
 
-    if results.get("p8_shared_facts"):
-        facts = results["p8_shared_facts"]
-        body_text = "\n".join(
-            f"- [{fact.confidence:.0%}] {fact.content}" for fact in facts)
-        sections.append(ContextSection(
-            id="colony-shared-facts",
-            title="Known Facts About Contact",
-            body=body_text,
-            priority=70,
-        ))
+    shared_section = None
+    shared_packet = results.get('shared_facts')
+    if shared_packet:
+        _, selected, body_text = shared_packet
+        if body_text:
+            refs = {ref['source_id']: ref for row in selected
+                for ref in row['_annotation_source_refs']}
+            shared_section = ContextSection(id='colony-shared-facts',
+                title='Relevant Contact Knowledge Estimates', body=body_text,
+                priority=70, citations=list(refs.values()))
+            sections.append(shared_section)
 
     if results.get("contact"):
         c = results["contact"]
@@ -11265,25 +11289,6 @@ async def enriched_context(
         except Exception:
             logger.debug("commitment section failed", exc_info=True)
 
-    # Shared facts
-    if _p8_runtime is None and _facts_store is not None and contact_id \
-            and features.get("shared_facts", True):
-        try:
-            result = _facts_store.list_facts(contact_id=contact_id, limit=10)
-            if result["total"] > 0:
-                lines = []
-                for f in result["facts"]:
-                    source_label = {"told_by_contact": "They told us", "told_to_contact": "We told them", "shared_context": "Shared", "inferred": "Inferred"}.get(f["source"], f["source"])
-                    lines.append(f"- [{source_label}] {f['fact']}")
-                sections.append(ContextSection(
-                    id="colony-shared-facts",
-                    title=f"Shared Knowledge with {contact_id}",
-                    body="\n".join(lines),
-                    priority=70,
-                ))
-        except Exception:
-            logger.debug("shared facts section failed", exc_info=True)
-
     # Surprises (noteworthy observations)
     if _enriched_legacy_global_allowed and _surprise_store is not None \
             and contact_id and features.get("surprises", True):
@@ -11301,6 +11306,28 @@ async def enriched_context(
                 ))
         except Exception:
             logger.debug("surprises section failed", exc_info=True)
+
+    def current_sections(items):
+        if shared_section is None:
+            return items
+        from colony_sidecar.turns.source_annotations import current_candidates
+        ledger, selected, _ = shared_packet
+        try:
+            current = current_candidates(ledger, selected, contact_id=contact_id,
+                session_id=body.context.session_id)
+        except Exception:
+            logger.debug('enriched source-linked packet recheck unavailable', exc_info=True)
+            current = []
+        # Generic section compression can drop citations, cut off a correction,
+        # or summarize it. Only publish this bounded packet byte-for-byte, with
+        # its checked revisions, or omit it entirely. Recheck after async work.
+        result = []
+        for item in items:
+            if item.id != 'colony-shared-facts':
+                result.append(item)
+            elif len(current) == len(selected) and item.body == shared_section.body:
+                result.append(shared_section)
+        return result
 
     # Adaptive compression
     compression_mode_str = None
@@ -11333,14 +11360,14 @@ async def enriched_context(
             )
         compressed = [ContextSection(**s) for s in result["sections"]]
         return EnrichedContextResponse(
-            sections=compressed,
+            sections=current_sections(compressed),
             contact_id=contact_id,
             metadata=result.get("metadata"),
         )
     except Exception:
         logger.debug("compression failed, returning uncompressed", exc_info=True)
 
-    return EnrichedContextResponse(sections=sections, contact_id=contact_id)
+    return EnrichedContextResponse(sections=current_sections(sections), contact_id=contact_id)
 
 
 # ---------------------------------------------------------------------------

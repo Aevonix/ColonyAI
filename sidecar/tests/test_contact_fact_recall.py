@@ -33,7 +33,19 @@ def contact_context(source_app, tmp_path, monkeypatch):
     _write_keyring(keyring, principals)
     source_app.add_middleware(ApiKeyMiddleware, keyring_path=str(keyring), api_key=None)
 
-    def add(text, *, person='contact-a', enveloped=True, source_lineage=None):
+    original_search = TurnIdempotencyLedger.search_sources
+    monkeypatch.setattr(TurnIdempotencyLedger, 'search_sources', lambda *a, **k: [
+        row for row in original_search(*a, **k) if not row['turn_id'].startswith('fact-support-')])
+    # Isolate estimate ranking from the separately tested quotation producer;
+    # source membership and current revisions still use the actual ledger.
+    origins = []
+    def add(text, *, person='contact-a', enveloped=True, source_lineage=None, source_linked=True):
+        if source_lineage is None and source_linked:
+            turn = 'fact-support-' + str(len(origins))
+            origins.append(turn)
+            ledger.record_source(turn, contact_id=person, session_id='prior-'+turn,
+                messages=[{'role': 'user', 'content': text}], derive_claims=False)
+            source_lineage, _ = facts.source_input(turn, person)
         row = facts.create_fact(contact_id=person, fact=text, source='inferred',
                                 confidence=.95, source_lineage=source_lineage)
         if enveloped:
@@ -41,7 +53,7 @@ def contact_context(source_app, tmp_path, monkeypatch):
             runtime.append_shared_fact(row, producer=viewer, origin='server')
         return row
 
-    yield SimpleNamespace(app=source_app, ledger=ledger, facts=facts, add=add)
+    yield SimpleNamespace(app=source_app, ledger=ledger, facts=facts, add=add, keyring=keyring)
     facts.close()
 
 

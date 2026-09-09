@@ -18,7 +18,13 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.29 adds bounded original audio and attributed transcript segments to
+Version 1.0.30 requires current source evidence for automatic contact recall.
+Historical estimates remain inspectable, but unlinked facts and their graph
+mirrors no longer enter each turn. Corrections stay attached in enriched context;
+relationship inferences with missing, changed or corrected premises are omitted.
+These checks also cover cached audience views and concurrent source changes.
+
+Bounded original audio and attributed transcript segments use
 the existing source ledger. Reviewed transcript claims retain their exact audio
 parent and recognition uncertainty through recall, correction, erasure and
 recovery. Capture remains a deployment choice; Colony does not start a microphone

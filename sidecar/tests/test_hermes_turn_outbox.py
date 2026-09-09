@@ -854,7 +854,7 @@ def test_colony_outage_never_withholds_safe_reply_after_durable_enqueue(
     client.sync_block.set()
 
 
-def test_post_turn_drain_shrinks_recovered_backlog_within_one_total_budget(
+def test_post_turn_drains_recovered_backlog_when_budget_remains(
     tmp_path, monkeypatch,
 ):
     module = _load_plugin("colony_hermes_post_turn_backlog_drain_test")
@@ -876,14 +876,16 @@ def test_post_turn_drain_shrinks_recovered_backlog_within_one_total_budget(
         platform="sms", sender_id="+15550001", user_message="hello",
     )
 
-    began = time.monotonic()
+    # Exercise recovered-row and current-turn delivery without assuming disk
+    # throughput. The adjacent real-clock lock/callback tests enforce the total
+    # drain deadline; a loaded filesystem may correctly leave some rows pending.
+    monkeypatch.setattr(module.time, "monotonic", lambda: 1_000.0)
     context.hooks["post_llm_call"](
         session_id="session-1", task_id="task-1", turn_id="turn-current",
         user_message="hello", assistant_response="safe reply",
         conversation_history=[], model="model-a", platform="sms",
     )
 
-    assert time.monotonic() - began < 0.5
     assert len(client.synced) == 4
     assert all(row["state"] == "delivered" for row in outbox.snapshot())
 

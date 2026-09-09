@@ -10,6 +10,16 @@ Everything below ships **default-inert**: with a stock configuration the
 assembled context is byte-identical to a build without this system (test:
 `tests/test_tom2_wiring.py::test_defaults_byte_identical_to_neutralized_block`).
 
+Automatic ToM2 sections require current canonical source links for the fact
+and every supporting reference. A missing fact does not become an anonymous
+"shared fact" assertion. Source corrections also exclude the old knowledge
+inference, including when the correction has subsequently been erased. The
+compact ToM2 renderers cannot carry a complete correction packet; ordinary
+memory recall still supplies attributed corrections with their sources.
+Selection is rechecked after other context producers finish. Explicit fact
+and inference APIs retain their history, and source support alone does not
+establish that a knowledge inference is semantically correct.
+
 ## Level semantics
 
 | Level | Audience | What renders |
