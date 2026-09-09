@@ -10,23 +10,29 @@ PROBE = r'''
 import asyncio,hashlib,importlib.util,json,os,socket,sys,time
 from pathlib import Path
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
+from datetime import datetime,timezone
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
 def no_network(*args,**kwargs):raise AssertionError('Native social qualification is offline')
 socket.socket.connect=no_network;socket.create_connection=no_network
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import host,commitment_work,temporal_followups,social_state
+from colony_sidecar.api.middleware import ApiKeyMiddleware
+from colony_sidecar.api.routers import host,commitment_work,temporal_followups,social_state,executions,transport,followup_plans
 from colony_sidecar.commitments.store import CommitmentStore
 from colony_sidecar.contacts.store import SQLiteContactStore
 from colony_sidecar.contacts.config import ContactsConfig
+from colony_sidecar.contacts.comms import CommsLog
 from colony_sidecar.turns import get_turn_idempotency_ledger
 from colony_sidecar.self_model import appraisals
 state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
 contacts=SQLiteContactStore(ContactsConfig(sqlite_path=str(state/'contacts.db')))
 def close_on_error(kind,value,traceback):
- try:asyncio.run(contacts.close())
+ try:
+  asyncio.run(contacts.close())
+  if 'api' in globals():api.__exit__(None,None,None)
  finally:sys.__excepthook__(kind,value,traceback)
 sys.excepthook=close_on_error
 async def seed_contacts():
@@ -36,6 +42,8 @@ async def seed_contacts():
  corrected=await contacts.create(display_name='Fixture corrected colleague')
  guest=await contacts.create(display_name='Fixture guest')
  await contacts.add_handle(guest.contact_id,'sms','+15550002',verified=True)
+ await contacts.add_handle(owner.contact_id,'sms','+15550001',verified=True)
+ await contacts.add_handle(owner.contact_id,'whatsapp','+15550003',verified=True)
  await contacts.add_handle(colleague.contact_id,'email','fixture@example.invalid',verified=True)
  return owner,colleague,corrected,guest
 owner,colleague,corrected,guest=asyncio.run(seed_contacts())
@@ -45,16 +53,33 @@ store=CommitmentStore(state/'commitments.db');host._commitment_store=store
 obligation=store.create(person_id=owner.contact_id,description='Obtain a useful task response')
 ledger=get_turn_idempotency_ledger(state)
 app=FastAPI()
+resolver_access={'allowed':True,'available':True}
+keyring=state/'keys.json'
+def write_keys(active=True):
+ keyring.write_text(json.dumps({'version':1,'principals':[{'principal':'native-social-fixture',
+  'status':'active' if active else 'revoked','viewer_person_id':owner.contact_id,
+  'person_ids':[owner.contact_id,guest.contact_id], 'audiences':['viewer'],
+  'turn_ingress_platforms':['cli','sms','whatsapp'],
+  'scopes':['api:access','turns:write','context:read','turns:resolve-sender','memory:read','transport:write'],
+  'credentials':[{'id':'fixture','secret':'fixture','status':'active'}]},
+  {'principal':'fixture-provider','status':'active','viewer_person_id':owner.contact_id,
+   'audiences':['viewer'],'scopes':['transport:write'],
+   'credentials':[{'id':'provider','secret':'provider-fixture','status':'active'}]}]}))
+ keyring.chmod(0o600)
+write_keys()
 @app.middleware('http')
 async def authority(request,next_call):
- request.state.colony_authority=RequestAuthority(principal_id='native-social-fixture',credential_id='fixture',
-   scopes=frozenset({'turns:write','context:read','turns:resolve-sender','contacts:read'}),
-   viewer_person_id=owner.contact_id,person_ids=frozenset({owner.contact_id,guest.contact_id}),
-   static_person_ids=frozenset({owner.contact_id,guest.contact_id}),turn_ingress_platforms=frozenset({'cli','sms'}),
-   audiences=frozenset({'viewer'}),authenticated=True)
+ if request.url.path=='/v1/host/contacts/resolve' and not resolver_access['available']:
+  from starlette.responses import JSONResponse
+  return JSONResponse({'detail':'fixture resolver unavailable'},status_code=503)
  return await next_call(request)
-for router in (host.router,host.v2_router,commitment_work.router,temporal_followups.router,social_state.router):app.include_router(router)
-api=TestClient(app);calls=[]
+for router in (host.router,host.v2_router,commitment_work.router,temporal_followups.router,social_state.router,executions.router,transport.router,followup_plans.router):app.include_router(router)
+app.add_middleware(ApiKeyMiddleware,api_key=None,keyring_path=str(keyring))
+api=TestClient(app,headers={'Authorization':'Bearer fixture'});calls=[];resolver_cost_ms=[]
+# CommsLog belongs to the persistent ASGI event loop, as in production.
+# A bare TestClient starts a different loop for every request.
+api.__enter__()
+comms=api.portal.call(lambda:CommsLog(str(state/'communications.db')));host._comms_log=comms
 spec=importlib.util.spec_from_file_location('colony_hermes',Path(sys.argv[2])/'__init__.py',submodule_search_locations=[sys.argv[2]])
 module=importlib.util.module_from_spec(spec);sys.modules['colony_hermes']=module;spec.loader.exec_module(module)
 def adapter_method(method):
@@ -62,7 +87,10 @@ def adapter_method(method):
   calls.append((method,path,kwargs.get('json')))
   kwargs.pop('_deadline_monotonic',None)
   kwargs.pop('timeout',None)
-  return getattr(api,method)(path,**kwargs)
+  began=time.monotonic()
+  response=getattr(api,method)(path,**kwargs)
+  if path=='/v1/host/contacts/resolve':resolver_cost_ms.append((time.monotonic()-began)*1000)
+  return response
  return invoke
 for method in ('get','post','put'):setattr(module.ColonyClient,method,adapter_method(method))
 home=Path(os.environ['HERMES_HOME']);home.mkdir();Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
@@ -73,10 +101,11 @@ installed=home/'fixture-installed';metadata=installed/'colony_native_fixture-0.d
 (metadata/'entry_points.txt').write_text('[hermes_agent.plugins]\ncolony = colony_hermes\n')
 sys.path.insert(0,str(installed))
 (home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
- 'owner_contact_id':owner.contact_id,'attested_system_platforms':['cli'],'turn_outbox_path':str(home/'turns.db')}}}))
+ 'owner_contact_id':owner.contact_id,'attested_system_platforms':['cli','cron'],
+ 'execution_registry_enabled':True,'turn_outbox_path':str(home/'turns.db')}}}))
 from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.lifecycle import invoke_hook
-from hermes_cli.middleware import apply_llm_request_middleware
+from hermes_cli.middleware import apply_llm_request_middleware,run_tool_execution_middleware
 from model_tools import handle_function_call
 manager=get_plugin_manager();manager.discover_and_load()
 loaded=manager._plugins['colony'];assert loaded.enabled,loaded.error
@@ -194,9 +223,182 @@ for name,payload in [('colony_contacts',{'operation':'inspect'}),('colony_judgme
 assert not any(path.startswith('/v1/host/social') for _,path,_ in calls[before:])
 assert not any(path.startswith('/v1/host/temporal-followups') for _,path,_ in calls[before:])
 assert store.get(obligation['id'])['status']=='pending'
+
+# Two admitted owner channels share one accepted task; a native child inherits
+# its exact parent rather than the most recent owner session.
+shared=store.create(person_id=owner.contact_id,description='Inspect the shared fixture once')
+start('shared-sms','Inspect the shared fixture.',platform='sms',sender='+15550001')
+start('shared-wa','Inspect the shared fixture.',platform='whatsapp',sender='+15550003')
+with ThreadPoolExecutor(2) as pool:
+ raced=list(pool.map(lambda s:tool(s,'colony_commitment_work',{'commitment_id':shared['id'],'operation':'claim'}),
+                     ['shared-sms','shared-wa']))
+assert all('accepted' in r for r in raced),raced
+assert sorted(r['accepted'] for r in raced)==[False,True],raced
+winner=next(r['session_id'] for r in raced if r['accepted'])
+loser=next(s for s in ('shared-sms','shared-wa') if s!=winner)
+assert tool(loser,'colony_commitment_work',{'commitment_id':shared['id'],'operation':'status'})['session_id']==winner
+invoke_hook('subagent_start',parent_session_id=winner,parent_turn_id='turn-'+winner,child_session_id='shared-child')
+invoke_hook('pre_llm_call',session_id='shared-child',task_id='child-task',turn_id='child-turn',
+            parent_session_id=winner,platform='subagent',user_message='Inspect one part')
+start('registered-cron','Inspect the local schedule.',platform='cron')
+view=api.get('/v1/host/executions',params={'contact_id':owner.contact_id}).json()
+items={i['session_id']:i for i in view['items']}
+assert {'shared-sms','shared-wa','shared-child','registered-cron'}<=items.keys(),view
+assert items['shared-child']['parent_execution_id']==items[winner]['execution_id']
+assert items['registered-cron']['platform']=='cron' and view['complete'] is False
+
+# A verified owner handle is corrected while its old native turn and child are
+# still alive. The next privileged operation must not use cached old identity.
+start('revoked-sms','Inspect a local fixture.',platform='sms',sender='+15550001')
+invoke_hook('subagent_start',parent_session_id='revoked-sms',parent_turn_id='turn-revoked-sms',child_session_id='revoked-child')
+invoke_hook('pre_llm_call',session_id='revoked-child',task_id='revoked-child-task',turn_id='revoked-child-turn',
+            parent_session_id='revoked-sms',platform='subagent',user_message='Inspect one part')
+before_correction=[]
+assert run_tool_execution_middleware('read_file',{},lambda a:before_correction.append(a) or 'read',
+    session_id='revoked-sms',task_id='revoked-sms',turn_id='turn-revoked-sms')=='read'
+cost_start=len(resolver_cost_ms)
+dispatch_total_ms=[]
+for _ in range(5):
+ began=time.monotonic()
+ assert run_tool_execution_middleware('read_file',{},lambda a:'read',
+    session_id='revoked-sms',task_id='revoked-sms',turn_id='turn-revoked-sms')=='read'
+ dispatch_total_ms.append((time.monotonic()-began)*1000)
+dispatch_resolve_cost_ms=resolver_cost_ms[cost_start:]
+changed_owner=tool('contact-owner','colony_contacts',{'operation':'correct_identity','gateway':'sms','address':'+15550001',
+    'expected_contact_id':owner.contact_id,'subject_contact_id':guest.contact_id})
+assert changed_owner.get('contact_id')==guest.contact_id,changed_owner
+for session,task_id,turn_id in [('revoked-sms','revoked-sms','turn-revoked-sms'),
+                               ('revoked-child','revoked-child-task','revoked-child-turn')]:
+ called=[]
+ result=run_tool_execution_middleware('read_file',{},lambda a:called.append(a) or 'must not run',
+    session_id=session,task_id=task_id,turn_id=turn_id)
+ assert called==[] and json.loads(result)['effect_performed'] is False,(session,result)
+assert len(dispatch_resolve_cost_ms)==5,dispatch_resolve_cost_ms
+assert run_tool_execution_middleware('read_file',{},lambda a:'owner cli still works',
+    session_id='contact-owner',task_id='contact-owner',turn_id='turn-contact-owner')=='owner cli still works'
+
+# Server-side credential scope revocation and outage are distinguished. The
+# unchanged WhatsApp owner turn must not execute either a native or Colony tool.
+for allowed,available,reason in [(False,True,'participant_authority_revoked'),
+                                (True,False,'participant_revalidation_unavailable')]:
+ resolver_access.update(allowed=allowed,available=available)
+ write_keys(allowed)
+ called=[]
+ result=run_tool_execution_middleware('read_file',{},lambda a:called.append(a),
+    session_id='shared-wa',task_id='shared-wa',turn_id='turn-shared-wa')
+ assert not called and json.loads(result)['reason']==reason,result
+ denial=tool('shared-wa','colony_contacts',{'operation':'inspect'})
+ assert denial['effect_performed'] is False and denial['reason']==reason,denial
+resolver_access.update(allowed=True,available=True)
+write_keys()
+
+# A real provider receipt starts a short fixture expectation; loss of intake
+# coverage never means the recipient ignored it. This prepares one internal
+# native review under the existing owner task, without any provider send.
+from colony_hermes.initiative_work import NativeFollowups
+from colony_sidecar.initiatives.temporal_followup import TemporalFollowups
+from hermes_cli import kanban_db as kb
+follow_parent=store.create(person_id=owner.contact_id,description='Obtain the fixture response')
+start('follow-owner','Obtain the response and prepare one followup if needed.')
+assert tool('follow-owner','colony_commitment_work',{'operation':'claim','commitment_id':follow_parent['id']})['accepted']
+follow=tool('follow-owner','colony_followup',{'operation':'expect_reply','commitment_id':follow_parent['id'],
+    'recipient_id':colleague.contact_id,'outbound_ref':'fixture:accepted-message',
+    'expected_after_seconds':.001,'expires_at':time.time()+3600})
+assert follow['state']=='open' and follow['expected_at'] is None,follow
+registration=next(body for method,path,body in reversed(calls) if path=='/v1/host/temporal-followups' and method=='post')
+wait=follow['wait_id'];sid=follow['source_refs'][0];message='Please send the fixture response when convenient.'
+plan=dict(wait_id=wait,commitment_id=follow_parent['id'],work_id=registration['work_id'],
+    source_id=sid,source_version=follow['source_versions'][sid],recipient_id=colleague.contact_id,
+    channel='whatsapp',purpose='Obtain fixture response',expires_at=follow['expires_at'],max_followups=1,
+    message=message,message_sha256=hashlib.sha256(message.encode()).hexdigest())
+url='/v1/host/temporal-followups/'+wait
+bound=api.post(url+'/bind-plan',json={key:registration[key] for key in ('contact_id','session_id','turn_id','claim_id')}|{'plan':plan})
+assert bound.status_code==200 and not bound.json()['effect_authorized'],bound.text
+provider={'Authorization':'Bearer provider-fixture'}
+check={'plan':plan,'outbound_ref':'fixture:accepted-message','target':{'channel':'whatsapp','recipient_id':'fixture-handle'}}
+def event(event_id,direction,**extra):
+ return dict(event_id=event_id,contact_id=colleague.contact_id,channel='whatsapp',direction=direction,
+    external_ref=event_id,receipt_ref='receipt:'+event_id,status='accepted' if direction=='out' else 'received',
+    occurred_at=datetime.now(timezone.utc).isoformat(),**extra)
+receipt=api.post('/v1/host/transport/observe',headers=provider,
+    json=event('provider-original','out',outbound_ref='fixture:accepted-message'))
+assert receipt.status_code==200,receipt.text
+waiting=TemporalFollowups(store)
+assert waiting.get(wait)['dispatch_receipt_ref']=='receipt:provider-original'
+unknown=api.post(url+'/check-plan',headers=provider,json=check)
+assert unknown.status_code==200 and not unknown.json()['review_allowed'],unknown.text
+assert unknown.json()['reason']=='intake_coverage_unknown'
+created=waiting.get(wait)['created_at']
+for connected in (False,True):
+ coverage=api.post('/v1/host/transport/ingress/coverage',headers=provider,json={
+   'account_id':'fixture-account','epoch':'fixture-epoch','connected_since':created-1,
+   'observed_at':time.time(),'watermark':0,'connected':connected,'unavailable':0})
+ assert coverage.status_code==200,coverage.text
+ checked=api.post(url+'/check-plan',headers=provider,json=check)
+ assert checked.status_code==200 and checked.json()['review_allowed'] is connected,checked.text
+ assert checked.json()['transport_coverage']['observed'] is connected
+assert not waiting.preflight(wait)['dispatch_allowed']
+reviews=[NativeFollowups(api,owner.contact_id),NativeFollowups(api,owner.contact_id)]
+with ThreadPoolExecutor(2) as pool:
+ prepared=list(pool.map(lambda index:reviews[index].work(wait),range(2)))
+native_id=prepared[0]['native_task_id']
+assert all(item['native_task_id']==native_id for item in prepared),prepared
+with kb.connect(board='default') as db:
+ assert db.execute('SELECT count(*) FROM tasks WHERE idempotency_key=?',('colony-followup:'+wait,)).fetchone()[0]==1
+ assert kb.get_task(db,native_id).status=='ready' and kb.latest_run(db,native_id) is None
+reply=event('provider-reply','in',reply_to_ref='provider-original',reply_to_channel='whatsapp')
+reply['channel']='email'
+received=api.post('/v1/host/transport/observe',headers=provider,json=reply)
+assert received.status_code==200,received.text
+assert waiting.get(wait)['state']=='resolved'
+assert waiting.get(wait)['reply']['matches'][0]['provider_reply_to_ref']=='whatsapp:provider-original'
+reviews[0].reconcile(board='default')
+with kb.connect(board='default') as db:
+ assert kb.get_task(db,native_id).status=='archived' and kb.latest_run(db,native_id) is None
+assert store.get(follow_parent['id'])['status']=='pending'
+assert not waiting.preflight(wait)['dispatch_allowed']
+
+# Exercise a real cron run and a real native child lifecycle. Only the model
+# transport is controlled; scheduler, agents, plugins and the shared API run.
+from run_agent import AIAgent
+from openai.types.chat import ChatCompletion
+from cron import scheduler
+from tools import delegate_tool
+observed_runtime=[]
+def controlled_model(agent,kwargs,**ignored):
+ snapshot=api.get('/v1/host/executions',params={'contact_id':owner.contact_id,'limit':100}).json()
+ actual=next(i for i in snapshot['items'] if i['session_id']==agent.session_id)
+ observed_runtime.append(actual)
+ return ChatCompletion(id='controlled-native',created=int(time.time()),object='chat.completion',model='fixture',
+     choices=[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':'Fixture review completed.'}}])
+runtime={'provider':'custom','requested_provider':'custom','api_key':'fixture','base_url':'http://fixture.invalid/v1','api_mode':'chat_completions'}
+setup=scheduler._CronAgentSetup(model='fixture',runtime=runtime,max_iterations=2)
+with patch.object(AIAgent,'_interruptible_api_call',controlled_model),patch.object(AIAgent,'_interruptible_streaming_api_call',controlled_model),patch.object(scheduler,'_resolve_cron_agent_setup',lambda *a:setup):
+ cron=scheduler.run_job({'id':'shared-state-fixture','name':'Shared state fixture','model':'fixture','prompt':'Inspect the fixture schedule.',
+                         'deliver':'none','toolsets':[]})
+ assert cron[0] and cron[2]=='Fixture review completed.',cron
+ parent=AIAgent(model='fixture',provider='custom',api_key='fixture',base_url='http://fixture.invalid/v1',
+    api_mode='chat_completions',session_id='contact-owner',enabled_toolsets=[],max_iterations=2,
+    skip_context_files=True,load_soul_identity=False,skip_memory=True,skip_background_review=True)
+ parent._current_turn_id='turn-contact-owner'
+ try:
+  child=delegate_tool._build_child_agent(0,'Inspect one fixture component.',None,[],None,2,1,parent)
+  completed=delegate_tool._run_single_child(0,'Inspect one fixture component.',child,parent)
+  assert completed['status']=='completed',completed
+ finally:parent.close()
+assert {i['platform'] for i in observed_runtime}=={'cron','subagent'},observed_runtime
+actual_child=next(i for i in observed_runtime if i['platform']=='subagent')
+assert actual_child['parent_execution_id']==items['contact-owner']['execution_id']
+api.portal.call(comms._conn.close)
+api.__exit__(None,None,None)
 asyncio.run(contacts.close())
 print(json.dumps({'native_tools_registered':True,'first_turn_capture_claim_wait':True,'canonical_refs_match':True,
-                  'owner_identity_correction':True,'appraisal_inspect':True,'guest_restricted':True,'external_model_calls':0,'network':0}))
+                  'owner_identity_correction':True,'appraisal_inspect':True,'guest_restricted':True,
+                  'concurrent_owner_commitment':True,'next_operation_identity_correction':True,'inherited_child_correction':True,
+                  'actual_credential_revocation':True,'resolver_outage_distinct':True,'attested_cli_preserved':True,
+                  'native_cron_and_child':True,'dispatch_resolver_cost_ms':dispatch_resolve_cost_ms,'dispatch_total_ms':dispatch_total_ms,
+                  'receipt_starts_wait':True,'outage_not_silence':True,'one_native_followup_review':True,'matched_reply_cancels_review':True,
+                  'external_model_calls':0,'network':0}))
 '''
 
 
@@ -217,3 +419,4 @@ def test_actual_native_social_tools(tmp_path):
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode==0,result.stdout+result.stderr
     assert '"first_turn_capture_claim_wait": true' in result.stdout
+    print(result.stdout.splitlines()[-1])

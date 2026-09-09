@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import threading
+import time
 from typing import Any, Mapping, Sequence
 from urllib.parse import quote, urlsplit
 import uuid
@@ -408,6 +409,7 @@ class _TransportScope:
     authority_lane: str
     resolution_status: str
     user_message: str = ""
+    authority_gateway: str = ""
 
     @property
     def valid_participant(self) -> bool:
@@ -641,13 +643,36 @@ def _resolve_scope(
         lane = "unresolved"
     return _TransportScope(
         session, task, turn, transport, sender, contact_id, lane,
-        resolution_status, str(user_message or ""),
+        resolution_status, str(user_message or ""), authority_gateway=transport,
     )
 
 
 _TOOL_EXECUTION_CONTEXT: ContextVar[dict[str, str] | None] = ContextVar(
     "colony_tool_execution_context", default=None,
 )
+
+
+def _current_participant(client: ColonyClient, scope: _TransportScope) -> str | None:
+    """Recheck the original external handle, including inherited child turns.
+
+    Local system attestation is separate. A network failure is unavailable
+    authority, not evidence that somebody else's identity was established.
+    """
+    try:
+        response = client.get('/v1/host/contacts/resolve', params={
+            'gateway': scope.authority_gateway or scope.platform,
+            'address': scope.sender_id, 'create': 'false'},
+            timeout=0.5, _deadline_monotonic=time.monotonic() + 0.5)
+        if response.status_code in {401, 403}:
+            return 'participant_authority_revoked'
+        if response.status_code != 200:
+            return 'participant_revalidation_unavailable'
+        value = response.json()
+        if not isinstance(value, Mapping) or value.get('contact_id') != scope.contact_id:
+            return 'participant_identity_changed'
+        return None
+    except Exception:
+        return 'participant_revalidation_unavailable'
 
 
 def _tool_execution_middleware(**kwargs: Any) -> Any:
@@ -689,12 +714,18 @@ def _tool_execution_middleware(**kwargs: Any) -> Any:
         # These exact adapter-owned tools perform their own scope/capability
         # checks and submit effects to the existing mediator. No prefix grant.
         governed = name in {*_READ_TOOL_NAMES, *_ACTION_INTENT_TOOL_NAMES, *_OWNER_MESSAGE_TOOL_NAMES, *_COORDINATION_TOOL_NAMES}
+        exact = all(snapshot[key] for key in ("session_id", "task_id", "turn_id"))
+        scope = _TRANSPORT_SCOPES.for_execution(
+            session_id=snapshot["session_id"], task_id=snapshot["task_id"],
+            turn_id=snapshot["turn_id"],
+        ) if exact else None
+        validate = kwargs.get('revalidate_participant')
+        if scope is not None and scope.resolution_status == 'resolved' and callable(validate):
+            reason = validate(scope)
+            if reason:
+                return _canonical_json({'error': 'Current participant authority could not be confirmed',
+                    'status': 'unavailable', 'reason': reason, 'effect_performed': False, 'approval_created': False})
         if not governed:
-            exact = all(snapshot[key] for key in ("session_id", "task_id", "turn_id"))
-            scope = _TRANSPORT_SCOPES.for_execution(
-                session_id=snapshot["session_id"], task_id=snapshot["task_id"],
-                turn_id=snapshot["turn_id"],
-            ) if exact else None
             if scope is None or not scope.valid_participant:
                 return _canonical_json({"error": "Native tool withheld: exact participant authority is unavailable",
                     "status": "unavailable", "effect_performed": False, "approval_created": False})
@@ -2530,7 +2561,8 @@ def register(ctx: Any) -> None:
                     if key not in {"next_call", "args"}
                 })
             return next_call(args)
-        return _tool_execution_middleware(**{**kwargs, "next_call": observed})
+        return _tool_execution_middleware(**{**kwargs, "next_call": observed,
+            'revalidate_participant': lambda scope: _current_participant(client, scope)})
     ctx.register_middleware("tool_execution", observe_tool)
 
     def reconcile_request(request, **kwargs):
