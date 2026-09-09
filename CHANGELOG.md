@@ -12,8 +12,9 @@ reject before accepting unsupported media.
 The existing extraction and admission-review jobs can form claims from exact
 retained transcript spans. Commit rechecks the current source and asset owner.
 Claims remain recognition-derived and unverified, including after correction or
-later recall. Receipt time cannot resolve an unknown speech date. Segment labels,
-unrelated text and incomplete required conditions cannot become admitted claims.
+later recall. Receipt time cannot resolve an unknown speech date. Segment labels
+and unrelated text do not supply quoted transcript evidence. Admission remains
+fallible, and one extracted procedure claim may omit another source condition.
 Appraisal and personality extraction remain outside this audio path.
 
 No additional store, worker, model or Hermes patch is introduced. The bounded
@@ -23,8 +24,15 @@ transcript formation, not recognition accuracy or physical voice capture.
 Deployments must qualify their own recognizer and capture adapter before enabling
 audio where they previously supplied text. See [audio sources](docs/SOURCE-AUDIO.md).
 
-Ordinary persistent judgments now wait for the existing source-admission job and
-require current reviewed claims from their exact source messages. A plain recall
+Automatic persistent judgments are experimental and off by default. Exact
+`COLONY_SELF_JUDGMENTS_ENABLED=1` opts in after a deployment qualifies its reasoning
+model. Disabled generation leaves sources, history and correction controls intact;
+pending judgments stay held and no working views enter automatic context.
+
+When enabled, ordinary judgments wait for the existing source-admission job and
+require reviewed decisions, procedures or substantive events from their exact
+source messages. Facts, preferences and relationships use their existing memory
+projections without another opinion request. A plain recall
 question with no admitted premise finishes without another judgment request.
 Supporting and contrary claim IDs remain bound through commit and later context,
 so a corrected premise cannot be replaced by an unrelated surviving claim.
@@ -32,6 +40,11 @@ Recorded runtime observations and explicit owner reconsideration retain their
 existing paths. Historical views without these bindings remain inspectable and
 correctable, but no longer enter automatic guidance. This narrows eligibility;
 admission and generated opinions still require semantic quality evaluation.
+
+The bounded extraction batch now has a 4096-token output allowance; review reasons
+retain up to 1024 characters. Existing role deadlines and attempt limits are
+unchanged. The repair preserves useful completed responses without admitting
+truncated output or silently rewriting review decisions.
 
 ## v1.0.28 - complete source opening and coherent current state
 
