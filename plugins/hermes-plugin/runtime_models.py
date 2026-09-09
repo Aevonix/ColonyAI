@@ -11,17 +11,17 @@ class RuntimeModelObserver:
         self.client, self.owner = client, owner
 
     def observe(self, phase, **kwargs):
-        from agent.delegation_context import is_dispatcher_owned_worker_context, is_delegated_child_context
-        if not (is_dispatcher_owned_worker_context() or is_delegated_child_context()):
-            return
         task_id, run_id, claim = (os.environ.get(key, '') for key in
             ('HERMES_KANBAN_TASK', 'HERMES_KANBAN_RUN_ID', 'HERMES_KANBAN_CLAIM_LOCK'))
         if not task_id or not run_id.isdigit() or not claim or not kwargs.get('api_request_id'):
             return
-        from hermes_cli import kanban_db as kb
-        if kb.get_current_board() != 'default':
-            return
         try:
+            from agent.delegation_context import is_dispatcher_owned_worker_context, is_delegated_child_context
+            if not (is_dispatcher_owned_worker_context() or is_delegated_child_context()):
+                return
+            from hermes_cli import kanban_db as kb
+            if kb.get_current_board() != 'default':
+                return
             path = kb.kanban_db_path(board='default').resolve()
             with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True, timeout=.1)) as db:
                 db.row_factory = sqlite3.Row
