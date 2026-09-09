@@ -26,8 +26,11 @@ schema; source text never becomes shared routing configuration. Full-message
 evidence also includes neighboring clauses, and the existing sensitive-evidence
 filter can reject the whole short passage. The original source remains retained.
 
-Routine status, build/test progress, acknowledgments, boilerplate, hypothetical
-examples and debugging output should remain source history. Short and mutable
+Routine status, build/test progress, acknowledgments, boilerplate, fictional or
+hypothetical examples and debugging output should remain source history. Facts
+inside a narrative do not become assertions about the actual world. Real props,
+project decisions, reported events and conditional procedures can still qualify
+when their source supports that interpretation. Short and mutable
 facts can still matter: a key location, an appointment or a reusable repair
 procedure should not disappear merely because it can change.
 
@@ -71,6 +74,12 @@ Shortened lexical and semantic excerpts are marked as incomplete. A successful
 rerank must score every submitted candidate; partial or malformed output keeps
 the original ordering with an unavailable status instead of mixing incompatible
 scores. Selection remains bounded by the common item and character budgets.
+
+The shared memory header preserves the distinction between actual observations,
+reports, fiction and hypotheses. On qualified native Hermes, the existing request
+middleware replaces the recognized outer authoritative-memory note with this
+evidence contract. It preserves the person's input and the supplied source packet.
+An unknown wrapper stays unchanged and requires renewed native qualification.
 
 ## Evaluation and limits
 

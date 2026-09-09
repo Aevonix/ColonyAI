@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.0.27 - source-grounded formation and recollection
+
+Memory formation can use strict JSON schemas on model bindings whose serving
+endpoint has verified support. The capability is explicit and defaults off;
+prompt-only fallback keeps the existing validators. Source extraction preserves
+complete short quotations and stores a procedure's evidence directly as its
+value. Its task distinguishes actual-world assertions from narrative details,
+while retaining reported real events, physical props and conditional procedures.
+
+Appraisal output distinguishes durable scoped preferences from artifact requests,
+and repair records require the supported satisfaction transition. New working
+judgments normalize an absent predecessor only when no prior head exists.
+
+Recollection preserves distinct dated source occurrences and marks incomplete
+excerpts. Partial or malformed reranker output retains the original ranking
+instead of mixing score types. The native request middleware corrects Hermes
+0.21.1's qualified authoritative-memory note without changing quoted evidence,
+source revisions or erasure checks. Shared context guidance also reaches direct
+consumers such as voice adapters.
+
+No historical memory is rewritten, no database migration is needed, and no new
+model or approval service is introduced. Structural checks do not establish
+truth or semantic quality; qualify the actual deployed models, generation
+settings and identity instructions. Hermes 0.21.1 remains the qualification
+target, with its core unchanged.
+
 ## v1.0.26 - explicit legacy compatibility boundaries
 
 Goal record imports no longer eagerly load optional decomposition, inference and

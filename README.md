@@ -18,10 +18,11 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.26 separates legacy goal readers from planner imports and directs
-new work in live native mode through current acceptance. Legacy persona setup
-reports host settings that it cannot apply. The [changelog](CHANGELOG.md) records
-the retained compatibility surfaces and the limits of this maintenance release.
+Version 1.0.27 improves memory formation and the presentation of recalled
+evidence. Optional structured output preserves complete short quotations and
+procedure steps; recollection retains source scope and uncertainty across native
+and direct consumers. The [memory guide](docs/MEMORY-QUALITY.md) explains the
+behavior and its limits, and the [changelog](CHANGELOG.md) records the changes.
 
 The lightweight installation starts with memory and observation. Extended
 autonomy loops, public channels, voice systems and hardware need explicit
