@@ -16,7 +16,8 @@ from test_self_perspective import perspective
 
 
 @pytest.fixture
-def observation(local_api):
+def observation(local_api, monkeypatch):
+    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
     api, _, initiatives, _, native = local_api
     api.app.include_router(initiative_work.router)
     row = initiatives.create(type='operational', source_type='operational', created_by='autonomy_loop',
@@ -66,6 +67,24 @@ def observe(fixture):
 def sources(fixture):
     with closing(fixture[6]._connect()) as db:
         return [dict(row) for row in db.execute('SELECT * FROM turn_sources')]
+
+
+@pytest.mark.asyncio
+async def test_disabled_judgments_preserve_runtime_observation_without_queue(observation, monkeypatch):
+    monkeypatch.delenv('COLONY_SELF_JUDGMENTS_ENABLED')
+    end_run(observation)
+    assert observe(observation)['status'] == 'failed'
+    retained = sources(observation)
+    assert len(retained) == 1
+    assert json.loads(retained[0]['messages_json'])[0]['_native_runtime_observation'] == 'native-runtime-observation-v1'
+    ledger = observation[6]
+    with closing(ledger._connect()) as db:
+        assert db.execute('SELECT count(*) FROM self_judgment_runs').fetchone()[0] == 0
+    processor = Processor()
+    assert not await SelfJudgments(ledger, owner_id='cid-owner').process_one(processor)
+    assert processor.requests == []
+    observe(observation)
+    assert sources(observation) == retained
 
 
 @pytest.mark.asyncio

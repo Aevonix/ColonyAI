@@ -1,5 +1,23 @@
 # Revisable working judgments
 
+Automatic working judgments are experimental and **off by default**. Only the
+exact setting `COLONY_SELF_JUDGMENTS_ENABLED=1` enables them. Qualify the configured
+reasoning model before opting in; the system does not infer that a new model is
+qualified. A bounded evaluation of the default single-model installation still
+produced an unsupported cost comparison after source-premise admission checks.
+That result does not establish the quality of every other available processor.
+
+While disabled, ordinary turns and typed runtime observations retain their
+canonical sources but enqueue no judgment reflection. Existing pending work is
+held without consuming attempts, and no judgments enter automatic context.
+Memory formation, recall, preferences and appraisals remain active. History,
+withdrawal and correction controls remain available; explicit reconsideration
+may queue work, which stays held until opt-in. `/v1/host/self` exposes
+`judgments_enabled` and a `held` flag on pending processing records. No retained
+judgment or source is deleted by this switch.
+
+The following describes the opt-in behavior.
+
 An ordinary attributed owner turn can now produce a durable agent judgment:
 a topic, stance, reason, supporting and contrary source references, stated
 certainty, predecessor revision and actual model/configuration provenance.

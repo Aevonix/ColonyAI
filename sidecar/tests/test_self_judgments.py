@@ -56,6 +56,7 @@ def revise(payload, *, stance='I favor explicit checkpoints for long local work.
 @pytest.fixture
 def judgments(tmp_path, monkeypatch):
     monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
     clock = Clock()
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     return SelfJudgments(ledger, owner_id='contact-a', clock=clock), clock

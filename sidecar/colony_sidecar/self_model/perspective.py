@@ -221,6 +221,7 @@ class SelfPerspective:
                 'historical_only': snapshot.get('version') != VERSION}
         return {'kind': 'operational_working_perspective', 'preferences': self.preferences(),
                 'corrections': self.preferences(history=True), 'opinions': self.opinions(),
+                'judgments_enabled': self.judgments.enabled,
                 'judgments': self.judgments.revisions(), 'judgment_history': self.judgments.revisions(history=True),
                 'judgment_processing': self.judgments.processing(),
                 'appraisals': self.appraisals.view(self.owner_id, viewer_contact_id=self.owner_id,

@@ -184,7 +184,8 @@ async def test_asr_annotation_matches_original_revision_and_fences_recalled_clai
 
 
 @pytest.mark.asyncio
-async def test_only_transcript_preference_read_retains_provenance_without_affect_or_judgment(tmp_path):
+async def test_only_transcript_preference_read_retains_provenance_without_affect_or_judgment(tmp_path, monkeypatch):
+    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
     from colony_sidecar.self_model.appraisals import AppraisalStore
     from colony_sidecar.self_model.judgments import SelfJudgments
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db'); projection = SourceClaimProjection(ledger)

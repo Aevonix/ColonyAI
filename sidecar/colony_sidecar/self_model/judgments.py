@@ -21,6 +21,11 @@ from colony_sidecar.util.model_output import final_text
 VERSION = 'agent-judgment-v2'
 
 
+def enabled():
+    """Operator opt-in after qualification of the configured reasoning model."""
+    return os.environ.get('COLONY_SELF_JUDGMENTS_ENABLED') == '1'
+
+
 class JudgmentValidationError(ValueError):
     """A fixed local validation code, never provider response text."""
 
@@ -141,6 +146,8 @@ def _attribution(message):
 
 
 def enqueue(conn, turn_id, contact_id, messages, *, scope, runtime_observation=False):
+    if not enabled():
+        return
     from colony_sidecar.identity import get_owner_contact_id
     owner = get_owner_contact_id()
     if not owner or contact_id != owner or scope != 'person':
@@ -183,6 +190,10 @@ class SelfJudgments:
         self.ledger, self.owner_id, self.clock = ledger, str(owner_id or ''), clock
         with closing(ledger._connect()) as conn, conn:
             initialize(conn)
+
+    @property
+    def enabled(self):
+        return enabled()
 
     def _premises(self, conn, turn_id, message_hash):
         """Existing admitted assertions qualify a quote, without another judge.
@@ -315,7 +326,8 @@ class SelfJudgments:
 
     def processing(self):
         with closing(self.ledger._connect()) as conn:
-            return [dict(row) for row in conn.execute('''SELECT turn_id,status,attempts,
+            return [dict(row, held=not self.enabled and row['status'] in {'pending', 'running'})
+                for row in conn.execute('''SELECT turn_id,status,attempts,
                 CASE WHEN status='pending' AND reconsider_revision_id IS NULL AND EXISTS
                     (SELECT 1 FROM source_claim_jobs c WHERE c.turn_id=self_judgment_runs.turn_id AND c.status!='complete')
                     THEN 'waiting_source_claims' ELSE disposition END AS disposition,
@@ -323,6 +335,8 @@ class SelfJudgments:
                 WHERE owner_id=? ORDER BY rowid DESC LIMIT 10''', (self.owner_id,))]
 
     def brief(self, query, *, source_ids=None):
+        if not self.enabled:
+            return ''
         rows = self.relevant(query, limit=2)
         if not rows:
             return ''
@@ -622,7 +636,7 @@ class SelfJudgments:
             return 'revised'
 
     async def process_one(self, router):
-        if not self.owner_id or getattr(router, 'supports_function_routing', False) is not True:
+        if not self.enabled or not self.owner_id or getattr(router, 'supports_function_routing', False) is not True:
             return False
         configured_deadline = router.function_deadline_seconds(context={'function_role': 'reasoning'})
         if not isinstance(configured_deadline, (int, float)) or isinstance(configured_deadline, bool) or not math.isfinite(configured_deadline) or configured_deadline <= 0:

@@ -20,6 +20,7 @@ from test_turn_source_evidence import source_app
 @pytest.fixture
 def perspective(source_app, tmp_path, monkeypatch):
     monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     perspective = SelfPerspective(ledger, owner_id='contact-a')
     learner = PreferenceLearner(db_path=str(tmp_path / 'old-preferences.db'), perspective=perspective)
