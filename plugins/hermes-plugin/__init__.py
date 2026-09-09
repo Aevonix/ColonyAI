@@ -2660,6 +2660,8 @@ def register(ctx: Any) -> None:
         drain_limit=drain_limit, drain_seconds=drain_timeout_seconds))
     if execution_observer is not None:
         execution_observer.register(ctx)
+    from .runtime_models import RuntimeModelObserver
+    RuntimeModelObserver(client, owner_contact_id).register(ctx)
 
     register_command = getattr(ctx, "register_command", None) or getattr(
         ctx, "register_slash_command", None

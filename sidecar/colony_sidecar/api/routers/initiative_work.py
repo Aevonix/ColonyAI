@@ -1,6 +1,7 @@
 """Owner/system handoff of registered internal reviews to native Hermes work."""
 import hashlib
 import sqlite3
+from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +18,33 @@ class ReviewBinding(BaseModel):
     native_board: str = Field(pattern='^default$')
     native_task_id: str = Field(min_length=1, max_length=128)
     contract_sha256: str = Field(pattern='^[a-f0-9]{64}$')
+
+
+class ModelObservation(ReviewBinding):
+    native_run_id: int = Field(gt=0)
+    native_claim_lock: str = Field(min_length=1, max_length=256)
+    api_request_id: str = Field(min_length=1, max_length=256)
+    phase: Literal['start', 'response', 'error']
+    requested_model: str | None = Field(default=None, min_length=1, max_length=256)
+    provider: str | None = Field(default=None, min_length=1, max_length=128)
+    response_model: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+@router.post('/{initiative_id}/model-observation')
+def model_observation(initiative_id: str, body: ModelObservation, request: Request):
+    work, person = store(request, body.contact_id, write=True)
+    def retain():
+        native, state = task_snapshot(initiative_id, person, body.model_dump(), review=True)
+        value = work.get(initiative_id)
+        bound = value.get('native_work') or {}
+        if (state['contract_sha256'] != body.contract_sha256
+                or any(bound.get(k) != native[k] for k in ('native_task_id', 'native_board', 'source_home_id'))):
+            raise ValueError('native_review_contract_mismatch')
+        from colony_sidecar.self_model import runtime_models
+        from colony_sidecar import get_state_dir
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        return runtime_models.retain(get_turn_idempotency_ledger(get_state_dir()), person, native, state, body.model_dump())
+    return guarded(retain)
 
 
 def store(request, contact_id, *, write=False):
