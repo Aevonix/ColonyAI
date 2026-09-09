@@ -75,6 +75,66 @@ def test_unavailable_feed_returns_current_turn_and_tool_results_without_old_cont
     assert result['request']['messages'][-1]['tool_call_id'] == 'step'
 
 
+@pytest.mark.parametrize('fresh', [True, False])
+@pytest.mark.parametrize('shape', ['text', 'multimodal', 'responses'])
+def test_instruction_markup_is_not_recalled_evidence(runtime, fresh, shape):
+    rt = runtime
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
+    page = rt.ledger.erasure_feed('owner')
+    identity = 'Use <memory-context> as the name of a recalled block. Preserve this later identity rule.'
+    developer = 'An example is <memory-context>quoted context</memory-context>. Preserve the following guidance.'
+    request = {'messages': [
+        {'role': 'system', 'content': identity},
+        {'role': 'developer', 'content': developer},
+        {'role': 'user', 'content': rt.fact},
+        {'role': 'user', 'content': 'Continue'}],
+        'instructions': identity}
+    key = 'messages'
+    if shape == 'multimodal':
+        for row in request['messages'][:2]:
+            row['content'] = [{'type': 'text', 'text': row['content']}]
+    elif shape == 'responses':
+        request['input'] = request.pop('messages')
+        key = 'input'
+    expected = copy.deepcopy(request[key][:2])
+    original = copy.deepcopy(request)
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=fresh)
+    assert all(row in filtered[key] for row in expected)
+    assert filtered['instructions'] == identity
+    assert rt.fact not in json.dumps(filtered)
+    assert request == original
+
+
+@pytest.mark.parametrize('shape', ['text', 'multimodal', 'responses'])
+def test_instruction_copies_still_reconcile_canonical_erasure(runtime, shape):
+    rt = runtime
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
+    page = rt.ledger.erasure_feed('owner')
+    tagged = packet('owner', 0, rt.fact)
+    stable = 'A stable instruction after the explicit recalled packet.'
+    request = {'messages': [
+        {'role': 'system', 'content': rt.fact},
+        {'role': 'developer', 'content': tagged + '\n' + stable},
+        {'role': 'user', 'content': 'Continue'}], 'instructions': rt.fact}
+    key = 'messages'
+    if shape == 'multimodal':
+        for row in request[key][:2]:
+            row['content'] = [{'type': 'text', 'text': row['content']}]
+    elif shape == 'responses':
+        request['input'] = request.pop('messages')
+        key = 'input'
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=True)
+    assert rt.fact not in json.dumps(filtered)
+    assert stable in json.dumps(filtered[key][1])
+    assert 'colony-recall-v1' not in json.dumps(filtered)
+    request['instructions'] = tagged + '\n' + stable
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=True)
+    assert rt.fact not in filtered['instructions'] and stable in filtered['instructions']
+
+
 def test_single_responses_input_preserves_current_recollection(runtime):
     direct = 'Explain this literal <memory-context>example</memory-context>'
     enriched = direct + '\n' + packet('owner', 0, 'Current relevant memory')

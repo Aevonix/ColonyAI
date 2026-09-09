@@ -20,6 +20,9 @@ from colony_sidecar.api.routers import host
 from colony_sidecar.turns import get_turn_idempotency_ledger
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
+identity='Neutral identity documents <memory-context> as the name of a recalled block. Preserve the full identity tail.'
+ephemeral='Preserve this native deployment instruction after the identity.'
+home.joinpath('SOUL.md').write_text(identity)
 home.joinpath('config.yaml').write_text(json.dumps({
     'context': {'engine': 'compressor'},
     'plugins': {'enabled': ['colony'], 'colony': {'owner_contact_id': 'contact-a', 'url': 'http://fixture'}},
@@ -79,9 +82,9 @@ client.chat.completions.create.side_effect=[
 ]
 with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=[]), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
     agent=AIAgent(api_key='fixture',base_url='http://127.0.0.1:1/v1',provider='openai',
-        model='fixture/model',quiet_mode=True,skip_context_files=True,skip_memory=False,platform='cli',max_iterations=2)
+        model='fixture/model',quiet_mode=True,skip_context_files=True,skip_memory=False,platform='cli',max_iterations=2,
+        load_soul_identity=True,ephemeral_system_prompt=ephemeral)
     assert isinstance(agent.context_compressor, ContextCompressor)
-    agent._cached_system_prompt='Stable neutral identity.'
     agent._use_prompt_caching=False; agent.save_trajectories=False
     question='What is my orchard badge in the retained neutral source?'
     # Observe the real automatic turn prefetch; do not manually supply its
@@ -91,6 +94,8 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     automatic.assert_called_once_with(question,session_id=agent.session_id)
     assert result['final_response']=='BEFORE_OK', result
     supplied=client.chat.completions.create.call_args_list[0].kwargs['messages']
+    system='\n'.join(row['content'] for row in supplied if row.get('role')=='system')
+    assert identity in system and ephemeral in system,system
     current=next(row for row in reversed(supplied) if row.get('role')=='user')
     assert question in current['content'] and fact in current['content'],(wire,supplied)
     # Actual Hermes composes an authoritative-memory note outside the provider.
@@ -178,7 +183,7 @@ filtered=apply_llm_request_middleware({'messages':[{'role':'user','content':enri
     session_id='image-resume',task_id='image-task',turn_id='image-turn').payload
 assert 'neutral-fixture' not in json.dumps(filtered) and 'Neutral original pixels' not in json.dumps(filtered)
 print(json.dumps({'native_compressor':True,'native_persist_resume':True,'before_present':True,
-    'current_automatic_recall_consumed':True,'exact_answer_lineage_erased':True,
+    'current_automatic_recall_consumed':True,'full_native_identity_and_deployment_prompt':True,'exact_answer_lineage_erased':True,
     'standard_forget':True,'resumed_request_absent':True,'native_storage_gap_explicit':True,
     'multimodal_whole_source_erased':True,'explicit_retelling_preserved':True,'controlled_inference':True}))
 '''

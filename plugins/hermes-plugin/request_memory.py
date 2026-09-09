@@ -153,6 +153,24 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
                     for part in value]
         return value
 
+    def instruction_content(value):
+        # Native recollection lives in appended user api_content. Instruction
+        # text can document its generic fence, including a literal opener with
+        # no close, so that markup alone cannot identify recalled evidence.
+        # Exact erased sources and explicit Colony lineage packets still obey
+        # the same erasure boundary when copied into trusted instructions.
+        original = aliases.get(_content_key(value), value) if origins and aliases else value
+        if erased(original):
+            return _ERASED
+        if isinstance(value, str):
+            clean = _PACKET.sub('', value)
+            return _ERASED if erased(clean) else clean
+        if isinstance(value, list):
+            return [{**part, 'text': instruction_content(part['text'])}
+                    if isinstance(part, dict) and isinstance(part.get('text'), str) else part
+                    for part in value]
+        return value
+
     result = dict(request)
     for key in ('messages', 'input'):
         messages = request.get(key)
@@ -171,6 +189,11 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             if not isinstance(original, dict):
                 continue
             row = dict(original)
+            if row.get('role') in ('system', 'developer'):
+                if 'content' in row:
+                    row['content'] = instruction_content(row['content'])
+                retained.append(row)
+                continue
             if not fresh and i < latest_user and row.get('role') not in ('system', 'developer'):
                 continue
             if 'content' in row:
@@ -189,7 +212,7 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             retained.insert(0, {'role': 'system', 'content': _UNAVAILABLE})
         result[key] = retained
     if isinstance(request.get('instructions'), str):
-        result['instructions'] = content(request['instructions'])
+        result['instructions'] = instruction_content(request['instructions'])
     return result
 
 

@@ -221,6 +221,14 @@ as voice adapters that do not use the Hermes envelope. Unknown envelope formats
 are unchanged. The native request test exercises the actual upstream wrapper,
 so a framing change requires renewed qualification rather than a core patch.
 
+System/developer instructions and Responses instructions may document the generic
+`<memory-context>` fence. That markup alone is not a recalled packet there, even
+when the example omits a closing tag. Exact forgotten source copies and explicit
+Colony lineage packets still reconcile in these fields. Legacy untagged fenced
+instruction text is preserved unless it is an exact erased source or observed
+alias; substring and paraphrase erasure are not promised. Native automatic
+recollection continues to reconcile in its appended user-content boundary.
+
 Install test dependencies into an isolated environment with the target Hermes
 checkout available, then run:
 
