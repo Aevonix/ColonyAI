@@ -55,7 +55,39 @@ These syntax rules affect only temporal interpretation; lexical and
 semantic retrieval retain the complete original query. Unmarked narrative and
 malformed or truncated pasted structures can remain ambiguous.
 
-One key expands to at most eight distinct values. A larger group is withheld; repeated identical values do not crowd out a distinct conflicting value. The shared five-result/character budget still applies, and a large atomic group can be omitted. This trades answer coverage for avoiding partial conflict presentation. It is not a universal guarantee that all relevant evidence will be found. Legacy graph memories without source lineage keep their existing behavior.
+One key expands to at most eight distinct values. A larger group supplies a compact incomplete-history marker with a source/claim anchor; it does not choose a value. The shared five-result/character budget still applies. An oversized atomic assertion bundle can similarly supply an opening anchor when the marker fits. Repeated identical values do not crowd out a distinct conflict. This remains bounded discovery, not a guarantee that every relevant source is found. Legacy graph memories without source lineage keep their existing behavior.
+
+## Complete source opening and event precision
+
+Extraction version 5 retains `event_time`: the exact source expression, known
+precision, or explicit unresolved status. A supported optional event phrase such
+as "before sending this message" does not erase an otherwise supported assertion.
+It bounds the event before source occurrence, without assigning that timestamp
+to the event. Calendar-day expressions retain their day interval. Invented date
+text and unresolved required `valid_from_text`/`valid_to_text` still reject a
+proposal. The existing semantic reviewer checks the complete source and its
+conditions; this representation does not independently prove entailment. Earlier
+assertions without precision metadata remain labelled legacy precision unknown.
+
+`colony_memory_read_source` opens a source ID/version supplied to the current
+participant. The existing `POST /v1/host/memory/read` accepts additive canonical
+selectors alongside graph reads: `source_id`, `source_version`, `session_id`, and
+optional `source_view=assertions` plus an anchored `claim_id`. Source pages contain
+at most 4,096 characters of serialized canonical messages and applicable
+attributed corrections. History pages contain at most eight assertions, including
+superseded/retracted status. Histories above 10,000 scoped assertions return an
+explicit read-limit error. `next_offset`, `offset_unit` and `read_revision` support
+continuation; changed evidence requires restarting at offset zero. A partial page
+is not a complete procedure. Graph IDs are not canonical source IDs.
+
+Opening checks current scope, version, attribution and annotations. The adapter
+registers exact actual tool output and source dependencies, which count as
+supplied only when that output reaches a model request. Changed erasure freshness
+withholds the old result. A later turn must reopen an old source-read result
+instead of replaying it as fresh evidence. This uses existing native request
+reconciliation. Direct API consumers must likewise apply returned source
+versions/watermark before using delayed results. Actual reader completeness and
+answer quality still require behavioral qualification.
 
 The memory-provider wrapper now distinguishes persistent state from source evidence, preserves uncertainty and permits clarification when a material contradiction remains.
 

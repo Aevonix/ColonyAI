@@ -610,6 +610,12 @@ def source_message_hash(session_id: str, message: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def source_input_erased(ref: Mapping[str, str], rules: Sequence[Mapping[str, Any]]) -> bool:
+    return any(ref.get('source_id') == rule.get('source_turn_id', rule['turn_id'])
+        and (rule.get('whole_source', True) or ref.get('input_message_hash') in rule['message_hashes'])
+        for rule in rules)
+
+
 def redact_source_payload(payload: Mapping[str, Any], rules: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
     """Remove exact erased evidence without replaying ordinary turn effects."""
     original = dict(payload)
@@ -623,6 +629,8 @@ def redact_source_payload(payload: Mapping[str, Any], rules: Sequence[Mapping[st
     erased_dependency = any(ref.get('source_id') == rule.get('source_turn_id', rule['turn_id'])
         and (rule.get('whole_source', True) or ref.get('source_version') == rule.get('source_version'))
         for ref in original.get('assistant_source_refs') or [] for rule in rules)
+    erased_dependency = erased_dependency or any(source_input_erased(ref, rules)
+        for ref in original.get('assistant_input_refs') or [])
     retained = [message for message in messages if source_message_hash(session, message) not in hashes
                 and not (message.get('role') == 'assistant' and erased_dependency)]
     if len(retained) == len(messages):
@@ -643,6 +651,8 @@ def redact_source_payload(payload: Mapping[str, Any], rules: Sequence[Mapping[st
         result = {"session_id": session, "contact_id": original["contact_id"], "checkpoint_messages": retained}
     if original.get('assistant_source_refs') and any(message['role'] == 'assistant' for message in retained):
         result['assistant_source_refs'] = original['assistant_source_refs']
+    if original.get('assistant_input_refs') and any(message['role'] == 'assistant' for message in retained):
+        result['assistant_input_refs'] = original['assistant_input_refs']
     digest = hashlib.sha256(json.dumps(result, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     result["turn_id"] = "checkpoint:" + digest
     return result
@@ -1676,6 +1686,7 @@ class ColonyClient:
         sender: Mapping[str, str] | None = None,
         checkpoint_messages: Sequence[Mapping[str, Any]] | None = None,
         assistant_source_refs: Sequence[Mapping[str, str]] | None = None,
+        assistant_input_refs: Sequence[Mapping[str, str]] | None = None,
         source_only: bool | None = None,
         instruction_only: bool = False,
         require_source_receipt: bool = False,
@@ -1731,6 +1742,8 @@ class ColonyClient:
                 }
             if assistant_source_refs:
                 payload['assistant_source_refs'] = list(assistant_source_refs)
+            if assistant_input_refs:
+                payload['assistant_input_refs'] = list(assistant_input_refs)
             if source_only:
                 payload['source_only'] = True
             if tools_used:
@@ -1747,7 +1760,8 @@ class ColonyClient:
                 payload["checkpoint_messages"] = list(checkpoint_messages)
 
             if turn_id:
-                route = ('turns/task-instruction' if instruction_only else
+                route = ('turns/source-linked/input-parent' if assistant_input_refs else
+                         'turns/task-instruction' if instruction_only else
                          'turns/source-survivors' if source_only else
                          'turns/source-linked' if assistant_source_refs else 'turns')
                 response = self.put(

@@ -48,7 +48,7 @@ def _current(ledger, references, versions, owner):
     return True
 
 
-def _retain(ledger, *, source_id, owner, native, facts, occurred_at):
+def _retain(ledger, *, source_id, owner, native, facts, occurred_at, dependencies=None):
     # First observation survives replay. Native configuration can change later;
     # never rebind an old receipt to whichever model is configured today.
     with closing(ledger._connect()) as db:
@@ -58,6 +58,8 @@ def _retain(ledger, *, source_id, owner, native, facts, occurred_at):
             session_id='native-runtime:'+native['native_task_id'],
             occurred_at=datetime.fromtimestamp(occurred_at, timezone.utc).isoformat(),
             messages=[{'role':'assistant', '_native_runtime_observation':VERSION, '_native_forecast_facts':facts,
+                **({'_supplied_sources': [{'source_id': r.removeprefix('receipt:'), 'source_version': v}
+                                         for r, v in dependencies.items()]} if dependencies else {}),
                 'content':'Runtime-owned task forecast/lifecycle observation. This is not an owner statement, '
                           'successful output evaluation, or permission for any action.\n'+json.dumps(facts, sort_keys=True)}],
             derive_claims=False)
@@ -69,6 +71,22 @@ def _retain(ledger, *, source_id, owner, native, facts, occurred_at):
     if message.get('_native_runtime_observation') != VERSION or message.get('_native_forecast_facts', {}).get('identity') != _identity(native):
         raise ValueError('runtime forecast source binding conflict')
     return {_reference(source_id):refs[0]['source_version']}, message['_native_forecast_facts']
+
+
+def _outcome_facts(ledger, outcome):
+    if ledger is None or outcome is None:
+        return {}
+    with closing(ledger._connect()) as db:
+        row = db.execute('SELECT messages_json FROM turn_sources WHERE turn_id=?',
+                         (outcome['receipt_ref'].removeprefix('receipt:'),)).fetchone()
+    facts = json.loads(row[0])[0].get('_native_forecast_facts', {}) if row else {}
+    return facts if facts.get('version') == VERSION and facts.get('kind') == 'duration_outcome' else {}
+
+
+def _comparable(configuration, outcome_facts):
+    observed = outcome_facts.get('processor_observation') or {}
+    return bool(configuration and observed.get('configuration') == configuration
+                and observed.get('complete_observed_pairs') and observed.get('served_model'))
 
 
 def _parts(review, native, state, owner):
@@ -107,7 +125,9 @@ def attach(review, native, state, owner):
     cohort = 'native-review:'+review['review']['action']
     def current(prediction, outcome):
         return (_current(ledger, prediction.evidence_refs, prediction.detail['source_versions'], owner)
-                and _current(ledger, outcome['evidence_refs'], outcome['source_versions'], owner))
+                and _current(ledger, outcome['evidence_refs'], outcome['source_versions'], owner)
+                and prediction.detail['model_provenance']['capabilities'] == config
+                and _comparable(config, _outcome_facts(ledger, outcome)))
     estimate = store.estimate_duration(domain='task_duration',cohort=cohort,
         subject_person_id=owner,viewer_scope='owner',prior_seconds=prior,
         now=now,evidence_is_current=current)
@@ -163,12 +183,17 @@ def observe(review, native, state, owner):
     paused = any(o['reason'] == 'paused' for o in history['outcomes'])
     complete = state['status'] == 'done' and state.get('completed_run') and valid and not paused
     reason = '' if complete else 'source_retracted' if not valid else 'paused' if paused or (state['status']=='blocked' and not state.get('gave_up')) else 'cancelled' if state['status'] in {'archived','cancelled'} else 'unavailable'
+    from .runtime_models import summarize
+    processor = summarize(ledger, owner, native, state.get('native_run_id'))
     versions, retained = _retain(ledger,source_id=source_id,owner=owner,native=native,occurred_at=ended,
+        dependencies=processor['source_versions'],
         facts={'version':VERSION,'kind':'duration_outcome','identity':identity,
                'native_run_id':state.get('native_run_id'),'observation':observed,
+               'processor_observation':processor,
                'native_status':state['status'],'forecast_id':fid,
                'turnaround_seconds':ended-prediction['detail']['origin_at'],
                'measurement':'attachment_to_terminal_turnaround','quality_evaluated':False})
+    versions = {**versions, **retained.get('processor_observation', {}).get('source_versions', {})}
     result = store.record_forecast_outcome(forecast_id=fid,receipt_ref=receipt,
         evidence_refs=list(versions),source_versions=versions,source_kind='task_receipt',
         observed_at=ended,subject_person_id=owner,viewer_scope='owner',shareability='owner_private',
@@ -207,15 +232,21 @@ def project(review, native, state, owner, *, now=None):
     status = state.get('status')
     active = status in {'ready','running'}
     latest = history['outcomes'][-1] if history['outcomes'] else None
+    outcome_facts = _outcome_facts(ledger, latest)
+    processor = outcome_facts.get('processor_observation') or {}
+    if latest:
+        # Later profile/task edits do not rewrite the conditions witnessed by
+        # the terminal receipt. Original future processor fields stay unknown.
+        same_conditions = bool(recorded_configuration) and recorded_configuration == processor.get('configuration')
     outcome_current = latest is None or _current(ledger,latest['evidence_refs'],latest['source_versions'],owner)
-    if not same_conditions:
-        decision = prior_decision = 'conditions_unknown_or_changed'
-    elif not outcome_current:
+    if not outcome_current:
         decision = prior_decision = 'source_unavailable'
     elif latest and latest['status'] == 'censored':
         decision = prior_decision = 'censored'
     elif not active:
         decision = prior_decision = 'terminal' if status in {'done','archived','cancelled'} else 'not_running'
+    elif not same_conditions:
+        decision = prior_decision = 'conditions_unknown_or_changed'
     else:
         decision = 'inspect_recorded_state' if stamp >= prediction['horizon'] else 'continue_waiting'
         prior_decision = 'inspect_recorded_state' if stamp >= prior_horizon else 'continue_waiting'
@@ -227,8 +258,11 @@ def project(review, native, state, owner, *, now=None):
         'prior_decision':prior_decision,'changed_from_prior':decision != prior_decision,
         'sample_n':estimate['sample_n'],'uncertain':estimate['uncertain'],
         'configuration_matches':same_conditions,
-        'conditions_comparable':same_conditions and detail['model_provenance']['served_model'] is not None,
-        'served_model':detail['model_provenance']['served_model'],
+        'conditions_comparable':bool(outcome_current and latest and latest['status'] == 'observed'
+                                     and _comparable(recorded_configuration, outcome_facts)),
+        'served_model':processor.get('served_model'),
+        'original_served_model':detail['model_provenance']['served_model'],
+        'processor_observation':processor,
         'evidence_refs':prediction['evidence_refs'],'source_versions':detail['source_versions'],
         'suggestion_enabled':False,'quality_evaluated':False,
         'enable_criteria':{'cohort_must_be_closed':True,'minimum_comparable_terminal_receipts':10,
@@ -237,6 +271,8 @@ def project(review, native, state, owner, *, now=None):
     if latest and latest['status'] == 'observed' and latest['value'] is True and outcome_current:
         ended = latest['observed_at']
         result['comparison'] = {
+            'conditions_comparable':result['conditions_comparable'],
+            'observed_response_model':processor.get('served_model'),
             'receipt_ref':latest['receipt_ref'],'outcome_source_versions':latest['source_versions'],
             'turnaround_seconds':ended-detail['origin_at'],
             'forecast_absolute_error_seconds':abs(ended-prediction['horizon']),

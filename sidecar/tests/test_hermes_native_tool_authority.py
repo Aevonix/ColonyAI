@@ -95,6 +95,27 @@ def test_native_rotation_keeps_exact_owner_scope(runtime):
     assert call(ctx, "terminal", session="rotated") == "executed"
 
 
+def test_optional_native_model_observer_does_not_block_when_runtime_is_unavailable(runtime, monkeypatch):
+    import builtins
+    import importlib
+    from unittest.mock import Mock
+
+    module, _, _, _ = runtime
+    observer_type = importlib.import_module(module.__name__ + '.runtime_models').RuntimeModelObserver
+    for name, value in [('HERMES_KANBAN_TASK', 'fixture-task'),
+                        ('HERMES_KANBAN_RUN_ID', '1'), ('HERMES_KANBAN_CLAIM_LOCK', 'fixture-claim')]:
+        monkeypatch.setenv(name, value)
+    original_import = builtins.__import__
+    def without_native(name, *args, **kwargs):
+        if name == 'agent.delegation_context':
+            raise ModuleNotFoundError('Native runtime is unavailable in this fixture')
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', without_native)
+    client = Mock()
+    observer_type(client, 'cid-owner').observe('start', api_request_id='fixture-api')
+    client.post.assert_not_called()
+
+
 def test_nested_code_dispatch_inherits_only_exact_ambient_scope(runtime):
     module, ctx, _, _ = runtime
     _pre(ctx, session="s", task="t", turn="u", platform="cli", sender="")

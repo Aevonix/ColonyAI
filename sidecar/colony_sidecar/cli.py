@@ -33,7 +33,7 @@ def main() -> None:
     # Harness configuration (new approach)
     init_p.add_argument("--mcp-harnesses", help="Connect coding harnesses via MCP (comma-separated: claude-code,codex,crush,opencode)")
     init_p.add_argument("--agent-harness", choices=["hermes"], help="Connect agent harness via plugin (OpenClaw support was removed in v0.21.14)")
-    init_p.add_argument("--hermes-home", default=None, help="Selected Hermes profile/home (default: HERMES_HOME or ~/.hermes)")
+    init_p.add_argument("--hermes-home", default=None, help="Selected Hermes home; guided setup lists native profiles, noninteractive defaults to HERMES_HOME or ~/.hermes")
     init_p.add_argument("--hermes-python", help="Python interpreter of an existing supported Hermes installation")
     init_p.add_argument("--agent-name", help="Name for a new private identity; existing SOUL is preserved")
     init_p.add_argument("--agent-values", help="Comma-separated guiding values for a new private agent")
@@ -170,8 +170,12 @@ def main() -> None:
 
     # --- restore ---
     restore_p = sub.add_parser("restore", help="Restore Colony from a backup")
-    restore_p.add_argument("--full", action="store_true", help="Full-state restore from archive")
+    restore_mode = restore_p.add_mutually_exclusive_group()
+    restore_mode.add_argument("--full", action="store_true", help="Reconstruct full archive state; current authority and erasures still require reconciliation")
+    restore_mode.add_argument("--memory-only", action="store_true", help="Recover canonical memory using a surviving current source ledger")
     restore_p.add_argument("--input", "-i", default=None, help="Backup file path (default: prompts for it)")
+    restore_p.add_argument("--current-state", default=None, help="Surviving authoritative source state (--memory-only)")
+    restore_p.add_argument("--output", "-o", default=None, help="Fresh memory bundle destination (--memory-only)")
     restore_p.add_argument("--passphrase", default=None, help="Passphrase to decrypt (default: prompts for it)")
     restore_p.add_argument("--force-identity", action="store_true", help="Allow restoring onto a different colony identity")
     mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
@@ -773,6 +777,15 @@ def _cmd_restore(args) -> None:
     """Restore Colony from a backup -- interactive by default."""
     _load_dotenv()
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
+    memory_only = getattr(args, "memory_only", False)
+    if memory_only and (not getattr(args, "current_state", None)
+                        or not getattr(args, "output", None)
+                        or getattr(args, "force_identity", False)):
+        print("  Memory recovery requires --current-state and a fresh --output; identity cannot be overridden.")
+        raise SystemExit(2)
+    if not memory_only and (getattr(args, "current_state", None) or getattr(args, "output", None)):
+        print("  --current-state and --output require --memory-only.")
+        raise SystemExit(2)
 
     if args.input:
         backup_path = args.input
@@ -787,21 +800,33 @@ def _cmd_restore(args) -> None:
     if args.passphrase:
         passphrase = args.passphrase.encode()
 
-    if args.full:
+    if args.full or memory_only:
         if passphrase is None and backup_path.endswith(".enc"):
             import getpass
             passphrase = getpass.getpass("  Backup passphrase: ").encode()
 
-        from colony_sidecar.backup import restore_full_backup
+        from colony_sidecar.backup import restore_full_backup, restore_source_memory
         try:
+            if memory_only:
+                summary = restore_source_memory(
+                    backup_path, args.output, current_state=args.current_state,
+                    passphrase=passphrase,
+                )
+                print(f"\n  Current source memory recovered to {args.output}")
+                print(f"  Sources: {summary['source_count']}; original images: {summary['source_images']}")
+                print("  Files: turn-idempotency.db, owned images and source-memory-recovery.json.")
+                print("  Install only these memory files with writers stopped and separately current runtime bindings.")
+                print("  The bundle does not restore runtime authority or completed-effect state.")
+                return
             summary = restore_full_backup(
                 backup_path, state_dir,
                 passphrase=passphrase,
                 force_identity=getattr(args, "force_identity", False),
             )
-            print(f"\n  Colony restored: {summary['colony_id']}")
+            print(f"\n  Archive reconstructed: {summary['colony_id']}")
             print(f"  Databases: {', '.join(summary.get('databases', []))}")
-            print(f"\n  Run 'colony start' to bring the Colony online.")
+            print("  Reconcile current authority, erasures and completed effects before starting services.")
+            print("  Use --memory-only for bounded recovery from a surviving current source ledger.")
         except ValueError as e:
             print(f"  Error: {e}")
             raise SystemExit(1)
@@ -2636,6 +2661,7 @@ def _cmd_persona(args) -> None:
         )
         print(f"  Restored colony: {summary['colony_id']}")
         print(f"  Databases: {', '.join(summary.get('databases', []))}")
+        print("  Reconcile current authority, erasures and completed effects before starting services.")
 
     elif cmd == "uninstall":
         active = _find_active_persona(state_dir)

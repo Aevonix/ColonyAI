@@ -33,8 +33,11 @@ colony init --non-interactive \
   --model-url http://127.0.0.1:8000/v1 --model my-local-model --local-work --start
 ```
 
-`--hermes-home` wins over `HERMES_HOME`, then `~/.hermes`. Only that home is
-inspected. `--dir` selects private Colony state, otherwise `COLONY_STATE_DIR` or
+`--hermes-home` wins over `HERMES_HOME`. Without either selection, guided setup
+lists live profiles through the selected Hermes runtime and asks which home to
+attach. Listing reads profile names and paths, not their private configuration.
+Noninteractive setup retains the `~/.hermes` default. Only the selected home's
+configuration is inspected or changed. `--dir` selects private Colony state, otherwise `COLONY_STATE_DIR` or
 `<selected Hermes home>/colony` is used. Both the selected Hermes home and Colony
 state must stay outside Git checkouts, including when `--dir` is separate.
 Select that same Hermes home when launching Hermes:

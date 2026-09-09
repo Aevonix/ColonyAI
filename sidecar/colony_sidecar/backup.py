@@ -353,7 +353,10 @@ def restore_full_backup(
             )
             _preflight_private_governed_destination(state_dir)
 
-        summary: dict[str, Any] = {"colony_id": backup_id, "databases": [], "errors": []}
+        summary: dict[str, Any] = {
+            "colony_id": backup_id, "databases": [], "errors": [],
+            "serving_admitted": False,
+        }
 
         identity_dir = root / "identity"
         if identity_dir.is_dir():
@@ -421,6 +424,164 @@ def restore_full_backup(
 
     logger.info("Restore complete: %s", summary)
     return summary
+
+
+def restore_source_memory(
+    archive_path: str | Path,
+    destination: str | Path,
+    *,
+    current_state: str | Path,
+    passphrase: Optional[bytes] = None,
+) -> dict[str, Any]:
+    """Recover current canonical memory, without restoring runtime authority.
+
+    The caller must select a surviving authoritative source ledger. Its current
+    membership, revisions, scopes and erasure history replace the old archive's
+    memory metadata. The archive supplies only still-owned original image bytes
+    missing from that surviving state. No old grants, effects, identity, config,
+    contact databases, tasks, graph or native host state are installed.
+    """
+    archive_path = Path(archive_path).resolve(strict=True)
+    current_state = Path(current_state).resolve()
+    destination = Path(destination).absolute()
+    resolved_destination = destination.resolve()
+    if (destination.exists() or destination.is_symlink()
+            or current_state == resolved_destination
+            or current_state in resolved_destination.parents
+            or resolved_destination in current_state.parents):
+        raise ValueError("Memory recovery requires a fresh destination outside current state")
+    current_id = _read_colony_id(current_state)
+    ledger = current_state / "turn-idempotency.db"
+    if not current_id or not ledger.is_file():
+        raise ValueError("Memory recovery requires the surviving colony identity and source ledger")
+
+    from colony_sidecar.vector.image_store import LocalImageStore
+
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="colony-memory-recovery-", dir=destination.parent) as temporary:
+        staging = Path(temporary)
+        actual_archive = archive_path
+        if archive_path.suffix == ".enc":
+            if passphrase is None:
+                raise ValueError("Archive is encrypted; passphrase required")
+            actual_archive = staging / "decrypted.tar.gz"
+            _decrypt_file(archive_path, actual_archive, passphrase)
+        unpacked = staging / "archive"
+        unpacked.mkdir()
+        _extract_archive(actual_archive, unpacked)
+        archived = _find_backup_root(unpacked)
+        meta = json.loads((archived / "meta.json").read_text())
+        if meta.get("backup_version", 0) > BACKUP_VERSION:
+            raise ValueError("Memory archive version is newer than this Colony supports")
+        if meta.get("colony_id") != current_id:
+            raise ValueError("Memory archive and surviving state have different colony identities")
+
+        selected = staging / "selected"
+        (selected / "databases").mkdir(parents=True)
+        snapshot = selected / "databases" / "turn-idempotency.db"
+        try:
+            with closing(sqlite3.connect(ledger.resolve().as_uri() + "?mode=ro", uri=True)) as source:
+                with closing(sqlite3.connect(snapshot)) as target:
+                    source.backup(target)
+                    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise ValueError("Surviving source ledger failed its integrity check")
+            snapshot.chmod(0o600)
+            with closing(sqlite3.connect(snapshot.as_uri() + "?mode=ro", uri=True)) as current:
+                source_count = current.execute("SELECT count(*) FROM turn_sources").fetchone()[0]
+                heads = current.execute(
+                    "SELECT contact_id,max(sequence) FROM source_erasures GROUP BY contact_id"
+                ).fetchall()
+                _check_erasure_ancestry(archived / "databases" / "turn-idempotency.db", current)
+        except sqlite3.Error as error:
+            raise ValueError("Surviving canonical source history is unavailable") from error
+        if _read_colony_id(current_state) != current_id:
+            raise ValueError("Surviving colony identity changed during memory recovery")
+
+        bundle = staging / "bundle"
+        bundle.mkdir(mode=0o700)
+        shutil.copyfile(snapshot, bundle / "turn-idempotency.db")
+        (bundle / "turn-idempotency.db").chmod(0o600)
+        output_images = LocalImageStore(str(bundle), source_evidence=True)
+        live_images = LocalImageStore(str(current_state), source_evidence=True)
+        old_images = LocalImageStore(str(archived), source_evidence=True)
+        recovered_from_archive = 0
+        records = _source_image_records(selected)
+        if records:
+            output_images._ensure_dirs()
+        for record in records:
+            chosen = None
+            for source_images, from_archive in ((live_images, False), (old_images, True)):
+                candidate = source_images._original_path(record["asset_hash"], record["mime_type"])
+                try:
+                    data = candidate.read_bytes()
+                except FileNotFoundError:
+                    continue
+                if (len(data) != record["size_bytes"]
+                        or hashlib.sha256(data).hexdigest() != record["asset_hash"]):
+                    continue
+                chosen = data
+                recovered_from_archive += int(from_archive)
+                break
+            if chosen is None:
+                raise ValueError("Current source image has no matching original in surviving state or archive")
+            target = output_images._original_path(record["asset_hash"], record["mime_type"])
+            target.write_bytes(chosen)
+            target.chmod(0o600)
+
+        files = []
+        for path in sorted(bundle.rglob("*")):
+            if path.is_file():
+                files.append({"path": path.relative_to(bundle).as_posix(),
+                              "sha256": _file_sha256(path), "bytes": path.stat().st_size})
+        summary = {
+            "recovery_mode": "source_memory_only",
+            "colony_id": current_id,
+            "source_count": source_count,
+            "source_images": len(records),
+            "images_recovered_from_archive": recovered_from_archive,
+            "erasure_head": max((row[1] for row in heads), default=0),
+            "erasure_contacts": len(heads),
+            "current_source_ledger_sha256": _file_sha256(snapshot),
+            "archive_sha256": _file_sha256(archive_path),
+            "files": files,
+            "runtime_authority_restored": False,
+            "serving_admitted": False,
+        }
+        receipt = bundle / "source-memory-recovery.json"
+        receipt.write_text(json.dumps(summary, indent=2) + "\n")
+        receipt.chmod(0o600)
+        # Reserve the destination only after all source and image checks pass.
+        # A publication failure leaves an incomplete bundle, never a success.
+        destination.mkdir(mode=0o700)
+        _restore_directory(bundle, destination)
+    return summary
+
+
+def _file_sha256(path: Path) -> str:
+    value = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            value.update(block)
+    return value.hexdigest()
+
+
+def _check_erasure_ancestry(archived_ledger: Path, current: sqlite3.Connection) -> None:
+    """A selected surviving history cannot rewind or replace captured erasures."""
+    if not archived_ledger.is_file():
+        return
+    with closing(sqlite3.connect(archived_ledger.resolve().as_uri() + "?mode=ro", uri=True)) as old:
+        for table in ("source_erasures", "source_erasure_revisions"):
+            if not old.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                continue
+            columns = [row[1] for row in old.execute(f"PRAGMA table_info({table})")]
+            selected = ",".join('"' + column.replace('"', '""') + '"' for column in columns)
+            for row in old.execute(f"SELECT {selected} FROM {table}"):
+                sequence = row[columns.index("sequence")]
+                current_row = current.execute(
+                    f"SELECT {selected} FROM {table} WHERE sequence=?", (sequence,)
+                ).fetchone()
+                if current_row != row:
+                    raise ValueError("Surviving source erasure history does not extend the archive")
 
 
 # ── Database snapshot ────────────────────────────────────────────────────

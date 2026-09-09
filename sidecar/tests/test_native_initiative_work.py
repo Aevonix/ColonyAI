@@ -3,7 +3,7 @@ import json
 import pytest
 
 from colony_sidecar.initiatives.native_work import contract
-from test_hermes_general_governance import runtime, _pre, _tool
+from test_hermes_general_governance import runtime, _Context, _pre, _tool
 from test_accepted_local_work import local_api
 
 
@@ -41,7 +41,10 @@ def test_another_existing_registered_internal_review_uses_same_contract():
 
 def test_review_tool_uses_real_owner_system_turn_and_rejects_guest_and_extra_args(runtime, monkeypatch):
     module, ctx, _, _ = runtime
-    ctx.config['plugins']['colony']['attested_system_platforms'] = ['cli', 'cron']
+    # A reload installs a fresh listener set. Re-registering on the old fake
+    # would retain both the old untrusted-cron and new attested-cron observers.
+    ctx = _Context({**ctx.config['plugins']['colony'],
+                    'attested_system_platforms': ['cli', 'cron']})
     module.register(ctx)
     calls = []
     monkeypatch.setattr(module.NativeReviews, 'work', lambda self, identifier:

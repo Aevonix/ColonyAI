@@ -99,10 +99,31 @@ class MemoryReadRequest(BaseModel):
     person_id: Optional[str] = None
     audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
     limit: Optional[int] = None
+    source_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    source_version: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
+    session_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    source_view: Literal['source', 'assertions'] = 'source'
+    claim_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    offset: int = Field(default=0, ge=0, le=10000000)
+    read_revision: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
+
+    @model_validator(mode='after')
+    def canonical_read_selector(self):
+        if self.source_id:
+            if not self.source_version or not self.session_id or self.memory_id:
+                raise ValueError('canonical reads require source version/session and no graph memory ID')
+            if (self.source_view == 'assertions') != bool(self.claim_id):
+                raise ValueError('assertion history requires its source claim ID')
+            if self.offset and not self.read_revision:
+                raise ValueError('continuation requires the preceding read revision')
+        elif self.source_version or self.claim_id or self.offset or self.read_revision or self.source_view != 'source':
+            raise ValueError('canonical read fields require a source ID')
+        return self
 
 
 class MemoryReadResponse(BaseModel):
     entries: List[MemoryEntry] = []
+    source: Optional[Dict[str, Any]] = None
 
 
 class MemoryWriteRequest(BaseModel):
@@ -498,6 +519,13 @@ class SourceReference(BaseModel):
     source_version: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class SourceInputReference(BaseModel):
+    """Exact admitted input before canonical media normalization."""
+    model_config = ConfigDict(extra="forbid")
+    source_id: str = Field(min_length=1, max_length=256)
+    input_message_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class TurnSyncRequest(BaseModel):
     identity: HostIdentity
     context: HostTurnContext
@@ -513,6 +541,7 @@ class TurnSyncRequest(BaseModel):
     user_message: Optional[Union[HostMessage, TurnMessage]] = None
     assistant_message: Optional[Union[HostMessage, TurnMessage]] = None
     assistant_source_refs: Optional[List[SourceReference]] = Field(default=None, min_length=1)
+    assistant_input_refs: Optional[List[SourceInputReference]] = Field(default=None, min_length=1)
     source_only: Optional[Literal[True]] = None
     # Model that produced the assistant side of this turn (optional, additive).
     # Lets the mining layer detect provider escalations / cloud failovers from
@@ -537,9 +566,11 @@ class TurnSyncRequest(BaseModel):
         if self.source_only and (self.checkpoint_messages is not None or not any(
                 nonempty(message) for message in (self.user_message, self.assistant_message))):
             raise ValueError('source-only delivery requires nonempty direct source messages')
-        if self.assistant_source_refs and not any(message is not None and message.role == 'assistant' and nonempty(message)
+        if (self.assistant_source_refs or self.assistant_input_refs) and not any(message is not None and message.role == 'assistant' and nonempty(message)
                 for message in [self.assistant_message, *(self.checkpoint_messages or [])]):
             raise ValueError('source references require an assistant message')
+        if self.assistant_input_refs and (not self.context.turn_id or self.checkpoint_messages is not None):
+            raise ValueError('input parents require an identified direct assistant source')
         return self
 
 

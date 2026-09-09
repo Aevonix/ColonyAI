@@ -18,12 +18,13 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.27 improves memory formation and the presentation of recalled
-evidence. Optional structured output preserves complete short quotations and
-procedure steps. One batched review checks grounded proposals before admission;
-recollection retains source scope and uncertainty across native and direct
-consumers. The [memory guide](docs/MEMORY-QUALITY.md) explains the
-behavior and its limits, and the [changelog](CHANGELOG.md) records the changes.
+Version 1.0.28 opens complete canonical sources when recollection is partial,
+preserves uncertain event times and gives lasting preferences one source of
+authorship. Native tools recheck a sender's current identity before execution.
+Forecast outcomes retain observed processor provenance, and a memory-only
+recovery path preserves surviving current corrections and erasures.
+The [memory guide](docs/MEMORY-QUALITY.md), [recovery guide](docs/SOURCE-MEMORY-RECOVERY.md)
+and [changelog](CHANGELOG.md) explain these behaviors and their limits.
 
 The lightweight installation starts with memory and observation. Extended
 autonomy loops, public channels, voice systems and hardware need explicit
@@ -45,19 +46,16 @@ python -m pip install . ./sidecar
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
-The wizard selects a Hermes home, asks for your name, agent name, model, values, timezone and quiet hours, and
+The wizard lists existing Hermes profiles, selects one home, asks for your name, agent name, model, values, timezone and quiet hours, and
 creates private state outside Git. It preserves existing identity, channels and
 model settings. Replacing an incumbent memory provider is an explicit choice.
 It attaches the canonical installed adapter when its bytes match, or installs
 profile directory adapters when no native package is present. It neither
 patches Hermes core nor restarts an existing gateway.
 
-Choose a private `--hermes-home` under directories you control. Before probing
-the model, setup checks the runtime's existing conversation-outbox path rules:
-the immediate `state` directory must be mode 0700, and ancestors cannot be
-group/other writable except root-owned sticky directories such as `/tmp`.
-A private child inside a shared writable directory is insufficient. Setup
-reports the offending path and leaves existing permissions unchanged.
+Choose a private `--hermes-home` outside Git checkouts. The
+[setup guide](docs/LOCAL-HERMES-SETUP.md) covers existing profiles, directory
+permissions, user services and upgrades.
 
 Accept the wizard's startup option, or run:
 

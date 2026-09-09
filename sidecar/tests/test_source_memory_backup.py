@@ -11,6 +11,7 @@ from colony_sidecar import backup
 from colony_sidecar.turns import TurnIdempotencyLedger
 from colony_sidecar.turns.media import SourceMedia
 from test_source_media import image_bytes, message
+from test_hermes_turn_outbox import _load_client
 
 
 @pytest.fixture
@@ -134,3 +135,210 @@ os._exit(0)
     with sqlite3.connect(db) as connection:
         assert not connection.execute("SELECT 1 FROM sqlite_master WHERE name='obsolete'").fetchone()
         assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+
+
+def _memory_archive(state, output):
+    (state / 'colony-id').write_text('recovery-fixture-colony')
+    return backup.create_full_backup(state, output, include_graph=False, include_vectors=False)
+
+
+def test_memory_salvage_keeps_newer_erasures_and_offline_host_cursor(evidence, tmp_path):
+    state, ledger, media, asset = evidence
+    client = _load_client('recovery_offline_client')
+    outbox = client.TurnOutbox(tmp_path / 'offline-host' / 'outbox.sqlite3')
+    outbox.enqueue('image-source', {'turn_id': 'image-source', 'contact_id': 'fixture-contact',
+        'session_id': 'original', 'checkpoint_messages': [message()]})
+    archive = _memory_archive(state, tmp_path / 'archives')
+    assert ledger.erase_sources(contact_id='fixture-contact', turn_ids=['image-source'])['media_cleanup'] == 'complete'
+    page = ledger.erasure_feed('fixture-contact')
+    outbox.apply_erasure_page('fixture-contact', page)
+    cursor = outbox.erasure_watermark('fixture-contact')
+    assert cursor > 0
+
+    old = tmp_path / 'old-restore'
+    backup.restore_full_backup(archive, old)
+    old_media = SourceMedia(TurnIdempotencyLedger(old / 'turn-idempotency.db'))
+    assert old_media.read(asset, contact_id='fixture-contact', session_id='later')[0] == image_bytes()
+    with pytest.raises(ValueError, match='restore requires reconciliation'):
+        old_media.ledger.erasure_feed('fixture-contact', after=cursor)
+
+    destination = tmp_path / 'current-memory'
+    summary = backup.restore_source_memory(archive, destination, current_state=state)
+    recovered = SourceMedia(TurnIdempotencyLedger(destination / 'turn-idempotency.db'))
+    assert recovered.ledger.erasure_feed('fixture-contact', after=cursor)['complete']
+    assert recovered.search('blue circle', contact_id='fixture-contact', session_id='later') == []
+    with pytest.raises(KeyError):
+        recovered.read(asset, contact_id='fixture-contact', session_id='later')
+    assert not (destination / 'images').exists()
+    assert summary['erasure_head'] == cursor
+    assert summary['source_images'] == 0
+    assert summary['runtime_authority_restored'] is False
+    with sqlite3.connect(outbox.path) as db:
+        assert db.execute('SELECT count(*) FROM turn_outbox').fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('lost_original', ['missing', 'corrupt'])
+def test_memory_salvage_recovers_owned_bytes_and_current_corrections_scope_only(evidence, tmp_path, lost_original):
+    state, ledger, media, asset = evidence
+    from colony_sidecar.turns.idempotency import canonical_turn_digest
+    source = [{'role': 'user', 'content': 'The toolbox is in the study.'}]
+    ledger.record_source('text-source', contact_id='fixture-contact', session_id='original',
+                         messages=source, derive_claims=False)
+    runtime_files = ('task_queue.db', 'approval_authority.db', 'contacts.db', 'colony-action-journal.db')
+    for filename in runtime_files:
+        with sqlite3.connect(state / filename) as db:
+            db.execute('CREATE TABLE records(id TEXT)')
+            db.execute("INSERT INTO records VALUES ('old-runtime-state')")
+    (state / '.env').write_text('EXAMPLE_SETTING=old\n')
+    archive = _memory_archive(state, tmp_path / 'archives')
+    for filename in runtime_files:
+        with sqlite3.connect(state / filename) as db:
+            db.execute("UPDATE records SET id='current-runtime-state'")
+    current_runtime_hashes = {name: hashlib.sha256((state / name).read_bytes()).hexdigest()
+                              for name in runtime_files}
+
+    annotation = ledger.append_source_annotation(
+        contact_id='fixture-contact', session_id='later', annotation_id='correct-location',
+        source_id='text-source', source_version=canonical_turn_digest(source), excerpt='toolbox',
+        correction='This was an unverified report, not a confirmed location.', author_principal='fixture-owner')
+    ledger.record_source('session-only', contact_id='fixture-contact', session_id='private-session',
+        scope='session', messages=[{'role': 'user', 'content': 'Temporary workshop arrangement.'}], derive_claims=False)
+    original = media.store._original_path(asset, 'image/png')
+    if lost_original == 'missing':
+        original.unlink()
+    else:
+        original.write_bytes(b'corrupted original')
+
+    destination = tmp_path / 'memory-bundle'
+    summary = backup.restore_source_memory(archive, destination, current_state=state)
+    assert current_runtime_hashes == {name: hashlib.sha256((state / name).read_bytes()).hexdigest()
+                                      for name in runtime_files}
+    assert set(path.name for path in destination.iterdir()) == {
+        'turn-idempotency.db', 'images', 'source-memory-recovery.json'}
+    recovered_ledger = TurnIdempotencyLedger(destination / 'turn-idempotency.db')
+    recovered = SourceMedia(recovered_ledger)
+    assert recovered.read(asset, contact_id='fixture-contact', session_id='later')[0] == image_bytes()
+    assert recovered.search('blue circle', contact_id='fixture-contact', session_id='later')
+    with pytest.raises(KeyError):
+        recovered.read(asset, contact_id='foreign-fixture', session_id='later')
+    assert recovered_ledger.search_sources('workshop', contact_id='fixture-contact', session_id='later') == []
+    assert recovered_ledger.search_sources('workshop', contact_id='fixture-contact', session_id='private-session')
+    with sqlite3.connect(destination / 'turn-idempotency.db') as db:
+        assert db.execute('SELECT target_source_id FROM source_annotations WHERE annotation_source_id=?',
+                          (annotation['source_id'],)).fetchone()[0] == 'text-source'
+    assert summary['images_recovered_from_archive'] == 1
+    assert summary['serving_admitted'] is False
+    assert json.loads((destination / 'source-memory-recovery.json').read_text()) == summary
+    assert recovered_ledger.erase_sources(contact_id='fixture-contact', turn_ids=['image-source'])['media_cleanup'] == 'complete'
+
+
+@pytest.mark.parametrize('missing', ['colony-id', 'turn-idempotency.db'])
+def test_memory_salvage_requires_surviving_identity_and_history(evidence, tmp_path, missing):
+    state, _, _, _ = evidence
+    archive = _memory_archive(state, tmp_path / 'archives')
+    (state / missing).unlink()
+    destination = tmp_path / 'absent'
+    with pytest.raises(ValueError, match='surviving colony identity and source ledger'):
+        backup.restore_source_memory(archive, destination, current_state=state)
+    assert not destination.exists()
+
+
+def test_memory_salvage_rejects_older_surviving_erasure_history(evidence, tmp_path):
+    state, ledger, _, _ = evidence
+    original = _memory_archive(state, tmp_path / 'first')
+    stale = tmp_path / 'stale-current'
+    backup.restore_full_backup(original, stale)
+    ledger.erase_sources(contact_id='fixture-contact', turn_ids=['image-source'])
+    newer_archive = _memory_archive(state, tmp_path / 'second')
+    destination = tmp_path / 'absent'
+    with pytest.raises(ValueError, match='erasure history does not extend'):
+        backup.restore_source_memory(newer_archive, destination, current_state=stale)
+    assert not destination.exists()
+
+
+def test_memory_salvage_rejects_different_history_at_the_same_erasure_head(evidence, tmp_path):
+    state, ledger, _, _ = evidence
+    ledger.erase_sources(contact_id='fixture-contact', turn_ids=['image-source'])
+    archive = _memory_archive(state, tmp_path / 'archives')
+    other = tmp_path / 'different-current'
+    alternate = TurnIdempotencyLedger(other / 'turn-idempotency.db')
+    (other / 'colony-id').write_text('recovery-fixture-colony')
+    alternate.record_source('different-source', contact_id='fixture-contact', session_id='other',
+        messages=[{'role': 'user', 'content': 'Different history.'}], derive_claims=False)
+    alternate.erase_sources(contact_id='fixture-contact', turn_ids=['different-source'])
+    assert alternate.erasure_watermark('fixture-contact') == ledger.erasure_watermark('fixture-contact')
+    with pytest.raises(ValueError, match='erasure history does not extend'):
+        backup.restore_source_memory(archive, tmp_path / 'absent', current_state=other)
+
+
+def test_memory_salvage_uses_existing_encrypted_archive_support(evidence, tmp_path):
+    state, _, _, asset = evidence
+    (state / 'colony-id').write_text('recovery-fixture-colony')
+    archive = backup.create_full_backup(state, tmp_path / 'archives',
+        passphrase=b'fixture-passphrase', include_graph=False, include_vectors=False)
+    destination = tmp_path / 'memory'
+    with pytest.raises(ValueError, match='passphrase required'):
+        backup.restore_source_memory(archive, destination, current_state=state)
+    assert not destination.exists()
+    backup.restore_source_memory(archive, destination, current_state=state,
+                                 passphrase=b'fixture-passphrase')
+    recovered = SourceMedia(TurnIdempotencyLedger(destination / 'turn-idempotency.db'))
+    assert recovered.read(asset, contact_id='fixture-contact', session_id='later')[0] == image_bytes()
+
+
+def test_memory_salvage_rejects_identity_mismatch_and_existing_destination(evidence, tmp_path):
+    state, _, _, _ = evidence
+    archive = _memory_archive(state, tmp_path / 'archives')
+    destination = tmp_path / 'absent'
+    (state / 'colony-id').write_text('unrelated-colony')
+    with pytest.raises(ValueError, match='different colony identities'):
+        backup.restore_source_memory(archive, destination, current_state=state)
+    assert not destination.exists()
+    (state / 'colony-id').write_text('recovery-fixture-colony')
+    with pytest.raises(ValueError, match='fresh destination'):
+        backup.restore_source_memory(archive, state, current_state=state)
+
+
+def test_memory_salvage_checks_owned_originals_before_publication(evidence, tmp_path):
+    state, _, media, asset = evidence
+    archive = _memory_archive(state, tmp_path / 'archives')
+    unpacked = tmp_path / 'unpacked'; unpacked.mkdir()
+    backup._extract_archive(archive, unpacked)
+    root = backup._find_backup_root(unpacked)
+    (root / 'images' / 'sources' / 'originals' / (asset + '.png')).write_bytes(b'bad original')
+    broken = tmp_path / 'broken.tar.gz'
+    backup._create_archive(root, broken)
+    media.store._original_path(asset, 'image/png').unlink()
+    destination = tmp_path / 'absent'
+    with pytest.raises(ValueError, match='no matching original'):
+        backup.restore_source_memory(broken, destination, current_state=state)
+    assert not destination.exists()
+
+
+def test_restore_cli_reports_scope_and_requires_explicit_memory_destination(evidence, tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    from colony_sidecar import cli
+    state, _, _, _ = evidence
+    archive = _memory_archive(state, tmp_path / 'archives')
+    monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
+    args = SimpleNamespace(full=False, memory_only=True, input=str(archive), passphrase=None,
+                           current_state=str(state), output=None, force_identity=False)
+    with pytest.raises(SystemExit) as stopped:
+        cli._cmd_restore(args)
+    assert stopped.value.code == 2
+    args.output = str(tmp_path / 'memory')
+    monkeypatch.setattr(sys, 'argv', ['colony', 'restore', '--memory-only', '--input', str(archive),
+                                     '--current-state', str(state), '--output', args.output])
+    cli.main()
+    output = capsys.readouterr().out
+    assert 'Current source memory recovered' in output
+    assert 'separately current runtime bindings' in output
+    assert "Run 'colony start'" not in output
+
+    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path / 'full-state'))
+    args.full = True; args.memory_only = False; args.current_state = None; args.output = None
+    cli._cmd_restore(args)
+    output = capsys.readouterr().out
+    assert 'Archive reconstructed' in output
+    assert 'Reconcile current authority, erasures and completed effects' in output
+    assert "Run 'colony start'" not in output

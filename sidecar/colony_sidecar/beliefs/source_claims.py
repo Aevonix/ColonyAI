@@ -10,11 +10,11 @@ import re
 import unicodedata
 from urllib.parse import urlsplit
 
-from .source_time import parse_source_date, utc_timestamp
+from .source_time import parse_source_date, source_event_time, utc_timestamp
 from .promotion import MEMORY_KINDS, PROMOTION_PROMPT, promotion_metadata
 from colony_sidecar.util.model_output import final_text
 
-EXTRACTION_VERSION = "source-claims-v4"
+EXTRACTION_VERSION = "source-claims-v5"
 SYSTEM = '''Extract the user's attributed assertions about the actual world from
 one USER message. Facts true only inside fiction, role-play, an invented example
 or a counterfactual are not actual-world assertions, even when useful for writing.
@@ -54,7 +54,10 @@ ID or null; reuse its subject/predicate identity for the same property. Differen
 values without explicit correction/change are independent assertions, not a win.
 valid_from_text/valid_to_text describe when a state holds. event_at_text is when
 a described observation/event occurred. All are exact date expressions copied
-from the message, or null. Do not infer dates from ingestion. A quotation naming another reporter
+from the message, or null. The source timestamp is when this message was reported,
+not when its described event happened. Do not infer event dates from it or from ingestion.
+Preserve required validity conditions; an unresolved condition is not a current fact.
+A quotation naming another reporter
 is still only what this user reported. Include the reporter words in evidence.
 Return only JSON, without commentary.''' + '\n' + PROMOTION_PROMPT
 
@@ -280,7 +283,7 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
                 invalid_date = True
                 break
             parsed = parse_source_date(expression, observed_at=observed_at, timezone_name=timezone_name)
-            if parsed is None:
+            if parsed is None and key != "event_at_text":
                 invalid_date = True
                 break
             dates.append(parsed)
@@ -306,6 +309,8 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
             "prior_claim_id": previous["id"] if previous else None,
             "valid_from": valid_from, "valid_to": valid_to, "validity_basis": validity_basis,
             "event_at": event_at,
+            "event_time": source_event_time(item.get("event_at_text"), observed_at=observed_at,
+                                            timezone_name=timezone_name),
             "memory_quality": quality,
         })
         if diagnostics is not None:

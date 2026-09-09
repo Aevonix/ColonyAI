@@ -30,6 +30,10 @@ class SourceErased(ValueError):
     """The requested source or an exact message copy was deliberately erased."""
 
 
+class SourceInputPending(ValueError):
+    """An exact admitted parent has not reached the canonical ledger yet."""
+
+
 def source_message_hash(session_id: str, message: Mapping[str, Any]) -> str:
     # Ledger-owned normalization metadata retains the input message identity.
     # Public message schemas cannot supply this top-level field.
@@ -62,6 +66,8 @@ def canonical_turn_digest(payload: Any) -> str:
         payload = {key: value for key, value in payload.items() if key != "checkpoint_messages"}
     if isinstance(payload, dict) and payload.get("assistant_source_refs") is None:
         payload = {key: value for key, value in payload.items() if key != "assistant_source_refs"}
+    if isinstance(payload, dict) and payload.get("assistant_input_refs") is None:
+        payload = {key: value for key, value in payload.items() if key != "assistant_input_refs"}
     if isinstance(payload, dict) and payload.get("source_only") is None:
         payload = {key: value for key, value in payload.items() if key != "source_only"}
     canonical = json.dumps(
@@ -219,6 +225,7 @@ class TurnIdempotencyLedger:
             "session_id": session_id, "scope": scope,
             "occurred_at": occurred_at,
         })
+        messages = json.loads(encoded)  # Resolving lineage never mutates caller-owned input.
         with closing(self._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             rules = self._erasure_rules(conn, contact_id)
@@ -228,6 +235,15 @@ class TurnIdempotencyLedger:
             # below remain scoped to their original contact and session.
             if conn.execute("SELECT 1 FROM source_erasures WHERE turn_id=?", (turn_id,)).fetchone():
                 raise SourceErased("source was erased")
+            for message in messages:
+                if message.get('_supplied_inputs'):
+                    if message.get('role') != 'assistant':
+                        raise ValueError('invalid_source_input_dependency')
+                    resolved = self._resolve_input_dependencies(conn, contact_id, session_id,
+                                                               message['_supplied_inputs'], turn_id=turn_id)
+                    existing = message.get('_supplied_sources', [])
+                    message['_supplied_sources'] = list({(ref['source_id'], ref['source_version']): ref
+                                                         for ref in [*existing, *resolved]}.values())
             self._validate_dependencies(conn, turn_id, contact_id, session_id, messages)
             retained = self._retained_messages(messages, session_id, rules)
             if retained != messages:
@@ -322,6 +338,49 @@ class TurnIdempotencyLedger:
                 if exact or dependent:
                     causes.add(rule['turn_id'])
         return causes
+
+    @staticmethod
+    def _resolve_input_dependencies(conn, contact_id, session_id, refs, *, turn_id=''):
+        if not isinstance(refs, list):
+            raise ValueError('invalid_source_input_dependency')
+        result = []
+        for ref in refs:
+            if (not isinstance(ref, dict) or set(ref) != {'source_id', 'input_message_hash'}
+                    or not isinstance(ref['source_id'], str) or not 1 <= len(ref['source_id']) <= 256
+                    or ref['source_id'] == turn_id or not isinstance(ref['input_message_hash'], str)
+                    or not re.fullmatch('[0-9a-f]{64}', ref['input_message_hash'])):
+                raise ValueError('invalid_source_input_dependency')
+            # An old revision can have been erased while delivery was offline.
+            # Check that exact input first, even when some parent content remains.
+            erased = conn.execute('''SELECT e.message_hashes_json,r.source_version
+                FROM source_erasures e JOIN source_erasure_revisions r USING(sequence)
+                WHERE r.source_turn_id=? AND e.contact_id=?
+                AND (r.source_scope='person' OR e.session_id=?) ORDER BY sequence''',
+                (ref['source_id'], contact_id, session_id)).fetchall()
+            version = next((row['source_version'] for row in erased
+                            if ref['input_message_hash'] in json.loads(row['message_hashes_json'])), None)
+            if version is None:
+                parent = conn.execute('''SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?
+                    AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i
+                        WHERE i.source_id=turn_sources.turn_id)''', (ref['source_id'], contact_id)).fetchone()
+                if parent is None:
+                    if conn.execute('SELECT 1 FROM turn_sources WHERE turn_id=?', (ref['source_id'],)).fetchone():
+                        raise ValueError('invalid_source_input_dependency')
+                    raise SourceInputPending('source_input_parent_pending')
+                messages = json.loads(parent['messages_json'])
+                if (not (parent['scope'] == 'person' or parent['session_id'] == session_id)
+                        or not any(message.get('role') == 'user' and
+                            source_message_hash(parent['session_id'], message) == ref['input_message_hash']
+                            for message in messages)):
+                    raise ValueError('invalid_source_input_dependency')
+                version = canonical_turn_digest(messages)
+            result.append({'source_id': ref['source_id'], 'source_version': version})
+        return result
+
+    def resolve_input_dependencies(self, *, contact_id, session_id, refs, turn_id=''):
+        """Preflight before reserving effects; record_source rechecks atomically."""
+        with closing(self._connect()) as conn:
+            return self._resolve_input_dependencies(conn, contact_id, session_id, refs, turn_id=turn_id)
 
     @staticmethod
     def _validate_dependencies(conn, turn_id, contact_id, session_id, messages):

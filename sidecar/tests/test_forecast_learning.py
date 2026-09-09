@@ -127,7 +127,7 @@ def test_causal_self_survival_remains_historical_not_predictive_truth(tmp_path):
 def inspection(tmp_path, monkeypatch):
     store = ExpectationStore(str(tmp_path/'inspection.db'))
     configuration = {'runtime_budget_seconds':200,'requested_profile':'default'}
-    provenance = {'requested_role':'reasoning','served_model':'observed-processor',
+    provenance = {'requested_role':'reasoning','served_model':None,
                   'capabilities':configuration}
     estimate = {'prior_seconds':200,'seconds':100,'sample_n':12,'uncertain':False}
     issue(store,conditions={'estimate':estimate},model_provenance=provenance)
@@ -162,6 +162,22 @@ def test_inspection_terminal_outcome_has_independent_counterfactual_comparison(i
     assert score['forecast_premature_inspection'] and not score['prior_premature_inspection']
     assert score['forecast_inspection_lateness_seconds']==0 and score['prior_inspection_lateness_seconds']==50
     assert score['counterfactual_horizon_comparison'] and score['projection_added_status_calls']==0
+
+
+def test_completed_forecast_uses_retained_outcome_conditions_not_later_config(inspection, monkeypatch):
+    store, state = inspection
+    observed(store, observed_at=1150, recorded_at=1151)
+    original = store.forecast_history('one')['forecasts'][0]
+    monkeypatch.setattr(runtime_forecasts, '_outcome_facts', lambda *a: {'processor_observation': {
+        'configuration': state['forecast_configuration'], 'complete_observed_pairs': True,
+        'served_model': 'provider-reported-actual'}}, raising=False)
+    changed = {**state, 'status': 'done', 'forecast_configuration': {'requested_profile': 'edited-later'}}
+    result = runtime_forecasts.project({}, {}, changed, 'owner', now=1300)
+    assert result['conditions_comparable'] and result['configuration_matches']
+    assert result['served_model'] == 'provider-reported-actual'
+    assert result['original_served_model'] is None
+    assert result['comparison']['conditions_comparable'] and not result['suggestion_enabled']
+    assert store.forecast_history('one')['forecasts'][0] == original
 
 
 def test_inspection_censor_changed_configuration_unknown_and_erasure(inspection,monkeypatch):

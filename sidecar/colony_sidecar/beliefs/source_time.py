@@ -53,6 +53,31 @@ def parse_source_date(expression: str, *, observed_at: str | None, timezone_name
     return None
 
 
+def source_event_time(expression: str | None, *, observed_at: str | None, timezone_name="UTC") -> dict:
+    """Retain source-grounded event precision without inventing a point in time.
+
+    The caller verifies the expression against the quotation. An unresolved
+    optional event date is different from an unresolved state-validity condition.
+    The latter must still prevent certifying when a state holds.
+    """
+    if expression is None:
+        return {"status": "unknown"}
+    result = {"expression": expression}
+    parsed = parse_source_date(expression, observed_at=observed_at, timezone_name=timezone_name)
+    if parsed:
+        if expression.casefold().strip() == "now" or (re.fullmatch(_DATE, expression, re.I) and "T" in expression.upper()):
+            return {**result, "status": "resolved", "precision": "instant", "at": parsed}
+        begin = utc_timestamp(parsed).astimezone(ZoneInfo(timezone_name))
+        return {**result, "status": "resolved", "precision": "calendar_day", "start": parsed,
+                "end_exclusive": (begin + timedelta(days=1)).astimezone(UTC).isoformat()}
+    # This relation refers to the message's occurrence, never its later import.
+    if re.fullmatch(r"before (?:sending )?(?:this|the current) message", expression.strip(), re.I):
+        observed = utc_timestamp(observed_at)
+        if observed:
+            return {**result, "status": "bounded", "before": observed.isoformat()}
+    return {**result, "status": "unresolved"}
+
+
 @dataclass(frozen=True)
 class MemoryTimeQuery:
     mode: str = "current"

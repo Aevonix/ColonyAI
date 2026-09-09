@@ -220,7 +220,17 @@ class _Context:
         self.tools[kwargs["name"]] = kwargs
 
     def register_hook(self, name, fn):
-        self.hooks[name] = fn
+        previous = self.hooks.get(name)
+        if previous is None:
+            self.hooks[name] = fn
+        else:
+            # Native Hermes keeps all registered observers. A later telemetry
+            # callback must not erase the earlier participant-rotation hook.
+            def composed(*args, **kwargs):
+                earlier = previous(*args, **kwargs)
+                result = fn(*args, **kwargs)
+                return result if result is not None else earlier
+            self.hooks[name] = composed
 
     def register_middleware(self, kind, fn):
         self.middleware[kind] = fn
@@ -1411,6 +1421,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
         "colony_judgments",
         "colony_memory_annotate",
         "colony_memory_forget",
+        "colony_memory_read_source",
         "colony_create_commitment",
         "colony_list_goals",
         "colony_queue_stats",
