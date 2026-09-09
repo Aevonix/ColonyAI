@@ -225,6 +225,8 @@ def test_shared_budget_marks_truncation_without_mutating_original_evidence():
     assert len(text) <= 700 and rows[0]["excerpt_truncated"] is True
     assert rows[0]["source_uri"] == "turn:turn-1"
     assert rows[0]["role"] == "assistant"
+    assert 'fictional, hypothetical, reported or uncertain scope' in text
+    assert 'Use a claim as a real-world fact only when its source supports' in text
     assert original["content"] == 'A long "quoted" passage.\n' * 400
     assert "excerpt_truncated" not in original
 

@@ -93,6 +93,12 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     supplied=client.chat.completions.create.call_args_list[0].kwargs['messages']
     current=next(row for row in reversed(supplied) if row.get('role')=='user')
     assert question in current['content'] and fact in current['content'],(wire,supplied)
+    # Actual Hermes composes an authoritative-memory note outside the provider.
+    # The supported Colony request middleware preserves evidence and lineage
+    # while correcting that note before the native client receives it.
+    assert 'Treat as authoritative reference data' not in current['content'],current
+    assert 'fictional, hypothetical or reported scope' in current['content'],current
+    assert 'Use a claim as a real-world fact only when its source supports' in current['content'],current
     packets=[line for row in supplied for line in str(row.get('content','')).splitlines()
              if line.startswith('[colony-recall-v1 ')]
     assert len(packets)==1,packets
