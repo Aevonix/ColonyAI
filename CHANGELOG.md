@@ -13,6 +13,12 @@ Selected linked estimates carry exact source membership into the existing
 correction and request-erasure paths. They remain labelled unverified estimates.
 The enriched-context route uses the same query-matching, annotated source
 packet; compression cannot turn a corrected estimate back into a bare claim.
+Automatic relationship inferences require current supporting facts. Missing or
+corrected premises suppress the old inference, including UUID-only fallback
+text. Cached audience views recheck exact current source membership, and a
+source change during context assembly removes the affected inference. Explicit
+inference history remains available; these checks do not establish that a
+model's original inference was correct.
 No source, historical record or graph mirror is deleted, and no new judge,
 store, approval step or Hermes patch is introduced.
 

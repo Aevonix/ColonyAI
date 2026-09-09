@@ -73,7 +73,12 @@ query overlap and carry the existing attributed-correction packet and exact
 source references. The complete packet must fit the recall character budget;
 if later section compression changes it, the section is omitted. Source and
 correction revisions are rechecked after compression. Explicit history remains
-available when an automatic packet cannot fit. Old unlinked facts, including hand-entered
+available when an automatic packet cannot fit. Automatic relationship inferences
+also require current supporting facts. A correction suppresses the old inference
+rather than interpreting it again; missing source membership cannot produce a
+UUID-only fallback. Cached audience views and context assembly recheck the current
+source after other asynchronous work. Explicit inference history remains readable.
+Old unlinked facts, including hand-entered
 ones, remain available through explicit fact/history APIs but are not injected
 automatically. Their historical source enum and free-form metadata do not
 reliably distinguish owner curation from automated extraction. No curation or
