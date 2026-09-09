@@ -383,6 +383,14 @@ class SourceClaimProjection:
                     if offset >= 0 and hit["content"] != text:
                         hit["excerpt_truncated"] = True
                     while offset >= 0:
+                        procedures = [c for c in message_claims
+                            if c.get('memory_quality', {}).get('memory_kind') == 'procedure']
+                        if procedures:
+                            # Its unclaimed remainder may also contain a
+                            # required condition. Select the owning message,
+                            # never an independently ranked leftover fragment.
+                            keys.extend((c['subject_key'], c['predicate']) for c in procedures)
+                            removed.append((0, len(hit['content'])))
                         for claim in message_claims:
                             start = max(0, claim["span_start"] - offset)
                             end = min(len(hit["content"]), claim["span_end"] - offset)
@@ -400,10 +408,53 @@ class SourceClaimProjection:
                         retained_hits.append(dict(hit, content=fragment,
                             excerpt_truncated=bool(removed) or bool(hit.get("excerpt_truncated"))))
                 cursor = max(cursor, end)
-        bundles = []
+        bundles, procedure_sources, emitted_procedures, groups = [], {}, set(), {}
+
+        def current_group(key):
+            if key not in groups:
+                with closing(self.ledger._connect()) as conn:
+                    groups[key] = self._rows(conn, contact_id, session_id, key=key,
+                        time_query=time_query, distinct_values=True, limit=9)
+            return groups[key]
+
+        def procedure_source(claim):
+            """A property card cannot certify completeness of its procedure.
+
+            Keep the owning message together when it is still current. A
+            changed message needs the existing source/history readers instead
+            of reviving obsolete instructions from its original quotation.
+            """
+            if claim.get('memory_quality', {}).get('memory_kind') != 'procedure':
+                return None
+            identity = (claim['turn_id'], claim['message_hash'])
+            if identity not in procedure_sources:
+                with closing(self.ledger._connect()) as conn:
+                    source = conn.execute('''SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?
+                        AND (scope='person' OR session_id=?)''',
+                        (claim['turn_id'], contact_id, session_id)).fetchone()
+                    message = next((m for m in json.loads(source['messages_json'])
+                        if source_message_hash(source['session_id'], m) == claim['message_hash']), None) if source else None
+                    ids = [row['id'] for row in conn.execute(
+                        'SELECT id FROM source_claims WHERE turn_id=? AND message_hash=? LIMIT 513', identity)]
+                    all_claims = self._rows(conn, contact_id, session_id, ids=ids, limit=513)
+                    current = self._rows(conn, contact_id, session_id, ids=ids,
+                        time_query=time_query, limit=513)
+                text = source_text(message.get('content')) if message else ''
+                complete = bool(text and all_claims and len(ids) < 513
+                    and {c['id'] for c in all_claims} == {c['id'] for c in current}
+                    and not any(c['superseded_by'] or c['retracted_by'] for c in all_claims)
+                    and all(len(current_group((c['subject_key'], c['predicate']))) == 1 for c in all_claims))
+                procedure_sources[identity] = {'source': dict(source) if source else None,
+                    'message': message, 'text': text, 'complete': complete}
+            value = procedure_sources[identity]
+            # A complete one-message assertion keeps its existing property
+            # semantics. This boundary concerns partial-message procedures.
+            if value['text'] and claim['evidence'].strip() == value['text'].strip():
+                return None
+            return value
+
         for key in dict.fromkeys(keys):
-            with closing(self.ledger._connect()) as conn:
-                group = self._rows(conn, contact_id, session_id, key=key, time_query=time_query, distinct_values=True, limit=9)
+            group = current_group(key)
             if not group:
                 continue
             overflow = len(group) > 8
@@ -426,7 +477,7 @@ class SourceClaimProjection:
                        for c in group]
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
             identifier = hashlib.sha256(json.dumps([contact_id, key, [c["id"] for c in group]]).encode()).hexdigest()
-            bundles.append({"id": "assertions:" + identifier, "kind": "source_quote",
+            bundle = {"id": "assertions:" + identifier, "kind": "source_quote",
                             "history_anchor": {"source_id": group[0]['turn_id'], "claim_id": group[0]['id']},
                             "source_turn_ids": list(dict.fromkeys(c['turn_id'] for c in group)),
                             "_source_message_hashes": {turn: list(dict.fromkeys(
@@ -449,7 +500,35 @@ class SourceClaimProjection:
                                 "subject": group[0]['subject'], "predicate": key[1],
                                 "status": "incomplete_assertion_history", "distinct_values_at_least": len(values),
                                 "instruction": "Open assertion history before resolving this property; no value selected."},
-                                ensure_ascii=False)} if overflow else {})})
+                                ensure_ascii=False)} if overflow else {})}
+            contexts = [(claim, procedure_source(claim)) for claim in group]
+            contexts = [(claim, context) for claim, context in contexts if context is not None]
+            if contexts:
+                bundle['source_anchors'] = [{'source_id': turn} for turn in
+                    dict.fromkeys(claim['turn_id'] for claim in group)]
+                if len(group) == 1 and contexts[0][1]['complete']:
+                    claim, context = contexts[0]
+                    identity = (claim['turn_id'], claim['message_hash'])
+                    if identity in emitted_procedures:
+                        continue
+                    emitted_procedures.add(identity)
+                    source, message = context['source'], context['message']
+                    bundle.update(id='procedure-source:' + hashlib.sha256(json.dumps(identity).encode()).hexdigest(),
+                        content=context['text'], ranking_text=context['text'],
+                        procedure_context='complete_source_message_text',
+                        claim_status='source_procedure_context',
+                        epistemic_state='derived_unverified' if claim.get('evidence_basis') else 'quotation',
+                        source_turn_id=claim['turn_id'], source_message_hash=claim['message_hash'],
+                        role=message['role'], contact_id=source['contact_id'], session_id=source['session_id'],
+                        scope=source['scope'], occurred_at=source['occurred_at'], ingested_at=source['ingested_at'])
+                else:
+                    # A conflicting or changed procedure remains discoverable,
+                    # but its partial assertion is not sufficient instructions.
+                    bundle.update(procedure_context='full_source_required', excerpt_truncated=True,
+                        content='Incomplete procedure context. Open the full sources in source_anchors '
+                            'using their recalled source versions and inspect assertion history before '
+                            'following the procedure. Property history alone may omit its conditions.')
+            bundles.append(bundle)
         return (filter_unstructured(retained_beliefs, time_query),
                 bundles + filter_unstructured(source_candidates(retained_hits), time_query))
 
