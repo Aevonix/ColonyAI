@@ -133,6 +133,11 @@ searchable in either case. One captured outer deadline and owned job lease cover
 both requests; the router also keeps each role's deadline. Review therefore adds
 background work and latency, with a 1400-token output cap per batch.
 
+Extraction has a 4096-token output allowance for its bounded proposal batch.
+Review explanations can contain up to 1024 characters and are retained intact;
+overlong or truncated responses remain invalid. These output bounds do not
+extend the existing role deadlines, job lease or allowed attempts.
+
 Kept records preserve the proposal's fields and add `admission_review`, containing
 version `source-claim-review-v1`, a bounded reason and the actual review processor's
 provenance. Its basis is `model_judgment_unverified`: a supported source assertion

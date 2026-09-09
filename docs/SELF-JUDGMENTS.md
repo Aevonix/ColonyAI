@@ -7,6 +7,20 @@ The existing source worker performs this reflection using the configured
 `reasoning` role. It owns one in-flight reflection while continuing source
 indexing, claim extraction and image captioning; no additional service is needed.
 
+Ordinary reflection waits for the existing source-claim job to complete without
+spending a reflection attempt. Only current reviewed `decision`, `procedure` and
+`substantive_event` claims supply premises. Personal facts, preferences and
+relationships remain in their existing memory and relationship projections.
+A question with no qualifying claim does not invoke the judgment model. This
+reuses the fallible admission category; it adds no classifier or semantic judge.
+
+Supporting and contrary references bind exact admitted claim IDs. Correction,
+retraction, attribution invalidation and erasure are checked again before commit
+and automatic context use. A different surviving claim in the same message
+cannot replace a corrected premise. Older message-only views remain inspectable
+as `unsupported_premise` history, without automatic injection. Explicit owner
+reconsideration and typed native execution observations retain their paths.
+
 The model is asked to abstain on transient logistics, copied preferences,
 unsupported generalizations and views without lasting use. This is an inference
 requirement, not proof that every accepted judgment is good. Output validation
