@@ -105,9 +105,11 @@ async def test_oversized_message_requires_full_source_not_only_one_property_hist
 
 
 @pytest.mark.asyncio
-async def test_corrected_or_retracted_sibling_never_reappears_as_complete_original(tmp_path):
+@pytest.mark.parametrize('whole_message', [False, True])
+async def test_corrected_or_retracted_sibling_never_reappears_as_complete_original(tmp_path, whole_message):
     ledger = TurnIdempotencyLedger(tmp_path/'ledger.db')
-    projection = await project(ledger)
+    projection = await project(ledger, outputs=[procedure(TEXT, predicate) for predicate in
+        ('sample test', 'indicator limitation', 'power condition')] if whole_message else None)
     replacement = 'Correction: for the bench sensor sample test, record a twenty-second sample.'
     await project(ledger, replacement, turn='correction', outputs=[
         procedure(replacement, operation='correct', match_prior=True)])
@@ -126,7 +128,7 @@ async def test_corrected_or_retracted_sibling_never_reappears_as_complete_origin
         assert opened['complete']
         histories.extend(json.loads(opened['content'])['assertions'])
     assert any(c['evidence'] == replacement for c in histories)
-    assert any(c['evidence'] == STEPS and c['retracted_by'] for c in histories)
+    assert any(c['evidence'] == (TEXT if whole_message else STEPS) and c['retracted_by'] for c in histories)
     # Erasing the correction must not revive its retracted predecessor.
     ledger.erase_sources(contact_id='person', turn_ids=['correction'])
     _, body = pack_memory_context(candidates(projection), max_chars=6000)

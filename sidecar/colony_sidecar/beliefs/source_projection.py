@@ -449,7 +449,7 @@ class SourceClaimProjection:
             value = procedure_sources[identity]
             # A complete one-message assertion keeps its existing property
             # semantics. This boundary concerns partial-message procedures.
-            if value['text'] and claim['evidence'].strip() == value['text'].strip():
+            if value['complete'] and claim['evidence'].strip() == value['text'].strip():
                 return None
             return value
 
