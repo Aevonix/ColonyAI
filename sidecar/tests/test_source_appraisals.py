@@ -48,6 +48,7 @@ class Processor:
 
     async def complete(self, *, messages, context):
         assert context['function_role'] == 'extraction'
+        assert context['response_schema'] == module.RESPONSE_SCHEMA
         payload = json.loads(messages[-1]['content']); self.requests.append(payload)
         if self.pause:
             await self.pause(payload)

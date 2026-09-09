@@ -91,6 +91,31 @@ and repairs set to the old frustration ID. This is a settlement receipt: it clea
 the old frustration, without creating a new frustration or performed mood.
 Return the JSON object only, without commentary or Markdown fences.'''
 
+_CITATION_SCHEMA = {'type': 'object', 'additionalProperties': False,
+                    'required': ['handle', 'quote'], 'properties': {
+                        'handle': {'type': 'string'},
+                        'quote': {'type': 'string', 'minLength': 1, 'maxLength': 500}}}
+_APPRAISAL_PROPERTIES = {
+    'topic': {'type': 'string', 'minLength': 1, 'maxLength': 80},
+    'text': {'type': 'string', 'minLength': 1, 'maxLength': 360},
+    'reason': {'type': 'string', 'minLength': 1, 'maxLength': 360},
+    'support': {'type': 'array', 'minItems': 1, 'maxItems': 3, 'items': _CITATION_SCHEMA},
+    'contrary': {'type': 'array', 'maxItems': 3, 'items': _CITATION_SCHEMA},
+    'intensity': {'type': 'string', 'enum': ['low', 'moderate']},
+    'hint': {'type': 'string', 'enum': sorted(HINTS)},
+    'repairs': {'type': ['string', 'null']},
+}
+RESPONSE_SCHEMA = {'name': 'source_appraisal', 'schema': {
+    'type': 'object', 'additionalProperties': False, 'required': ['observations'],
+    'properties': {'observations': {'type': 'array', 'maxItems': 4, 'items': {'anyOf': [
+        {'type': 'object', 'additionalProperties': False,
+         'required': ['kind', 'dimension', *_APPRAISAL_PROPERTIES],
+         'properties': {'kind': {'type': 'string', 'const': kind},
+                        'dimension': {'type': 'string', 'enum': sorted(dimensions)},
+                        **_APPRAISAL_PROPERTIES}}
+        for kind, dimensions in DIMENSIONS.items()
+    ]}}}}}
+
 
 def _json(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
@@ -505,7 +530,8 @@ class AppraisalStore:
                  if k in evidence} for evidence in payload['evidence']]}
             response = await asyncio.wait_for(router.complete(messages=[{'role': 'system', 'content': SYSTEM},
                 {'role': 'user', 'content': _json(prompt_payload)}], context={'task': 'source_appraisal',
-                'function_role': 'extraction', 'allow_fallback': True, 'max_output_tokens': 2200}), deadline + 5)
+                'function_role': 'extraction', 'allow_fallback': True, 'max_output_tokens': 2200,
+                'response_schema': RESPONSE_SCHEMA}), deadline + 5)
             items = self._validate(final_text(response), payload)
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (
                 ('model_id', 'model_id'), ('binding', 'binding'), ('config_revision', 'config_revision'), ('weight_revision', 'model_revision'))}

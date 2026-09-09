@@ -67,6 +67,23 @@ current evidence handle; contrary may be empty. Certainty is your stated degree
 of conviction, not a measured probability. Do not copy an owner's stance merely
 because they hold it. Explain the practical tradeoff in your own reasoned view.'''
 
+_JUDGMENT_PROPERTIES = {
+    'topic': {'type': 'string', 'minLength': 1, 'maxLength': 80},
+    'supersedes': {'type': ['integer', 'null'], 'minimum': 1},
+    'stance': {'type': 'string', 'minLength': 1, 'maxLength': 500},
+    'reason': {'type': 'string', 'minLength': 1, 'maxLength': 700},
+    'certainty': {'type': 'string', 'enum': ['tentative', 'moderate', 'strong']},
+    'support': {'type': 'array', 'minItems': 1, 'items': {'type': 'string'}},
+    'contrary': {'type': 'array', 'items': {'type': 'string'}},
+}
+RESPONSE_SCHEMA = {'name': 'self_judgment', 'schema': {'type': 'object', 'anyOf': [
+    {'type': 'object', 'additionalProperties': False, 'required': ['action', *fields],
+     'properties': {'action': {'type': 'string', 'const': action},
+                    **{name: _JUDGMENT_PROPERTIES[name] for name in fields}}}
+    for action, fields in [('abstain', ()), ('retain', ('topic', 'supersedes')),
+                           ('revise', tuple(_JUDGMENT_PROPERTIES))]
+]}}
+
 
 def _json(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
@@ -530,7 +547,8 @@ class SelfJudgments:
                     'when no useful decision beyond the single execution is supported.')
             response = await asyncio.wait_for(router.complete(
                 messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': _json(payload)}],
-                context={'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True}), timeout=deadline)
+                context={'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True,
+                         'response_schema': RESPONSE_SCHEMA}), timeout=deadline)
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (
                 ('model_id', 'model_id'), ('binding', 'binding'), ('config_revision', 'config_revision'),
                 ('weight_revision', 'model_revision'))}

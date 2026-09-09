@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from colony_sidecar.beliefs.source_claims import validated_claims
+from colony_sidecar.beliefs.source_claims import RESPONSE_SCHEMA, validated_claims
 from colony_sidecar.beliefs.source_projection import SourceClaimProjection
 from colony_sidecar.self_model.judgments import SelfJudgments
 from colony_sidecar.turns import TurnIdempotencyLedger
@@ -35,6 +35,7 @@ async def test_complete_procedure_survives_commit_restart_and_scoped_projection(
     model = Model({PROCEDURE: procedure()})
     assert await projection.process_one(model)
     assert len(model.calls) == 1
+    assert model.calls[0][1]['context']['response_schema'] == RESPONSE_SCHEMA
     status = projection.status('contact-a')[0]
     assert status['status'] == 'complete' and status['claim_count'] == 1
     reopened = SourceClaimProjection(TurnIdempotencyLedger(path))

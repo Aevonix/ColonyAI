@@ -10,7 +10,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 from .source_time import parse_source_date, utc_timestamp
-from .promotion import PROMOTION_PROMPT, promotion_metadata
+from .promotion import MEMORY_KINDS, PROMOTION_PROMPT, promotion_metadata
 from colony_sidecar.util.model_output import final_text
 
 EXTRACTION_VERSION = "source-claims-v2"
@@ -45,6 +45,27 @@ a described observation/event occurred. All are exact date expressions copied
 from the message, or null. Do not infer dates from ingestion. A quotation naming another reporter
 is still only what this user reported. Include the reporter words in evidence.
 Return only JSON, without commentary.''' + '\n' + PROMOTION_PROMPT
+
+_CLAIM_PROPERTIES = {
+    'subject': {'type': 'string', 'minLength': 1, 'maxLength': 160},
+    'predicate': {'type': 'string', 'minLength': 1, 'maxLength': 160},
+    'evidence': {'type': 'string', 'minLength': 1, 'maxLength': 500},
+    'operation': {'type': 'string', 'enum': ['assert', 'change', 'correct']},
+    'prior_claim_id': {'type': ['string', 'null']},
+    'valid_from_text': {'type': ['string', 'null']},
+    'valid_to_text': {'type': ['string', 'null']},
+    'event_at_text': {'type': ['string', 'null']},
+    'recall_reason': {'type': 'string', 'minLength': 12, 'maxLength': 240},
+}
+RESPONSE_SCHEMA = {'name': 'source_claims', 'schema': {
+    'type': 'array', 'maxItems': 6, 'items': {'anyOf': [
+        {'type': 'object', 'additionalProperties': False,
+         'required': [*_CLAIM_PROPERTIES, 'memory_kind', 'value'],
+         'properties': {**_CLAIM_PROPERTIES,
+                        'memory_kind': {'type': 'string', 'enum': kinds},
+                        'value': {'type': 'string', 'minLength': 1, 'maxLength': limit}}}
+        for kinds, limit in [(sorted(MEMORY_KINDS - {'procedure'}), 160), (['procedure'], 500)]
+    ]}}}
 
 _CORRECT = re.compile(r"\b(correction|correct(?:ing)? that|i misspoke|i was wrong|actually|not .{1,80} but)\b", re.I)
 _CHANGE = re.compile(r"\b(now|moved|changed|starting|no longer|from .{1,40} onward|instead)\b", re.I)
@@ -277,7 +298,7 @@ async def extract_claims(router, source: dict, message: dict, prior: list[dict],
         messages=[{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
         force_tier=tier, context={"task": "source_claim_extraction", "function_role": "extraction", "max_output_tokens": 1400,
-                                  "allow_fallback": functions}),
+                                  "allow_fallback": functions, "response_schema": RESPONSE_SCHEMA}),
         timeout=extraction_timeout_seconds(router) if request_timeout is None else request_timeout)
     provenance = {
         'function_role': getattr(response, 'function_role', '') or 'extraction',

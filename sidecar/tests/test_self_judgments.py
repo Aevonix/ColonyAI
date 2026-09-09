@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.self_model.judgments import SelfJudgments
+from colony_sidecar.self_model.judgments import RESPONSE_SCHEMA, SelfJudgments
 from colony_sidecar.turns import TurnIdempotencyLedger
 from test_self_perspective import perspective, tell
 from test_turn_source_evidence import source_app
@@ -32,7 +32,8 @@ class Processor:
         return self.deadline
 
     async def complete(self, *, messages, context):
-        assert context == {'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True}
+        assert context == {'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True,
+                           'response_schema': RESPONSE_SCHEMA}
         payload = json.loads(messages[-1]['content'])
         self.requests.append(payload)
         if self.before_return:
