@@ -23,8 +23,8 @@ the existing source ledger. Reviewed transcript claims retain their exact audio
 parent and recognition uncertainty through recall, correction, erasure and
 recovery. Capture remains a deployment choice; Colony does not start a microphone
 or assume that recognized words are correct.
-Ordinary persistent opinions require current reviewed source premises; a routine
-question alone cannot establish a memory failure. Older unqualified views remain
+Ordinary persistent opinions require current reviewed source premises; questions
+without admitted premises skip opinion generation. Older unqualified views remain
 inspectable while being excluded from automatic guidance.
 The [audio source guide](docs/SOURCE-AUDIO.md), [memory guide](docs/MEMORY-QUALITY.md)
 and [changelog](CHANGELOG.md) explain these behaviors and their limits.
