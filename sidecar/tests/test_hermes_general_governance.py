@@ -220,7 +220,17 @@ class _Context:
         self.tools[kwargs["name"]] = kwargs
 
     def register_hook(self, name, fn):
-        self.hooks[name] = fn
+        previous = self.hooks.get(name)
+        if previous is None:
+            self.hooks[name] = fn
+        else:
+            # Native Hermes keeps all registered observers. A later telemetry
+            # callback must not erase the earlier participant-rotation hook.
+            def composed(*args, **kwargs):
+                earlier = previous(*args, **kwargs)
+                result = fn(*args, **kwargs)
+                return result if result is not None else earlier
+            self.hooks[name] = composed
 
     def register_middleware(self, kind, fn):
         self.middleware[kind] = fn
