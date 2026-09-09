@@ -25,7 +25,8 @@ def handle(args, scope, client):
             keys = ('judgments', 'judgment_history', 'judgment_processing')
             return json.dumps({key: perspective.get(key, [])[:10] for key in keys} |
                               {'truncated': {key: len(perspective.get(key, [])) > 10 for key in keys},
-                               'appraisals': perspective.get('appraisals', {})})
+                               'appraisals': perspective.get('appraisals', {}),
+                               'judgments_enabled': perspective.get('judgments_enabled')})
         if (type(args['judgment_id']) is not int or args['judgment_id'] < 1 or
                 not scope.turn_id or not scope.user_message.strip()):
             raise ValueError('owner_turn_and_judgment_required')
