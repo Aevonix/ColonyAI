@@ -92,6 +92,35 @@ class ExecutionObserver:
                 self._children.popitem(last=False)
 
     @staticmethod
+    def output_limit_metadata(kwargs):
+        """Read final wire fields, not the agent's optional pre-transport cap.
+
+        No request body is copied or retained. An observed omission means the
+        provider chooses the limit; it does not attest an unlimited response.
+        Missing/truncated payloads cannot establish that omission.
+        """
+        unknown = {'output_limit_kind': 'unknown'}
+        if kwargs.get('api_mode') not in {'chat_completions', 'anthropic_messages', 'codex_responses'}:
+            return unknown
+        request = kwargs.get('request')
+        if not isinstance(request, dict) or request.get('_truncated') or request.get('_truncated_items'):
+            return unknown
+        body = request.get('body')
+        if not isinstance(body, dict) or body.get('_truncated') or body.get('_truncated_items'):
+            return unknown
+        extra = body.get('extra_body', {})
+        if not isinstance(extra, dict) or extra.get('_truncated') or extra.get('_truncated_items'):
+            return unknown
+        values = [part[key] for part in (body, extra)
+                  for key in ('max_tokens', 'max_completion_tokens', 'max_output_tokens') if key in part]
+        if not values:
+            return {'output_limit_kind': 'provider_default'}
+        if (all(type(value) is int and 0 < value <= 2147483647 for value in values)
+                and len(set(values)) == 1):
+            return {'output_limit_kind': 'request', 'max_tokens': values[0]}
+        return unknown
+
+    @staticmethod
     def runtime_metadata(event, kwargs):
         """Whitelist callback metadata, never request/response content or URLs."""
         result = {'event': event}
@@ -100,10 +129,12 @@ class ExecutionObserver:
             value = kwargs.get(source)
             if isinstance(value, str) and value and len(value) <= 256 and not any(ord(c) < 32 for c in value):
                 result[target] = value
-        for key in ('api_call_count', 'retry_count', 'approx_input_tokens', 'max_tokens', 'tool_count'):
+        for key in ('api_call_count', 'retry_count', 'approx_input_tokens', 'tool_count'):
             value = kwargs.get(key)
             if type(value) is int and 0 <= value <= 2147483647:
                 result[key] = value
+        if event == 'start':
+            result.update(ExecutionObserver.output_limit_metadata(kwargs))
         for key in ('started_at', 'ended_at'):
             value = kwargs.get(key)
             if type(value) in (int, float) and math.isfinite(value) and value > 0:

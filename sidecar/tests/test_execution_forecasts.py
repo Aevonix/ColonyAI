@@ -27,7 +27,7 @@ def send(setup, name='a', **changes):
 def api(event='start', **changes):
     return {'event': event, 'request_id': 'request-a', 'requested_model': 'model-a', 'provider': 'local',
         'api_mode': 'chat_completions', 'profile_id': 'a'*64, 'runtime_kind': 'turn',
-        'max_tokens': 8192, 'tool_count': 4, 'approx_input_tokens': 2000,
+        'max_tokens': 8192, 'output_limit_kind': 'request', 'tool_count': 4, 'approx_input_tokens': 2000,
         **({'api_call_count': 1, 'retry_count': 0} if event == 'start' else {}), **changes}
 
 def start(runtime, name='a'):
@@ -177,6 +177,55 @@ def test_unknown_input_configuration_stays_incomparable(runtime):
     send(runtime,sequence=2,phase='model',runtime=api(approx_input_tokens=None))
     assert not finish(runtime)['forecast']['conditions_comparable']
     assert history(runtime)['outcomes'][0]['status'] == 'censored'
+
+
+def test_observed_provider_default_learns_without_inventing_a_numeric_cap(runtime):
+    def observed(name, *, kind='provider_default', cap=None):
+        send(runtime, name)
+        send(runtime, name, sequence=2, phase='model',
+             runtime=api(output_limit_kind=kind, max_tokens=cap))
+        finish(runtime, name)
+
+    observed('first')
+    original = history(runtime, 'first')['forecasts'][0]
+    config = original['detail']['model_provenance']['capabilities']
+    assert config['output_limit_kind'] == 'provider_default' and config['max_tokens'] is None
+    assert history(runtime, 'first')['outcomes'][0]['status'] == 'observed'
+    observed('second')
+    estimate = history(runtime, 'second')['forecasts'][0]['detail']['conditions']['estimate']
+    assert estimate['sample_n'] == 1 and estimate['seconds'] == 396
+    observed('explicit', kind='request', cap=8192)
+    assert history(runtime, 'explicit')['forecasts'][0]['detail']['conditions']['estimate']['sample_n'] == 0
+    observed('unknown', kind='unknown')
+    assert history(runtime, 'unknown')['outcomes'][0]['status'] == 'censored'
+    assert history(runtime, 'first')['forecasts'][0] == original
+    assert forecasts.project(runtime[0], observation('second')['execution_id'], 'contact-a')['suggestion_enabled'] is False
+
+
+@pytest.mark.parametrize('later_kind,later_cap', [('request',8192), ('unknown',None), ('provider_default',0)])
+def test_changed_or_unqualified_output_policy_cannot_complete_comparable_run(runtime, later_kind, later_cap):
+    send(runtime)
+    send(runtime, sequence=2, phase='model', runtime=api(output_limit_kind='provider_default', max_tokens=None))
+    send(runtime, sequence=3, phase='between_calls', runtime=api('response', response_model='model-a'))
+    send(runtime, sequence=4, phase='model', runtime=api(request_id='second', api_call_count=2,
+         output_limit_kind=later_kind, max_tokens=later_cap))
+    send(runtime, sequence=5, phase='between_calls', runtime=api('response', request_id='second', response_model='model-a'))
+    assert send(runtime, sequence=6, phase='ended', state='completed')['forecast']['conditions_comparable'] is False
+    assert history(runtime)['outcomes'][0]['status'] == 'censored'
+
+
+def test_missing_legacy_output_policy_stays_censored_and_does_not_seed_new_cohort(runtime):
+    send(runtime)
+    legacy = api(max_tokens=None)
+    legacy.pop('output_limit_kind')
+    send(runtime, sequence=2, phase='model', runtime=legacy)
+    finish(runtime)
+    old = history(runtime)
+    assert old['outcomes'][0]['status'] == 'censored'
+    send(runtime, 'next')
+    send(runtime, 'next', sequence=2, phase='model', runtime=api(output_limit_kind='provider_default', max_tokens=None))
+    assert history(runtime, 'next')['forecasts'][0]['detail']['conditions']['estimate']['sample_n'] == 0
+    assert history(runtime) == old
 
 
 @pytest.mark.parametrize('recovery', ['duplicate_callback', 'owner_read_after_restart', 'next_forecast'])

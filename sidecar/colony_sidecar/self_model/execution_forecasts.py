@@ -70,12 +70,19 @@ def _config(event):
     bucket = ('up_to_4k' if size <= 4096 else '4k_to_16k' if size <= 16384
               else '16k_to_64k' if size <= 65536 else 'over_64k') if type(size) is int else 'unknown'
     return {**{key: event.get(key) or '' for key in ROUTING_KEYS},
-        'input_bucket': bucket, 'max_tokens': event.get('max_tokens'), 'tool_count': event.get('tool_count')}
+        'input_bucket': bucket, 'max_tokens': event.get('max_tokens'),
+        'output_limit_kind': event.get('output_limit_kind', 'unknown'), 'tool_count': event.get('tool_count')}
 
 
 def _known(config):
+    # Observed provider-default requests form their own cohort. Their actual
+    # server cap stays unknown; missing legacy telemetry never joins it.
+    output_known = ((config.get('output_limit_kind') == 'request'
+                     and type(config.get('max_tokens')) is int and config['max_tokens'] > 0)
+                    or (config.get('output_limit_kind') == 'provider_default'
+                        and config.get('max_tokens') is None))
     return (all(config.get(key) and config[key] != 'unknown' for key in (*ROUTING_KEYS, 'input_bucket'))
-            and type(config.get('max_tokens')) is int and config['max_tokens'] > 0
+            and output_known
             and type(config.get('tool_count')) is int)
 
 

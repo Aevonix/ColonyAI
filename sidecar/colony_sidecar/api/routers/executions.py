@@ -23,6 +23,7 @@ class ExecutionRuntimeObservation(BaseModel):
     runtime_kind: Literal['turn', 'cron', 'kanban_worker', 'delegated_child', 'unknown'] = 'unknown'
     approx_input_tokens: int | None = Field(default=None, ge=0, le=2147483647)
     max_tokens: int | None = Field(default=None, ge=0, le=2147483647)
+    output_limit_kind: Literal['request', 'provider_default', 'unknown'] = 'unknown'
     tool_count: int | None = Field(default=None, ge=0, le=2147483647)
     api_call_count: int | None = Field(default=None, ge=0, le=2147483647)
     retry_count: int | None = Field(default=None, ge=0, le=2147483647)
