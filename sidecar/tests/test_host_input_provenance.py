@@ -142,6 +142,72 @@ def test_ordinary_cli_turn_remains_excluded_without_supplied_input(handoff):
         assert db.execute('SELECT COUNT(*) FROM turn_sources').fetchone()[0] == 2
 
 
+@pytest.mark.parametrize('entry', ['pre_api_request', 'llm_request'])
+def test_native_compression_rotation_preserves_input_memory_and_root_result(handoff, monkeypatch, entry):
+    h = handoff
+    provider = _memory_provider(h, monkeypatch)
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        request = h.start()['request']
+        for session in ('compressed-once', 'compressed-twice'):
+            assert provider._prefetch_contact(session) == ''
+            if entry == 'pre_api_request':
+                h.ctx.hooks[entry](session_id=session, task_id='task', turn_id='turn')
+                # Rotation itself does not attest current memory sources.
+                assert provider._prefetch_contact(session) == ''
+            result = h.ctx.middleware['llm_request'](request,
+                session_id=session, task_id='task', turn_id='turn')
+            assert result['reason'] == 'source_erasure_checked'
+            assert 'maintenance record' in json.dumps(result['request'])
+            assert provider._prefetch_contact(session) == 'owner'
+            assert call(h.ctx, 'read_file', session=session, task='task', turn='turn') == 'executed'
+        h.finish(session='compressed-twice')
+        assert supplied.result['session_id'] == 'compressed-twice'
+        assert supplied.result['input_refs'] == h.parents
+        assert supplied.result['source_refs'] == h.refs
+    rows = h.outbox.snapshot()
+    assert len(rows) == 1 and rows[0]['state'] == 'delivered'
+    assert rows[0]['payload']['assistant_input_refs'] == h.parents
+    assert rows[0]['payload']['assistant_source_refs'] == h.refs
+    assert 'user_message' not in rows[0]['payload']
+
+
+def test_rotated_child_cannot_complete_root_handoff(handoff):
+    h = handoff
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        h.start()
+        h.ctx.hooks['subagent_start'](parent_session_id='native', parent_turn_id='turn',
+            child_session_id='child')
+        h.ctx.hooks['pre_llm_call'](session_id='child', task_id='child-task', turn_id='child-turn',
+            parent_session_id='native', platform='cli', sender_id='', user_message='Read the record.')
+        h.ctx.hooks['pre_api_request'](session_id='compressed-child', task_id='child-task', turn_id='child-turn')
+        assert call(h.ctx, 'read_file', session='compressed-child', task='child-task', turn='child-turn') == 'executed'
+        h.finish(session='compressed-child', task='child-task', turn='child-turn')
+        assert supplied.result is None
+        h.finish()
+        assert supplied.result['session_id'] == 'native'
+
+
+@pytest.mark.parametrize('erased', ['original-input', 'earlier'])
+def test_erasure_after_native_rotation_still_withholds_request_tools_and_completion(handoff, erased):
+    h = handoff
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        request = h.start()['request']
+        h.ctx.hooks['pre_api_request'](session_id='compressed', task_id='task', turn_id='turn')
+        h.ledger.erase_sources(contact_id='owner', turn_ids=[erased])
+        result = h.ctx.middleware['llm_request'](request,
+            session_id='compressed', task_id='task', turn_id='turn')
+        assert result['reason'] == 'source_input_unavailable'
+        assert 'maintenance record' not in json.dumps(result['request'])
+        assert result['request']['tools'] == []
+        assert json.loads(call(h.ctx, 'read_file', session='compressed', task='task', turn='turn'))['reason'] == 'source_input_unavailable'
+        h.finish(session='compressed')
+        assert supplied.result is None
+        assert h.outbox.snapshot() == []
+
+
 def _memory_provider(handoff, monkeypatch):
     from test_colony_memory_provider import _load_provider_module
     monkeypatch.delenv('COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY', raising=False)

@@ -7,6 +7,7 @@ participant resolver, source reader and canonical writer remain authoritative.
 """
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 import copy
 import json
 import re
@@ -42,6 +43,7 @@ class SuppliedInput:
         self._lock = threading.Lock()
         self._bound = set()
         self._sessions = {session_id}
+        self._root_sessions = {session_id}
         self._memory_sessions = set()
         self._closed = self._blocked = False
         self.result = None
@@ -50,12 +52,31 @@ class SuppliedInput:
         with self._lock:
             self._memory_sessions.discard(scope.session_id)
             valid = (not self._closed and scope.valid_participant and scope.contact_id == self.contact_id
-                     and (scope.session_id == self.session_id or parent_session_id in self._sessions))
+                     and (scope.session_id in self._root_sessions or parent_session_id in self._sessions))
             if valid:
                 self._bound.add((scope.session_id, scope.task_id, scope.turn_id))
                 self._sessions.add(scope.session_id)
             else:
                 self._blocked = True
+
+    def rotate(self, previous, scope):
+        """Follow only an equivalent scope admitted by the native registry.
+
+        Task/turn equality in allowed() is insufficient: only the registry's
+        authenticated rotation path calls here. A new session still needs the
+        normal fresh source check before it can supply memory or run tools.
+        """
+        with self._lock:
+            if (self._closed or self._blocked or not previous.valid_participant
+                    or previous.contact_id != self.contact_id
+                    or (previous.session_id, previous.task_id, previous.turn_id) not in self._bound
+                    or scope != replace(previous, session_id=scope.session_id)):
+                return
+            self._bound.add((scope.session_id, scope.task_id, scope.turn_id))
+            self._sessions.add(scope.session_id)
+            self._memory_sessions.discard(scope.session_id)
+            if previous.session_id in self._root_sessions:
+                self._root_sessions.add(scope.session_id)
 
     def allowed(self, scope, *, fresh, rules):
         with self._lock:
@@ -102,12 +123,12 @@ class SuppliedInput:
             + json.dumps(self._sources) + '\n[/colony-recall-v1]')
 
     def completed(self, scope, turn_id, sources):
-        if scope.session_id == self.session_id:
-            with self._lock:
-                if not self._blocked and not self._closed:
-                    self.result = {'session_id': scope.session_id, 'turn_id': turn_id,
-                                   'input_refs': copy.deepcopy(self._inputs),
-                                   'source_refs': copy.deepcopy(sources)}
+        with self._lock:
+            if (scope.session_id in self._root_sessions
+                    and not self._blocked and not self._closed):
+                self.result = {'session_id': scope.session_id, 'turn_id': turn_id,
+                               'input_refs': copy.deepcopy(self._inputs),
+                               'source_refs': copy.deepcopy(sources)}
 
 
 def current():

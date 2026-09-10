@@ -552,7 +552,10 @@ class _TransportScopeRegistry:
             if not matches or any(replace(scope, session_id=session) !=
                                   replace(matches[0], session_id=session) for scope in matches):
                 return
-            self.put(replace(matches[0], session_id=session))
+            scope = self.put(replace(matches[0], session_id=session))
+            supplied = input_provenance.current()
+            if supplied is not None:
+                supplied.rotate(matches[0], scope)
 
 
 _TRANSPORT_SCOPES = _TransportScopeRegistry()

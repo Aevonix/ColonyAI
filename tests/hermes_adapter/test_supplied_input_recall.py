@@ -106,7 +106,13 @@ def respond(request):
   else:
    tool_rows=[row for row in body['messages'] if row['role']=='tool']
    assert len(tool_rows)==1,tool_rows
-   if step==3:assert record in tool_rows[0]['content'],tool_rows
+   if step==3:
+    assert record in tool_rows[0]['content'],tool_rows
+    if scenario=='rotate':
+     # Simulate the compressor's session-ID change between native requests.
+     # The next request uses the actual middleware/hook and source writer;
+     # no supplied-input binding is manufactured by the fixture.
+     parent.session_id += '-compressed'
    if step==4:
     result=json.loads(tool_rows[0]['content'])
     assert 'SYNCHRONOUSLY' in result['note'] and result['results'][0]['status']=='completed',result
@@ -150,11 +156,11 @@ def agent():
   platform='cli',max_iterations=5,enabled_toolsets=['colony','delegation'])
  value.save_trajectories=False
  return value
-parent=agent()
+parent=agent();initial_session=parent.session_id
 with supplied_input(contact_id='owner',session_id=parent.session_id,input_refs=parents,source_refs=[ref]) as supplied:
  with patch.object(parent._memory_manager,'prefetch_all',wraps=parent._memory_manager.prefetch_all) as automatic:
   result=parent.run_conversation('Perform the admitted lamp maintenance task.',persist_user_message=original)
- automatic.assert_called_once_with(original,session_id=parent.session_id)
+ automatic.assert_called_once_with(original,session_id=initial_session)
  if scenario=='erase_during':
   assert len(generation)==2 and result['final_response']=='The source is unavailable.',result
   assert supplied.result is None and supplied.memory_contact(parent.session_id)==''
@@ -167,13 +173,16 @@ with supplied_input(contact_id='owner',session_id=parent.session_id,input_refs=p
  assert result['final_response']=='Disconnect external power before cleaning the lamp.',result
  assert supplied.result['input_refs']==parents and ref in supplied.result['source_refs'],supplied.result
  assert automatic_ref in supplied.result['source_refs'],supplied.result
+ assert supplied.result['session_id']==parent.session_id
+ if scenario=='rotate':assert parent.session_id!=initial_session
  assert len(generation)==4
 parent.close()
 assemblies=[row for row in wire if row['path']=='/v1/host/context/assemble']
 # Native queues a next-turn prefetch at completion. It may run before this
 # finite supplied context closes; it is not another consumed prompt packet.
 assert 1<=len(assemblies)<=2 and all(row['status']==200 for row in assemblies),assemblies
-assert all(row['body']['context']=={'session_id':parent.session_id,'contact_id':'owner'} for row in assemblies)
+assert all(row['body']['context'].get('session_id') in (initial_session,parent.session_id)
+ and row['body']['context'].get('contact_id')=='owner' for row in assemblies)
 assembly_count=len(assemblies)
 rows=TurnOutbox(home/'outbox.db').snapshot()
 assert len(rows)==2 and all(row['state']=='delivered' for row in rows),rows
@@ -197,7 +206,7 @@ print(json.dumps({'native_parent_automatic_recall':True,'no_gateway_sender':True
 '''
 
 
-@pytest.mark.parametrize('scenario', ['normal', 'erase_during'])
+@pytest.mark.parametrize('scenario', ['normal', 'erase_during', 'rotate'])
 def test_supplied_native_input_reaches_automatic_recall_and_delegated_source_reader(artifacts, tmp_path, scenario):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified Hermes release for native request qualification')
