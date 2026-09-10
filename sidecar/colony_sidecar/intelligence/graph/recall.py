@@ -49,6 +49,7 @@ def source_candidates(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "ingested_at": hit.get("ingested_at"),
             **({"source_message_hash": hit['source_message_hash']} if hit.get('source_message_hash') else {}),
             **({"excerpt_truncated": True} if hit.get("excerpt_truncated") else {}),
+            **({'_current_work_status_reply': True} if hit.get('_current_work_status_reply') is True else {}),
             "relevance": 1 / (60 + rank), "retrieval_method": hit.get('retrieval_method', 'lexical'),
         })
     return rows

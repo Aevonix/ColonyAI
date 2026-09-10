@@ -5,8 +5,29 @@ import asyncio
 import logging
 import math
 import os
+import re
 import time
 from typing import Any, Dict, List
+
+
+def current_work_query(query):
+    """Recognize explicit present-work questions, retaining ambiguous requests.
+
+    This is a narrow selection hint, not authority or a semantic classifier.
+    History, comparisons and requests for instructions still need old answers.
+    """
+    if not isinstance(query, str) or len(query) > 8000:
+        return False
+    text = re.sub(r"^\s*\[[^\]\n]{1,512}\]\s*", "", query).strip().lower()
+    if re.search(r"\b(yesterday|histor(?:y|ical)|previous(?:ly)?|earlier|before|then|"
+                 r"last (?:time|week|month|year)|used to|compar(?:e|ing|ison)|"
+                 r"how (?:to|do|can|should)|procedure|playbook|recipe|steps|"
+                 r"(?:give|provide|explain|show|need|include|use|follow|recall) (?:the |your |me )?instructions)\b", text):
+        return False
+    return bool(re.match(
+        r"(?:what are you (?:doing|working on) (?:right now|now|currently)\b|"
+        r"what (?:work|tasks|sessions|jobs|crons|workers) (?:are|is) "
+        r"(?:currently |now )?(?:running|active|in flight)\b)", text))
 
 
 class RecallSelector:
@@ -15,7 +36,8 @@ class RecallSelector:
         self._rerank_calibration_metadata = calibration_metadata
         self.logger = logger or logging.getLogger(__name__)
 
-    async def select_context(self, query, beliefs, quotations, *, limit=5, max_chars=6000):
+    async def select_context(self, query, beliefs, quotations, *, limit=5, max_chars=6000,
+                             current_work_available=False):
         """One rank fusion, reranking pass and budget after authority checks."""
         from .recall import fuse_candidates, pack_memory_context
         beliefs = [dict(row, kind="belief") for row in beliefs]
@@ -25,7 +47,18 @@ class RecallSelector:
         # lineage; assertion/conflict bundles, dated events and uncertain
         # attribution survive. A time-qualified query may need both occurrences.
         unique, seen = [], set()
+        omit_status_replies = current_work_available and current_work_query(query)
         for row in quotations:
+            # Only canonical request/answer pairing can identify an old status
+            # reply. Never use quotation text alone or a client owner flag.
+            if (omit_status_replies
+                    and row.get('_current_work_status_reply') is True
+                    and row.get('kind') == 'source_quote' and row.get('role') == 'assistant'
+                    and row.get('scope') == 'person'
+                    and row.get('epistemic_state') == 'quotation'
+                    and not any(row.get(key) for key in (
+                        'atomic_evidence', 'validity_status', 'procedure_context', '_annotation_ids'))):
+                continue
             if (row.get("kind") == "source_quote" and row.get("epistemic_state") == "quotation"
                     and not row.get("atomic_evidence") and row.get("scope") == "person"
                     and not row.get("validity_status")

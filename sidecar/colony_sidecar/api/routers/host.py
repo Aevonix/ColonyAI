@@ -2425,6 +2425,27 @@ async def context_assemble(
     sections: list[ContextSection] = []
     query_text = body.incoming_message.content if body.incoming_message else ""
 
+    # Read authenticated work before recall selection. Native requests still
+    # refresh this observation at their existing model boundary.
+    current_work_available = False
+    # --- Scoped execution observations (not a commitment lock) ---
+    try:
+        from colony_sidecar.api.routers.executions import authorized_viewer, with_queue_work
+        from colony_sidecar.turns.executions import registry, format_view
+        person, owner = authorized_viewer(request, body.context.contact_id, scope="context:read")
+        # Public/guest turns do not get cross-session activity. The owner view
+        # is sealed from existing exact person grants, never a body owner flag.
+        if owner:
+            work = registry().view(contact_id=person, owner=True, limit=8)
+            work = await with_queue_work(work, owner=True, limit=8)
+            current_work_available = True
+            if work["items"] or work.get('worker_work', {}).get('items') or work.get('native_cron') or work.get('reported_worker'):
+                sections.append(ContextSection(id="colony-executions", title="Work observed at turn start", body=format_view(work), priority=73))
+    except HTTPException:
+        pass
+    except Exception:
+        logger.debug("execution observation view unavailable", exc_info=True)
+
     # --- Temporal Context: see _build_temporal_section ---
     try:
         cid = (
@@ -2556,9 +2577,11 @@ async def context_assemble(
                     contact_tz, body.context.timezone or ("UTC" if _canonical_only else None)))
             if source_ledger is not None:
                 from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+                from colony_sidecar.intelligence.graph.selection import current_work_query
                 beliefs, quotations = SourceClaimProjection(source_ledger).prepare_context(
                     beliefs, source_hits, contact_id=body.context.contact_id,
-                    session_id=body.context.session_id, time_query=time_query)
+                    session_id=body.context.session_id, time_query=time_query,
+                    classify_work_replies=current_work_available and current_work_query(query_text))
                 from colony_sidecar.turns.media import SourceMedia
                 media_hits = SourceMedia(source_ledger).search(
                     query_text, contact_id=body.context.contact_id, session_id=body.context.session_id)
@@ -2590,6 +2613,7 @@ async def context_assemble(
                 quotations = expand_annotations(source_ledger, quotations, covered=beliefs, **annotation_scope)
             selected, body_text = await _memory_context_selector().select_context(
                 query_text, beliefs, quotations, limit=5,
+                current_work_available=current_work_available,
                 max_chars=max(0, min(max_chars, 24000)))
             if source_ledger is not None:
                 from colony_sidecar.turns.source_annotations import current_candidates
@@ -2721,23 +2745,6 @@ async def context_assemble(
                 ))
         except Exception as exc:
             logger.warning("context_assemble skills failed: %s", exc)
-
-    # --- Scoped execution observations (not a commitment lock) ---
-    try:
-        from colony_sidecar.api.routers.executions import authorized_viewer, with_queue_work
-        from colony_sidecar.turns.executions import registry, format_view
-        person, owner = authorized_viewer(request, body.context.contact_id, scope="context:read")
-        # Public/guest turns do not get cross-session activity. The owner view
-        # is sealed from existing exact person grants, never a body owner flag.
-        if owner:
-            work = registry().view(contact_id=person, owner=True, limit=8)
-            work = await with_queue_work(work, owner=True, limit=8)
-            if work["items"] or work.get('worker_work', {}).get('items') or work.get('native_cron') or work.get('reported_worker'):
-                sections.append(ContextSection(id="colony-executions", title="Work observed at turn start", body=format_view(work), priority=73))
-    except HTTPException:
-        pass
-    except Exception:
-        logger.debug("execution observation view unavailable", exc_info=True)
 
     # --- Pending Commitments ---
     contact_id = body.context.contact_id if body.context else None

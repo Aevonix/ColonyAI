@@ -463,7 +463,57 @@ class SourceClaimProjection:
                 result.append({**claim, 'session_id': source['session_id'], 'sources': refs})
         return result
 
-    def prepare_context(self, beliefs, source_hits, *, contact_id, session_id, time_query: MemoryTimeQuery):
+    def _current_work_reply(self, conn, source, message, *, contact_id, session_id):
+        """Resolve one exact status request through existing canonical lineage.
+
+        A native answer is often stored separately from its supplied user input.
+        Unknown, corrected, changed, multiple-input and cross-scope provenance
+        remains recallable. This transient hint never changes stored history.
+        """
+        from colony_sidecar.intelligence.graph.selection import current_work_query
+        from colony_sidecar.turns.idempotency import canonical_turn_digest, source_message_hash
+        if message.get('role') != 'assistant' or source['scope'] != 'person':
+            return False
+        refs = message.get('_supplied_inputs')
+        if refs is not None:
+            if not isinstance(refs, list) or len(refs) != 1 or not isinstance(refs[0], dict):
+                return False
+            ref = refs[0]
+            if set(ref) != {'source_id', 'input_message_hash'}:
+                return False
+            parent = conn.execute('''SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?
+                AND (scope='person' OR session_id=?) AND NOT EXISTS (
+                    SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=turn_sources.turn_id)
+                ''', (ref['source_id'], contact_id, session_id)).fetchone()
+            if parent is None or parent['scope'] != 'person':
+                return False
+            messages = json.loads(parent['messages_json'])
+            if {'source_id': parent['turn_id'], 'source_version': canonical_turn_digest(messages)} \
+                    not in message.get('_supplied_sources', []):
+                return False
+            matches = [m for m in messages if m.get('role') == 'user'
+                       and source_message_hash(parent['session_id'], m) == ref['input_message_hash']]
+            if len(matches) != 1:
+                return False
+            request = matches[0]
+        else:
+            # Ordinary paired turns can carry the request in the same envelope.
+            messages = json.loads(source['messages_json'])
+            indices = [i for i, m in enumerate(messages) if m == message]
+            if len(indices) != 1 or indices[0] == 0:
+                return False
+            parent, request = source, messages[indices[0] - 1]
+            if request.get('role') != 'user':
+                return False
+        request_hash = source_message_hash(parent['session_id'], request)
+        annotations = conn.execute('SELECT target_message_hashes_json FROM source_annotations WHERE target_source_id=?',
+                                   (parent['turn_id'],)).fetchall()
+        if any(request_hash in json.loads(row[0]) for row in annotations):
+            return False
+        return current_work_query(request.get('content'))
+
+    def prepare_context(self, beliefs, source_hits, *, contact_id, session_id, time_query: MemoryTimeQuery,
+                        classify_work_replies=False):
         """Expand retrieved keys into complete scoped assertion bundles.
 
         Ranking chooses relevant keys. It cannot choose a winner within an
@@ -487,6 +537,20 @@ class SourceClaimProjection:
                           hit["turn_id"] == source["turn_id"] and hit["role"] == message.get("role")
                           and hit["content"] in source_text(message.get('content')) for hit in source_hits)}
             claims = self._rows(conn, contact_id, session_id, turn_ids=turn_ids, message_hashes=hashes, limit=512)
+            status_replies = set()
+            if classify_work_replies:
+                # Resolve only exact retrieved messages, never every assistant
+                # message in an otherwise long canonical checkpoint.
+                pending = {(hit['turn_id'], hit.get('source_message_hash')) for hit in source_hits}
+                for source in sources.values():
+                    for message in json.loads(source['messages_json']):
+                        identity = (source['turn_id'], source_message_hash(source['session_id'], message))
+                        if identity not in pending:
+                            continue
+                        pending.discard(identity)
+                        if self._current_work_reply(conn, source, message,
+                                                    contact_id=contact_id, session_id=session_id):
+                            status_replies.add(identity)
         by_turn, by_hash = {}, {}
         for claim in claims:
             by_turn.setdefault(claim["turn_id"], []).append(claim)
@@ -506,6 +570,7 @@ class SourceClaimProjection:
         retained_hits = []
         for original in source_hits:
             hit = dict(original)
+            hit.pop('_current_work_status_reply', None)
             source = sources.get(hit["turn_id"])
             removed = []
             if source:
@@ -520,6 +585,9 @@ class SourceClaimProjection:
                         text = source_text(text)
                     if message.get("role") != hit["role"] or not isinstance(text, str):
                         continue
+                    if ((source['turn_id'], source_message_hash(source['session_id'], message)) in status_replies
+                            and hit.get('source_message_hash') == source_message_hash(source['session_id'], message)):
+                        hit['_current_work_status_reply'] = True
                     message_claims = by_hash.get(source_message_hash(source["session_id"], message), [])
                     # Source FTS chunks overlap. Clip exact message spans into
                     # every matching chunk occurrence; never depend on an entire
