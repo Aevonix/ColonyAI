@@ -7616,30 +7616,57 @@ class QueueManager:
 
     @_serialized_read
     async def current_work(self, limit: int = 20) -> dict:
-        """Bounded canonical worker work, with no payload/result disclosure."""
+        """Pending and claimed work records, without treating a lease as success."""
         assert self._db is not None
         bounded = max(1, min(limit, 100))
-        cur = await self._db.execute("""SELECT job_id,job_type,status,claimed_by,
-            claim_attempt_id,claim_expires_at,last_heartbeat,payload FROM jobs
-            WHERE status IN ('claimed','running') ORDER BY posted_at DESC LIMIT ?""", (bounded + 1,))
+        statuses = ('running', 'claimed', 'queued', 'blocked', 'abandoned')
+        where = "status IN ('claimed','running','queued','blocked','abandoned')"
+        counts = await self._db.execute('SELECT status,count(*) AS n FROM jobs WHERE ' + where + ' GROUP BY status')
+        state_counts = {row['status']: row['n'] for row in await counts.fetchall()}
+        # One row per state before a second row from a busy state. Otherwise a
+        # running backlog can hide every queued or blocked undertaking.
+        cur = await self._db.execute("""SELECT * FROM (
+            SELECT job_id,job_type,status,claimed_by,claim_attempt_id,claim_expires_at,last_heartbeat,
+                   payload, row_number() OVER (PARTITION BY status ORDER BY priority DESC,posted_at,job_id) AS position
+            FROM jobs WHERE """ + where + """ )
+            ORDER BY position, CASE status WHEN 'running' THEN 0 WHEN 'claimed' THEN 1
+                WHEN 'queued' THEN 2 WHEN 'blocked' THEN 3 ELSE 4 END,job_id LIMIT ?""", (bounded,))
         rows = await cur.fetchall()
         now = self._worker_now()
         items = []
-        for row in rows[:bounded]:
-            payload = json.loads(row['payload'] or '{}')
+        for row in rows:
+            try:
+                payload = json.loads(row['payload'] or '{}')
+                if not isinstance(payload, dict):
+                    payload = {}
+            except (TypeError, ValueError):
+                payload = {}
             description = next((payload[key] for key in ('title', 'goal', 'description', 'instruction', 'task')
                                 if isinstance(payload.get(key), str) and payload[key].strip()), row['job_type'])
             age = None
+            claim_unexpired = None
+            if row['status'] == 'claimed' and row['claim_expires_at']:
+                try:
+                    claim_unexpired = datetime.fromisoformat(row['claim_expires_at']) >= now
+                except (ValueError, TypeError):
+                    pass
             if row['last_heartbeat']:
                 try:
-                    age = max(0, (now - datetime.fromisoformat(row['last_heartbeat'])).total_seconds())
+                    age = (now - datetime.fromisoformat(row['last_heartbeat'])).total_seconds()
+                    if age < 0:
+                        age = None
                 except (TypeError, ValueError):
                     pass
             items.append({'job_id': row['job_id'], 'job_type': row['job_type'], 'state': row['status'],
                 'worker_id': row['claimed_by'], 'claim_attempt_id': row['claim_attempt_id'],
+                'claim_expires_at': row['claim_expires_at'], 'claim_unexpired': claim_unexpired,
                 'description': description[:240], 'heartbeat_age_seconds': round(age, 1) if age is not None else None,
-                'liveness': 'recently_observed' if age is not None and age < self._worker_heartbeat_ttl_secs else 'unknown'})
-        return {'items': items, 'truncated': len(rows) > bounded, 'source': 'canonical_task_queue'}
+                'liveness': ('recently_observed' if (row['status'] == 'running' or claim_unexpired is True)
+                             and age is not None and age <= self._worker_heartbeat_ttl_secs else 'unknown')})
+        total = sum(state_counts.values())
+        return {'items': items, 'total': total, 'state_counts': {state: state_counts.get(state, 0) for state in statuses},
+                'truncated': total > len(items), 'available': True, 'complete': False,
+                'source': 'canonical_task_queue', 'coverage': 'current pending and claimed job records; no process or effect verification'}
 
     @_serialized_read
     async def get_jobs_by_status(self, status: JobStatus) -> List[Job]:

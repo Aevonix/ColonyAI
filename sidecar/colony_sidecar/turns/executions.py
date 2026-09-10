@@ -125,6 +125,10 @@ def work_source_coverage(view):
         for key in ('reason', 'source_home_id', 'selection', 'observed_at'):
             if key in group:
                 coverage[key] = group[key]
+        if isinstance(group.get('state_counts'), dict):
+            coverage['state_counts'] = {state: count for state, count in group['state_counts'].items()
+                if state in {'queued', 'blocked', 'abandoned', 'claimed', 'running'}
+                and type(count) is int and count >= 0}
         result[source] = coverage
     return result
 
@@ -137,8 +141,10 @@ def _coverage_line(coverage):
             recent = str(row['recent_total']) if 'recent_total' in row else str(row['recent_returned']) + '+'
             count = count + ' active, ' + recent + ' recent'
         state = row['status']
+        states = ', '.join(name + '=' + str(n) for name, n in row.get('state_counts', {}).items() if n)
         parts.append(source + '=' + (count + ' records' if state == 'observed'
-                                     else count + ' records, partial' if state == 'partial' else state))
+                                     else count + ' records, partial' if state == 'partial' else state)
+                     + (' [' + states + ']' if states else ''))
     return 'Selected source coverage (overlapping records, not a unique task count): ' + '; '.join(parts) + '.\n'
 
 
@@ -222,7 +228,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000) -
             'native_run_status', 'goal_mode', 'goal_max_turns', 'heartbeat_age_seconds', 'assignee',
             'terminal_record_at',
             'execution_id', 'parent_execution_id', 'session_id', 'turn_id',
-            'job_id', 'job_type', 'worker_id', 'claim_attempt_id',
+            'job_id', 'job_type', 'worker_id', 'claim_attempt_id', 'claim_expires_at', 'claim_unexpired',
             'task_id', 'parent_task_id', 'id', 'kind', 'task_class', 'label', 'platform',
             'status', 'state', 'phase', 'tool_name', 'liveness', 'freshness',
             'status_sha256',
@@ -244,7 +250,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000) -
                 value = row.get(key)
                 if isinstance(value, str) and value:
                     item[key] = value[:256 if key.endswith('_id') else 128]
-                elif key == 'goal_mode' and type(value) is bool:
+                elif key in {'goal_mode', 'claim_unexpired'} and type(value) is bool:
                     item[key] = value
                 elif type(value) in (int, float) and math.isfinite(value):
                     item[key] = value

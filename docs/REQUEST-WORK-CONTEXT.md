@@ -36,7 +36,7 @@ can describe the same undertaking; do not sum them into a unique task count.
 | `execution` | Registered, nonterminal native turns, including bound children; expired observations have unknown liveness |
 | `native_kanban` | Explicitly selected boards or the current native board, with per-board availability |
 | `local_work` | Canonical accepted local drafts and bound internal reviews, with native associations |
-| `worker_work` | Claimed/running jobs in the attached canonical queue; an unattached queue is unavailable, not idle |
+| `worker_work` | Running, claimed, queued, blocked and abandoned records in the attached canonical queue; an unattached queue is unavailable, not idle |
 | `native_cron` | The explicitly bound profile's native execution ledger |
 | `reported_worker` | Configured local status files, including unverified terminal reports; no configured reader is `not_observed` |
 
@@ -50,9 +50,35 @@ the other sources. These are separate snapshots, not one atomic snapshot across
 databases. Cancelling the
 await does not kill an underlying read-only thread. Selected readers retain
 their existing bounded SQLite reads. Other profiles, unregistered processes and
-independent direct-delivery receipts are outside this inventory. `complete`
+unenrolled direct-delivery receipts are outside this inventory. `complete`
 remains false. Full API reads can request up to 100 records per reader; they
 remain bounded and disclose omissions.
+
+Queue coverage includes counts by state before the row limit. A busy running
+queue cannot hide every pending state: the reader takes one row per state
+before taking the next row in a state. A queued or blocked record is pending
+work, not a running process. Claimed rows expose their existing claim expiry
+and whether it remains unexpired; expired, absent or future-dated observations
+do not prove liveness. The view does not claim or reschedule jobs.
+
+An enrolled process heartbeat may include `state.work_snapshot` using
+`ColonyWorkSnapshotV1`. This is a bounded, read-only projection of an existing
+producer's selected ledger. It carries observation time, per-source availability,
+state counts and up to four delivery/provider cursor rows. Genuine delivery,
+intent, request and attempt identifiers remain distinct. `total` counts producer
+deliveries; multiple provider cursors can refer to one delivery. Never sum
+these into unique tasks. Accepted work, a provider-started attempt, a recorded
+provider observation and recipient read evidence are different stages. This
+snapshot provides no recipient read proof and always has `complete=false`.
+
+The generic reader strips recipients, message content and undeclared fields;
+it never opens a ledger, follows a path embedded in a report, dispatches work
+or grants authority. The deployment explicitly enrolls the heartbeat through
+the existing `COLONY_WORKER_STATUS_PATHS` mapping. Unsupported, failed or
+partial snapshots remain explicit; stale or future timestamps cannot establish
+current execution. A terminal download report remains an unverified terminal
+record even while its enclosing file is readable. An optional gateway outcome
+cache is not a substitute for the selected producer/provider sources.
 
 One request-only block, delimited by `colony-work-request-v1`, supersedes the
 turn-start snapshot. A later call replaces that block instead of accumulating

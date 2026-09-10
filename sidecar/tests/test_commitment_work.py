@@ -169,6 +169,9 @@ async def test_canonical_worker_queue_view_has_descriptions_and_truthful_livenes
         await queue.post(job)
         claimed = await queue.claim_job('fixture-worker', WorkerCapabilities(node_id='fixture-worker', capabilities=set(), job_types={JobType.RESEARCH}))
         assert claimed and await queue.start_job(job.job_id, 'fixture-worker', claimed.claim_attempt_id)
+        # start_job stamps its real clock; this reader's injected clock must
+        # not accidentally precede that retained heartbeat.
+        clock[0] = datetime.now(timezone.utc)
         monkeypatch.setattr(host, '_task_queue', SimpleNamespace(queue=queue))
         view = await executions.with_queue_work({'items': []}, owner=True)
         item = view['worker_work']['items'][0]
