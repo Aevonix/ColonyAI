@@ -258,7 +258,10 @@ class InferenceHandler(JobHandler):
         ]
         response = await self._router.complete(
             messages,
-            force_tier=ModelTier.SMALL,
+            force_tier=(
+                None if getattr(self._router, "supports_function_routing", False) is True
+                else ModelTier.SMALL
+            ),
             context={
                 "task": "thought_job",
                 "max_output_tokens": thought.max_output_tokens,
@@ -296,6 +299,8 @@ class InferenceHandler(JobHandler):
         user_text: str,
         force_tier: Optional[Any],
         payload: Dict[str, Any],
+        *,
+        router_context: Optional[Dict[str, Any]] = None,
     ) -> list[dict]:
         """Shrink oversized message content to the target tier's useful window.
 
@@ -322,14 +327,15 @@ class InferenceHandler(JobHandler):
 
             # Budget from the tier the call will actually use
             tier = force_tier
-            if tier is None:
-                try:
-                    tier = self._router.route(user_text, {})[0]
-                except Exception:
-                    return messages
             if force_tier is None and getattr(self._router, 'supports_function_routing', False) is True:
-                tier_cfg = self._router.function_config()
+                tier_cfg = self._router.function_config(context=router_context)
+                tier = getattr(tier_cfg, "tier", None)
             else:
+                if tier is None:
+                    try:
+                        tier = self._router.route(user_text, router_context or {})[0]
+                    except Exception:
+                        return messages
                 tier_cfg = getattr(self._router, "tier_config", lambda _t: None)(tier)
             budget = getattr(tier_cfg, "useful_context_tokens", 0) or gcfg.default_budget_tokens
             if budget <= 0:
@@ -480,16 +486,19 @@ class InferenceHandler(JobHandler):
                 {"role": "user", "content": user_text},
             ]
 
-        # ── Context gate: fit input to the tier's useful window ───────────
-        messages = await self._gate_context(messages, user_text, force_tier, payload)
-
-        # ── LLM call ──────────────────────────────────────────────────────
         router_context: Dict[str, Any] = {}
         if cognition_read_only:
             router_context = {
                 "task": "thought_job",
                 "max_output_tokens": int(payload.get("max_output_tokens") or 768),
             }
+
+        # ── Context gate: fit input to the dispatch role's useful window ──
+        messages = await self._gate_context(
+            messages, user_text, force_tier, payload, router_context=router_context,
+        )
+
+        # ── LLM call ──────────────────────────────────────────────────────
         response = await self._router.complete(
             messages, force_tier=force_tier, context=router_context,
         )
