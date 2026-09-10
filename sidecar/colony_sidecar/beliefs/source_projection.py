@@ -46,7 +46,7 @@ def erase_removed(conn, turn_id, session_id, retained):
     rows = conn.execute('SELECT id,message_hash FROM source_claims WHERE turn_id=?', (turn_id,)).fetchall()
     for row in rows:
         if row["message_hash"] not in hashes:
-            # Inherited subjects point directly to their original grounded
+            # Inherited identities point directly to their original grounded
             # claim, so erasure needs one hop and never removes raw corrections.
             conn.execute("DELETE FROM source_claims WHERE json_extract(data_json,'$.subject_basis_claim_id')=?", (row['id'],))
             conn.execute('DELETE FROM source_claims WHERE id=?', (row["id"],))
@@ -71,11 +71,12 @@ def _subject_basis_source_sql(identifier_sql, contact_sql):
 
 
 def subject_basis(conn, claim, *, contact_id):
-    """Return a retained quotation solely as evidence of subject identity.
+    """Return retained evidence of subject identity or a corrected episode's identity.
 
     A root's value may be retracted or superseded while its literal subject
     remains grounded. Annotation, erasure or changed attribution revokes it.
     Only one fully grounded ancestor is allowed, not a recursive claim chain.
+    An episode's quoted report identifies a record, not a person or world entity.
     """
     identifier = claim.get('subject_basis_claim_id')
     if not identifier:
@@ -98,11 +99,16 @@ def subject_basis(conn, claim, *, contact_id):
         return None
     # Reuse the original literal-grounding rule, without inferring an alias.
     from .source_claims import literal_subject
-    if not literal_subject(data['subject'], data['evidence']):
+    episode = data.get('representation') == claim.get('representation') == 'episode'
+    if episode:
+        if row['subject_key'] != 'episode:' + hashlib.sha256(data['evidence'].encode()).hexdigest():
+            return None
+    elif not literal_subject(data['subject'], data['evidence']):
         return None
     return {'claim_id': row['id'], 'turn_id': row['turn_id'], 'message_hash': row['message_hash'],
             'source_version': canonical_turn_digest(messages),
-            'disposition': 'subject_identity_only', 'value_use': 'not_evidence_for_current_value',
+            'disposition': 'episode_identity_only' if episode else 'subject_identity_only',
+            'value_use': 'not_evidence_for_current_value',
             **{k: data[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality') if k in data},
             'subject': data['subject'], 'predicate': row['predicate'], 'evidence': data['evidence']}
 
@@ -498,12 +504,23 @@ class SourceClaimProjection:
                             excerpt_truncated=bool(removed) or bool(hit.get("excerpt_truncated"))))
                 cursor = max(cursor, end)
         bundles, message_contexts, emitted_messages, groups = [], {}, set(), {}
+        unresolved_episode_times = set()
 
         def current_group(key):
             if key not in groups:
                 with closing(self.ledger._connect()) as conn:
                     groups[key] = self._rows(conn, contact_id, session_id, key=key,
                         time_query=time_query, distinct_values=True, limit=9)
+                    if not groups[key] and time_query.mode == 'observed_range':
+                        # Relevance already selected this source. An unknown
+                        # episode time may help answer a date question, but it
+                        # cannot certify a matching date. Never admit a known
+                        # event outside the requested interval through here.
+                        groups[key] = [c for c in self._rows(conn, contact_id, session_id, key=key,
+                            time_query=MemoryTimeQuery(), distinct_values=True, limit=9)
+                            if c.get('representation') == 'episode' and not c.get('event_at')]
+                        if groups[key]:
+                            unresolved_episode_times.add(key)
             return groups[key]
 
         def complete_message_context(claim):
@@ -598,7 +615,8 @@ class SourceClaimProjection:
                             # are provenance, not the passage's semantic topic.
                             # Conflicting peers remain one indivisible candidate.
                             "ranking_text": "\n".join(dict.fromkeys(c["evidence"] for c in group)),
-                            **({"validity_status": "query_time_unresolved"} if time_query.mode == "unresolved_time" else {}),
+                            **({"validity_status": "query_time_unresolved"}
+                               if time_query.mode == "unresolved_time" or key in unresolved_episode_times else {}),
                             "contradiction_count": len(values) - 1 if conflict else 0, "relevance": 1 / (61 + len(bundles)),
                             "content": json.dumps({"subject": group[0]["subject"], "predicate": key[1],
                                                    "status": status, "assertions": members}, ensure_ascii=False),

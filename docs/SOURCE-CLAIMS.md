@@ -122,29 +122,36 @@ The memory-provider wrapper now distinguishes persistent state from source evide
 
 ## Operation and qualification
 
-The experimental v8 extractor represents substantive experiences and comparisons
+The experimental v9 extractor represents substantive experiences and comparisons
 as quoted episodes. The processor selects one exact passage and explains its
 future use; it does not synthesize subject/value fields for the episode. The
 existing admission review checks the passage against the complete source, and
-the existing source table retains it with a content-derived record identity.
+the existing source table retains it with a content-derived record identity. An
+explicit correction selects an offered prior episode, reuses that identity and
+retracts the mistaken report through the existing claim lineage. Its original
+source remains an identity dependency, so erasure or attribution changes revoke
+dependent interpretations; erasing the correction does not revive the old value.
 `Reported episode` is a record label, not a person or world-model entity. The
 passage preserves units, conditions, attribution and uncertainty within the
-existing 500-character limit. An episode's event time stays unknown in the
-projection; dates remain in its quote, and the source report time remains
-separate. No model-generated date is required to retain an exact experience.
-Consequently, structured event-date filters do not select these episodes, even
-when their quotations contain dates; source-history reading retains those dates.
+existing 500-character limit. An episode may supply an exact event-date expression
+from its quotation. The existing date parser resolves supported expressions using
+the source clock; report time remains separate. An unsupported or unquoted optional
+date cannot discard an otherwise valid exact report. Unquoted date metadata is
+removed and counted in `ignored_episode_date_count`; its invented text is not
+stored. Missing dates stay unknown rather than inheriting a date from a different
+quotation. Relevant episodes with unknown time remain available to event-date
+queries as `query_time_unresolved` evidence; known events outside the requested
+interval stay excluded.
 Material that cannot fit with its essential context
 stays available as source history.
 
 Structured facts and procedures keep their existing representation and temporal
 conflict handling. Episodes are independent reports: sharing a topic does not
-automatically overwrite an earlier report or resolve contradictions. Source
-correction, attribution invalidation and erasure still withdraw dependent views.
-An ordinary later correction sentence is another reported episode, not an
-automatic retraction. Use the existing explicit source-annotation path when
-the earlier episode needs a correction attached to it; removing that annotation
-does not make the original unqualified episode eligible again.
+automatically overwrite an earlier report or resolve contradictions. A correction
+must have an explicit correction cue, select an offered episode reference and
+pass the existing admission review of the same reported experience. A different
+incident cannot retract the earlier one. The existing explicit source-annotation
+path also remains available for owner corrections.
 There is no new database, worker or model call. This representation is undergoing
 behavioral qualification and does not enable automatic opinions.
 

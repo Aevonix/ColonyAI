@@ -24,7 +24,8 @@ REPORT = ('In a controlled checkpoint comparison, six short local tasks took '
 
 def episode(text=REPORT):
     return {'representation': 'episode', 'memory_kind': 'substantive_event',
-            'evidence': text, 'recall_reason': 'Use the observed overhead when choosing checkpoint frequency.'}
+            'evidence': text, 'recall_reason': 'Use the observed overhead when choosing checkpoint frequency.',
+            'operation': 'assert', 'prior_claim_id': None, 'event_at_text': None}
 
 
 def test_episode_preserves_complete_report_without_synthesized_fact_fields():
@@ -42,7 +43,6 @@ def test_episode_preserves_complete_report_without_synthesized_fact_fields():
     {'evidence': REPORT.replace('three seconds', 'nine seconds')},
     {'subject': 'all local processors'},
     {'memory_kind': 'preference'},
-    {'event_at_text': '2026-09-10'},
 ])
 def test_episode_cannot_smuggle_a_rewritten_quote_or_other_memory_kind(update):
     assert validated_claims(json.dumps([episode() | update]), message=REPORT, prior=[], observed_at=None) == []
