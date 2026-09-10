@@ -61,6 +61,13 @@ owner projection. The server independently checks the existing owner authority;
 the projection is not a new authority grant. A selected local worker running
 through an explicitly attested CLI keeps that existing scope.
 
+Child completion also consumes native `subagent_stop`. Hermes can skip a
+bounded `on_session_end` callback while another session invokes it; its
+caller-thread child-stop hook supplies the finalized child status. The observer
+closes only an exact previously bound child and preserves prior terminal
+states. Unrecognized statuses become `ended`, not successful completion. A
+missing observation or unavailable service still becomes unknown on expiry.
+
 The native integration fixture runs one turn through three model requests and
 two native file reads. A concurrent HTTP writer completes an existing neutral
 initiative between requests. The next request sees its completion and report

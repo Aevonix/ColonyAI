@@ -170,6 +170,35 @@ def test_scope_conflict_does_not_replace_child_binding(store):
     assert "tc" not in observer._records
 
 
+@pytest.mark.parametrize('status, state', [('completed', 'completed'), ('failed', 'failed'),
+    ('error', 'failed'), ('interrupted', 'interrupted'), ('unrecognized', 'ended')])
+def test_native_child_stop_closes_only_exact_bound_child_after_rotation(store, status, state):
+    from test_hermes_general_governance import _load_plugin
+    module = _load_plugin("colony_execution_child_stop_test")
+    calls = []
+    observer = module.ExecutionObserver(SimpleNamespace(post=lambda path, **kw:
+        calls.append(kw['json']) or SimpleNamespace(raise_for_status=lambda: None)))
+    scope = SimpleNamespace(valid_participant=True, contact_id='contact-a', platform='sms')
+    observer.start(scope, session_id='parent', turn_id='parent-turn')
+    observer.child(parent_session_id='parent', parent_turn_id='parent-turn', child_session_id='child')
+    observer.start(scope, session_id='child', turn_id='child-turn', parent_session_id='parent')
+    observer.update('model', session_id='rotated-child', turn_id='child-turn')
+    observer.update('model', session_id='rotated-parent', turn_id='parent-turn')
+    before = len(calls)
+    observer.child_end(child_session_id='child', parent_session_id='parent', child_status='completed')
+    observer.child_end(child_session_id='rotated-child', parent_session_id='foreign', child_status='completed')
+    observer.child_end(child_session_id='missing', parent_session_id='parent', child_status='completed')
+    assert len(calls) == before
+    observer.child_end(child_session_id='rotated-child', parent_session_id='rotated-parent',
+                       child_status=status, child_summary='Never store result prose')
+    assert calls[-1]['state'] == state and calls[-1]['turn_id'] == 'child-turn'
+    assert calls[-1]['contact_id'] == 'contact-a' and 'Never store' not in str(calls)
+    count = len(calls)
+    observer.end(turn_id='child-turn', completed=True)
+    observer.child_end(child_session_id='rotated-child', parent_session_id='parent', child_status='completed')
+    assert len(calls) == count
+
+
 @pytest.mark.asyncio
 async def test_owner_context_observes_other_sessions_but_guest_context_omits_them(store, monkeypatch):
     from colony_sidecar.api.routers import host
