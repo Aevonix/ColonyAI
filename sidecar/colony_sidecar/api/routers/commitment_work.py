@@ -125,7 +125,10 @@ class NativeKanbanFinish(NativeKanbanRun):
 def accepted_native(body, initiative_id, person):
     from colony_sidecar.turns.hermes_kanban import task_snapshot
     try:
-        return task_snapshot(initiative_id, person, body.model_dump(exclude={'contact_id', 'result'}))
+        # An accepted transition can wait briefly for a native writer, including
+        # Hermes' DELETE-journal fallback. Ordinary work projections stay fast.
+        return task_snapshot(initiative_id, person,
+                             body.model_dump(exclude={'contact_id', 'result'}), read_timeout=2.)
     except (OSError, sqlite3.Error):
         raise HTTPException(503, detail='native_board_unavailable') from None
     except (ValueError, KeyError, TypeError) as error:

@@ -22,6 +22,7 @@ time, not queue time or every task's full duration. Timing decisions remain off
 until prospective outcomes demonstrate benefit. No service or model call is added.
 
 - Reconcile committed execution outcomes after missed settlement, deduplicate repeated standing clauses, keep source text out of serialized refusal verdicts, and remove the unused directive LLM fallback.
+- Let accepted native task transitions wait up to two seconds for a brief board writer; keep ordinary work projections on their shorter read budget.
 
 ## v1.1.1 - grounded corrections and ordinary task context
 
