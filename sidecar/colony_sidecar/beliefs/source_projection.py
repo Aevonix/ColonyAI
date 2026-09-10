@@ -540,6 +540,9 @@ class SourceClaimProjection:
                 # turn a time-qualified assertion query into an undated quote,
                 # or restore any ineligible span from a changed message.
                 if (not value['complete'] or len(value['text']) > 2000 or time_query.mode != 'current'
+                        # Derived media needs its exact segment/recognizer basis;
+                        # a transcript's display prefix is not missing context.
+                        or any(c.get('evidence_basis') for c in value['claims'])
                         or all(c['evidence'].strip() == value['text'].strip() for c in value['claims'])):
                     return None
                 return value

@@ -55,7 +55,9 @@ class AudioModel(Model):
 
 @pytest.mark.asyncio
 async def test_retained_audio_forms_reviewed_derived_claim_with_exact_original_lineage(tmp_path):
+    from colony_sidecar.intelligence.graph.recall import pack_memory_context
     from colony_sidecar.turns.source_read import read
+    from test_procedure_source_context import candidates
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db')
     text = 'My office is in River.'
     original, rendered = record(ledger, text)
@@ -83,6 +85,20 @@ async def test_retained_audio_forms_reviewed_derived_claim_with_exact_original_l
     assert schema['items']['anyOf'][0]['properties']['evidence']['enum'] == [text]
     packet = prepared(projection, contact='person')[0]['assertions'][0]
     assert packet['evidence_basis'] == basis and packet['reported_at'] != packet['event_at']
+    # The injected reader packet must retain lineage, not merely the stored row.
+    selected, body = pack_memory_context(candidates(projection, query='office'))
+    assert any(r.get('content_format') == 'source_assertions_v1' for r in selected)
+    entries = [json.JSONDecoder().raw_decode(line[2:])[0]
+               for line in body.splitlines() if line.startswith('- ')]
+    card, = [e for e in entries if isinstance(e.get('content'), dict)]
+    recalled, = card['content']['assertions']
+    passage, = [e for e in entries if e.get('evidence_ref') == recalled['evidence_ref']]
+    assert recalled['evidence_basis'] == basis
+    assert card['state'] == recalled['epistemic_state'] == 'derived_unverified'
+    assert card['source_modality'] == recalled['source_modality'] == 'audio_transcript'
+    assert recalled['event_at'] is None and recalled['event_time']['status'] == 'unknown'
+    assert passage['quote'] == text and passage['source_message_hash'] == basis['source_message_hash']
+    assert card['history_anchor'] == {'source_id': 'audio', 'claim_id': packet['claim_id']}
     refs = ledger.source_references(['audio'], contact_id='person', session_id='later')
     assert basis['source_version_at_formation'] == refs[0]['source_version']
     opened = read(ledger, contact_id='person', session_id='later', **refs[0],
