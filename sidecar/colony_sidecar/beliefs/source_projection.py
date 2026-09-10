@@ -536,10 +536,12 @@ class SourceClaimProjection:
                     'message': message, 'text': text, 'complete': complete, 'claims': all_claims}
             value = message_contexts[identity]
             if not procedure:
-                # Short quotations use the existing source chunk bound. Do not
-                # turn a time-qualified assertion query into an undated quote,
-                # or restore any ineligible span from a changed message.
-                if (not value['complete'] or len(value['text']) > 2000 or time_query.mode != 'current'
+                # An unresolved time expression cannot certify a dated fact,
+                # but must not strip conditions from its attributed source.
+                # The bundle retains query_time_unresolved in that case.
+                # Resolved historical windows still use qualified assertions.
+                if (not value['complete'] or len(value['text']) > 2000
+                        or time_query.mode not in {'current', 'unresolved_time'}
                         # Derived media needs its exact segment/recognizer basis;
                         # a transcript's display prefix is not missing context.
                         or any(c.get('evidence_basis') for c in value['claims'])
