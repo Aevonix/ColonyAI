@@ -21,6 +21,8 @@ pairs do not become comparable success samples. This measures accepted request
 time, not queue time or every task's full duration. Timing decisions remain off
 until prospective outcomes demonstrate benefit. No service or model call is added.
 
+- Reconcile committed execution outcomes after missed settlement, deduplicate repeated standing clauses, keep source text out of serialized refusal verdicts, and remove the unused directive LLM fallback.
+
 ## v1.1.1 - grounded corrections and ordinary task context
 
 Explicit corrections and changes can resolve an abbreviated subject through the

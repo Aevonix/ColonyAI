@@ -95,3 +95,5 @@ premature inspection and inspection lateness separately from independent output
 quality. Do not count a parent and its child as independent completed tasks, or
 manufacture work to fill the sample count. Local callback qualification is not
 live benefit evidence.
+
+Committed terminal observations are reconciled on later execution callbacks and owner work reads, up to 20 pending operational records per call within the seven-day retention window. A failed settlement can retry without changing the recorded terminal time or issuing a late forecast. Replaying an already settled outcome is idempotent. No new timer, queue or service is involved.

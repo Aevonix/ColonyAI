@@ -98,7 +98,7 @@ class Verdict:
             "allowed": self.allowed,
             "reason": self.reason,
             "violations": [
-                {"id": d.id, "subject": d.subject, "raw_text": d.raw_text}
+                {"id": d.id, **({} if d.evidence else {"subject": d.subject, "raw_text": d.raw_text})}
                 for d in self.violations
             ],
         }
@@ -287,11 +287,11 @@ class DirectiveGuard:
                 violations.append(d)
 
         if violations:
-            subjects = "; ".join(v.subject for v in violations)
+            subjects = "; ".join(v.id if v.evidence else v.subject for v in violations)
             ids = ",".join(v.id for v in violations)
             action_summary = (action.text or action.target or action.tool_name)[:120]
             logged_summary = "source-bound action" if any(v.evidence for v in violations) else action_summary
-            logged_subjects = "; ".join(v.id if v.evidence else v.subject for v in violations)
+            logged_subjects = subjects
             if capability == "read":
                 # OBSERVE blackout on a read: logged so introspection about the
                 # blindspot's existence still works ("not looking, per directive").

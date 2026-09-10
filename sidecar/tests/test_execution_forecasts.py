@@ -162,3 +162,33 @@ def test_unknown_input_configuration_stays_incomparable(runtime):
     send(runtime,sequence=2,phase='model',runtime=api(approx_input_tokens=None))
     assert not finish(runtime)['forecast']['conditions_comparable']
     assert history(runtime)['outcomes'][0]['status'] == 'censored'
+
+
+@pytest.mark.parametrize('recovery', ['duplicate_callback', 'owner_read_after_restart', 'next_forecast'])
+def test_committed_terminal_settlement_recovers_without_rewriting_observation(runtime, monkeypatch, recovery):
+    start(runtime)
+    with monkeypatch.context() as fault:
+        fault.setattr(forecasts, 'observe', lambda *args: (_ for _ in ()).throw(RuntimeError('injected settlement failure')))
+        assert finish(runtime)['forecast']['status'] == 'unavailable'
+    assert history(runtime)['outcomes'] == []
+    registry, store, now = runtime
+    with closing(registry.ledger._connect()) as db:
+        before = tuple(db.execute('SELECT * FROM execution_observations').fetchone())
+    now[0] += 120
+    if recovery == 'duplicate_callback':
+        assert not send(runtime, sequence=4, phase='ended', state='completed')['accepted']
+    elif recovery == 'owner_read_after_restart':
+        reopened = ExecutionRegistry(TurnIdempotencyLedger(registry.ledger.db_path), clock=lambda: now[0])
+        assert reopened.view(contact_id='contact-a', owner=True)['items'] == []
+    else:
+        start(runtime, 'next')
+        assert history(runtime, 'next')['forecasts'][0]['detail']['conditions']['estimate']['sample_n'] == 1
+    with closing(registry.ledger._connect()) as db:
+        after = tuple(db.execute('SELECT * FROM execution_observations WHERE execution_id=?', (observation()['execution_id'],)).fetchone())
+    assert before == after
+    outcomes = history(runtime)['outcomes']
+    assert len(outcomes) == 1 and outcomes[0]['observed_at'] == before[-2]
+    assert forecasts._facts(registry.ledger, outcomes[0])['duration_seconds'] == 60
+    registry.view(contact_id='contact-a', owner=True)
+    send(runtime, sequence=4, phase='ended', state='completed')
+    assert history(runtime)['outcomes'] == outcomes

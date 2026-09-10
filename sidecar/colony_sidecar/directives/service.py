@@ -215,39 +215,6 @@ class DirectiveManager:
             pass
         return False
 
-    async def capture_llm(self, message: str, *, source_id: str = "", contact_id: str = "") -> List[Directive]:
-        """LLM-assisted capture (1b), run only when the deterministic pass found
-        nothing. Inferred directives are lower-confidence and surfaced for the
-        owner to correct."""
-        from colony_sidecar.directives.extractor import llm_extract_directives, standing_clauses
-        from colony_sidecar.delivery.reachout_policy import is_system_origin
-        if (not standing_clauses(message) or is_system_origin(message)
-                or self.store.ledger is not None and not source_id):
-            return []
-        candidates = extract_directives(message)
-        if not any(self._subject_acceptable(d) and not self._duplicate_active(d) for d in candidates):
-            return []
-        found = await llm_extract_directives(message)
-        stored: List[Directive] = []
-        for d in found:
-            # Same quality gates as the deterministic path: inferred capture
-            # must never store fragments or pile up duplicates.
-            if not self._subject_acceptable(d) or self._duplicate_active(d):
-                continue
-            if source_id:
-                from .evidence import bind
-                d.evidence = bind(self.store.ledger, source_id=source_id, contact_id=contact_id,
-                                  message=message, clause=d.raw_text)
-                if d.evidence is None:
-                    continue
-            self.store.add(d)
-            stored.append(d)
-            verb = "will not" if d.polarity == Polarity.PROHIBIT else "will make sure to"
-            self._ack_ids = [d.id]
-            self._last_ack = (f"I inferred a standing instruction: I {verb} {d.subject}. "
-                              "Tell me if that is wrong.")
-        return stored
-
     def consume_ack(self) -> Optional[str]:
         """Return and clear the one-shot acknowledgment (echoed once)."""
         ack, self._last_ack = self._last_ack, None

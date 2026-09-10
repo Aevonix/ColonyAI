@@ -90,12 +90,6 @@ def test_manual_intent_and_standalone_global_pause_remain(setup):
     assert not manager.guard.check(Action(kind='execute_tool',text='unrelated work')).allowed
     assert extract_directives('The user wrote "pause autonomy" as an example.')==[]
 
-@pytest.mark.asyncio
-async def test_optional_llm_cannot_bypass_task_scope(setup,monkeypatch):
-    from colony_sidecar.directives import extractor
-    async def forbidden(*a,**kw):raise AssertionError('Task content must not invoke model extraction')
-    monkeypatch.setattr(extractor,'llm_extract_directives',forbidden)
-    assert await setup[1].capture_llm('For this task, never deploy widget-service.')==[]
 
 
 @pytest.mark.parametrize('text,expected', [
@@ -143,7 +137,7 @@ async def test_real_owner_turn_ingestion_and_manual_api(monkeypatch, tmp_path):
     from colony_sidecar.events import broadcaster
     from colony_sidecar.turns import get_turn_idempotency_ledger
     monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
-    monkeypatch.setenv('COLONY_DIRECTIVE_LLM_ASSIST', 'false')
+    monkeypatch.setenv('COLONY_DIRECTIVE_LLM_ASSIST', 'true')  # Retired setting has no model consumer.
     monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
     for name in ('_graph', '_contacts_store', '_presence_store', '_context_provenance',
                  '_telemetry', '_p8_runtime', '_reranker', '_context_recall_selector',
@@ -231,3 +225,27 @@ def test_dotted_identifier_remains_exact_and_source_bound_logs_have_no_prose(set
 def test_negative_complements_do_not_prohibit_the_underlying_action(setup, text):
     assert capture(setup, text).captured == []
     assert setup[1].guard.check(Action(kind='execute_tool', text='check the backup')).allowed
+
+
+def test_repeated_identical_clause_is_acknowledged_once_and_stays_enforced(setup):
+    result = capture(setup, 'Never deploy widget-service. Never deploy widget-service.')
+    assert len(result.captured) == 1
+    ledger, manager = setup
+    reopened = DirectiveManager(DirectiveStore(manager.store._db_path, ledger=ledger))
+    assert len(reopened.store.active()) == 1
+    assert not reopened.guard.check(Action(kind='execute_tool', text='deploy widget-service')).allowed
+    ledger.erase_sources(contact_id='owner', turn_ids=['source-a'])
+    assert reopened.store.active() == []
+
+
+def test_source_bound_verdict_has_no_duplicate_prose_for_downstream_storage(setup):
+    rule = capture(setup, 'Never deploy confidential-widget-service.').captured[0]
+    ledger, manager = setup
+    verdict = manager.guard.check(Action(kind='execute_tool', text='deploy confidential-widget-service'))
+    assert not verdict.allowed and rule.id in verdict.reason
+    serialized = json.dumps(verdict.as_dict())
+    assert 'confidential-widget-service' not in serialized
+    assert verdict.as_dict()['violations'] == [{'id': rule.id}]
+    ledger.erase_sources(contact_id='owner', turn_ids=['source-a'])
+    assert manager.store.get(rule.id) is None
+    assert 'confidential-widget-service' not in serialized

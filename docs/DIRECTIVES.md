@@ -10,11 +10,11 @@ Only the exact rule clause is injected. Explanations, subsequent sentences, cred
 
 ## Source and correction
 
-New automatic rules store a reference to the attributed owner source, source version, message hash and clause span in the existing directive metadata column. The existing directive row stores no second copy of the rule prose or match terms. Enforcement and context resolve the current canonical source each time. A correction or erasure of that source withdraws the rule, pending acknowledgment, pending lift and cached block presentation. Capture events contain IDs; source-backed capture and guard logs omit rule prose.
+New automatic rules store a reference to the attributed owner source, source version, message hash and clause span in the existing directive metadata column. The existing directive row stores no second copy of the rule prose or match terms. Enforcement and context resolve the current canonical source each time. A correction or erasure of that source withdraws the rule, pending acknowledgment, pending lift and cached block presentation. Capture events and serialized source-backed verdicts contain IDs; source-backed capture and guard logs omit rule prose. Current rule text is available through the source-aware directive reader, not copied into downstream refusal records.
 
 Identical active restatements are deduplicated against the first source. Erasing or correcting that source withdraws the rule even if another conversation repeated it. A later new explicit statement can create a new source-bound rule. This repair does not reconstruct provenance for old rows or erase historical logs and backups.
 
-The authorized manual directive API remains explicit operator intent and does not require a standing opener or a conversation source. Its existing revoke API remains the way to retire a manual rule. The standalone “pause autonomy” command keeps its existing meaning. No approval service or additional model call is introduced. The optional legacy LLM interface cannot create unsupported rules or bypass source admission, and skips unavailable or duplicate candidates.
+The authorized manual directive API remains explicit operator intent and does not require a standing opener or a conversation source. Its existing revoke API remains the way to retire a manual rule. The standalone “pause autonomy” command keeps its existing meaning. No approval service or additional model call is introduced. The dead optional LLM extraction fallback has been removed. `COLONY_DIRECTIVE_LLM_ASSIST` no longer enables a consumer; automatic standing rules use the deterministic admission described above.
 
 ## Compatibility
 

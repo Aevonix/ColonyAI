@@ -4437,17 +4437,6 @@ async def _process_turn_sync(
                                "needs_confirmation": bool(_cap.needs_confirmation)})
                     except Exception:
                         pass
-                else:
-                    # Deterministic pass found nothing: optionally fall back to
-                    # the LLM classifier (1b), non-blocking, default OFF.
-                    try:
-                        from colony_sidecar.directives.extractor import llm_assist_enabled
-                        if llm_assist_enabled():
-                            _spawn_task(_directive_manager.capture_llm(
-                                getattr(body.user_message, "content", "") or "",
-                                source_id=source_id, contact_id=owner_id))
-                    except Exception:
-                        pass
         except Exception:
             logger.debug("owner directive capture failed", exc_info=True)
 

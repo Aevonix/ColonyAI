@@ -232,9 +232,43 @@ def observe(registry, execution_id, owner):
     return {'status': 'observed', 'conditions_comparable': comparable, 'suggestion_enabled': False}
 
 
+def safe_reconcile(registry, owner):
+    """Replay a bounded set of durable terminals on callbacks and owner reads.
+
+    The marker is only an optimization in the existing operational metadata.
+    A crash before it commits replays the same immutable outcome receipt.
+    No terminal row can issue a retrospective forecast.
+    """
+    try:
+        if _parts(registry, owner) is None:
+            return
+        with closing(registry.ledger._connect()) as db:
+            rows = db.execute(
+                "SELECT e.execution_id FROM execution_observations e "
+                "JOIN execution_runtime_observations r USING(execution_id) "
+                "WHERE e.contact_id=? AND e.state!='observed' "
+                "AND e.last_observed_at>=? "
+                "AND json_extract(r.metadata_json,'$.forecast_settled') IS NULL "
+                "ORDER BY e.last_observed_at,e.execution_id LIMIT 20",
+                (owner, registry.clock()-7*86400)).fetchall()
+        for row in rows:
+            safe_observe(registry, row['execution_id'], owner)
+    except Exception as error:
+        logger.warning('Execution duration reconciliation unavailable: %s', type(error).__name__)
+
+
 def safe_observe(registry, execution_id, owner):
     try:
-        return observe(registry, execution_id, owner)
+        result = observe(registry, execution_id, owner)
+        if result and result.get('status') in {'observed', 'no_prospective_forecast'}:
+            with closing(registry.ledger._connect()) as db, db:
+                db.execute(
+                    "UPDATE execution_runtime_observations "
+                    "SET metadata_json=json_set(metadata_json,'$.forecast_settled',1) "
+                    "WHERE execution_id=? AND execution_id IN "
+                    "(SELECT execution_id FROM execution_observations "
+                    "WHERE contact_id=? AND state!='observed')", (execution_id, owner))
+        return result
     except Exception as error:
         logger.warning('Execution duration observer unavailable: %s', type(error).__name__)
         return {'status': 'unavailable', 'error_type': type(error).__name__, 'suggestion_enabled': False}

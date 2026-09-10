@@ -12,7 +12,7 @@ stay in their source conversation. Pure communication-STYLE directives
 from __future__ import annotations
 
 import re
-from typing import List, Optional
+from typing import List
 
 from colony_sidecar.directives.models import (
     Directive, Polarity, normalize_terms,
@@ -120,7 +120,8 @@ def standing_clauses(message: str) -> List[str]:
             end = ending.start() + (ending[0] in '.!?')
             clause = clause[:end].strip()
         if 0 < len(clause) <= 500:
-            admitted.append(clause)
+            if clause not in admitted:
+                admitted.append(clause)
     return admitted
 
 
@@ -183,67 +184,3 @@ def extract_directives(message: str, *, source: str = "owner_explicit") -> List[
 
 def is_revocation(directive: Directive) -> bool:
     return bool(directive.__dict__.get("_revocation"))
-
-
-# ---------------------------------------------------------------------------
-# Optional LLM-assisted extraction (behind the deterministic pass) -- 1b
-# ---------------------------------------------------------------------------
-
-def llm_assist_enabled() -> bool:
-    import os
-    return os.environ.get("COLONY_DIRECTIVE_LLM_ASSIST", "false").strip().lower() == "true"
-
-
-_LLM_SYS = (
-    "You extract STANDING directives from an owner message: lasting instructions "
-    "to DO or AVOID something (not one-off requests, not writing-style tweaks). "
-    "Reply ONLY with JSON: {\"polarity\":\"prohibit|require|none\",\"subject\":\"...\"}. "
-    "Use none unless the message clearly sets a lasting boundary or rule."
-)
-
-
-async def llm_extract_directives(text: str) -> List[Directive]:
-    """A cheap classifier for turns the regex missed. Default OFF; only runs when
-    COLONY_DIRECTIVE_LLM_ASSIST=true and an introspection endpoint is configured.
-    Inferred directives are stored at lower confidence + source 'inferred' so the
-    owner can correct them via the acknowledgment echo."""
-    import os, json as _json
-    clauses = standing_clauses(text)
-    if not clauses or not extract_directives(text) or not llm_assist_enabled():
-        return []
-    base = os.environ.get("COLONY_INTROSPECT_BASE_URL", "").rstrip("/")
-    model = os.environ.get("COLONY_INTROSPECT_MODEL", "")
-    if not base or not model:
-        return []
-    try:
-        import aiohttp
-    except ImportError:
-        return []
-    headers = {"Content-Type": "application/json"}
-    key = os.environ.get("COLONY_INTROSPECT_API_KEY", "")
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    payload = {
-        "model": model, "temperature": 0,
-        "max_tokens": 120,
-        "messages": [{"role": "system", "content": _LLM_SYS},
-                     {"role": "user", "content": "\n".join(clauses)[:800]}],
-    }
-    try:
-        timeout = aiohttp.ClientTimeout(total=float(os.environ.get("COLONY_INTROSPECT_TIMEOUT", "20")))
-        async with aiohttp.ClientSession() as s:
-            async with s.post(base + "/chat/completions", json=payload,
-                              headers=headers, timeout=timeout) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-        content = data["choices"][0]["message"]["content"]
-        m = re.search(r"\{.*\}", content, re.DOTALL)
-        obj = _json.loads(m.group(0) if m else content)
-    except Exception:
-        return []
-    # A model cannot override scope admission or invent a new enforced rule.
-    # Retain only an exact deterministic rule from the admitted source clauses.
-    pol, subject = str(obj.get('polarity', 'none')), str(obj.get('subject', '')).strip()
-    return [directive for directive in extract_directives(text, source='inferred')
-            if directive.polarity.value == pol and directive.subject == subject]
