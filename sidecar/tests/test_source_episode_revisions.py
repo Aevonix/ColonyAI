@@ -98,6 +98,28 @@ async def test_unknown_episode_time_is_labelled_in_relevant_date_query(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_ordinary_api_preserves_calendar_day_overlap_across_source_and_query_timezones(source_app, tmp_path, monkeypatch):
+    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
+    projection = SourceClaimProjection(ledger)
+    async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://fixture') as client:
+        await ingest(client, 'sensor', REPORT, tz='UTC', occurred='2026-09-10T12:00:00+00:00')
+        assert await projection.process_one(Model({REPORT: episode(REPORT) | {'event_at_text': '2026-08-24'}}))
+        for date, expected in [('2026-08-24', True), ('2026-08-25', False)]:
+            response = await client.post('/v1/host/context/assemble', json={
+                'identity': {'host_id': 'test-host'},
+                'context': {'contact_id': 'contact-a', 'session_id': 'later', 'timezone': 'America/New_York'},
+                'incoming_message': {'role': 'user', 'content': QUERY.replace('2026-08-24', date)}})
+            assert response.status_code == 200, response.text
+            memories = [s for s in response.json()['sections'] if s['id'] == 'colony-memory']
+            assert bool(memories) is expected
+            if memories:
+                assert '2026-08-24T00:00:00+00:00' in memories[0]['body']
+                assert 'calendar_day' in memories[0]['body']
+                assert 'query_time_unresolved' in memories[0]['body']
+
+
+@pytest.mark.asyncio
 async def test_ordinary_correction_retracts_prior_episode_and_retains_identity_basis(source_app, tmp_path):
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     projection = SourceClaimProjection(ledger)

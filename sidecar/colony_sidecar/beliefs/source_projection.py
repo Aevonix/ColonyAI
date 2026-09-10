@@ -145,8 +145,17 @@ class SourceClaimProjection:
             if time_query.mode == "unresolved_time":
                 pass  # Return labelled evidence, never certify a requested time.
             elif time_query.mode == "observed_range":
-                where += ["json_extract(c.data_json,'$.event_at')>=?", "json_extract(c.data_json,'$.event_at')<?"]
-                args.extend((time_query.start, time_query.end))
+                # A source calendar day is an interval, not a midnight event.
+                # Source and query timezones can give that day different UTC
+                # boundaries. Retain overlap without claiming an exact instant.
+                where.append("""((json_extract(c.data_json,'$.event_time.status')='resolved'
+                    AND json_extract(c.data_json,'$.event_time.precision')='calendar_day'
+                    AND json_extract(c.data_json,'$.event_time.start')<?
+                    AND json_extract(c.data_json,'$.event_time.end_exclusive')>?)
+                    OR (coalesce(json_extract(c.data_json,'$.event_time.precision'),'')!='calendar_day'
+                    AND json_extract(c.data_json,'$.event_at')>=?
+                    AND json_extract(c.data_json,'$.event_at')<?))""")
+                args.extend((time_query.end, time_query.start, time_query.start, time_query.end))
             elif time_query.mode == "valid_range":
                 where += ["c.valid_from IS NOT NULL", "c.valid_from<?", "(c.valid_to IS NULL OR c.valid_to>?)"]
                 args.extend((time_query.end, time_query.start))
@@ -504,13 +513,22 @@ class SourceClaimProjection:
                             excerpt_truncated=bool(removed) or bool(hit.get("excerpt_truncated"))))
                 cursor = max(cursor, end)
         bundles, message_contexts, emitted_messages, groups = [], {}, set(), {}
-        unresolved_episode_times = set()
+        unresolved_time_keys = set()
 
         def current_group(key):
             if key not in groups:
                 with closing(self.ledger._connect()) as conn:
                     groups[key] = self._rows(conn, contact_id, session_id, key=key,
                         time_query=time_query, distinct_values=True, limit=9)
+                    if time_query.mode == 'observed_range' and any(
+                            c.get('event_time', {}).get('precision') == 'calendar_day'
+                            and (c['event_time']['start'] < time_query.start
+                                 or c['event_time']['end_exclusive'] > time_query.end)
+                            for c in groups[key]):
+                        # The event could fall in the overlapping part or the
+                        # remainder of its source day. Relevance is not proof
+                        # that it happened within the query's narrower window.
+                        unresolved_time_keys.add(key)
                     if not groups[key] and time_query.mode == 'observed_range':
                         # Relevance already selected this source. An unknown
                         # episode time may help answer a date question, but it
@@ -520,7 +538,7 @@ class SourceClaimProjection:
                             time_query=MemoryTimeQuery(), distinct_values=True, limit=9)
                             if c.get('representation') == 'episode' and not c.get('event_at')]
                         if groups[key]:
-                            unresolved_episode_times.add(key)
+                            unresolved_time_keys.add(key)
             return groups[key]
 
         def complete_message_context(claim):
@@ -616,7 +634,7 @@ class SourceClaimProjection:
                             # Conflicting peers remain one indivisible candidate.
                             "ranking_text": "\n".join(dict.fromkeys(c["evidence"] for c in group)),
                             **({"validity_status": "query_time_unresolved"}
-                               if time_query.mode == "unresolved_time" or key in unresolved_episode_times else {}),
+                               if time_query.mode == "unresolved_time" or key in unresolved_time_keys else {}),
                             "contradiction_count": len(values) - 1 if conflict else 0, "relevance": 1 / (61 + len(bundles)),
                             "content": json.dumps({"subject": group[0]["subject"], "predicate": key[1],
                                                    "status": status, "assertions": members}, ensure_ascii=False),

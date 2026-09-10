@@ -141,7 +141,10 @@ removed and counted in `ignored_episode_date_count`; its invented text is not
 stored. Missing dates stay unknown rather than inheriting a date from a different
 quotation. Relevant episodes with unknown time remain available to event-date
 queries as `query_time_unresolved` evidence; known events outside the requested
-interval stay excluded.
+interval stay excluded. A calendar-day observation is matched as an interval,
+not as an event at midnight. Partial overlap across source and query timezones
+also carries `query_time_unresolved`, since an unknown point within the source
+day cannot certify that the event happened inside the query's narrower window.
 Material that cannot fit with its essential context
 stays available as source history.
 

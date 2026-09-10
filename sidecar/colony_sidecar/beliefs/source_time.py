@@ -99,6 +99,12 @@ class MemoryTimeQuery:
         if self.mode == "unresolved_time":
             return False
         if self.mode == "observed_range":
+            event = claim.get('event_time', {})
+            if event.get('status') == 'resolved' and event.get('precision') == 'calendar_day':
+                start, end = utc_timestamp(event.get('start')), utc_timestamp(event.get('end_exclusive'))
+                return bool(start and end
+                    and (not self.end or start < utc_timestamp(self.end))
+                    and (not self.start or end > utc_timestamp(self.start)))
             return self.accepts_observation(claim.get("event_at"))
         start, end = utc_timestamp(claim.get("valid_from")), utc_timestamp(claim.get("valid_to"))
         query_start, query_end = utc_timestamp(self.start), utc_timestamp(self.end)
