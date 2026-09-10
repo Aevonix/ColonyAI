@@ -117,6 +117,22 @@ class LocalImageStore:
             self._write_durable(path, data)
         return digest
 
+    def store_source_document(self, data: bytes) -> str:
+        """Retain already bounded PDF bytes in the existing source namespace.
+
+        Keep the legacy unknown-MIME path mapping: predecessor backup/read and
+        erasure use it too. The MIME is application/pdf; the internal suffix is
+        not a declaration of image content and no thumbnail is generated.
+        """
+        if self._base_dir.name != 'sources':
+            raise ValueError('documents require canonical source ownership')
+        self._ensure_dirs()
+        digest = hashlib.sha256(data).hexdigest()
+        path = self._original_path(digest, 'application/pdf')
+        if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            self._write_durable(path, data)
+        return digest
+
     def delete_original(self, image_hash: str) -> bool:
         """Delete an owned original and thumbnail after ledger reference checks."""
         if len(image_hash) != 64 or any(c not in "0123456789abcdef" for c in image_hash):

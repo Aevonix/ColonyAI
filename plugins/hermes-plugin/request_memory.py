@@ -238,7 +238,8 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             return None
         row = dict(row)
         if (not receipt or not fresh or receipt['watermark'] != watermark
-                or receipt.get('image_url_hash') and not receipt.get('image_current')):
+                or receipt.get('image_url_hash') and not receipt.get('image_current')
+                or receipt.get('document_read') and not receipt.get('document_current')):
             field = 'output' if row.get('type') == 'function_call_output' else 'content'
             row[field] = '[Opened source withheld; read again after source freshness is restored.]'
         return row
@@ -381,6 +382,10 @@ class RequestMemory:
                     image_url_hash=hashlib.sha256(image_url.encode()).hexdigest(),
                     image_read={key: result[key] for key in ('source_id', 'source_version', 'read_revision')}
                                | {'asset_hash': result['image']['asset_hash']})
+            if result.get('view') == 'document':
+                self._read_receipts[key][tool_call_id]['document_read'] = {
+                    field: result[field] for field in ('source_id', 'source_version', 'read_revision', 'offset')
+                } | {field: result['document'][field] for field in ('asset_hash', 'page')}
             return True
 
     def supplied_snapshot(self, scope):
@@ -495,6 +500,31 @@ class RequestMemory:
                         and checked.get('image', {}).get('asset_hash') == receipt['image_read']['asset_hash'])
                 except Exception:
                     receipt['image_current'] = False
+            # PDF parsing can finish or change without changing canonical
+            # source refs. Revalidate the exact bounded derivative revision
+            # and correction set immediately before actual native dispatch.
+            for row in _read_rows(request):
+                receipt = _read_receipt(row, read_receipts)
+                if not receipt or not receipt.get('document_read') or receipt.get('document_current'):
+                    continue
+                try:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError('source_document_verification_deadline')
+                    selector = receipt['document_read']
+                    response = self.client.post('/v1/host/memory/read', timeout=remaining,
+                        _deadline_monotonic=deadline, json={'identity': {'host_id': 'hermes'},
+                            'person_id': contact, 'session_id': scope.session_id,
+                            'source_view': 'document', **selector})
+                    response.raise_for_status()
+                    checked = response.json()['source']
+                    receipt['document_current'] = (checked.get('read_revision') == selector['read_revision']
+                        and checked.get('watermark') == watermark and checked.get('source_refs') == receipt['sources']
+                        and checked.get('view') == 'document' and checked.get('offset') == selector['offset']
+                        and checked.get('document', {}).get('asset_hash') == selector['asset_hash']
+                        and checked.get('document', {}).get('page') == selector['page'])
+                except Exception:
+                    receipt['document_current'] = False
         if watermark and not observed:
             # A missing/evicted pre-turn observation cannot certify enriched
             # historical api_content. Its transcript must not fail open.

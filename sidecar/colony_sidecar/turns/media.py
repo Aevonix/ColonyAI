@@ -1,4 +1,4 @@
-"""Owned image/audio originals and fallible derivatives in the source ledger."""
+"""Owned image/audio/PDF originals and fallible derivatives in the source ledger."""
 from __future__ import annotations
 
 import asyncio
@@ -84,6 +84,27 @@ def normalize_messages(conn, store, turn_id, session_id, messages):
             if index in consumed:
                 continue
             kind = block.get('type') if isinstance(block, dict) else None
+            if kind == 'input_document':
+                from .documents import decode_document, disposition
+                changed = True
+                try:
+                    data = decode_document(block)
+                except ValueError as exc:
+                    blocks.append({'type': 'document_unretained', 'reason': str(exc),
+                                   'reference_sha256': hashlib.sha256(json.dumps(block, sort_keys=True).encode()).hexdigest()})
+                    continue
+                asset = store.store_source_document(data)
+                conn.execute('''INSERT INTO source_media(asset_hash,mime_type,size_bytes,width,height,status,media_metadata_json)
+                    VALUES (?,'application/pdf',?,0,0,'document_pending',?) ON CONFLICT(asset_hash) DO UPDATE SET
+                    status=CASE WHEN source_media.status='orphan' THEN 'document_pending' ELSE source_media.status END,
+                    media_metadata_json=CASE WHEN source_media.status='orphan' THEN excluded.media_metadata_json
+                                             ELSE source_media.media_metadata_json END''',
+                    (asset, len(data), json.dumps({'document': disposition('pending')})))
+                conn.execute('''INSERT OR IGNORE INTO source_media_links
+                    (turn_id,message_hash,asset_hash,block_index,role) VALUES (?,?,?,?,?)''',
+                    (turn_id, original_hash, asset, index, message['role']))
+                blocks.append({'type': 'document', 'asset_id': 'sha256:' + asset, 'mime_type': 'application/pdf'})
+                continue
             if kind == 'input_audio':
                 from colony_sidecar.turns.audio import decode_audio, transcript
                 changed = True
@@ -110,7 +131,8 @@ def normalize_messages(conn, store, turn_id, session_id, messages):
                     except Exception:
                         blocks.append({'type': 'audio_transcript_unretained', 'reason': 'invalid_audio_transcript'})
                 continue
-            if kind in {'audio_transcript', 'audio_url', 'input_video', 'video_url'}:
+            if kind in {'audio_transcript', 'audio_url', 'input_video', 'video_url',
+                        'document_url', 'input_file', 'file_url'}:
                 changed = True
                 blocks.append({'type': 'media_unretained', 'reason': 'unsupported_or_unpaired_media',
                                'reference_sha256': hashlib.sha256(json.dumps(block, sort_keys=True).encode()).hexdigest()})
@@ -166,7 +188,7 @@ def erase_removed(conn, turn_id, session_id, retained):
             affected.add(row['asset_hash'])
     for asset in affected:
         if not conn.execute('SELECT 1 FROM source_media_links WHERE asset_hash=?', (asset,)).fetchone():
-            conn.execute("UPDATE source_media SET status='orphan',description=NULL,model=NULL,error=NULL,lease_token='' WHERE asset_hash=?", (asset,))
+            conn.execute("UPDATE source_media SET status='orphan',description=NULL,model=NULL,error=NULL,media_metadata_json=NULL,lease_token='' WHERE asset_hash=?", (asset,))
             conn.execute('DELETE FROM source_media_search WHERE asset_hash=?', (asset,))
 
 
@@ -287,6 +309,50 @@ class SourceMedia:
                     enqueue(conn, source['turn_id'])
             return True
 
+    def claim_document_job(self):
+        # Distinct statuses deliberately remain invisible to predecessor image
+        # workers during rollback. No schema rebuild or second queue is needed.
+        now = time.time()
+        with closing(self.ledger._connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('''SELECT * FROM source_media WHERE mime_type='application/pdf'
+                AND (status='document_pending' OR (status='document_running' AND lease_until<=?))
+                LIMIT 1''', (now,)).fetchone()
+            if row is None:
+                return None
+            token = uuid.uuid4().hex
+            conn.execute("UPDATE source_media SET status='document_running',attempts=attempts+1,lease_token=?,lease_until=? WHERE asset_hash=?",
+                         (token, now + 60, row['asset_hash']))
+            return dict(row, lease_token=token)
+
+    def finish_document(self, job, result):
+        with closing(self.ledger._connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute("SELECT 1 FROM source_media WHERE asset_hash=? AND status='document_running' AND lease_token=?",
+                               (job['asset_hash'], job['lease_token'])).fetchone()
+            if not row or not conn.execute('SELECT 1 FROM source_media_links WHERE asset_hash=?', (job['asset_hash'],)).fetchone():
+                return False
+            status = 'complete' if result['status'] in {'complete', 'partial'} else 'document_' + result['status']
+            conn.execute('''UPDATE source_media SET status=?,media_metadata_json=?,error=?,lease_until=0,lease_token=''
+                WHERE asset_hash=?''', (status, json.dumps({'document': result}, ensure_ascii=True),
+                                      result.get('reason'), job['asset_hash']))
+            # Page text stays explicitly addressed evidence. It is not fed into
+            # image captions, factual claims, or semantic recall automatically.
+            return True
+
+    async def process_document(self, job):
+        from .documents import MAX_DOCUMENT_BYTES, disposition, extract_document
+        try:
+            with self.store._original_path(job['asset_hash'], job['mime_type']).open('rb') as stream:
+                data = stream.read(MAX_DOCUMENT_BYTES + 1)
+            if len(data) > MAX_DOCUMENT_BYTES or hashlib.sha256(data).hexdigest() != job['asset_hash']:
+                result = disposition('failed', 'document_original_integrity_mismatch')
+            else:
+                result = await extract_document(data)
+        except (OSError, ValueError):
+            result = disposition('failed', 'document_original_or_parser_unavailable')
+        self.finish_document(job, result)
+
     async def process_one(self, router):
         try:
             self.collect_orphans()
@@ -294,6 +360,10 @@ class SourceMedia:
             # A fenced but undeletable orphan must not starve other image jobs.
             # Explicit erasure reports pending; later passes retry deletion.
             pass
+        document = self.claim_document_job()
+        if document is not None:
+            await self.process_document(document)
+            return True
         job = self.claim_job()
         if job is None:
             return False
