@@ -13,7 +13,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from httpx import NetworkError, RemoteProtocolError, TimeoutException
+from httpx import HTTPStatusError, NetworkError, RemoteProtocolError, TimeoutException
 
 from .client import source_message_hash
 
@@ -488,7 +488,9 @@ class RequestMemory:
                     freshness_retryable = (page.get('complete') is False
                                            and int(page['through']) < int(page['head']))
         except Exception as error:
-            freshness_retryable = isinstance(error, (TimeoutError, TimeoutException, NetworkError, RemoteProtocolError))
+            freshness_retryable = (
+                isinstance(error, (TimeoutError, TimeoutException, NetworkError, RemoteProtocolError))
+                or (isinstance(error, HTTPStatusError) and error.response.status_code in {502, 503, 504}))
             logger.warning('request memory freshness unavailable (%s)', type(error).__name__)
         if fresh:
             # Only explicitly opened images pay this small metadata read. A

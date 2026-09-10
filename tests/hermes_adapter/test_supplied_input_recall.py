@@ -67,12 +67,13 @@ automatic_ref=ledger.source_references(['automatic-record'],contact_id='owner',s
 parents=[{'source_id':'original-input','input_message_hash':source_message_hash(
  'voice-input',{'role':'user','content':original})}]
 wire=[];generation=[];mode='supplied';scenario=sys.argv[4]
-initial_failure_pending=scenario in ('initial_timeout','initial_remote_protocol')
+initial_failure_pending=scenario in ('initial_timeout','initial_remote_protocol','initial_http_503')
 def respond(request):
  global mode, initial_failure_pending
  if request.url.host=='fixture':
   if initial_failure_pending and request.url.path=='/v1/host/memory/sources/erasures':
    initial_failure_pending=False
+   if scenario=='initial_http_503':return httpx.Response(503,json={'error':'Temporarily unavailable'})
    error=httpx.RemoteProtocolError if scenario=='initial_remote_protocol' else httpx.ReadTimeout
    raise error('Controlled initial freshness transport failure',request=request)
   response=api.request(request.method,request.url.path,params=request.url.params,
@@ -200,7 +201,7 @@ def agent():
   platform='cli',max_iterations=5,enabled_toolsets=['colony','delegation'])
  value.save_trajectories=False
  return value
-if scenario in ('initial_timeout','initial_remote_protocol'):
+if scenario in ('initial_timeout','initial_remote_protocol','initial_http_503'):
  mode='initial_timeout';blocked=agent()
  with supplied_input(contact_id='owner',session_id=blocked.session_id,input_refs=parents,source_refs=[ref]) as supplied:
   blocked.run_conversation('Perform the admitted lamp maintenance task.',persist_user_message=original)
@@ -262,7 +263,7 @@ print(json.dumps({'native_parent_automatic_recall':True,'no_gateway_sender':True
 '''
 
 
-@pytest.mark.parametrize('scenario', ['normal', 'erase_during', 'rotate', 'initial_timeout', 'initial_remote_protocol'])
+@pytest.mark.parametrize('scenario', ['normal', 'erase_during', 'rotate', 'initial_timeout', 'initial_remote_protocol', 'initial_http_503'])
 def test_supplied_native_input_reaches_automatic_recall_and_delegated_source_reader(artifacts, tmp_path, scenario):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified Hermes release for native request qualification')
