@@ -5,8 +5,9 @@
 Authenticated native tasks can recollect for the contact bound to their validated
 human input, including host tasks with no channel sender. The memory provider
 uses the existing source validation and session binding before selecting that
-contact. Unbound tasks receive no owner fallback, channel senders must still
-match, and source erasure invalidates dependent recall before another request.
+contact. This adds no owner fallback for unchecked supplied input. Channel
+senders must still match, and source erasure invalidates dependent recall before
+another request. Existing explicit owner-system configuration is unchanged.
 
 Shared work prioritizes current native executions and keeps available ancestors
 with their children under the existing eight-record and 4,000-character limits.
@@ -15,8 +16,9 @@ execution ancestry does not establish that two tasks have the same purpose.
 
 The installation guide uses the matched published packages, documents Hermes'
 public source installation prerequisite and separates the minimal memory setup
-from optional accepted local work and native goals. A fresh Linux installation
-completed one real native task; channel enrollment still needs deployment checks.
+from optional accepted local work and native goals. The fresh Linux installation
+trial used version 1.1.2 and completed one real native task; channel enrollment
+still needs deployment checks.
 
 Focused native and source-lifecycle checks cover these fixes. A replay of the
 failed concurrent-work snapshot now retains both parent and child. This does not
