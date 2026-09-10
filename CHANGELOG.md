@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.1.3 - native recollection and concurrent work context
+
+Authenticated native tasks can recollect for the contact bound to their validated
+human input, including host tasks with no channel sender. The memory provider
+uses the existing source validation and session binding before selecting that
+contact. Unbound tasks receive no owner fallback, channel senders must still
+match, and source erasure invalidates dependent recall before another request.
+
+Shared work prioritizes current native executions and keeps available ancestors
+with their children under the existing eight-record and 4,000-character limits.
+Optional historical reports follow active work. Omitted records remain explicit;
+execution ancestry does not establish that two tasks have the same purpose.
+
+The installation guide uses the matched published packages, documents Hermes'
+public source installation prerequisite and separates the minimal memory setup
+from optional accepted local work and native goals. A fresh Linux installation
+completed one real native task; channel enrollment still needs deployment checks.
+
+Focused native and source-lifecycle checks cover these fixes. A replay of the
+failed concurrent-work snapshot now retains both parent and child. This does not
+establish improved model attribution or a completed cross-session task.
+
 ## v1.1.2 - complete recall passages and scoped standing rules
 
 Recall shares exact source passages across assertion cards and keeps an eligible
