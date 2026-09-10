@@ -555,7 +555,8 @@ class SourceClaimProjection:
                     not b["valid_to"] or not a["valid_from"] or a["valid_from"] < b["valid_to"])
             conflict = any(norm_value(a["value"]) != norm_value(b["value"]) and overlaps(a, b)
                            for i, a in enumerate(group) for b in group[i + 1:])
-            members = [{"claim_id": c["id"], "source": "turn:" + c["turn_id"], "role": c["role"],
+            members = [{"claim_id": c["id"], "source": "turn:" + c["turn_id"],
+                        "source_message_hash": c["message_hash"], "role": c["role"],
                         "value": c["value"], "quote": c["evidence"], "observed_at": c["observed_at"],
                         "recorded_at": c["recorded_at"], "valid_from": c["valid_from"], "valid_to": c["valid_to"],
                         "event_at": c.get("event_at"), "event_time": c.get("event_time", {
@@ -579,6 +580,7 @@ class SourceClaimProjection:
                             "epistemic_state": ('derived_unverified' if any(c.get('evidence_basis') for c in group) else status),
                             **({'source_modality': 'audio_transcript'} if any(c.get('evidence_basis') for c in group) else {}),
                             "atomic_evidence": True,
+                            "content_format": "source_assertions_v1",
                             # Rank the grounded language the user supplied.
                             # Administrative IDs/timestamps in the output JSON
                             # are provenance, not the passage's semantic topic.
