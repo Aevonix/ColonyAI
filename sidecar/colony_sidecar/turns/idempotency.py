@@ -79,6 +79,18 @@ def canonical_turn_digest(payload: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _lexical_chunks(messages):
+    """The existing FTS writer's exact chunks, also used to recover ownership."""
+    from colony_sidecar.turns.audio import source_text
+    for message in messages:
+        content = source_text(message.get("content"))
+        if not content.strip():
+            continue
+        # Overlap preserves boundary phrases; full messages remain canonical.
+        for start in range(0, len(content), 1800):
+            yield message, content, content[start:start + 2000]
+
+
 class TurnIdempotencyLedger:
     """SQLite reservation ledger safe across threads and sidecar processes."""
 
@@ -287,22 +299,11 @@ class TurnIdempotencyLedger:
 
     @staticmethod
     def _index_messages(conn: sqlite3.Connection, turn_id: str, messages: list[dict[str, Any]]) -> None:
-        for message in messages:
-            content = message.get("content")
-            # Media references remain in source JSON. Only explicit text
-            # blocks are indexed; URLs, tool metadata and API wrappers are not.
-            if isinstance(content, list):
-                from colony_sidecar.turns.audio import source_text
-                content = source_text(content)
-            if not isinstance(content, str) or not content.strip():
-                continue
-            # Overlap avoids losing a phrase at a chunk boundary. The full
-            # message remains losslessly stored above, without chunk joins.
-            for start in range(0, len(content), 1800):
-                conn.execute(
-                    "INSERT INTO turn_source_search(turn_id, role, content) VALUES (?, ?, ?)",
-                    (turn_id, message["role"], content[start:start + 2000]),
-                )
+        for message, _, chunk in _lexical_chunks(messages):
+            conn.execute(
+                "INSERT INTO turn_source_search(turn_id, role, content) VALUES (?, ?, ?)",
+                (turn_id, message["role"], chunk),
+            )
 
 
     @staticmethod
@@ -596,43 +597,53 @@ class TurnIdempotencyLedger:
         if not words:
             return []
         expression = " OR ".join('"' + word + '"' for word in words)
+        from colony_sidecar.turns.audio import evidence_metadata
+
+        @lru_cache(maxsize=4)
+        def canonical_chunks(session, encoded):
+            # Reconstruct only scoped FTS matches, not the whole source store.
+            # The per-query cache is bounded; source envelopes are capped at 8 MiB.
+            chunks, messages = {}, {}
+            for message, text, chunk in _lexical_chunks(json.loads(encoded)):
+                # A long message can have thousands of chunks. Hash its original
+                # envelope and recover its modality once, not once per chunk.
+                key = id(message)
+                if key not in messages:
+                    messages[key] = (source_message_hash(session, message), evidence_metadata(message))
+                message_hash, metadata = messages[key]
+                owners = chunks.setdefault((message.get('role'), chunk), {})
+                owners[message_hash] = {'source_message_hash': message_hash,
+                    **metadata,
+                    **({'excerpt_truncated': True} if chunk != text else {})}
+            return {key: json.dumps(list(owners.values()), sort_keys=True)
+                    for key, owners in chunks.items()}
+
+        def owners(session, encoded, role, chunk):
+            return canonical_chunks(session, encoded).get((role, chunk), '[]')
+
         with closing(self._connect()) as conn:
+            conn.create_function('canonical_lexical_owners', 4, owners)
             rows = conn.execute("""
-                SELECT f.turn_id, f.role, f.content, s.contact_id, s.session_id, s.scope,
-                       s.occurred_at, s.ingested_at, s.messages_json
+                SELECT DISTINCT f.turn_id, f.role, f.content, s.contact_id, s.session_id, s.scope,
+                       s.occurred_at, s.ingested_at, owner.value AS ownership
                 FROM turn_source_search AS f
                 JOIN turn_sources AS s ON s.turn_id=f.turn_id
+                JOIN json_each(canonical_lexical_owners(
+                    s.session_id, s.messages_json, f.role, f.content)) AS owner
                 WHERE turn_source_search MATCH ? AND s.contact_id=?
                   AND (s.scope='person' OR s.session_id=?)
                   AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)
                 ORDER BY bm25(turn_source_search)
                 LIMIT ?
-            """, (expression, contact_id, session_id, max(1, min(limit, 10)) * 2)).fetchall()
-        from colony_sidecar.turns.audio import evidence_metadata, source_text
-        result, seen, source_messages = [], set(), {}
+            """, (expression, contact_id, session_id, max(1, min(limit, 20)))).fetchall()
+        # Exact chunk ownership and duplicate projection rows are resolved before
+        # LIMIT, so stale rows cannot spend the canonical result budget. This also
+        # reads predecessor-written indexes without a migration or startup rebuild.
+        result = []
         for row in rows:
             value = dict(row)
-            encoded = value.pop('messages_json')
-            if value['turn_id'] not in source_messages:
-                source_messages[value['turn_id']] = [
-                    (message, source_text(message.get('content')),
-                     source_message_hash(value['session_id'], message))
-                    for message in json.loads(encoded)]
-            # FTS is a projection. Hydrate the exact owning message before
-            # inheriting modality, uncertainty or correction lineage. A shared
-            # role does not make another message's ASR evidence applicable.
-            for message, text, message_hash in source_messages[value['turn_id']]:
-                if message.get('role') != value['role'] or value['content'] not in text:
-                    continue
-                key = (value['turn_id'], message_hash, value['content'])
-                if key in seen:
-                    continue
-                seen.add(key)
-                result.append({**value, 'source_message_hash': message_hash,
-                    **evidence_metadata(message),
-                    **({'excerpt_truncated': True} if value['content'] != text else {})})
-                if len(result) >= limit:
-                    return result
+            ownership = json.loads(value.pop('ownership'))
+            result.append({**value, **ownership})
         return result
 
     def reserve(self, turn_id: str, content_sha256: str) -> Reservation:

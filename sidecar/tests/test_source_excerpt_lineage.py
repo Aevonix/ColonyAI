@@ -95,3 +95,87 @@ def test_lexical_hydration_marks_truncation_and_ignores_unowned_index_rows(tmp_p
     assert all(hit["content"] in message["content"] for hit in hits)
     assert all(hit["excerpt_truncated"] for hit in hits)
     assert all(hit["source_message_hash"] == source_message_hash("work", message) for hit in hits)
+
+
+def test_containing_message_does_not_own_another_messages_indexed_excerpt(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / "sources.db")
+    short = {"role": "user", "content": "The phrase is violet"}
+    longer = {"role": "user", "content": "Preface: The phrase is violet"}
+    other = {"role": "user", "content": "A violet lantern stands beside the courtyard entrance."}
+    ledger.record_source("nested", contact_id="person", session_id="work",
+                         messages=[short, longer], derive_claims=False)
+    ledger.record_source("other", contact_id="person", session_id="work",
+                         messages=[other], derive_claims=False)
+    hits = ledger.search_sources("violet", contact_id="person", session_id="later", limit=3)
+    assert {(hit["content"], hit["source_message_hash"]) for hit in hits} == {
+        (message["content"], source_message_hash("work", message))
+        for message in (short, longer, other)}
+    assert len(hits) == 3
+
+
+def test_stale_projection_rows_do_not_exhaust_the_canonical_result_limit(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / "sources.db")
+    message = {"role": "user", "content": "The violet marker is here. " + "Ordinary filler. " * 80}
+    ledger.record_source("valid", contact_id="person", session_id="work",
+                         messages=[message], derive_claims=False)
+    with ledger._connect() as conn, conn:
+        conn.executemany("INSERT INTO turn_source_search(turn_id,role,content) VALUES (?,?,?)",
+                         [("valid", "user", "violet " * 80 + f"stale {index}") for index in range(10)])
+    hits = ledger.search_sources("violet", contact_id="person", session_id="later", limit=5)
+    assert len(hits) == 1
+    assert hits[0]["content"] == message["content"]
+    assert hits[0]["source_message_hash"] == source_message_hash("work", message)
+
+
+def test_duplicate_projection_rows_do_not_hide_other_canonical_messages(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / "sources.db")
+    short = {"role": "user", "content": "Violet marker."}
+    other = {"role": "user", "content": "The violet marker beside the garden is ready."}
+    for turn, message in (("first", short), ("second", other)):
+        ledger.record_source(turn, contact_id="person", session_id="work",
+                             messages=[message], derive_claims=False)
+    with ledger._connect() as conn, conn:
+        conn.executemany("INSERT INTO turn_source_search(turn_id,role,content) VALUES (?,?,?)",
+                         [("first", "user", short["content"])] * 12)
+    hits = ledger.search_sources("violet", contact_id="person", session_id="later", limit=2)
+    assert {hit["turn_id"] for hit in hits} == {"first", "second"}
+    assert len(hits) == 2
+
+
+def test_ownership_reconstruction_only_reads_scoped_matches_and_hashes_each_message_once(tmp_path, monkeypatch):
+    from colony_sidecar.turns import idempotency
+    ledger = TurnIdempotencyLedger(tmp_path / "sources.db")
+    retained = {"role": "user", "content": "Violet marker. " * 400}
+    ledger.record_source("kept", contact_id="person", session_id="work",
+                         messages=[retained], derive_claims=False)
+    ledger.record_source("foreign", contact_id="other", session_id="work",
+                         messages=[{"role": "user", "content": "Violet foreign marker."}], derive_claims=False)
+    ledger.record_source("private", contact_id="person", session_id="private", scope="session",
+                         messages=[{"role": "user", "content": "Violet private marker."}], derive_claims=False)
+    ledger.record_source("unmatched", contact_id="person", session_id="work",
+                         messages=[{"role": "user", "content": "A brass compass."}], derive_claims=False)
+    observed = []
+    original_hash = idempotency.source_message_hash
+
+    def record_hash(session, message):
+        observed.append((session, message))
+        return original_hash(session, message)
+
+    monkeypatch.setattr(idempotency, "source_message_hash", record_hash)
+    hits = ledger.search_sources("violet", contact_id="person", session_id="later", limit=5)
+    assert hits and {hit["turn_id"] for hit in hits} == {"kept"}
+    assert observed == [("work", retained)]
+
+
+def test_shared_exact_prefix_chunks_keep_both_canonical_owners(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / "sources.db")
+    common = "Violet prefix. " + "Ordinary padding. " * 150
+    messages = [{"role": "user", "content": common + ending}
+                for ending in ("First ending.", "Second ending.")]
+    ledger.record_source("shared-prefix", contact_id="person", session_id="work",
+                         messages=messages, derive_claims=False)
+    hits = ledger.search_sources("violet", contact_id="person", session_id="later", limit=2)
+    assert len(hits) == 2
+    assert {hit["source_message_hash"] for hit in hits} == {
+        source_message_hash("work", message) for message in messages}
+    assert all(hit["content"] == common[:2000] and hit["excerpt_truncated"] for hit in hits)

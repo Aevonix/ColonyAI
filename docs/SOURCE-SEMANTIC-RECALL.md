@@ -27,6 +27,15 @@ completion requeues the linked sources. No new process, database or autonomous
 action is added. Disabling claim extraction does not disable configured semantic
 projection. Without embeddings the lexical path continues to work.
 
+Lexical recall recovers message ownership by regenerating the existing exact
+2,000-character chunks with a 1,800-character stride from current canonical
+messages. A containing substring does not establish ownership. Stale index rows
+and duplicate projections are filtered before the result limit; identical chunks
+actually produced by distinct messages retain those distinct owners. Recovery
+runs only for scoped full-text matches with a bounded per-query source cache.
+The existing FTS schema and writer format remain compatible across rollback and
+upgrade; no startup rebuild or ownership migration is required.
+
 Source chunks use the existing Lance `conversations` collection and the selected
 embedding generation. Each projection links an exact source turn and original
 message hash, plus its text span or asset and description hash. Original image
