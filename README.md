@@ -18,12 +18,14 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.1.1 repairs abbreviated-subject corrections and ordinary task context.
-A correction can retain the identity from its reviewed prior assertion while
-recollection distinguishes the new value from historical evidence. The native
-adapter also keeps assigned-worker instructions out of ordinary conversations
-without a dispatcher-owned task. The obsolete built-in self-knowledge seed is
-retired; deployment identity remains private.
+Version 1.1.2 keeps eligible short source messages together during recall, so a
+correction's introduction cannot displace the actual changed requirement.
+Assertions share exact source passages in the context packet without repeating
+them for each claim. Automatic standing rules require explicit lasting intent
+and current canonical evidence; ordinary task constraints stay with their task.
+Native execution callbacks also supply shadow duration observations through the
+existing forecast store. Estimates do not change scheduling or tool authority.
+These repairs still require useful-task qualification on the selected models.
 
 Version 1.1.0 added [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
 Authenticated integrations can retain an original PDF and reopen extracted text

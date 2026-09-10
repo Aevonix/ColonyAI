@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.1.2 - complete recall passages and scoped standing rules
+
+Recall shares exact source passages across assertion cards and keeps an eligible
+short current message intact with its claim and correction references. A partial
+introduction cannot crowd out the changed requirement from that same message.
+Conflicted, superseded and retracted claims still prevent whole-message expansion.
+Literal JSON source text remains evidence rather than an internal assertion card.
+
+Automatic directive capture requires an explicit lasting owner instruction.
+Temporary task constraints remain canonical task evidence. New learned rules
+store source references instead of duplicate prose and hydrate from current
+evidence, so correction and forgetting withdraw their effect. Explicit manual
+rules and historical records retain their existing behavior.
+
+Accepted native API requests and terminal execution callbacks now contribute
+bounded duration observations to the existing shadow forecast path. Cohorts
+retain processor and request-shape distinctions; failed, cancelled and missing
+pairs do not become comparable success samples. This measures accepted request
+time, not queue time or every task's full duration. Timing decisions remain off
+until prospective outcomes demonstrate benefit. No service or model call is added.
+
 ## v1.1.1 - grounded corrections and ordinary task context
 
 Explicit corrections and changes can resolve an abbreviated subject through the
