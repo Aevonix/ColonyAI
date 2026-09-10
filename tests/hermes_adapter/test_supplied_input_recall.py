@@ -137,7 +137,16 @@ def respond(request):
  return httpx.Response(200,json={'id':'fixture','object':'chat.completion','created':1,
   'model':'fixture-model','choices':[{'index':0,'message':message,'finish_reason':finish}],
   'usage':{'prompt_tokens':20,'completion_tokens':10,'total_tokens':30}})
-httpx.HTTPTransport.handle_request=lambda self,request:respond(request)
+def controlled_transport(self, request):
+ try:
+  return respond(request)
+ except Exception:
+  # The SDK wraps fixture assertion failures as APIConnectionError and retries.
+  # Preserve the first cause before that retry obscures the native boundary.
+  import traceback
+  traceback.print_exc()
+  raise
+httpx.HTTPTransport.handle_request=controlled_transport
 def no_network(*args,**kwargs):raise AssertionError('No external network in native recall qualification')
 socket.socket.connect=no_network;socket.create_connection=no_network
 from gateway.session_context import declare_stateless_channel, get_session_env
