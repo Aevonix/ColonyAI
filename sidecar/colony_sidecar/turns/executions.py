@@ -1,7 +1,8 @@
 """Scoped execution observations in the existing turn ledger.
 
 This is a view of host observations, never an execution lock or authority grant.
-Expired leases mean unknown liveness. Transcript content is deliberately absent.
+Expired leases mean unknown liveness. Operational storage contains no transcript
+text. A fresh scoped read can associate a root execution with its admitted input.
 """
 from __future__ import annotations
 
@@ -73,6 +74,18 @@ class ExecutionRegistry:
                                        (value['execution_id'],)).fetchone()
             metadata = accumulate(json.loads(old_runtime[0]) if old_runtime else None,
                                   value, previous, now)
+            inputs = value.get('input_refs')
+            if inputs:
+                if value['parent_execution_id'] or value['platform'] in {'cron', 'background_review'}:
+                    raise ValueError('root_execution_input_required')
+                if previous:
+                    if metadata.get('input_refs') != inputs:
+                        raise ValueError('execution_input_binding_conflict')
+                else:
+                    self.ledger._resolve_input_dependencies(conn, contact_id, value['session_id'], inputs)
+                    # References expire with these operational observations.
+                    # Source text remains only in the canonical source store.
+                    metadata['input_refs'] = inputs
             conn.execute('INSERT OR REPLACE INTO execution_runtime_observations VALUES (?,?)',
                          (value['execution_id'], json.dumps(metadata, separators=(',', ':'))))
             # Metadata is operational and bounded in time, not another memory archive.
@@ -83,7 +96,7 @@ class ExecutionRegistry:
         return {"accepted": True, "lease_seconds": 120, **({'forecast': forecast} if forecast else {})}
 
     def view(self, *, contact_id: str, owner: bool = False, session_id: str = "", limit: int = 20,
-             include_ancestors: bool = False) -> dict:
+             include_ancestors: bool = False, include_inputs: bool = True) -> dict:
         if owner:
             from colony_sidecar.self_model.execution_forecasts import safe_reconcile
             safe_reconcile(self, contact_id)
@@ -96,7 +109,8 @@ class ExecutionRegistry:
             clauses.extend(["contact_id=?", "session_id=?"])
             args.extend([contact_id, session_id])
         where = " AND ".join(clauses)
-        columns = "execution_id, session_id, turn_id, parent_execution_id, platform, phase, tool_name, last_observed_at, lease_until"
+        columns = ("execution_id, contact_id, session_id, turn_id, parent_execution_id, platform, phase, tool_name, last_observed_at, lease_until, "
+            "(SELECT metadata_json FROM execution_runtime_observations r WHERE r.execution_id=execution_observations.execution_id) metadata_json")
         with closing(self.ledger._connect()) as conn:
             conn.execute("BEGIN")
             total = conn.execute("SELECT count(*) FROM execution_observations WHERE " + where, args).fetchone()[0]
@@ -121,6 +135,18 @@ class ExecutionRegistry:
         items = []
         for row in rows:
             item = dict(row)
+            subject = item.pop('contact_id')
+            metadata = json.loads(item.pop('metadata_json') or '{}')
+            item['request_input'] = {'status': 'unbound'}
+            if include_inputs and metadata.get('input_refs'):
+                item['request_input'] = {'status': 'unavailable_in_viewer_scope'}
+                if subject == contact_id:
+                    try:
+                        from colony_sidecar.turns.source_read import input_excerpt
+                        item['request_input'] = input_excerpt(self.ledger, contact_id=contact_id,
+                            session_id=session_id, refs=metadata['input_refs'])
+                    except (ValueError, OSError, sqlite3.Error):
+                        item['request_input'] = {'status': 'source_unavailable_or_changed'}
             item["observation_age_seconds"] = round(max(0.0, now - item["last_observed_at"]), 1)
             item["liveness"] = "recently_observed" if item.pop("lease_until") > now else "unknown"
             if owner:
@@ -215,7 +241,6 @@ def format_view(view: dict) -> str:
         lines.append(f"- {item['platform']}{parent}, {item['phase']}{tool}; {item['liveness']}, last observed {item['observation_age_seconds']:g}s ago; session {item['session_id']}")
     if view["truncated"]:
         lines.append(f"Showing {len(view['items'])} of {view['total']} scoped observations.")
-    import json
     kanban = view.get('native_kanban')
     if kanban:
         lines.append('Native Kanban coverage: '+json.dumps({key:kanban.get(key) for key in
@@ -262,10 +287,16 @@ def format_view(view: dict) -> str:
 
 def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
                          session_id: str = '') -> dict:
-    """A fresh operational excerpt: bounded task titles, never bodies/drafts."""
+    """Fresh work records with optional scoped excerpts of admitted input."""
     import json
     import math
     from itertools import zip_longest
+
+    def line_for(row):
+        # JSON still decodes to the exact quote. A literal close marker inside
+        # source text must not terminate the adapter's outer instruction block.
+        return json.dumps(row, sort_keys=True, ensure_ascii=True).replace(
+            '[/colony-work-request-v1]', r'\u005b/colony-work-request-v1\u005d') + '\n'
 
     groups = _work_groups(view)
     coverage = work_source_coverage(view)
@@ -350,6 +381,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
               'parent_execution_id links execution rows only.\n')
     text = header + _coverage_line(coverage)
     shown_ids = set()
+    shown_executions = []
     shown = 0
     for row in coverage.values():
         row['shown'] = 0
@@ -369,7 +401,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
             current = (executions.get(current.get('parent_execution_id'))
                        if current['source'] == 'execution' else None)
         bundle.reverse()
-        lines = ''.join(json.dumps(row, sort_keys=True, ensure_ascii=True) + '\n' for row in bundle)
+        lines = ''.join(line_for(row) for row in bundle)
         if shown + len(bundle) > limit or len(text) + len(lines) > max_chars - 200:
             return
         text += lines
@@ -377,16 +409,42 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
         for row in bundle:
             shown_ids.add(id(row))
             coverage[row['source']]['shown'] += 1
+            if row['source'] == 'execution' and row.get('execution_id'):
+                shown_executions.append(row)
 
     for item in priority + rows:
         emit(item)
+    # Purpose is optional source evidence. First select all active record
+    # families with the existing fair budget so long input cannot hide a queue.
+    originals = {item['execution_id']: item for item in view.get('items', []) if item.get('execution_id')}
+    provenance = [row.get('request_input', {}).get('_provenance', {}) for row in originals.values()
+                  if row.get('request_input', {}).get('status') == 'admitted_input_excerpt']
+    source_scope = {(row.get('contact_id'), row.get('watermark')) for row in provenance}
+    input_sources = {}
+    input_note = ('Input excerpts identify original requests, not performance or child assignments; '
+                  'partial excerpts can omit task conditions.\n')
+    for item in shown_executions:
+        supplied = originals[item['execution_id']].get('request_input', {})
+        if supplied.get('status') != 'admitted_input_excerpt' or len(source_scope) != 1:
+            continue
+        old = line_for(item)
+        line = line_for({**item, 'request_input': {key: value for key, value in supplied.items()
+            if key != '_provenance'}})
+        note = '' if input_sources else input_note
+        if len(text) + len(line) - len(old) + len(note) <= max_chars - 200:
+            text = text.replace(old, line, 1)
+            text += note
+            for ref in supplied['_provenance']['source_refs']:
+                input_sources[(ref['source_id'], ref['source_version'])] = ref
+        else:
+            truncated = True
     kanban = view.get('native_kanban')
     if kanban:
         board_coverage = {'source': 'native_kanban_coverage', 'selection': kanban.get('selection'),
                     'partial': kanban.get('partial'), 'complete': False,
                     'boards': [{k:board[k] for k in ('board','available','reason') if k in board}
                                for board in kanban.get('boards', [])]}
-        line = json.dumps(board_coverage, sort_keys=True, ensure_ascii=True)+'\n'
+        line = line_for(board_coverage)
         if len(text)+len(line) <= max_chars-200:
             text += line
         else:
@@ -400,4 +458,6 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
         text += 'Additional operational records omitted.\n'
     return {'schema': 'ColonyRequestWorkV1', 'observed_at': time.time(),
             'text': text, 'truncated': truncated, 'work_sources': coverage,
-            'complete': False}
+            'complete': False, **({'input_provenance': {
+                'contact_id': next(iter(source_scope))[0], 'watermark': next(iter(source_scope))[1],
+                'source_refs': list(input_sources.values())}} if input_sources else {})}

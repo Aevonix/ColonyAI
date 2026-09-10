@@ -37,7 +37,7 @@ class ExecutionObserver:
         except Exception:
             logger.debug("Execution observation unavailable; liveness will become unknown")
 
-    def start(self, scope, *, review_parent=None, **kwargs):
+    def start(self, scope, *, review_parent=None, input_refs=None, **kwargs):
         turn_id = str(kwargs.get("turn_id") or "")
         session_id = str(kwargs.get("session_id") or "")
         if not turn_id or not session_id:
@@ -69,6 +69,10 @@ class ExecutionObserver:
                 "parent_execution_id": parent_id, "platform": platform,
                 "state": "observed", "phase": "turn", "tool_name": "", "sequence": 1,
             }
+            if input_refs and not parent_id and platform not in {'cron', 'background_review'}:
+                # The caller supplies only a source-checked root input. A child
+                # has a narrower assignment; its parent's request is not it.
+                payload['input_refs'] = input_refs
             self._records[turn_id] = payload
             self._current_sessions[turn_id] = session_id
             while len(self._records) > 2048:

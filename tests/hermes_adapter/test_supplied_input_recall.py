@@ -20,7 +20,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
+from colony_sidecar.api.routers import host, executions
 from colony_sidecar.turns import get_turn_idempotency_ledger
 from colony_hermes.client import source_message_hash
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
@@ -37,9 +37,9 @@ keyring.write_text(json.dumps({'version':1,'principals':[{
  'agent':{'max_turns':5},'toolsets':['colony','delegation'],
  'memory':{'provider':'colony-memory','config':{'contact_id':'owner','url':'http://fixture','api_key':secret}},
  'plugins':{'enabled':['colony'],'colony':{'owner_contact_id':'owner','url':'http://fixture',
-  'api_key':secret,'turn_outbox_path':str(home/'outbox.db')}}}))
+  'api_key':secret,'turn_outbox_path':str(home/'outbox.db'),'execution_registry_enabled':True}}}))
 app=FastAPI();app.add_middleware(ApiKeyMiddleware,keyring_path=str(keyring))
-app.include_router(host.router);app.include_router(host.v2_router)
+app.include_router(host.router);app.include_router(host.v2_router);app.include_router(executions.router)
 api=TestClient(app)
 ledger=get_turn_idempotency_ledger(os.environ['COLONY_STATE_DIR'])
 original='Recall the lamp maintenance record and delegate checking its required exception.'
@@ -81,6 +81,12 @@ def respond(request):
    assert 'Relevant Memories' in str(current_user['content']),current_user
    assert 'maintenance-record' in str(current_user['content']),current_user
    assert len([row for row in wire if row['path']=='/v1/host/context/assemble'])==1
+   work=next(row['content'] for row in body['messages'] if row.get('role') in ('system','developer')
+    and isinstance(row.get('content'),str) and row['content'].startswith('[colony-work-request-v1]'))
+   observed=[json.loads(line) for line in work.splitlines() if line.startswith('{')]
+   root=next(row for row in observed if row.get('source')=='execution')
+   assert root['request_input']['excerpt']==original,observed
+   assert root['request_input']['source_id']=='original-input' and not root['request_input']['partial']
    message={'role':'assistant','content':None,'tool_calls':[{'id':'delegate-one','type':'function',
     'function':{'name':'delegate_task','arguments':json.dumps({'tasks':[{
      'goal':'Read the supplied lamp maintenance record and report the exception.',
@@ -100,6 +106,12 @@ def respond(request):
    assert len(child_sessions)==1,child_sessions
    assert supplied.memory_contact(child_sessions[0])=='owner'
    assert supplied.memory_contact('unrelated-child')==''
+   from colony_sidecar.turns.executions import registry
+   observed=registry().view(contact_id='owner',owner=True,session_id=child_sessions[0])['items']
+   child=next(row for row in observed if row['session_id']==child_sessions[0])
+   parent_row=next(row for row in observed if row['execution_id']==child['parent_execution_id'])
+   assert child['request_input']=={'status':'unbound'},child
+   assert parent_row['request_input']['excerpt']==original,parent_row
    message={'role':'assistant','content':None,'tool_calls':[{'id':'read-one','type':'function',
     'function':{'name':'tool_call','arguments':json.dumps({
      'name':'colony_memory_read_source','arguments':ref})}}]};finish='tool_calls'
@@ -182,6 +194,7 @@ with supplied_input(contact_id='owner',session_id=parent.session_id,input_refs=p
  assert result['final_response']=='Disconnect external power before cleaning the lamp.',result
  assert supplied.result['input_refs']==parents and ref in supplied.result['source_refs'],supplied.result
  assert automatic_ref in supplied.result['source_refs'],supplied.result
+ assert ledger.source_references(['original-input'],contact_id='owner',session_id=parent.session_id)[0] in supplied.result['source_refs']
  assert supplied.result['session_id']==parent.session_id
  if scenario=='rotate':assert parent.session_id!=initial_session
  assert len(generation)==4
