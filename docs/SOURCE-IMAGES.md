@@ -78,6 +78,14 @@ and tool-result capability rules. If it selects the text fallback, the result
 explicitly says no visual inspection occurred and `image_bytes_included` is
 false. Colony does not select a new model or silently recaption the original.
 
+Qualify the model identifier on the constructed native request, including any
+explicit voice or CLI override. A named provider may resolve its default model
+correctly while a caller passes the provider alias as the model. If the vision
+declaration names only the concrete model, Hermes can then choose the text
+fallback even though the endpoint accepts the alias. Align the selected role
+model and its capability declaration through the deployment's existing publisher;
+a successful description call alone does not verify this native boundary.
+
 Before each actual model dispatch containing an authenticated image read,
 Colony verifies the exact source, ownership, asset and read revision again.
 That metadata-only call shares the existing 250 ms request freshness budget
