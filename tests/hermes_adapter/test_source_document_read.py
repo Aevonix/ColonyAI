@@ -47,14 +47,14 @@ prime('reader','reader-task','reader-turn')
 # above is explicit; this test does not claim Hermes captured a channel file.
 agent._model_supports_vision=lambda: False
 args={**ref,'view':'document','asset_hash':asset,'page':1}
-pieces=[]; results=[]
+pieces=[]; results=[]; selectors=[]
 for index in range(4):
     opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
         call='document-read-'+str(index),tool='colony_memory_read_source')
     assert 'error' not in opened and opened['document']['status']=='complete',opened
     assert opened['document']['page']==1 and opened['document']['page_count']==2,opened
     assert opened['document']['ocr_performed'] is False,opened
-    pieces.append(opened['content']); results.append(copy.deepcopy(dispatch.last_result))
+    pieces.append(opened['content']); results.append(copy.deepcopy(dispatch.last_result)); selectors.append(dict(args))
     if opened['complete']: break
     args={**args,'offset':opened['next_offset'],'read_revision':opened['read_revision']}
 else: raise AssertionError('Bounded PDF page did not finish')
@@ -66,10 +66,10 @@ assert second['complete'] and json.loads(second['content'])['document']['text']=
 assert 'error' in dispatch({**ref,'view':'document','asset_hash':asset,'page':3},
     session='reader',task='reader-task',turn='reader-turn',call='document-missing',tool='colony_memory_read_source')
 messages=[{'role':'user','content':compose_user_api_content('',recalled,'')}]
-for result in results:
+for result,selector in zip(results,selectors):
     messages.extend([{'role':'assistant','content':'','tool_calls':[{
         'id':result['tool_call_id'],'type':'function','function':{
-            'name':'colony_memory_read_source','arguments':json.dumps({**ref,'view':'document','asset_hash':asset,'page':1})}}]},result])
+            'name':'colony_memory_read_source','arguments':json.dumps(selector)}}]},result])
 _,anthropic=convert_messages_to_anthropic(copy.deepcopy(messages))
 requests=[{'messages':messages},{'input':_chat_messages_to_responses_input(copy.deepcopy(messages))},{'messages':anthropic}]
 for request in requests:
