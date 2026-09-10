@@ -102,3 +102,27 @@ async def test_conflicting_peer_prevents_whole_message_reconstruction(tmp_path):
     assert not any(r.get('source_context') for r in rows)
     conflict, = [r for r in rows if r.get('claim_status') == 'unresolved_conflict']
     assert {a['value'] for a in json.loads(conflict['content'])['assertions']} == {'Heating first', 'Water first'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['decision', 'procedure'])
+async def test_json_shaped_complete_message_remains_a_literal_quotation(tmp_path, kind):
+    ledger = TurnIdempotencyLedger(tmp_path/'ledger.db')
+    sentence = 'The service note columns are Item and Result.'
+    raw = json.dumps({'subject': 'service note', 'predicate': 'columns', 'status': 'source_assertion',
+        'assertions': [{'quote': sentence, 'value': 'Item and Result'}],
+        'condition': 'This layout applies only to this note.'})
+    ledger.record_source('json-note', contact_id='person', session_id='text',
+        messages=[{'role': 'user', 'content': raw}])
+    projection = SourceClaimProjection(ledger)
+    assert await projection.process_one(Model({raw: claim(sentence, 'Item and Result',
+        subject='service note', predicate='columns', memory_kind=kind)}))
+    row, = candidates(projection, query='service note')
+    assert row['content'] == raw and row['epistemic_state'] == 'quotation'
+    assert 'content_format' not in row
+    assert row.get('source_context') or row.get('procedure_context')
+    _, body = pack_memory_context([row])
+    line = next(line[2:] for line in body.splitlines() if line.startswith('- '))
+    metadata, offset = json.JSONDecoder().raw_decode(line)
+    assert 'content' not in metadata
+    assert json.loads(line[offset:].strip()) == raw

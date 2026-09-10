@@ -626,6 +626,9 @@ class SourceClaimProjection:
                         source_turn_id=claim['turn_id'], source_message_hash=claim['message_hash'],
                         role=message['role'], contact_id=source['contact_id'], session_id=source['session_id'],
                         scope=source['scope'], occurred_at=source['occurred_at'], ingested_at=source['ingested_at'])
+                    # Content now holds raw source text, which can itself look
+                    # like JSON. It is no longer an internal assertion card.
+                    bundle.pop('content_format', None)
                     # Other represented properties can inherit an exact subject
                     # from another source. Retain every opening dependency.
                     for represented in context['claims']:
