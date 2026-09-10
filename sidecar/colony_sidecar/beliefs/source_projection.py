@@ -632,6 +632,11 @@ class SourceClaimProjection:
                     # Content now holds raw source text, which can itself look
                     # like JSON. It is no longer an internal assertion card.
                     bundle.pop('content_format', None)
+                    derived = [{'claim_id': c['id'], 'evidence_basis': c['evidence_basis']}
+                               for c in context['claims'] if c.get('evidence_basis')]
+                    if derived:
+                        bundle.update(source_evidence_bases=derived, epistemic_state='derived_unverified',
+                                      source_modality='audio_transcript')
                     # Other represented properties can inherit an exact subject
                     # from another source. Retain every opening dependency.
                     for represented in context['claims']:

@@ -109,6 +109,50 @@ async def test_retained_audio_forms_reviewed_derived_claim_with_exact_original_l
 
 
 @pytest.mark.asyncio
+async def test_audio_procedure_keeps_unclaimed_condition_and_exact_segment_basis(tmp_path):
+    from colony_sidecar.intelligence.graph.recall import pack_memory_context
+    from test_procedure_source_context import candidates
+    ledger = TurnIdempotencyLedger(tmp_path/'sources.db')
+    step = 'For the pump inspection, record the inlet reading.'
+    condition = 'Only inspect the pump when its motor is disconnected.'
+    original = audio(step)
+    segments = original['content'][1]['segments']
+    segments[0]['end_ms'] = 40
+    segments.append({'start_ms': 50, 'end_ms': 100, 'text': condition})
+    ledger.record_source('pump-audio', contact_id='person', session_id='voice', messages=[original])
+    rendered = source_text(retained(ledger, 'pump-audio')['content'])
+    projection = SourceClaimProjection(ledger)
+    assert await projection.process_one(AudioModel({rendered: claim(step, 'record the inlet reading',
+        subject='pump inspection', predicate='inspection steps', memory_kind='procedure')}))
+    stored, = claims(ledger)
+    row, = candidates(projection, query='pump inspection')
+    assert row['procedure_context'] == 'complete_source_message_text'
+    assert row['content'] == rendered and step in rendered and condition in rendered
+    selected, body = pack_memory_context([row])
+    assert selected == [row]
+    line, = [line[2:] for line in body.splitlines() if line.startswith('- ')]
+    metadata, end = json.JSONDecoder().raw_decode(line)
+    assert json.loads(line[end:].strip()) == rendered
+    assert metadata['state'] == 'derived_unverified' and metadata['source_modality'] == 'audio_transcript'
+    basis, = metadata['source_evidence_bases']
+    assert basis == {'claim_id': row['history_anchor']['claim_id'], 'evidence_basis': stored['evidence_basis']}
+    segment = basis['evidence_basis']['segment']
+    assert segment['segment_index'] == 0 and segment['start_ms'] == 0 and segment['end_ms'] == 40
+    assert segment['evidence_start'] == 0 and segment['evidence_end'] == len(step)
+    assert segment['recognizer']['model_id'] == 'fixture-asr'
+    assert basis['evidence_basis']['source_message_hash'] == row['source_message_hash']
+    # A budget notice opens the complete source, not the extracted step alone.
+    bounded, short = pack_memory_context([row], max_chars=len(body)-1)
+    notice, = bounded
+    assert notice['procedure_context'] == 'full_source_required'
+    assert 'source_evidence_bases' not in notice
+    assert step not in short and condition not in short
+    assert notice['history_anchor'] == row['history_anchor']
+    assert notice['source_anchors'] == [{'source_id': 'pump-audio'}]
+    assert row['source_evidence_bases'] == metadata['source_evidence_bases']
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('outside', ['label', 'surrounding_text'])
 async def test_audio_metadata_and_other_blocks_cannot_become_asr_claims(tmp_path, outside):
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db')

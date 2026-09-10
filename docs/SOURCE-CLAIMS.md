@@ -63,9 +63,13 @@ asserted clause from the same message. Changed messages retain the existing span
 suppression; historical queries retain assertion/time semantics. If the complete
 message cannot fit the injection budget, an opening notice replaces it instead
 of presenting a convenient prefix. This preserves context but does not establish
-that a model will interpret the quotation correctly. Derived media assertions
-retain their structured evidence cards and exact segment/recognizer lineage;
-a machine transcript's display prefix does not trigger short-message expansion.
+that a model will interpret the quotation correctly. Non-procedure audio
+assertions retain their structured evidence cards and exact segment/recognizer
+lineage; a machine transcript's display prefix does not trigger short-message
+expansion. A complete audio procedure keeps its full quoted conditions and
+attaches the represented claims' exact segment bases as metadata, still labelled
+derived and unverified. An oversized procedure supplies only an opening notice,
+with no partial procedure or segment-basis payload.
 
 Valid time, event time and recording time are different fields. Interval comparisons use canonical UTC timestamps. Supported query dates are ISO dates/datetimes, full English month dates and anchored today/yesterday/tomorrow; event queries also support trailing hours/days and since a date. Calendar days use the resolved contact/communication timezone. A historical assertion without a known validity start is not certified for that date. Raw quotations remain labelled with unknown validity. An unprojected source captured inside an event window is labelled `source_occurrence_only`, which does not establish the event's time.
 
