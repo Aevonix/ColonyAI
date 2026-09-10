@@ -7,79 +7,35 @@ Persistent memory and shared work for a personal agent, using your own models.
 
 Colony runs beside [Hermes](https://github.com/NousResearch/hermes-agent).
 Hermes handles conversations, tools, scheduling and delegation. Colony retains
-what happened, assembles relevant evidence before a turn, and shares commitments
-and work across sessions. Your private deployment supplies its identity,
-credentials, channels and hardware adapters.
+source evidence, recalls relevant information before a turn, and shares work
+across sessions. Your private instance supplies its identity, credentials,
+channels, model endpoints and optional hardware adapters.
 
-Colony supports native Hermes attachment, durable source memory, scoped
-recollection and shared work. Optional image and semantic projections,
-source-backed owner preferences and inspectable attention, and evaluated native
-skill updates extend that core. These
-paths have executable qualifications; model quality and each deployment's
-configuration still determine their results.
+- **Memory:** attributed source records, correction history, deliberate forgetting
+  and optional semantic retrieval. Retained images, audio and PDF pages keep
+  references to their originals. Capture and supported media readers depend on
+  the integration. [Memory](docs/MEMORY-QUALITY.md),
+  [audio](docs/SOURCE-AUDIO.md), [documents](docs/SOURCE-DOCUMENTS.md).
+- **Shared work:** native tasks, children, crons and enrolled external work appear
+  in one scoped view, refreshed at model-request boundaries. Source coverage and
+  missing observations stay explicit. Accepted drafts retain their identity
+  through delayed acknowledgments.
+- **A private instance:** source-backed preferences, inspectable attention and
+  revisable relationship appraisals can guide relevant behavior. Relationship
+  state and action permissions are separate. Automatic persistent opinions are
+  experimental and disabled by default.
+- **Your processors:** named function roles and optional per-task overrides select
+  configured local endpoints, capabilities, deadlines and fallback candidates.
+  In-flight calls retain their selected configuration.
+- **Native development:** optional evaluated skill updates use Hermes work and
+  existing deployment authorization. A rejected candidate remains a recorded
+  learning attempt; it does not count as an improvement.
 
-Version 1.1.5 lets a deployment select a model role for an individual cognitive
-task. Memory formation can use deliberate reasoning while other extraction keeps
-its current processor. Capability checks, deadlines and dispatch use the same
-selection, and running calls retain their original configuration.
-
-Native source handoffs distinguish a temporary verification outage before
-admission from unavailable or erased input. A host can make one fresh attempt
-within its original task deadline; an admitted task is never eligible for that
-retry. Colony continues to preserve attributed episodes, correction history and
-scoped root-task context. Useful continuity still depends on the model applying
-the supplied evidence correctly.
-
-Accepted native drafts stay held until their source association is acknowledged.
-A delayed or lost response reuses the same card, then restores its normal retry
-limit after the association succeeds.
-
-Media descriptions participate independently in recall ranking, so a long list
-of text matches cannot exclude images before relevance is assessed. Selected
-descriptions retain the source and asset references needed to open the original.
-
-Version 1.1.0 added [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
-Authenticated integrations can retain an original PDF and reopen extracted text
-with exact page, source and correction references. Extraction is bounded and
-reports blank or unsupported documents honestly; OCR and automatic channel-file
-capture are not included. Shared work now includes pending queue states and
-enrolled delivery snapshots, keeping provider receipts distinct from recipient
-read evidence. These are qualified integration behaviors, not a claim that every
-model answer is grounded or every external process is visible.
-
-The [profile read-receipt preference](docs/LOCAL-HERMES-SETUP.md#whatsapp-read-receipts-for-a-selected-profile)
-has a config-only preview and apply path. It preserves channel selection and
-does not imply online presence. Authenticated hosts can carry already captured
-human input into a native task through [exact source references](plugins/hermes-plugin/SUPPLIED-INPUT.md),
-keeping derived task instructions distinct from human testimony.
-
-Attributed corrections appear first when ranking source evidence,
-while keeping the full original and correction packet intact. The changed input
-format requires matching, deployment-qualified calibration metadata; it does not
-choose or lower a global relevance cutoff.
-
-Automatic contact recall requires current source evidence.
-Historical estimates remain inspectable, but unlinked facts and their graph
-mirrors no longer enter each turn. Corrections stay attached in enriched context;
-relationship inferences with missing, changed or corrected premises are omitted.
-These checks also cover cached audience views and concurrent source changes.
-
-Bounded original audio and attributed transcript segments use
-the existing source ledger. Reviewed transcript claims retain their exact audio
-parent and recognition uncertainty through recall, correction, erasure and
-recovery. Capture remains a deployment choice; Colony does not start a microphone
-or assume that recognized words are correct.
-Automatic persistent opinions are experimental and off by default. When explicitly
-enabled, they require current admitted decisions, procedures or substantive events.
-Facts, preferences, relationships and questions without such premises skip opinion
-generation. History and owner correction remain inspectable while disabled.
-The [audio source guide](docs/SOURCE-AUDIO.md), [memory guide](docs/MEMORY-QUALITY.md)
-and [changelog](CHANGELOG.md) explain these behaviors and their limits.
-
-The lightweight installation starts with memory and observation. Extended
-autonomy loops, public channels, voice systems and hardware need explicit
-deployment integration and their own behavioral checks. Colony does not
-claim complete autonomy, a complete view of every process, or subjective feelings.
+The lightweight profile starts with memory and observation. Extended autonomy,
+public channels, voice and hardware need deployment integration and behavioral
+checks. Current limitations include unsupported model claims and incomplete
+ordinary-use evidence for useful autonomous learning. The
+[changelog](CHANGELOG.md) records implementation changes and qualification limits.
 
 ## Start with Hermes
 
