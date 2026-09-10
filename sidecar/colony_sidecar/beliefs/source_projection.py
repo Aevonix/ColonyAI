@@ -370,6 +370,8 @@ class SourceClaimProjection:
                 # scope cannot attest the speaker of every historical message.
                 hit.update({name: source[name] for name in ("contact_id", "session_id", "scope")})
                 for message in json.loads(source["messages_json"]):
+                    if hit.get('source_message_hash') and hit['source_message_hash'] != source_message_hash(source['session_id'], message):
+                        continue
                     text = message.get("content")
                     if isinstance(text, list):
                         text = source_text(text)

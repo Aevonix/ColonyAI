@@ -598,7 +598,7 @@ class TurnIdempotencyLedger:
         expression = " OR ".join('"' + word + '"' for word in words)
         with closing(self._connect()) as conn:
             rows = conn.execute("""
-                SELECT f.turn_id, f.role, f.content, s.session_id, s.scope,
+                SELECT f.turn_id, f.role, f.content, s.contact_id, s.session_id, s.scope,
                        s.occurred_at, s.ingested_at, s.messages_json
                 FROM turn_source_search AS f
                 JOIN turn_sources AS s ON s.turn_id=f.turn_id
@@ -608,24 +608,31 @@ class TurnIdempotencyLedger:
                 ORDER BY bm25(turn_source_search)
                 LIMIT ?
             """, (expression, contact_id, session_id, max(1, min(limit, 10)) * 2)).fetchall()
-        result, seen = [], set()
+        from colony_sidecar.turns.audio import evidence_metadata, source_text
+        result, seen, source_messages = [], set(), {}
         for row in rows:
-            # Equal words from different turns can describe different events
-            # or have different corrections. Retain their lineage until the
-            # context selector has expanded claims and applied time filters.
-            key = (row["turn_id"], row["role"], row["content"])
-            if key in seen:
-                continue
-            seen.add(key)
             value = dict(row)
-            messages = json.loads(value.pop('messages_json'))
-            from colony_sidecar.turns.audio import evidence_metadata
-            for message in messages:
-                if message.get('role') == value['role']:
-                    value.update(evidence_metadata(message))
-            result.append(value)
-            if len(result) >= limit:
-                break
+            encoded = value.pop('messages_json')
+            if value['turn_id'] not in source_messages:
+                source_messages[value['turn_id']] = [
+                    (message, source_text(message.get('content')),
+                     source_message_hash(value['session_id'], message))
+                    for message in json.loads(encoded)]
+            # FTS is a projection. Hydrate the exact owning message before
+            # inheriting modality, uncertainty or correction lineage. A shared
+            # role does not make another message's ASR evidence applicable.
+            for message, text, message_hash in source_messages[value['turn_id']]:
+                if message.get('role') != value['role'] or value['content'] not in text:
+                    continue
+                key = (value['turn_id'], message_hash, value['content'])
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append({**value, 'source_message_hash': message_hash,
+                    **evidence_metadata(message),
+                    **({'excerpt_truncated': True} if value['content'] != text else {})})
+                if len(result) >= limit:
+                    return result
         return result
 
     def reserve(self, turn_id: str, content_sha256: str) -> Reservation:

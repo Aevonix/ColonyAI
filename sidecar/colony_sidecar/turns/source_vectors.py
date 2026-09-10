@@ -257,7 +257,7 @@ def merge_source_hits(lexical, semantic):
     scores, rows = {}, {}
     for candidates in (lexical, semantic):
         for rank, row in enumerate(candidates, 1):
-            key = (row['turn_id'], row['role'], row['content'])
+            key = (row['turn_id'], row.get('source_message_hash'), row['role'], row['content'])
             scores[key] = scores.get(key, 0) + 1 / (60 + rank)
             rows[key] = {**rows.get(key, {}), **row}
     return [rows[key] for key in sorted(scores, key=scores.get, reverse=True)]
