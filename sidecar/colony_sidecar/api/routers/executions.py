@@ -11,6 +11,25 @@ from colony_sidecar.turns.executions import registry
 router = APIRouter(prefix="/v1/host/executions", tags=["executions"])
 
 
+class ExecutionRuntimeObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event: Literal['start', 'response', 'error']
+    request_id: str = Field(default='', max_length=256, pattern=r'^[^\x00-\x1f]*$')
+    requested_model: str = Field(default='', max_length=256, pattern=r'^[^\x00-\x1f]*$')
+    provider: str = Field(default='', max_length=256, pattern=r'^[^\x00-\x1f]*$')
+    response_model: str = Field(default='', max_length=256, pattern=r'^[^\x00-\x1f]*$')
+    api_mode: str = Field(default='', max_length=256, pattern=r'^[^\x00-\x1f]*$')
+    profile_id: str = Field(default='', pattern=r'^(?:[a-f0-9]{64})?$')
+    runtime_kind: Literal['turn', 'cron', 'kanban_worker', 'delegated_child', 'unknown'] = 'unknown'
+    approx_input_tokens: int | None = Field(default=None, ge=0, le=2147483647)
+    max_tokens: int | None = Field(default=None, ge=0, le=2147483647)
+    tool_count: int | None = Field(default=None, ge=0, le=2147483647)
+    api_call_count: int | None = Field(default=None, ge=0, le=2147483647)
+    retry_count: int | None = Field(default=None, ge=0, le=2147483647)
+    started_at: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    ended_at: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
 class ExecutionObservation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     execution_id: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -23,6 +42,7 @@ class ExecutionObservation(BaseModel):
     phase: Literal["turn", "model", "tool", "between_calls", "ended"] = "turn"
     tool_name: str = Field(default="", max_length=128, pattern=r"^[a-zA-Z0-9_.:-]*$")
     sequence: int = Field(ge=1, le=2147483647)
+    runtime: ExecutionRuntimeObservation | None = None
 
 
 def authorized_viewer(request: Request, contact_id: str, *, scope: str) -> tuple[str, bool]:

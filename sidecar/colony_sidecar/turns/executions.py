@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from contextlib import closing
 import sqlite3
+import json
 import time
 
 from colony_sidecar import get_state_dir
@@ -36,6 +37,12 @@ class ExecutionRegistry:
             )""")
             conn.execute("CREATE INDEX IF NOT EXISTS executions_contact_state ON execution_observations(contact_id, state, last_observed_at)")
 
+            # An adjunct keeps the predecessor's positional INSERT compatible
+            # during rollback. Request metadata expires with operational rows.
+            conn.execute("""CREATE TABLE IF NOT EXISTS execution_runtime_observations (
+                execution_id TEXT PRIMARY KEY, metadata_json TEXT NOT NULL
+            )""")
+
     def observe(self, value: dict, *, principal_id: str, contact_id: str) -> dict:
         now = self.clock()
         immutable = (principal_id, contact_id, value["session_id"], value["turn_id"], value["parent_execution_id"], value["platform"])
@@ -59,9 +66,19 @@ class ExecutionRegistry:
                   sequence=excluded.sequence, last_observed_at=excluded.last_observed_at,
                   lease_until=excluded.lease_until""",
                 (value["execution_id"], *immutable, value["state"], value["phase"], value["tool_name"], value["sequence"], now, now, now + 120.0))
+            from colony_sidecar.self_model.execution_forecasts import accumulate
+            old_runtime = conn.execute('SELECT metadata_json FROM execution_runtime_observations WHERE execution_id=?',
+                                       (value['execution_id'],)).fetchone()
+            metadata = accumulate(json.loads(old_runtime[0]) if old_runtime else None,
+                                  value, previous, now)
+            conn.execute('INSERT OR REPLACE INTO execution_runtime_observations VALUES (?,?)',
+                         (value['execution_id'], json.dumps(metadata, separators=(',', ':'))))
             # Metadata is operational and bounded in time, not another memory archive.
             conn.execute("DELETE FROM execution_observations WHERE last_observed_at < ?", (now - 7 * 86400,))
-        return {"accepted": True, "lease_seconds": 120}
+            conn.execute('DELETE FROM execution_runtime_observations WHERE execution_id NOT IN (SELECT execution_id FROM execution_observations)')
+        from colony_sidecar.self_model.execution_forecasts import safe_observe
+        forecast = safe_observe(self, value['execution_id'], contact_id)
+        return {"accepted": True, "lease_seconds": 120, **({'forecast': forecast} if forecast else {})}
 
     def view(self, *, contact_id: str, owner: bool = False, session_id: str = "", limit: int = 20) -> dict:
         now = self.clock()
@@ -81,6 +98,9 @@ class ExecutionRegistry:
             item = dict(row)
             item["observation_age_seconds"] = round(max(0.0, now - item["last_observed_at"]), 1)
             item["liveness"] = "recently_observed" if item.pop("lease_until") > now else "unknown"
+            if owner:
+                from colony_sidecar.self_model.execution_forecasts import project
+                item['forecast'] = project(self, item['execution_id'], contact_id)
             items.append(item)
         return {"schema": "ColonyExecutionViewV1", "items": items, "total": total,
                 "truncated": total > len(items), "coverage": "registered Hermes turns only",

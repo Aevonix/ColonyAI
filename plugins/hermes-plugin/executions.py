@@ -2,6 +2,8 @@
 from collections import OrderedDict
 import hashlib
 import logging
+import math
+import os
 import threading
 import time
 import uuid
@@ -89,7 +91,40 @@ class ExecutionObserver:
             while len(self._children) > 2048:
                 self._children.popitem(last=False)
 
-    def update(self, phase, *, state="observed", **kwargs):
+    @staticmethod
+    def runtime_metadata(event, kwargs):
+        """Whitelist callback metadata, never request/response content or URLs."""
+        result = {'event': event}
+        for source, target in (('api_request_id', 'request_id'), ('model', 'requested_model'),
+                               ('provider', 'provider'), ('response_model', 'response_model'), ('api_mode', 'api_mode')):
+            value = kwargs.get(source)
+            if isinstance(value, str) and value and len(value) <= 256 and not any(ord(c) < 32 for c in value):
+                result[target] = value
+        for key in ('api_call_count', 'retry_count', 'approx_input_tokens', 'max_tokens', 'tool_count'):
+            value = kwargs.get(key)
+            if type(value) is int and 0 <= value <= 2147483647:
+                result[key] = value
+        for key in ('started_at', 'ended_at'):
+            value = kwargs.get(key)
+            if type(value) in (int, float) and math.isfinite(value) and value > 0:
+                result[key] = value
+        try:
+            from hermes_constants import hermes_home_key
+            from agent.delegation_context import is_delegated_child_process_context, is_dispatcher_owned_worker_context
+            result['profile_id'] = hashlib.sha256(hermes_home_key().encode()).hexdigest()
+            result['runtime_kind'] = ('delegated_child' if is_delegated_child_process_context()
+                else 'kanban_worker' if os.environ.get('HERMES_KANBAN_TASK') and is_dispatcher_owned_worker_context()
+                else 'cron' if kwargs.get('platform') == 'cron' else 'turn')
+        except (ImportError, AttributeError):
+            # Unknown native context is evidence missing, never a guessed role.
+            pass
+        return result
+
+    def api(self, event, **kwargs):
+        self.update('model' if event == 'start' else 'between_calls',
+                    runtime=self.runtime_metadata(event, kwargs), **kwargs)
+
+    def update(self, phase, *, state="observed", runtime=None, **kwargs):
         with self._lock:
             previous = self._find(kwargs)
             if previous is None or previous["state"] != "observed":
@@ -99,6 +134,8 @@ class ExecutionObserver:
             previous.update(phase=phase, state=state, sequence=previous["sequence"] + 1,
                             tool_name=str(kwargs.get("tool_name") or "") if phase == "tool" else "")
             payload = dict(previous)
+            if runtime is not None:
+                payload["runtime"] = runtime
         self._send(payload)
 
     def end(self, **kwargs):
@@ -135,8 +172,9 @@ class ExecutionObserver:
     def register(self, ctx):
         ctx.register_hook("subagent_start", self.child)
         ctx.register_hook("subagent_stop", self.child_end)
-        ctx.register_hook("pre_api_request", lambda **kw: self.update("model", **kw))
-        ctx.register_hook("post_api_request", lambda **kw: self.update("between_calls", **kw))
+        ctx.register_hook("pre_api_request", lambda **kw: self.api("start", **kw))
+        ctx.register_hook("post_api_request", lambda **kw: self.api("response", **kw))
+        ctx.register_hook("api_request_error", lambda **kw: self.api("error", **kw))
         ctx.register_hook("post_tool_call", lambda **kw: self.update("between_calls", **kw))
         ctx.register_hook("on_session_end", self.end)
 

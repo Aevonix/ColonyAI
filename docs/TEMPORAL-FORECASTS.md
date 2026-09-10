@@ -8,7 +8,7 @@ suggestions remain disabled while their value is unproven. An unknown actual
 serving processor does not establish comparable conditions. Request context
 omits raw shadow decisions and private outcome/configuration records.
 
-A prospective native internal-review attachment issues a task-turnaround forecast when expectations are enabled. Independent native lifecycle readback records the outcome. The next review of the same registered action uses a bounded estimate learned from those receipts. The estimate includes queue delay; native execution time is recorded separately. Completion establishes elapsed time, not answer quality. The native ledger does not identify the actual serving processor, so that field remains unknown.
+A prospective native internal-review attachment issues a task-turnaround forecast when expectations are enabled. Independent native lifecycle readback records the outcome. The next review of the same registered action uses a bounded estimate learned from those receipts. The estimate includes queue delay; native execution time is recorded separately. Completion establishes elapsed time, not answer quality. The native task ledger alone does not identify the actual serving processor. Registered request callbacks retain provider-reported model labels; missing callbacks remain unknown.
 
 Forecast revisions preserve previous probabilities and horizons. Only the latest pending revision enters current context; original forecasts drive calibration, preventing repeated revisions from inflating its sample count. Explicit outcome corrections remain append-only. Missing coverage is unresolved, and paused, cancelled or unavailable work is censored. Historical causal-edge survival remains a self-consistency diagnostic and is excluded from predictive scores.
 
@@ -40,3 +40,58 @@ Integration points:
 - Keep recipient configuration and hardware adapters private to each deployment.
 
 The focused native qualification uses actual HTTP routes and Hermes Kanban transitions with network and inference disabled. It covers concurrent dispatch, attachment races, cancellation, lost acknowledgments, measured completion, a changed subsequent forecast and removal of erased receipts from future estimates. Live deployment validation remains a separate release step.
+
+Registered owner Hermes turns also contribute a separate remaining-duration
+observation through the existing execution observer. It uses the actual native
+`pre_llm_call`, API start/response/error, session-end and delegated-child hooks.
+This includes admitted owner conversation, cron and worker turns where those
+hooks and identity bindings run; it does not imply every cron, child or auxiliary
+model call is observed. The same observation endpoint carries the metadata; error callbacks join the
+existing lifecycle observations. No extra scheduled work is added.
+
+The prediction origin is the server's first accepted API-start observation,
+provided the turn's sequence-1 start was already seen and Hermes reports its
+first, unretried request. It measures observation-to-terminal time, separately
+from review attachment-to-terminal time and queue delay. It is not backdated to
+the host clock. A missed first observation cannot be repaired by issuing a
+prediction after the response. The unchanged 480-second fallback is a comparison
+prior, not a promised latency or execution timeout.
+
+The existing duration estimator uses up to 50 original outcomes, with the same
+four-observation prior and bounded median update. Samples share platform,
+root/child class, actual native runtime kind, selected profile fingerprint,
+requested model/provider/API mode, output-token limit, tool count and the
+first request input-token bucket (up to 4K, 16K, 64K, or above). Missing
+configuration remains incomparable; no task meaning is guessed from prose. The most recent
+eligible historical actual response-model label selects a single training
+cohort, frozen in the original forecast. The model that will serve the next
+request remains unknown until its response. An alias rebinding can therefore
+produce a recorded duration that is incomparable with that forecast's training
+cohort; a later prediction can learn from the newly observed processor without
+rewriting the old prediction. Mixed processors, missing response labels or
+request pairs, gaps, failures and interruptions retain explicit uncertainty.
+Provider labels are not weight attestations, and task difficulty, machine
+contention and hidden auxiliary calls are not yet measured covariates.
+
+At most 128 request pairs live in one adjunct table in the existing turn ledger,
+with the same seven-day operational retention. A predecessor can still write
+its original fourteen-column execution rows after rollback. Upgrade the
+sidecar before the adapter; roll back the adapter before the sidecar, because
+the predecessor HTTP schema rejects the new optional metadata field. Forecast start and
+terminal receipts retain compact aggregate counts and actual-model provenance,
+without durable per-request pairs. They use empty-content canonical source metadata, producing no
+semantic or lexical recall chunks and no claim, appraisal or opinion learning.
+Existing source erasure and correction checks remove invalidated receipts from
+future samples. Owner work context exposes only the existing compact shadow
+forecast fields. Detailed original forecasts and source receipts remain in the
+existing expectation and source ledgers. No timing suggestion, notification,
+retry, approval, quality claim or work progression gate is enabled.
+
+Before claiming useful timing improvement, collect genuinely useful terminal
+work, retaining failed and incomplete attempts, and compare each untouched
+original horizon with its frozen prior. Close and identify the actual-model
+cohort before judging ten or more comparable outcomes. Check absolute error,
+premature inspection and inspection lateness separately from independent output
+quality. Do not count a parent and its child as independent completed tasks, or
+manufacture work to fill the sample count. Local callback qualification is not
+live benefit evidence.
