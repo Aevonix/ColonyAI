@@ -8,15 +8,23 @@ attempt identifiers, reports missing or failed readers, and discloses omissions.
 Independent readers run concurrently within their existing deadlines. Source
 counts overlap and are not presented as a unique task count or complete process
 inventory.
+Partial observations survive a delayed reader, and recently finished work is
+counted separately from active work.
 Native child completion also uses Hermes' supported child-stop hook, so
 completion can still be observed when session-end callbacks overlap. An
 unavailable observation endpoint still leaves liveness unknown.
+Overlapping native text turns also recover skipped initialization through the
+existing memory-provider and request-middleware contracts. Recovery binds the
+captured message to its transport identity and exact turn; unresolved identity
+remains unavailable. No core patch is required.
 
 Lexical recall now hydrates each excerpt against its exact canonical message
 before attaching modality, uncertainty and correction lineage. Typed text no
 longer inherits another message's audio-transcript metadata. Distinct messages
 with identical rendered text remain distinct through retrieval fusion, and
-unowned stale index excerpts are excluded. No schema migration is required.
+unowned stale index excerpts are excluded before the result limit. Exact indexed
+chunks determine ownership, so a substring in another message cannot supply
+its metadata. No schema migration is required.
 
 An explicitly corrected, verified channel handle now takes precedence over
 phone matching across channels. Current request evidence revalidates source
