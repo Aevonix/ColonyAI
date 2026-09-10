@@ -1329,7 +1329,7 @@ async def memory_read(
             return MemoryReadResponse(source=read(get_turn_idempotency_ledger(get_state_dir()),
                 contact_id=person_id, session_id=body.session_id, source_id=body.source_id,
                 source_version=body.source_version, view=body.source_view, claim_id=body.claim_id,
-                offset=body.offset, read_revision=body.read_revision, asset_hash=body.asset_hash))
+                offset=body.offset, read_revision=body.read_revision, asset_hash=body.asset_hash, page=body.page))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
     if _graph is None:
@@ -4017,6 +4017,19 @@ async def audio_source_sync(turn_id: str, body: TurnSyncRequest, response: Respo
             and any(isinstance(block, dict) and block.get('type') == 'input_audio' for block in message.content)
             for message in messages):
         raise HTTPException(422, detail={'code': 'invalid_audio_source'})
+    return await turns_sync_v2(turn_id, body, response, request)
+
+
+@v2_router.put('/turns/source-media/document/{turn_id:path}', response_model=TurnSyncResponse)
+async def document_source_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request = None):
+    """Explicit inline document ingestion; predecessors reject unequal path IDs."""
+    if body.context.turn_id == 'source-media/document/' + turn_id:
+        return await turns_sync_v2(body.context.turn_id, body, response, request)
+    messages = [body.user_message, body.assistant_message, *(body.checkpoint_messages or [])]
+    if body.context.turn_id != turn_id or not any(message and isinstance(message.content, list)
+            and any(isinstance(block, dict) and block.get('type') == 'input_document' for block in message.content)
+            for message in messages):
+        raise HTTPException(422, detail={'code': 'invalid_document_source'})
     return await turns_sync_v2(turn_id, body, response, request)
 
 
