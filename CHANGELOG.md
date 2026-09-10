@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.35 - relevant ordinary context and explicit briefing access
+
+Ordinary context assembly no longer inserts the latest three global briefings
+without a relevance or freshness check. This removes repeated operational
+summaries from unrelated turns while preserving scoped source recall, citations,
+current work context and every stored briefing.
+
+Explicit briefing history remains available. Enriched-context requests now
+render the actual stored briefing type through the existing narrative converter,
+instead of silently omitting its content. Regression coverage checks both owner
+projection paths, retained source citations, explicit history and enriched access.
+No data migration or Hermes core change is required.
+
 ## v1.0.34 - profile read-receipt preference
 
 `colony init --preferences-only --whatsapp-read-receipts on|off` updates an

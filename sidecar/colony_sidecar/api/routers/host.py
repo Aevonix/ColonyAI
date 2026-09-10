@@ -2664,21 +2664,9 @@ async def context_assemble(
         except Exception as exc:
             logger.warning("context_assemble initiatives failed: %s", exc)
 
-    # --- Contact Briefing ---
-    if _legacy_global_allowed and _briefings_engine is not None \
-            and body.context and body.context.contact_id:
-        try:
-            briefings = _briefings_engine.get_recent(limit=3)
-            if briefings:
-                body_text = "\n".join(f"- {b}" for b in briefings) if isinstance(briefings, list) else str(briefings)
-                sections.append(ContextSection(
-                    id="colony-briefing",
-                    title="Contact Briefing",
-                    body=body_text,
-                    priority=85,
-                ))
-        except Exception as exc:
-            logger.warning("context_assemble briefings failed: %s", exc)
+    # Stored global briefings have no query or participant relevance contract.
+    # Keep them available through /briefings and explicit enriched requests;
+    # do not prepend the latest three (possibly old dataclass dumps) to every turn.
 
     # --- World Model Entities ---
     if _legacy_global_allowed and _world_store is not None and query_text:
@@ -11224,8 +11212,11 @@ async def enriched_context(
         for b in briefings[:3]:
             # Careful not to shadow the request model `body` — it is
             # still read below (compression, citations).
-            b_title = b.get("title") if isinstance(b, dict) else getattr(b, "title", "")
-            b_body = b.get("body") if isinstance(b, dict) else getattr(b, "body", "")
+            # The engine returns Briefing dataclasses, whose narratives live in
+            # sections. Use the same projection as the explicit history API.
+            brief = b if isinstance(b, dict) else _briefing_to_response(b).model_dump()
+            b_title = brief.get("title") or ""
+            b_body = brief.get("body") or ""
             if b_title or b_body:
                 parts.append(f"- {b_title}: {b_body[:200]}" if b_title else f"- {b_body[:200]}")
         if parts:
