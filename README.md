@@ -34,6 +34,10 @@ Accepted native drafts stay held until their source association is acknowledged.
 A delayed or lost response reuses the same card, then restores its normal retry
 limit after the association succeeds.
 
+Media descriptions participate independently in recall ranking, so a long list
+of text matches cannot exclude images before relevance is assessed. Selected
+descriptions retain the source and asset references needed to open the original.
+
 Version 1.1.0 added [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
 Authenticated integrations can retain an original PDF and reopen extracted text
 with exact page, source and correction references. Extraction is bounded and
