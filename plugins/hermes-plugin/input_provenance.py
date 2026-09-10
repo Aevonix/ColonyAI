@@ -42,15 +42,17 @@ class SuppliedInput:
         self._lock = threading.Lock()
         self._bound = set()
         self._sessions = {session_id}
+        self._memory_sessions = set()
         self._closed = self._blocked = False
         self.result = None
 
     def bind(self, scope, parent_session_id=''):
         with self._lock:
+            self._memory_sessions.discard(scope.session_id)
             valid = (not self._closed and scope.valid_participant and scope.contact_id == self.contact_id
                      and (scope.session_id == self.session_id or parent_session_id in self._sessions))
             if valid:
-                self._bound.add((scope.task_id, scope.turn_id))
+                self._bound.add((scope.session_id, scope.task_id, scope.turn_id))
                 self._sessions.add(scope.session_id)
             else:
                 self._blocked = True
@@ -59,7 +61,7 @@ class SuppliedInput:
         with self._lock:
             valid = (not self._closed and not self._blocked and scope is not None
                      and scope.valid_participant and scope.contact_id == self.contact_id
-                     and (scope.task_id, scope.turn_id) in self._bound and fresh)
+                     and (scope.session_id, scope.task_id, scope.turn_id) in self._bound and fresh)
             if valid:
                 valid = (not any(source_input_erased(ref, rules) for ref in self._inputs)
                          and redact_source_payload({'contact_id': self.contact_id,
@@ -68,7 +70,22 @@ class SuppliedInput:
                              'assistant_source_refs': self._sources}, rules) is not None)
             if not valid:
                 self._blocked = True
+            else:
+                self._memory_sessions.add(scope.session_id)
             return valid
+
+    def memory_contact(self, session_id):
+        """Share an already checked native participant with the memory provider.
+
+        The supplied constructor data grants nothing. Only the normal native
+        hook's participant resolution and fresh source check admit an exact
+        session. Native prefetch threads inherit this context; unrelated or
+        closed sessions cannot use it as a default owner identity.
+        """
+        with self._lock:
+            if not self._closed and not self._blocked and session_id in self._memory_sessions:
+                return self.contact_id
+            return ''
 
     def parents(self):
         return copy.deepcopy(self._inputs), copy.deepcopy(self._sources)
