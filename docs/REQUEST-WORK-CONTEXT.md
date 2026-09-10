@@ -132,3 +132,27 @@ artifact and actual configuration. Broader worker coverage and preventing
 every conflicting promise remain separate work. Shared context helps a model
 notice changes; consequential coordination still uses the durable commitment
 and task ownership contracts.
+
+### Native Kanban assignment compatibility
+
+Qualified Hermes 0.21.1 adds its assigned-worker instructions whenever
+`kanban_show` is available. Ordinary profiles may expose the same tools without
+owning a dispatcher task. Colony corrects this known mismatch through its existing
+`llm_request` middleware: it removes the exact native assignment block from
+instruction fields unless the existing Hermes task binding and context-local
+dispatcher-ownership predicate both apply. Actual assigned workers keep their
+lifecycle instructions; delegated children and in-process cron cannot inherit
+that role merely from the parent's environment.
+
+This is a temporary native compatibility correction, not a new task role or
+authority mechanism. It changes no Hermes files, tool schemas, cached native
+prompt, user messages or tool evidence. Chat, Responses and Anthropic instruction
+representations retain their existing shape. Recognition requires the known
+native assignment prefix and exact imported block; changed upstream guidance is
+left alone and must be requalified. Both native initialization and its prompt
+fallback reach the same request boundary, including streaming requests.
+
+Native cron records also retain their existing bounded optional name alongside
+the source, job and execution identifiers. A missing name stays absent; prompts
+and scripts never become labels. A nearby terminal cron remains an observation
+of that named job, not evidence that the current conversation's task completed.
