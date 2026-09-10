@@ -497,7 +497,7 @@ class SourceClaimProjection:
                         retained_hits.append(dict(hit, content=fragment,
                             excerpt_truncated=bool(removed) or bool(hit.get("excerpt_truncated"))))
                 cursor = max(cursor, end)
-        bundles, procedure_sources, emitted_procedures, groups = [], {}, set(), {}
+        bundles, message_contexts, emitted_messages, groups = [], {}, set(), {}
 
         def current_group(key):
             if key not in groups:
@@ -506,17 +506,16 @@ class SourceClaimProjection:
                         time_query=time_query, distinct_values=True, limit=9)
             return groups[key]
 
-        def procedure_source(claim):
-            """A property card cannot certify completeness of its procedure.
+        def complete_message_context(claim):
+            """Keep a current short message or a procedure's conditions together.
 
             Keep the owning message together when it is still current. A
             changed message needs the existing source/history readers instead
             of reviving obsolete instructions from its original quotation.
             """
-            if claim.get('memory_quality', {}).get('memory_kind') != 'procedure':
-                return None
+            procedure = claim.get('memory_quality', {}).get('memory_kind') == 'procedure'
             identity = (claim['turn_id'], claim['message_hash'])
-            if identity not in procedure_sources:
+            if identity not in message_contexts:
                 with closing(self.ledger._connect()) as conn:
                     source = conn.execute('''SELECT * FROM turn_sources WHERE turn_id=? AND contact_id=?
                         AND (scope='person' OR session_id=?)''',
@@ -529,13 +528,21 @@ class SourceClaimProjection:
                     current = self._rows(conn, contact_id, session_id, ids=ids,
                         time_query=time_query, limit=513)
                 text = source_text(message.get('content')) if message else ''
-                complete = bool(text and all_claims and len(ids) < 513
+                complete = bool(text and all_claims and len(ids) < 513 and len(all_claims) == len(ids)
                     and {c['id'] for c in all_claims} == {c['id'] for c in current}
                     and not any(c['superseded_by'] or c['retracted_by'] for c in all_claims)
                     and all(len(current_group((c['subject_key'], c['predicate']))) == 1 for c in all_claims))
-                procedure_sources[identity] = {'source': dict(source) if source else None,
+                message_contexts[identity] = {'source': dict(source) if source else None,
                     'message': message, 'text': text, 'complete': complete, 'claims': all_claims}
-            value = procedure_sources[identity]
+            value = message_contexts[identity]
+            if not procedure:
+                # Short quotations use the existing source chunk bound. Do not
+                # turn a time-qualified assertion query into an undated quote,
+                # or restore any ineligible span from a changed message.
+                if (not value['complete'] or len(value['text']) > 2000 or time_query.mode != 'current'
+                        or all(c['evidence'].strip() == value['text'].strip() for c in value['claims'])):
+                    return None
+                return value
             # A complete one-message assertion keeps its existing property
             # semantics. This boundary concerns partial-message procedures.
             if value['complete'] and claim['evidence'].strip() == value['text'].strip():
@@ -595,7 +602,7 @@ class SourceClaimProjection:
                                 "status": "incomplete_assertion_history", "distinct_values_at_least": len(values),
                                 "instruction": "Open assertion history before resolving this property; no value selected."},
                                 ensure_ascii=False)} if overflow else {})}
-            contexts = [(claim, procedure_source(claim)) for claim in group]
+            contexts = [(claim, complete_message_context(claim)) for claim in group]
             contexts = [(claim, context) for claim, context in contexts if context is not None]
             if contexts:
                 bundle['source_anchors'] = [{'source_id': turn} for turn in
@@ -603,18 +610,33 @@ class SourceClaimProjection:
                 if len(group) == 1 and contexts[0][1]['complete']:
                     claim, context = contexts[0]
                     identity = (claim['turn_id'], claim['message_hash'])
-                    if identity in emitted_procedures:
+                    if identity in emitted_messages:
                         continue
-                    emitted_procedures.add(identity)
+                    emitted_messages.add(identity)
                     source, message = context['source'], context['message']
-                    bundle.update(id='procedure-source:' + hashlib.sha256(json.dumps(identity).encode()).hexdigest(),
+                    procedure = claim.get('memory_quality', {}).get('memory_kind') == 'procedure'
+                    bundle.update(id=('procedure-source:' if procedure else 'message-source:') + hashlib.sha256(json.dumps(identity).encode()).hexdigest(),
                         content=context['text'], ranking_text=context['text'],
-                        procedure_context='complete_source_message_text',
-                        claim_status='source_procedure_context',
+                        **({'procedure_context': 'complete_source_message_text'} if procedure else {
+                            'source_context': 'complete_source_message_text',
+                            'source_history_anchors': [{'source_id': c['turn_id'], 'claim_id': c['id']}
+                                for c in context['claims']]}),
+                        claim_status='source_procedure_context' if procedure else 'source_message_context',
                         epistemic_state='derived_unverified' if claim.get('evidence_basis') else 'quotation',
                         source_turn_id=claim['turn_id'], source_message_hash=claim['message_hash'],
                         role=message['role'], contact_id=source['contact_id'], session_id=source['session_id'],
                         scope=source['scope'], occurred_at=source['occurred_at'], ingested_at=source['ingested_at'])
+                    # Other represented properties can inherit an exact subject
+                    # from another source. Retain every opening dependency.
+                    for represented in context['claims']:
+                        basis = represented.get('subject_basis')
+                        if basis:
+                            if basis['turn_id'] not in bundle['source_turn_ids']:
+                                bundle['source_turn_ids'].append(basis['turn_id'])
+                            hashes = bundle['_source_message_hashes'].setdefault(basis['turn_id'], [])
+                            if basis['message_hash'] not in hashes:
+                                hashes.append(basis['message_hash'])
+                    bundle['source_anchors'] = [{'source_id': turn} for turn in bundle['source_turn_ids']]
                 else:
                     # A conflicting or changed procedure remains discoverable,
                     # but its partial assertion is not sufficient instructions.
@@ -629,6 +651,10 @@ class SourceClaimProjection:
                             'using their recalled source versions and inspect each procedure_history_anchors entry before '
                             'following the procedure. Property history alone may omit its conditions.')
             bundles.append(bundle)
+        # A complete selected message already includes its unclaimed remainder.
+        # Do not rank those fragments independently against their own context.
+        retained_hits = [hit for hit in retained_hits
+            if (hit['turn_id'], hit.get('source_message_hash')) not in emitted_messages]
         return (filter_unstructured(retained_beliefs, time_query),
                 bundles + filter_unstructured(source_candidates(retained_hits), time_query))
 

@@ -68,7 +68,7 @@ def render_memory_context(memories: list[dict[str, Any]]) -> str:
                   "kind": memory.get("kind", "belief"),
                   "source": str(memory.get("source_uri") or ""),
                   "state": str(memory.get("epistemic_state") or "inferred")}
-        for name in ("source_turn_id", "source_message_hash", "source_modality", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source", "history_anchor", "source_anchors", "procedure_context", "procedure_history_anchors"):
+        for name in ("source_turn_id", "source_message_hash", "source_modality", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source", "history_anchor", "source_anchors", "procedure_context", "procedure_history_anchors", "source_context", "source_history_anchors"):
             if memory.get(name) is not None:
                 source[name] = memory[name]
         if memory.get("effective_confidence") is not None:
@@ -158,7 +158,11 @@ def pack_memory_context(
                 if not row.get('history_anchor'):
                     continue
                 row['excerpt_truncated'] = True
-                if row.get('procedure_context'):
+                if row.get('source_context'):
+                    row['source_context'] = 'full_source_required'
+                    row['content'] = ('Incomplete source context. Open the full sources in source_anchors '
+                        'using their recalled source versions and inspect source_history_anchors before resolving it.')
+                elif row.get('procedure_context'):
                     row['procedure_context'] = 'full_source_required'
                     row['content'] = ('Incomplete procedure context. Open the full sources in source_anchors '
                         'using their recalled source versions before following the procedure. '
