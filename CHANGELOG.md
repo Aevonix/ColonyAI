@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.1.1 - grounded corrections and ordinary task context
+
+Explicit corrections and changes can resolve an abbreviated subject through the
+exact reviewed prior assertion. The new value still comes from the new source.
+Recollection includes both references and labels the original quotation as
+subject identity evidence, so an old value does not become current again.
+Erasure, changed attribution and source annotation invalidate dependent claims
+and learned views. Existing source records remain intact.
+
+The native request adapter removes Hermes' exact assigned-worker guidance from
+ordinary conversations that have no dispatcher-owned task, including its ASCII
+recovery form. Real workers keep their guidance. This uses the existing request
+middleware across supported transports, with no Hermes core patch. Shared work
+also retains the observed name of a native cron job beside its identifier.
+
+The retired built-in self-knowledge seed no longer writes an obsolete capability
+catalog. Its CLI and host route retain a small no-write compatibility response;
+private identity setup and existing stored history are preserved.
+
+Controlled native tests and two first-attempt real-model correction cases cover
+these repairs. They do not establish general answer quality, natural background
+learning, or a completed cross-channel task.
+
 ## v1.1.0 - page-addressed PDF sources and pending work visibility
 
 Authenticated source capture can retain bounded PDF originals in the existing
