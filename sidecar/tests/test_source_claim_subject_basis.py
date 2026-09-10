@@ -175,6 +175,51 @@ async def test_annotation_revokes_subject_basis_without_removing_raw_correction(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['annotate', 'erase', 'reattribute'])
+async def test_revoked_inheritance_cannot_hide_same_value_independent_assertion(action, tmp_path):
+    projection = SourceClaimProjection(TurnIdempotencyLedger(tmp_path/'sources.db'))
+    await add(projection, 'independent', 'The loading cupboard contains 17 units.', '17')
+    await add(projection, 'original', ORIGINAL, '14')
+    await add(projection, 'correction', CORRECTION, '17', operation='correct',
+        prior_claim_id=rows(projection)['original']['id'])
+    before = prepared(projection, 'cupboard count', contact='owner')[0]
+    assert [(c['value'], c['source']) for c in before['assertions']] == [('17', 'turn:correction')]
+
+    remove_original(projection, action)
+    packet = prepared(projection, 'cupboard count', contact='owner')[0]
+    assert [(c['value'], c['source']) for c in packet['assertions']] == [('17', 'turn:independent')]
+    assert 'subject_basis' not in packet['assertions'][0]
+    assert ('correction' in rows(projection)) == (action == 'annotate')
+
+    # Removing the independent witness must not revive the invalid correction
+    # or its retracted original value, even when the raw correction is retained.
+    projection.ledger.erase_sources(contact_id='owner', turn_ids=['independent'])
+    reopened = SourceClaimProjection(TurnIdempotencyLedger(projection.ledger.db_path))
+    assert not prepared(reopened, 'cupboard count', contact='owner')
+    assert any(hit['turn_id'] == 'correction' for hit in
+        reopened.ledger.search_sources('cupboard', contact_id='owner', session_id='later'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('value_count', [9, 10])
+async def test_revoked_duplicate_does_not_reduce_distinct_value_overflow(value_count, tmp_path):
+    projection = SourceClaimProjection(TurnIdempotencyLedger(tmp_path/'sources.db'))
+    await add(projection, 'independent-17', 'The loading cupboard contains 17 units.', '17')
+    await add(projection, 'original', ORIGINAL, '14')
+    await add(projection, 'correction', CORRECTION, '17', operation='correct',
+        prior_claim_id=rows(projection)['original']['id'])
+    assert rows(projection)['correction']['subject_basis_claim_id'] == rows(projection)['original']['id']
+    for value in range(18, 17 + value_count):
+        await add(projection, 'independent-'+str(value),
+            f'The loading cupboard contains {value} units.', str(value))
+    remove_original(projection, 'annotate')
+    packet = prepared(projection, 'cupboard count', contact='owner')[0]
+    assert packet['status'] == 'incomplete_assertion_history'
+    assert packet['distinct_values_at_least'] == 9
+    assert 'assertions' not in packet
+
+
+@pytest.mark.asyncio
 async def test_literal_successor_does_not_depend_on_retired_subject_basis(tmp_path):
     projection = await start(tmp_path)
     await add(projection, 'correction', CORRECTION, '17', operation='correct', match_prior=True)

@@ -56,6 +56,20 @@ def erase_removed(conn, turn_id, session_id, retained):
     # values. Deleting a correction must never silently revive its old value.
 
 
+def _subject_basis_source_sql(identifier_sql, contact_sql):
+    """Shared root lifecycle eligibility; full grounding stays in subject_basis.
+
+    Both arguments are internal SQL fragments, never user-supplied values.
+    """
+    return f'''FROM source_claims b
+        JOIN turn_sources bs ON bs.turn_id=b.turn_id JOIN source_claim_jobs bj ON bj.turn_id=b.turn_id
+        WHERE b.id={identifier_sql} AND bs.contact_id={contact_sql} AND bs.scope='person' AND bj.status='complete'
+        AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=bs.turn_id)
+        AND NOT EXISTS (SELECT 1 FROM source_projection_erasures e WHERE e.turn_id=bs.turn_id)
+        AND NOT EXISTS (SELECT 1 FROM source_annotations a,json_each(a.target_message_hashes_json) h
+                        WHERE a.target_source_id=bs.turn_id AND h.value=b.message_hash)'''
+
+
 def subject_basis(conn, claim, *, contact_id):
     """Return a retained quotation solely as evidence of subject identity.
 
@@ -68,13 +82,7 @@ def subject_basis(conn, claim, *, contact_id):
         return None
     from colony_sidecar.turns.idempotency import source_message_hash, canonical_turn_digest
     from colony_sidecar.turns.audio import claim_message
-    row = conn.execute('''SELECT c.*,s.session_id,s.messages_json FROM source_claims c
-        JOIN turn_sources s ON s.turn_id=c.turn_id JOIN source_claim_jobs j ON j.turn_id=c.turn_id
-        WHERE c.id=? AND s.contact_id=? AND s.scope='person' AND j.status='complete'
-        AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)
-        AND NOT EXISTS (SELECT 1 FROM source_projection_erasures e WHERE e.turn_id=s.turn_id)
-        AND NOT EXISTS (SELECT 1 FROM source_annotations a,json_each(a.target_message_hashes_json) h
-                        WHERE a.target_source_id=s.turn_id AND h.value=c.message_hash)''',
+    row = conn.execute('SELECT b.*,bs.session_id,bs.messages_json ' + _subject_basis_source_sql('?', '?'),
         (identifier, contact_id)).fetchone()
     if row is None:
         return None
@@ -141,6 +149,12 @@ class SourceClaimProjection:
                 args.extend((time_query.start, time_query.start))
         columns = "c.*,s.contact_id,s.session_id,s.scope,s.messages_json,s.occurred_at,s.ingested_at"
         if distinct_values:
+            # A revoked inherited claim cannot win value deduplication over
+            # an independent witness. Filter lifecycle eligibility inside the
+            # scoped query, preserving its value limit and the grounding
+            # checks on returned rows below.
+            where.append("(json_extract(c.data_json,'$.subject_basis_claim_id') IS NULL OR EXISTS (SELECT 1 "
+                + _subject_basis_source_sql("json_extract(c.data_json,'$.subject_basis_claim_id')", 's.contact_id') + '))')
             columns += ",row_number() OVER (PARTITION BY c.value_key ORDER BY s.ingested_at DESC,c.id) AS value_rank"
         query = ("SELECT " + columns + " FROM source_claims c JOIN turn_sources s ON s.turn_id=c.turn_id WHERE "
                  + " AND ".join(where))
