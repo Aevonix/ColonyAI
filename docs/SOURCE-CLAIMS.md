@@ -122,7 +122,7 @@ The memory-provider wrapper now distinguishes persistent state from source evide
 
 ## Operation and qualification
 
-The experimental v9 extractor represents substantive experiences and comparisons
+The experimental v10 extractor represents substantive experiences and comparisons
 as quoted episodes. The processor selects one exact passage and explains its
 future use; it does not synthesize subject/value fields for the episode. The
 existing admission review checks the passage against the complete source, and
@@ -151,6 +151,11 @@ looks up its current retained revision through the existing episode identity.
 The original quotation supplies topic context, not a stale correction handle.
 Lookup remains within the contact's visible sources and existing candidate
 limits; erasing or reattributing a revision cannot revive a retracted report.
+The correction wire supplies the offered episode ID and current exact evidence;
+the stored predecessor supplies its representation and memory kind. Correcting
+one count does not turn the episode into a separate structured fact. Structured
+branches cannot select episode IDs, and contradictory explicit types or extra
+fact fields are rejected rather than silently reinterpreted.
 `Reported episode` is a record label, not a person or world-model entity. The
 passage preserves units, conditions, attribution and uncertainty within the
 existing 500-character limit. An episode may supply an exact event-date expression

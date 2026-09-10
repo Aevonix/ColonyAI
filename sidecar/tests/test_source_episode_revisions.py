@@ -64,10 +64,50 @@ def test_only_offered_episode_ids_can_be_selected_by_the_decoder():
              {'id': 'ordinary-fact', 'representation': 'assertion'}]
     schema = claim_response_schema(CORRECTION, prior=prior)['schema']
     proposal = episode(CORRECTION) | {'operation': 'correct', 'prior_claim_id': 'episode-first'}
+    proposal = {k: v for k, v in proposal.items() if k not in {'representation', 'memory_kind'}}
     jsonschema.validate([proposal], schema)
     for identifier in ('invented', 'ordinary-fact'):
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate([proposal | {'prior_claim_id': identifier}], schema)
+
+
+@pytest.mark.asyncio
+async def test_episode_correction_kind_comes_from_the_selected_stored_record(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
+    projection = SourceClaimProjection(ledger)
+    await record(ledger, projection, 'original', REPORT, episode(REPORT))
+    original, = claims(ledger)
+    proposal = {k: v for k, v in episode(CORRECTION).items()
+                if k not in {'representation', 'memory_kind'}}
+    proposal.update(operation='correct', prior_claim_id=original['id'])
+    jsonschema.validate([proposal], claim_response_schema(CORRECTION, prior=[original])['schema'])
+    await record(ledger, projection, 'correction', CORRECTION, proposal)
+    current = next(row for row in claims(ledger) if row['turn_id'] == 'correction')
+    assert current['representation'] == 'episode'
+    assert current['memory_quality']['memory_kind'] == 'substantive_event'
+    assert current['prior_claim_id'] == original['id']
+    assert current['evidence'] == current['value'] == CORRECTION
+
+
+@pytest.mark.asyncio
+async def test_structured_branch_cannot_correct_an_episode_or_silently_change_its_type(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
+    projection = SourceClaimProjection(ledger)
+    await record(ledger, projection, 'original', REPORT, episode(REPORT))
+    original, = claims(ledger)
+    # The actual failed trial chose a structured count despite its episode ID.
+    wrong = {'representation': 'assertion', 'subject': 'pressure sensor', 'predicate': 'resets',
+        'value': 'once', 'evidence': CORRECTION, 'operation': 'correct',
+        'prior_claim_id': original['id'], 'memory_kind': 'personal_context',
+        'recall_reason': 'Use the corrected count when reviewing the incident.',
+        'valid_from_text': None, 'valid_to_text': None, 'event_at_text': None}
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate([wrong], claim_response_schema(CORRECTION, prior=[original])['schema'])
+    diagnostic = {}
+    assert validated_claims(json.dumps([wrong]), message=CORRECTION, prior=[original],
+        observed_at=None, diagnostics=diagnostic) == []
+    assert diagnostic['rejection_counts'] == {'episode_representation_mismatch': 1}
+    assert claims(ledger)[0]['retracted_by'] is None
 
 
 @pytest.mark.asyncio

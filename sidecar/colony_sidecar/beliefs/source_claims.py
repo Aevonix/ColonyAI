@@ -15,7 +15,7 @@ from .source_time import parse_source_date, source_event_time, utc_timestamp
 from .promotion import MEMORY_KINDS, PROMOTION_PROMPT, promotion_metadata
 from colony_sidecar.util.model_output import final_text
 
-EXTRACTION_VERSION = "source-claims-v9"
+EXTRACTION_VERSION = "source-claims-v10"
 SYSTEM = '''Extract the user's attributed assertions about the actual world from
 one USER message. Facts true only inside fiction, role-play, an invented example
 or a counterfactual are not actual-world assertions, even when useful for writing.
@@ -37,8 +37,11 @@ recall_reason, operation, prior_claim_id and event_at_text. Copy its complete at
 units into one exact evidence passage of at most 500 characters. Do not generate
 a subject, predicate or value for an episode. It remains a reported experience,
 not a verified fact or a choice already made. A new episode uses operation="assert"
-and prior_claim_id=null. An explicit correction to a mistaken supplied episode
-uses operation="correct" and that exact offered episode's prior_claim_id. This
+and prior_claim_id=null. An explicit correction to a mistaken supplied episode,
+including a correction to only one number, uses operation="correct" and that
+exact offered episode's prior_claim_id, evidence, recall_reason and event_at_text.
+Omit representation, memory_kind, subject, predicate and value for this correction:
+its existing episode identity determines its representation. This
 revises the same report; a later or different experience is not a correction.
 Abstain on an ambiguous episode reference. event_at_text is the exact event-date
 expression in the current quotation, or null; never copy the report timestamp
@@ -111,11 +114,18 @@ RESPONSE_SCHEMA = {'name': 'source_claims', 'schema': {
         'properties': {
             'representation': {'type': 'string', 'const': 'episode'},
             'memory_kind': {'type': 'string', 'const': 'substantive_event'},
-            'operation': {'type': 'string', 'enum': ['assert', 'correct']},
-            'prior_claim_id': {'type': ['string', 'null']},
+            'operation': {'type': 'string', 'const': 'assert'},
+            'prior_claim_id': {'type': 'null'},
             'event_at_text': deepcopy(_CLAIM_PROPERTIES['event_at_text']),
             **{key: deepcopy(_CLAIM_PROPERTIES[key]) for key in
-               ('evidence', 'recall_reason')}}}]
+               ('evidence', 'recall_reason')}}}, {
+        'type': 'object', 'additionalProperties': False,
+        'required': ['operation', 'prior_claim_id', 'evidence', 'recall_reason', 'event_at_text'],
+        'properties': {
+            'operation': {'type': 'string', 'const': 'correct'},
+            'prior_claim_id': {'type': 'string'},
+            **{key: deepcopy(_CLAIM_PROPERTIES[key]) for key in
+               ('evidence', 'recall_reason', 'event_at_text')}}}]
     }}}
 
 
@@ -126,11 +136,20 @@ def claim_response_schema(message: str, *, audio_segments=None, prior=()) -> dic
     its schema; no source text is retained in the shared contract or router.
     """
     schema = deepcopy(RESPONSE_SCHEMA)
-    for branch in schema['schema']['items']['anyOf']:
-        if branch['properties']['representation'].get('const') == 'episode':
-            # Only supplied episode handles may extend an episode's lineage.
+    branches = schema['schema']['items']['anyOf']
+    episode_ids = list(dict.fromkeys(row['id'] for row in prior[:16]
+                                    if row.get('representation') == 'episode'))
+    if not episode_ids:
+        branches.pop()  # No episode can be corrected without an offered ID.
+    for branch in branches:
+        kind = branch['properties'].get('representation', {}).get('const')
+        if kind is None:
+            branch['properties']['prior_claim_id']['enum'] = episode_ids
+        elif kind != 'episode':
+            # A correction cannot change the representation of its selected
+            # episode or invent a new structured identity for one detail.
             branch['properties']['prior_claim_id']['enum'] = [None, *dict.fromkeys(
-                row['id'] for row in prior[:16] if row.get('representation') == 'episode')]
+                row['id'] for row in prior[:16] if row.get('representation') != 'episode')]
     if audio_segments is not None:
         # Short segment context has the same preservation guarantee as a
         # short text message, without forcing generated labels into evidence.
@@ -268,7 +287,19 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
     prior_by_id = {row["id"]: row for row in prior}
     output = []
     for item in values:
-        episode = item.get('representation') == 'episode'
+        previous = prior_by_id.get(item.get('prior_claim_id'))
+        episode_correction = (item.get('operation') == 'correct' and previous is not None
+                              and previous.get('representation') == 'episode')
+        if episode_correction:
+            # The selected stored record owns its kind. Older callers may
+            # repeat the same constants, but contradictory types/fields never
+            # become a different interpretation silently.
+            if (item.get('representation', 'episode') != 'episode'
+                    or item.get('memory_kind', 'substantive_event') != 'substantive_event'):
+                reject('episode_representation_mismatch')
+                continue
+            item = dict(item, representation='episode', memory_kind='substantive_event')
+        episode = episode_correction or item.get('representation') == 'episode'
         if episode:
             required = {'representation', 'memory_kind', 'evidence', 'recall_reason'}
             if (not required <= set(item)
