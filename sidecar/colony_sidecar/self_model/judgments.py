@@ -657,7 +657,7 @@ class SelfJudgments:
     async def process_one(self, router):
         if not self.enabled or not self.owner_id or getattr(router, 'supports_function_routing', False) is not True:
             return False
-        configured_deadline = router.function_deadline_seconds(context={'function_role': 'reasoning'})
+        configured_deadline = router.function_deadline_seconds(context={'task': 'self_judgment'})
         if not isinstance(configured_deadline, (int, float)) or isinstance(configured_deadline, bool) or not math.isfinite(configured_deadline) or configured_deadline <= 0:
             return False
         deadline = configured_deadline + 5
@@ -682,7 +682,7 @@ class SelfJudgments:
                     'when no useful decision beyond the single execution is supported.')
             response = await asyncio.wait_for(router.complete(
                 messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': _json(payload)}],
-                context={'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True,
+                context={'task': 'self_judgment', 'allow_fallback': True,
                          'response_schema': RESPONSE_SCHEMA}), timeout=deadline)
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (
                 ('model_id', 'model_id'), ('binding', 'binding'), ('config_revision', 'config_revision'),

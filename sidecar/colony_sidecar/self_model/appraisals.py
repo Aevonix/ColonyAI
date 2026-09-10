@@ -133,7 +133,23 @@ def _json(value):
 
 def _topic_words(value):
     # Model labels often use underscores; these are separators, not one word.
-    return set(re.findall(r'[^\W_]{3,}', value.casefold()))
+    words = set(re.findall(r'[^\W_]{3,}', value.casefold()))
+    # Keep the original terms and add common English plural variants on both
+    # sides of the relevance check. A topic about "drawings" must remain
+    # available to a query about a "drawing". This is lexical matching, not
+    # a language detector or permission/identity normalization.
+    for word in tuple(words):
+        if not word.isascii() or not word.isalpha() or len(word) < 4:
+            continue
+        if word == 'news' or word.endswith(('ss', 'us', 'is')):
+            continue
+        if word.endswith(('ches', 'shes', 'sses', 'xes', 'zes')):
+            words.add(word[:-2])
+        elif word.endswith('ies'):
+            words.update((word[:-3] + 'y', word[:-1]))
+        elif word.endswith('s'):
+            words.add(word[:-1])
+    return words
 
 
 def initialize(conn):
@@ -561,7 +577,7 @@ class AppraisalStore:
     async def process_one(self, router):
         if not self.owner_id or getattr(router, 'supports_function_routing', False) is not True:
             return False
-        deadline = router.function_deadline_seconds(context={'function_role': 'extraction'})
+        deadline = router.function_deadline_seconds(context={'task': 'source_appraisal'})
         if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline) or not 0 < deadline <= 600:
             return False
         job = self._claim(deadline + 5)
@@ -583,7 +599,7 @@ class AppraisalStore:
                  if k in evidence} for evidence in payload['evidence']]}
             response = await asyncio.wait_for(router.complete(messages=[{'role': 'system', 'content': SYSTEM},
                 {'role': 'user', 'content': _json(prompt_payload)}], context={'task': 'source_appraisal',
-                'function_role': 'extraction', 'allow_fallback': True, 'max_output_tokens': 2200,
+                'allow_fallback': True, 'max_output_tokens': 2200,
                 'response_schema': RESPONSE_SCHEMA}), deadline + 5)
             items = self._validate(final_text(response), payload)
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (

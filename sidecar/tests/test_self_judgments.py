@@ -28,11 +28,11 @@ class Processor:
         self.requests = []
 
     def function_deadline_seconds(self, *, context):
-        assert context['function_role'] == 'reasoning'
+        assert context == {'task': 'self_judgment'}
         return self.deadline
 
     async def complete(self, *, messages, context):
-        assert context == {'task': 'self_judgment', 'function_role': 'reasoning', 'allow_fallback': True,
+        assert context == {'task': 'self_judgment', 'allow_fallback': True,
                            'response_schema': RESPONSE_SCHEMA}
         payload = json.loads(messages[-1]['content'])
         self.requests.append(payload)

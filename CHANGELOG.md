@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.1.6 - relevant current work and relationship context
+
+Present-work questions prefer the authenticated current work view over old
+assistant status replies. Suppression requires verified source/input lineage;
+user evidence, corrections, procedures and explicit historical comparisons stay
+eligible. Historical replies remain available through source inspection.
+
+Relationship topic matching recognizes common English plural forms. Repeated
+identical behavior hints render once while their records and source references
+remain intact. This changes relevant context selection, not evidence validation,
+relationship authority or automatic opinion activation.
+
+The existing `source_appraisal` and `self_judgment` tasks now accept per-task
+role overrides. Each operator uses the same task selection for dispatch and its
+lease deadline. Default roles, prompts and activation settings are unchanged.
+
+Focused regressions reproduce the omitted topic and mixed-history comparison
+failures. They do not establish grounded model answers or useful relationship
+adaptation; first model failures remain part of deployment qualification.
+
 ## v1.1.5 - task-specific processors and recoverable source admission
 
 Optional `taskRoles` selects an existing function role for a supported cognitive

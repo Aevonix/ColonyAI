@@ -43,11 +43,11 @@ class Processor:
         self.requests = []
 
     def function_deadline_seconds(self, **kwargs):
-        assert kwargs == {'context': {'function_role': 'extraction'}}
+        assert kwargs == {'context': {'task': 'source_appraisal'}}
         return 20
 
     async def complete(self, *, messages, context):
-        assert context['function_role'] == 'extraction'
+        assert context['task'] == 'source_appraisal' and 'function_role' not in context
         assert context['response_schema'] == module.RESPONSE_SCHEMA
         payload = json.loads(messages[-1]['content']); self.requests.append(payload)
         if self.pause:
@@ -81,6 +81,84 @@ def admitted_preference(store, name, *, value='concise explanations', prior=None
     projection = SourceClaimProjection(store.ledger)
     assert projection.commit(row, message, claims, model='controlled-extractor') == 1
     return projection.preferences(row['contact_id'], now=store.test_clock.value)[0]
+
+
+@pytest.mark.parametrize(('topic', 'query', 'relevant'), [
+    ('drawing checks', 'drawing', True),
+    ('drawings', 'drawing', True),
+    ('drawing', 'drawings', True),
+    ('attachments', 'attachment', True),
+    ('jobs', 'job', True),
+    ('job', 'jobs', True),
+    ('cars', 'car', True),
+    ('dog', 'dogs', True),
+    ('review deadlines', 'deadline', True),
+    ('latches', 'latch', True),
+    ('classes', 'class', True),
+    ('boxes', 'box', True),
+    ('retries', 'retry', True),
+    ('movies', 'movie', True),
+    ('CSV_DRAWINGS', 'csv drawing', True),
+    ('ZEICHNUNG', 'zeichnung', True),
+    ('dessin', 'dessin', True),
+    ('drawing', 'garden', False),
+    ('news', 'new', False),
+    ('status', 'statu', False),
+    ('analysis', 'analysi', False),
+    ('glass', 'glas', False),
+])
+@pytest.mark.asyncio
+async def test_topic_relevance_preserves_common_plural_and_exact_terms(state, topic, query, relevant):
+    source(state, 'incident', 'The comparison stopped after a version mismatch.')
+    await state.process_one(Processor(lambda p: observation(p, topic=topic)))
+    assert bool(view(state, query=query)['records']) is relevant
+
+
+@pytest.mark.asyncio
+async def test_drawing_query_recalls_two_source_hypothesis_without_exposing_private_prose(state):
+    source(state, 'first', 'The first drawing comparison used an outdated attachment.')
+    await state.process_one(Processor(lambda p: observation(p, topic='drawing comparison')))
+    source(state, 'second', 'A separate drawing comparison started with another outdated attachment.')
+
+    def hypothesis(payload):
+        item = observation(payload, kind='behavior_hypothesis', dimension='working_style',
+            topic='attachment checks before comparing drawings', hint='verify_before_relying')
+        item['support'].append({'handle': payload['evidence'][1]['handle'],
+                                'quote': payload['evidence'][1]['quotes'][0]})
+        return item
+
+    await state.process_one(Processor(hypothesis))
+    query = 'For the unfinished drawing revision review, what is the next step?'
+    owner = view(state, query=query)
+    record = next(r for r in owner['records'] if r['kind'] == 'behavior_hypothesis')
+    assert len({ref['source_id'] for ref in record['sources']}) == 2
+    contact = state.view('person', viewer_contact_id='person', query=query)
+    assert contact['records'] == []
+    assert {'hint': 'verify_before_relying', 'record_id': record['id']} in contact['behavior_hints']
+    assert state.view('person', viewer_contact_id='stranger', query=query)['behavior_hints'] == []
+    state.ledger.erase_sources(contact_id='person', turn_ids=['first'])
+    assert not view(state, query=query)['records']
+
+
+@pytest.mark.parametrize('contact', ['person', 'owner'])
+@pytest.mark.asyncio
+async def test_context_renders_identical_hints_once_preserving_each_source_and_record(state, monkeypatch, contact):
+    from colony_sidecar.api.routers import social_state
+    for name, hint in [('first', 'try_different_approach'),
+                       ('second', 'try_different_approach'),
+                       ('third', 'verify_before_relying')]:
+        source(state, name, f'The export comparison for {name} stopped with a mismatch.', contact=contact)
+        await state.process_one(Processor(lambda p: observation(p, topic=f'export {name}', hint=hint)))
+    monkeypatch.setattr(social_state, 'appraisal_store', lambda: state)
+    brief, refs = social_state.appraisal_context(contact_id=contact, session_id='next', query='export')
+    assert brief.count(social_state._HINT_TEXT['try_different_approach']) == 1
+    assert brief.count(social_state._HINT_TEXT['verify_before_relying']) == 1
+    assert {ref['source_id'] for ref in refs} == {'first', 'second', 'third'}
+    assert len(state.view(contact, viewer_contact_id='owner', query='export')['records']) == 3
+    if contact == 'owner':
+        approach_line, = [line for line in brief.splitlines()
+                          if line.startswith(social_state._HINT_TEXT['try_different_approach'])]
+        assert 'export first' in approach_line and 'export second' in approach_line
 
 
 @pytest.mark.asyncio
