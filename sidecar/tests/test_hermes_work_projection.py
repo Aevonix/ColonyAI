@@ -71,6 +71,22 @@ def test_unavailable_schema_does_not_claim_no_work(native):
     assert view['complete'] is False and 'total' not in view
 
 
+def test_request_projection_keeps_bounded_cron_name_with_exact_native_identity(native):
+    from colony_sidecar.turns.executions import request_work_context
+    _, _, path = native
+    before = path.read_bytes()
+    now = datetime(2026, 9, 6, 12, 3, tzinfo=timezone.utc).timestamp()
+    view = cron_view(now=now)
+    request = request_work_context({'items': [], 'native_cron': view})
+    rows = [json.loads(line) for line in request['text'].splitlines() if line.startswith('{')]
+    named = next(row for row in rows if row.get('job_id') == 'job-one')
+    assert named['name'] == 'Neutral local check'
+    assert named['source'] == 'native_cron' and named['execution_id'] == 'one'
+    assert named['status'] == 'running' and named['liveness'] == 'unknown'
+    assert all('name' not in row for row in rows if row.get('job_id') != 'job-one')
+    assert 'private' not in request['text'] and before == path.read_bytes()
+
+
 @pytest.mark.asyncio
 async def test_only_attested_owner_current_work_and_context_can_read_native_profile(native, monkeypatch):
     monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'fixture-owner')

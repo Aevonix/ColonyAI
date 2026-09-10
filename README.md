@@ -18,7 +18,14 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.1.0 adds [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
+Version 1.1.1 repairs abbreviated-subject corrections and ordinary task context.
+A correction can retain the identity from its reviewed prior assertion while
+recollection distinguishes the new value from historical evidence. The native
+adapter also keeps assigned-worker instructions out of ordinary conversations
+without a dispatcher-owned task. The obsolete built-in self-knowledge seed is
+retired; deployment identity remains private.
+
+Version 1.1.0 added [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
 Authenticated integrations can retain an original PDF and reopen extracted text
 with exact page, source and correction references. Extraction is bounded and
 reports blank or unsupported documents honestly; OCR and automatic channel-file

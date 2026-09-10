@@ -364,3 +364,12 @@ when no original existed), and remove `plugins/colony` and `plugins/colony-memor
 only if this setup created them in private-directory mode. Keep the private Colony
 state and Hermes transcripts. No database rollback is part of installation or
 recovery. Compare files before restoring if you have edited them since setup.
+
+The former built-in self-knowledge catalog is retired. Legacy standalone/MCP
+setup no longer writes that catalog into the world model or requests graph
+seeding. The guided Hermes installation follows its existing setup path.
+`colony seed`, including its compatibility flags `--force` and `--verify`, reports
+retirement without contacting a sidecar. `POST /v1/host/seed` retains its response
+shape with zero counts, no errors, and `skipped=["builtin_self_knowledge_retired"]`.
+Historical records remain intact. This retirement does not revise previously
+stored claims or the separate self-question context corpus.

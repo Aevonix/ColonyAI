@@ -2550,64 +2550,6 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     print()
 
-    # ── Step 9: Self-knowledge seeding ──────────────────────────────────
-
-    print(_bold("Step 9: Self-knowledge seeding"))
-    print()
-    print("  Seeding Colony with understanding of itself...")
-    print("  (Full seeding happens on first 'colony start' via the /v1/host/seed endpoint)")
-    print()
-
-    # Pre-seed world model entities (SQLite, no sidecar needed)
-    try:
-        from colony_sidecar.world_model.store import WorldModelStore
-        from colony_sidecar.seed import WORLD_MODEL_ENTITIES
-        from colony_sidecar.world_model.entities import BaseEntity
-        from datetime import datetime, timezone
-
-        async def seed_entities():
-            world_store = WorldModelStore()
-            await world_store.connect()
-            now = datetime.now(timezone.utc)
-
-            # Map seed types to allowed SQLite types
-            type_map = {
-                "technology": "concept", "organization": "company",
-                "framework": "concept", "project": "project",
-                "person": "person", "concept": "concept",
-            }
-
-            count = 0
-            for entity_data in WORLD_MODEL_ENTITIES:
-                mapped_type = type_map.get(entity_data["type"], "concept")
-                slug = entity_data["name"].lower().replace(" ", "-")
-                e = BaseEntity(
-                    id=f"seed-{mapped_type}-{slug}",
-                    name=entity_data["name"],
-                    entity_type=mapped_type,
-                    properties={**entity_data.get("attributes", {}), "original_type": entity_data["type"]},
-                    confidence=1.0,
-                    first_seen=now, last_seen=now,
-                    created_at=now, updated_at=now,
-                )
-                await world_store.upsert_entity(e)
-                count += 1
-            await world_store.close()
-            return count
-
-        count = asyncio.run(seed_entities())
-        print(f"  ✅ World model seeded ({count} entities)")
-    except Exception as exc:
-        print(f"  ⚠️ World model seed deferred: {exc}")
-        print("  (Will seed automatically on first start)")
-
-    if neo4j_password:
-        print("  ⚪ Graph memories + insights will seed on first start")
-    else:
-        print("  ⚪ Memory seeding skipped (Neo4j not configured)")
-
-    print()
-
     # ── Step 10: Start sidecar + verify ─────────────────────────────────
 
     print(_bold("Step 10: Start sidecar and verify"))
@@ -2639,23 +2581,6 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     sidecar_started = True
                     caps = r.json().get("capabilities", [])
                     print(f"  ✅ Sidecar running — {len(caps)} capabilities")
-
-                    # ── Step 10a: Seed self-knowledge via API ────────────────
-                    # Now that sidecar is running, seed Neo4j memories
-                    try:
-                        api_key = values.get("COLONY_API_KEY", "colony")
-                        seed_r = httpx.post(
-                            f"{sidecar_url}/v1/host/seed",
-                            headers={"Authorization": f"Bearer {api_key}"},
-                            timeout=30,
-                        )
-                        if seed_r.status_code == 200:
-                            seed_data = seed_r.json()
-                            print(f"  ✅ Self-knowledge seeded (memories: {seed_data.get('memories', 0)}, entities: {seed_data.get('entities', 0)})")
-                        else:
-                            print(f"  ⚪ Seeding deferred (status {seed_r.status_code})")
-                    except Exception as seed_err:
-                        print(f"  ⚪ Seeding deferred: {seed_err}")
 
                     break
             except Exception:

@@ -11890,7 +11890,7 @@ class SeedResponse(BaseModel):
     skills: int = 0
     insights: int = 0
     errors: list[str] = []
-    skipped: list[str] = []  # Reasons for skipping (e.g., "already_seeded")
+    skipped: list[str] = []  # Machine-readable dispositions, including retirement
 
 
 # ---------------------------------------------------------------------------
@@ -12891,49 +12891,11 @@ async def extract_tom(
 
 
 @router.post("/seed", response_model=SeedResponse)
-async def seed_self_knowledge_endpoint(force: bool = Query(False, description="Force re-seeding even if already seeded")) -> SeedResponse:
-    """Seed Colony with self-knowledge via API.
-
-    This endpoint triggers the self-knowledge seeding process that populates
-    Colony's memory, world model, and skills registry with deep understanding
-    of its own architecture and capabilities.
-
-    Args:
-        force: If True, re-seed even if already seeded (updates existing)
-    """
+async def seed_self_knowledge_endpoint(force: bool = Query(False, description="Compatibility flag; built-in seeding remains retired")) -> SeedResponse:
+    """Return the retired built-in seeding disposition without opening stores."""
     from colony_sidecar.seed import seed_self_knowledge
 
-    # Ensure world store is connected
-    ws = _world_store
-    if ws is not None and hasattr(ws, "connect") and getattr(ws, "_backend", None) is None:
-        try:
-            await ws.connect()
-        except Exception:
-            pass
-
-    # Ensure skills registry is opened
-    sr = _skills_registry
-    if sr is not None and hasattr(sr, "open"):
-        try:
-            sr.open()
-        except Exception:
-            pass
-
-    results = await seed_self_knowledge(
-        graph=_graph,
-        world_store=ws,
-        skills_registry=sr,
-        force=force,
-    )
-
-    return SeedResponse(
-        memories=results.get("memories", 0),
-        entities=results.get("entities", 0),
-        skills=results.get("skills", 0),
-        insights=results.get("insights", 0),
-        errors=results.get("errors", []),
-        skipped=results.get("skipped", []),
-    )
+    return SeedResponse(**await seed_self_knowledge(force=force))
 
 
 # ============================================================================

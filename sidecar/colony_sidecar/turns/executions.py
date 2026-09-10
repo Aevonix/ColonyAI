@@ -229,7 +229,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000) -
             'terminal_record_at',
             'execution_id', 'parent_execution_id', 'session_id', 'turn_id',
             'job_id', 'job_type', 'worker_id', 'claim_attempt_id', 'claim_expires_at', 'claim_unexpired',
-            'task_id', 'parent_task_id', 'id', 'kind', 'task_class', 'label', 'platform',
+            'task_id', 'parent_task_id', 'id', 'kind', 'task_class', 'label', 'name', 'platform',
             'status', 'state', 'phase', 'tool_name', 'liveness', 'freshness',
             'status_sha256',
             'observation_age_seconds', 'record_age_seconds', 'age_seconds')
