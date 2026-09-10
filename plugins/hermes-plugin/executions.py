@@ -1,6 +1,7 @@
 """Bounded observers for native Hermes turn lifecycle, with no tool authority."""
 from collections import OrderedDict
 import hashlib
+import json
 import logging
 import math
 import os
@@ -9,6 +10,7 @@ import time
 import uuid
 
 logger = logging.getLogger(__name__)
+_OUTPUT_LIMIT_TRACE = 'colony.execution-output-limit.v1:'
 
 
 class ExecutionObserver:
@@ -92,7 +94,7 @@ class ExecutionObserver:
                 self._children.popitem(last=False)
 
     @staticmethod
-    def output_limit_metadata(kwargs):
+    def _body_output_limit(kwargs):
         """Read final wire fields, not the agent's optional pre-transport cap.
 
         No request body is copied or retained. An observed omission means the
@@ -119,6 +121,53 @@ class ExecutionObserver:
                 and len(set(values)) == 1):
             return {'output_limit_kind': 'request', 'max_tokens': values[0]}
         return unknown
+
+    @staticmethod
+    def request_metadata(result, **kwargs):
+        """Use Hermes' existing trace to carry three scalars past sanitization.
+
+        This observes Colony's returned request without changing provider
+        fields or retaining the request. A later request rewrite invalidates
+        the marker because only the final trace entry is consumed.
+        """
+        request_id = kwargs.get('api_request_id')
+        if not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            return result
+        policy = ExecutionObserver._body_output_limit({
+            'request': {'body': result.get('request')}, 'api_mode': kwargs.get('api_mode')})
+        if policy['output_limit_kind'] == 'unknown':
+            return result
+        marker = {'request_id': request_id, 'output_limit_kind': policy['output_limit_kind'],
+                  'max_tokens': policy.get('max_tokens')}
+        return {**result, 'name': _OUTPUT_LIMIT_TRACE + json.dumps(marker, separators=(',', ':'))}
+
+    @staticmethod
+    def output_limit_metadata(kwargs):
+        policy = ExecutionObserver._body_output_limit(kwargs)
+        if policy['output_limit_kind'] != 'unknown':
+            return policy
+        request = kwargs.get('request')
+        # An available, complete body with invalid fields remains unknown.
+        if isinstance(request, dict) and not request.get('_truncated'):
+            body = request.get('body')
+            if isinstance(body, dict) and not body.get('_truncated') and not body.get('_truncated_items'):
+                return policy
+        trace = kwargs.get('middleware_trace')
+        name = trace[-1].get('name') if isinstance(trace, list) and trace and isinstance(trace[-1], dict) else None
+        if not isinstance(name, str) or not name.startswith(_OUTPUT_LIMIT_TRACE) or len(name) > 512:
+            return policy
+        try:
+            marker = json.loads(name[len(_OUTPUT_LIMIT_TRACE):])
+        except (TypeError, ValueError):
+            return policy
+        if not isinstance(marker, dict) or marker.get('request_id') != kwargs.get('api_request_id'):
+            return policy
+        kind, cap = marker.get('output_limit_kind'), marker.get('max_tokens')
+        if kind == 'provider_default' and cap is None:
+            return {'output_limit_kind': kind}
+        if kind == 'request' and type(cap) is int and 0 < cap <= 2147483647:
+            return {'output_limit_kind': kind, 'max_tokens': cap}
+        return policy
 
     @staticmethod
     def runtime_metadata(event, kwargs):

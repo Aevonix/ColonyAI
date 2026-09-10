@@ -84,6 +84,15 @@ contention and hidden auxiliary calls are not yet measured covariates. Provider
 configuration changes that retain the same response-model label are also not
 attested by a provider-default observation.
 
+For long requests whose hook body is truncated, Colony's existing request
+middleware places only the request ID, output-limit policy and optional numeric
+cap in Hermes' existing middleware trace. The observer accepts this marker only
+for the same API request and only as the final request-changing trace entry.
+Later middleware rewrites invalidate it; an available final body takes precedence.
+No request cache or provider payload field is added. A missing trace or an
+unqualified body remains unknown. This carries output-limit metadata only, not
+the omitted prompt, and does not claim complete coverage of other request fields.
+
 At most 128 request pairs live in one adjunct table in the existing turn ledger,
 with the same seven-day operational retention. A predecessor can still write
 its original fourteen-column execution rows after rollback. Upgrade the

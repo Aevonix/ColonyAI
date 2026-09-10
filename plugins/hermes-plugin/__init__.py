@@ -2639,7 +2639,8 @@ def register(ctx: Any) -> None:
     def reconcile_request(request, **kwargs):
         from .request_capabilities import describe
         if native_drafts is not None and native_drafts.worker:
-            return {'request': describe(request)}
+            result = {'request': describe(request)}
+            return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
         _TRANSPORT_SCOPES.bind_current_session(**kwargs)
         scope = _TRANSPORT_SCOPES.for_execution(
             session_id=str(kwargs.get('session_id') or ''),
@@ -2652,7 +2653,7 @@ def register(ctx: Any) -> None:
         result['request'] = describe(result['request'])
         result['request'] = request_work(
             result['request'], scope, api_mode=str(kwargs.get('api_mode') or ''))
-        return result
+        return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
 
     def commitment_work_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}
