@@ -131,6 +131,21 @@ explicit correction selects an offered prior episode, reuses that identity and
 retracts the mistaken report through the existing claim lineage. Its original
 source remains an identity dependency, so erasure or attribution changes revoke
 dependent interpretations; erasing the correction does not revive the old value.
+For the first correction, the original quote is labelled `prior_episode_report`
+and read alongside the correction. Corrected or withdrawn details are not current;
+unchanged clauses remain attributed earlier context, not independently verified
+facts. Withdrawing the whole report withdraws every detail. Original event and
+report dates stay attached to that original quotation, never copied into the
+correction. The store does not synthesize a merged current report.
+
+For successive partial corrections, the root quote is instead labelled
+`episode_history_incomplete`. It omits intermediate corrections and cannot
+establish current details. The existing assertion-history reader exposes retained
+revisions and their links. If a revision is unavailable or withdrawn, the reader
+must preserve that gap rather than reconstruct it from older text. Cumulative
+interpretation remains a reader responsibility; this projection does not claim
+to materialize or validate it. An unavailable predecessor is labelled
+`incomplete_revision_chain` even when pagination has returned every retained row.
 `Reported episode` is a record label, not a person or world-model entity. The
 passage preserves units, conditions, attribution and uncertainty within the
 existing 500-character limit. An episode may supply an exact event-date expression

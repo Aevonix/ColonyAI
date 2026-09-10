@@ -71,19 +71,22 @@ def _subject_basis_source_sql(identifier_sql, contact_sql):
 
 
 def subject_basis(conn, claim, *, contact_id):
-    """Return retained evidence of subject identity or a corrected episode's identity.
+    """Return grounded identity and explicitly qualified earlier episode context.
 
     A root's value may be retracted or superseded while its literal subject
     remains grounded. Annotation, erasure or changed attribution revokes it.
     Only one fully grounded ancestor is allowed, not a recursive claim chain.
-    An episode's quoted report identifies a record, not a person or world entity.
+    An immediate episode correction can qualify the earlier report without
+    withdrawing every unchanged detail. Further corrections require the existing
+    history reader: the root alone does not represent intervening revisions.
     """
     identifier = claim.get('subject_basis_claim_id')
     if not identifier:
         return None
     from colony_sidecar.turns.idempotency import source_message_hash, canonical_turn_digest
     from colony_sidecar.turns.audio import claim_message
-    row = conn.execute('SELECT b.*,bs.session_id,bs.messages_json ' + _subject_basis_source_sql('?', '?'),
+    row = conn.execute('SELECT b.*,bs.session_id,bs.messages_json,bs.occurred_at,bs.ingested_at '
+        + _subject_basis_source_sql('?', '?'),
         (identifier, contact_id)).fetchone()
     if row is None:
         return None
@@ -105,12 +108,27 @@ def subject_basis(conn, claim, *, contact_id):
             return None
     elif not literal_subject(data['subject'], data['evidence']):
         return None
-    return {'claim_id': row['id'], 'turn_id': row['turn_id'], 'message_hash': row['message_hash'],
+    result = {'claim_id': row['id'], 'turn_id': row['turn_id'], 'message_hash': row['message_hash'],
             'source_version': canonical_turn_digest(messages),
-            'disposition': 'episode_identity_only' if episode else 'subject_identity_only',
+            'disposition': 'subject_identity_only',
             'value_use': 'not_evidence_for_current_value',
             **{k: data[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality') if k in data},
             'subject': data['subject'], 'predicate': row['predicate'], 'evidence': data['evidence']}
+    if episode:
+        immediate = claim.get('prior_claim_id') == identifier
+        result.update(
+            disposition='prior_episode_report' if immediate else 'episode_history_incomplete',
+            value_use=(
+                'Read with the current correction. Corrected or withdrawn details are not current. '
+                'Unchanged details remain attributed earlier context, not newly verified facts. '
+                'A withdrawal of the whole report withdraws all its details.' if immediate else
+                'Intermediate corrections are absent here. Do not infer current details from this '
+                'original report. Open assertion history; missing or withdrawn revisions cannot '
+                'be reconstructed from the original.'),
+            role='user', reported_at=row['occurred_at'], recorded_at=row['ingested_at'],
+            event_at=data.get('event_at'), event_time=data.get('event_time', {
+                'status': 'legacy_precision_unknown' if data.get('event_at') else 'unknown'}))
+    return result
 
 
 class SourceClaimProjection:

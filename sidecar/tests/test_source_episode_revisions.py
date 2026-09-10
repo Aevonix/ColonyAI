@@ -120,7 +120,7 @@ async def test_ordinary_api_preserves_calendar_day_overlap_across_source_and_que
 
 
 @pytest.mark.asyncio
-async def test_ordinary_correction_retracts_prior_episode_and_retains_identity_basis(source_app, tmp_path):
+async def test_ordinary_correction_retains_qualified_prior_report_context(source_app, tmp_path):
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     projection = SourceClaimProjection(ledger)
     model = Model({REPORT: episode(REPORT) | {'event_at_text': '2026-08-24'},
@@ -142,7 +142,13 @@ async def test_ordinary_correction_retracts_prior_episode_and_retains_identity_b
     assert current['value'] == CORRECTION and current['operation'] == 'correct'
     assert current['event_at'] is None  # No date inherited from a different quotation.
     assert current['subject_basis']['evidence'] == REPORT
-    assert current['subject_basis']['disposition'] == 'episode_identity_only'
+    basis = current['subject_basis']
+    assert basis['disposition'] == 'prior_episode_report'
+    assert 'Unchanged details remain attributed earlier context' in basis['value_use']
+    assert 'Corrected or withdrawn details are not current' in basis['value_use']
+    assert basis['event_at'] == '2026-08-24T00:00:00+00:00'
+    assert basis['reported_at'] == '2026-09-10T12:00:00+00:00'
+    assert set(selected['source_turn_ids']) == {'original', 'correction'}
     ledger.erase_sources(contact_id='contact-a', turn_ids=['correction'])
     assert context(projection, QUERY) == []  # Erasing the correction never revives its old value.
 
@@ -182,3 +188,72 @@ async def test_non_correction_or_unknown_episode_reference_cannot_retract(tmp_pa
         proposal = episode(text) | {'operation': 'correct', 'prior_claim_id': identifier}
         assert validated_claims(json.dumps([proposal]), message=text, prior=[previous], observed_at=None) == []
     assert claims(ledger)[0]['retracted_by'] is None
+
+
+@pytest.mark.asyncio
+async def test_whole_report_withdrawal_does_not_revive_its_details(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
+    projection = SourceClaimProjection(ledger)
+    await record(ledger, projection, 'original', REPORT, episode(REPORT))
+    withdrawal = ('Correction: the pressure sensor bench run never happened. '
+                  'I invented the entire report and withdraw all of it.')
+    await record(ledger, projection, 'withdrawal', withdrawal,
+        episode(withdrawal) | {'operation': 'correct', 'match_prior': True})
+    selected, = context(projection)
+    current, = json.loads(selected['content'])['assertions']
+    assert current['value'] == withdrawal
+    assert current['subject_basis']['disposition'] == 'prior_episode_report'
+    assert 'A withdrawal of the whole report withdraws all its details.' in current['subject_basis']['value_use']
+    assert all(row['retracted_by'] for row in claims(ledger) if row['turn_id'] == 'original')
+    ledger.erase_sources(contact_id='contact-a', turn_ids=['withdrawal'])
+    assert context(projection) == []
+
+
+@pytest.mark.asyncio
+async def test_successive_partial_corrections_require_history_and_keep_read_dependencies(tmp_path):
+    from colony_sidecar.turns.source_read import read
+
+    ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
+    projection = SourceClaimProjection(ledger)
+    await record(ledger, projection, 'original', REPORT, episode(REPORT))
+    await record(ledger, projection, 'count-correction', CORRECTION,
+        episode(CORRECTION) | {'operation': 'correct', 'match_prior': True})
+    duration = 'Correction: that pressure sensor bench run lasted three hours, not four.'
+    await record(ledger, projection, 'duration-correction', duration,
+        episode(duration) | {'operation': 'correct', 'match_prior': True})
+    selected, = context(projection)
+    current, = json.loads(selected['content'])['assertions']
+    assert current['value'] == duration
+    assert current['subject_basis']['disposition'] == 'episode_history_incomplete'
+    assert 'Do not infer current details' in current['subject_basis']['value_use']
+    assert current['subject_basis']['evidence'] == REPORT
+    assert current['prior_claim_id'] != current['subject_basis']['claim_id']
+    # No synthetic count is materialized from the original plus latest text.
+    assert CORRECTION not in selected['content']
+
+    reference, = ledger.source_references(['duration-correction'], contact_id='contact-a', session_id='later')
+    def history():
+        return read(ledger, contact_id='contact-a', session_id='later', **reference,
+            view='assertions', claim_id=current['claim_id'])
+    before = history()
+    history_rows = json.loads(before['content'])['assertions']
+    assert [row['evidence'] for row in history_rows] == [REPORT, CORRECTION, duration]
+    assert {ref['source_id'] for ref in before['source_refs']} == {
+        'original', 'count-correction', 'duration-correction'}
+
+    ledger.erase_sources(contact_id='contact-a', turn_ids=['count-correction'])
+    assert ledger.erasure_watermark('contact-a') > before['watermark']
+    available = ledger.source_references([ref['source_id'] for ref in before['source_refs']],
+        contact_id='contact-a', session_id='later')
+    assert any(ref not in available for ref in before['source_refs'])
+    after = history()
+    assert CORRECTION not in after['content']
+    assert after['read_revision'] != before['read_revision']
+    opened = json.loads(after['content'])
+    assert opened['episode_history'] == 'incomplete_revision_chain'
+    assert 'Complete pagination does not close this gap' in opened['guidance']
+    remaining = opened['assertions']
+    assert current['prior_claim_id'] not in {row['id'] for row in remaining}
+    current_after, = json.loads(context(projection)[0]['content'])['assertions']
+    assert current_after['subject_basis']['disposition'] == 'episode_history_incomplete'
+    assert 'missing or withdrawn revisions cannot be reconstructed' in current_after['subject_basis']['value_use']

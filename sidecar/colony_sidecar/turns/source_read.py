@@ -179,7 +179,14 @@ def read(ledger, *, contact_id, session_id, source_id, source_version,
             selected = rows[offset:offset + 8]
             total, next_offset = len(rows), offset + len(selected)
             ids = list(dict.fromkeys([source_id, *(c['turn_id'] for c in selected)]))
-            content = json.dumps({'status': 'attributed_assertion_history', 'assertions': [
+            retained_ids = {c['id'] for c in rows}
+            episode_gap = any(c.get('representation') == 'episode' and c.get('prior_claim_id')
+                              and c['prior_claim_id'] not in retained_ids for c in rows)
+            content = json.dumps({'status': 'attributed_assertion_history',
+                **({'episode_history': 'incomplete_revision_chain',
+                    'guidance': 'A prior episode revision is unavailable. Do not reconstruct current '
+                                'details from older reports. Complete pagination does not close this gap.'}
+                   if episode_gap else {}), 'assertions': [
                 {key: c.get(key) for key in ('id', 'turn_id', 'role', 'subject', 'predicate', 'value', 'evidence',
                     'observed_at', 'recorded_at', 'valid_from', 'valid_to', 'event_at', 'event_time',
                     'validity_basis', 'operation', 'prior_claim_id', 'superseded_by', 'retracted_by')}
