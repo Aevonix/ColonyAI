@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.1.0 - page-addressed PDF sources and pending work visibility
+
+Authenticated source capture can retain bounded PDF originals in the existing
+media ledger. The source reader opens extracted text by page with pagination,
+source identity and current correction lineage. Changed or erased evidence is
+withheld before native dispatch. Extraction runs in a bounded child process;
+Darwin uses sampled RSS monitoring when its address-space limit is unavailable.
+That fallback is explicitly reported as a sampled limit, not a hard memory cap.
+Blank, encrypted, malformed and partially readable documents retain distinct
+outcomes. This does not add OCR, visual layout interpretation, video or automatic
+channel attachment capture. Existing readers can still back up and erase the
+owned originals. Eligible PDF and image jobs share FIFO scheduling.
+
+Current work includes pending, blocked and abandoned queue records as well as
+claimed/running work. Enrolled external heartbeat snapshots can describe delivery
+state using exact task and attempt identifiers without message or recipient
+content. Missing observations stay unknown, and provider receipts do not become
+proof that a recipient read a message. No new queue, database or service is added.
+
+Controlled source and installed-Hermes tests cover page reads, pagination,
+protocol conversion, correction, erasure and the external-producer/public-reader
+boundary through generic fixtures. Actual deployment activation and ordinary
+usefulness require separate qualification.
+
 ## v1.0.36 - shared work, corrected identity and original image recall
 
 Bounded request context now takes turns across selected work sources, so a busy

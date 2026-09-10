@@ -11,20 +11,21 @@ what happened, assembles relevant evidence before a turn, and shares commitments
 and work across sessions. Your private deployment supplies its identity,
 credentials, channels and hardware adapters.
 
-Colony 1.0 supports native Hermes attachment, durable source memory, scoped
+Colony supports native Hermes attachment, durable source memory, scoped
 recollection and shared work. Optional image and semantic projections,
 source-backed owner preferences and inspectable attention, and evaluated native
 skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.36 preserves exact message ownership during source recall, rechecks
-corrected contact attribution before dispatch, and lets a supported vision
-processor reopen an authorized original image. Shared work gives each selected
-source space in the request context and distinguishes active work from recent
-completions, including partial observations when another reader is unavailable.
-These are qualified integration behaviors, not a claim that every model answer
-is grounded or every external process is visible.
+Version 1.1.0 adds [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
+Authenticated integrations can retain an original PDF and reopen extracted text
+with exact page, source and correction references. Extraction is bounded and
+reports blank or unsupported documents honestly; OCR and automatic channel-file
+capture are not included. Shared work now includes pending queue states and
+enrolled delivery snapshots, keeping provider receipts distinct from recipient
+read evidence. These are qualified integration behaviors, not a claim that every
+model answer is grounded or every external process is visible.
 
 The [profile read-receipt preference](docs/LOCAL-HERMES-SETUP.md#whatsapp-read-receipts-for-a-selected-profile)
 has a config-only preview and apply path. It preserves channel selection and
@@ -57,7 +58,7 @@ and [changelog](CHANGELOG.md) explain these behaviors and their limits.
 
 The lightweight installation starts with memory and observation. Extended
 autonomy loops, public channels, voice systems and hardware need explicit
-deployment integration and their own behavioral checks. Version 1.0 does not
+deployment integration and their own behavioral checks. Colony does not
 claim complete autonomy, a complete view of every process, or subjective feelings.
 
 ## Start with Hermes
