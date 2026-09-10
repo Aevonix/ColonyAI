@@ -94,16 +94,14 @@ document it in `.env.example` instead of hardcoding it.
 
 ## Versioning
 
-Colony uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`). Everything is
-`0.MINOR.PATCH` until v1.0, which means the API may still change: MINOR bumps
-for new subsystems/endpoints/features, PATCH for fixes, docs, and hardening.
-
-There is a single versioned artifact: the `colonyai` package on PyPI. (The
-former `@aevonix/colonyai` npm package no longer exists.)
+Colony uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`): MINOR for compatible
+features, PATCH for fixes and documentation, and MAJOR for incompatible public
+contracts. The `colonyai` sidecar and `colony-hermes` integration are published
+together on PyPI with the same version. The former npm package is retired.
 
 ## Release flow
 
-1. Bump `version` in `sidecar/pyproject.toml`
+1. Bump `version` in both `pyproject.toml` and `sidecar/pyproject.toml`
 2. Add an entry at the top of `CHANGELOG.md` (`## vX.Y.Z — title`, prose + bullets)
 3. Commit and tag: `git tag vX.Y.Z && git push --tags`
 4. CI (`.github/workflows/release.yml`) publishes to PyPI, pushes the Docker

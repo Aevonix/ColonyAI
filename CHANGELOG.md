@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.0.36 - shared-work coverage and exact recall evidence
+
+Bounded request context now takes turns across selected work sources, so a busy
+local backlog cannot consume all eight records. It preserves session, parent and
+attempt identifiers, reports missing or failed readers, and discloses omissions.
+Independent readers run concurrently within their existing deadlines. Source
+counts overlap and are not presented as a unique task count or complete process
+inventory.
+
+Lexical recall now hydrates each excerpt against its exact canonical message
+before attaching modality, uncertainty and correction lineage. Typed text no
+longer inherits another message's audio-transcript metadata. Distinct messages
+with identical rendered text remain distinct through retrieval fusion, and
+unowned stale index excerpts are excluded. No schema migration is required.
+
+Controlled SQLite/HTTP and pinned native-runtime tests cover the changed paths.
+These checks do not establish ordinary cross-session usefulness or improved
+model answer quality.
+
 ## v1.0.35 - relevant ordinary context and explicit briefing access
 
 Ordinary context assembly no longer inserts the latest three global briefings
