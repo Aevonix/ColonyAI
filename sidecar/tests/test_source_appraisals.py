@@ -43,11 +43,11 @@ class Processor:
         self.requests = []
 
     def function_deadline_seconds(self, **kwargs):
-        assert kwargs == {'context': {'function_role': 'extraction'}}
+        assert kwargs == {'context': {'task': 'source_appraisal'}}
         return 20
 
     async def complete(self, *, messages, context):
-        assert context['function_role'] == 'extraction'
+        assert context['task'] == 'source_appraisal' and 'function_role' not in context
         assert context['response_schema'] == module.RESPONSE_SCHEMA
         payload = json.loads(messages[-1]['content']); self.requests.append(payload)
         if self.pause:

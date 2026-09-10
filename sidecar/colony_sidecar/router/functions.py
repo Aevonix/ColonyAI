@@ -24,6 +24,7 @@ DEFAULT_ROLES = {
 DEFAULT_NETWORKS = ('127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '::1/128', 'fc00::/7')
 TASK_ROLES = {
     'source_claim_extraction': 'extraction', 'source_image_description': 'vision',
+    'source_appraisal': 'extraction', 'self_judgment': 'reasoning',
     'project_planning': 'planning', 'thought_job': 'reasoning',
     'tom_affect_extraction': 'extraction', 'tom_belief_extraction': 'extraction',
     'tom_intention_extraction': 'extraction',

@@ -577,7 +577,7 @@ class AppraisalStore:
     async def process_one(self, router):
         if not self.owner_id or getattr(router, 'supports_function_routing', False) is not True:
             return False
-        deadline = router.function_deadline_seconds(context={'function_role': 'extraction'})
+        deadline = router.function_deadline_seconds(context={'task': 'source_appraisal'})
         if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline) or not 0 < deadline <= 600:
             return False
         job = self._claim(deadline + 5)
@@ -599,7 +599,7 @@ class AppraisalStore:
                  if k in evidence} for evidence in payload['evidence']]}
             response = await asyncio.wait_for(router.complete(messages=[{'role': 'system', 'content': SYSTEM},
                 {'role': 'user', 'content': _json(prompt_payload)}], context={'task': 'source_appraisal',
-                'function_role': 'extraction', 'allow_fallback': True, 'max_output_tokens': 2200,
+                'allow_fallback': True, 'max_output_tokens': 2200,
                 'response_schema': RESPONSE_SCHEMA}), deadline + 5)
             items = self._validate(final_text(response), payload)
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (

@@ -45,6 +45,11 @@ roles reject the configuration. Supported task names are declared in
 `colony_sidecar/router/functions.py` as `TASK_ROLES`. Routing status reports
 the overrides as `task_roles`; each active request keeps its selected snapshot.
 
+`source_appraisal` and `self_judgment` can also be assigned independently. Their
+defaults remain extraction and reasoning, respectively. Each background operator
+uses its task selection for dispatch and its existing job deadline and lease.
+Assigning a role does not enable a disabled operator or automatic opinions.
+
 ```json
 {
   "provider": "local",
