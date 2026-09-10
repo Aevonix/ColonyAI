@@ -92,6 +92,7 @@ def _is_style_only(subj: str) -> bool:
 _TASK_SCOPE = re.compile(
     r"\b(?:for|during) (?:this|the current) (?:task|request|phase|run|example)\b"
     r"|\b(?:this is|these are) (?:an? |the )?(?:temporary|one[- ]off) (?:task |standing )?(?:instruction|requirement|rule|constraint)s?\b"
+    r"|(?:^|[.!?;\n]\s*)(?:temporary|one[- ]off) (?:task )?(?:instruction|requirement|rule|constraint)s?\s*[:.!?;\n]"
     r"|\bnot (?:a |my )?(?:personal preference|standing (?:rule|instruction|boundary))\b"
     r"|\b(?:for now|until (?:this|the) (?:task|phase|run) (?:ends|finishes|completes))\b", re.I)
 _STANDING = re.compile(r"^(?:please\s+)?(?:(?:from now on|going forward|as a standing rule|as a permanent rule|permanently)[,:]?\s+|(?:always|never)\s+)", re.I)
@@ -169,7 +170,7 @@ def extract_directives(message: str, *, source: str = "owner_explicit") -> List[
             continue  # Negated omissions do not prohibit the underlying action.
         if (not subject or len(subject) < 2 or _is_style_only(subject)
                 or re.match(r'^(?:(?:I|we|he|she|they|my|your|did|had|has|was|were|is|am|are)\b|have\s+(?:I|we|they)\b)', subject, re.I)
-                or re.match(r'^(?:\w+\s+)*(?:did|do|does|have|has|had|am|is|are|was|were)\s+(?:I|we|he|she|they|you)\b', subject, re.I)
+                or re.match(r'^(?:(?:again|ever|really|actually|previously|once)\s+)*(?:did|do|does|have|has|had|am|is|are|was|were)\s+(?:I|we|he|she|they|you)\b', subject, re.I)
                 or polarity == Polarity.REQUIRE and not re.match(
                     r'^(?:ask|check|confirm|consult|contact|keep|leave|look|make|maintain|notify|obtain|read|remember|report|request|require|respect|review|run|save|seek|send|show|tell|test|track|use|verify|wait)\b', subject, re.I)):
             continue

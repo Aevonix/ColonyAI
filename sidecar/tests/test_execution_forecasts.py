@@ -105,6 +105,21 @@ def test_bounded_retry_keeps_first_failure_and_can_complete(runtime):
     processor = forecasts._facts(runtime[0].ledger, history(runtime)['outcomes'][0])['processor']
     assert processor['error_request_count'] == 1 and processor['observed_request_count'] == 2
 
+
+@pytest.mark.parametrize('size,comparable', [(4000, True), (20000, False), (None, False)])
+def test_later_requests_must_remain_in_the_forecast_input_bucket(runtime, size, comparable):
+    start(runtime)
+    send(runtime, sequence=3, phase='between_calls', runtime=api('response', response_model='model-a'))
+    send(runtime, sequence=4, phase='model', runtime=api(request_id='second', api_call_count=2,
+                                                     approx_input_tokens=size))
+    send(runtime, sequence=5, phase='between_calls', runtime=api('response', request_id='second',
+                                                              response_model='model-a'))
+    runtime[2][0] += 90
+    assert send(runtime, sequence=6, phase='ended', state='completed')['forecast']['conditions_comparable'] is comparable
+    assert history(runtime)['outcomes'][0]['status'] == ('observed' if comparable else 'censored')
+    start(runtime, 'next')
+    assert history(runtime, 'next')['forecasts'][0]['detail']['conditions']['estimate']['sample_n'] == int(comparable)
+
 def test_predecessor_schema_still_writes_and_metadata_expires(runtime):
     start(runtime)
     registry = runtime[0]

@@ -266,6 +266,22 @@ def test_temporary_instructions_as_object_do_not_cancel_a_lasting_rule(setup):
     assert not setup[1].guard.check(Action(kind='execute_tool', text='delete temporary task instructions')).allowed
 
 
+@pytest.mark.parametrize('declaration', ['Temporary instruction.', 'One-off constraint.'])
+def test_standalone_temporary_declaration_keeps_following_rule_task_scoped(setup, declaration):
+    assert capture(setup, declaration + ' Never deploy widget-service.').captured == []
+    assert setup[1].guard.check(Action(kind='execute_tool', text='deploy widget-service')).allowed
+
+
+@pytest.mark.parametrize('text', [
+    'Never permit this system to do you harm.',
+    'Never let me have you followed.',
+])
+def test_imperative_object_is_not_mistaken_for_factual_inversion(setup, text):
+    rule, = capture(setup, text).captured
+    assert setup[1].store.get(rule.id)
+    assert not setup[1].guard.check(Action(kind='execute_tool', text=rule.subject)).allowed
+
+
 @pytest.mark.parametrize('withdrawal', ['erase', 'correct'])
 def test_erased_or_corrected_lift_request_cannot_be_confirmed(setup, withdrawal):
     rule = capture(setup, 'Never deploy widget-service.').captured[0]

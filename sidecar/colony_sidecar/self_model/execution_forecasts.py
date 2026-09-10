@@ -93,7 +93,7 @@ def _processor(data, config):
         for event in pair.values():
             configuration_matches &= all(event.get(key) == config[key] for key in ROUTING_KEYS)
         if start:
-            configuration_matches &= all(start.get(key) == config[key] for key in ('max_tokens', 'tool_count'))
+            configuration_matches &= _config(start) == config
         response = pair.get('response')
         if response:
             if response.get('response_model'):
