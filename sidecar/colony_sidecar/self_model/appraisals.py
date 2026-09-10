@@ -139,9 +139,9 @@ def _topic_words(value):
     # available to a query about a "drawing". This is lexical matching, not
     # a language detector or permission/identity normalization.
     for word in tuple(words):
-        if not word.isascii() or not word.isalpha() or len(word) < 5:
+        if not word.isascii() or not word.isalpha() or len(word) < 4:
             continue
-        if word.endswith(('ss', 'us', 'is')):
+        if word == 'news' or word.endswith(('ss', 'us', 'is')):
             continue
         if word.endswith(('ches', 'shes', 'sses', 'xes', 'zes')):
             words.add(word[:-2])

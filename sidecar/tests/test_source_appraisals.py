@@ -88,6 +88,10 @@ def admitted_preference(store, name, *, value='concise explanations', prior=None
     ('drawings', 'drawing', True),
     ('drawing', 'drawings', True),
     ('attachments', 'attachment', True),
+    ('jobs', 'job', True),
+    ('job', 'jobs', True),
+    ('cars', 'car', True),
+    ('dog', 'dogs', True),
     ('review deadlines', 'deadline', True),
     ('latches', 'latch', True),
     ('classes', 'class', True),
@@ -136,20 +140,25 @@ async def test_drawing_query_recalls_two_source_hypothesis_without_exposing_priv
     assert not view(state, query=query)['records']
 
 
+@pytest.mark.parametrize('contact', ['person', 'owner'])
 @pytest.mark.asyncio
-async def test_context_renders_identical_hints_once_preserving_each_source_and_record(state, monkeypatch):
+async def test_context_renders_identical_hints_once_preserving_each_source_and_record(state, monkeypatch, contact):
     from colony_sidecar.api.routers import social_state
     for name, hint in [('first', 'try_different_approach'),
                        ('second', 'try_different_approach'),
                        ('third', 'verify_before_relying')]:
-        source(state, name, f'The export comparison for {name} stopped with a mismatch.')
+        source(state, name, f'The export comparison for {name} stopped with a mismatch.', contact=contact)
         await state.process_one(Processor(lambda p: observation(p, topic=f'export {name}', hint=hint)))
     monkeypatch.setattr(social_state, 'appraisal_store', lambda: state)
-    brief, refs = social_state.appraisal_context(contact_id='person', session_id='next', query='export')
+    brief, refs = social_state.appraisal_context(contact_id=contact, session_id='next', query='export')
     assert brief.count(social_state._HINT_TEXT['try_different_approach']) == 1
     assert brief.count(social_state._HINT_TEXT['verify_before_relying']) == 1
     assert {ref['source_id'] for ref in refs} == {'first', 'second', 'third'}
-    assert len(view(state, query='export')['records']) == 3
+    assert len(state.view(contact, viewer_contact_id='owner', query='export')['records']) == 3
+    if contact == 'owner':
+        approach_line, = [line for line in brief.splitlines()
+                          if line.startswith(social_state._HINT_TEXT['try_different_approach'])]
+        assert 'export first' in approach_line and 'export second' in approach_line
 
 
 @pytest.mark.asyncio
