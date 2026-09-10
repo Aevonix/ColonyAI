@@ -191,6 +191,39 @@ async def test_combined_rerank_bounds_model_work_without_mixing_unscored_tail(mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("relevant", [True, False])
+async def test_media_producer_reaches_same_bounded_reranker_without_forcing_selection(monkeypatch, relevant):
+    reranker = Reranker()
+    calibrate(monkeypatch, reranker)
+    calls = []
+    caption = "A blue circle appears to the right of a red rectangle."
+
+    async def rank(query, documents, top_k):
+        calls.append((documents, top_k))
+        return [{"index": i, "score": .99 if relevant and text == caption else .01}
+                for i, text in enumerate(documents)]
+
+    selector = RecallSelector(rank, calibration_metadata=lambda: provider_calibration_metadata(reranker))
+    beliefs = [{**belief(f"Graph passage {i}"), "id": f"b{i}"} for i in range(25)]
+    quotations = [{**quotes()[0], "id": f"s{i}", "content": f"Text passage {i}"}
+                  for i in range(25)]
+    # The host appends the independently retrieved media producer after text.
+    media = {"id": "media:fixture", "kind": "media_description", "content": caption,
+             "source_uri": "turn:image", "source_turn_id": "image", "role": "user",
+             "asset_id": "sha256:" + "a" * 64, "epistemic_state": "derived_unverified",
+             "description_model": "fixture", "description_version": "fixture-v1"}
+    selected, text = await selector.select_context("What is on the right?", beliefs, quotations + [media])
+    assert len(calls) == 1 and len(calls[0][0]) == calls[0][1] == 20
+    assert caption in calls[0][0]
+    assert [row["id"] for row in selected] == ([media["id"]] if relevant else [])
+    if relevant:
+        assert caption in text and media["asset_id"] in text
+        assert '"source_turn_id": "image"' in text and '"state": "derived_unverified"' in text
+    else:
+        assert text == ""
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode,fail", [("off", False), ("shadow", False), ("on", True)])
 async def test_bounded_rerank_preserves_full_fallback_and_shadow_input(monkeypatch, mode, fail):
     monkeypatch.setenv("COLONY_RECALL_RERANK", mode)

@@ -36,12 +36,18 @@ class RecallSelector:
                 seen.add(key)
             unique.append(row)
         quotations = unique
+        # Media is an independent candidate producer. Appending its first hit
+        # after every text hit can exclude it from the bounded reranker before
+        # relevance is assessed. Fuse its rank independently; it still shares
+        # the same reranker, abstention threshold and final context budget.
+        media = [row for row in quotations if row.get("kind") == "media_description"]
+        text = [row for row in quotations if row.get("kind") != "media_description"]
         # Confidence in a belief and certainty that words were quoted are not
         # comparable truth scores. Preserve them as evidence metadata; select
         # across kinds by rank and semantic relevance alone.
         candidates = fuse_candidates(
-            beliefs, quotations, limit=len(beliefs) + len(quotations),
-            confidence_weighting=False)
+            beliefs, text, limit=len(beliefs) + len(quotations),
+            confidence_weighting=False, additional=(media,))
         ranked = await self.rerank(
             query, candidates, limit, confidence_weighting=False,
             candidate_limit=max(1, 4 * limit))

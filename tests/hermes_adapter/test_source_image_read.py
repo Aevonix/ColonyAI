@@ -17,8 +17,9 @@ def test_native_owned_pixels_reopen_on_supported_protocols_and_erase(artifacts, 
     marker = "print(json.dumps({'native_dispatch':True"
     assert probe.count(marker) == 1
     check = r'''
-import base64, copy, hashlib, io
+import base64, copy, hashlib, io, re
 from PIL import Image, ImageDraw
+from colony_sidecar.turns.media import SourceMedia
 from agent.codex_responses_adapter import _chat_messages_to_responses_input
 from agent.anthropic_message_convert import convert_messages_to_anthropic
 picture=Image.new('RGB',(96,48),'white'); draw=ImageDraw.Draw(picture)
@@ -29,14 +30,25 @@ ledger.record_source('native-image',contact_id='person',session_id='source-sessi
     'role':'user','content':[{'type':'text','text':'Retain this neutral geometry reference image.'},
     {'type':'image_url','image_url':{'url':'data:image/png;base64,'+encoded}}]}],derive_claims=False)
 ref=ledger.source_references(['native-image'],contact_id='person',session_id='reader')[0]
+media=SourceMedia(ledger)
+caption='Neutral geometry reference image: a red rectangle on the left and a blue circle on the right.'
+# Recorded fixture derivative, not a model-quality claim. Real source storage,
+# selection, provider formatting and native composition must expose its handle.
+assert media.finish(media.claim_job(),description=caption,model='fixture-vision')
 recalled=provider.prefetch('neutral geometry reference image',session_id='reader')
 assert ref['source_version'] in recalled,recalled
+native_context=compose_user_api_content('',recalled,'')
+assert caption in native_context and 'derived_unverified' in native_context,native_context
+stamp=json.loads(re.search(r'\[colony-recall-v1 (\{[^\n]+\})\]',native_context).group(1))
+recalled_ref=next(item for item in stamp['sources'] if item['source_id']=='native-image')
+recalled_asset=re.search(r'"asset_id": "sha256:([0-9a-f]{64})"',native_context).group(1)
+assert recalled_ref==ref and recalled_asset==asset
 prime('reader','reader-task','reader-turn')
 # Controlled active-model capability declarations; no provider inference call.
 # Actual native dispatch still owns normalization and vision tool gating.
 agent._model_supports_vision=lambda: True
 agent._provider_supports_vision_tool_messages=lambda: True
-args={**ref,'view':'image','asset_hash':asset}
+args={**recalled_ref,'view':'image','asset_hash':recalled_asset}
 opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
                 call='call_image',tool='colony_memory_read_source')
 assert opened['image_bytes_included'] is True and opened['image']['asset_hash']==asset,opened
