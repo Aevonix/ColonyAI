@@ -87,7 +87,7 @@ async def test_ordinary_episode_reaches_deliberation_and_erasure_withdraws_it(so
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
         await tell(client, REPORT, 'checkpoint-episode')
         assert await projection.process_one(model)
-    assert len(model.calls) == 2  # The existing extraction and admission calls.
+    assert len(model.calls) == 1  # Exact whole-source reports need no second review.
     thinker = Processor()
     assert await judgments.process_one(thinker)
     assert len(thinker.requests) == 1

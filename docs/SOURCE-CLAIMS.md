@@ -122,11 +122,16 @@ The memory-provider wrapper now distinguishes persistent state from source evide
 
 ## Operation and qualification
 
-The experimental v10 extractor represents substantive experiences and comparisons
+The experimental v11 extractor represents substantive experiences and comparisons
 as quoted episodes. The processor selects one exact passage and explains its
 future use; it does not synthesize subject/value fields for the episode. The
-existing admission review checks the passage against the complete source, and
-the existing source table retains it with a content-derived record identity. An
+existing source table retains it with a content-derived record identity. When the
+episode quotes the entire eligible text message, deterministic source checks
+replace the second model review. The extractor still judges usefulness and
+correction references. The distinct `source_admission` marker records
+`whole_source_quote_unverified`; it does not invent a review or verify the report.
+Selected excerpts from longer messages and segmented audio keep context review.
+An
 explicit correction selects an offered prior episode, reuses that identity and
 retracts the mistaken report through the existing claim lineage. Its original
 source remains an identity dependency, so erasure or attribution changes revoke
@@ -176,8 +181,9 @@ stays available as source history.
 Structured facts and procedures keep their existing representation and temporal
 conflict handling. Episodes are independent reports: sharing a topic does not
 automatically overwrite an earlier report or resolve contradictions. A correction
-must have an explicit correction cue, select an offered episode reference and
-pass the existing admission review of the same reported experience. A different
+must have an explicit correction cue and select a current, admitted episode
+reference. Source identity and predecessor eligibility are rechecked at commit.
+Selecting the same reported experience remains an extractor judgment. A different
 incident cannot retract the earlier one. The existing explicit source-annotation
 path also remains available for owner corrections.
 There is no new database, worker or model call. This representation is undergoing

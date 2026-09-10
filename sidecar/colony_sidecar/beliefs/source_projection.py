@@ -9,7 +9,8 @@ import logging
 import time
 import uuid
 
-from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_diagnostics, projection_timeout_seconds, norm_value
+from .source_claims import (EXTRACTION_VERSION, admission_metadata, extract_claims,
+                            extraction_diagnostics, projection_timeout_seconds, norm_value)
 from .source_time import MemoryTimeQuery, filter_unstructured
 
 logger = logging.getLogger(__name__)
@@ -97,8 +98,9 @@ def subject_basis(conn, claim, *, contact_id):
     if (data.get('subject_basis_claim_id') or message is None or message.get('role') != 'user'
             or data.get('subject') != claim.get('subject') or row['subject_key'] != claim['subject_key']
             or row['predicate'] != claim['predicate'] or data['evidence'] not in message.get('content', '')
-            or data.get('admission_review', {}).get('version') != 'source-claim-review-v1'
-            or data.get('admission_review', {}).get('basis') != 'model_judgment_unverified'):
+            or admission_metadata(data) is None
+            or ('source_admission' in data and ('_audio_segments' in message
+                or data['evidence'] != message.get('content')))):
         return None
     # Reuse the original literal-grounding rule, without inferring an alias.
     from .source_claims import literal_subject
@@ -276,6 +278,9 @@ class SourceClaimProjection:
                 # after model execution and after any concurrent source erase.
                 if current_view["content"][claim["span_start"]:claim["span_end"]] != claim["evidence"]:
                     continue
+                if 'source_admission' in claim and (admission_metadata(claim) is None
+                        or '_audio_segments' in current_view or claim['evidence'] != current_view['content']):
+                    continue
                 if '_audio_segments' in current_view:
                     basis = claim_basis(current_view, claim['span_start'], claim['span_end'])
                     review = claim.get('admission_review', {})
@@ -308,8 +313,7 @@ class SourceClaimProjection:
                             or old['subject_key'] != claim['subject_key'] or old['predicate'] != claim['predicate']
                             or old['superseded_by'] or old['retracted_by']
                             or claim['operation'] not in {'correct', 'change'}
-                            or claim.get('admission_review', {}).get('version') != 'source-claim-review-v1'
-                            or claim.get('admission_review', {}).get('basis') != 'model_judgment_unverified'
+                            or admission_metadata(claim) is None
                             or claim['subject_basis_claim_id'] != (old.get('subject_basis_claim_id') or old['id'])
                             or subject_basis(conn, claim, contact_id=current['contact_id']) is None):
                         continue  # A missing dependency cannot become assert.

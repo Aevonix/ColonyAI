@@ -202,15 +202,14 @@ class SelfJudgments:
         only decisions, procedures and substantive events invite a new stance.
         A request is not an observation of its outcome. Raw historical claims,
         revoked attribution and corrected interpretations cannot supply premises.
-        Admission remains an unverified model judgment, not factual authority.
+        Admission preserves an attributed report or unverified model judgment,
+        never factual authority. Forming an opinion still uses its own model.
         """
         rows = conn.execute('''SELECT c.id,c.data_json FROM source_claims c
             JOIN source_claim_jobs j ON j.turn_id=c.turn_id
             JOIN turn_sources s ON s.turn_id=c.turn_id
             WHERE c.turn_id=? AND c.message_hash=? AND s.contact_id=? AND s.scope='person'
             AND j.status='complete' AND c.superseded_by IS NULL AND c.retracted_by IS NULL
-            AND json_extract(c.data_json,'$.admission_review.version')='source-claim-review-v1'
-            AND json_extract(c.data_json,'$.admission_review.basis')='model_judgment_unverified'
             AND json_extract(c.data_json,'$.memory_quality.memory_kind') IN ('decision','procedure','substantive_event')
             AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)
             AND NOT EXISTS (SELECT 1 FROM source_projection_erasures e WHERE e.turn_id=s.turn_id)
@@ -218,8 +217,12 @@ class SelfJudgments:
                             WHERE a.target_source_id=s.turn_id AND h.value=c.message_hash)
             ORDER BY c.id''', (turn_id, message_hash, self.owner_id)).fetchall()
         result = []
+        from colony_sidecar.beliefs.source_claims import admission_metadata
         for row in rows:
             claim = json.loads(row['data_json'])
+            admission = admission_metadata(claim)
+            if admission is None:
+                continue
             if claim.get('subject_basis_claim_id'):
                 from colony_sidecar.beliefs.source_projection import subject_basis
                 basis = subject_basis(conn, claim, contact_id=self.owner_id)
@@ -228,8 +231,8 @@ class SelfJudgments:
                 claim['subject_basis'] = basis
             result.append({'claim_id': row['id'], **{key: claim[key] for key in (
                 'representation', 'subject', 'predicate', 'value', 'evidence', 'memory_quality', 'model_provenance', 'subject_basis') if key in claim},
-                'admission': {key: claim['admission_review'][key] for key in
-                    ('version', 'basis', 'model_provenance') if key in claim['admission_review']}})
+                'admission': {key: admission[key] for key in
+                    ('version', 'basis', 'model_provenance') if key in admission}})
         return result
 
     def _supported(self, conn, ref):

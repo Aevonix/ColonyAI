@@ -194,7 +194,7 @@ async def test_ordinary_correction_retains_qualified_prior_report_context(source
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('when', ['after_commit', 'during_review'])
+@pytest.mark.parametrize('when', ['after_commit', 'during_extraction'])
 async def test_erasing_episode_basis_prevents_or_withdraws_dependent_correction(tmp_path, when):
     ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
     projection = SourceClaimProjection(ledger)
@@ -205,7 +205,7 @@ async def test_erasing_episode_basis_prevents_or_withdraws_dependent_correction(
     complete = processor.complete
     async def complete_then_erase(*args, **kwargs):
         answer = await complete(*args, **kwargs)
-        if when == 'during_review' and kwargs['context']['task'] == 'source_claim_review':
+        if when == 'during_extraction' and kwargs['context']['task'] == 'source_claim_extraction':
             ledger.erase_sources(contact_id='contact-a', turn_ids=['original'])
         return answer
     processor.complete = complete_then_erase
