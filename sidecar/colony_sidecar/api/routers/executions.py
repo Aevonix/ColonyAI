@@ -77,7 +77,7 @@ async def active(request: Request, contact_id: str, session_id: str = "", limit:
     view = await with_queue_work(view, owner=owner, limit=limit)
     if projection == 'request':
         from colony_sidecar.turns.executions import request_work_context
-        return request_work_context(view, limit=limit)
+        return request_work_context(view, limit=limit, session_id=session_id)
     return view
 
 
