@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -98,14 +99,14 @@ def plugin(monkeypatch, tmp_path):
     monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
     context = _Context(tmp_path / "turn-outbox.sqlite3")
     module.register(context)
+    # These payload checks exercise a synchronous drain, not elapsed disk time.
+    # Keep the clock local to the client module; real deadline tests live in
+    # test_hermes_turn_outbox.py.
+    client_module = sys.modules[module.TurnOutbox.__module__]
+    monkeypatch.setattr(
+        client_module, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=time.time),
+    )
     return context, _Client.instances[-1]
-
-
-def _wait_count(client, count, timeout=3):
-    deadline = time.time() + timeout
-    while len(client.synced) < count and time.time() < deadline:
-        time.sleep(0.01)
-    assert len(client.synced) >= count
 
 
 def _pre(context, *, session, task, turn, platform="sms", sender="+15550001"):
@@ -127,7 +128,7 @@ def test_turn_sync_includes_exact_sender_and_no_competing_signal_write(plugin):
     context, client = plugin
     _pre(context, session="sess-1", task="task-1", turn="turn-1")
     _post(context, session="sess-1", task="task-1", turn="turn-1")
-    _wait_count(client, 1)
+    assert len(client.synced) == 1
     assert client.synced[0]["contact_id"] == "cid-owner"
     assert client.synced[0]["sender"] == {
         "platform": "sms", "user_id": "+15550001",
@@ -145,7 +146,6 @@ def test_unresolved_sender_skips_turn_instead_of_owner_fallback(plugin):
     _post(
         context, session="sess-unknown", task="task-unknown", turn="turn-unknown",
     )
-    time.sleep(0.05)
     assert client.synced == []
 
 
@@ -154,8 +154,6 @@ def test_missing_host_turn_id_uses_task_id_and_duplicate_hook_writes_once(plugin
     _pre(context, session="sess-no-turn", task="task-stable", turn="")
     _post(context, session="sess-no-turn", task="task-stable")
     _post(context, session="sess-no-turn", task="task-stable")
-    _wait_count(client, 1)
-    time.sleep(0.05)
     assert len(client.synced) == 1
     assert client.synced[0]["turn_id"].startswith("hermes:")
 
@@ -172,12 +170,54 @@ def test_failed_canonical_write_releases_local_claim_for_retry(plugin):
         platform="cli", user_message="persist this", assistant_response="okay",
         conversation_history=[],
     )
-    _wait_count(client, 1)
-    time.sleep(0.02)
+    assert len(client.synced) == 1
     context.hooks["post_llm_call"](
         session_id="sess-retry", task_id="task-retry", turn_id="turn-retry",
         platform="cli", user_message="persist this", assistant_response="okay",
         conversation_history=[],
     )
-    _wait_count(client, 2)
+    assert len(client.synced) == 2
     assert client.synced[0]["turn_id"] == client.synced[1]["turn_id"]
+
+
+def test_expired_turn_drain_preserves_exact_payload_for_explicit_recovery(plugin, monkeypatch):
+    context, client = plugin
+    module = sys.modules[context.hooks["post_llm_call"].__module__]
+    client_module = sys.modules[module.TurnOutbox.__module__]
+    clock = [1000.0]
+    monkeypatch.setattr(
+        client_module, "time", SimpleNamespace(monotonic=lambda: clock[0], time=time.time),
+    )
+    connect = module.TurnOutbox._connect
+
+    def expire_after_connect(self, *args, **kwargs):
+        connection = connect(self, *args, **kwargs)
+        if kwargs.get("deadline_monotonic") is not None:
+            clock[0] = kwargs["deadline_monotonic"] + 1.0
+        return connection
+
+    _pre(context, session="sess-deferred", task="task-deferred", turn="turn-deferred")
+    with monkeypatch.context() as expired:
+        expired.setattr(module.TurnOutbox, "_connect", expire_after_connect)
+        _post(context, session="sess-deferred", task="task-deferred", turn="turn-deferred")
+
+    config = context.config["plugins"]["colony"]
+    outbox = module.TurnOutbox(config["turn_outbox_path"])
+    pending, = outbox.snapshot()
+    assert pending["state"] == "pending"
+    assert pending["attempts"] == 0
+    assert client.synced == []
+    assert pending["payload"]["contact_id"] == "cid-owner"
+    assert pending["payload"]["sender"] == {"platform": "sms", "user_id": "+15550001"}
+    assert pending["payload"]["turn_id"] == "turn-deferred"
+    delivered = []
+
+    def deliver(payload, **kwargs):
+        delivered.append(payload)
+        return client.sync_turn(**payload, **kwargs)
+
+    assert module.recover_turn_outbox(config, deliver) == 1
+    assert delivered == [pending["payload"]]
+    assert len(client.synced) == 1
+    assert outbox.snapshot()[0]["state"] == "delivered"
+    assert client.posts == []
