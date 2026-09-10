@@ -22,6 +22,7 @@ dependencies = [
     "Pillow>=10.0",
     "cryptography>=42.0",
     "pypdf>=6.18.0,<7",
+    "psutil>=7.2.2,<8; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +35,7 @@ lancedb = ["lancedb>=0.6", "pyarrow>=14.0", "pandas>=2.0"]
 postgres = ["asyncpg>=0.29"]
 extraction = ["PyMuPDF>=1.24", "beautifulsoup4>=4.12"]
 dev = [
+    "psutil>=7.2.2,<8",
     "neo4j>=5.18",
     "sentence-transformers>=3.0",
     "pandas>=2.0",

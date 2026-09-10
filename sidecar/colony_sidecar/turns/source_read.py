@@ -81,6 +81,8 @@ def _document_page(ledger, conn, *, scope, expected, asset_hash, page, hashes):
                     'parser_version': document.get('parser_version'), 'ocr_performed': False,
                     'epistemic_state': 'derived_unverified',
                     'page_status': selected['status'] if selected else 'not_extracted'}
+        evidence.update({key: document[key] for key in ('memory_control', 'memory_limit_bytes',
+                         'memory_sample_interval_ms', 'hard_limit') if key in document})
         text = selected['text'] if selected and selected['status'] == 'text' else ''
         fingerprint = hashlib.sha256(json.dumps([media['status'], document], sort_keys=True).encode()).hexdigest()
         return evidence, text, fingerprint

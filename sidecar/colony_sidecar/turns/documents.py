@@ -20,6 +20,8 @@ MAX_PAGE_CHARS = 32000
 MAX_TEXT_CHARS = 200000
 MAX_RESULT_BYTES = 6 * MAX_TEXT_CHARS + 65536
 MAX_PARSE_SECONDS = 15
+MAX_MEMORY_BYTES = 384 * 1024 * 1024
+MEMORY_SAMPLE_INTERVAL_MS = 25
 VERSION = 'source-pdf-text-v1'
 
 
@@ -96,45 +98,137 @@ def _extract(data):
 
 def _child():
     logging.disable(logging.CRITICAL)
+    memory_control = 'address_space'
     try:
         import resource
-        resource.setrlimit(resource.RLIMIT_AS, (384 * 1024 * 1024, 384 * 1024 * 1024))
         resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (MAX_MEMORY_BYTES, MAX_MEMORY_BYTES))
+        except (ValueError, OSError):
+            if sys.platform != 'darwin' or sys.argv[1:] != ['--rss-guarded']:
+                raise
+            memory_control = 'sampled_rss'
     except (ImportError, ValueError, OSError):
         result = disposition('unsupported', 'parser_resource_limits_unavailable')
     else:
+        # The guarded parent samples this PID before sending stdin. No parser
+        # import or PDF decoding starts until that parent closes the pipe.
         result = _extract(sys.stdin.buffer.read(MAX_DOCUMENT_BYTES + 1))
+        result.update(_memory_metadata(memory_control))
     sys.stdout.buffer.write(json.dumps(result, ensure_ascii=True).encode())
+
+
+def _memory_metadata(control):
+    return {'memory_control': control, 'memory_limit_bytes': MAX_MEMORY_BYTES,
+            'memory_sample_interval_ms': MEMORY_SAMPLE_INTERVAL_MS if control == 'sampled_rss' else None,
+            'hard_limit': control == 'address_space'}
+
+
+class _MemoryGuardError(RuntimeError):
+    pass
+
+
+def _sample_rss(target):
+    import psutil
+    try:
+        if not target.is_running():
+            raise psutil.NoSuchProcess(target.pid)
+        rss = target.memory_info().rss
+        if type(rss) is not int or rss < 0:
+            raise ValueError('invalid RSS')
+    except psutil.NoSuchProcess as exc:
+        raise _MemoryGuardError('parser_memory_monitor_exited') from exc
+    except Exception as exc:
+        raise _MemoryGuardError('parser_memory_monitor_failed') from exc
+    if rss > MAX_MEMORY_BYTES:
+        raise _MemoryGuardError('parser_memory_limit')
+
+
+async def _watch_rss(process, target):
+    # Best-effort resident memory samples; scheduling and allocations can
+    # exceed this interval/threshold. This is not an OS memory allocation cap.
+    while process.returncode is None:
+        try:
+            _sample_rss(target)
+        except _MemoryGuardError as exc:
+            if str(exc) == 'parser_memory_monitor_exited':
+                await asyncio.sleep(0)  # Let a genuine exit notification settle.
+                if process.returncode is not None:
+                    return
+            raise
+        await asyncio.sleep(MEMORY_SAMPLE_INTERVAL_MS / 1000)
 
 
 async def extract_document(data):
     """No model, OCR, fetch, embedded action, or file reference is executed."""
+    guarded = sys.platform == 'darwin'
+    if guarded:
+        try:
+            import psutil
+        except ImportError:
+            return disposition('unsupported', 'parser_memory_monitor_unavailable')
     process = await asyncio.create_subprocess_exec(
         sys.executable, '-I', str(Path(__file__).resolve()),
+        *(['--rss-guarded'] if guarded else []),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL)
+    communication = watcher = target = None
+    guard_metadata = {}
     try:
-        output, _ = await asyncio.wait_for(process.communicate(data), MAX_PARSE_SECONDS)
+        async with asyncio.timeout(MAX_PARSE_SECONDS):
+            if guarded:
+                try:
+                    target = psutil.Process(process.pid)
+                except Exception as exc:
+                    raise _MemoryGuardError('parser_memory_monitor_unavailable') from exc
+                guard_metadata = _memory_metadata('sampled_rss')
+                _sample_rss(target)  # Must succeed before any PDF bytes go in.
+                watcher = asyncio.create_task(_watch_rss(process, target))
+            communication = asyncio.create_task(process.communicate(data))
+            if watcher is not None:
+                await asyncio.wait((communication, watcher), return_when=asyncio.FIRST_COMPLETED)
+                if watcher.done():
+                    watcher.result()  # A breach takes precedence over output.
+            output, _ = await asyncio.shield(communication)
         if process.returncode:
-            return disposition('failed', 'parser_process_failed_or_resource_limit')
+            return disposition('failed', 'parser_process_failed_or_resource_limit') | guard_metadata
         if len(output) > MAX_RESULT_BYTES:
-            return disposition('failed', 'parser_output_exceeds_limit')
+            return disposition('failed', 'parser_output_exceeds_limit') | guard_metadata
         result = json.loads(output)
         if result.get('version') != VERSION or result.get('status') not in {'complete', 'partial', 'unsupported', 'failed'}:
             raise ValueError('invalid parser result')
         return result
     except asyncio.TimeoutError:
-        return disposition('failed', 'parser_time_limit')
+        return disposition('failed', 'parser_time_limit') | guard_metadata
+    except _MemoryGuardError as exc:
+        reason = 'parser_memory_monitor_failed' if str(exc) == 'parser_memory_monitor_exited' else str(exc)
+        return disposition('unsupported', reason) | guard_metadata
     except (ValueError, TypeError):
-        return disposition('failed', 'invalid_parser_result')
+        return disposition('failed', 'invalid_parser_result') | guard_metadata
     finally:
-        if process.returncode is None:
-            try:
-                process.kill()
-            except ProcessLookupError:
-                pass
-        await process.wait()
+        try:
+            if process.returncode is None:
+                try:
+                    if target is None:
+                        process.kill()
+                    else:
+                        try:
+                            target.kill()  # Checks this bound PID's identity.
+                        except psutil.NoSuchProcess:
+                            pass
+                        except psutil.Error:
+                            process.kill()  # Owned-child Popen also polls first.
+                except ProcessLookupError:
+                    pass
+        finally:
+            if watcher is not None:
+                watcher.cancel()
+            if communication is None:
+                communication = asyncio.create_task(process.communicate())
+            # Drain pipes while reaping, including cancellation during output.
+            await asyncio.gather(communication, *([watcher] if watcher is not None else []), return_exceptions=True)
+            await process.wait()
 
 
 if __name__ == '__main__':

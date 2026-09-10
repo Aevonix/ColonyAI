@@ -54,11 +54,21 @@ a BSD-3-Clause dependency also used by Hermes's shipped PDF scripts. This
 implementation calls its parser directly; it does not vendor Hermes scripts
 or introduce a new parsing service. Parser provenance records the actual
 installed version. Dependency range: `pypdf>=6.18.0,<7`.
+Darwin also installs `psutil>=7.2.2,<8` for the existing child process's
+[resident-memory measurements](https://psutil.io/api/#psutil.Process.memory_info).
 
 The parser runs in an isolated Python child, receiving bytes over stdin. It has
-a 384 MiB address-space limit, a 10-second CPU limit, a 15-second wall limit,
-and disabled core dumps. Platforms without these resource limits report an
-unsupported disposition. Originals are bounded at 4 MiB; extraction is bounded
+a 10-second CPU limit, a 15-second wall limit, and disabled core dumps. Where
+supported, the operating system enforces a 384 MiB address-space limit. On
+Darwin, where that limit can be unavailable, the parent uses `psutil` to sample
+the same child's RSS every 25 ms and terminate it above 384 MiB. The monitor
+must be established before document bytes are supplied; a missing or failed
+monitor prevents extraction. This sampled RSS threshold is best effort:
+allocations can overshoot between samples, scheduling can delay a check, and
+RSS does not include all allocated memory. It is not a hard memory cap.
+Extraction metadata reports the actual memory-control mode and sampling
+interval. Unsupported resource controls remain an explicit disposition.
+Originals are bounded at 4 MiB; extraction is bounded
 at 64 pages, 2 MiB decompressed content per page, 32,000 characters per page,
 and 200,000 characters per document. Exceeding an extraction limit retains the
 original and reports the limit without publishing a truncated document as
