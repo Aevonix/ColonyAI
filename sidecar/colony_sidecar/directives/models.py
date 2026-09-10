@@ -16,6 +16,7 @@ from the owner's own words / config, never hardcoded here.
 from __future__ import annotations
 
 import re
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -129,6 +130,7 @@ class Directive:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     expires_at: Optional[float] = None
+    evidence: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         if isinstance(self.polarity, str):
@@ -152,7 +154,7 @@ class Directive:
         return True
 
     def to_row(self) -> Dict[str, Any]:
-        return {
+        row = {
             "id": self.id,
             "subject": self.subject,
             "polarity": self.polarity.value,
@@ -169,11 +171,24 @@ class Directive:
             "expires_at": self.expires_at,
         }
 
+        if self.evidence is not None:
+            # Existing metadata column, no second prose copy or schema. Older
+            # readers see an empty subject rather than resurrecting erased text.
+            row.update(subject='', raw_text='', match_terms='',
+                       source='canonical-directive-v1:'+json.dumps({**self.evidence, 'method': self.source}, sort_keys=True, separators=(',', ':')))
+        return row
+
     @classmethod
     def from_row(cls, row: Dict[str, Any]) -> "Directive":
         def _split(v: Any) -> List[str]:
             return [t for t in str(v or "").split(" ") if t]
+        source = row.get('source', 'owner_explicit') or 'owner_explicit'
+        evidence = None
+        if source.startswith('canonical-directive-v1:'):
+            evidence = json.loads(source.removeprefix('canonical-directive-v1:'))
+            source = evidence.get('method', 'owner_explicit')
         return cls(
+            evidence=evidence,
             id=row["id"],
             subject=row["subject"],
             polarity=Polarity(row["polarity"]),
@@ -181,7 +196,7 @@ class Directive:
             match_terms=_split(row.get("match_terms")),
             entity_ids=_split(row.get("entity_ids")),
             action_kinds=_split(row.get("action_kinds")),
-            source=row.get("source", "owner_explicit") or "owner_explicit",
+            source=source,
             confidence=float(row.get("confidence", 0.9) or 0.9),
             status=DirectiveStatus(row.get("status", "active")),
             level=(Level(row["level"]) if row.get("level") else None),

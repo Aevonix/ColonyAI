@@ -4,9 +4,8 @@ Deterministic, cue-driven detection of prohibitions ("don't / stop / avoid /
 leave X alone"), requirements ("always / from now on / make sure to X"), and
 revocations ("you can X again / disregard that"). Owner-gated by the caller.
 
-Deliberately biased toward RECALL on prohibitions: it is safer to capture a
-boundary the owner stated (and let the guard's specificity avoid over-blocking)
-than to silently miss "don't touch X". Pure communication-STYLE directives
+Only explicitly lasting clauses become standing rules. Ordinary task limits
+stay in their source conversation. Pure communication-STYLE directives
 ("be concise", "no emoji") are left to the PreferenceLearner and skipped here.
 """
 
@@ -26,11 +25,6 @@ _PROHIBIT_PATTERNS = [
     re.compile(r"\b(?:steer\s+clear\s+of|stay\s+away\s+from|lay\s+off|hands\s+off)\s+(?P<subj>.+)", re.I),
     re.compile(r"\bleave\s+(?P<subj>.+?)\s+alone\b", re.I),
     re.compile(r"\b(?:ignore|forget\s+about)\s+(?P<subj>.+)", re.I),
-]
-
-# Requirement openers -> capture the required behavior.
-_REQUIRE_PATTERNS = [
-    re.compile(r"\b(?:from\s+now\s+on|going\s+forward|always|make\s+sure(?:\s+to)?|be\s+sure\s+to|remember\s+to|you\s+must)\s+(?P<subj>.+)", re.I),
 ]
 
 # Revocation openers -> the owner is lifting a prior boundary.
@@ -68,7 +62,7 @@ def make_global_pause_directive(raw_text: str = "",
     )
 
 # Clause terminators: cut the subject at the first of these.
-_CLAUSE_END = re.compile(r"[.;,!?\n]| but | and then | because | since | unless | so that ", re.I)
+_CLAUSE_END = re.compile(r"\.(?=\s|$)|[;,!?\n]| but | and then | because | since | unless | so that ", re.I)
 
 # Words that mark a pure communication-style directive (handled elsewhere).
 _STYLE_ONLY = frozenset({
@@ -93,67 +87,98 @@ def _is_style_only(subj: str) -> bool:
     return bool(terms) and terms.issubset(_STYLE_ONLY)
 
 
-def extract_directives(message: str, *, source: str = "owner_explicit") -> List[Directive]:
-    """Extract zero or more directives from a single owner message."""
-    if not message or not message.strip():
+# Durable admission requires positive lasting scope. Task instructions remain
+# canonical evidence, even when they contain imperatives such as "never".
+_TASK_SCOPE = re.compile(
+    r"\b(?:for|during) (?:this|the current) (?:task|request|phase|run|example)\b"
+    r"|\b(?:temporary|one[- ]off) (?:task |standing )?(?:instruction|requirement|rule|constraint)s?\b"
+    r"|\bnot (?:a |my )?(?:personal preference|standing (?:rule|instruction|boundary))\b"
+    r"|\b(?:for now|until (?:this|the) (?:task|phase|run) (?:ends|finishes|completes))\b", re.I)
+_STANDING = re.compile(r"^(?:please\s+)?(?:(?:from now on|going forward|as a standing rule|as a permanent rule|permanently)[,:]?\s+|(?:always|never)\s+)", re.I)
+_SENTENCES = re.compile(r"(?<=[.!?])\s+|[;\n]+")
+
+
+def standing_clauses(message: str) -> List[str]:
+    """Bounded, exact clauses with explicit lasting intent, not inferred intent."""
+    text = (message or '').strip()
+    if not text or _TASK_SCOPE.search(text):
         return []
-    text = message.strip()
+    admitted = []
+    for candidate in _SENTENCES.split(text):
+        clause = candidate.strip()
+        prefix = _STANDING.match(clause)
+        if prefix is None:
+            continue
+        # The keyword guard cannot enforce exceptions or contextual conditions.
+        # Keep these instructions in the conversation instead of broadening
+        # them into an unconditional standing prohibition.
+        if re.search(r'\b(?:unless|until|except|if|when|without)\b', clause, re.I):
+            continue
+        # Keep the exact rule clause, excluding explanatory or unrelated text.
+        ending = _CLAUSE_END.search(clause, prefix.end())
+        if ending:
+            end = ending.start() + (ending[0] in '.!?')
+            clause = clause[:end].strip()
+        if 0 < len(clause) <= 500:
+            admitted.append(clause)
+    return admitted
 
-    # Global pause first (Amendment 1.5): "stop acting" must never be diluted
-    # into a keyword boundary; it is THE kill switch and stands alone.
-    for pat in _GLOBAL_PAUSE_PATTERNS:
-        if pat.search(text):
-            return [make_global_pause_directive(text, source=source)]
 
-    out: List[Directive] = []
-    seen_subjects = set()
-
-    def _emit(subj: str, polarity: Polarity) -> None:
-        subj = _clean_subject(subj)
-        if not subj or len(subj) < 2:
-            return
-        if _is_style_only(subj):
-            return
-        terms = normalize_terms(subj)
-        if not terms:
-            return
-        key = (polarity, tuple(sorted(terms)))
-        if key in seen_subjects:
-            return
-        seen_subjects.add(key)
-        out.append(Directive(
-            subject=subj, polarity=polarity, raw_text=text,
-            match_terms=terms, source=source,
-            confidence=0.9 if source == "owner_explicit" else 0.6,
-        ))
-
-    # Revocations first (so "actually you can X" is not read as a prohibition).
-    revoked = False
-    for pat in _REVOKE_PATTERNS:
-        m = pat.search(text)
-        if m:
-            revoked = True
-            # A revocation subject is returned as a PREFER 'allow' marker so the
-            # caller can match+revoke an existing PROHIBIT; not itself a boundary.
-            subj = _clean_subject(m.group("subj") or "")
-            if subj and not _is_style_only(subj):
-                d = Directive(subject=subj, polarity=Polarity.PREFER,
-                              raw_text=text, source=source)
-                d.__dict__["_revocation"] = True  # caller hint
-                out.append(d)
-            break
-    if revoked:
-        return out
-
-    for pat in _PROHIBIT_PATTERNS:
-        m = pat.search(text)
-        if m:
-            _emit(m.group("subj"), Polarity.PROHIBIT)
-    for pat in _REQUIRE_PATTERNS:
-        m = pat.search(text)
-        if m:
-            _emit(m.group("subj"), Polarity.REQUIRE)
-    return out
+def extract_directives(message: str, *, source: str = "owner_explicit") -> List[Directive]:
+    """Extract explicit standing owner rules; one-off work is not a rule."""
+    from colony_sidecar.directives.models import Level
+    text = (message or '').strip()
+    if not text:
+        return []
+    # The standalone pause command retains its immediate, explicit meaning.
+    command = re.sub(r'^please\s+', '', text.rstrip('.!?'), flags=re.I)
+    command = re.sub(r'\s+(?:for now|for a while)$', '', command, flags=re.I)
+    if any(pattern.fullmatch(command) for pattern in _GLOBAL_PAUSE_PATTERNS):
+        return [make_global_pause_directive(text, source=source)]
+    # Lifting a rule is explicit interaction with an existing rule, not new
+    # durable learning. Keep the existing confirmation behavior unchanged.
+    for pattern in _REVOKE_PATTERNS:
+        match = pattern.match(text)
+        if match and not _TASK_SCOPE.search(text):
+            subject = _clean_subject(match.group('subj') or '')
+            if subject and not _is_style_only(subject):
+                directive = Directive(subject=subject, polarity=Polarity.PREFER,
+                                      raw_text=text, source=source)
+                directive.__dict__['_revocation'] = True
+                return [directive]
+            return []
+    result = []
+    for clause in standing_clauses(text):
+        prefix = _STANDING.match(clause)
+        body = clause[prefix.end():].strip()
+        # Never/always themselves are the lasting imperative.
+        if re.search(r'\bnever\s+$', prefix[0], re.I):
+            body = 'never '+body
+        polarity, subject = Polarity.REQUIRE, body
+        for pattern in _PROHIBIT_PATTERNS:
+            match = pattern.match(body)
+            if match:
+                polarity, subject = Polarity.PROHIBIT, match.group('subj')
+                break
+        if polarity == Polarity.PROHIBIT and re.search(r'\b(?:before|after|once)\b', body, re.I):
+            continue
+        subject = re.sub(r'^always\s+', '', _clean_subject(subject), flags=re.I)
+        if polarity == Polarity.PROHIBIT and re.match(
+                r'^(?:(?:forget|fail|neglect|refuse)\s+to\b|stop\s+\w+ing\b)', subject, re.I):
+            continue  # Negated omissions do not prohibit the underlying action.
+        if (not subject or len(subject) < 2 or _is_style_only(subject)
+                or re.match(r'^(?:(?:I|we|he|she|they|my|your|did|had|has|was|were|is|am|are)\b|have\s+(?:I|we|they)\b)', subject, re.I)
+                or polarity == Polarity.REQUIRE and not re.match(
+                    r'^(?:ask|check|confirm|consult|contact|keep|leave|look|make|maintain|notify|obtain|read|remember|report|request|require|respect|review|run|save|seek|send|show|tell|test|track|use|verify|wait)\b', subject, re.I)):
+            continue
+        # Only the prohibited action determines observation versus action.
+        # Unrelated "read the documentation" elsewhere cannot escalate it.
+        perception = re.match(r'^(?:even\s+)?(?:look(?:ing)?\s+at|read(?:ing)?\b|watch(?:ing)?\b|monitor(?:ing)?\b|track(?:ing)?\b|stay\s+out\s+of|snoop|peek|observ(?:e|ing))', subject, re.I)
+        result.append(Directive(subject=subject, polarity=polarity, raw_text=clause,
+            match_terms=normalize_terms(subject), source=source,
+            confidence=0.9 if source == 'owner_explicit' else 0.6,
+            level=Level.OBSERVE if polarity == Polarity.PROHIBIT and perception else Level.ACT))
+    return result
 
 
 def is_revocation(directive: Directive) -> bool:
@@ -183,7 +208,8 @@ async def llm_extract_directives(text: str) -> List[Directive]:
     Inferred directives are stored at lower confidence + source 'inferred' so the
     owner can correct them via the acknowledgment echo."""
     import os, json as _json
-    if not text or not llm_assist_enabled():
+    clauses = standing_clauses(text)
+    if not clauses or not extract_directives(text) or not llm_assist_enabled():
         return []
     base = os.environ.get("COLONY_INTROSPECT_BASE_URL", "").rstrip("/")
     model = os.environ.get("COLONY_INTROSPECT_MODEL", "")
@@ -201,7 +227,7 @@ async def llm_extract_directives(text: str) -> List[Directive]:
         "model": model, "temperature": 0,
         "max_tokens": 120,
         "messages": [{"role": "system", "content": _LLM_SYS},
-                     {"role": "user", "content": text[:800]}],
+                     {"role": "user", "content": "\n".join(clauses)[:800]}],
     }
     try:
         timeout = aiohttp.ClientTimeout(total=float(os.environ.get("COLONY_INTROSPECT_TIMEOUT", "20")))
@@ -216,12 +242,8 @@ async def llm_extract_directives(text: str) -> List[Directive]:
         obj = _json.loads(m.group(0) if m else content)
     except Exception:
         return []
-    pol = str(obj.get("polarity", "none")).strip().lower()
-    subj = str(obj.get("subject", "")).strip()
-    if pol not in ("prohibit", "require") or not subj or len(subj) < 2:
-        return []
-    terms = normalize_terms(subj)
-    if not terms:
-        return []
-    return [Directive(subject=subj, polarity=Polarity(pol), raw_text=text,
-                      match_terms=terms, source="inferred", confidence=0.55)]
+    # A model cannot override scope admission or invent a new enforced rule.
+    # Retain only an exact deterministic rule from the admitted source clauses.
+    pol, subject = str(obj.get('polarity', 'none')), str(obj.get('subject', '')).strip()
+    return [directive for directive in extract_directives(text, source='inferred')
+            if directive.polarity.value == pol and directive.subject == subject]

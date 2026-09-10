@@ -2097,7 +2097,9 @@ async def lifespan(app: FastAPI):
     try:
         from colony_sidecar.directives import DirectiveManager, DirectiveStore
         from colony_sidecar.api.routers.host import set_directive_manager
-        _directive_store = DirectiveStore(db_path=str(state_dir / "colony-directives.db"))
+        from colony_sidecar.turns import get_turn_idempotency_ledger
+        _directive_store = DirectiveStore(db_path=str(state_dir / "colony-directives.db"),
+                                         ledger=get_turn_idempotency_ledger(state_dir))
         _directive_manager = DirectiveManager(_directive_store)
         set_directive_manager(_directive_manager)
         if locals().get("tool_executor") is not None:

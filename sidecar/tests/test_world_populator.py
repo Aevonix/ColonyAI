@@ -65,7 +65,7 @@ def test_boundary_skips_prohibited_subject():
     async def run():
         async with _store() as s:
             dm = DirectiveManager(DirectiveStore(db_path=None))
-            dm.capture_from_message("don't track anything about Acme Corp")
+            dm.capture_from_message("From now on, don't track anything about Acme Corp")
             pop = WorldModelPopulator(s, directive_manager=dm, mode="shadow")
             rep = await pop.populate_from_text(_TEXT, "msg-4")
             created_names = {c["name"] for c in rep.created}

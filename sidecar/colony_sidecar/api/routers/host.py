@@ -4403,36 +4403,37 @@ async def _process_turn_sync(
             logger.debug("owner directive learning failed", exc_info=True)
 
     # Owner boundary/directive capture: durably record standing directives the
-    # owner states ("don't touch X", "always check before Y", "you can do Z
+    # owner states ("from now on, don't touch X", "always check before Y", "you can do Z
     # again"). Owner-ONLY (a boundary can only be set/lifted by the owner) so a
     # third party can never install or remove the assistant's boundaries.
-    if _directive_manager is not None and body.user_message is not None:
+    if (_directive_manager is not None and body.user_message is not None and source_recorded
+            and not getattr(getattr(request, 'state', None), 'task_instruction_only', False)):
         try:
             from colony_sidecar.identity import get_owner_contact_id
             owner_id = get_owner_contact_id()
             if owner_id and body.context.contact_id == owner_id:
                 _cap = _directive_manager.capture_from_message(
-                    getattr(body.user_message, "content", "") or ""
+                    getattr(body.user_message, "content", "") or "",
+                    source_id=source_id, contact_id=owner_id,
                 )
                 if _cap.captured:
                     logger.info(
                         "Captured %d owner directive(s): %s",
                         len(_cap.captured),
-                        "; ".join(f"[{d.polarity.value}] {d.subject}" for d in _cap.captured),
+                        "; ".join(f"[{d.polarity.value}] {d.id}" for d in _cap.captured),
                     )
                 if _cap.revoked:
                     logger.info("Lifted %d boundary(ies) on owner confirmation: %s",
                                 len(_cap.revoked),
-                                "; ".join(d.subject for d in _cap.revoked))
+                                "; ".join(d.id for d in _cap.revoked))
                 if _cap.needs_confirmation:
-                    logger.info("Boundary-lift staged, awaiting confirmation: %s",
-                                _cap.needs_confirmation)
+                    logger.info("Boundary-lift staged, awaiting confirmation")
                 if _cap.any():
                     try:
                         from colony_sidecar.events.broadcaster import emit as _emit
                         _emit("directive.captured",
-                              {"captured": [d.subject for d in _cap.captured],
-                               "revoked": [d.subject for d in _cap.revoked],
+                              {"captured_ids": [d.id for d in _cap.captured],
+                               "revoked_ids": [d.id for d in _cap.revoked],
                                "needs_confirmation": bool(_cap.needs_confirmation)})
                     except Exception:
                         pass
@@ -4443,7 +4444,8 @@ async def _process_turn_sync(
                         from colony_sidecar.directives.extractor import llm_assist_enabled
                         if llm_assist_enabled():
                             _spawn_task(_directive_manager.capture_llm(
-                                getattr(body.user_message, "content", "") or ""))
+                                getattr(body.user_message, "content", "") or "",
+                                source_id=source_id, contact_id=owner_id))
                     except Exception:
                         pass
         except Exception:
