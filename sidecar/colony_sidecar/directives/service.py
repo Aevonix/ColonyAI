@@ -62,9 +62,11 @@ class DirectiveManager:
         self._pending_lift: Optional[dict] = None
         # One-shot acknowledgment to echo back to the owner (1a).
         self._last_ack: Optional[str] = None
+        self._ack_ids: List[str] = []
 
     # -- capture -------------------------------------------------------
-    def capture_from_message(self, message: str, *, source: str = "owner_explicit") -> CaptureResult:
+    def capture_from_message(self, message: str, *, source: str = "owner_explicit",
+                             source_id: str = "", contact_id: str = "") -> CaptureResult:
         """Extract directives from an OWNER message and persist them.
 
         Asymmetric friction (1c): SETTING a boundary is one-turn easy; LIFTING
@@ -89,15 +91,25 @@ class DirectiveManager:
         # 1) If a lift is pending, ONLY an explicit affirmation on the immediate
         #    next message confirms it; anything else clears it (fail-safe: a
         #    prohibition is never lifted by an attribution error or stray text).
+        if self.store.ledger is not None and not source_id:
+            return result
+        if self._pending_lift is not None and not self._pending_lift_current():
+            self._pending_lift = None
         if self._pending_lift is not None:
             expired = time.time() - self._pending_lift["ts"] > _PENDING_TTL_SECS
             if not expired and _AFFIRM.match(text):
+                if self.store.ledger is not None:
+                    from .evidence import bind
+                    if bind(self.store.ledger, source_id=source_id, contact_id=contact_id,
+                            message=text, clause=text) is None:
+                        return result
                 revoked = self._apply_revocation_ids(self._pending_lift["ids"])
                 subj = self._pending_lift["subject"]
                 self._pending_lift = None
                 result.revoked = revoked
                 result.ack = f"Confirmed. I will resume {subj}."
                 self._last_ack = result.ack
+                self._ack_ids = [d.id for d in revoked]
                 return result
             # not confirmed -> the boundary stays; drop the pending lift
             self._pending_lift = None
@@ -112,9 +124,16 @@ class DirectiveManager:
             matches = [d for d in self.store.active(polarity=Polarity.PROHIBIT)
                        if set(d.match_terms) & terms]
             if matches:
+                evidence = None
+                if self.store.ledger is not None:
+                    from .evidence import bind
+                    evidence = bind(self.store.ledger, source_id=source_id, contact_id=contact_id,
+                                    message=text, clause=text)
+                    if evidence is None:
+                        return result
                 self._pending_lift = {
                     "subject": rev.subject, "ids": [d.id for d in matches],
-                    "ts": time.time(),
+                    "ts": time.time(), "evidence": evidence,
                 }
                 subs = "; ".join(d.raw_text or d.subject for d in matches)
                 result.needs_confirmation = (
@@ -127,13 +146,17 @@ class DirectiveManager:
         # the quality gates: fragments are refused and duplicates never pile up.
         for d in found:
             if not self._subject_acceptable(d):
-                logger.info("Directive capture refused (degenerate subject): %r",
-                            (d.subject or "")[:80])
+                logger.info("Directive capture skipped: degenerate subject")
                 continue
             if self._duplicate_active(d):
-                logger.debug("Directive capture skipped (duplicate of an active "
-                             "directive): %r", (d.subject or "")[:80])
+                logger.debug("Directive capture skipped: duplicate active rule")
                 continue
+            if source_id:
+                from .evidence import bind
+                d.evidence = bind(self.store.ledger, source_id=source_id, contact_id=contact_id,
+                                  message=text, clause=d.raw_text)
+                if d.evidence is None:
+                    continue
             self.store.add(d)
             result.captured.append(d)
         if result.captured:
@@ -160,6 +183,7 @@ class DirectiveManager:
                         "full blackout")
             result.ack = "Noted: " + "; ".join(parts) + "."
             self._last_ack = result.ack
+            self._ack_ids = [d.id for d in result.captured]
         return result
 
     # -- capture quality gates ------------------------------------------
@@ -202,35 +226,29 @@ class DirectiveManager:
             pass
         return False
 
-    async def capture_llm(self, message: str) -> List[Directive]:
-        """LLM-assisted capture (1b), run only when the deterministic pass found
-        nothing. Inferred directives are lower-confidence and surfaced for the
-        owner to correct."""
-        from colony_sidecar.directives.extractor import llm_extract_directives
-        found = await llm_extract_directives(message)
-        stored: List[Directive] = []
-        for d in found:
-            # Same quality gates as the deterministic path: inferred capture
-            # must never store fragments or pile up duplicates.
-            if not self._subject_acceptable(d) or self._duplicate_active(d):
-                continue
-            self.store.add(d)
-            stored.append(d)
-            verb = "will not" if d.polarity == Polarity.PROHIBIT else "will make sure to"
-            self._last_ack = (f"I inferred a standing instruction: I {verb} {d.subject}. "
-                              "Tell me if that is wrong.")
-        return stored
-
     def consume_ack(self) -> Optional[str]:
         """Return and clear the one-shot acknowledgment (echoed once)."""
         ack, self._last_ack = self._last_ack, None
+        identifiers, self._ack_ids = self._ack_ids, []
+        if any(self.store.get(identifier) is None for identifier in identifiers):
+            return None
         return ack
+
+    def _pending_lift_current(self) -> bool:
+        pending = self._pending_lift
+        if (pending is None or time.time() - pending["ts"] > _PENDING_TTL_SECS
+                or not any(self.store.get(identifier) for identifier in pending["ids"])):
+            return False
+        if self.store.ledger is not None:
+            from .evidence import _message
+            return bool(pending.get("evidence") and _message(self.store.ledger, pending["evidence"]) is not None)
+        return True
 
     def pending_confirmation(self) -> Optional[str]:
         """The current pending boundary-lift prompt, if any (for context echo)."""
         if self._pending_lift is None:
             return None
-        if time.time() - self._pending_lift["ts"] > _PENDING_TTL_SECS:
+        if not self._pending_lift_current():
             self._pending_lift = None
             return None
         subj = self._pending_lift["subject"]
@@ -242,7 +260,7 @@ class DirectiveManager:
             d = self.store.get(did)
             if d and self.store.revoke(did):
                 revoked.append(d)
-                logger.info("Directive revoked by owner (confirmed): %r (id=%s)", d.subject, did)
+                logger.info("Directive revoked by owner (confirmed): id=%s", did)
         return revoked
 
     def add_explicit(self, subject: str, polarity: str = "prohibit",

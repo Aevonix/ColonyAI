@@ -382,7 +382,7 @@ async def test_execute_one_refuses_boundary_violation():
     """A boundary the owner set must stop the executor before it acts."""
     from colony_sidecar.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore(db_path=None))
-    dm.capture_from_message("Don't touch the colony-web repo")
+    dm.capture_from_message("From now on, Don't touch the colony-web repo")
     store = FakeStore([FakeInitiative()])
     reasoning = FakeReasoningLoop()
     svc = InitiativeExecutorService(
@@ -434,7 +434,7 @@ async def test_execute_one_fails_closed_when_boundary_check_raises(monkeypatch):
 async def test_execute_one_allows_when_no_boundary_matches():
     from colony_sidecar.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore(db_path=None))
-    dm.capture_from_message("Don't touch the colony-web repo")
+    dm.capture_from_message("From now on, Don't touch the colony-web repo")
     store = FakeStore([FakeInitiative()])
     reasoning = FakeReasoningLoop()
     svc = InitiativeExecutorService(

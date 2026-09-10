@@ -42,6 +42,35 @@ A newer timestamp alone never supersedes a conflicting assertion. Generated prop
 
 Graph candidates and direct source hits locate assertion keys. Recall expands each key into its scoped, time-appropriate evidence before the existing shared reranker and context budget. An unresolved conflict is one atomic candidate: the packet cannot retain just the winning side or truncate away its qualifications. Raw source chunks have the projected spans removed; each remaining excerpt is still a contiguous quotation, including when source chunks overlap. Recognized graph summaries are candidate locators, rather than a second route for injecting superseded assertions.
 
+The injected assertion cards share repeated exact quotations from the same
+canonical message version. A packet-local `evidence_ref` links each assertion to
+its quotation, source, message hash, speaker and report/recording time. Assertion
+IDs, values, event precision, validity intervals, correction ancestry and opening
+anchors remain attached to their cards. Different message versions are never
+merged. Internal assertion JSON is rendered once as data; raw source text stays
+quoted, including text that resembles JSON. The shared character budget measures
+the complete rendered packet, so a repeated passage does not consume the budget
+again for each property. This changes presentation, not retrieval ranking or
+whether a claim is true. A report timestamp does not establish event order.
+
+For a current-state query, a short message of at most 2,000 characters remains
+one quoted evidence unit when partial extraction would separate its clauses.
+This reuses the complete-procedure source check: every stored assertion must
+still be eligible, without a superseded/retracted sibling or conflicting peer.
+The quotation carries its canonical message hash and property-history opening
+anchors. Its unclaimed clauses are no longer independently ranked against the
+asserted clause from the same message. Changed messages retain the existing span
+suppression; historical queries retain assertion/time semantics. If the complete
+message cannot fit the injection budget, an opening notice replaces it instead
+of presenting a convenient prefix. This preserves context but does not establish
+that a model will interpret the quotation correctly. Non-procedure audio
+assertions retain their structured evidence cards and exact segment/recognizer
+lineage; a machine transcript's display prefix does not trigger short-message
+expansion. A complete audio procedure keeps its full quoted conditions and
+attaches the represented claims' exact segment bases as metadata, still labelled
+derived and unverified. An oversized procedure supplies only an opening notice,
+with no partial procedure or segment-basis payload.
+
 Valid time, event time and recording time are different fields. Interval comparisons use canonical UTC timestamps. Supported query dates are ISO dates/datetimes, full English month dates and anchored today/yesterday/tomorrow; event queries also support trailing hours/days and since a date. Calendar days use the resolved contact/communication timezone. A historical assertion without a known validity start is not certified for that date. Raw quotations remain labelled with unknown validity. An unprojected source captured inside an event window is labelled `source_occurrence_only`, which does not establish the event's time.
 
 Recognized unsupported ranges, multiple dates and week/month/year relative expressions are labelled unresolved instead of silently selecting the first date. The parser does not understand all natural-language temporal questions. It does not implement historical transaction-time queries such as reconstructing exactly what the system believed before an ingestion date.

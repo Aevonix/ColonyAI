@@ -98,7 +98,7 @@ class Verdict:
             "allowed": self.allowed,
             "reason": self.reason,
             "violations": [
-                {"id": d.id, "subject": d.subject, "raw_text": d.raw_text}
+                {"id": d.id, **({} if d.evidence else {"subject": d.subject, "raw_text": d.raw_text})}
                 for d in self.violations
             ],
         }
@@ -252,7 +252,7 @@ class DirectiveGuard:
                 action_summary = (action.text or action.target or action.tool_name)[:120]
                 logger.warning(
                     "DirectiveGuard GLOBAL PAUSE active [%s]: %s action (%r) "
-                    "refused", d.id, action.kind, action_summary,
+                    "refused", d.id, action.kind, "source-bound action" if d.evidence else action_summary,
                 )
                 self._recent_blocks.append({
                     "ts": time.time(),
@@ -287,22 +287,24 @@ class DirectiveGuard:
                 violations.append(d)
 
         if violations:
-            subjects = "; ".join(v.subject for v in violations)
+            subjects = "; ".join(v.id if v.evidence else v.subject for v in violations)
             ids = ",".join(v.id for v in violations)
             action_summary = (action.text or action.target or action.tool_name)[:120]
+            logged_summary = "source-bound action" if any(v.evidence for v in violations) else action_summary
+            logged_subjects = subjects
             if capability == "read":
                 # OBSERVE blackout on a read: logged so introspection about the
                 # blindspot's existence still works ("not looking, per directive").
                 logger.info(
                     "DirectiveGuard: not looking, per directive [%s] -- %s read "
                     "of %r withheld (%s)",
-                    ids, action.kind, action_summary, subjects,
+                    ids, action.kind, logged_summary, logged_subjects,
                 )
             else:
                 logger.warning(
                     "DirectiveGuard BLOCKED %s action (%r): violates boundary(ies) "
                     "[%s]: %s",
-                    action.kind, action_summary, ids, subjects,
+                    action.kind, logged_summary, ids, logged_subjects,
                 )
             self._recent_blocks.append({
                 "ts": time.time(),
@@ -319,7 +321,10 @@ class DirectiveGuard:
 
     def recent_blocks(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Most-recent refusals (for the 'why didn't you do X' introspection)."""
-        items = list(self._recent_blocks)[-limit:]
+        # A forgotten/corrected source must not reappear through this cache.
+        items = [item for item in self._recent_blocks
+                 if self._store is not None and all(self._store.get(identifier)
+                     for identifier in item["directive_ids"])][-limit:]
         items.reverse()
         return items
 

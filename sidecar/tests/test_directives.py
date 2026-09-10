@@ -13,7 +13,7 @@ from colony_sidecar.directives.extractor import extract_directives, is_revocatio
 # ---------------------------------------------------------------------------
 
 def test_extract_prohibition_dont_touch_repo():
-    d = extract_directives("Don't touch the colony-web repo, it is a side project")
+    d = extract_directives("From now on, don't touch the colony-web repo, it is a side project")
     assert len(d) == 1
     assert d[0].polarity == Polarity.PROHIBIT
     assert "colony-web" in d[0].match_terms
@@ -23,7 +23,7 @@ def test_extract_prohibition_variants():
     for msg in ["stop researching competitors", "avoid the acme-corp account",
                 "leave the SSL cert stuff alone", "never message my ex",
                 "ignore the legacy billing system"]:
-        d = extract_directives(msg)
+        d = extract_directives("From now on, " + msg)
         assert d and d[0].polarity == Polarity.PROHIBIT, msg
 
 
@@ -34,9 +34,9 @@ def test_read_only_adjective_does_not_escalate_boundary_to_observe():
         "Goal: verify Colony cognition is live with a read-only internal "
         "plan; do not contact anyone or change external systems"
     )
-    blackout = extract_directives("don't read the billing spreadsheet")
+    blackout = extract_directives("From now on, don't read the billing spreadsheet")
 
-    assert len(goal) == 1 and goal[0].level == Level.ACT
+    assert goal == []  # Temporary task instructions are not standing boundaries.
     assert len(blackout) == 1 and blackout[0].level == Level.OBSERVE
 
 
@@ -205,7 +205,7 @@ def test_shared_source_quotation_is_injected_once_without_losing_boundaries():
 def test_act_boundary_allows_read_blocks_actions():
     """ACT: reads open; delegate/mutate/outbound blocked."""
     m = DirectiveManager(DirectiveStore(db_path=None))
-    m.capture_from_message("leave the widget-api repo alone")
+    m.capture_from_message("From now on, leave the widget-api repo alone")
     d = m.store.active()[0]
     from colony_sidecar.directives.models import Level
     assert d.level == Level.ACT                              # default level
@@ -221,7 +221,7 @@ def test_act_boundary_allows_read_blocks_actions():
 def test_observe_boundary_blocks_reads_too():
     """OBSERVE (perception-explicit): full blackout, reads blocked + recorded."""
     m = DirectiveManager(DirectiveStore(db_path=None))
-    m.capture_from_message("don't look at the widget-api repo")
+    m.capture_from_message("From now on, don't look at the widget-api repo")
     d = m.store.active()[0]
     from colony_sidecar.directives.models import Level
     assert d.level == Level.OBSERVE
@@ -236,17 +236,17 @@ def test_observe_boundary_blocks_reads_too():
 
 def test_echo_states_interpretation():
     m = DirectiveManager(DirectiveStore(db_path=None))
-    cap = m.capture_from_message("leave the widget-api repo alone")
+    cap = m.capture_from_message("From now on, leave the widget-api repo alone")
     assert "stop acting on" in cap.ack and "full blackout" in cap.ack  # ACT echo
     m2 = DirectiveManager(DirectiveStore(db_path=None))
-    cap2 = m2.capture_from_message("don't look at the widget-api repo")
+    cap2 = m2.capture_from_message("From now on, don't look at the widget-api repo")
     assert "blackout" in cap2.ack and "not act on it or look at it" in cap2.ack
 
 
 def test_critical_flag_fires_once_via_guarded_delivery():
     import asyncio
     m = DirectiveManager(DirectiveStore(db_path=None))
-    m.capture_from_message("leave the billing-svc repo alone")
+    m.capture_from_message("From now on, leave the billing-svc repo alone")
     delivered = []
     async def router(payload):
         delivered.append(payload); return True
@@ -277,7 +277,7 @@ def test_critical_flag_fires_once_via_guarded_delivery():
 
 def test_manager_capture_then_enforce():
     m = DirectiveManager(DirectiveStore(db_path=None))
-    m.capture_from_message("Don't touch the colony-web repo")
+    m.capture_from_message("From now on, Don't touch the colony-web repo")
     assert m.store.count_active() == 1
     # an autonomous action on colony-web is now refused
     v = m.check(Action(kind="directed_action", text="open a PR in colony-web", high_risk=True))
@@ -287,7 +287,7 @@ def test_manager_capture_then_enforce():
 def test_manager_revocation_requires_confirmation():
     """Asymmetric friction: a lift must be confirmed, never one-turn (1c)."""
     m = DirectiveManager(DirectiveStore(db_path=None))
-    cap = m.capture_from_message("stop working on the acme-corp integration")
+    cap = m.capture_from_message("From now on, stop working on the acme-corp integration")
     assert m.store.count_active() == 1
     assert cap.ack and "stop acting on" in cap.ack  # confirmation echo (1a, tiered)
     # A revocation attempt does NOT lift immediately; it stages a confirmation.
@@ -304,7 +304,7 @@ def test_manager_revocation_requires_confirmation():
 
 def test_manager_non_affirmation_does_not_lift():
     m = DirectiveManager(DirectiveStore(db_path=None))
-    m.capture_from_message("don't touch the payments repo")
+    m.capture_from_message("From now on, don't touch the payments repo")
     m.capture_from_message("you can work on payments again")   # stages pending
     m.capture_from_message("what's the weather")               # not an affirmation
     assert m.store.count_active() == 1  # boundary held; stray text can't confirm
@@ -354,9 +354,9 @@ def test_system_origin_text_never_captures():
 
 def test_duplicate_captures_do_not_pile_up():
     m = _mgr()
-    m.capture_from_message("don't touch the staging database")
-    m.capture_from_message("don't touch the staging database")
-    m.capture_from_message("don't touch the staging database")
+    m.capture_from_message("From now on, don't touch the staging database")
+    m.capture_from_message("From now on, don't touch the staging database")
+    m.capture_from_message("From now on, don't touch the staging database")
     subs = [d.subject for d in m.store.active()]
     assert len(subs) == 1
 

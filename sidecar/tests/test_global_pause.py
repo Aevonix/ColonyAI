@@ -29,7 +29,7 @@ def test_pause_phrasings_captured_as_global():
 
 
 def test_normal_prohibition_not_global():
-    found = extract_directives("stop researching competitors")
+    found = extract_directives("From now on, stop researching competitors")
     assert found and GLOBAL_PAUSE_TERM not in found[0].match_terms
 
 

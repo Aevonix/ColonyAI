@@ -69,7 +69,7 @@ def test_act_boundary_allows_reads(tmp_path):
     read-only mirror tools stay open."""
     src = _make_source_repo(str(tmp_path))
     dm = DirectiveManager(DirectiveStore(db_path=None))
-    dm.capture_from_message("leave the widget-api repo alone")
+    dm.capture_from_message("From now on, leave the widget-api repo alone")
     mgr = RepoMirrorManager(
         mirror_dir=str(tmp_path / "m2"),
         config={"widget-api": {"url": f"file://{src}", "aliases": ""}},
@@ -85,7 +85,7 @@ def test_observe_boundary_blocks_reads(tmp_path):
     """Explicit perception language -> OBSERVE blackout blocks reads too."""
     src = _make_source_repo(str(tmp_path))
     dm = DirectiveManager(DirectiveStore(db_path=None))
-    dm.capture_from_message("don't even look at the widget-api repo")
+    dm.capture_from_message("From now on, don't even look at the widget-api repo")
     mgr = RepoMirrorManager(
         mirror_dir=str(tmp_path / "m3"),
         config={"widget-api": {"url": f"file://{src}", "aliases": ""}},

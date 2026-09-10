@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 class DirectiveStore:
-    def __init__(self, db_path: Optional[str] = None) -> None:
+    def __init__(self, db_path: Optional[str] = None, *, ledger=None) -> None:
+        self.ledger = ledger
         self._db_path = str(db_path) if db_path else ":memory:"
         self._lock = threading.RLock()
         # A single shared connection (check_same_thread=False) guarded by a lock;
@@ -105,7 +106,8 @@ class DirectiveStore:
             self._conn.commit()
         logger.info(
             "Directive stored: [%s] %r (id=%s, source=%s)",
-            directive.polarity.value, directive.subject, directive.id, directive.source,
+            directive.polarity.value, "canonical source" if directive.evidence else directive.subject,
+            directive.id, directive.source,
         )
         return directive
 
@@ -115,7 +117,8 @@ class DirectiveStore:
                 "SELECT * FROM directives WHERE id=?", (directive_id,)
             )
             r = cur.fetchone()
-        return Directive.from_row(dict(r)) if r else None
+        from .evidence import hydrate
+        return hydrate(self.ledger, Directive.from_row(dict(r))) if r else None
 
     def list(
         self,
@@ -134,7 +137,8 @@ class DirectiveStore:
         q += " ORDER BY created_at DESC"
         with self._lock:
             rows = self._conn.execute(q, params).fetchall()
-        return [Directive.from_row(dict(r)) for r in rows]
+        from .evidence import hydrate
+        return [item for row in rows if (item := hydrate(self.ledger, Directive.from_row(dict(row)))) is not None]
 
     def active(self, polarity: Optional[Polarity] = None) -> List[Directive]:
         """All currently-active directives (status active + not expired)."""

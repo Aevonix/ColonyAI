@@ -297,3 +297,48 @@ def test_current_work_projects_native_state_without_claiming_process_liveness(na
     assert unavailable['available'] is True
     assert unavailable['items'][0]['native_work']['available'] is False
     assert unavailable['items'][0]['initiative_id'] == item['id']
+
+
+def test_native_association_waits_for_short_delete_journal_writer(native_api, tmp_path, monkeypatch):
+    """Hermes can use DELETE journals; its brief writer must not lose acceptance."""
+    from threading import Event, Thread
+    import time
+    api, _, initiatives, _, _, board = native_api
+    item = accept(native_api, tmp_path)
+    binding = task(board, item['id'])
+    locked, reading = Event(), Event()
+    original_connect = sqlite3.connect
+    errors = []
+
+    def writer():
+        try:
+            with original_connect(board) as db:
+                db.execute('PRAGMA journal_mode=DELETE')
+                db.execute('BEGIN EXCLUSIVE')
+                locked.set()
+                assert reading.wait(3)
+                time.sleep(.35)
+        except BaseException as error:
+            errors.append(error)
+            locked.set()
+
+    def connect(database, *args, **kwargs):
+        db = original_connect(database, *args, **kwargs)
+        if str(database) == board.resolve().as_uri()+'?mode=ro':
+            reading.set()
+        return db
+
+    thread = Thread(target=writer)
+    thread.start()
+    try:
+        assert locked.wait(3)
+        monkeypatch.setattr(sqlite3, 'connect', connect)
+        response = post(api, route(item, 'native-task'), binding)
+    finally:
+        reading.set()
+        thread.join(4)
+    assert not thread.is_alive() and not errors
+    assert response.status_code == 200, response.text
+    assert response.json()['context']['native_task_id'] == binding['native_task_id']
+    with original_connect(initiatives._db_path) as db:
+        assert db.execute("SELECT count(*) FROM assignment_history WHERE action='native_task_bound'").fetchone()[0] == 1

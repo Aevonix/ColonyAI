@@ -55,14 +55,20 @@ def source_candidates(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def render_memory_context(memories: list[dict[str, Any]]) -> str:
-    """Preserve source handles and uncertainty in the injected evidence packet."""
-    lines = []
+    """Render authorized evidence once per exact passage and message version.
+
+    The projection's typed assertion cards contain JSON data, not a quoted JSON
+    string. Raw quotations (including text resembling a card) remain strings.
+    Claim histories stay indivisible; only repeated supporting passages share a
+    reference. References are local to this packet, not new source handles.
+    """
+    lines, passages, passage_ids = [], [], {}
     for memory in memories:
         source = {"id": str(memory.get("id") or ""),
                   "kind": memory.get("kind", "belief"),
                   "source": str(memory.get("source_uri") or ""),
                   "state": str(memory.get("epistemic_state") or "inferred")}
-        for name in ("source_turn_id", "source_message_hash", "source_modality", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source", "history_anchor", "source_anchors", "procedure_context", "procedure_history_anchors"):
+        for name in ("source_turn_id", "source_message_hash", "source_modality", "role", "occurred_at", "ingested_at", "excerpt_truncated", "validity_status", "claim_status", "asset_id", "description_model", "description_version", "recorded_source", "history_anchor", "source_anchors", "procedure_context", "procedure_history_anchors", "source_context", "source_history_anchors", "source_evidence_bases"):
             if memory.get(name) is not None:
                 source[name] = memory[name]
         if memory.get("effective_confidence") is not None:
@@ -81,8 +87,45 @@ def render_memory_context(memories: list[dict[str, Any]]) -> str:
             source["rerank_calibration"] = memory["rerank_calibration"]
         if memory.get("rerank_status") == "unavailable":
             source["rerank_status"] = "unavailable"
-        lines.append(f"- {json.dumps(source, ensure_ascii=False)} {json.dumps(str(memory.get('content', '')), ensure_ascii=False)}")
-    return "\n".join(lines)
+        content = str(memory.get('content', ''))
+        card = None
+        if (memory.get('content_format') == 'source_assertions_v1'
+                and memory.get('atomic_evidence') and not memory.get('procedure_context')):
+            try:
+                parsed = json.loads(content)
+            except (ValueError, TypeError):
+                parsed = None
+            # An annotation can wrap an assertion card after projection. Never
+            # mistake its replacement content for the original assertion data.
+            if (isinstance(parsed, dict) and {'subject', 'predicate', 'status'} <= parsed.keys()
+                    and isinstance(parsed.get('assertions'), list)
+                    and all(isinstance(a, dict) for a in parsed['assertions'])):
+                card = parsed
+        if card is not None:
+            for assertion in card['assertions']:
+                source_id = str(assertion.get('source', '')).removeprefix('turn:')
+                version = assertion.get('source_message_hash')
+                if (not version or version not in memory.get('_source_message_hashes', {}).get(source_id, [])
+                        or not isinstance(assertion.get('quote'), str)):
+                    continue
+                passage = {key: assertion[key] for key in (
+                    'source', 'source_message_hash', 'role', 'reported_at', 'recorded_at', 'quote')
+                    if key in assertion}
+                key = json.dumps(passage, ensure_ascii=False, sort_keys=True)
+                if key not in passage_ids:
+                    passage_ids[key] = f'q{len(passages) + 1}'
+                    passages.append(dict(evidence_ref=passage_ids[key], **passage))
+                for name in passage:
+                    assertion.pop(name)
+                # observed_at is the legacy alias of report time, not a
+                # separately observed event. Retain it only if it differs.
+                if assertion.get('observed_at') == passage.get('reported_at'):
+                    assertion.pop('observed_at', None)
+                assertion['evidence_ref'] = passage_ids[key]
+            lines.append('- ' + json.dumps(dict(source, content=card), ensure_ascii=False))
+        else:
+            lines.append(f"- {json.dumps(source, ensure_ascii=False)} {json.dumps(content, ensure_ascii=False)}")
+    return '\n'.join(['- ' + json.dumps(passage, ensure_ascii=False) for passage in passages] + lines)
 
 
 def pack_memory_context(
@@ -101,33 +144,37 @@ def pack_memory_context(
     )
     if max_chars <= len(header):
         return [], ""
-    selected, lines = [], []
-    remaining = max_chars - len(header)
+    selected = []
+    available = max_chars - len(header)
     for original in memories:
         if len(selected) >= limit:
             break
         row = dict(original)
-        rendered = render_memory_context([row])
-        if len(rendered) > remaining:
+        rendered = render_memory_context(selected + [row])
+        if len(rendered) > available:
             if row.get("atomic_evidence"):
                 # An oversized atomic bundle remains discoverable without
                 # showing a convenient subset as though it were complete.
                 if not row.get('history_anchor'):
                     continue
                 row['excerpt_truncated'] = True
-                if row.get('procedure_context'):
+                # An opening notice carries no partial derived evidence payload.
+                row.pop('source_evidence_bases', None)
+                if row.get('source_context'):
+                    row['source_context'] = 'full_source_required'
+                    row['content'] = ('Incomplete source context. Open the full sources in source_anchors '
+                        'using their recalled source versions and inspect source_history_anchors before resolving it.')
+                elif row.get('procedure_context'):
                     row['procedure_context'] = 'full_source_required'
                     row['content'] = ('Incomplete procedure context. Open the full sources in source_anchors '
                         'using their recalled source versions before following the procedure. '
                         'Inspect procedure_history_anchors when present; one property history may omit its conditions.')
                 else:
                     row['content'] = 'Incomplete assertion history. Open history_anchor using its recalled source version before resolving it.'
-                rendered = render_memory_context([row])
-                if len(rendered) > remaining:
+                rendered = render_memory_context(selected + [row])
+                if len(rendered) > available:
                     continue
                 selected.append(row)
-                lines.append(rendered)
-                remaining -= len(rendered) + 1
                 continue
             row["excerpt_truncated"] = True
             content = str(row.get("content", ""))
@@ -135,20 +182,18 @@ def pack_memory_context(
             while low < high:
                 middle = (low + high + 1) // 2
                 row["content"] = content[:middle]
-                if len(render_memory_context([row])) <= remaining:
+                if len(render_memory_context(selected + [row])) <= available:
                     low = middle
                 else:
                     high = middle - 1
             if low < min(80, len(content)):
                 continue
             row["content"] = content[:low]
-            rendered = render_memory_context([row])
-            if len(rendered) > remaining:
+            rendered = render_memory_context(selected + [row])
+            if len(rendered) > available:
                 continue
         selected.append(row)
-        lines.append(rendered)
-        remaining -= len(rendered) + 1
-    return selected, (header + "\n".join(lines)) if lines else ""
+    return selected, (header + render_memory_context(selected)) if selected else ""
 
 
 def lexical_terms(text: str, max_terms: int = 16) -> list[str]:

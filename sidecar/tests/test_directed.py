@@ -58,7 +58,7 @@ def _service(dm=None, feedback=None, deliver=None, mirrors=None):
 
 def test_gate_boundary_refuses_with_citation():
     dm = DirectiveManager(DirectiveStore(db_path=None))
-    dm.capture_from_message("don't touch the billing-svc repo")
+    dm.capture_from_message("From now on, don't touch the billing-svc repo")
     svc = _service(dm=dm)
     async def run():
         t = await svc.intake("fix the retry bug in billing-svc")

@@ -152,7 +152,7 @@ def selected_board():
     return home, board, profile, path
 
 
-def task_snapshot(identifier, contact_id, native, *, review=False, followup=False):
+def task_snapshot(identifier, contact_id, native, *, review=False, followup=False, read_timeout=.2):
     """Verify native provenance and, when supplied, the currently held run."""
     if review or followup:
         home, boards, _ = observed_boards()
@@ -165,7 +165,8 @@ def task_snapshot(identifier, contact_id, native, *, review=False, followup=Fals
         raise ValueError('selected_native_board_required')
     if not path.is_file():
         raise OSError('native_board_unavailable')
-    with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True, timeout=.2)) as db:
+    with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True,
+                                 timeout=min(2., max(0., read_timeout)))) as db:
         db.row_factory = sqlite3.Row
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
