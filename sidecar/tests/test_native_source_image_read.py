@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from colony_sidecar.turns.source_read import read
-from test_native_request_erasure import runtime
+from test_native_request_erasure import runtime, freshness_response
 from test_source_media import image_bytes, message
 
 
@@ -22,10 +22,14 @@ def image_runtime(runtime):
     rt.ref = rt.ledger.source_references(['image'], contact_id='owner', session_id='later')[0]
     rt.asset = hashlib.sha256(image_bytes()).hexdigest()
     rt.calls = []
+    rt.freshness = []
     def get(path, **kw):
         return httpx.Response(200, json=rt.ledger.erasure_feed('owner', kw['params']['after']),
                               request=httpx.Request('GET', 'http://fixture'+path))
     def post(path, **kw):
+        if path.endswith('/sources/erasures'):
+            rt.freshness.append(kw['json'])
+            return freshness_response(rt.ledger, path, kw['json'])
         body = kw['json']; rt.calls.append(body)
         try:
             result = read(rt.ledger, contact_id=body['person_id'], session_id=body['session_id'],
@@ -40,6 +44,7 @@ def image_runtime(runtime):
     rt.scope = SimpleNamespace(contact_id='owner', session_id='later', task_id='task', turn_id='turn',
                                valid_participant=True, authority_lane='guest')
     current = {'role': 'user', 'content': 'Inspect the original reference image.'}
+    rt.current = current
     rt.middleware.observe(rt.scope, [current], user_message=current['content'])
     stamp = json.dumps({'contact_id': 'owner', 'watermark': 0, 'sources': [rt.ref]})
     current['api_content'] = current['content'] + '\n\n<memory-context>\n[colony-recall-v1 ' + stamp + ']\n' + rt.asset + '\n[/colony-recall-v1]\n</memory-context>'
@@ -109,3 +114,15 @@ def test_nonvision_summary_is_explicit_failure_without_image_or_source_prose(ima
     assert summary['complete'] is False and summary['image_bytes_included'] is False
     assert 'No visual inspection occurred' in summary['error']
     assert 'data:image/' not in result['text_summary'] and image_runtime.asset not in result['text_summary']
+
+
+def test_nested_anthropic_receipt_nominates_current_source_without_recall_packet(image_runtime):
+    rt = image_runtime
+    # Native request composition can drop a recall block while an opened tool
+    # result remains. Its authentic nested receipt must still nominate parents.
+    rt.current['api_content'] = rt.current['content']
+    rt.wire = {'role': 'user', 'content': rt.current['content']}
+    checked = rt.middleware(request(rt, 'anthropic'), rt.scope)['request']
+    assert 'data:image/' not in json.dumps(checked)  # Anthropic uses typed base64, not a URL.
+    assert base64.b64encode(image_bytes()).decode() in json.dumps(checked)
+    assert rt.freshness[-1]['source_refs'] == [rt.ref]

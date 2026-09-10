@@ -67,8 +67,8 @@ The tool uses the existing scoped `POST /v1/host/memory/read` route with
 message role, recorded/reported times, exact source references and attributed
 corrections applying to the image's owning messages. Interpretations remain
 unverified. Corrections are not truncated to make an image fit: a correction
-bundle over 16,384 characters requires resolving the oversized read before
-pixels can be opened. Original static-image ingest limits still apply. Audio
+bundle over 16,384 characters returns unavailable without sending pixels;
+the textual source reader can still page its evidence. Original static-image ingest limits still apply. Audio
 and unsupported attachment types cannot enter this image view.
 
 Hermes receives its supported `_multimodal` tool envelope: one provenance text

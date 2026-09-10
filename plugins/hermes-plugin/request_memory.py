@@ -427,12 +427,11 @@ class RequestMemory:
             if host_input:
                 for ref in host_input['sources']:
                     source_refs[(ref['source_id'], ref['source_version'])] = ref
-            for name in ('messages', 'input'):
-                for row in request.get(name, []) if isinstance(request.get(name), list) else []:
-                    receipt = _read_receipt(row, read_receipts) if isinstance(row, dict) else None
-                    if receipt:
-                        for ref in receipt['sources']:
-                            source_refs[(ref['source_id'], ref['source_version'])] = ref
+            for row in _read_rows(request):
+                receipt = _read_receipt(row, read_receipts)
+                if receipt:
+                    for ref in receipt['sources']:
+                        source_refs[(ref['source_id'], ref['source_version'])] = ref
             parents_valid = len(source_refs) <= 512
         except (KeyError, TypeError, ValueError, AttributeError):
             parents_valid = False
