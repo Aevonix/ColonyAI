@@ -84,7 +84,8 @@ def test_registered_hooks_api_and_request_inject_admitted_input_not_task_wrapper
     assert root['request_input']['status'] == 'source_unavailable_or_changed'
 
 
-def test_erasure_between_work_fetch_and_existing_request_check_withholds_quote(handoff, monkeypatch):
+@pytest.mark.parametrize('change', ['erasure', 'annotation'])
+def test_source_change_between_work_fetch_and_existing_request_check_withholds_quote(handoff, monkeypatch, change):
     h = handoff
     monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
     h.api.app.include_router(executions.router)
@@ -100,7 +101,18 @@ def test_erasure_between_work_fetch_and_existing_request_check_withholds_quote(h
     def erase_before_check(self, path, **kwargs):
         if path == '/v1/host/memory/sources/erasures':
             checked.append(kwargs['json']['source_refs'])
-            h.ledger.erase_sources(contact_id='owner', turn_ids=['original-input'])
+            if change == 'erasure':
+                h.ledger.erase_sources(contact_id='owner', turn_ids=['original-input'])
+            else:
+                assert kwargs['json']['unannotated_input_refs'] == h.parents
+                before = h.ledger.erasure_watermark('owner')
+                ref = h.ledger.source_references(['original-input'], contact_id='owner', session_id='observer')[0]
+                h.ledger.append_source_annotation(contact_id='owner', session_id='observer',
+                    annotation_id='withdraw-during-fetch', **ref,
+                    excerpt='Use the lamp maintenance record I supplied.',
+                    correction='Do not inspect this record until I provide its replacement.', author_principal='host')
+                assert h.ledger.erasure_watermark('owner') == before
+                assert ref in h.ledger.source_references(['original-input'], contact_id='owner', session_id='observer')
         return post(self, path, **kwargs)
     monkeypatch.setattr(h.module.ColonyClient, 'post', erase_before_check)
     result = ctx.middleware['llm_request']({'messages': [{'role': 'user', 'content': 'What are you doing?'}]},
@@ -109,6 +121,28 @@ def test_erasure_between_work_fetch_and_existing_request_check_withholds_quote(h
     assert result['reason'] == 'source_erasure_unavailable'
     assert 'Use the lamp maintenance record I supplied.' not in json.dumps(result['request'])
     assert 'shared work withheld' in json.dumps(result['request'])
+
+
+def test_annotation_after_candidate_snapshot_is_not_published_as_unqualified_input(store, monkeypatch):
+    from colony_sidecar.turns import source_read
+    refs = admitted(store)
+    bind(store, refs)
+    original = source_read.current_candidates
+    ref = store.ledger.source_references(['input'], contact_id='owner', session_id='later')[0]
+    watermark = store.ledger.erasure_watermark('owner')
+    def annotate_after_snapshot(*args, **kwargs):
+        selected = original(*args, **kwargs)
+        assert len(selected) == 1 and not selected[0]['_annotation_ids']
+        store.ledger.append_source_annotation(contact_id='owner', session_id='later',
+            annotation_id='late-condition', **ref,
+            excerpt='Review the turbine maintenance table and record any inconsistencies.',
+            correction='Withdraw this request until the table is replaced.', author_principal='host')
+        return selected
+    monkeypatch.setattr(source_read, 'current_candidates', annotate_after_snapshot)
+    view = store.view(contact_id='owner', owner=True)
+    assert view['items'][0]['request_input'] == {'status': 'annotated_input_requires_source_read'}
+    assert store.ledger.erasure_watermark('owner') == watermark
+    assert ref in store.ledger.source_references(['input'], contact_id='owner', session_id='later')
 
 
 def test_source_scope_is_not_expanded_by_owner_execution_visibility(store):

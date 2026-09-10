@@ -105,6 +105,7 @@ class RequestWork:
             supplied = value.get('input_provenance')
             if supplied is not None:
                 refs = supplied.get('source_refs')
+                input_refs = supplied.get('unannotated_input_refs')
                 if (supplied.get('contact_id') != scope.contact_id
                         or type(supplied.get('watermark')) is not int or supplied['watermark'] < 0
                         or not isinstance(refs, list) or not 1 <= len(refs) <= 512
@@ -113,6 +114,12 @@ class RequestWork:
                             or not isinstance(ref['source_version'], str)
                             or not re.fullmatch('[a-f0-9]{64}', ref['source_version']) for ref in refs)):
                     raise ValueError('Invalid operational input provenance')
+                if (not isinstance(input_refs, list) or not 1 <= len(input_refs) <= 512
+                        or any(not isinstance(ref, dict) or set(ref) != {'source_id', 'input_message_hash'}
+                            or ref['source_id'] not in {source['source_id'] for source in refs}
+                            or not isinstance(ref['input_message_hash'], str)
+                            or not re.fullmatch('[a-f0-9]{64}', ref['input_message_hash']) for ref in input_refs)):
+                    raise ValueError('Operational input requires current annotation checks')
                 provenance = {**supplied, 'text': _OPEN + '\n' + text + '\n' + _CLOSE}
         except Exception:
             # A temporary work-service failure must not stall a conversation

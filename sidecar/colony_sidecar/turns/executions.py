@@ -421,6 +421,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
                   if row.get('request_input', {}).get('status') == 'admitted_input_excerpt']
     source_scope = {(row.get('contact_id'), row.get('watermark')) for row in provenance}
     input_sources = {}
+    input_guards = {}
     input_note = ('Input excerpts identify original requests, not performance or child assignments; '
                   'partial excerpts can omit task conditions.\n')
     for item in shown_executions:
@@ -436,6 +437,8 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
             text += note
             for ref in supplied['_provenance']['source_refs']:
                 input_sources[(ref['source_id'], ref['source_version'])] = ref
+            for ref in supplied['_provenance']['unannotated_input_refs']:
+                input_guards[(ref['source_id'], ref['input_message_hash'])] = ref
         else:
             truncated = True
     kanban = view.get('native_kanban')
@@ -460,4 +463,5 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
             'text': text, 'truncated': truncated, 'work_sources': coverage,
             'complete': False, **({'input_provenance': {
                 'contact_id': next(iter(source_scope))[0], 'watermark': next(iter(source_scope))[1],
-                'source_refs': list(input_sources.values())}} if input_sources else {})}
+                'source_refs': list(input_sources.values()),
+                'unannotated_input_refs': list(input_guards.values())}} if input_sources else {})}

@@ -5,7 +5,7 @@ import json
 import re
 
 from .idempotency import canonical_turn_digest, source_message_hash
-from .source_annotations import expand, current_candidates
+from .source_annotations import expand, current_candidates, inputs_unannotated
 
 
 def input_excerpt(ledger, *, contact_id, session_id, refs, max_chars=240):
@@ -15,6 +15,8 @@ def input_excerpt(ledger, *, contact_id, session_id, refs, max_chars=240):
     evidence that the execution is fulfilling it. Multiple inputs and long
     messages remain explicitly partial. Annotated inputs require the normal
     source reader so their conditions cannot be clipped off a work label.
+    Exact input membership travels to the existing native freshness check so
+    a later annotation can invalidate the excerpt without changing its bytes.
     """
     from .audio import source_text
     watermark = ledger.erasure_watermark(contact_id)
@@ -47,7 +49,7 @@ def input_excerpt(ledger, *, contact_id, session_id, refs, max_chars=240):
         contact_id=contact_id, session_id=session_id), contact_id=contact_id, session_id=session_id)
     if len(current) != 1 or ledger.erasure_watermark(contact_id) != watermark:
         raise ValueError('source_input_unavailable')
-    if current[0].get('_annotation_ids'):
+    if current[0].get('_annotation_ids') or not inputs_unannotated(ledger, refs):
         return {'status': 'annotated_input_requires_source_read'}
     if not text:
         return {'status': 'input_has_no_text'}
@@ -55,7 +57,8 @@ def input_excerpt(ledger, *, contact_id, session_id, refs, max_chars=240):
         'partial': len(text) > max_chars or len(refs) > 1,
         'input_count': len(refs), 'source_id': selected['source_id'],
         'input_message_hash': selected['input_message_hash'],
-        '_provenance': {'contact_id': contact_id, 'watermark': watermark, 'source_refs': versions}}
+        '_provenance': {'contact_id': contact_id, 'watermark': watermark, 'source_refs': versions,
+                        'unannotated_input_refs': [dict(ref) for ref in refs]}}
 
 
 def _document_media(ledger, conn, *, scope, expected, asset_hash, hashes):

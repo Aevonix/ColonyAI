@@ -60,6 +60,7 @@ from colony_sidecar.api.schemas.host import (
     ScopePromoteRequest,
     ScopeResponse,
     SourceReference,
+    SourceInputReference,
     ResponseGuardCheckRequest,
     ContextAssembleRequest,
     ContextAssembleResponse,
@@ -3741,6 +3742,7 @@ class SourceFreshnessRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=256)
     after: int = Field(default=0, ge=0)
     source_refs: list[SourceReference] = Field(min_length=1, max_length=512)
+    unannotated_input_refs: list[SourceInputReference] = Field(default_factory=list, max_length=512)
 
 
 @router.post('/memory/sources/erasures')
@@ -3750,6 +3752,8 @@ async def source_freshness_feed(body: SourceFreshnessRequest, request: Request):
     Corrections change attribution without erasing source bytes or changing
     their content digest. Check canonical ownership and descendant validity;
     an erasure watermark alone cannot certify cached recall after a correction.
+    Optional exact input membership also rechecks that an operational excerpt
+    has no applicable annotation, including a first note added after selection.
     POST keeps the bounded reference set out of URLs and adds no persisted state.
     """
     person = resolve_request_person(request, claimed_person_id=body.contact_id) or body.contact_id
@@ -3763,6 +3767,11 @@ async def source_freshness_feed(body: SourceFreshnessRequest, request: Request):
     current = ledger.source_references([ref.source_id for ref in body.source_refs],
                                       contact_id=person, session_id=body.session_id)
     page['sources_current'] = expected == {(ref['source_id'], ref['source_version']) for ref in current}
+    if body.unannotated_input_refs:
+        from colony_sidecar.turns.source_annotations import inputs_unannotated
+        refs = [ref.model_dump() for ref in body.unannotated_input_refs]
+        page['sources_current'] &= ({ref['source_id'] for ref in refs} <= {ref['source_id'] for ref in current}
+                                    and inputs_unannotated(ledger, refs))
     return page
 
 

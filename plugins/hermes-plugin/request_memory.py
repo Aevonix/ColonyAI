@@ -428,6 +428,7 @@ class RequestMemory:
         # records or keep evidence current. Validate their current ownership in
         # the same round trip as erasure freshness, not by changing source IDs.
         source_refs = {}
+        unannotated_inputs = []
         try:
             current_packet = _native_packet(current)
             if current_packet:
@@ -445,6 +446,7 @@ class RequestMemory:
             if operational and any(operational['text'] in text for text in _request_texts(request)):
                 for ref in operational['source_refs']:
                     source_refs[(ref['source_id'], ref['source_version'])] = ref
+                unannotated_inputs = operational['unannotated_input_refs']
             parents_valid = len(source_refs) <= 512
         except (KeyError, TypeError, ValueError, AttributeError):
             parents_valid = False
@@ -460,7 +462,8 @@ class RequestMemory:
                     if source_refs:
                         response = self.client.post('/v1/host/memory/sources/erasures',
                             json={'contact_id': contact, 'after': watermark,
-                                  'session_id': scope.session_id, 'source_refs': list(source_refs.values())},
+                                  'session_id': scope.session_id, 'source_refs': list(source_refs.values()),
+                                  **({'unannotated_input_refs': unannotated_inputs} if unannotated_inputs else {})},
                             timeout=remaining, _deadline_monotonic=deadline)
                     else:
                         response = self.client.get("/v1/host/memory/sources/erasures",
