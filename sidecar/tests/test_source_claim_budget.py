@@ -14,7 +14,8 @@ from test_source_claim_projection import claim, Model
 
 
 @pytest.mark.asyncio
-async def test_actual_role_request_uses_configured_outer_deadline(monkeypatch):
+@pytest.mark.parametrize('task_override', [False, True])
+async def test_actual_role_request_uses_configured_outer_deadline(monkeypatch, task_override):
     text = 'My office is in Alder.'
     observed = []
     original_wait_for = asyncio.wait_for
@@ -32,12 +33,17 @@ async def test_actual_role_request_uses_configured_outer_deadline(monkeypatch):
     with endpoint(content=answer) as (url, requests):
         cfg = config(url, url, deadlineSeconds=80)
         cfg['functionRoles']['judging'] = ['interactive']
+        if task_override:
+            cfg['taskRoles'] = {'source_claim_extraction': 'reasoning'}
         r = router(cfg)
         rows, _ = await extract_claims(r, {'occurred_at': None}, {'role': 'user', 'content': text}, [])
         assert len(rows) == 1 and len(requests) == 2
-        assert observed == [85, 185]
-        assert extraction_timeout_seconds(r) == 85
-        assert projection_timeout_seconds(r) == 270
+        extraction_bound = 185 if task_override else 85
+        assert requests[0]['payload']['model'] == ('strong-neutral' if task_override else 'fast-neutral')
+        assert requests[1]['payload']['model'] == 'fast-neutral'  # Review keeps its own role.
+        assert observed == [extraction_bound, 185]
+        assert extraction_timeout_seconds(r) == extraction_bound
+        assert projection_timeout_seconds(r) == extraction_bound + 185
         r.configure(config(url, url, deadlineSeconds=120))
         assert extraction_timeout_seconds(r) == 125
 

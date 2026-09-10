@@ -67,12 +67,14 @@ class RoutingSnapshot:
     roles: dict[str, FunctionRole]
     networks: tuple
     declared_hosts: frozenset[str]
+    task_roles: dict[str, str]
     provider: str = ''
     base_url: str = ''
 
     def status(self):
         return {'config_revision': self.revision, 'capability_basis': 'deployment declarations, not measured by this router',
                 'roles': {key: list(value.candidates) for key, value in self.roles.items()},
+                'task_roles': dict(self.task_roles),
                 'models': {name: {'model_id': b.config.model_id, 'weight_revision': b.weight_revision,
                     'context_tokens': b.context_tokens, 'supports_vision': b.config.supports_vision,
                     'supports_tools': b.supports_tools, 'latency_ms': b.latency_ms,
@@ -158,6 +160,10 @@ def build_snapshot(host: dict, tiers: dict) -> RoutingSnapshot:
     role_config = host.get('functionRoles', {})
     if not isinstance(role_config, dict) or set(role_config) - FUNCTIONS:
         raise ValueError('Unknown function role; speech/embedding/rerank use their own transports')
+    task_roles = host.get('taskRoles', {})
+    if (not isinstance(task_roles, dict) or set(task_roles) - TASK_ROLES.keys()
+            or any(not isinstance(role, str) or role not in FUNCTIONS for role in task_roles.values())):
+        raise ValueError('taskRoles must map supported task names to existing function roles')
     roles = {}
     for name, defaults in DEFAULT_ROLES.items():
         raw = role_config.get(name, [key for key in defaults if key in bindings])
@@ -184,7 +190,16 @@ def build_snapshot(host: dict, tiers: dict) -> RoutingSnapshot:
         raise ValueError('localHosts must list deployment hostnames')
     revision = hashlib.sha256(json.dumps(host, sort_keys=True, separators=(',', ':')).encode()).hexdigest()[:20]
     return RoutingSnapshot(revision, materialized, bindings, roles, networks, frozenset(h.casefold() for h in hosts),
+                           task_roles=dict(task_roles),
                            provider=str(host.get('provider') or ''), base_url=str(host.get('baseUrl') or ''))
+
+
+def select_role(snapshot, context):
+    """The same selection governs capability hints, deadlines and dispatch."""
+    task = context.get('task')
+    return (context.get('function_role')
+            or (snapshot.task_roles.get(task) if snapshot else None)
+            or TASK_ROLES.get(task, 'reasoning'))
 
 
 def endpoint_host(binding, snapshot):
