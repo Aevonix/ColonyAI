@@ -18,14 +18,15 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.1.2 keeps eligible short source messages together during recall, so a
-correction's introduction cannot displace the actual changed requirement.
-Assertions share exact source passages in the context packet without repeating
-them for each claim. Automatic standing rules require explicit lasting intent
-and current canonical evidence; ordinary task constraints stay with their task.
-Native execution callbacks also supply shadow duration observations through the
-existing forecast store. Estimates do not change scheduling or tool authority.
-These repairs still require useful-task qualification on the selected models.
+Version 1.1.3 restores automatic recollection for authenticated native tasks
+whose human input was captured by an enrolled host. Recall uses that input's
+validated contact and session; it does not assume that every local task belongs
+to the owner. Shared work keeps available parent executions alongside children
+by fetching older active ancestors before applying the existing context budget.
+The setup guide covers installation
+from published packages and optional native task dispatch. These changes repair
+observed integration failures; useful continuity still depends on the model
+applying the supplied evidence correctly.
 
 Version 1.1.0 added [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
 Authenticated integrations can retain an original PDF and reopen extracted text
@@ -78,10 +79,13 @@ Python 3.12 is exercised by native integration CI. One local OpenAI-compatible
 chat endpoint is sufficient. The lightweight profile needs no Docker, Neo4j,
 embedding model or external account.
 
-Install from this checkout to use the changes described here:
+Install the matching published packages in a private environment. A Colony
+checkout is not required:
 
 ```bash
-python -m pip install . ./sidecar
+python3 -m venv "$HOME/.local/share/colony/venv"
+source "$HOME/.local/share/colony/venv/bin/activate"
+python -m pip install "colonyai[hermes]==1.1.3" "colony-hermes==1.1.3"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -94,7 +98,8 @@ patches Hermes core nor restarts an existing gateway.
 
 Choose a private `--hermes-home` outside Git checkouts. The
 [setup guide](docs/LOCAL-HERMES-SETUP.md) covers existing profiles, directory
-permissions, user services and upgrades.
+permissions, user services, upgrades and development from a checkout.
+Run `colony init --help` for unattended setup and optional task features.
 
 Accept the wizard's startup option, or run:
 

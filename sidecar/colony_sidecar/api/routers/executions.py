@@ -73,11 +73,12 @@ async def active(request: Request, contact_id: str, session_id: str = "", limit:
         raise HTTPException(403, detail='owner_work_context_required')
     if projection == 'request':
         limit = min(limit, 8)
-    view = registry().view(contact_id=person, owner=owner, session_id=session_id, limit=limit)
+    view = registry().view(contact_id=person, owner=owner, session_id=session_id, limit=limit,
+                           include_ancestors=projection == 'request')
     view = await with_queue_work(view, owner=owner, limit=limit)
     if projection == 'request':
         from colony_sidecar.turns.executions import request_work_context
-        return request_work_context(view, limit=limit)
+        return request_work_context(view, limit=limit, session_id=session_id)
     return view
 
 

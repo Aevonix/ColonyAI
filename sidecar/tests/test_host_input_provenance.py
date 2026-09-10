@@ -4,6 +4,7 @@ from contextvars import copy_context
 import importlib
 import json
 import sqlite3
+import sys
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -139,6 +140,149 @@ def test_ordinary_cli_turn_remains_excluded_without_supplied_input(handoff):
     assert h.outbox.snapshot() == []
     with sqlite3.connect(h.ledger.db_path) as db:
         assert db.execute('SELECT COUNT(*) FROM turn_sources').fetchone()[0] == 2
+
+
+@pytest.mark.parametrize('entry', ['pre_api_request', 'llm_request'])
+def test_native_compression_rotation_preserves_input_memory_and_root_result(handoff, monkeypatch, entry):
+    h = handoff
+    provider = _memory_provider(h, monkeypatch)
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        request = h.start()['request']
+        for session in ('compressed-once', 'compressed-twice'):
+            assert provider._prefetch_contact(session) == ''
+            if entry == 'pre_api_request':
+                h.ctx.hooks[entry](session_id=session, task_id='task', turn_id='turn')
+                # Rotation itself does not attest current memory sources.
+                assert provider._prefetch_contact(session) == ''
+            result = h.ctx.middleware['llm_request'](request,
+                session_id=session, task_id='task', turn_id='turn')
+            assert result['reason'] == 'source_erasure_checked'
+            assert 'maintenance record' in json.dumps(result['request'])
+            assert provider._prefetch_contact(session) == 'owner'
+            assert call(h.ctx, 'read_file', session=session, task='task', turn='turn') == 'executed'
+        h.finish(session='compressed-twice')
+        assert supplied.result['session_id'] == 'compressed-twice'
+        assert supplied.result['input_refs'] == h.parents
+        assert supplied.result['source_refs'] == h.refs
+    rows = h.outbox.snapshot()
+    assert len(rows) == 1 and rows[0]['state'] == 'delivered'
+    assert rows[0]['payload']['assistant_input_refs'] == h.parents
+    assert rows[0]['payload']['assistant_source_refs'] == h.refs
+    assert 'user_message' not in rows[0]['payload']
+
+
+def test_rotated_child_cannot_complete_root_handoff(handoff):
+    h = handoff
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        h.start()
+        h.ctx.hooks['subagent_start'](parent_session_id='native', parent_turn_id='turn',
+            child_session_id='child')
+        h.ctx.hooks['pre_llm_call'](session_id='child', task_id='child-task', turn_id='child-turn',
+            parent_session_id='native', platform='cli', sender_id='', user_message='Read the record.')
+        h.ctx.hooks['pre_api_request'](session_id='compressed-child', task_id='child-task', turn_id='child-turn')
+        assert call(h.ctx, 'read_file', session='compressed-child', task='child-task', turn='child-turn') == 'executed'
+        h.finish(session='compressed-child', task='child-task', turn='child-turn')
+        assert supplied.result is None
+        h.finish()
+        assert supplied.result['session_id'] == 'native'
+
+
+@pytest.mark.parametrize('erased', ['original-input', 'earlier'])
+def test_erasure_after_native_rotation_still_withholds_request_tools_and_completion(handoff, erased):
+    h = handoff
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        request = h.start()['request']
+        h.ctx.hooks['pre_api_request'](session_id='compressed', task_id='task', turn_id='turn')
+        h.ledger.erase_sources(contact_id='owner', turn_ids=[erased])
+        result = h.ctx.middleware['llm_request'](request,
+            session_id='compressed', task_id='task', turn_id='turn')
+        assert result['reason'] == 'source_input_unavailable'
+        assert 'maintenance record' not in json.dumps(result['request'])
+        assert result['request']['tools'] == []
+        assert json.loads(call(h.ctx, 'read_file', session='compressed', task='task', turn='turn'))['reason'] == 'source_input_unavailable'
+        h.finish(session='compressed')
+        assert supplied.result is None
+        assert h.outbox.snapshot() == []
+
+
+def _memory_provider(handoff, monkeypatch):
+    from test_colony_memory_provider import _load_provider_module
+    monkeypatch.delenv('COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY', raising=False)
+    monkeypatch.setitem(sys.modules, 'colony_hermes', handoff.module)
+    monkeypatch.setitem(sys.modules, 'colony_hermes.input_provenance', handoff.module.input_provenance)
+    provider = _load_provider_module().ColonyMemoryProvider(config={
+        'url':'http://testserver', 'contact_id':'owner', 'api_key':'fixture-key'})
+    monkeypatch.setattr(provider, '_turn_sender_context', lambda: ('', '', ''))
+    return provider
+
+
+def test_memory_uses_only_current_checked_native_source_session(handoff, monkeypatch):
+    h = handoff
+    provider = _memory_provider(h, monkeypatch)
+    assert provider._prefetch_contact('native') == ''
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        assert provider._prefetch_contact('native') == ''  # Constructor grants nothing.
+        h.start()
+        assert provider._prefetch_contact('native') == 'owner'
+        assert provider._prefetch_contact('unrelated') == ''
+        copied = copy_context()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(copied.run, provider._prefetch_contact, 'native').result() == 'owner'
+        # The next native turn must refresh source validity before prefetch.
+        scope = h.module._TRANSPORT_SCOPES.for_session('native')
+        supplied.bind(scope)
+        assert provider._prefetch_contact('native') == ''
+        assert supplied.allowed(scope, fresh=True, rules=[])
+        assert provider._prefetch_contact('native') == 'owner'
+        h.ledger.erase_sources(contact_id='owner', turn_ids=['earlier'])
+        assert h.start(task='next-task', turn='next-turn')['reason'] == 'source_input_unavailable'
+        assert provider._prefetch_contact('native') == ''
+    assert supplied.memory_contact('native') == ''
+    assert copied.run(provider._prefetch_contact, 'native') == ''
+    assert provider._prefetch_contact('native') == ''
+
+
+@pytest.mark.parametrize('resolved', ['', 'foreign', 'owner'])
+def test_supplied_native_memory_cannot_override_gateway_sender(handoff, monkeypatch, resolved):
+    h = handoff
+    provider = _memory_provider(h, monkeypatch)
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents) as supplied:
+        h.start()
+        monkeypatch.setattr(provider, '_turn_sender_context', lambda: ('whatsapp', 'sender', 'thread'))
+        monkeypatch.setattr(provider, '_resolve_handle', lambda platform, sender: resolved)
+        assert provider._prefetch_contact('native') == ('owner' if resolved == 'owner' else '')
+        monkeypatch.setattr(provider, '_turn_sender_context', lambda: ('whatsapp', '', 'thread'))
+        assert provider._prefetch_contact('native') == ''
+
+
+def test_supplied_memory_requires_independently_bound_child_session(handoff, monkeypatch):
+    h = handoff
+    provider = _memory_provider(h, monkeypatch)
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents) as supplied:
+        h.start()
+        parent = h.module._TRANSPORT_SCOPES.for_session('native')
+        from dataclasses import replace
+        child = replace(parent, session_id='child', platform='subagent')
+        # Reusing a parent's task/turn identifiers is insufficient.
+        assert not supplied.allowed(child, fresh=True, rules=[])
+        assert provider._prefetch_contact('child') == ''
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents) as supplied:
+        h.start(task='parent-two', turn='parent-two')
+        parent = h.module._TRANSPORT_SCOPES.for_session('native')
+        child = replace(parent, session_id='child', task_id='child-task', turn_id='child-turn', platform='subagent')
+        supplied.bind(child, parent_session_id='native')
+        assert provider._prefetch_contact('child') == ''
+        assert supplied.allowed(child, fresh=True, rules=[])
+        provider._platform = 'subagent'
+        assert provider._prefetch_contact('child') == 'owner'
+        assert provider._prefetch_contact('another-child') == ''
 
 
 def test_unattested_caller_cannot_use_parents_to_enable_capture(handoff):

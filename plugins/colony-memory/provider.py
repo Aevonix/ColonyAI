@@ -1030,9 +1030,9 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         "relevant info isn't injected live" bug.) If queue_prefetch() already
         fetched in the background for this turn, return that; otherwise fetch now.
         """
-        contact_id = self._prefetch_contact()
-        participant = self._turn_participant_key()
         effective_session = session_id or self._session_id
+        contact_id = self._prefetch_contact(effective_session)
+        participant = self._turn_participant_key()
         if not contact_id:
             logger.warning(
                 "Colony prefetch withheld: current turn has no attested "
@@ -1141,21 +1141,41 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             }
         )
 
-    def _prefetch_contact(self) -> str:
+    def _prefetch_contact(self, session_id: str = "") -> str:
         """Resolve one exact turn participant; never cross a real-channel miss."""
         platform, sender, chat = self._turn_sender_context()
         effective = platform or str(self._platform or "").strip().lower()
         internal_lane = effective in {
             "cli", "internal", "system", "owner", "api", "worker", "cron",
         }
+        supplied_contact = None
+        try:
+            from colony_hermes.input_provenance import current
+
+            supplied = current()
+            if supplied is not None:
+                supplied_contact = supplied.memory_contact(session_id or self._session_id)
+                if not supplied_contact:
+                    return ""
+        except ImportError:
+            pass  # Standalone memory-provider installations have no host input.
+        # A native task can carry exact source authority without a gateway
+        # sender. The normal plugin hook must have independently checked that
+        # session first. Real gateway identity still resolves below and must
+        # agree; constructor input alone never overrides it.
+        if supplied_contact and not (platform or sender or chat):
+            return supplied_contact
         if sender or chat or not internal_lane:
             if not sender:
                 return ""
             try:
-                return self._resolve_handle(effective, sender) or ""
+                resolved = self._resolve_handle(effective, sender) or ""
+                return resolved if supplied_contact in (None, resolved) else ""
             except Exception as exc:
                 logger.debug("Colony per-turn prefetch contact failed: %s", exc)
                 return ""
+        if supplied_contact is not None:
+            return supplied_contact
         try:
             cid = self._turn_contact()
         except Exception as exc:
@@ -1463,7 +1483,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         internal_owner_lane: Optional[bool] = None,
     ) -> str:
         """Blocking /context/assemble call → formatted context string."""
-        bound_contact = contact_id or self._prefetch_contact()
+        bound_contact = contact_id or self._prefetch_contact(session_id)
         if not bound_contact:
             return ""
         internal_owner = (
@@ -1555,9 +1575,9 @@ class ColonyMemoryProvider(_MemoryProviderABC):
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         """Kick off a background (thread) prefetch for the upcoming turn so the
         synchronous prefetch() can return instantly with the cached result."""
-        contact_id = self._prefetch_contact()
-        participant = self._turn_participant_key()
         effective_session = session_id or self._session_id
+        contact_id = self._prefetch_contact(effective_session)
+        participant = self._turn_participant_key()
         internal_owner_lane = self._internal_owner_lane(contact_id)
         with self._cache_lock:
             self._cached_context = ""

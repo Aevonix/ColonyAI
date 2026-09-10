@@ -2,17 +2,25 @@
 
 The supported lightweight path uses Hermes **0.21.1** (qualification commit
 `2237be355906fbe6065ce1815711eee52b2d646e`) or **0.21.0**, Python 3.11 to 3.13, and one local
-OpenAI-compatible chat endpoint. Install Hermes separately with its native
-requirements. Colony does not patch or download Hermes, models, containers or
-machine services.
+OpenAI-compatible chat endpoint. Install Hermes separately using its
+[native installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
+Colony does not patch or download Hermes, models, containers or machine services.
 
-From this public checkout, install both distributable packages in your Colony
-Python environment. They may share an environment with Hermes, but need not:
+Install the matching published packages in a private Python environment. This
+path needs no Colony checkout or source edits. The environment may be shared
+with Hermes, but the commands below keep an existing Hermes installation intact:
 
 ```bash
-python -m pip install . ./sidecar
+python3 -m venv "$HOME/.local/share/colony/venv"
+source "$HOME/.local/share/colony/venv/bin/activate"
+python -m pip install "colonyai[hermes]==1.1.3" "colony-hermes==1.1.3"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
+
+Use a Python version supported above. Replace the interpreter placeholder with
+the Python from the Hermes runtime you actually run. Keeping both Colony
+packages at the same version avoids attaching an older adapter to a newer
+sidecar. `colony init --help` lists the wizard's optional and unattended flags.
 
 A separate Hermes environment needs its own native core dependencies. It does
 not need Colony's CLI dependency `typer` or a preinstalled Colony adapter; setup
@@ -44,7 +52,7 @@ Select that same Hermes home when launching Hermes:
 
 ```bash
 export HERMES_HOME="$HOME/.hermes-orion"
-hermes
+/path/to/hermes/.venv/bin/hermes
 ```
 
 Setup checks native runtime imports/version, canonical adapter resources, the
@@ -140,8 +148,8 @@ their old draft job is paused. An older instance without a planning role or comp
 adapter needs explicit configuration or an adapter upgrade first.
 
 Graph/vector retrieval, embedding downloads and consequential background workers
-are disabled in this profile. Install `./sidecar[graph,vectors]` only when adding
-those services intentionally. Model quality still determines extraction and
+are disabled in this profile. Install `colonyai[graph,vectors]==1.1.3` only when
+adding those services intentionally. Model quality still determines extraction and
 reasoning quality. Lexical retrieval does not promise semantic recall of every
 paraphrase. This setup is a growing local base, not a claim that every autonomous
 behaviour or public channel is ready.
@@ -176,7 +184,15 @@ other boards remain outside the observation view. No board is enumerated or
 created by this opt-in, and no new worker profile or executor is added.
 
 The selected Hermes gateway must be running to dispatch tasks. Colony does not
-start or restart it. Use Hermes' existing host lifecycle after configuration;
+start or restart it. For a new profile, run it in a separate terminal using the
+same interpreter selected during setup:
+
+```bash
+HERMES_HOME="$HOME/.hermes-orion" \
+  /path/to/hermes/.venv/bin/python -m hermes_cli.main gateway run
+```
+
+For an existing deployment, use Hermes' existing host lifecycle after configuration;
 setup reports an explicitly disabled dispatcher configuration or environment
 override instead of silently overriding it. Enabling config is not proof that
 the gateway has acquired native dispatch ownership or completed a task.
@@ -232,16 +248,15 @@ or `service stop` for a managed instance). Complete or cancel in-flight work
 through Hermes before stopping it. Keep the private instance and Hermes home.
 
 Update both Colony distributions in the environment that runs Colony, selecting
-the release you intend to use. For a source checkout this is:
+the same release for both packages:
 
 ```sh
-python -m pip install --upgrade . ./sidecar
+python -m pip install --upgrade "colonyai[hermes]==1.1.3" "colony-hermes==1.1.3"
 colony init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
-For a published release, install its matching `colonyai[hermes]` and
-`colony-hermes` versions instead. A Hermes interpreter with native installed
-Colony entry points also needs that adapter package updated explicitly in its
+Replace `1.1.3` with the release you are selecting. A Hermes interpreter with
+native installed Colony entry points also needs that adapter package updated explicitly in its
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;
 it does not copy a second active adapter or install packages itself.
@@ -271,6 +286,22 @@ ordinary write failure refresh restores the files it changed. If the process
 itself is interrupted, keep both runtimes stopped and restore the retained
 adapter directory and corresponding `.colony-backup-*` manifest files before
 retrying. Database downgrade or rollback is outside this code-only refresh.
+
+## Develop from a checkout
+
+For source development, install both distributions from the public repository
+root in your development environment:
+
+```bash
+python -m pip install . ./sidecar
+colony init --hermes-python /path/to/hermes/.venv/bin/python \
+  --hermes-home "$HOME/.hermes-colony-dev"
+```
+
+Keep generated profiles and private state outside the checkout. After changing
+managed adapter code, use the same stopped-runtime refresh procedure above;
+installing changed source packages alone does not update an existing copied
+adapter. Source development is optional for a normal published installation.
 
 ## Start, observe and recover
 
