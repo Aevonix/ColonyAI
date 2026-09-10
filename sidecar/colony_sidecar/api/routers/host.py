@@ -3770,8 +3770,15 @@ async def source_freshness_feed(body: SourceFreshnessRequest, request: Request):
     if body.unannotated_input_refs:
         from colony_sidecar.turns.source_annotations import inputs_unannotated
         refs = [ref.model_dump() for ref in body.unannotated_input_refs]
-        page['sources_current'] &= ({ref['source_id'] for ref in refs} <= {ref['source_id'] for ref in current}
-                                    and inputs_unannotated(ledger, refs))
+        try:
+            inputs = ledger.resolve_input_dependencies(contact_id=person,
+                session_id=body.session_id, refs=refs)
+        except ValueError:
+            page['sources_current'] = False
+        else:
+            page['sources_current'] &= (
+                {(ref['source_id'], ref['source_version']) for ref in inputs} <= expected
+                and inputs_unannotated(ledger, refs))
     return page
 
 
