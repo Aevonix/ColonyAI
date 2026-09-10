@@ -25,7 +25,8 @@ def current_work_query(query):
                  r"(?:give|provide|explain|show|need|include|use|follow|recall) (?:the |your |me )?instructions)\b", text):
         return False
     return bool(re.match(
-        r"(?:what are you (?:doing|working on) (?:right now|now|currently)\b|"
+        r"(?:what are you (?:currently (?:doing|working on)|"
+        r"(?:doing|working on) (?:right now|now|currently))\b|"
         r"what (?:work|tasks|sessions|jobs|crons|workers) (?:are|is) "
         r"(?:currently |now )?(?:running|active|in flight)\b)", text))
 

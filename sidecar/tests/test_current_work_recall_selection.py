@@ -47,6 +47,8 @@ def prepared(ledger, *, contact='contact-a', session='later', classify=True):
 @pytest.mark.parametrize('pair', ['same', 'supplied'])
 @pytest.mark.parametrize('query,omitted', [
     (CURRENT, True),
+    ('What are you currently doing?', True),
+    ('What are you currently working on?', True),
     ('What were you doing yesterday?', False),
     ('What are you doing right now compared with last time?', False),
     ('What are you doing right now, and what procedure should I use to recover it?', False),
@@ -72,6 +74,22 @@ async def test_four_query_kinds_keep_history_and_instructions(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('pair', ['same', 'supplied'])
+@pytest.mark.parametrize('query', [
+    'What are you currently doing?',
+    'What are you currently working on?',
+])
+async def test_currently_before_activity_classifies_canonical_reply(tmp_path, query, pair):
+    assert current_work_query(query)
+    ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
+    seed(ledger, request=query, pair=pair)
+    rows = prepared(ledger)
+    assert any(row.get('_current_work_status_reply') for row in rows)
+    _, text = await RecallSelector().select_context(CURRENT, [], rows, current_work_available=True)
+    assert STATUS not in text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('pair,original_query', [
     ('unknown', CURRENT),
     ('supplied', 'What are you doing right now? Also give the steps for resuming an import.'),
@@ -90,6 +108,10 @@ async def test_unknown_or_mixed_original_request_is_not_classified(tmp_path, pai
 @pytest.mark.parametrize('comparison', [
     'What are you doing right now compared with Monday?',
     'What are you doing right now versus Monday?',
+    'What are you currently doing compared with Monday?',
+    'What are you currently doing versus Monday?',
+    'What are you currently working on compared with Monday?',
+    'What are you currently working on versus Monday?',
 ])
 @pytest.mark.parametrize('comparison_in', ['original', 'incoming'])
 async def test_comparison_requests_preserve_status_evidence(tmp_path, comparison, comparison_in):
