@@ -34,10 +34,16 @@ def _without_unbound_worker_guidance(request):
     if not KANBAN_GUIDANCE.startswith(
             '# Kanban task execution protocol\nYou have been assigned ONE task '):
         return request  # Do not rewrite a future upstream guidance contract.
+    # Native ASCII-codec recovery sanitizes the request before middleware.
+    # Match that exact rendering too, without broadening instruction matching.
+    guidance_blocks = (KANBAN_GUIDANCE,
+                       KANBAN_GUIDANCE.encode('ascii', errors='ignore').decode('ascii'))
 
     def content(value):
         if isinstance(value, str):
-            return value.replace(KANBAN_GUIDANCE, '')
+            for guidance in guidance_blocks:
+                value = value.replace(guidance, '')
+            return value
         if isinstance(value, list):
             parts = []
             for part in value:

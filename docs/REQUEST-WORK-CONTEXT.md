@@ -148,9 +148,10 @@ This is a temporary native compatibility correction, not a new task role or
 authority mechanism. It changes no Hermes files, tool schemas, cached native
 prompt, user messages or tool evidence. Chat, Responses and Anthropic instruction
 representations retain their existing shape. Recognition requires the known
-native assignment prefix and exact imported block; changed upstream guidance is
-left alone and must be requalified. Both native initialization and its prompt
-fallback reach the same request boundary, including streaming requests.
+native assignment prefix and exact imported block, including its native ASCII
+recovery rendering; changed upstream guidance is left alone and must be
+requalified. Both native initialization and its prompt fallback reach the same
+request boundary, including streaming requests.
 
 Native cron records also retain their existing bounded optional name alongside
 the source, job and execution identifiers. A missing name stays absent; prompts

@@ -70,6 +70,8 @@ with context(),patch('agent.process_bootstrap.OpenAI',return_value=client):
         assert 'kanban_show' in agent.valid_tool_names,agent.valid_tool_names
     if pathway=='fallback':
         agent._kanban_worker_guidance=None
+    if pathway=='ascii_recovery':
+        agent._force_ascii_payload=True
     agent.compression_enabled=False;agent.save_trajectories=False
     agent._use_prompt_caching=False
     original_names=set(agent.valid_tool_names)
@@ -83,7 +85,15 @@ with context(),patch('agent.process_bootstrap.OpenAI',return_value=client):
     assert bool(native.get('stream'))==(pathway=='streaming')
     sent='\n'.join(row['content'] for row in native['messages']
         if row.get('role') in ('system','developer') and isinstance(row.get('content'),str))
-    assert (KANBAN_GUIDANCE in sent)==(kind=='worker'),(kind,pathway,sent)
+    rendered_guidance=KANBAN_GUIDANCE
+    if pathway=='ascii_recovery':
+        from agent.message_sanitization import _strip_non_ascii,_sanitize_structure_non_ascii
+        rendered_guidance=_strip_non_ascii(KANBAN_GUIDANCE)
+        quoted=_strip_non_ascii(quoted)
+        # Native recovery also sanitizes tool descriptions before middleware.
+        _sanitize_structure_non_ascii(original_tools)
+        assert rendered_guidance!=KANBAN_GUIDANCE
+    assert (rendered_guidance in sent)==(kind=='worker'),(kind,pathway,sent)
     assert any(row.get('role')=='user' and row.get('content')==quoted for row in native['messages'])
     assert agent.valid_tool_names==original_names and agent.tools==original_tools
     # Middleware did not rewrite the cached native prompt. The retained cache
@@ -99,7 +109,7 @@ print(json.dumps({'kind':kind,'pathway':pathway,'worker_guidance':kind=='worker'
 
 
 @pytest.mark.parametrize('kind', ['ordinary', 'worker', 'voice', 'delegated', 'cron'])
-@pytest.mark.parametrize('pathway', ['initialization', 'fallback', 'streaming'])
+@pytest.mark.parametrize('pathway', ['initialization', 'fallback', 'streaming', 'ascii_recovery'])
 def test_native_request_assigns_only_actual_dispatcher_worker(artifacts, tmp_path, kind, pathway):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual native instruction assembly')
@@ -112,3 +122,61 @@ def test_native_request_assigns_only_actual_dispatcher_worker(artifacts, tmp_pat
     result = run_python('-I', '-c', PROBE, artifacts[3],
         os.environ.get('COLONY_TEST_DEPENDENCY_PATH', ''), kind, pathway, cwd=tmp_path, env=env)
     assert json.loads(result.stdout.splitlines()[-1])['tools_preserved']
+
+
+SANITIZED_PROBE = r'''
+import copy,json,os,socket,sys
+sys.path.insert(0,sys.argv[1]);sys.path.append(sys.argv[2])
+shape,worker=sys.argv[3:5]
+def no_network(*args,**kwargs):raise AssertionError('No external requests in native fixture')
+socket.socket.connect=no_network;socket.create_connection=no_network
+from agent.message_sanitization import _sanitize_structure_non_ascii
+from agent.prompt_builder import KANBAN_GUIDANCE
+from colony_hermes.request_capabilities import describe
+if worker=='worker':
+    os.environ['HERMES_KANBAN_TASK']='fixture-bound-task'
+instructions='Stable identity.\n'+KANBAN_GUIDANCE+'\nOther evidence rules.'
+evidence=[{'role':'user','content':KANBAN_GUIDANCE},
+          {'role':'tool','tool_call_id':'receipt','content':KANBAN_GUIDANCE}]
+request={'tools':[{'type':'function','function':{'name':'kanban_show'}}]}
+if shape=='chat':
+    request['messages']=[{'role':'developer','content':instructions},*evidence]
+elif shape=='responses':
+    request.update(instructions=instructions,input=evidence)
+else:
+    request.update(system=[{'type':'text','text':instructions,
+                            'cache_control':{'type':'ephemeral'}}],messages=evidence)
+assert _sanitize_structure_non_ascii(request)
+before=copy.deepcopy(request)
+result=describe(request)
+assert request==before and result['tools']==before['tools']
+rendered=KANBAN_GUIDANCE.encode('ascii',errors='ignore').decode('ascii')
+if worker=='worker':
+    assert result is request
+elif shape=='chat':
+    assert result['messages'][0]['content']==before['messages'][0]['content'].replace(rendered,'')
+    assert result['messages'][1:]==before['messages'][1:]
+elif shape=='responses':
+    assert result['instructions']==before['instructions'].replace(rendered,'')
+    assert result['input']==before['input']
+else:
+    assert result['system'][0]=={**before['system'][0],
+        'text':before['system'][0]['text'].replace(rendered,'')}
+    assert result['messages']==before['messages']
+assert describe(result)==result
+print(json.dumps({'shape':shape,'worker':worker,'external_model_calls':0}))
+'''
+
+
+@pytest.mark.parametrize('shape', ['chat', 'responses', 'anthropic'])
+@pytest.mark.parametrize('worker', ['ordinary', 'worker'])
+def test_native_ascii_sanitization_preserves_instruction_scope(artifacts, tmp_path, shape, worker):
+    if importlib.util.find_spec('hermes_cli') is None:
+        pytest.skip('Install qualified Hermes for actual native request sanitization')
+    env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'LANG') if key in os.environ}
+    env.update(HERMES_HOME=str(tmp_path/'profile'), COLONY_STATE_DIR=str(tmp_path/'colony'),
+        HERMES_DISABLE_TELEMETRY='1', HERMES_DISABLE_LAZY_INSTALLS='1', COLONY_SKIP_DOTENV='1',
+        LITELLM_LOCAL_MODEL_COST_MAP='True')
+    result = run_python('-I', '-c', SANITIZED_PROBE, artifacts[3],
+        os.environ.get('COLONY_TEST_DEPENDENCY_PATH', ''), shape, worker, cwd=tmp_path, env=env)
+    assert json.loads(result.stdout.splitlines()[-1])['external_model_calls'] == 0
