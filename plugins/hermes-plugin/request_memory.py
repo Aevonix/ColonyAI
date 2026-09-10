@@ -253,8 +253,13 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             continue
         # During a brief sidecar outage keep the current turn and its tool
         # results, but never replay historical evidence with unknown freshness.
+        # Anthropic wraps tool results in user rows. They are not a new input
+        # boundary: dropping their preceding tool-use row breaks the request.
         latest_user = max((i for i, row in enumerate(messages)
-                           if isinstance(row, dict) and row.get('role') == 'user'), default=len(messages))
+                           if isinstance(row, dict) and row.get('role') == 'user'
+                           and not (isinstance(row.get('content'), list) and row['content']
+                               and all(isinstance(part, dict) and part.get('type') == 'tool_result'
+                                       for part in row['content']))), default=len(messages))
         retained = []
         for i, original in enumerate(messages):
             if not isinstance(original, dict):

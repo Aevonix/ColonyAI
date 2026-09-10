@@ -76,6 +76,12 @@ ledger.erase_sources(contact_id='person',turn_ids=['native-image'])
 for request in requests:
     checked=apply_llm_request_middleware(request,session_id='reader',task_id='reader-task',turn_id='reader-turn').payload
     assert encoded not in json.dumps(checked) and 'withheld' in json.dumps(checked),checked
+    if request.get('messages') is anthropic:
+        # Anthropic tool results are user rows, but never a new human turn.
+        # Even failure output must retain its native preceding tool-use pair.
+        assert any(p.get('type')=='tool_use' and p.get('id')=='call_image'
+            for row in checked['messages'] if row.get('role')=='assistant'
+            for p in row.get('content',[]) if isinstance(p,dict)),checked
 client.chat.completions.create.assert_not_called()
 '''
     monkeypatch.setattr(annotation, 'PROBE', probe.replace(marker, check+'\n'+marker))

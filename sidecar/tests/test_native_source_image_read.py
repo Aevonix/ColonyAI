@@ -64,7 +64,10 @@ def request(rt, shape):
             'output': [{'type': 'input_text', 'text': text['text']},
                        {'type': 'input_image', 'image_url': image['image_url']['url']}]}]}
     if shape == 'anthropic':
-        return {'messages': [rt.wire, {'role': 'user', 'content': [{'type': 'tool_result',
+        return {'messages': [rt.wire, {'role': 'assistant', 'content': [{'type': 'tool_use',
+            'id': 'actual-image', 'name': 'colony_memory_read_source', 'input': {
+                **rt.ref, 'view': 'image', 'asset_hash': rt.asset}}]},
+            {'role': 'user', 'content': [{'type': 'tool_result',
             'tool_use_id': 'actual-image', 'content': [text, {'type': 'image', 'source': {
                 'type': 'base64', 'media_type': 'image/png',
                 'data': image['image_url']['url'].split(',', 1)[1]}}]}]}]}
@@ -94,6 +97,8 @@ def test_original_parts_verified_on_each_request_then_withheld_when_stale(image_
         rt.client.post = lambda *a, **kw: (_ for _ in ()).throw(OSError('offline'))
     checked = rt.middleware(wire, rt.scope)['request']
     assert encoded not in json.dumps(checked) and 'withheld' in json.dumps(checked)
+    if shape == 'anthropic':
+        assert checked['messages'][-2] == before['messages'][-2]  # Keep the native tool-use pair.
     assert wire == before
 
 
