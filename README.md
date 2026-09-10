@@ -78,10 +78,13 @@ Python 3.12 is exercised by native integration CI. One local OpenAI-compatible
 chat endpoint is sufficient. The lightweight profile needs no Docker, Neo4j,
 embedding model or external account.
 
-Install from this checkout to use the changes described here:
+Install the matching published packages in a private environment. A Colony
+checkout is not required:
 
 ```bash
-python -m pip install . ./sidecar
+python3 -m venv "$HOME/.local/share/colony/venv"
+source "$HOME/.local/share/colony/venv/bin/activate"
+python -m pip install "colonyai[hermes]==1.1.2" "colony-hermes==1.1.2"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -94,7 +97,8 @@ patches Hermes core nor restarts an existing gateway.
 
 Choose a private `--hermes-home` outside Git checkouts. The
 [setup guide](docs/LOCAL-HERMES-SETUP.md) covers existing profiles, directory
-permissions, user services and upgrades.
+permissions, user services, upgrades and development from a checkout.
+Run `colony init --help` for unattended setup and optional task features.
 
 Accept the wizard's startup option, or run:
 
