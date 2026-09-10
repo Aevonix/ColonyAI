@@ -1,5 +1,12 @@
 # Native Hermes adapter distribution
 
+Ordinary recall no longer inserts the three latest global briefings into every
+turn. Those records were selected without a relevance or freshness check and
+could repeatedly add old operational summaries to unrelated conversations.
+Their stored contents remain available through `/v1/host/briefings` and the
+explicit enriched-context briefing option. Scoped memory retrieval, source
+citations and current work context continue through the existing assembly path.
+
 Hermes 0.21.1 applies `hooks.output_spill` to external memory-provider output.
 Its default 10,000-character head/tail preview can cut a Colony source envelope
 or remove the middle of an original/correction bundle. Guided attachment and
