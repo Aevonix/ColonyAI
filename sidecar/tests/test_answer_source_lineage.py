@@ -150,6 +150,12 @@ def test_actual_native_hooks_capture_only_trusted_delivered_selection(tmp_path, 
     def packet(refs):
         return '[colony-recall-v1 ' + json.dumps({'contact_id': 'cid-owner', 'watermark': 0, 'sources': refs}) + ']\nEvidence\n[/colony-recall-v1]'
     class Client(_Client):
+        def post(self, path, **kwargs):
+            if path.endswith('/erasures'):
+                assert kwargs['json'] == {'contact_id': 'cid-owner', 'session_id': 'fresh', 'after': 0, 'source_refs': [ref]}
+                return _Response({'contact_id': 'cid-owner', 'head': 0, 'through': 0, 'complete': True,
+                                  'events': [], 'sources_current': True})
+            return super().post(path, **kwargs)
         def get(self, path, **kwargs):
             if path.endswith('/erasures'):
                 return _Response({'contact_id': 'cid-owner', 'head': 0, 'through': 0, 'complete': True, 'events': []})

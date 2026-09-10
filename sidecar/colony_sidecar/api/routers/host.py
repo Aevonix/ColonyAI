@@ -59,6 +59,7 @@ from colony_sidecar.api.schemas.host import (
     ScopeMemberIn,
     ScopePromoteRequest,
     ScopeResponse,
+    SourceReference,
     ResponseGuardCheckRequest,
     ContextAssembleRequest,
     ContextAssembleResponse,
@@ -3732,6 +3733,37 @@ async def source_erasure_feed(contact_id: str, after: int = Query(0, ge=0), requ
         return get_turn_idempotency_ledger(get_state_dir()).erasure_feed(person, after)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"code": "erasure_history_mismatch"}) from exc
+
+
+class SourceFreshnessRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    contact_id: str = Field(min_length=1, max_length=256)
+    session_id: str = Field(min_length=1, max_length=256)
+    after: int = Field(default=0, ge=0)
+    source_refs: list[SourceReference] = Field(min_length=1, max_length=512)
+
+
+@router.post('/memory/sources/erasures')
+async def source_freshness_feed(body: SourceFreshnessRequest, request: Request):
+    """The existing feed plus current ownership of the exact supplied sources.
+
+    Corrections change attribution without erasing source bytes or changing
+    their content digest. Check canonical ownership and descendant validity;
+    an erasure watermark alone cannot certify cached recall after a correction.
+    POST keeps the bounded reference set out of URLs and adds no persisted state.
+    """
+    person = resolve_request_person(request, claimed_person_id=body.contact_id) or body.contact_id
+    from colony_sidecar.turns import get_turn_idempotency_ledger
+    ledger = get_turn_idempotency_ledger(get_state_dir())
+    try:
+        page = ledger.erasure_feed(person, body.after)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={'code': 'erasure_history_mismatch'}) from exc
+    expected = {(ref.source_id, ref.source_version) for ref in body.source_refs}
+    current = ledger.source_references([ref.source_id for ref in body.source_refs],
+                                      contact_id=person, session_id=body.session_id)
+    page['sources_current'] = expected == {(ref['source_id'], ref['source_version']) for ref in current}
+    return page
 
 
 @router.get("/memory/sources/claims/status")

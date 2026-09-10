@@ -358,24 +358,56 @@ class RequestMemory:
             read_receipts = copy.deepcopy(self._read_receipts.get(observed_key, {}))
             host_input = copy.deepcopy(self._host_inputs.get(observed_key))
         current_content = current.get('api_content', current.get('content')) if current else None
+        # Only native-observed recall and authenticated read receipts can
+        # nominate parents. User-authored markers cannot select other people's
+        # records or keep evidence current. Validate their current ownership in
+        # the same round trip as erasure freshness, not by changing source IDs.
+        source_refs = {}
+        try:
+            current_packet = _native_packet(current)
+            if current_packet:
+                meta = json.loads(_STAMP.match(current_packet.group()).group(1))
+                for ref in meta.get('sources', []):
+                    source_refs[(ref['source_id'], ref['source_version'])] = ref
+            if host_input:
+                for ref in host_input['sources']:
+                    source_refs[(ref['source_id'], ref['source_version'])] = ref
+            for name in ('messages', 'input'):
+                for row in request.get(name, []) if isinstance(request.get(name), list) else []:
+                    receipt = _read_receipt(row, read_receipts) if isinstance(row, dict) else None
+                    if receipt:
+                        for ref in receipt['sources']:
+                            source_refs[(ref['source_id'], ref['source_version'])] = ref
+            parents_valid = len(source_refs) <= 512
+        except (KeyError, TypeError, ValueError, AttributeError):
+            parents_valid = False
         deadline = time.monotonic() + .25
         watermark, rules, fresh = 0, [], False
         try:
-            if contact:
+            if contact and parents_valid:
                 watermark, rules = self.outbox.erasure_state(contact, deadline_monotonic=deadline)
                 for _ in range(4):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break
-                    response = self.client.get("/v1/host/memory/sources/erasures",
-                        params={'contact_id': contact, 'after': watermark},
-                        timeout=remaining, _deadline_monotonic=deadline)
+                    if source_refs:
+                        response = self.client.post('/v1/host/memory/sources/erasures',
+                            json={'contact_id': contact, 'after': watermark,
+                                  'session_id': scope.session_id, 'source_refs': list(source_refs.values())},
+                            timeout=remaining, _deadline_monotonic=deadline)
+                    else:
+                        response = self.client.get("/v1/host/memory/sources/erasures",
+                            params={'contact_id': contact, 'after': watermark},
+                            timeout=remaining, _deadline_monotonic=deadline)
                     response.raise_for_status()
                     page = response.json()
                     self.outbox.apply_erasure_page(contact, page, deadline_monotonic=deadline)
                     watermark, rules = self.outbox.erasure_state(contact, deadline_monotonic=deadline)
                     fresh = (page.get('complete') is True
-                             and int(page['head']) == int(page['through']) <= watermark)
+                             and int(page['head']) == int(page['through']) <= watermark
+                             and (not source_refs or page.get('sources_current') is True))
+                    if source_refs and page.get('sources_current') is not True:
+                        break
                     if fresh:
                         break
         except Exception as error:

@@ -68,16 +68,16 @@ authoritative server-side attribution regardless of client caching bugs.
 `resolve(sender, *, allow_shadow=True) -> Resolution(contact_id, method, created)`
 
 Resolution ladder, first hit wins:
-1. **Exact handle**: `contact_handles(gateway=platform, address=user_id)`
-   (phones via the existing `phone_key` cross-format matcher).
+1. **Verified exact handle**: `contact_handles(gateway=platform, address=user_id)`
+   with canonical email/SMS formatting. An explicit per-channel correction
+   takes precedence over cross-gateway phone inference.
 2. **Cross-gateway phone**: `user_id` parses as a phone → `phone_key`
    match against ANY gateway's handles (the cross-gateway case: an `sms` handle
    matching an `rcs` sender).
 3. **Normalized email**: lowercase match for email-shaped ids.
 4. **Scoped display-name (PROPOSAL only)**: `display_name` uniquely
-   matches one member of the same group scope → return that contact AND
-   file a merge proposal linking the new handle, flagged for owner review.
-   Confidence below auto-merge never links silently.
+   matches one member of the same group scope. File a candidate association;
+   keep the sender's separate shadow identity until an explicit correction.
 5. **Shadow contact**: create (tier `unknown`, `interaction_allowed=false`,
    `met_via=<channel_id>`, `import_source=auto:sender`) with the handle
    attached, when `COLONY_IDENTITY_SHADOW_CONTACTS` (default true).
@@ -85,6 +85,29 @@ Resolution ladder, first hit wins:
 The resolver also OWNS the machine gate: senderless turns on machine
 channels (`cron:`, `api:` prefixes, configurable) or system-origin text
 resolve to the `system` sentinel.
+
+### Current source attribution in active requests
+
+An owner correction can move one exact handle and explicitly selected sources
+without rewriting their original bytes. It invalidates source-linked descendant
+answers and their projections. Reversing the correction restores direct-source
+attribution; it does not revive those old derived conclusions or grant authority.
+
+The Hermes request middleware checks cited source ownership, version and session
+scope alongside the existing erasure feed. Its POST form at
+`/memory/sources/erasures` accepts up to 512 exact source references and returns
+`sources_current`, under the same `turns:write` scope as GET. The existing 250 ms
+request budget and bounded feed pagination remain. No new queue, database or
+service is involved. Changed attribution, unavailable validation, or an oversized
+reference set withholds current recalled evidence and opened-source receipts.
+Current human input stays intact. Deploy the backend before the updated plugin.
+
+This checks structured native recall and authenticated source-read receipts.
+It does not identify copied paraphrases or retroactively relabel native transcript
+storage. An unchanged content digest does not prove that the source still belongs
+to the same person. The native social-tool fixture qualifies correction and
+reversal during an active request, channel separation, and inherited-child tool
+revocation without an external model or a message send.
 
 ### 3. turns/sync becomes the attribution chokepoint
 

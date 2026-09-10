@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from colony_sidecar.turns.source_read import read
-from test_native_request_erasure import runtime
+from test_native_request_erasure import runtime, freshness_response
 
 
 @pytest.mark.parametrize('shape', ['chat', 'blocks', 'responses'])
@@ -20,6 +20,8 @@ def test_authenticated_opening_is_dispatch_bound_and_erasure_safe(runtime, shape
                               request=httpx.Request('GET', 'http://fixture' + path))
     calls = []
     def post(path, **kwargs):
+        if path == '/v1/host/memory/sources/erasures':
+            return freshness_response(rt.ledger, path, kwargs['json'])
         calls.append(kwargs['json'])
         body = kwargs['json']
         result = read(rt.ledger, contact_id=body['person_id'], session_id=body['session_id'],

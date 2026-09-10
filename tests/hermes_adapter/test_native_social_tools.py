@@ -44,6 +44,7 @@ async def seed_contacts():
  await contacts.add_handle(guest.contact_id,'sms','+15550002',verified=True)
  await contacts.add_handle(owner.contact_id,'sms','+15550001',verified=True)
  await contacts.add_handle(owner.contact_id,'whatsapp','+15550003',verified=True)
+ await contacts.add_handle(owner.contact_id,'whatsapp','15550001@s.whatsapp.net',verified=True)
  await contacts.add_handle(colleague.contact_id,'email','fixture@example.invalid',verified=True)
  return owner,colleague,corrected,guest
 owner,colleague,corrected,guest=asyncio.run(seed_contacts())
@@ -192,6 +193,31 @@ changed=tool('contact-owner','colony_contacts',change_args)
 assert changed.get('contact_id')==corrected.contact_id,changed
 assert changed['authority_granted'] is False
 assert tool('contact-owner','colony_contacts',change_args)==changed
+
+# Correct one exact transport and its selected source while another native
+# request still holds that source. Neither the erasure watermark nor source
+# bytes change, so only current canonical attribution can fence the packet.
+source_change={'operation':'correct_identity','gateway':'whatsapp','address':'15550001@s.whatsapp.net',
+               'expected_contact_id':owner.contact_id,'subject_contact_id':guest.contact_id,
+               'source_ids':[ref['source_id']]}
+source_receipt=tool('contact-owner','colony_contacts',source_change)
+assert source_receipt.get('source_reconciliation_required') is False,source_receipt
+assert source_receipt['contact_id']==guest.contact_id and not source_receipt['authority_granted']
+assert ledger.erasure_watermark(owner.contact_id)==0
+assert api.get('/v1/host/contacts/resolve',params={'gateway':'sms','address':'+15550001'}).json()['contact_id']==owner.contact_id
+assert api.get('/v1/host/contacts/resolve',params={'gateway':'whatsapp','address':'15550001@s.whatsapp.net'}).json()['contact_id']==guest.contact_id
+retained_request={'messages':[{'role':'user','content':history[-1]['api_content']}]}
+after_correction=apply_llm_request_middleware(retained_request,session_id='owner-retained',
+    task_id='owner-retained',turn_id='turn-owner-retained').payload
+assert retained_text not in json.dumps(after_correction) and continued in json.dumps(after_correction),after_correction
+assert ledger.source_references([ref['source_id']],contact_id=guest.contact_id,session_id='guest-voice')==[ref]
+reversed_source=tool('contact-owner','colony_contacts',{**source_change,
+    'expected_contact_id':guest.contact_id,'subject_contact_id':owner.contact_id})
+assert reversed_source.get('source_reconciliation_required') is False,reversed_source
+after_reversal=apply_llm_request_middleware(retained_request,session_id='owner-retained',
+    task_id='owner-retained',turn_id='turn-owner-retained').payload
+assert retained_text in json.dumps(after_reversal),after_reversal
+assert any(method=='post' and path=='/v1/host/memory/sources/erasures' for method,path,_ in calls)
 
 # Build a source-grounded appraisal through its normal reducer using a fixed
 # fixture processor. This qualifies tool plumbing, not model intelligence.
@@ -397,6 +423,7 @@ asyncio.run(contacts.close())
 print(json.dumps({'native_tools_registered':True,'first_turn_capture_claim_wait':True,'canonical_refs_match':True,
                   'owner_identity_correction':True,'appraisal_inspect':True,'guest_restricted':True,
                   'concurrent_owner_commitment':True,'next_operation_identity_correction':True,'inherited_child_correction':True,
+                  'cached_recall_identity_correction_and_reversal':True,'exact_phone_handle_split':True,
                   'actual_credential_revocation':True,'resolver_outage_distinct':True,'attested_cli_preserved':True,
                   'native_cron_and_child':True,'dispatch_resolver_cost_ms':dispatch_resolve_cost_ms,'dispatch_total_ms':dispatch_total_ms,
                   'receipt_starts_wait':True,'outage_not_silence':True,'one_native_followup_review':True,'matched_reply_cancels_review':True,

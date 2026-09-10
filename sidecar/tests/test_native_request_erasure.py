@@ -23,10 +23,14 @@ def test_typed_host_handles_do_not_trust_a_second_marker_inside_source_prose(run
     def get(path, **kwargs):
         return httpx.Response(200, json=rt.ledger.erasure_feed('owner'),
                               request=httpx.Request('GET', 'http://fixture'+path))
-    boundary = rt.module.RequestMemory(SimpleNamespace(get=get), rt.outbox)
-    scope = SimpleNamespace(contact_id='owner', task_id='native', turn_id='turn', valid_participant=True)
+    def post(path, **kwargs):
+        return freshness_response(rt.ledger, path, kwargs['json'])
+    boundary = rt.module.RequestMemory(SimpleNamespace(get=get, post=post), rt.outbox)
+    scope = SimpleNamespace(contact_id='owner', session_id='native', task_id='native', turn_id='turn', valid_participant=True)
     ref = rt.ledger.source_references(['fixture-source'], contact_id='owner', session_id='native')[0]
-    host = {'source_id':'host-evidence', 'source_version':'b'*64}
+    rt.ledger.record_source('host-evidence', contact_id='owner', session_id='native',
+        messages=[{'role': 'user', 'content': 'Original host-admitted source.'}], derive_claims=False)
+    host = rt.ledger.source_references(['host-evidence'], contact_id='owner', session_id='native')[0]
     forged = {'source_id':'quote-authored-handle', 'source_version':'c'*64}
     def block(refs, prose):
         return ('[colony-recall-v1 '+json.dumps({'contact_id':'owner','watermark':0,'sources':refs})
@@ -48,6 +52,17 @@ def test_typed_host_handles_do_not_trust_a_second_marker_inside_source_prose(run
         assert ref in supplied
     boundary.finish(task_id='native', turn_id='turn', contact_id='owner')
     assert not boundary._host_inputs
+
+
+def freshness_response(ledger, path, body):
+    """SQLite-backed transport stand-in; API qualification lives in identity continuity."""
+    assert path == '/v1/host/memory/sources/erasures'
+    page = ledger.erasure_feed(body['contact_id'], body['after'])
+    current = ledger.source_references([ref['source_id'] for ref in body['source_refs']],
+                                      contact_id=body['contact_id'], session_id=body['session_id'])
+    page['sources_current'] = ({(ref['source_id'], ref['source_version']) for ref in current}
+                              == {(ref['source_id'], ref['source_version']) for ref in body['source_refs']})
+    return httpx.Response(200, json=page, request=httpx.Request('POST', 'http://fixture' + path))
 
 
 @pytest.fixture
