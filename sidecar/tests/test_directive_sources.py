@@ -249,3 +249,36 @@ def test_source_bound_verdict_has_no_duplicate_prose_for_downstream_storage(setu
     ledger.erase_sources(contact_id='owner', turn_ids=['source-a'])
     assert manager.store.get(rule.id) is None
     assert 'confidential-widget-service' not in serialized
+
+
+@pytest.mark.parametrize('text', [
+    'Never again did I deploy widget-service.',
+    'Never before today had we deployed widget-service.',
+])
+def test_adverbial_past_fact_does_not_become_a_standing_rule(setup, text):
+    assert capture(setup, text).captured == []
+    assert setup[1].guard.check(Action(kind='execute_tool', text='deploy widget-service')).allowed
+
+
+def test_temporary_instructions_as_object_do_not_cancel_a_lasting_rule(setup):
+    rule = capture(setup, 'Never delete temporary task instructions.').captured[0]
+    assert setup[1].store.get(rule.id)
+    assert not setup[1].guard.check(Action(kind='execute_tool', text='delete temporary task instructions')).allowed
+
+
+@pytest.mark.parametrize('withdrawal', ['erase', 'correct'])
+def test_erased_or_corrected_lift_request_cannot_be_confirmed(setup, withdrawal):
+    rule = capture(setup, 'Never deploy widget-service.').captured[0]
+    ledger, manager = setup
+    assert capture(setup, 'Resume deploying widget-service.', 'lift').needs_confirmation
+    proof = manager._pending_lift['evidence']
+    if withdrawal == 'erase':
+        ledger.erase_sources(contact_id='owner', turn_ids=['lift'])
+    else:
+        ledger.append_source_annotation(contact_id='owner', session_id='session-lift', annotation_id='lift-correction',
+            source_id='lift', source_version=proof['source_version'], excerpt='Resume deploying widget-service.',
+            correction='That request was mistaken. Keep the restriction.', author_principal='owner-operator')
+    assert manager.pending_confirmation() is None
+    assert capture(setup, 'yes', 'unrelated-yes').revoked == []
+    assert manager.store.get(rule.id) is not None
+    assert not manager.guard.check(Action(kind='execute_tool', text='deploy widget-service')).allowed

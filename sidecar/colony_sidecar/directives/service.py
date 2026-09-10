@@ -91,12 +91,18 @@ class DirectiveManager:
         # 1) If a lift is pending, ONLY an explicit affirmation on the immediate
         #    next message confirms it; anything else clears it (fail-safe: a
         #    prohibition is never lifted by an attribution error or stray text).
-        if self._pending_lift is not None and not any(
-                self.store.get(identifier) for identifier in self._pending_lift["ids"]):
+        if self.store.ledger is not None and not source_id:
+            return result
+        if self._pending_lift is not None and not self._pending_lift_current():
             self._pending_lift = None
         if self._pending_lift is not None:
             expired = time.time() - self._pending_lift["ts"] > _PENDING_TTL_SECS
             if not expired and _AFFIRM.match(text):
+                if self.store.ledger is not None:
+                    from .evidence import bind
+                    if bind(self.store.ledger, source_id=source_id, contact_id=contact_id,
+                            message=text, clause=text) is None:
+                        return result
                 revoked = self._apply_revocation_ids(self._pending_lift["ids"])
                 subj = self._pending_lift["subject"]
                 self._pending_lift = None
@@ -108,8 +114,6 @@ class DirectiveManager:
             # not confirmed -> the boundary stays; drop the pending lift
             self._pending_lift = None
 
-        if self.store.ledger is not None and not source_id:
-            return result
         found = extract_directives(text, source=source)
 
         # 2) A revocation stages a pending confirmation (never lifts immediately).
@@ -120,9 +124,16 @@ class DirectiveManager:
             matches = [d for d in self.store.active(polarity=Polarity.PROHIBIT)
                        if set(d.match_terms) & terms]
             if matches:
+                evidence = None
+                if self.store.ledger is not None:
+                    from .evidence import bind
+                    evidence = bind(self.store.ledger, source_id=source_id, contact_id=contact_id,
+                                    message=text, clause=text)
+                    if evidence is None:
+                        return result
                 self._pending_lift = {
                     "subject": rev.subject, "ids": [d.id for d in matches],
-                    "ts": time.time(),
+                    "ts": time.time(), "evidence": evidence,
                 }
                 subs = "; ".join(d.raw_text or d.subject for d in matches)
                 result.needs_confirmation = (
@@ -223,12 +234,21 @@ class DirectiveManager:
             return None
         return ack
 
+    def _pending_lift_current(self) -> bool:
+        pending = self._pending_lift
+        if (pending is None or time.time() - pending["ts"] > _PENDING_TTL_SECS
+                or not any(self.store.get(identifier) for identifier in pending["ids"])):
+            return False
+        if self.store.ledger is not None:
+            from .evidence import _message
+            return bool(pending.get("evidence") and _message(self.store.ledger, pending["evidence"]) is not None)
+        return True
+
     def pending_confirmation(self) -> Optional[str]:
         """The current pending boundary-lift prompt, if any (for context echo)."""
         if self._pending_lift is None:
             return None
-        if (time.time() - self._pending_lift["ts"] > _PENDING_TTL_SECS
-                or not any(self.store.get(identifier) for identifier in self._pending_lift["ids"])):
+        if not self._pending_lift_current():
             self._pending_lift = None
             return None
         subj = self._pending_lift["subject"]
