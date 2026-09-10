@@ -300,6 +300,37 @@ async def test_successive_partial_corrections_require_history_and_keep_read_depe
 
 
 @pytest.mark.asyncio
+async def test_erased_terminal_correction_leaves_explicit_history_gap(tmp_path):
+    from colony_sidecar.turns.source_read import read
+
+    ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
+    projection = SourceClaimProjection(ledger)
+    await record(ledger, projection, 'original', REPORT, episode(REPORT))
+    original, = claims(ledger)
+    await record(ledger, projection, 'correction', CORRECTION,
+        episode(CORRECTION) | {'operation': 'correct', 'match_prior': True})
+    reference, = ledger.source_references(['original'], contact_id='contact-a', session_id='later')
+    def history():
+        return read(ledger, contact_id='contact-a', session_id='later', **reference,
+            view='assertions', claim_id=original['id'])
+    before = history()
+    assert 'episode_history' not in json.loads(before['content'])
+
+    ledger.erase_sources(contact_id='contact-a', turn_ids=['correction'])
+    after = history()
+    opened = json.loads(after['content'])
+    assert opened['episode_history'] == 'incomplete_revision_chain'
+    assert 'Complete pagination does not close this gap' in opened['guidance']
+    remaining, = opened['assertions']
+    assert remaining['prior_claim_id'] is None and remaining['retracted_by']
+    assert remaining['evidence'] == REPORT
+    assert CORRECTION not in after['content']
+    assert after['watermark'] > before['watermark']
+    assert after['read_revision'] != before['read_revision']
+    assert context(projection) == []  # The withdrawn report never becomes current.
+
+
+@pytest.mark.asyncio
 async def test_later_episode_correction_finds_current_revision_through_original_topic(tmp_path):
     ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
     projection = SourceClaimProjection(ledger)

@@ -57,7 +57,8 @@ async def test_long_selected_excerpt_still_receives_context_review():
 
 
 @pytest.mark.asyncio
-async def test_mixed_batch_reviews_only_generated_interpretation_preserving_order():
+@pytest.mark.parametrize('duplicate_report', [False, True])
+async def test_mixed_batch_reviews_only_generated_interpretation_preserving_order(duplicate_report):
     text = 'I left the keys in Lake. The unlocked cabinet opened during the inspection.'
     report = episode(text)
     assertion = claim(text, 'Lake')
@@ -65,7 +66,8 @@ async def test_mixed_batch_reviews_only_generated_interpretation_preserving_orde
     original = model.complete
     async def mixed(*args, **kwargs):
         if kwargs['context']['task'] == 'source_claim_extraction':
-            return SimpleNamespace(content=json.dumps([report, assertion]), model_id='fixture-extraction')
+            proposals = [report, assertion, report] if duplicate_report else [report, assertion]
+            return SimpleNamespace(content=json.dumps(proposals), model_id='fixture-extraction')
         return await original(*args, **kwargs)
     model.complete = mixed
     rows, _ = await extract_claims(model, {'occurred_at': None}, {'role': 'user', 'content': text}, [])
@@ -74,6 +76,40 @@ async def test_mixed_batch_reviews_only_generated_interpretation_preserving_orde
     assert 'admission_review' in rows[1] and 'source_admission' not in rows[1]
     proposals = model.calls[0][0]['proposals']
     assert len(proposals) == 1 and proposals[0]['claim']['value'] == 'Lake'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reverse', [False, True])
+async def test_two_event_whole_message_is_one_report_without_arbitrary_event_date(tmp_path, reverse):
+    text = ('On 2026-08-24, the pressure sensor reset during the pump run. '
+            'On 2026-08-27, the pressure sensor ran for four hours without resetting.')
+    reports = [episode(text) | {'event_at_text': date} for date in ('2026-08-24', '2026-08-27')]
+    ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
+    projection = SourceClaimProjection(ledger)
+    ledger.record_source('two-events', contact_id='contact-a', session_id='first',
+        messages=[{'role': 'user', 'content': text}], occurred_at='2026-09-10T12:00:00+00:00')
+    model = Model({})
+    async def two_events(*args, **kwargs):
+        assert kwargs['context']['task'] == 'source_claim_extraction'
+        return SimpleNamespace(content=json.dumps(reports[::-1] if reverse else reports),
+            model_id='fixture-extraction')
+    model.complete = two_events
+    assert await projection.process_one(model)
+    retained, = claims(ledger)
+    assert retained['value'] == retained['evidence'] == text
+    assert retained['event_at'] is None and retained['event_time'] == {'status': 'unknown'}
+    assert retained['source_admission']['basis'] == 'whole_source_quote_unverified'
+    status, = projection.status('contact-a')
+    assert status['diagnostics']['coalesced_episode_count'] == 1
+    assert status['diagnostics']['whole_source_episode_count'] == 1
+    assert status['diagnostics']['reviewed_count'] == 0
+    # Both dated questions retain the complete report without assigning it to
+    # whichever event the extractor happened to list first.
+    for date in ('2026-08-24', '2026-08-27'):
+        selected, = context(projection, f'What pressure sensor incident happened on {date}?')
+        assert selected['validity_status'] == 'query_time_unresolved'
+        row, = json.loads(selected['content'])['assertions']
+        assert row['quote'] == text and row['event_at'] is None
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,7 @@ from .source_time import parse_source_date, source_event_time, utc_timestamp
 from .promotion import MEMORY_KINDS, PROMOTION_PROMPT, promotion_metadata
 from colony_sidecar.util.model_output import final_text
 
-EXTRACTION_VERSION = "source-claims-v11"
+EXTRACTION_VERSION = "source-claims-v12"
 SYSTEM = '''Extract the user's attributed assertions about the actual world from
 one USER message. Facts true only inside fiction, role-play, an invented example
 or a counterfactual are not actual-world assertions, even when useful for writing.
@@ -45,7 +45,11 @@ its existing episode identity determines its representation. This
 revises the same report; a later or different experience is not a correction.
 Abstain on an ambiguous episode reference. event_at_text is the exact event-date
 expression in the current quotation, or null; never copy the report timestamp
-or assume an event date. Abstain when essential context cannot fit.
+or assume an event date. When the complete message fits in 500 characters, use
+at most one new episode quoting the whole message. If it reports distinct events,
+retain them together in that quotation and use event_at_text=null rather than
+assigning the whole report the date of only one event. Existing episode corrections
+still select their own supplied prior_claim_id. Abstain when essential context cannot fit.
 Use the structured form below for individual facts and procedures.
 Choose representation first: episode for a substantive reported experience,
 procedure for reusable instructions, assertion for an individual fact.
@@ -263,6 +267,7 @@ def extraction_diagnostics() -> dict:
             "review_response_count": 0, "reviewed_count": 0,
             "review_kept_count": 0, "review_rejected_count": 0,
             "whole_source_episode_count": 0,
+            "coalesced_episode_count": 0,
             "ignored_episode_date_count": 0,
             "invalid_review_count": 0, "last_review_provenance": None}
 
@@ -474,6 +479,22 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
         })
         if diagnostics is not None:
             diagnostics["accepted_count"] += 1
+    # Providers may still return several new episodes quoting the same complete
+    # message. Those have one existing commit identity: retain one full report
+    # here, before commit could silently choose the first candidate's event date.
+    # Distinct dates remain in the quotation, without a single time assigned to
+    # the combined report. Corrections and independently selected spans keep
+    # their existing identities and review requirements.
+    whole = [index for index, claim in enumerate(output)
+             if claim.get('representation') == 'episode' and claim['operation'] == 'assert'
+             and claim['prior_claim_id'] is None and claim['evidence'] == message]
+    if len(whole) > 1:
+        combined = output[whole[0]]
+        if any(output[index]['event_time'] != combined['event_time'] for index in whole[1:]):
+            combined['event_at'], combined['event_time'] = None, {'status': 'unknown'}
+        output = [claim for index, claim in enumerate(output) if index not in whole[1:]]
+        if diagnostics is not None:
+            diagnostics['coalesced_episode_count'] += len(whole) - 1
     return output
 
 
