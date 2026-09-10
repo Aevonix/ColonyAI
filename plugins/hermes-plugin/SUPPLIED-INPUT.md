@@ -34,6 +34,21 @@ revalidate these before delayed result exposure, playback or further effects.
 Canonical deletion follows recorded dependencies; arbitrary paraphrases,
 native transcript files and archived copies remain outside this guarantee.
 
+`handoff.failure` is either `None` or a typed summary containing `reason`,
+`admitted` and `retryable`. A timeout or network failure during source freshness
+verification reports `source_freshness_unavailable`. Only a failure before any
+successful source admission has `retryable: true`. Confirmed erasure, invalid
+scope, HTTP authorization failures and other unknown failures are not retryable.
+Later successful verification never reopens the failed scope. The request stays
+without source content or tools; transient verification is described as temporary,
+not as a claim that the source was deleted.
+
+A host may use that exact initial-failure result to start one fresh native task
+under its existing deadline, after revalidating the original source envelope.
+It must rebuild the agent and supplied-input scope so native prefetch and inherited
+context run again. This adapter does not retry tasks, extend their budgets or
+authorize replay after any successful admission or possible tool effect.
+
 When `execution_registry_enabled` is true, a source-checked root execution also
 retains these input IDs and hashes in its existing operational metadata. The
 work reader opens a current, viewer-scoped excerpt of the original input, up to

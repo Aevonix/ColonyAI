@@ -142,6 +142,55 @@ def test_ordinary_cli_turn_remains_excluded_without_supplied_input(handoff):
         assert db.execute('SELECT COUNT(*) FROM turn_sources').fetchone()[0] == 2
 
 
+@pytest.mark.parametrize('failure', ['timeout', 'status', 'changed_source'])
+def test_only_typed_initial_transport_failure_can_request_a_fresh_task(handoff, monkeypatch, failure):
+    import httpx
+    h = handoff
+    get = h.module.ColonyClient.get
+    attempts = []
+    def fail_once(client, path, **kwargs):
+        if path == '/v1/host/memory/sources/erasures' and not attempts:
+            attempts.append(path)
+            if failure == 'timeout':
+                raise httpx.ReadTimeout('Controlled initial freshness timeout')
+            if failure == 'status':
+                return httpx.Response(401, request=httpx.Request('GET', 'http://fixture'+path))
+            h.ledger.erase_sources(contact_id='owner', turn_ids=['earlier'])
+        return get(client, path, **kwargs)
+    monkeypatch.setattr(h.module.ColonyClient, 'get', fail_once)
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        blocked = h.start()
+        assert blocked['request']['tools'] == []
+        assert supplied.failure['admitted'] is False
+        assert supplied.failure['retryable'] is (failure == 'timeout')
+        assert supplied.failure['reason'] == {'timeout': 'source_freshness_unavailable',
+            'status': 'source_input_unavailable', 'changed_source': 'source_input_erased'}[failure]
+        assert ('temporarily unavailable' in json.dumps(blocked['request'])) is (failure == 'timeout')
+        # A successful subsequent check does not reopen the partially initialized task.
+        effects = []
+        assert json.loads(call(h.ctx, 'terminal', session='native', task='task', turn='turn',
+            dispatch=lambda args: effects.append(args)))['reason'] == 'source_input_unavailable'
+        assert not effects and supplied.memory_contact('native') == ''
+        h.finish()
+        assert supplied.result is None
+    assert h.outbox.snapshot() == []
+
+
+def test_failure_after_any_admission_never_permits_replay(handoff, monkeypatch):
+    import httpx
+    h = handoff
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        h.start()
+        monkeypatch.setattr(h.module.ColonyClient, 'post',
+            lambda *args, **kwargs: (_ for _ in ()).throw(httpx.ReadTimeout('Controlled later timeout')))
+        result = h.ctx.middleware['llm_request']({'messages': [], 'tools': [{}]},
+            session_id='native', task_id='task', turn_id='turn')
+        assert result['request']['tools'] == []
+        assert supplied.failure == {'reason': 'source_freshness_unavailable', 'admitted': True, 'retryable': False}
+
+
 @pytest.mark.parametrize('entry', ['pre_api_request', 'llm_request'])
 def test_native_compression_rotation_preserves_input_memory_and_root_result(handoff, monkeypatch, entry):
     h = handoff

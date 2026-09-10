@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from httpx import NetworkError, TimeoutException
 
 from .client import source_message_hash
 
@@ -452,6 +453,7 @@ class RequestMemory:
             parents_valid = False
         deadline = time.monotonic() + .25
         watermark, rules, fresh = 0, [], False
+        freshness_retryable = False
         try:
             if contact and parents_valid:
                 watermark, rules = self.outbox.erasure_state(contact, deadline_monotonic=deadline)
@@ -481,6 +483,7 @@ class RequestMemory:
                     if fresh:
                         break
         except Exception as error:
+            freshness_retryable = isinstance(error, (TimeoutError, TimeoutException, NetworkError))
             logger.warning('request memory freshness unavailable (%s)', type(error).__name__)
         if fresh:
             # Only explicitly opened images pay this small metadata read. A
@@ -595,4 +598,5 @@ class RequestMemory:
                     self._supplied[observed_key].update(supplied)
                     self._requests_seen.add(observed_key)
         return {'request': filtered, 'source': 'colony',
+                'freshness_retryable': freshness_retryable and not fresh,
                 'reason': 'source_erasure_checked' if fresh else 'source_erasure_unavailable'}

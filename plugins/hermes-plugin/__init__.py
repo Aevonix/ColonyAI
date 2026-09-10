@@ -2606,7 +2606,8 @@ def register(ctx: Any) -> None:
             outcome = outcome or request_memory({'messages': []}, scope)
             _, rules = turn_outbox.erasure_state(supplied_input.contact_id)
             return supplied_input.allowed(scope,
-                fresh=outcome['reason'] == 'source_erasure_checked', rules=rules)
+                fresh=outcome['reason'] == 'source_erasure_checked', rules=rules,
+                freshness_retryable=outcome.get('freshness_retryable') is True)
         except Exception:
             return supplied_input.allowed(scope, fresh=False, rules=[])
 
@@ -2653,7 +2654,8 @@ def register(ctx: Any) -> None:
             api_mode=str(kwargs.get('api_mode') or ''))
         result = request_memory(request, scope, operational=operational)
         if not check_supplied_input(scope, result):
-            result['request'] = input_provenance.withheld_request(result['request'])
+            result['request'] = input_provenance.withheld_request(result['request'],
+                failure=input_provenance.current().failure)
             result['reason'] = 'source_input_unavailable'
         result['request'] = describe(result['request'])
         return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
