@@ -167,7 +167,7 @@ class NativeDrafts:
                         assignee=self.profile, created_by='colony-local-work', tenant=self.owner,
                         idempotency_key=PREFIX+identifier, board=self.board, initial_status='blocked',
                         workspace_kind='scratch', max_runtime_seconds=int(
-                            self.config.get('routing_policy', {}).get('run_deadline_seconds', 600)), max_retries=2,
+                            self.config.get('routing_policy', {}).get('run_deadline_seconds', 600)), max_retries=0,
                         session_id=context.get('accepted_session_id'))
                     self.verify_task(kb.get_task(db, task_id), identifier)
             origin = context.get('origin') or {}
@@ -176,6 +176,14 @@ class NativeDrafts:
                     delivery_mode=None if origin['platform'] == 'api_server' else 'notify')
             assignment = request(self.client, self.path(identifier)+'/native-task', {
                 'contact_id': self.owner, 'native_board': self.board, 'native_task_id': task_id})
+            # An initial blocked card has no sticky native block event, so
+            # recompute_ready would otherwise release it during association.
+            # Zero retries holds that card until the remote acknowledgment.
+            # Both supported native versions lack a retry-limit setter.
+            with kb.write_txn(db):
+                db.execute('UPDATE tasks SET max_retries=2 WHERE id=? AND status=\'blocked\' '
+                           'AND max_retries=0 AND NOT EXISTS '
+                           '(SELECT 1 FROM task_runs WHERE task_id=tasks.id)', (task_id,))
             task = kb.get_task(db, task_id)
             # No worker may beat acceptance association or its notification
             # subscription. Only an initial, never-claimed task is released.

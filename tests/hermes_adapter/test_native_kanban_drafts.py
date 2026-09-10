@@ -133,6 +133,64 @@ else:
     response=client.post('/v1/host/commitments/'+obligation['id']+'/local-draft',json=body)
     assert response.status_code==200,response.text
     accepted=response.json()
+if mode.startswith('association_'):
+    from colony_hermes import native_drafts
+    original_request=native_drafts.request
+    association_calls=[]
+    def interrupted_association(http,path,payload=None):
+        # This separate native connection represents the dispatcher after
+        # task creation commits but before the association is acknowledged.
+        assert path.endswith('/native-task'),path
+        observer=kb.connect(board=config['board'])
+        task_id=payload['native_task_id'];association_calls.append(task_id)
+        try:
+            for _ in range(3):
+                assert kb.recompute_ready(observer)==0
+                assert kb.get_task(observer,task_id).status=='blocked'
+                assert kb.claim_task(observer,task_id) is None
+            assert kb.latest_run(observer,task_id) is None
+        finally:observer.close()
+        if mode=='association_lost_ack':original_request(http,path,payload)
+        if mode!='association_delayed':raise ConnectionError('Controlled association interruption')
+        return original_request(http,path,payload)
+    with patch('colony_hermes.native_drafts.request',side_effect=interrupted_association):
+        if mode=='association_delayed':associated=gateway.ensure_task(accepted)
+        else:
+            try:gateway.ensure_task(accepted)
+            except ConnectionError:pass
+            else:raise AssertionError('Expected controlled association interruption')
+    # Retry from the original acceptance, including a lost response after
+    # the remote commit. Keep the same card and restore its normal retries.
+    associated=gateway.ensure_task(accepted)
+    tid=associated['context']['native_task_id']
+    assert association_calls==[tid]
+    db=kb.connect(board=config['board'])
+    assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==1
+    assert db.execute('SELECT count(*) FROM kanban_notify_subs').fetchone()[0]==1
+    assert kb.get_task(db,tid).status=='ready'
+    assert kb.get_task(db,tid).max_retries==2
+    assert kb.latest_run(db,tid) is None
+    first=kb.claim_task(db,tid);assert first
+    assert gateway.ensure_task(associated)['context']['native_task_id']==tid
+    assert kb.get_task(db,tid).claim_lock==first.claim_lock
+    kb.reclaim_task(db,tid,reason='Controlled worker interruption after association')
+    profile=root/'profiles'/config['worker_profile'];profile.mkdir(parents=True)
+    (profile/'config.yaml').write_text('plugins: {enabled: []}\n')
+    try:from hermes_cli.kanban_db_dispatch import dispatch_once
+    except ModuleNotFoundError:dispatch_once=kb.dispatch_once
+    spawn_attempts=[]
+    def fail_spawn(task,workspace,**kwargs):
+        spawn_attempts.append(task.current_run_id)
+        raise RuntimeError('Controlled spawn interruption after association')
+    for failures,status in [(1,'ready'),(2,'blocked')]:
+        dispatch_once(db,board=config['board'],spawn_fn=fail_spawn,max_spawn=1,failure_limit=99)
+        task=kb.get_task(db,tid)
+        assert (task.consecutive_failures,task.status,task.max_retries)==(failures,status,2),task
+    assert len(set(spawn_attempts))==2 and first.current_run_id not in spawn_attempts
+    assert kb.recompute_ready(db)==0
+    db.close();initiatives.close();selected.stop();selected_board.stop()
+    print(json.dumps({'case':mode,'native_run_contract':True,'association_hold':True}))
+    sys.exit(0)
 with ThreadPoolExecutor(max_workers=2) as pool:
     values=list(pool.map(lambda _:gateway.ensure_task(accepted),range(2)))
 assert values[0]['context']['native_task_id']==values[1]['context']['native_task_id']
@@ -283,7 +341,8 @@ db.close();initiatives.close();selected.stop();selected_board.stop()
 '''
 
 
-@pytest.mark.parametrize('mode', ['native_agent', 'shared_undertaking', 'recovery', 'publication_interrupted', 'source_changed', 'missing_reference'])
+@pytest.mark.parametrize('mode', ['native_agent', 'shared_undertaking', 'recovery', 'publication_interrupted', 'source_changed', 'missing_reference',
+    'association_failed', 'association_lost_ack', 'association_delayed'])
 def test_packaged_native_kanban_draft(artifacts, tmp_path, mode):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native task/run integration')
