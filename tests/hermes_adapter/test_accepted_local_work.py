@@ -58,6 +58,19 @@ def initialize(self,*args,**kwargs):
     original(self,*args,**kwargs)
     self._build_system_prompt=lambda *a,**k:'Neutral controlled local source task.'
     self._use_prompt_caching=False;self.compression_enabled=False
+    conversation=self.run_conversation
+    def observed_conversation(*a,**k):
+        outcome=conversation(*a,**k)
+        from colony_hermes.local_work import ACTIVE
+        work=ACTIVE.get()
+        # Synthetic fixture diagnostics retain the actual completion contract.
+        # No retry or change to the native return value is introduced.
+        diagnostic={key:outcome.get(key) for key in
+                    ('completed','interrupted','error','final_response')}
+        diagnostic['work']={'bound':work.bound,'error':work.error,'read':sorted(work.read)}
+        (home/'native-result.json').write_text(json.dumps(diagnostic,default=str))
+        return outcome
+    self.run_conversation=observed_conversation
 with patch(OPENAI_TARGET,return_value=client),patch.object(AIAgent,'__init__',initialize):
     try:
         code=main(['--job-id',job['id'],'--provider','fixture','--model','fixture/local','--destination',str(home/'drafts')])
@@ -148,7 +161,10 @@ elif mode=='fenced_missing_reference':
     assert not list((home/'drafts').rglob('report.md'))
     assert next((home/'drafts').rglob('model-final.txt')).read_text().startswith('```json\n')
 else:
-    assert recent['status']=='completed',recent
+    diagnostic={path.name:path.read_text() for path in
+                [home/'native-result.json',*list((home/'drafts').rglob('model-final.txt')),
+                 *list((home/'drafts').rglob('failure.json'))] if path.is_file()}
+    assert recent['status']=='completed',{'recent':recent,'diagnostic':diagnostic}
     assert recent['native_execution_id']==native[0][0]
     assert len(list((home/'drafts').rglob('report.md')))==1
     assert commitments.get(obligation['id'])['status']=='pending'
