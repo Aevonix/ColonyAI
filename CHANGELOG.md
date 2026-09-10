@@ -9,8 +9,8 @@ Independent readers run concurrently within their existing deadlines. Source
 counts overlap and are not presented as a unique task count or complete process
 inventory.
 Native child completion also uses Hermes' supported child-stop hook, so
-overlapping session-end callbacks cannot silently leave that child running in
-the observed work view.
+completion can still be observed when session-end callbacks overlap. An
+unavailable observation endpoint still leaves liveness unknown.
 
 Lexical recall now hydrates each excerpt against its exact canonical message
 before attaching modality, uncertainty and correction lineage. Typed text no
