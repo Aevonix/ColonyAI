@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 OUTCOMES = ("pending", "hit", "miss", "unresolved")
 EXPECTATION_VERSION = 2
+DURATION_METHOD_V1 = "receipt-duration-median-prior4-v1"
+DURATION_METHOD_V2 = "receipt-duration-median-prior4-v2"
 # Superseded predictions stay in history and scoring, but only the newest
 # pending revision governs current context. Apply before the query limit.
 _CURRENT_FORECAST_SQL = """ AND (outcome!='pending' OR prediction_id NOT IN (
@@ -660,13 +662,19 @@ class ExpectationStore:
         viewer_scope: str, prior_seconds: float, prior_confidence: float = 0.7,
         now: Optional[float] = None,
         evidence_is_current: Optional[Callable[[Prediction, Dict[str, Any]], bool]] = None,
+        method: str = DURATION_METHOD_V1,
     ) -> Dict[str, Any]:
         """Prospective, bounded empirical update from independent durations.
 
         One sample per original forecast, latest corrected outcome only. A
         fixed four-sample prior keeps single conversations from flipping the
-        estimate. No response speed is interpreted as relationship/trust.
+        estimate. V2 removes V1's permanent ratio clamp and retains its
+        counterfactual on exactly the same samples. Callers must use a new
+        cohort and current evidence predicate when adopting V2. Neither
+        empirical hit fractions nor duration estimates confer timing authority.
         """
+        if method not in {DURATION_METHOD_V1, DURATION_METHOD_V2}:
+            raise ValueError("unknown duration method")
         if not math.isfinite(prior_seconds) or prior_seconds <= 0 or not 0 <= prior_confidence <= 1:
             raise ValueError("invalid duration prior")
         stamp = _now() if now is None else now
@@ -682,7 +690,10 @@ class ExpectationStore:
             origin = json.loads(row["detail"])["origin_at"]
             if observation["status"] == "observed" and observation["observed_at"] >= row["created_at"]:
                 if observation["value"] is True:
-                    samples.append(observation["observed_at"] - origin)
+                    duration = observation["observed_at"] - origin
+                    if method == DURATION_METHOD_V2 and (not math.isfinite(duration) or duration <= 0):
+                        continue
+                    samples.append(duration)
                     hits.append(observation["observed_at"] <= row["horizon"])
                     receipts.append(observation["receipt_ref"])
                 elif observation["coverage_until"] is not None and observation["coverage_until"] >= row["horizon"]:
@@ -692,13 +703,17 @@ class ExpectationStore:
         median = statistics.median(samples) if samples else None
         weight = n / (n + 4)
         learned = prior_seconds if median is None else prior_seconds + weight * (median - prior_seconds)
-        seconds = max(prior_seconds * .5, min(prior_seconds * 2, learned))
+        clamped = max(prior_seconds * .5, min(prior_seconds * 2, learned))
+        seconds = learned if method == DURATION_METHOD_V2 else clamped
         confidence = prior_confidence if not hits else (4 * prior_confidence + sum(hits)) / (4 + len(hits))
         return {"prior_seconds": prior_seconds, "seconds": round(seconds, 3),
                 "prior_confidence": prior_confidence, "confidence": round(max(prior_confidence - .15, min(prior_confidence + .15, confidence)), 4),
                 "sample_n": n, "confidence_sample_n": len(hits), "sample_median_seconds": median,
-                "uncertain": n < 10, "method": "receipt-duration-median-prior4-v1",
-                "evidence_refs": receipts, "as_of": stamp}
+                "uncertain": n < 10, "method": method,
+                "evidence_refs": receipts, "as_of": stamp,
+                **({"clamped_comparison_seconds": round(clamped, 3),
+                    "clamped_comparison_method": DURATION_METHOD_V1,
+                    "confidence_is_calibrated": False} if method == DURATION_METHOD_V2 else {})}
 
     def forecast_coverage(self, *, subject_person_id: str, viewer_scope: str) -> Dict[str, Any]:
         with self._lock:

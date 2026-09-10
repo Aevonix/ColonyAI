@@ -8,12 +8,14 @@ from contextlib import closing
 from datetime import datetime, timezone
 import json
 import logging
+import math
 import os
 
-from .expectations import expectations_enabled
+from .expectations import DURATION_METHOD_V1, DURATION_METHOD_V2, expectations_enabled
 from .runtime_forecasts import _current, _digest
 
-VERSION = 'execution-duration-observation-v1'
+LEGACY_VERSION = 'execution-duration-observation-v1'
+VERSION = 'execution-duration-observation-v2'
 MEASUREMENT = 'first_api_observation_to_terminal'
 PRIOR_SECONDS = 480.0
 MAX_REQUESTS = 128
@@ -87,12 +89,13 @@ def _known(config):
 
 
 
-def _processor(data, config):
+def _processor(data, config, version=LEGACY_VERSION):
     requests = data['requests']
     complete = bool(requests) and not data['incomplete']
     configuration_matches = _known(config)
     served = set()
     errors = 0
+    input_buckets, tool_counts = [], []
     for pair in requests.values():
         start = pair.get('start')
         terminal = pair.get('response') or pair.get('error')
@@ -100,7 +103,17 @@ def _processor(data, config):
         for event in pair.values():
             configuration_matches &= all(event.get(key) == config[key] for key in ROUTING_KEYS)
         if start:
-            configuration_matches &= _config(start) == config
+            observed = _config(start)
+            if version == LEGACY_VERSION:
+                configuration_matches &= observed == config
+            else:
+                # Initial workload features select the cohort. Their ordinary
+                # evolution must not censor a longer completed execution.
+                configuration_matches &= (_known(observed) and all(
+                    observed[key] == config[key]
+                    for key in (*ROUTING_KEYS, 'max_tokens', 'output_limit_kind')))
+                input_buckets.append(observed['input_bucket'])
+                tool_counts.append(observed['tool_count'])
         response = pair.get('response')
         if response:
             if response.get('response_model'):
@@ -116,6 +129,9 @@ def _processor(data, config):
         'error_request_count': errors, 'configuration': config,
         'conditions_comparable': bool(complete and configuration_matches and len(served) == 1),
         'configuration_matches': bool(configuration_matches),
+        **({'workload_evolution': {'input_buckets': list(dict.fromkeys(input_buckets)),
+                                  'tool_counts': list(dict.fromkeys(tool_counts))}}
+           if version == VERSION else {}),
         'coverage': 'registered callback pairs only; auxiliary or dropped hooks may be absent'}
 
 
@@ -127,7 +143,7 @@ def _receipt(ledger, owner, execution_id, kind, facts, occurred_at):
         previous = db.execute('SELECT messages_json FROM turn_sources WHERE turn_id=?', (source,)).fetchone()
     if previous:
         retained = json.loads(previous[0])[0].get('_execution_runtime_facts', {})
-        if (retained.get('version'), retained.get('execution_id'), retained.get('kind')) != (VERSION, execution_id, facts['kind']):
+        if (retained.get('version'), retained.get('execution_id'), retained.get('kind')) != (facts['version'], execution_id, facts['kind']):
             raise ValueError('execution evidence binding conflict')
         facts = retained
     else:
@@ -168,15 +184,21 @@ def observe(registry, execution_id, owner):
                 or row['sequence'] != first['sequence'] or row['phase'] != 'model'):
             return {'status': 'no_prospective_forecast', 'suggestion_enabled': False}
         config = _config(first['event'])
-        cohort = 'hermes-execution:'+row['platform']+(':'+ 'child' if row['parent_execution_id'] else ':root')+':'+_digest(config)[:16]
+        prefix = 'hermes-execution:' if VERSION == LEGACY_VERSION else 'hermes-execution-v2:'
+        cohort = prefix+row['platform']+(':'+ 'child' if row['parent_execution_id'] else ':root')+':'+_digest(config)[:16]
+        method = DURATION_METHOD_V1 if VERSION == LEGACY_VERSION else DURATION_METHOD_V2
         training_model = [None]
         def current(prediction, outcome):
             facts = _facts(ledger, outcome)
             processor = facts.get('processor', {})
-            eligible = (_known(config) and prediction.detail['model_provenance']['capabilities'] == config
+            duration = facts.get('duration_seconds')
+            eligible = (_known(config) and prediction.detail['method'] == method
+                and prediction.detail['model_provenance']['capabilities'] == config
                 and facts.get('version') == VERSION and facts.get('observation_eligible') is True
                 and outcome['status'] == 'observed' and outcome['value'] is True
                 and processor.get('configuration') == config
+                and (VERSION == LEGACY_VERSION or (type(duration) in (int, float)
+                     and math.isfinite(duration) and duration > 0))
                 and _current(ledger, prediction.evidence_refs, prediction.detail['source_versions'], owner)
                 and _current(ledger, outcome['evidence_refs'], outcome['source_versions'], owner))
             if not eligible:
@@ -188,7 +210,8 @@ def observe(registry, execution_id, owner):
             return processor['served_model'] == training_model[0]
         now = registry.clock()
         estimate = store.estimate_duration(domain='task_duration', cohort=cohort, subject_person_id=owner,
-            viewer_scope='owner', prior_seconds=PRIOR_SECONDS, now=now, evidence_is_current=current)
+            viewer_scope='owner', prior_seconds=PRIOR_SECONDS, now=now, evidence_is_current=current,
+            method=method)
         estimate['training_served_model'] = training_model[0]
         # Origin is server receipt time, not the host's earlier callback clock.
         origin = first['observed_at']
@@ -209,19 +232,21 @@ def observe(registry, execution_id, owner):
             method=estimate['method'], model_provenance={'requested_role': None, 'served_model': None,
                 'model_revision': None, 'capabilities': config, 'fallback': None},
             subject_person_id=owner, viewer_scope='owner', shareability='owner_private',
-            conditions={'measurement': MEASUREMENT, 'estimate': estimate, 'prior_is_slo': False})
+            conditions={'measurement': MEASUREMENT, 'estimate': estimate, 'prior_is_slo': False,
+                **({'observation_version': VERSION} if VERSION != LEGACY_VERSION else {})})
         return {'status': 'issued', 'forecast_id': _fid(execution_id), 'suggestion_enabled': False}
     if row['state'] == 'observed' or history['outcomes']:
         return {'status': 'pending' if not history['outcomes'] else 'observed', 'suggestion_enabled': False}
     prediction = history['forecasts'][0]
-    processor = _processor(data, prediction['detail']['model_provenance']['capabilities'])
+    version = prediction['detail']['conditions'].get('observation_version', LEGACY_VERSION)
+    processor = _processor(data, prediction['detail']['model_provenance']['capabilities'], version)
     ended = row['last_observed_at']
     valid = _current(ledger, prediction['evidence_refs'], prediction['detail']['source_versions'], owner)
     eligible = bool(row['state'] == 'completed' and valid and processor['conditions_comparable']
                     and prediction['created_at'] <= ended and ended >= prediction['detail']['origin_at'])
     training_model = prediction['detail']['conditions']['estimate'].get('training_served_model')
     comparable = bool(eligible and (training_model is None or training_model == processor['served_model']))
-    facts = {'version': VERSION, 'kind': 'terminal', 'execution_id': execution_id, 'measurement': MEASUREMENT,
+    facts = {'version': version, 'kind': 'terminal', 'execution_id': execution_id, 'measurement': MEASUREMENT,
         'state': row['state'], 'ended_at': ended, 'processor': processor,
         'conditions_comparable': comparable, 'observation_eligible': eligible, 'quality_evaluated': False,
         'duration_seconds': ended-prediction['detail']['origin_at'],
@@ -297,7 +322,11 @@ def project(registry, execution_id, owner):
         result = {'status': 'shadow', 'forecast_id': _fid(execution_id), 'measurement': MEASUREMENT,
             'original_horizon': prediction['horizon'], 'prior_horizon': prediction['detail']['origin_at']+PRIOR_SECONDS,
             'sample_n': estimate['sample_n'], 'uncertain': estimate['uncertain'],
+            'method': prediction['detail']['method'], 'cohort': prediction['cohort'],
+            'observation_version': prediction['detail']['conditions'].get('observation_version', LEGACY_VERSION),
             'suggestion_enabled': False, 'quality_evaluated': False, 'conditions_comparable': False}
+        if 'clamped_comparison_seconds' in estimate:
+            result['clamped_comparison_horizon'] = prediction['detail']['origin_at']+estimate['clamped_comparison_seconds']
         if history['outcomes']:
             outcome = history['outcomes'][-1]
             facts = _facts(ledger, outcome)
@@ -313,6 +342,12 @@ def project(registry, execution_id, owner):
                     'prior_premature_inspection': result['prior_horizon'] < ended,
                     'forecast_inspection_lateness_seconds': max(0., result['original_horizon']-ended),
                     'prior_inspection_lateness_seconds': max(0., result['prior_horizon']-ended)}
+                if 'clamped_comparison_horizon' in result:
+                    clamped = result['clamped_comparison_horizon']
+                    result['comparison'].update(
+                        clamped_absolute_error_seconds=abs(ended-clamped),
+                        clamped_premature_inspection=clamped < ended,
+                        clamped_inspection_lateness_seconds=max(0., clamped-ended))
         return result
     except Exception:
         return {'status': 'unavailable', 'suggestion_enabled': False}

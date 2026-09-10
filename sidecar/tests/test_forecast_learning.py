@@ -196,3 +196,26 @@ def test_inspection_rejects_wrong_owner_and_time(inspection):
     assert runtime_forecasts.project({}, {}, state,'other',now=1300)=={'status':'source_unavailable'}
     for now in (999,float('nan'),float('inf')):
         assert runtime_forecasts.project({}, {}, state,'owner',now=now)=={'status':'unqualified_observation_time'}
+
+
+@pytest.mark.parametrize('duration', [10., 2000.])
+def test_shadow_v2_removes_both_ratio_clamps_but_retains_window_and_prior(tmp_path, duration):
+    store = ExpectationStore(str(tmp_path/'duration-v2.db'))
+    # Exercise the existing outcome store with 51 independent fixture receipts.
+    # These are arithmetic/retention cases, not a natural-work qualification.
+    for index in range(51):
+        origin = 1000 + index * 3000
+        issue(store, str(index), origin_at=origin, issued_at=origin+1, horizon=origin+480)
+        observed(store, str(index), observed_at=origin+duration, recorded_at=origin+duration+1)
+    args = dict(domain='task_duration', cohort='local-metadata', subject_person_id='owner',
+                viewer_scope='owner', prior_seconds=480, now=200000)
+    v1 = store.estimate_duration(**args)
+    v2 = store.estimate_duration(**args, method='receipt-duration-median-prior4-v2')
+    expected = round((4*480 + 50*duration)/54, 3)
+    assert v1['sample_n'] == v2['sample_n'] == 50
+    assert v2['seconds'] == expected
+    assert v1['seconds'] == v2['clamped_comparison_seconds'] == min(960, max(240, expected))
+    assert v2['evidence_refs'] == v1['evidence_refs']
+    assert 'receipt:0' not in v2['evidence_refs']
+    args['now'] = 1000 + duration + .5  # outcome not recorded yet
+    assert store.estimate_duration(**args, method='receipt-duration-median-prior4-v2')['sample_n'] == 0

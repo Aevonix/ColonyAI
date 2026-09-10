@@ -122,7 +122,9 @@ with patch.object(lifecycle,'has_hook',side_effect=lambda n:n in hooks),patch.ob
    assert agent._api_request_payload_for_hook(body).get('_truncated') is True
    assert len(trace)==(2 if case=='large_later_rewrite' else 1)
   _fire_pre_api_request_hook(agent,body,[],trace,
-   messages=[],original_user_message='private owner request',approx_tokens=8,total_chars=30,retry_count=retry,
+   messages=[],original_user_message='private owner request',
+   approx_tokens=20000 if case=='context_growth' and count==2 else 8,
+   total_chars=30,retry_count=retry,
    api_call_count=count,api_request_id=request_id,api_start_time=started,effective_task_id='task-a',turn_id='turn-a')
  pre('request-failed',1,0)
  assert len(payloads)==2,emitted
@@ -135,6 +137,8 @@ with patch.object(lifecycle,'has_hook',side_effect=lambda n:n in hooks),patch.ob
  agent._invoke_api_request_error_hook(task_id='task-a',turn_id='turn-a',api_request_id='request-failed',
   api_call_count=1,api_start_time=started,api_kwargs={'messages':[{'content':'private input'}]},
   error_type='TimeoutError',error_message='private error detail',retry_count=0,retryable=True)
+ if case=='tool_discovery': agent.tools=['discovered-tool']
+ if case=='route_change': agent.model='model-b'
  pre('request-retry',2,1)
  _fire_post_api_request_hook(agent,types.SimpleNamespace(model='model-a',usage=None),
   types.SimpleNamespace(content='private answer',tool_calls=[]),'stop',api_messages=[],api_call_count=2,
@@ -153,10 +157,18 @@ with patch.object(lifecycle,'has_hook',side_effect=lambda n:n in hooks),patch.ob
   'interrupted':False,'_turn_exit_reason':'text_response(stop)','_platform':'cli'})
  assert len(payloads)==6,emitted
 hist=host._expectations.store.forecast_history(forecasts._fid(eid))
-assert len(hist['outcomes'])==1 and hist['outcomes'][0]['status']==('censored' if expected_kind=='unknown' else 'observed'),hist
+assert len(hist['outcomes'])==1 and hist['outcomes'][0]['status']==('censored' if expected_kind=='unknown' or case=='route_change' else 'observed'),hist
 facts=forecasts._facts(registry.ledger,hist['outcomes'][0])
 assert facts['processor']['served_model']=='model-a' and facts['processor']['error_request_count']==1,facts
 assert facts['processor']['complete_observed_pairs'],facts
+assert facts['version']==forecasts.VERSION
+if case=='context_growth':
+ assert facts['processor']['workload_evolution']['input_buckets']==['up_to_4k','16k_to_64k'],facts
+ assert facts['conditions_comparable'],facts
+if case=='tool_discovery':
+ assert facts['processor']['workload_evolution']['tool_counts']==[0,1],facts
+ assert facts['conditions_comparable'],facts
+if case=='route_change': assert not facts['conditions_comparable'],facts
 text=json.dumps(payloads)
 for forbidden in ('private owner request','private source text','private-model.invalid','private answer','private error detail','private truncated request'):
  assert forbidden not in text,text
@@ -167,7 +179,8 @@ print(json.dumps({'actual_native_callbacks':True,'prospective':True,'retry_recor
 '''
 
 @pytest.mark.parametrize('case', ['request', 'provider_default', 'truncated',
-                                'large_request', 'large_provider_default', 'large_later_rewrite', 'large_wrong_request'])
+                                'large_request', 'large_provider_default', 'large_later_rewrite', 'large_wrong_request',
+                                'context_growth', 'tool_discovery', 'route_change'])
 def test_actual_hermes_execution_callbacks(tmp_path, case):
     python = os.environ.get('AEVA_HERMES_TEST_PYTHON')
     if not python:

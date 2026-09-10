@@ -57,11 +57,22 @@ the host clock. A missed first observation cannot be repaired by issuing a
 prediction after the response. The unchanged 480-second fallback is a comparison
 prior, not a promised latency or execution timeout.
 
-The existing duration estimator uses up to 50 original outcomes, with the same
-four-observation prior and bounded median update. Samples share platform,
+New execution forecasts use `execution-duration-observation-v2` and a separate
+`hermes-execution-v2:` cohort. Their `receipt-duration-median-prior4-v2` estimator
+uses up to 50 original outcomes, retaining a four-observation prior:
+`(4 * prior + n * median) / (4 + n)`. It removes the former permanent half-prior
+floor and double-prior ceiling. The window and prior still limit adaptation;
+the retained empirical hit fraction is explicitly not calibrated confidence.
+The same issue-time samples also freeze the former clamped calculation as a
+comparison, alongside the unchanged prior. These are fields on the existing
+forecast, not additional forecasts or independent sample counts. Samples share platform,
 root/child class, actual native runtime kind, selected profile fingerprint,
 requested model/provider/API mode, observed request output-limit policy, tool count and the
-first request input-token bucket (up to 4K, 16K, 64K, or above). Missing
+first request input-token bucket (up to 4K, 16K, 64K, or above). These are
+initial forecasting conditions. Later context growth or tool discovery stays
+eligible when recorded routing, protocol and output-limit policy remain stable.
+Terminal receipts retain the observed input-bucket and tool-count evolution as
+diagnostic covariates. Missing
 configuration remains incomparable; no task meaning is guessed from prose. The adapter
 reads only output-limit fields from the final native request payload. A complete
 payload with no limit explicitly forms a provider-default cohort, with the actual
@@ -107,12 +118,20 @@ forecast fields. Detailed original forecasts and source receipts remain in the
 existing expectation and source ledgers. No timing suggestion, notification,
 retry, approval, quality claim or work progression gate is enabled.
 
-Before claiming useful timing improvement, collect genuinely useful terminal
-work, retaining failed and incomplete attempts, and compare each untouched
-original horizon with its frozen prior. Close and identify the actual-model
-cohort before judging ten or more comparable outcomes. Check absolute error,
-premature inspection and inspection lateness separately from independent output
-quality. Do not count a parent and its child as independent completed tasks, or
+Existing V1 forecasts and receipt digests remain unchanged and readable. An
+unfinished V1 forecast settles under its original strict context/tool comparison.
+V1 outcomes cannot train V2 or fill a V2 qualification gate. Model aliases stay
+separate even when an operator believes the spelling change is cosmetic.
+
+Before claiming useful timing improvement, freeze the new method and cohort
+contract before collecting future useful work. Retain every failure and
+exclusion; score the first ten comparable natural outcomes in the selected
+actual-model cohort. Compare each untouched original horizon with both its
+frozen prior and its clamped counterfactual on that same new history. Check
+absolute error, premature inspection and mean inspection lateness separately
+from independent output quality. Declare a useful lateness target for the
+intended inspection before observing outcomes; beating a poor prior alone is
+insufficient. Old experiments retain their original denominators and gates. Do not count a parent and its child as independent completed tasks, or
 manufacture work to fill the sample count. Local callback qualification is not
 live benefit evidence.
 

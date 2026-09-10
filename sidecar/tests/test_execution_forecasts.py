@@ -106,8 +106,8 @@ def test_bounded_retry_keeps_first_failure_and_can_complete(runtime):
     assert processor['error_request_count'] == 1 and processor['observed_request_count'] == 2
 
 
-@pytest.mark.parametrize('size,comparable', [(4000, True), (20000, False), (None, False)])
-def test_later_requests_must_remain_in_the_forecast_input_bucket(runtime, size, comparable):
+@pytest.mark.parametrize('size,comparable', [(4000, True), (20000, True), (None, False)])
+def test_later_context_growth_is_observed_without_changing_initial_cohort(runtime, size, comparable):
     start(runtime)
     send(runtime, sequence=3, phase='between_calls', runtime=api('response', response_model='model-a'))
     send(runtime, sequence=4, phase='model', runtime=api(request_id='second', api_call_count=2,
@@ -164,7 +164,7 @@ def test_first_callback_failure_does_not_issue_late_after_response(runtime, monk
     assert history(runtime)['forecasts'] == []
 
 
-@pytest.mark.parametrize('field,value', [('approx_input_tokens',20000), ('profile_id','b'*64), ('max_tokens',16384), ('runtime_kind','kanban_worker')])
+@pytest.mark.parametrize('field,value', [('approx_input_tokens',20000), ('profile_id','b'*64), ('max_tokens',16384), ('runtime_kind','kanban_worker'), ('requested_model','different-alias')])
 def test_measured_request_configuration_keeps_different_work_separate(runtime, field, value):
     start(runtime); finish(runtime)
     send(runtime,'different')
@@ -256,3 +256,76 @@ def test_committed_terminal_settlement_recovers_without_rewriting_observation(ru
     registry.view(contact_id='contact-a', owner=True)
     send(runtime, sequence=4, phase='ended', state='completed')
     assert history(runtime)['outcomes'] == outcomes
+
+
+@pytest.mark.parametrize('growth', [False, True])
+def test_legacy_history_keeps_frozen_rules_and_cannot_train_v2(runtime, monkeypatch, growth):
+    # Issue using the exact predecessor contract, with no v2 condition field.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(forecasts, 'VERSION', forecasts.LEGACY_VERSION)
+        start(runtime, 'legacy')
+    original = history(runtime, 'legacy')['forecasts'][0]
+    assert 'observation_version' not in original['detail']['conditions']
+    assert original['detail']['method'] == 'receipt-duration-median-prior4-v1'
+    send(runtime, 'legacy', sequence=3, phase='between_calls', runtime=api('response', response_model='model-a'))
+    send(runtime, 'legacy', sequence=4, phase='model', runtime=api(request_id='second', api_call_count=2,
+         approx_input_tokens=20000 if growth else 2000))
+    send(runtime, 'legacy', sequence=5, phase='between_calls', runtime=api('response', request_id='second', response_model='model-a'))
+    runtime[2][0] += 90
+    assert send(runtime, 'legacy', sequence=6, phase='ended', state='completed')['forecast']['conditions_comparable'] is (not growth)
+    before = history(runtime, 'legacy')
+    start(runtime, 'new')
+    new = history(runtime, 'new')['forecasts'][0]
+    assert new['cohort'] != original['cohort']
+    assert new['detail']['conditions']['estimate']['sample_n'] == 0
+    assert new['detail']['method'] == 'receipt-duration-median-prior4-v2'
+    assert history(runtime, 'legacy') == before
+    read = forecasts.project(runtime[0], observation('legacy')['execution_id'], 'contact-a')
+    assert read['observation_version'] == forecasts.LEGACY_VERSION
+    assert read['conditions_comparable'] is (not growth)
+    assert 'clamped_comparison_horizon' not in read
+    assert read['suggestion_enabled'] is False
+
+
+def test_new_shadow_uses_only_prior_outcomes_and_retains_both_comparators(runtime):
+    originals = []
+    for index in range(11):
+        name = 'fixture-' + str(index)
+        start(runtime, name)
+        prediction = history(runtime, name)['forecasts'][0]
+        estimate = prediction['detail']['conditions']['estimate']
+        expected = round((4 * 480 + index * 10) / (4 + index), 3)
+        assert estimate['sample_n'] == index
+        assert estimate['seconds'] == expected
+        assert estimate['clamped_comparison_seconds'] == max(240, expected)
+        assert not estimate['confidence_is_calibrated']
+        originals.append((name, prediction['detail']))
+        send(runtime, name, sequence=3, phase='between_calls', runtime=api('response', response_model='model-a'))
+        runtime[2][0] += 10
+        send(runtime, name, sequence=4, phase='ended', state='completed')
+        read = forecasts.project(runtime[0], observation(name)['execution_id'], 'contact-a')
+        assert read['comparison']['forecast_absolute_error_seconds'] == pytest.approx(expected-10, abs=.001)
+        assert read['comparison']['clamped_absolute_error_seconds'] == pytest.approx(max(240,expected)-10, abs=.001)
+        assert read['comparison']['prior_absolute_error_seconds'] == 470
+        assert not read['suggestion_enabled']
+    assert estimate['seconds'] == 144.286  # no permanent 240-second floor
+    assert estimate['sample_n'] == 10 and not estimate['uncertain']
+    for name, original in originals:
+        assert history(runtime, name)['forecasts'][0]['detail'] == original
+
+
+@pytest.mark.parametrize('changed', [
+    {'requested_model': 'other-alias'}, {'provider': 'other-provider'},
+    {'api_mode': 'responses'}, {'profile_id': 'b'*64}, {'runtime_kind': 'cron'},
+])
+def test_v2_still_excludes_observed_route_and_protocol_changes(runtime, changed):
+    start(runtime)
+    send(runtime, sequence=3, phase='between_calls', runtime=api('response', response_model='model-a'))
+    send(runtime, sequence=4, phase='model', runtime=api(request_id='second', api_call_count=2,
+         approx_input_tokens=20000, tool_count=12, **changed))
+    send(runtime, sequence=5, phase='between_calls', runtime=api('response', request_id='second', response_model='model-a', **changed))
+    runtime[2][0] += 36
+    assert not send(runtime, sequence=6, phase='ended', state='completed')['forecast']['conditions_comparable']
+    assert history(runtime)['outcomes'][0]['status'] == 'censored'
+    start(runtime, 'next')
+    assert history(runtime, 'next')['forecasts'][0]['detail']['conditions']['estimate']['sample_n'] == 0

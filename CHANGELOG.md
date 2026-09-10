@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.7 - comparable execution forecasts and visible source tools
+
+New execution forecasts use a separate versioned cohort. Normal context growth
+and tool discovery remain eligible observations; changed routing or missing
+required measurements remain distinct. The duration estimate retains its small
+sample prior and removes the permanent ratio clamp. Old forecasts settle under
+their original rules and do not train the new cohort.
+
+The existing forecast record retains both the fixed prior and the old clamped
+calculation for comparison. Timing remains observational. These changes do not
+establish calibrated timing, useful scheduling or improved task quality.
+
+The native tool catalog now names original-image and PDF-text access in the
+source reader's first sentence. Tool permissions and behavior are unchanged.
+
 ## v1.1.6 - relevant current work and relationship context
 
 Present-work questions prefer the authenticated current work view over old
