@@ -13,7 +13,7 @@ with Hermes, but the commands below keep an existing Hermes installation intact:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.3" "colony-hermes==1.1.3"
+python -m pip install "colonyai[hermes]==1.1.4" "colony-hermes==1.1.4"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -148,7 +148,7 @@ their old draft job is paused. An older instance without a planning role or comp
 adapter needs explicit configuration or an adapter upgrade first.
 
 Graph/vector retrieval, embedding downloads and consequential background workers
-are disabled in this profile. Install `colonyai[graph,vectors]==1.1.3` only when
+are disabled in this profile. Install `colonyai[graph,vectors]==1.1.4` only when
 adding those services intentionally. Model quality still determines extraction and
 reasoning quality. Lexical retrieval does not promise semantic recall of every
 paraphrase. This setup is a growing local base, not a claim that every autonomous
@@ -251,11 +251,11 @@ Update both Colony distributions in the environment that runs Colony, selecting
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "colonyai[hermes]==1.1.3" "colony-hermes==1.1.3"
+python -m pip install --upgrade "colonyai[hermes]==1.1.4" "colony-hermes==1.1.4"
 colony init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
-Replace `1.1.3` with the release you are selecting. A Hermes interpreter with
+Replace `1.1.4` with the release you are selecting. A Hermes interpreter with
 native installed Colony entry points also needs that adapter package updated explicitly in its
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;

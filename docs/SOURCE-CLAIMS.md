@@ -130,9 +130,7 @@ episode quotes the entire eligible text message, deterministic source checks
 replace the second model review. The extractor still judges usefulness and
 correction references. The distinct `source_admission` marker records
 `whole_source_quote_unverified`; it does not invent a review or verify the report.
-Selected excerpts from longer messages and segmented audio keep context review.
-An
-explicit correction selects an offered prior episode, reuses that identity and
+Selected excerpts from longer messages and segmented audio keep context review. An explicit correction selects an offered prior episode, reuses that identity and
 retracts the mistaken report through the existing claim lineage. Its original
 source remains an identity dependency, so erasure or attribution changes revoke
 dependent interpretations; erasing the correction does not revive the old value.
