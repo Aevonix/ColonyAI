@@ -133,3 +133,27 @@ def test_many_board_details_cannot_take_the_native_ancestry_budget():
     native = {row['execution_id'] for row in rows(result) if row['source'] == 'execution'}
     assert {f'{2:064x}', f'{4:064x}'} <= native
     assert result['truncated'] and len(result['text']) <= 4000
+
+
+def test_recent_sibling_burst_preserves_other_active_sources_before_history():
+    current = execution(31, parent=1, session='current-child')
+    view = {'items': [current] + [execution(n, parent=1) for n in range(30, 22, -1)]
+            + [execution(1, age=180)], 'total': 31, 'truncated': True,
+        'local_work': {'items': [{'initiative_id': 'accepted-draft', 'status': 'running'}]},
+        'native_kanban': {'items': [{'native_task_id': 'active-board-task', 'status': 'running'}]},
+        'worker_work': {'items': [{'job_id': 'active-queue-job', 'state': 'running'}]},
+        'native_cron': {'items': [{'job_id': 'active-schedule', 'status': 'running'}]},
+        'reported_worker': {'items': [
+            {'label': 'active-download', 'state': 'running'},
+            {'label': 'old-download', 'state': 'exited', 'record_kind': 'terminal_report'}]}}
+    result = request_work_context(view, session_id='current-child')
+    projected = rows(result)
+    assert {row['source'] for row in projected} == {
+        'execution', 'local_work', 'native_kanban', 'worker_work', 'native_cron', 'reported_worker'}
+    native = {row['execution_id']: row for row in projected if row['source'] == 'execution'}
+    assert f'{1:064x}' in native and current['execution_id'] in native
+    assert all(not row.get('parent_execution_id') or row['parent_execution_id'] in native for row in native.values())
+    assert any(row.get('label') == 'active-download' for row in projected)
+    assert not any(row.get('label') == 'old-download' for row in projected)
+    assert len(projected) <= 8 and len(result['text']) <= 4000
+    assert result['truncated'] and not result['complete']
