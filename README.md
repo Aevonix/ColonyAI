@@ -22,7 +22,8 @@ Version 1.1.3 restores automatic recollection for authenticated native tasks
 whose human input was captured by an enrolled host. Recall uses that input's
 validated contact and session; it does not assume that every local task belongs
 to the owner. Shared work keeps available parent executions alongside children
-within the selected snapshot and existing context budget. The setup guide covers installation
+by fetching older active ancestors before applying the existing context budget.
+The setup guide covers installation
 from published packages and optional native task dispatch. These changes repair
 observed integration failures; useful continuity still depends on the model
 applying the supplied evidence correctly.

@@ -9,8 +9,9 @@ contact. This adds no owner fallback for unchecked supplied input. Channel
 senders must still match, and source erasure invalidates dependent recall before
 another request. Existing explicit owner-system configuration is unchanged.
 
-Shared work prioritizes current native executions and keeps available ancestors
-with their children under the existing eight-record and 4,000-character limits.
+Shared work fetches available active ancestors before projecting current native
+executions under the existing eight-record and 4,000-character limits. Parents
+stay with their children even when newer siblings fill the initial selection.
 Optional historical reports follow active work. Omitted records remain explicit;
 execution ancestry does not establish that two tasks have the same purpose.
 

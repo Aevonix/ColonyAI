@@ -82,7 +82,8 @@ class ExecutionRegistry:
         forecast = safe_observe(self, value['execution_id'], contact_id)
         return {"accepted": True, "lease_seconds": 120, **({'forecast': forecast} if forecast else {})}
 
-    def view(self, *, contact_id: str, owner: bool = False, session_id: str = "", limit: int = 20) -> dict:
+    def view(self, *, contact_id: str, owner: bool = False, session_id: str = "", limit: int = 20,
+             include_ancestors: bool = False) -> dict:
         if owner:
             from colony_sidecar.self_model.execution_forecasts import safe_reconcile
             safe_reconcile(self, contact_id)
@@ -95,9 +96,28 @@ class ExecutionRegistry:
             clauses.extend(["contact_id=?", "session_id=?"])
             args.extend([contact_id, session_id])
         where = " AND ".join(clauses)
+        columns = "execution_id, session_id, turn_id, parent_execution_id, platform, phase, tool_name, last_observed_at, lease_until"
         with closing(self.ledger._connect()) as conn:
+            conn.execute("BEGIN")
             total = conn.execute("SELECT count(*) FROM execution_observations WHERE " + where, args).fetchone()[0]
-            rows = conn.execute("SELECT execution_id, session_id, turn_id, parent_execution_id, platform, phase, tool_name, last_observed_at, lease_until FROM execution_observations WHERE " + where + " ORDER BY last_observed_at DESC, execution_id LIMIT ?", [*args, limit]).fetchall()
+            rows = conn.execute("SELECT " + columns + " FROM execution_observations WHERE " + where + " ORDER BY last_observed_at DESC, execution_id LIMIT ?", [*args, limit]).fetchall()
+            if owner and include_ancestors:
+                # Fetch ancestors from the same scoped snapshot before the final
+                # prompt budget. A quiet parent may precede many active siblings.
+                # Each row has one parent; a family longer than eight cannot fit.
+                seen = {row["execution_id"] for row in rows}
+                frontier = rows
+                for _ in range(min(limit, 8)):
+                    missing = {row["parent_execution_id"] for row in frontier
+                               if row["parent_execution_id"] and row["parent_execution_id"] not in seen}
+                    if not missing:
+                        break
+                    seen.update(missing)
+                    placeholders = ",".join("?" for _ in missing)
+                    frontier = conn.execute("SELECT " + columns + " FROM execution_observations WHERE "
+                        + where + " AND execution_id IN (" + placeholders + ")",
+                        [*args, *sorted(missing)]).fetchall()
+                    rows.extend(frontier)
         items = []
         for row in rows:
             item = dict(row)

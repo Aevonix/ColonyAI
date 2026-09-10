@@ -235,3 +235,56 @@ def test_enabled_tool_observer_preserves_owner_guest_authority(runtime):
     assert json.loads(owner)["running"] is True
     assert json.loads(guest).get("running") is not True
     assert module._TOOL_EXECUTION_CONTEXT.get() is None
+
+
+@pytest.mark.asyncio
+async def test_request_endpoint_fetches_quiet_parent_before_eight_row_projection(store, monkeypatch):
+    import json
+    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setattr(executions, "registry", lambda: store)
+    now = [1000.0]
+    store.clock = lambda: now[0]
+    parent = observation("quiet-parent", contact_id="owner")
+    store.observe(parent, principal_id="host", contact_id="owner")
+    now[0] += 180
+    for n in range(30):
+        store.observe(observation("sibling-"+str(n), contact_id="owner",
+            parent_execution_id=parent["execution_id"], platform="subagent"),
+            principal_id="host", contact_id="owner")
+        now[0] += 1
+    selected = store.view(contact_id="owner", owner=True, limit=8)
+    assert parent["execution_id"] not in {r["execution_id"] for r in selected["items"]}
+    app = FastAPI()
+    @app.middleware("http")
+    async def auth(request, call_next):
+        request.state.colony_authority = RequestAuthority(principal_id="owner-host", credential_id="key",
+            scopes=frozenset({"context:read"}), viewer_person_id="owner", person_ids=frozenset({"owner"}),
+            audiences=frozenset({"owner"}), authenticated=True)
+        return await call_next(request)
+    app.include_router(executions.router)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        result = await client.get('/v1/host/executions', params={
+            'contact_id': 'owner', 'session_id': 'session-sibling-29', 'projection': 'request'})
+    assert result.status_code == 200
+    packet = result.json()
+    rows = [json.loads(line) for line in packet['text'].splitlines() if line.startswith('{')]
+    native = {row['execution_id']: row for row in rows if row['source'] == 'execution'}
+    assert parent['execution_id'] in native and observation('sibling-29')['execution_id'] in native
+    assert native[parent['execution_id']]['liveness'] == 'unknown'
+    assert all(not row.get('parent_execution_id') or row['parent_execution_id'] in native for row in native.values())
+    assert len(rows) <= 8 and len(packet['text']) <= 4000
+    assert packet['truncated'] and not packet['complete']
+    assert packet['work_sources']['execution']['total'] == 31
+
+
+def test_ancestry_lookup_keeps_guest_session_and_terminal_selection_unchanged(store):
+    parent = observation('parent')
+    store.observe(parent, principal_id='host', contact_id='contact-a')
+    child = observation('child', parent_execution_id=parent['execution_id'])
+    store.observe(child, principal_id='host', contact_id='contact-a')
+    guest = store.view(contact_id='contact-a', session_id='session-child', limit=1, include_ancestors=True)
+    assert [row['execution_id'] for row in guest['items']] == [child['execution_id']]
+    store.observe({**parent, 'state': 'completed', 'phase': 'ended', 'sequence': 2}, principal_id='host', contact_id='contact-a')
+    owner = store.view(contact_id='owner', owner=True, limit=1, include_ancestors=True)
+    assert owner['total'] == 1
+    assert [row['execution_id'] for row in owner['items']] == [child['execution_id']]
