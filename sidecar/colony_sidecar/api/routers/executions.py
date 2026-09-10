@@ -75,18 +75,18 @@ async def with_queue_work(view, *, owner, limit=8):
 
     queue = getattr(host._task_queue, 'queue', host._task_queue)
 
-    async def read(reader, *, asynchronous=False):
+    async def read(reader, *, asynchronous=False, **reader_kwargs):
         # These are independent read-only snapshots. One unavailable ledger
         # must not hide work observed by all the other readers. Cancellation of
         # a thread await does not stop its read; native readers bound SQLite work.
         try:
-            operation = reader(limit=limit) if asynchronous else asyncio.to_thread(reader, limit=limit)
+            operation = reader(limit=limit, **reader_kwargs) if asynchronous else asyncio.to_thread(reader, limit=limit, **reader_kwargs)
             value = await asyncio.wait_for(operation, timeout=.2)
             if value is None:
                 return None
             return {**value, 'observed_at': time.time()}
         except Exception:
-            return {'items': [], 'available': False, 'unavailable': True,
+            return {'items': [], 'recent': [], 'available': False, 'unavailable': True,
                     'reason': 'work_source_unavailable', 'observed_at': time.time()}
 
     async def queue_view():
@@ -98,7 +98,9 @@ async def with_queue_work(view, *, owner, limit=8):
     # All sources share the existing request budget, rather than each taking
     # another sequential budget after the native ledgers finish.
     view['native_cron'], view['local_work'], view['native_kanban'], reported, view['worker_work'] = await asyncio.gather(
-        read(cron_view), read(local_work_view), read(kanban_view),
+        # Leave executor/return slack for the multi-board reader to retain
+        # faster boards when its own partial-read budget is exhausted.
+        read(cron_view), read(local_work_view), read(kanban_view, read_budget=.15),
         read(reported_worker_view), queue_view())
     if reported is not None:
         view['reported_worker'] = reported

@@ -133,6 +133,9 @@ def _coverage_line(coverage):
     parts = []
     for source, row in coverage.items():
         count = str(row['total']) if 'total' in row else str(row['items_returned']) + '+'
+        if 'recent_total' in row or row['recent_returned']:
+            recent = str(row['recent_total']) if 'recent_total' in row else str(row['recent_returned']) + '+'
+            count = count + ' active, ' + recent + ' recent'
         state = row['status']
         parts.append(source + '=' + (count + ' records' if state == 'observed'
                                      else count + ' records, partial' if state == 'partial' else state))

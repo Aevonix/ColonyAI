@@ -22,6 +22,8 @@ are never added to the request projection.
 The full API and request response include `work_sources`: each reader's status,
 returned record counts, known totals, truncation and read timestamp when known.
 Request responses also report how many rows from each source fit the excerpt.
+Active and recent terminal counts are reported separately. If a reader lacks
+a recent total, the coverage gives the returned recent count as a lower bound.
 The prompt names source coverage and takes records round-robin across readers,
 so a backlog of accepted drafts cannot consume all slots before another session
 or cron is considered. A row that cannot fit is omitted without preventing
@@ -39,8 +41,13 @@ can describe the same undertaking; do not sum them into a unique task count.
 | `reported_worker` | Configured local status files, including unverified terminal reports; no configured reader is `not_observed` |
 
 Independent ledger reads run concurrently with 200 ms read deadlines. A failed
-reader becomes unavailable while other observations remain usable. These are
-separate snapshots, not one atomic snapshot across databases. Cancelling the
+reader becomes unavailable while other observations remain usable.
+The multi-board reader uses a 150 ms internal budget during this fan-in, leaving
+time for its partial result to return before the outer deadline. A slow later
+board therefore need not discard already observed faster boards. Failed reader
+results retain empty active and recent rows so turn-start formatting preserves
+the other sources. These are separate snapshots, not one atomic snapshot across
+databases. Cancelling the
 await does not kill an underlying read-only thread. Selected readers retain
 their existing bounded SQLite reads. Other profiles, unregistered processes and
 independent direct-delivery receipts are outside this inventory. `complete`

@@ -59,7 +59,7 @@ def observed_boards():
     return home, boards, selection
 
 
-def kanban_view(*, limit=8, now=None):
+def kanban_view(*, limit=8, now=None, read_budget=.2):
     """Owner-only operational projection; no board initialization or dispatch."""
     view = {'source': 'hermes_native_kanban_ledgers', 'available': False,
             'items': [], 'recent': [], 'complete': False, 'boards': [],
@@ -74,7 +74,7 @@ def kanban_view(*, limit=8, now=None):
     view.update(source_home_id=hashlib.sha256(str(home).encode()).hexdigest(), selection=selection)
     limit = max(1, min(int(limit), 100))
     now = time.time() if now is None else now
-    deadline = time.monotonic() + .2
+    deadline = time.monotonic() + min(.2, max(.001, read_budget))
     active, recent, total, recent_total = [], [], 0, 0
     for board in boards:
         coverage = {'board': board, 'available': False}
