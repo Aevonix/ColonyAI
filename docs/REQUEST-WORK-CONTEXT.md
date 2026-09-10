@@ -75,6 +75,24 @@ closes only an exact previously bound child and preserves prior terminal
 states. Unrecognized statuses become `ended`, not successful completion. A
 missing observation or unavailable service still becomes unknown on expiry.
 
+Hermes can also skip `pre_llm_call` when another session is still invoking that
+same callback. The Colony memory provider's existing synchronous `on_turn_start`
+now retains a transient copy of the clean native text input and transport context.
+The supported request middleware binds it to one exact session/task/turn and
+can run the missed initialization before recall, work and tool authority are
+used. It resolves the original sender through the same contact endpoint; model
+arguments and recalled prose cannot supply the sender or clean input. A per-turn
+initialization claim prevents duplicate observers from resetting read receipts.
+Conflicting identities poison that exact scope rather than changing the speaker.
+
+This recovery is limited to a matching plain-text native input. Without the
+memory-provider callback, a matching native transport, or a supported input
+shape, missing binding remains unavailable. Derived host inputs, native draft
+workers, delegated children and background reviews keep their existing explicit
+provenance/parent rules; this recovery cannot promote them to an owner turn.
+It introduces no persistent input store and does not disable native hook
+timeouts. Other observational hooks remain best-effort.
+
 The native integration fixture runs one turn through three model requests and
 two native file reads. A concurrent HTTP writer completes an existing neutral
 initiative between requests. The next request sees its completion and report
