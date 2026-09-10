@@ -18,17 +18,19 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.0.34 adds a [profile read-receipt preference](docs/LOCAL-HERMES-SETUP.md#whatsapp-read-receipts-for-a-selected-profile)
-with a config-only preview and apply path. It preserves channel selection and
-does not imply online presence.
+Version 1.0.36 preserves exact message ownership during source recall, rechecks
+corrected contact attribution before dispatch, and lets a supported vision
+processor reopen an authorized original image. Shared work gives each selected
+source space in the request context and distinguishes active work from recent
+completions, including partial observations when another reader is unavailable.
+These are qualified integration behaviors, not a claim that every model answer
+is grounded or every external process is visible.
 
-Version 1.0.33 lets an authenticated host carry already captured human input
-into a native task through exact source references. Derived task instructions
-do not become duplicate human testimony; assistant replies retain the original
-input and source dependencies through the existing erasure checks. See the
-[host-input contract](plugins/hermes-plugin/SUPPLIED-INPUT.md).
-These dependent replies are retained even when the native platform is excluded
-from ordinary conversation capture; ordinary excluded turns remain excluded.
+The [profile read-receipt preference](docs/LOCAL-HERMES-SETUP.md#whatsapp-read-receipts-for-a-selected-profile)
+has a config-only preview and apply path. It preserves channel selection and
+does not imply online presence. Authenticated hosts can carry already captured
+human input into a native task through [exact source references](plugins/hermes-plugin/SUPPLIED-INPUT.md),
+keeping derived task instructions distinct from human testimony.
 
 Attributed corrections appear first when ranking source evidence,
 while keeping the full original and correction packet intact. The changed input
