@@ -81,6 +81,8 @@ No-text pages might be scans, images, or intentionally blank. The system does
 not infer which. A preexisting OCR layer can be extracted, but its accuracy is
 not validated. Extraction errors are terminal dispositions, not hidden retry
 loops. A crashed in-progress job can be reclaimed after its lease expires.
+The shared worker claims eligible image and PDF jobs in original insertion
+order, so later PDF arrivals cannot continually overtake a waiting image.
 
 ## Ownership, correction, recovery, and rollback
 

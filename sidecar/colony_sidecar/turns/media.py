@@ -276,17 +276,26 @@ class SourceMedia:
         with closing(self.ledger._connect()) as conn:
             return 'pending' if conn.execute("SELECT 1 FROM source_media WHERE status='orphan'").fetchone() else 'complete'
 
-    def claim_job(self):
+    def claim_job(self, *, include_documents=False):
         now = time.time()
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
-            row = conn.execute('''SELECT * FROM source_media WHERE
-                (status='pending' AND next_attempt<=?) OR (status='running' AND lease_until<=?) LIMIT 1''', (now, now)).fetchone()
+            eligibility = "(status='pending' AND next_attempt<=?) OR (status='running' AND lease_until<=?)"
+            parameters = [now, now]
+            if include_documents:
+                eligibility += " OR (mime_type='application/pdf' AND (status='document_pending' OR (status='document_running' AND lease_until<=?)))"
+                parameters.append(now)
+            # Original insertion order is shared across media kinds. A stream
+            # of later PDF arrivals cannot starve an already eligible image,
+            # or vice versa. Leased, failed and orphan rows are not eligible.
+            row = conn.execute('SELECT * FROM source_media WHERE ' + eligibility + ' ORDER BY rowid LIMIT 1',
+                               parameters).fetchone()
             if row is None:
                 return None
             token = uuid.uuid4().hex
-            conn.execute("UPDATE source_media SET status='running',attempts=attempts+1,lease_token=?,lease_until=? WHERE asset_hash=?",
-                         (token, now + 60, row['asset_hash']))
+            status = 'document_running' if row['mime_type'] == 'application/pdf' else 'running'
+            conn.execute("UPDATE source_media SET status=?,attempts=attempts+1,lease_token=?,lease_until=? WHERE asset_hash=?",
+                         (status, token, now + 60, row['asset_hash']))
             return dict(row, lease_token=token)
 
     def finish(self, job, *, description=None, model=None, error=None, model_provenance=None):
@@ -360,13 +369,12 @@ class SourceMedia:
             # A fenced but undeletable orphan must not starve other image jobs.
             # Explicit erasure reports pending; later passes retry deletion.
             pass
-        document = self.claim_document_job()
-        if document is not None:
-            await self.process_document(document)
-            return True
-        job = self.claim_job()
+        job = self.claim_job(include_documents=True)
         if job is None:
             return False
+        if job['mime_type'] == 'application/pdf':
+            await self.process_document(job)
+            return True
         try:
             from colony_sidecar.beliefs.source_claims import local_tier
             from colony_sidecar.router.tiers import ModelTier

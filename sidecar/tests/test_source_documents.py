@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import sys
+import time
 
 import httpx
 import pytest
@@ -253,3 +254,51 @@ async def test_parser_child_is_reaped_after_timeout_or_worker_cancellation(monke
     else:
         assert (await job)['reason'] == 'parser_time_limit'
     assert len(children) == 1 and children[0].returncode is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('document_first', [False, True])
+async def test_shared_worker_fifo_does_not_starve_either_media_kind(tmp_path, document_first):
+    from test_source_media import message as image_message, Vision
+    ledger = TurnIdempotencyLedger(tmp_path/'sources.db'); media = SourceMedia(ledger)
+    first = message() if document_first else image_message()
+    second = image_message() if document_first else message()
+    for identifier, original in [('first', first), ('second', second)]:
+        ledger.record_source(identifier, contact_id='a', session_id='s', messages=[original], derive_claims=False)
+    vision = Vision()
+    assert await media.process_one(vision)
+    assert vision.calls == (0 if document_first else 1)
+    # Later PDF arrivals must not overtake either earlier original.
+    for number in range(3):
+        data = pdf_bytes((f'Later PDF {number}.',))
+        ledger.record_source('later-' + str(number), contact_id='a', session_id='s',
+                             messages=[message(data)], derive_claims=False)
+    assert await media.process_one(vision)
+    assert vision.calls == 1
+    with closing(ledger._connect()) as db:
+        rows = db.execute('SELECT mime_type,status,attempts FROM source_media ORDER BY rowid').fetchall()
+        assert all(row['status'] == 'complete' and row['attempts'] == 1 for row in rows[:2])
+        assert all(row['status'] == 'document_pending' and row['attempts'] == 0 for row in rows[2:])
+
+
+@pytest.mark.asyncio
+async def test_noneligible_document_rows_and_image_retry_deadlines_do_not_block_worker(tmp_path):
+    from test_source_media import message as image_message, Vision
+    ledger = TurnIdempotencyLedger(tmp_path/'sources.db'); media = SourceMedia(ledger)
+    for number, status in enumerate(('document_running', 'document_failed', 'document_unsupported', 'orphan')):
+        data = pdf_bytes((f'Ineligible PDF {number}.',)); asset = hashlib.sha256(data).hexdigest()
+        ledger.record_source('pdf-' + str(number), contact_id='a', session_id='s', messages=[message(data)], derive_claims=False)
+        with closing(ledger._connect()) as db, db:
+            db.execute('UPDATE source_media SET status=?,lease_until=? WHERE asset_hash=?', (status, time.time() + 600, asset))
+            if status == 'orphan': db.execute('DELETE FROM source_media_links WHERE asset_hash=?', (asset,))
+    ledger.record_source('image', contact_id='a', session_id='s', messages=[image_message()], derive_claims=False)
+    with closing(ledger._connect()) as db, db:
+        db.execute("UPDATE source_media SET next_attempt=? WHERE mime_type='image/png'", (time.time() + 600,))
+    assert media.claim_job(include_documents=True) is None
+    with closing(ledger._connect()) as db, db:
+        db.execute("UPDATE source_media SET next_attempt=0 WHERE mime_type='image/png'")
+    vision = Vision(); assert await media.process_one(vision)
+    assert vision.calls == 1
+    with closing(ledger._connect()) as db:
+        assert db.execute("SELECT attempts FROM source_media WHERE mime_type='image/png'").fetchone()[0] == 1
+        assert all(row[0] == 0 for row in db.execute("SELECT attempts FROM source_media WHERE mime_type='application/pdf'"))
