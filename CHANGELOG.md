@@ -12,6 +12,10 @@ identical behavior hints render once while their records and source references
 remain intact. This changes relevant context selection, not evidence validation,
 relationship authority or automatic opinion activation.
 
+The existing `source_appraisal` and `self_judgment` tasks now accept per-task
+role overrides. Each operator uses the same task selection for dispatch and its
+lease deadline. Default roles, prompts and activation settings are unchanged.
+
 Focused regressions reproduce the omitted topic and mixed-history comparison
 failures. They do not establish grounded model answers or useful relationship
 adaptation; first model failures remain part of deployment qualification.
