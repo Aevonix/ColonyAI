@@ -225,7 +225,8 @@ request alias can work even when absent from the server's listing. Only an
 actual failed completion affects availability. A missing listing therefore
 remains an observation failure without disabling working inference.
 
-Source assertions now request `extraction`, image descriptions request `vision`,
+Source assertions default to `extraction`, with an optional task-role override;
+image descriptions request `vision`,
 and project plans request `planning`. Existing named task hints map compression
 and ToM extraction to `extraction`, working-state thinking to `reasoning`, skill
 distillation to `judging`, and tool drafts to `coding`. Other router calls default

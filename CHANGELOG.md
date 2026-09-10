@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.1.5 - task-specific processors and recoverable source admission
+
+Optional `taskRoles` selects an existing function role for a supported cognitive
+task. Source-memory formation can use reasoning while other extraction remains
+unchanged. Capability hints, worker budgets and dispatch share the same selector;
+explicit per-call roles take priority. Invalid maps preserve the last valid
+configuration, and active requests retain their selected snapshot.
+
+Native source handoffs report whether a transient verification failure happened
+before any successful admission. Temporary network failures and an exhausted
+initial freshness allowance remain distinct from erasure, invalid scope or a
+changed source. The scope stays blocked; a host may start one fresh process under
+its existing deadline. This release adds no automatic replay after admission,
+new service or additional request budget.
+
+Focused checks exercise routing reload, actual native startup, source invalidation
+and a private host's bounded subprocess retry. They do not establish improved
+memory quality, actual fleet rebinding or ordinary task recovery on their own.
+
 ## v1.1.4 - attributed experience and useful operational context
 
 Substantive experiences can use exact attributed episodes in the existing source
