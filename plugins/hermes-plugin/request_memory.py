@@ -460,7 +460,7 @@ class RequestMemory:
                 for _ in range(4):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        break
+                        raise TimeoutError('source_freshness_verification_deadline')
                     if source_refs:
                         response = self.client.post('/v1/host/memory/sources/erasures',
                             json={'contact_id': contact, 'after': watermark,

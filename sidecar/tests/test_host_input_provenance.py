@@ -191,6 +191,32 @@ def test_failure_after_any_admission_never_permits_replay(handoff, monkeypatch):
         assert supplied.failure == {'reason': 'source_freshness_unavailable', 'admitted': True, 'retryable': False}
 
 
+def test_expired_initial_budget_after_local_read_stays_transient(handoff, monkeypatch):
+    import time
+    h = handoff
+    erasure_state = h.module.TurnOutbox.erasure_state
+    delayed = []
+    def checked_then_delayed(outbox, *args, **kwargs):
+        result = erasure_state(outbox, *args, **kwargs)
+        if kwargs.get('deadline_monotonic') is not None and not delayed:
+            delayed.append(True)
+            # The read completed, but scheduling consumed the remaining
+            # initial verification budget before the next request can start.
+            time.sleep(.35)
+        return result
+    monkeypatch.setattr(h.module.TurnOutbox, 'erasure_state', checked_then_delayed)
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        blocked = h.start()
+        assert len(delayed) == 1 and blocked['request']['tools'] == []
+        assert 'temporarily unavailable' in json.dumps(blocked['request'])
+        assert supplied.failure == {'reason': 'source_freshness_unavailable', 'admitted': False, 'retryable': True}
+        # A later successful check cannot reopen this failed native task.
+        h.finish()
+        assert supplied.result is None and supplied.memory_contact('native') == ''
+    assert h.outbox.snapshot() == []
+
+
 @pytest.mark.parametrize('entry', ['pre_api_request', 'llm_request'])
 def test_native_compression_rotation_preserves_input_memory_and_root_result(handoff, monkeypatch, entry):
     h = handoff
