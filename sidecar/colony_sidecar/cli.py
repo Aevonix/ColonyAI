@@ -39,6 +39,9 @@ def main() -> None:
     init_p.add_argument("--agent-values", help="Comma-separated guiding values for a new private agent")
     init_p.add_argument("--timezone", help="Named timezone for the private agent's expectations, for example Europe/Paris")
     init_p.add_argument("--quiet-hours", help="Optional local follow-up quiet window, HH:MM-HH:MM; grants no outreach permission")
+    init_p.add_argument("--whatsapp-read-receipts", choices=["on", "off"], help="Set this Hermes profile's read receipts for accepted WhatsApp messages; omission preserves its setting")
+    init_p.add_argument("--preferences-only", action="store_true", help="Update only an existing Hermes config preference; skip instance and model setup")
+    init_p.add_argument("--preview", action="store_true", help="With --preferences-only, show changed preference paths without writing")
     init_p.add_argument("--model-url", help="One local OpenAI-compatible API root")
     init_p.add_argument("--model", help="Model identifier at that endpoint")
     init_p.add_argument("--adapter-wheel", help="Use this canonical colony-hermes wheel instead of the installed distribution")
@@ -298,6 +301,8 @@ def main() -> None:
         code = run_init(root_dir=args.dir, args=args)
         if code != 0:
             sys.exit(code)
+        if args.preferences_only:
+            return
 
         # Initialize Colony identity if not already done
         _load_dotenv()

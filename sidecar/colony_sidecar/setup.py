@@ -1889,6 +1889,14 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         root_dir: Root directory for config files
         args: Parsed argparse Namespace for non-interactive mode
     """
+    if (getattr(args, 'preferences_only', False) or getattr(args, 'preview', False)
+            or getattr(args, 'whatsapp_read_receipts', None) is not None):
+        if (getattr(args, 'no_harness', False) or getattr(args, 'mcp_harnesses', None)
+                or getattr(args, 'host_framework', None) not in (None, 'hermes')):
+            print('Hermes profile preferences cannot be combined with another harness setup.')
+            return 1
+        from colony_sidecar.setup_hermes import run
+        return run(root_dir, args)
     if (not getattr(args, 'no_harness', False) and not getattr(args, 'mcp_harnesses', None)
             and getattr(args, 'host_framework', None) in (None, 'hermes')):
         from colony_sidecar.setup_hermes import run

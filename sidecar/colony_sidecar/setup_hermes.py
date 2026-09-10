@@ -41,6 +41,91 @@ def _json(value):
     return json.dumps(value, indent=2, ensure_ascii=False) + '\n'
 
 
+def _receipt_preference(config, choice):
+    """Project one native shared key, respecting Hermes' existing YAML layouts.
+
+    Shared-key bridging chooses whatsapp, gateway.platforms.whatsapp, then
+    platforms.whatsapp. Nested extra maps are merged separately. Synchronize
+    existing aliases so an older spelling cannot override the explicit choice.
+    Copy each touched mapping to avoid changing unrelated YAML anchor aliases.
+    """
+    if choice not in {'on', 'off'}:
+        raise ValueError('WhatsApp read receipts must be on or off')
+    candidate = dict(config)
+    key, enabled, changes = 'send_read_receipts', choice == 'on', []
+
+    def mapping(parent, name, create=False):
+        if name not in parent and not create:
+            return None
+        value = parent.get(name, {})
+        if not isinstance(value, dict):
+            raise ValueError('WhatsApp configuration sections and extra settings must be mappings')
+        parent[name] = dict(value)
+        return parent[name]
+
+    slots = []
+    for path, merged in [(('whatsapp',), False),
+                         (('gateway', 'platforms', 'whatsapp'), True),
+                         (('platforms', 'whatsapp'), True),
+                         (('gateway', 'whatsapp'), True)]:
+        node = candidate
+        for part in path:
+            node = mapping(node, part)
+            if node is None:
+                break
+        if node is not None:
+            extra = mapping(node, 'extra')
+            slots.append((path, node, extra, merged))
+    chosen = next((row for row in slots if row[0] != ('gateway', 'whatsapp')), None)
+    effective = bool(chosen and key in chosen[1]) or any(
+        merged and extra is not None and key in extra for _, _, extra, merged in slots)
+    # Stock Hermes treats any merged extras as connection configuration. Do not
+    # introduce that signal when channel selection exists only outside YAML.
+    explicit_selection = any('enabled' in node for _, node, _, merged in slots
+                             if merged or node is (chosen[1] if chosen else None))
+    existing_extras = any(merged and extra for _, _, extra, merged in slots)
+    if not (explicit_selection or effective or existing_extras):
+        raise ValueError('Select WhatsApp enabled: true or enabled: false explicitly in Hermes config.yaml before adding a receipt preference')
+
+    def assign(node, path):
+        if node.get(key) is not enabled:
+            node[key] = enabled
+            changes.append('.'.join((*path, key)))
+
+    for path, node, extra, _ in slots:
+        if key in node:
+            assign(node, path)
+        if extra is not None and key in extra:
+            assign(extra, (*path, 'extra'))
+    if not effective:
+        if chosen:
+            assign(chosen[1], chosen[0])
+        elif slots:  # gateway.whatsapp.extra is merged, its direct keys are not.
+            path, node, _, _ = slots[0]
+            assign(mapping(node, 'extra', True), (*path, 'extra'))
+        else:
+            platforms = mapping(candidate, 'platforms', True)
+            whatsapp = mapping(platforms, 'whatsapp', True)
+            assign(mapping(whatsapp, 'extra', True), ('platforms', 'whatsapp', 'extra'))
+    return candidate, changes
+
+
+def _write_receipt_preference(home, choice, preview=False):
+    from . import setup
+    path = home/'config.yaml'
+    original, config = setup._read_hermes_config(path)
+    if original is None:
+        raise ValueError('Preference updates require an existing Hermes config.yaml')
+    candidate, changes = _receipt_preference(config, choice)
+    if not preview and changes:
+        setup._atomic_hermes_config_write(path, original,
+            yaml.safe_dump(candidate, sort_keys=False, allow_unicode=True).encode())
+    print(('Preview' if preview else 'Configured') + ': WhatsApp read receipts ' + choice)
+    print('Changed preference paths: ' + (', '.join(changes) if changes else 'none'))
+    if not preview:
+        print('Use the selected gateway lifecycle to reconnect and load this setting; no process was restarted.')
+
+
 def _agent_preferences(ask, args, config):
     """Private identity and time preferences; no automatic permission grants."""
     value_text = ask('Guiding values (comma-separated, optional)',
@@ -414,7 +499,28 @@ def run(root_dir=None, args=None):
             raise ValueError('Configuration values must fit on one line')
         return result
     try:
-        home, selected_python = _select_home(args, ask)
+        receipt_choice = getattr(args, 'whatsapp_read_receipts', None)
+        preferences_only = bool(getattr(args, 'preferences_only', False))
+        preview = bool(getattr(args, 'preview', False))
+        if preferences_only:
+            home = setup._resolve_hermes_home(getattr(args, 'hermes_home', None))
+            selected_python = None
+        else:
+            home, selected_python = _select_home(args, ask)
+        if preview and not preferences_only:
+            raise ValueError('--preview requires --preferences-only')
+        if preferences_only:
+            if receipt_choice is None:
+                raise ValueError('--preferences-only requires --whatsapp-read-receipts on or off')
+            if root_dir or any(getattr(args, name, None) for name in (
+                    'start', 'refresh_adapter', 'replace_memory_provider', 'local_work',
+                    'native_goals', 'model_url', 'model', 'adapter_wheel', 'agent_name',
+                    'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'encrypt',
+                    'passphrase', 'claim_genesis', 'mcp_harnesses', 'no_harness')) or (
+                    getattr(args, 'host_framework', None) not in (None, 'hermes')):
+                raise ValueError('--preferences-only cannot be combined with instance or setup options')
+            _write_receipt_preference(home, receipt_choice, preview)
+            return 0
         state = Path(root_dir or os.environ.get('COLONY_STATE_DIR') or home/'colony').expanduser().resolve()
         if state == home or home.is_relative_to(state):
             raise ValueError('The private Colony directory must not contain the Hermes home')
@@ -425,6 +531,8 @@ def run(root_dir=None, args=None):
                 raise ValueError('Choose a private Hermes home and instance directory outside Git checkouts')
         config_path = home/'config.yaml'
         original, config = setup._read_hermes_config(config_path)
+        if receipt_choice is not None:
+            _receipt_preference(config, receipt_choice)  # Validate before setup effects.
         for section in ('plugins', 'memory', 'compression'):
             if section in config and not isinstance(config[section], dict):
                 raise ValueError('Hermes plugin, memory and compression settings must be mappings')
@@ -463,6 +571,8 @@ def run(root_dir=None, args=None):
             if getattr(args, 'native_goals', False):
                 from .setup_native_goals import enable
                 enable(state)
+            if receipt_choice is not None:
+                _write_receipt_preference(home, receipt_choice)
             os.environ['COLONY_STATE_DIR'] = str(state)
             print(f'Existing private instance retained: {state}')
             print(f'Use colony --instance {str(state)!r} start, then status.')
@@ -625,6 +735,8 @@ def run(root_dir=None, args=None):
             candidate.setdefault('compression', {})['checkpoint_required'] = True
             if fresh_model:
                 candidate['model'] = {'provider': 'openai', 'default': model, 'base_url': endpoint}
+            if receipt_choice is not None:
+                candidate, _ = _receipt_preference(candidate, receipt_choice)
             final_config = yaml.safe_dump(candidate, sort_keys=False, allow_unicode=True).encode()
             prepared_path.unlink()
             backups = staged/'hermes-original'
