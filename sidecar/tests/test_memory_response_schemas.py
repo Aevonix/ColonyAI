@@ -98,24 +98,30 @@ def test_judgment_schema_has_exact_abstain_retain_revise_shapes():
 
 def test_appraisal_schema_retains_all_kinds_and_limits_without_semantic_claims():
     check = validator(appraisals)
-    check.validate({'observations': []})
+    empty = {'observations': [], 'incident_decisions': []}
+    check.validate(empty)
     item = {'kind': 'preference', 'dimension': 'communication', 'topic': 'review order',
             'text': 'The contact requests risk, edit, then links in reviews.',
             'reason': 'This is a reported preference for later reviews.',
             'support': [{'handle': 'current-handle', 'quote': 'risk, edit, then links'}],
-            'contrary': [], 'intensity': 'moderate', 'hint': 'none', 'repairs': None}
+            'contrary': [], 'intensity': 'moderate', 'hint': 'none'}
     for kind, dimensions in appraisals.DIMENSIONS.items():
         for dimension in dimensions:
-            check.validate({'observations': [{**item, 'kind': kind, 'dimension': dimension}]})
-    repair = {**item, 'kind': 'appraisal', 'dimension': 'satisfaction',
-              'hint': 'none', 'repairs': 'previous-frustration'}
-    check.validate({'observations': [repair]})
-    for bad in [{'observations': [item] * 5},
-                {'observations': [{**item, 'dimension': 'format'}]},
-                {'observations': [{**item, 'intensity': 'strong'}]},
-                {'observations': [{**item, 'support': []}]},
-                {'observations': [{**repair, 'hint': 'try_different_approach'}]},
-                {'observations': [{**repair, 'dimension': 'frustration'}]},
-                {'observations': [{**item, 'repairs': 'previous-frustration'}]}]:
+            check.validate({**empty, 'observations': [{**item, 'kind': kind, 'dimension': dimension}]})
+    item = {**item, 'kind': 'appraisal', 'dimension': 'satisfaction'}
+    repair = {'record_id': 'previous-incident', 'outcome': 'resolved',
+              **{k: item[k] for k in ('reason', 'support', 'contrary')}}
+    check.validate({**empty, 'incident_decisions': [repair]})
+    for outcome in ('unchanged', 'uncertain'):
+        check.validate({**empty, 'incident_decisions': [{'record_id': 'previous-incident', 'outcome': outcome}]})
+    for bad in [{'observations': []},
+                {**empty, 'observations': [item] * 5},
+                {**empty, 'observations': [{**item, 'dimension': 'format'}]},
+                {**empty, 'observations': [{**item, 'intensity': 'strong'}]},
+                {**empty, 'observations': [{**item, 'support': []}]},
+                {**empty, 'observations': [{**item, 'repairs': None}]},
+                {**empty, 'incident_decisions': [{**repair, 'support': []}]},
+                {**empty, 'incident_decisions': [{**repair, 'outcome': 'uncertain'}]},
+                {**empty, 'incident_decisions': [repair] * 9}]:
         with pytest.raises(ValidationError):
             check.validate(bad)
