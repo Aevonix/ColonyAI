@@ -13,12 +13,14 @@ from test_source_episode_revisions import CORRECTION, claims, context, record
 
 
 @pytest.mark.asyncio
-async def test_whole_report_commits_without_judging_endpoint_and_marker_is_honest(tmp_path):
+@pytest.mark.parametrize('padding', ['', '\n  '])
+async def test_whole_report_commits_without_judging_endpoint_and_marker_is_honest(tmp_path, padding):
     ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
     projection = SourceClaimProjection(ledger)
+    text = padding + REPORT + padding
     ledger.record_source('report', contact_id='contact-a', session_id='first',
-        messages=[{'role': 'user', 'content': REPORT}])
-    model = Model({REPORT: episode()})
+        messages=[{'role': 'user', 'content': text}])
+    model = Model({text: episode(text)})
     original = model.complete
     async def no_review(*args, **kwargs):
         assert kwargs['context']['task'] == 'source_claim_extraction'
@@ -26,6 +28,7 @@ async def test_whole_report_commits_without_judging_endpoint_and_marker_is_hones
     model.complete = no_review
     assert await projection.process_one(model)
     row, = claims(ledger)
+    assert row['value'] == row['evidence'] == text
     assert row['source_admission']['basis'] == 'whole_source_quote_unverified'
     assert 'admission_review' not in row
     assert row['memory_quality']['basis'] == 'model_judgment_unverified'

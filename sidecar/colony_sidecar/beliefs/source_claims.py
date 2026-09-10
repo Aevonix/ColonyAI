@@ -462,7 +462,7 @@ def validated_claims(raw: str, *, message: str, prior: list[dict], observed_at: 
         output.append({
             "subject_key": subject_key, "subject": subject.strip(), "predicate": predicate_key,
             **({'representation': 'episode'} if episode else {}),
-            "value": value.strip(), "evidence": evidence, "span_start": message.index(evidence),
+            "value": evidence if episode else value.strip(), "evidence": evidence, "span_start": message.index(evidence),
             "span_end": message.index(evidence) + len(evidence), "operation": operation,
             "prior_claim_id": previous["id"] if previous else None,
             **({'subject_basis_claim_id': subject_basis_id} if subject_basis_id else {}),
