@@ -1,6 +1,6 @@
 # Durable source images and recalled descriptions
 
-This increment closes one image memory loop: a native Hermes image becomes a local original, a fallible description, and a scoped recall candidate across sessions. It does not implement audio transcription, video timelines, image embeddings or automatic visual reinspection.
+Native Hermes images become local originals, fallible descriptions, and scoped recall candidates across sessions. The existing source reader can reopen an explicitly selected original into supported vision tool-result parts. Description recall and original-pixel inspection are distinct operations. Video timelines, image embeddings and automatic selection of a vision processor remain separate work.
 
 ## The source contract
 
@@ -55,10 +55,58 @@ Original bytes are available only through the authenticated, contact-scoped API,
 GET /v1/host/memory/sources/assets/<sha256>?contact_id=...&session_id=...
 ```
 
-There is no public static file route. A model-facing visual reinspection tool is a subsequent increment; an asset handle or caption alone is not equivalent to showing the model those pixels again.
+There is no public static file route. The existing `colony_memory_read_source`
+tool accepts `view: "image"` with a supplied `source_id`, `source_version`, and
+`asset_hash` (the 64 hexadecimal characters after `sha256:`). The source
+revision must already have reached this participant's current model request.
+The tool accepts no file path, URL, participant override or image service.
+Opening another person's source or an asset not in that exact source fails.
+
+The tool uses the existing scoped `POST /v1/host/memory/read` route with
+`source_view: "image"`. It returns original pixels together with their source
+message role, recorded/reported times, exact source references and attributed
+corrections applying to the image's owning messages. Interpretations remain
+unverified. Corrections are not truncated to make an image fit: a correction
+bundle over 16,384 characters requires resolving the oversized read before
+pixels can be opened. Original static-image ingest limits still apply. Audio
+and unsupported attachment types cannot enter this image view.
+
+Hermes receives its supported `_multimodal` tool envelope: one provenance text
+part and one `image_url` part containing the original data URL. The text does
+not duplicate base64 image data. Hermes applies the active processor's vision
+and tool-result capability rules. If it selects the text fallback, the result
+explicitly says no visual inspection occurred and `image_bytes_included` is
+false. Colony does not select a new model or silently recaption the original.
+
+Before each actual model dispatch containing an authenticated image read,
+Colony verifies the exact source, ownership, asset and read revision again.
+That metadata-only call shares the existing 250 ms request freshness budget
+and never downloads the pixels again. A new applicable correction changes the
+read revision even without erasure. Unavailability, changed ownership,
+erasure, missing original, changed correction set or altered tool parts
+withholds that result. An explicit fresh opening is then needed. Read receipts
+expire with the turn; historical image tool results cannot replay under a new
+turn's authority. Filtering copies the outbound request without rewriting the
+native transcript. Evidence already dispatched cannot be retracted.
+
+Chat tool parts, Responses `input_image` output parts and Anthropic base64
+image tool-result parts are qualified against Hermes v0.21.1. Other native
+protocols require their own qualification. A data URL retained in a transcript
+or a recalled description alone is not evidence that a vision model inspected
+the original.
 
 ## Qualification
 
 The source tests exercise actual image files, source API ingestion, scope isolation, durable reopening, canonical hash preservation, checkpoint/outbox erasure agreement, late-description rejection and cleanup of originals/thumbnails. The native packaged adapter test uses Hermes' actual `build_native_content_parts` and lifecycle hooks, then checks the durable outbox and client serializer preserve the content list.
 
-One private neutral image was also described through an explicitly configured local VISION role in 2.47 seconds. The real source API, caption worker and context route correctly recalled the description in another session, withheld it from another contact, reopened the exact original bytes and erased the original/description. This is one working image loop, not a vision accuracy benchmark or production acceptance. Deployment still needs a real channel attachment observed through the deployed adapter and memory provider. Future image embeddings and visual reinspection should complement these descriptions, preserving the same source ownership and erasure lineage.
+The packaged source-reader test uses installed Colony tools, the real scoped
+source API, actual native tool dispatch and Hermes' Chat, Responses and
+Anthropic conversion paths. It verifies exact original bytes in supported
+image parts, honest nonvision/unsupported-adapter fallbacks, and erasure before
+the next dispatch. Focused tests also cover correction/ownership changes,
+outage, altered output parts, oversized originals/corrections and erasure
+racing a file read. Provider capability declarations are controlled and no
+inference calls are made. This establishes protocol and lifecycle behavior,
+not visual accuracy or useful ordinary-conversation recollection.
+
+One private neutral image was also described through an explicitly configured local VISION role in 2.47 seconds. The real source API, caption worker and context route correctly recalled the description in another session, withheld it from another contact, reopened the exact original bytes and erased the original/description. This is one working image loop, not a vision accuracy benchmark or production acceptance. Deployment still needs a real channel attachment observed through the deployed adapter and memory provider, followed by a useful visual question whose answer requires the original pixels. Future image embeddings should preserve the same source ownership and erasure lineage.

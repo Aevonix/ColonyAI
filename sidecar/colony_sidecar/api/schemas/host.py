@@ -102,7 +102,8 @@ class MemoryReadRequest(BaseModel):
     source_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     source_version: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
     session_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    source_view: Literal['source', 'assertions'] = 'source'
+    source_view: Literal['source', 'assertions', 'image'] = 'source'
+    asset_hash: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
     claim_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     offset: int = Field(default=0, ge=0, le=10000000)
     read_revision: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
@@ -114,9 +115,11 @@ class MemoryReadRequest(BaseModel):
                 raise ValueError('canonical reads require source version/session and no graph memory ID')
             if (self.source_view == 'assertions') != bool(self.claim_id):
                 raise ValueError('assertion history requires its source claim ID')
+            if (self.source_view == 'image') != bool(self.asset_hash) or self.source_view == 'image' and self.offset:
+                raise ValueError('image reads require an asset hash and no page offset')
             if self.offset and not self.read_revision:
                 raise ValueError('continuation requires the preceding read revision')
-        elif self.source_version or self.claim_id or self.offset or self.read_revision or self.source_view != 'source':
+        elif self.source_version or self.claim_id or self.asset_hash or self.offset or self.read_revision or self.source_view != 'source':
             raise ValueError('canonical read fields require a source ID')
         return self
 

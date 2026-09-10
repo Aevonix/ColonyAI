@@ -1329,7 +1329,7 @@ async def memory_read(
             return MemoryReadResponse(source=read(get_turn_idempotency_ledger(get_state_dir()),
                 contact_id=person_id, session_id=body.session_id, source_id=body.source_id,
                 source_version=body.source_version, view=body.source_view, claim_id=body.claim_id,
-                offset=body.offset, read_revision=body.read_revision))
+                offset=body.offset, read_revision=body.read_revision, asset_hash=body.asset_hash))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
     if _graph is None:
