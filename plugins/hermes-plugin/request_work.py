@@ -70,18 +70,27 @@ class RequestWork:
         self.client = client
 
     def __call__(self, request, scope, *, api_mode=''):
+        return self.prepare(request, scope, api_mode=api_mode)[0]
+
+    def prepare(self, request, scope, *, api_mode=''):
+        """Return an authentic request-only block and its optional input lineage.
+
+        The registered adapter passes that lineage to its existing source
+        freshness check before dispatch. No text marker nominates a source.
+        """
         if (scope is None or not scope.valid_participant
                 or not (scope.authority_lane == 'owner'
                         or (scope.authority_lane == 'system'
                             and scope.resolution_status == 'attested_system'))
                 or scope.platform in ('cron', 'background_review')):
-            return replace_context(request, api_mode=api_mode)
+            return replace_context(request, api_mode=api_mode), None
         text = _UNAVAILABLE
+        provenance = None
         deadline = time.monotonic() + .25
         try:
             response = self.client.get("/v1/host/executions",
                 params={'contact_id': scope.contact_id, 'session_id': scope.session_id,
-                        'limit': 8, 'projection': 'request'},
+                        'limit': 8, 'projection': 'request', 'input_context': True},
                 timeout=.25, _deadline_monotonic=deadline)
             response.raise_for_status()
             value = response.json()
@@ -93,8 +102,27 @@ class RequestWork:
                     or time.monotonic() > deadline):
                 raise ValueError('Invalid or late operational view')
             text = f"Observed at {observed:.3f}.\n" + value['text']
+            supplied = value.get('input_provenance')
+            if supplied is not None:
+                refs = supplied.get('source_refs')
+                input_refs = supplied.get('unannotated_input_refs')
+                if (supplied.get('contact_id') != scope.contact_id
+                        or type(supplied.get('watermark')) is not int or supplied['watermark'] < 0
+                        or not isinstance(refs, list) or not 1 <= len(refs) <= 512
+                        or any(not isinstance(ref, dict) or set(ref) != {'source_id', 'source_version'}
+                            or not isinstance(ref['source_id'], str) or not 1 <= len(ref['source_id']) <= 256
+                            or not isinstance(ref['source_version'], str)
+                            or not re.fullmatch('[a-f0-9]{64}', ref['source_version']) for ref in refs)):
+                    raise ValueError('Invalid operational input provenance')
+                if (not isinstance(input_refs, list) or not 1 <= len(input_refs) <= 512
+                        or any(not isinstance(ref, dict) or set(ref) != {'source_id', 'input_message_hash'}
+                            or ref['source_id'] not in {source['source_id'] for source in refs}
+                            or not isinstance(ref['input_message_hash'], str)
+                            or not re.fullmatch('[a-f0-9]{64}', ref['input_message_hash']) for ref in input_refs)):
+                    raise ValueError('Operational input requires current annotation checks')
+                provenance = {**supplied, 'text': _OPEN + '\n' + text + '\n' + _CLOSE}
         except Exception:
             # A temporary work-service failure must not stall a conversation
             # or advertise the previous request's operational state as fresh.
-            pass
-        return replace_context(request, text, api_mode=api_mode)
+            text, provenance = _UNAVAILABLE, None
+        return replace_context(request, text, api_mode=api_mode), provenance

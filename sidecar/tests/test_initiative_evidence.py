@@ -99,6 +99,66 @@ async def test_backup_proposal_describes_only_the_observed_legacy_file(tmp_path,
 
 
 @pytest.mark.asyncio
+async def test_measured_log_volume_reaches_default_proposal_gate_without_mutating_logs(tmp_path, monkeypatch):
+    import json
+    from colony_sidecar.initiatives.native_work import NativeInitiativeWork
+
+    monkeypatch.setenv('HOME', str(tmp_path))
+    logs = tmp_path/'.colony/logs'
+    logs.mkdir(parents=True)
+    for name, size in [('sidecar.log', 99 * 1024 * 1024), ('monitor.log', 2 * 1024 * 1024)]:
+        with (logs/name).open('wb') as stream:
+            stream.write(b'retained log evidence\n')
+            stream.truncate(size)  # Sparse fixture, no large allocation.
+    canonical = tmp_path/'.hermes/sessions/source.json'
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text('canonical conversation evidence')
+    before = {path: (path.stat().st_ino, path.stat().st_size, path.stat().st_mtime_ns)
+              for path in [logs/'sidecar.log', logs/'monitor.log', canonical]}
+    store = InitiativeStore(tmp_path/'work')
+    engine = InitiativeEngine(None, None, None)
+    loop = AutonomyLoop(SimpleNamespace(initiative_engine=engine, initiative_store=store,
+                                       self_model=None, delivery=None),
+        AutonomyConfig(mode=AutonomyMode.PROACTIVE, enabled_phases=('initiative', 'execute'),
+                       proposals_only=True, max_actions_per_hour=0,
+                       quiet_hours_start='00:00', quiet_hours_end='00:00'))
+    for name in ('_feed_pending_tasks', '_feed_neglected_contacts', '_feed_commitment_reminders', '_feed_introduction_candidates'):
+        setattr(loop, name, AsyncMock())
+    await loop._phase_initiative()
+    await loop._phase_execute()
+    rows = store.list(status=['pending'])
+    assert len(rows) == 1 and rows[0].entity_id == 'log_rotation'
+    row = rows[0]
+    assert row.priority >= loop.config.initiative_confidence_threshold
+    assert row.context['total_size_bytes'] == 101 * 1024 * 1024
+    assert row.context['file_count'] == 2
+    assert [item['path'] for item in row.context['largest_files']] == [str(logs/'sidecar.log'), str(logs/'monitor.log')]
+    review = NativeInitiativeWork(store).get(row.id)['review']
+    assert review['action'] == 'operational_review'
+    assert 'bounded recent sample' in review['body'] and 'do not truncate or rotate' in review['body']
+    assert 'disk pressure and retention are unverified' in review['body']
+    assert str(canonical) not in json.dumps(row.context)
+    await loop._phase_initiative()
+    await loop._phase_execute()
+    assert store.count() == 1
+    assert before == {path: (path.stat().st_ino, path.stat().st_size, path.stat().st_mtime_ns) for path in before}
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_log_review_ignores_archives_and_does_not_invent_pressure_at_threshold(tmp_path, monkeypatch):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    logs = tmp_path/'.colony/logs'
+    logs.mkdir(parents=True)
+    for name in ['sidecar.log', 'historical.log.gz']:
+        with (logs/name).open('wb') as stream:
+            stream.truncate(100 * 1024 * 1024)
+    engine = InitiativeEngine(None, None, None)
+    await engine._load_operational_tasks()
+    assert await engine._generate_operational_initiatives() == []
+
+
+@pytest.mark.asyncio
 async def test_inferred_proposal_needs_acceptance_before_real_followup_generation(tmp_path, monkeypatch):
     from colony_sidecar.goals.models import Goal, GoalSource, GoalStatus
     from colony_sidecar.goals.store import GoalStore

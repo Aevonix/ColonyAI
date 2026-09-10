@@ -14,10 +14,18 @@ from test_turn_source_evidence import source_app
 
 @pytest.mark.parametrize('shape', ['chat', 'responses'])
 def test_current_cached_recall_is_withheld_when_its_source_changes_person(runtime, source_app, monkeypatch, shape):
+    import importlib
+    import time
     from fastapi.testclient import TestClient
     import colony_sidecar.turns
     from colony_sidecar.api.middleware import ApiKeyMiddleware
     rt = runtime
+    # This test verifies attribution changes through the real source API, not
+    # disk latency on a shared CI worker. Keep its local freshness clock fixed;
+    # the dedicated request/outbox deadline tests retain their real clocks.
+    clock = SimpleNamespace(monotonic=lambda: 1000.0, time=time.time, sleep=time.sleep)
+    monkeypatch.setattr(rt.module, 'time', clock)
+    monkeypatch.setattr(importlib.import_module(type(rt.outbox).__module__), 'time', clock)
     monkeypatch.setattr(colony_sidecar.turns, 'get_turn_idempotency_ledger', lambda *args: rt.ledger)
     source_app.add_middleware(ApiKeyMiddleware, api_key='identity-continuity-fixture')
     api = TestClient(source_app)

@@ -60,9 +60,18 @@ prior, not a promised latency or execution timeout.
 The existing duration estimator uses up to 50 original outcomes, with the same
 four-observation prior and bounded median update. Samples share platform,
 root/child class, actual native runtime kind, selected profile fingerprint,
-requested model/provider/API mode, output-token limit, tool count and the
+requested model/provider/API mode, observed request output-limit policy, tool count and the
 first request input-token bucket (up to 4K, 16K, 64K, or above). Missing
-configuration remains incomparable; no task meaning is guessed from prose. The most recent
+configuration remains incomparable; no task meaning is guessed from prose. The adapter
+reads only output-limit fields from the final native request payload. A complete
+payload with no limit explicitly forms a provider-default cohort, with the actual
+server cap unknown. It is separate from explicit numeric limits and missing or
+truncated request telemetry. The optional agent-level cap is not a substitute for
+the final request. This reader supports Chat Completions, Anthropic Messages and
+Codex Responses payloads. Other wire formats, conflicting or invalid limit fields
+remain unknown. No prior
+censored outcome is relabeled by this change, and the new policy field changes
+the cohort fingerprint. The most recent
 eligible historical actual response-model label selects a single training
 cohort, frozen in the original forecast. The model that will serve the next
 request remains unknown until its response. An alias rebinding can therefore
@@ -71,7 +80,18 @@ cohort; a later prediction can learn from the newly observed processor without
 rewriting the old prediction. Mixed processors, missing response labels or
 request pairs, gaps, failures and interruptions retain explicit uncertainty.
 Provider labels are not weight attestations, and task difficulty, machine
-contention and hidden auxiliary calls are not yet measured covariates.
+contention and hidden auxiliary calls are not yet measured covariates. Provider
+configuration changes that retain the same response-model label are also not
+attested by a provider-default observation.
+
+For long requests whose hook body is truncated, Colony's existing request
+middleware places only the request ID, output-limit policy and optional numeric
+cap in Hermes' existing middleware trace. The observer accepts this marker only
+for the same API request and only as the final request-changing trace entry.
+Later middleware rewrites invalidate it; an available final body takes precedence.
+No request cache or provider payload field is added. A missing trace or an
+unqualified body remains unknown. This carries output-limit metadata only, not
+the omitted prompt, and does not claim complete coverage of other request fields.
 
 At most 128 request pairs live in one adjunct table in the existing turn ledger,
 with the same seven-day operational retention. A predecessor can still write

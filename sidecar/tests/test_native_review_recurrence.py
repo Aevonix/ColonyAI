@@ -190,3 +190,33 @@ async def test_receipt_failure_completion_suppresses_same_attempt_but_new_attemp
     clock.moment += timedelta(hours=12)
     assert persist(store, await backup_candidate(engine))[1] == 'created'
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_log_growth_does_not_immediately_repeat_settled_native_review(tmp_path, monkeypatch, clock):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    path = tmp_path/'.colony/logs/sidecar.log'
+    path.parent.mkdir(parents=True)
+    with path.open('wb') as stream:
+        stream.truncate(101 * 1024 * 1024)
+    engine = engine_module.InitiativeEngine(None, None, None)
+    store = stores.InitiativeStore(tmp_path/'state')
+
+    async def candidate():
+        await engine._load_operational_tasks()
+        return (await engine._generate_operational_initiatives())[0]
+
+    first, _ = persist(store, await candidate())
+    complete_native(store, first)
+    store.close()
+    store = stores.InitiativeStore(tmp_path/'state')
+    clock.moment += timedelta(minutes=5)
+    with path.open('ab') as stream:
+        stream.write(b'new ordinary output\n')
+    current = await candidate()
+    assert current.trigger_data['total_size_bytes'] > first.context['total_size_bytes']
+    retained, outcome = persist(store, current)
+    assert outcome == 'deduped_terminal' and retained.id == first.id
+    clock.moment += timedelta(hours=12)
+    assert persist(store, await candidate())[1] == 'created'
+    store.close()

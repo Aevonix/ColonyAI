@@ -55,7 +55,7 @@ def test_fresh_context_replaces_only_our_block_and_preserves_input(module, paylo
     assert payload == before
     assert all(path == '/v1/host/executions' for path, _ in calls)
     assert calls[1][1]['params'] == {'contact_id': 'owner', 'session_id': 'session-a',
-                                    'limit': 8, 'projection': 'request'}
+                                    'limit': 8, 'projection': 'request', 'input_context': True}
     assert 0 < calls[1][1]['timeout'] <= .25
 
 

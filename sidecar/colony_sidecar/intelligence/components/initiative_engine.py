@@ -945,13 +945,28 @@ class InitiativeEngine:
         # Check log sizes
         log_dir = Path(os.path.expanduser("~/.colony/logs"))
         if log_dir.exists():
-            total_size_mb = sum(f.stat().st_size for f in log_dir.glob("*.log") if f.is_file()) / (1024 * 1024)
-            if total_size_mb > 100:
+            files = []
+            for path in log_dir.glob("*.log"):
+                try:
+                    if path.is_file():
+                        stat = path.stat()
+                        files.append({"path": str(path), "size_bytes": stat.st_size,
+                                      "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()})
+                except FileNotFoundError:
+                    continue  # An existing rotation may finish during observation.
+            total_bytes = sum(item["size_bytes"] for item in files)
+            if total_bytes > 100 * 1024 * 1024:
                 tasks.append({
                     "entity_id": "log_rotation",
                     "entity_type": "log_rotation",
-                    "description": f"Log files total {total_size_mb:.1f} MB",
+                    "description": f"Review local log volume: {total_bytes / (1024 * 1024):.1f} MiB exceeds the 100 MiB review threshold; disk pressure and retention are unverified",
                     "threshold_mb": 100,
+                    "total_size_bytes": total_bytes,
+                    "file_count": len(files),
+                    "largest_files": sorted(files, key=lambda item: (-item["size_bytes"], item["path"]))[:5],
+                    "evidence_scope": "local_log_directory_only",
+                    "evidence_path": str(log_dir),
+                    "observed_at": datetime.now(timezone.utc).isoformat(),
                 })
 
         self._context["operational_tasks"] = tasks
@@ -2384,6 +2399,11 @@ class InitiativeEngine:
             if task.get('evidence_scope') == 'configured_backup_receipt':
                 # Failed/unavailable evidence needs review without inventing age.
                 priority = max(0.7, priority)
+            log_review = entity_type == "log_rotation" and task.get("evidence_scope") == "local_log_directory_only"
+            if log_review:
+                # Measured excess should reach the default 0.7 proposal gate.
+                # It authorizes investigation, not deletion or a service restart.
+                priority = max(0.7, priority)
 
             initiatives.append(
                 Initiative(
@@ -2392,8 +2412,8 @@ class InitiativeEngine:
                     description=description,
                     priority=priority,
                     rationale=f"Operational hygiene: {entity_type}",
-                    action_hint=("operational_review" if entity_type == "backup"
-                                 and task.get("evidence_scope") in {"legacy_bak_directory_only", "configured_backup_receipt"}
+                    action_hint=("operational_review" if log_review or (entity_type == "backup"
+                                 and task.get("evidence_scope") in {"legacy_bak_directory_only", "configured_backup_receipt"})
                                  else "Execute maintenance task"),
                     entity_id=entity_id,
                     dedup_key=f"operational:{entity_id}",

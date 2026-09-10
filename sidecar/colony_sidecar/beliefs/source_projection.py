@@ -9,7 +9,8 @@ import logging
 import time
 import uuid
 
-from .source_claims import EXTRACTION_VERSION, extract_claims, extraction_diagnostics, projection_timeout_seconds, norm_value
+from .source_claims import (EXTRACTION_VERSION, admission_metadata, extract_claims,
+                            extraction_diagnostics, projection_timeout_seconds, norm_value)
 from .source_time import MemoryTimeQuery, filter_unstructured
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def erase_removed(conn, turn_id, session_id, retained):
     rows = conn.execute('SELECT id,message_hash FROM source_claims WHERE turn_id=?', (turn_id,)).fetchall()
     for row in rows:
         if row["message_hash"] not in hashes:
-            # Inherited subjects point directly to their original grounded
+            # Inherited identities point directly to their original grounded
             # claim, so erasure needs one hop and never removes raw corrections.
             conn.execute("DELETE FROM source_claims WHERE json_extract(data_json,'$.subject_basis_claim_id')=?", (row['id'],))
             conn.execute('DELETE FROM source_claims WHERE id=?', (row["id"],))
@@ -71,18 +72,22 @@ def _subject_basis_source_sql(identifier_sql, contact_sql):
 
 
 def subject_basis(conn, claim, *, contact_id):
-    """Return a retained quotation solely as evidence of subject identity.
+    """Return grounded identity and explicitly qualified earlier episode context.
 
     A root's value may be retracted or superseded while its literal subject
     remains grounded. Annotation, erasure or changed attribution revokes it.
     Only one fully grounded ancestor is allowed, not a recursive claim chain.
+    An immediate episode correction can qualify the earlier report without
+    withdrawing every unchanged detail. Further corrections require the existing
+    history reader: the root alone does not represent intervening revisions.
     """
     identifier = claim.get('subject_basis_claim_id')
     if not identifier:
         return None
     from colony_sidecar.turns.idempotency import source_message_hash, canonical_turn_digest
     from colony_sidecar.turns.audio import claim_message
-    row = conn.execute('SELECT b.*,bs.session_id,bs.messages_json ' + _subject_basis_source_sql('?', '?'),
+    row = conn.execute('SELECT b.*,bs.session_id,bs.messages_json,bs.occurred_at,bs.ingested_at '
+        + _subject_basis_source_sql('?', '?'),
         (identifier, contact_id)).fetchone()
     if row is None:
         return None
@@ -93,18 +98,39 @@ def subject_basis(conn, claim, *, contact_id):
     if (data.get('subject_basis_claim_id') or message is None or message.get('role') != 'user'
             or data.get('subject') != claim.get('subject') or row['subject_key'] != claim['subject_key']
             or row['predicate'] != claim['predicate'] or data['evidence'] not in message.get('content', '')
-            or data.get('admission_review', {}).get('version') != 'source-claim-review-v1'
-            or data.get('admission_review', {}).get('basis') != 'model_judgment_unverified'):
+            or admission_metadata(data) is None
+            or ('source_admission' in data and ('_audio_segments' in message
+                or data['evidence'] != message.get('content')))):
         return None
     # Reuse the original literal-grounding rule, without inferring an alias.
     from .source_claims import literal_subject
-    if not literal_subject(data['subject'], data['evidence']):
+    episode = data.get('representation') == claim.get('representation') == 'episode'
+    if episode:
+        if row['subject_key'] != 'episode:' + hashlib.sha256(data['evidence'].encode()).hexdigest():
+            return None
+    elif not literal_subject(data['subject'], data['evidence']):
         return None
-    return {'claim_id': row['id'], 'turn_id': row['turn_id'], 'message_hash': row['message_hash'],
+    result = {'claim_id': row['id'], 'turn_id': row['turn_id'], 'message_hash': row['message_hash'],
             'source_version': canonical_turn_digest(messages),
-            'disposition': 'subject_identity_only', 'value_use': 'not_evidence_for_current_value',
+            'disposition': 'subject_identity_only',
+            'value_use': 'not_evidence_for_current_value',
             **{k: data[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality') if k in data},
             'subject': data['subject'], 'predicate': row['predicate'], 'evidence': data['evidence']}
+    if episode:
+        immediate = claim.get('prior_claim_id') == identifier
+        result.update(
+            disposition='prior_episode_report' if immediate else 'episode_history_incomplete',
+            value_use=(
+                'Read with the current correction. Corrected or withdrawn details are not current. '
+                'Unchanged details remain attributed earlier context, not newly verified facts. '
+                'A withdrawal of the whole report withdraws all its details.' if immediate else
+                'Intermediate corrections are absent here. Do not infer current details from this '
+                'original report. Open assertion history; missing or withdrawn revisions cannot '
+                'be reconstructed from the original.'),
+            role='user', reported_at=row['occurred_at'], recorded_at=row['ingested_at'],
+            event_at=data.get('event_at'), event_time=data.get('event_time', {
+                'status': 'legacy_precision_unknown' if data.get('event_at') else 'unknown'}))
+    return result
 
 
 class SourceClaimProjection:
@@ -139,8 +165,17 @@ class SourceClaimProjection:
             if time_query.mode == "unresolved_time":
                 pass  # Return labelled evidence, never certify a requested time.
             elif time_query.mode == "observed_range":
-                where += ["json_extract(c.data_json,'$.event_at')>=?", "json_extract(c.data_json,'$.event_at')<?"]
-                args.extend((time_query.start, time_query.end))
+                # A source calendar day is an interval, not a midnight event.
+                # Source and query timezones can give that day different UTC
+                # boundaries. Retain overlap without claiming an exact instant.
+                where.append("""((json_extract(c.data_json,'$.event_time.status')='resolved'
+                    AND json_extract(c.data_json,'$.event_time.precision')='calendar_day'
+                    AND json_extract(c.data_json,'$.event_time.start')<?
+                    AND json_extract(c.data_json,'$.event_time.end_exclusive')>?)
+                    OR (coalesce(json_extract(c.data_json,'$.event_time.precision'),'')!='calendar_day'
+                    AND json_extract(c.data_json,'$.event_at')>=?
+                    AND json_extract(c.data_json,'$.event_at')<?))""")
+                args.extend((time_query.end, time_query.start, time_query.start, time_query.end))
             elif time_query.mode == "valid_range":
                 where += ["c.valid_from IS NOT NULL", "c.valid_from<?", "(c.valid_to IS NULL OR c.valid_to>?)"]
                 args.extend((time_query.end, time_query.start))
@@ -184,13 +219,32 @@ class SourceClaimProjection:
 
     def prior(self, source, message, limit=16):
         words = set(norm_value(message.get("content", "")).split())
+
+        def relevance(row):
+            # A partial correction can omit every topic word in the original
+            # report. Its retained, scoped basis still identifies that episode.
+            basis = row.get('subject_basis', {}) if row.get('representation') == 'episode' else {}
+            evidence = row['evidence'] + ' ' + basis.get('evidence', '')
+            return len(words & set(norm_value(evidence).split())), row['recorded_at']
+
         hits = self.ledger.search_sources(message.get("content", ""), contact_id=source["contact_id"],
                                           session_id=source["session_id"], limit=10)
         turn_ids = [hit["turn_id"] for hit in hits if hit["turn_id"] != source["turn_id"]]
         with closing(self.ledger._connect()) as conn:
             rows = self._rows(conn, source["contact_id"], source["session_id"], turn_ids=turn_ids or None)
-        rows = [row for row in rows if not row["superseded_by"] and not row["retracted_by"]]
-        rows.sort(key=lambda row: (len(words & set(norm_value(row["evidence"]).split())), row["recorded_at"]), reverse=True)
+            # Relevance can find a retracted report without finding its latest
+            # count-only correction. Offer the existing current episode, never
+            # the stale handle. The normal row reader rechecks source scope,
+            # attribution and retained basis; no erased history is reconstructed.
+            keys = list(dict.fromkeys((row['subject_key'], row['predicate'])
+                for row in sorted(rows, key=relevance, reverse=True)
+                if row.get('representation') == 'episode'))[:limit]
+            for key in keys:
+                rows.extend(self._rows(conn, source['contact_id'], source['session_id'],
+                    key=key, limit=limit))
+        rows = list({row['id']: row for row in rows
+                     if not row['superseded_by'] and not row['retracted_by']}.values())
+        rows.sort(key=relevance, reverse=True)
         return rows[:limit]
 
     def commit(self, source, message, claims, *, model, lease_token=None):
@@ -224,6 +278,9 @@ class SourceClaimProjection:
                 # after model execution and after any concurrent source erase.
                 if current_view["content"][claim["span_start"]:claim["span_end"]] != claim["evidence"]:
                     continue
+                if 'source_admission' in claim and (admission_metadata(claim) is None
+                        or '_audio_segments' in current_view or claim['evidence'] != current_view['content']):
+                    continue
                 if '_audio_segments' in current_view:
                     basis = claim_basis(current_view, claim['span_start'], claim['span_end'])
                     review = claim.get('admission_review', {})
@@ -256,8 +313,7 @@ class SourceClaimProjection:
                             or old['subject_key'] != claim['subject_key'] or old['predicate'] != claim['predicate']
                             or old['superseded_by'] or old['retracted_by']
                             or claim['operation'] not in {'correct', 'change'}
-                            or claim.get('admission_review', {}).get('version') != 'source-claim-review-v1'
-                            or claim.get('admission_review', {}).get('basis') != 'model_judgment_unverified'
+                            or admission_metadata(claim) is None
                             or claim['subject_basis_claim_id'] != (old.get('subject_basis_claim_id') or old['id'])
                             or subject_basis(conn, claim, contact_id=current['contact_id']) is None):
                         continue  # A missing dependency cannot become assert.
@@ -498,12 +554,32 @@ class SourceClaimProjection:
                             excerpt_truncated=bool(removed) or bool(hit.get("excerpt_truncated"))))
                 cursor = max(cursor, end)
         bundles, message_contexts, emitted_messages, groups = [], {}, set(), {}
+        unresolved_time_keys = set()
 
         def current_group(key):
             if key not in groups:
                 with closing(self.ledger._connect()) as conn:
                     groups[key] = self._rows(conn, contact_id, session_id, key=key,
                         time_query=time_query, distinct_values=True, limit=9)
+                    if time_query.mode == 'observed_range' and any(
+                            c.get('event_time', {}).get('precision') == 'calendar_day'
+                            and (c['event_time']['start'] < time_query.start
+                                 or c['event_time']['end_exclusive'] > time_query.end)
+                            for c in groups[key]):
+                        # The event could fall in the overlapping part or the
+                        # remainder of its source day. Relevance is not proof
+                        # that it happened within the query's narrower window.
+                        unresolved_time_keys.add(key)
+                    if not groups[key] and time_query.mode == 'observed_range':
+                        # Relevance already selected this source. An unknown
+                        # episode time may help answer a date question, but it
+                        # cannot certify a matching date. Never admit a known
+                        # event outside the requested interval through here.
+                        groups[key] = [c for c in self._rows(conn, contact_id, session_id, key=key,
+                            time_query=MemoryTimeQuery(), distinct_values=True, limit=9)
+                            if c.get('representation') == 'episode' and not c.get('event_at')]
+                        if groups[key]:
+                            unresolved_time_keys.add(key)
             return groups[key]
 
         def complete_message_context(claim):
@@ -536,10 +612,12 @@ class SourceClaimProjection:
                     'message': message, 'text': text, 'complete': complete, 'claims': all_claims}
             value = message_contexts[identity]
             if not procedure:
-                # Short quotations use the existing source chunk bound. Do not
-                # turn a time-qualified assertion query into an undated quote,
-                # or restore any ineligible span from a changed message.
-                if (not value['complete'] or len(value['text']) > 2000 or time_query.mode != 'current'
+                # An unresolved time expression cannot certify a dated fact,
+                # but must not strip conditions from its attributed source.
+                # The bundle retains query_time_unresolved in that case.
+                # Resolved historical windows still use qualified assertions.
+                if (not value['complete'] or len(value['text']) > 2000
+                        or time_query.mode not in {'current', 'unresolved_time'}
                         # Derived media needs its exact segment/recognizer basis;
                         # a transcript's display prefix is not missing context.
                         or any(c.get('evidence_basis') for c in value['claims'])
@@ -573,7 +651,7 @@ class SourceClaimProjection:
                             "status": "legacy_precision_unknown" if c.get("event_at") else "unknown"}),
                         "reported_at": c["observed_at"], "validity_basis": c["validity_basis"],
                         "operation": c["operation"], "prior_claim_id": c.get("prior_claim_id"),
-                        **{k: c[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality', 'subject_basis') if k in c}}
+                        **{k: c[k] for k in ('representation', 'evidence_basis', 'epistemic_state', 'source_modality', 'subject_basis') if k in c}}
                        for c in group]
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
             source_refs = [(c['turn_id'], c['message_hash']) for c in group]
@@ -596,7 +674,8 @@ class SourceClaimProjection:
                             # are provenance, not the passage's semantic topic.
                             # Conflicting peers remain one indivisible candidate.
                             "ranking_text": "\n".join(dict.fromkeys(c["evidence"] for c in group)),
-                            **({"validity_status": "query_time_unresolved"} if time_query.mode == "unresolved_time" else {}),
+                            **({"validity_status": "query_time_unresolved"}
+                               if time_query.mode == "unresolved_time" or key in unresolved_time_keys else {}),
                             "contradiction_count": len(values) - 1 if conflict else 0, "relevance": 1 / (61 + len(bundles)),
                             "content": json.dumps({"subject": group[0]["subject"], "predicate": key[1],
                                                    "status": status, "assertions": members}, ensure_ascii=False),

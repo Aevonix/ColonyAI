@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.1.4 - attributed experience and useful operational context
+
+Substantive experiences can use exact attributed episodes in the existing source
+ledger. Explicit corrections select a current episode, preserve earlier reported
+context and expose missing revision history. Event dates stay separate from report
+dates, including overlapping calendar days. Whole eligible text messages need one
+extraction pass; a distinct admission marker records that no second model review
+ran. Selected long excerpts, audio and generated structured assertions retain
+their existing review. Reports are not independently verified world facts.
+
+Recall preserves a complete eligible short message when query time is unresolved,
+with the uncertainty label intact. Procedural wording such as "before opening a
+file" previously caused otherwise available neighboring conditions to disappear.
+Resolved historical queries keep their qualified assertion behavior.
+
+Shared execution records can point to an already admitted root input. A current,
+scoped source read supplies its brief request excerpt; the work ledger stores only
+references. Work selection precedes optional excerpts, and the existing request
+source check tracks those excerpts into response lineage. Child assignments and
+unbound tasks remain unknown rather than inheriting a parent's stated purpose.
+
+Native forecast observations distinguish explicit output caps, observed provider
+defaults and missing metadata, using final request fields and Hermes' existing
+middleware trace. Legacy unknown observations do not become comparable outcomes.
+An existing local log-volume condition now reaches the existing read-only native
+operational review, with measured file sizes and settlement-based recurrence.
+No new service, scheduler or automatic maintenance authorization is added.
+
+Controlled episode trials established successful source-linked correction and
+history reading with a stronger extraction processor. Other first attempts timed
+out or selected the wrong correction operation; unsupported answer claims remain
+a measured weakness. These changes do not establish general recall accuracy,
+ordinary cross-session usefulness, timing gains or autonomous self-repair.
+
 ## v1.1.3 - native recollection and concurrent work context
 
 Authenticated native tasks can recollect for the contact bound to their validated

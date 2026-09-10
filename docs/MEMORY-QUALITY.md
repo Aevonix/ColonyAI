@@ -165,7 +165,7 @@ measurements return `diagnostics: null`; an older attempt's counts are not reuse
 The record lives on the existing job row, follows its lease, is replaced by the
 next finished attempt and is removed with source erasure.
 
-New claim jobs use `source-claims-v7`: after the existing quote, subject, value
+New claim jobs use `source-claims-v11`: after the existing quote, subject, value
 and date checks, one batched `source_claim_review` request uses the configured
 `judging` role to assess whether each proposal preserves the source's relation,
 attribution, negation, modality and memory category. Exact required proposal
@@ -175,10 +175,21 @@ that do not declare strict JSON schema support. There is no review call for an
 empty validated proposal set. Useful reports, temporary knowledge, standing
 conditional preferences and actual reusable procedures remain eligible.
 
+Whole-message text episodes bypass this second model call. Their value is the
+complete exact source, with no generated fact fields or omitted surrounding
+context. They retain the extractor's unverified usefulness judgment and a
+separate `source_admission` marker (`source-episode-admission-v1`, basis
+`whole_source_quote_unverified`). This does not establish truth or trust.
+Wrong relevance and correction references remain possible extractor errors.
+Long selected excerpts, segmented audio, structured assertions, procedures and
+opinion formation keep their existing model checks. Source bytes, ownership,
+current predecessor and erasure eligibility remain transaction requirements.
+
 An explicit correction or change can reuse a supplied prior assertion's exact
 subject and predicate when its current quotation refers back to that subject.
-The current value must still occur in the current quotation, and independent
-admission review must accept the reference. The stored `subject_basis_claim_id`
+The current value must still occur in the current quotation. Structured
+interpretations require independent admission review; whole-message episodes use
+their distinct source admission. The stored `subject_basis_claim_id`
 points directly to the original, literally grounded subject claim, including
 across consecutive corrections. Commit rechecks both the current prior and that
 original source; a missing or changed dependency cannot become a new assertion.
@@ -217,7 +228,9 @@ from the recall assertion member projection. Historical records are unchanged.
 `accepted_count` continues to mean candidates that passed the mechanical
 extraction checks. `reviewed_count`, `review_kept_count`, `review_rejected_count`,
 `review_response_count` and `invalid_review_count` describe the subsequent stage;
-`last_review_provenance` identifies its last completed response. `claim_count`
+`last_review_provenance` identifies its last completed response.
+`whole_source_episode_count` counts validated episodes needing no second review;
+their review counts remain zero and absent review provenance remains null. `claim_count`
 remains the number actually persisted. A positive extraction acceptance count
 does not mean review succeeded or a claim committed. Review reasons are stored
 only with kept claims, not in the job diagnostic record.

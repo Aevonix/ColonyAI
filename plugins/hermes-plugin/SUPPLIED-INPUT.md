@@ -33,3 +33,20 @@ the native session/turn and exact input/source dependencies. The host must
 revalidate these before delayed result exposure, playback or further effects.
 Canonical deletion follows recorded dependencies; arbitrary paraphrases,
 native transcript files and archived copies remain outside this guarantee.
+
+When `execution_registry_enabled` is true, a source-checked root execution also
+retains these input IDs and hashes in its existing operational metadata. The
+work reader opens a current, viewer-scoped excerpt of the original input, up to
+240 characters, so another session can identify the request associated with
+that execution. Long inputs and multiple input parents are marked partial.
+This is an attributed request, not proof of task performance, a current task
+plan, or a delegated child's assignment. Unbound executions keep unknown
+purpose; task wrappers and process commands never supply a substitute.
+
+The registered request adapter opts in with `input_context=true`, then includes
+any displayed excerpt in the existing source-freshness check and answer
+lineage. Older adapters receive operational metadata only. The registry stores
+no excerpt text. Erased or inaccessible inputs disappear on the next read;
+annotated inputs require the canonical source reader instead of a clipped work
+label that could omit the correction. Active work and ancestry are selected
+before optional excerpts within the same eight-record, 4,000-character budget.

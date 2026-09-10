@@ -122,6 +122,71 @@ The memory-provider wrapper now distinguishes persistent state from source evide
 
 ## Operation and qualification
 
+The experimental v11 extractor represents substantive experiences and comparisons
+as quoted episodes. The processor selects one exact passage and explains its
+future use; it does not synthesize subject/value fields for the episode. The
+existing source table retains it with a content-derived record identity. When the
+episode quotes the entire eligible text message, deterministic source checks
+replace the second model review. The extractor still judges usefulness and
+correction references. The distinct `source_admission` marker records
+`whole_source_quote_unverified`; it does not invent a review or verify the report.
+Selected excerpts from longer messages and segmented audio keep context review. An explicit correction selects an offered prior episode, reuses that identity and
+retracts the mistaken report through the existing claim lineage. Its original
+source remains an identity dependency, so erasure or attribution changes revoke
+dependent interpretations; erasing the correction does not revive the old value.
+For the first correction, the original quote is labelled `prior_episode_report`
+and read alongside the correction. Corrected or withdrawn details are not current;
+unchanged clauses remain attributed earlier context, not independently verified
+facts. Withdrawing the whole report withdraws every detail. Original event and
+report dates stay attached to that original quotation, never copied into the
+correction. The store does not synthesize a merged current report.
+
+For successive partial corrections, the root quote is instead labelled
+`episode_history_incomplete`. It omits intermediate corrections and cannot
+establish current details. The existing assertion-history reader exposes retained
+revisions and their links. If a revision is unavailable or withdrawn, the reader
+must preserve that gap rather than reconstruct it from older text. Cumulative
+interpretation remains a reader responsibility; this projection does not claim
+to materialize or validate it. An unavailable predecessor is labelled
+`incomplete_revision_chain` even when pagination has returned every retained row.
+When lexical retrieval finds only an earlier report, prior-episode selection
+looks up its current retained revision through the existing episode identity.
+The original quotation supplies topic context, not a stale correction handle.
+Lookup remains within the contact's visible sources and existing candidate
+limits; erasing or reattributing a revision cannot revive a retracted report.
+The correction wire supplies the offered episode ID and current exact evidence;
+the stored predecessor supplies its representation and memory kind. Correcting
+one count does not turn the episode into a separate structured fact. Structured
+branches cannot select episode IDs, and contradictory explicit types or extra
+fact fields are rejected rather than silently reinterpreted.
+`Reported episode` is a record label, not a person or world-model entity. The
+passage preserves units, conditions, attribution and uncertainty within the
+existing 500-character limit. An episode may supply an exact event-date expression
+from its quotation. The existing date parser resolves supported expressions using
+the source clock; report time remains separate. An unsupported or unquoted optional
+date cannot discard an otherwise valid exact report. Unquoted date metadata is
+removed and counted in `ignored_episode_date_count`; its invented text is not
+stored. Missing dates stay unknown rather than inheriting a date from a different
+quotation. Relevant episodes with unknown time remain available to event-date
+queries as `query_time_unresolved` evidence; known events outside the requested
+interval stay excluded. A calendar-day observation is matched as an interval,
+not as an event at midnight. Partial overlap across source and query timezones
+also carries `query_time_unresolved`, since an unknown point within the source
+day cannot certify that the event happened inside the query's narrower window.
+Material that cannot fit with its essential context
+stays available as source history.
+
+Structured facts and procedures keep their existing representation and temporal
+conflict handling. Episodes are independent reports: sharing a topic does not
+automatically overwrite an earlier report or resolve contradictions. A correction
+must have an explicit correction cue and select a current, admitted episode
+reference. Source identity and predecessor eligibility are rechecked at commit.
+Selecting the same reported experience remains an extractor judgment. A different
+incident cannot retract the earlier one. The existing explicit source-annotation
+path also remains available for owner corrections.
+There is no new database, worker or model call. This representation is undergoing
+behavioral qualification and does not enable automatic opinions.
+
 `GET /v1/host/memory/sources/claims/status?contact_id=...` uses the existing request scope and reports recent job states, attempts, model/version, errors and claim counts. Unavailable extraction leaves quotations usable; it does not block ordinary turn ingestion or the next conversation.
 
 `sidecar/tests/test_source_claim_projection.py` exercises actual source ingestion, SQLite transactions, source FTS, projection and context assembly. Controlled extractor outputs make correction, conflict, valid-time, erasure, lease and model-swap checks reproducible. The router check verifies that disabled escalation makes only one provider call.

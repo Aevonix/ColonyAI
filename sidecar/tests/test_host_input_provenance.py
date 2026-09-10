@@ -332,3 +332,20 @@ def test_exact_outbox_lookup_does_not_decode_an_unrelated_damaged_payload(handof
     assert h.outbox.lookup('wanted')['payload']['user_message'] == 'Exact source to retrieve.'
     assert h.outbox.lookup('absent') is None
     assert h.outbox.lookup("wanted' OR 1=1 --") is None
+
+
+@pytest.mark.parametrize('annotated', [False, True])
+def test_freshness_requires_actual_input_membership(handoff, annotated):
+    h = handoff
+    ref = h.ledger.source_references(['original-input'], contact_id='owner', session_id='observer')[0]
+    if annotated:
+        h.ledger.append_source_annotation(contact_id='owner', session_id='observer',
+            annotation_id='withdraw-input', **ref, excerpt='Use the lamp maintenance record I supplied.',
+            correction='Withdraw that request.', author_principal='host')
+    for inputs, expected in ((h.parents, not annotated),
+            ([{'source_id': 'original-input', 'input_message_hash': 'f' * 64}], False)):
+        response = h.api.post('/v1/host/memory/sources/erasures', json={
+            'contact_id': 'owner', 'session_id': 'observer', 'source_refs': [ref],
+            'unannotated_input_refs': inputs})
+        assert response.status_code == 200
+        assert response.json()['sources_current'] is expected

@@ -5,7 +5,60 @@ import json
 import re
 
 from .idempotency import canonical_turn_digest, source_message_hash
-from .source_annotations import expand, current_candidates
+from .source_annotations import expand, current_candidates, inputs_unannotated
+
+
+def input_excerpt(ledger, *, contact_id, session_id, refs, max_chars=240):
+    """A short exact admitted input, resolved afresh rather than copied to work.
+
+    This is what the participant requested, not a generated task summary or
+    evidence that the execution is fulfilling it. Multiple inputs and long
+    messages remain explicitly partial. Annotated inputs require the normal
+    source reader so their conditions cannot be clipped off a work label.
+    Exact input membership travels to the existing native freshness check so
+    a later annotation can invalidate the excerpt without changing its bytes.
+    """
+    from .audio import source_text
+    watermark = ledger.erasure_watermark(contact_id)
+    versions = ledger.resolve_input_dependencies(contact_id=contact_id,
+        session_id=session_id, refs=refs)
+    available = ledger.source_references([ref['source_id'] for ref in versions],
+        contact_id=contact_id, session_id=session_id)
+    if not refs or any(ref not in available for ref in versions):
+        raise ValueError('source_input_unavailable')
+    selected = refs[0]
+    with closing(ledger._connect()) as conn:
+        source = conn.execute('''SELECT session_id,messages_json FROM turn_sources
+            WHERE turn_id=? AND contact_id=? AND (scope='person' OR session_id=?)''',
+            (selected['source_id'], contact_id, session_id)).fetchone()
+        if source is None:
+            raise ValueError('source_input_unavailable')
+        matches = [message for message in json.loads(source['messages_json'])
+            if message.get('role') == 'user' and source_message_hash(source['session_id'], message)
+            == selected['input_message_hash']]
+    if len(matches) != 1:
+        raise ValueError('source_input_unavailable')
+    text = source_text(matches[0].get('content'))
+    membership = {}
+    for ref in refs:
+        membership.setdefault(ref['source_id'], []).append(ref['input_message_hash'])
+    candidate = {'id': 'execution-input:' + selected['source_id'], 'kind': 'source_quote',
+        'source_turn_ids': list(membership), 'content': text,
+        '_source_message_hashes': membership}
+    current = current_candidates(ledger, expand(ledger, [candidate],
+        contact_id=contact_id, session_id=session_id), contact_id=contact_id, session_id=session_id)
+    if len(current) != 1 or ledger.erasure_watermark(contact_id) != watermark:
+        raise ValueError('source_input_unavailable')
+    if current[0].get('_annotation_ids') or not inputs_unannotated(ledger, refs):
+        return {'status': 'annotated_input_requires_source_read'}
+    if not text:
+        return {'status': 'input_has_no_text'}
+    return {'status': 'admitted_input_excerpt', 'excerpt': text[:max_chars],
+        'partial': len(text) > max_chars or len(refs) > 1,
+        'input_count': len(refs), 'source_id': selected['source_id'],
+        'input_message_hash': selected['input_message_hash'],
+        '_provenance': {'contact_id': contact_id, 'watermark': watermark, 'source_refs': versions,
+                        'unannotated_input_refs': [dict(ref) for ref in refs]}}
 
 
 def _document_media(ledger, conn, *, scope, expected, asset_hash, hashes):
@@ -132,11 +185,20 @@ def read(ledger, *, contact_id, session_id, source_id, source_version,
             selected = rows[offset:offset + 8]
             total, next_offset = len(rows), offset + len(selected)
             ids = list(dict.fromkeys([source_id, *(c['turn_id'] for c in selected)]))
-            content = json.dumps({'status': 'attributed_assertion_history', 'assertions': [
+            retained_ids = {c['id'] for c in rows}
+            episode_gap = any(c.get('representation') == 'episode'
+                              and any(c.get(link) and c[link] not in retained_ids
+                                      for link in ('prior_claim_id', 'retracted_by', 'superseded_by'))
+                              for c in rows)
+            content = json.dumps({'status': 'attributed_assertion_history',
+                **({'episode_history': 'incomplete_revision_chain',
+                    'guidance': 'An episode revision is unavailable. Do not reconstruct current '
+                                'details from older reports. Complete pagination does not close this gap.'}
+                   if episode_gap else {}), 'assertions': [
                 {key: c.get(key) for key in ('id', 'turn_id', 'role', 'subject', 'predicate', 'value', 'evidence',
                     'observed_at', 'recorded_at', 'valid_from', 'valid_to', 'event_at', 'event_time',
                     'validity_basis', 'operation', 'prior_claim_id', 'superseded_by', 'retracted_by')}
-                | {key: c[key] for key in ('epistemic_state', 'source_modality', 'evidence_basis') if key in c}
+                | {key: c[key] for key in ('representation', 'epistemic_state', 'source_modality', 'evidence_basis') if key in c}
                 for c in selected]}, ensure_ascii=False)
             hashes = {identifier: [c['message_hash'] for c in selected if c['turn_id'] == identifier]
                       for identifier in ids}

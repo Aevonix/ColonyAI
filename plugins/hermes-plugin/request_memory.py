@@ -68,7 +68,7 @@ def _request_texts(value):
         for child in value:
             yield from _request_texts(child)
     elif isinstance(value, dict):
-        for key in ('content', 'text', 'messages', 'input', 'instructions', 'output'):
+        for key in ('content', 'text', 'messages', 'input', 'instructions', 'system', 'output'):
             if key in value:
                 yield from _request_texts(value[key])
 
@@ -414,7 +414,7 @@ class RequestMemory:
                     self._host_inputs.pop(key, None)
         return list(refs.values())
 
-    def __call__(self, request, scope):
+    def __call__(self, request, scope, *, operational=None):
         contact = scope.contact_id if scope is not None and scope.valid_participant else ''
         with self._lock:
             observed_key = (contact, scope.task_id, scope.turn_id) if scope else None
@@ -428,6 +428,7 @@ class RequestMemory:
         # records or keep evidence current. Validate their current ownership in
         # the same round trip as erasure freshness, not by changing source IDs.
         source_refs = {}
+        unannotated_inputs = []
         try:
             current_packet = _native_packet(current)
             if current_packet:
@@ -442,6 +443,10 @@ class RequestMemory:
                 if receipt:
                     for ref in receipt['sources']:
                         source_refs[(ref['source_id'], ref['source_version'])] = ref
+            if operational and any(operational['text'] in text for text in _request_texts(request)):
+                for ref in operational['source_refs']:
+                    source_refs[(ref['source_id'], ref['source_version'])] = ref
+                unannotated_inputs = operational['unannotated_input_refs']
             parents_valid = len(source_refs) <= 512
         except (KeyError, TypeError, ValueError, AttributeError):
             parents_valid = False
@@ -457,7 +462,8 @@ class RequestMemory:
                     if source_refs:
                         response = self.client.post('/v1/host/memory/sources/erasures',
                             json={'contact_id': contact, 'after': watermark,
-                                  'session_id': scope.session_id, 'source_refs': list(source_refs.values())},
+                                  'session_id': scope.session_id, 'source_refs': list(source_refs.values()),
+                                  **({'unannotated_input_refs': unannotated_inputs} if unannotated_inputs else {})},
                             timeout=remaining, _deadline_monotonic=deadline)
                     else:
                         response = self.client.get("/v1/host/memory/sources/erasures",
@@ -540,11 +546,20 @@ class RequestMemory:
             filtered = filter_request(request, contact_id=contact, watermark=0, rules=[], fresh=False,
                                       read_receipts=read_receipts)
             fresh = False
+        if operational and not (fresh and observed and operational['contact_id'] == contact
+                                and operational['watermark'] == watermark):
+            from .request_work import replace_context
+            filtered = replace_context(filtered,
+                'Current shared work withheld because its admitted input is unavailable or changed.')
         if fresh and observed:
             actual_texts = list(_request_texts(filtered))
             current_packet = _native_packet(current)
             packets = packets | ({current_packet.group()} if current_packet else set())
             supplied = {}
+            if (operational and operational['contact_id'] == contact and operational['watermark'] == watermark
+                    and any(operational['text'] in text for text in actual_texts)):
+                for ref in operational['source_refs']:
+                    supplied[(ref['source_id'], ref['source_version'])] = ref
             if host_input and host_input['watermark'] == watermark and host_input['text']:
                 enriched = current.get('api_content') if current else None
                 if (isinstance(enriched, str) and isinstance(current_input, str)

@@ -1,6 +1,7 @@
 """Bounded observers for native Hermes turn lifecycle, with no tool authority."""
 from collections import OrderedDict
 import hashlib
+import json
 import logging
 import math
 import os
@@ -9,6 +10,7 @@ import time
 import uuid
 
 logger = logging.getLogger(__name__)
+_OUTPUT_LIMIT_TRACE = 'colony.execution-output-limit.v1:'
 
 
 class ExecutionObserver:
@@ -35,7 +37,7 @@ class ExecutionObserver:
         except Exception:
             logger.debug("Execution observation unavailable; liveness will become unknown")
 
-    def start(self, scope, *, review_parent=None, **kwargs):
+    def start(self, scope, *, review_parent=None, input_refs=None, **kwargs):
         turn_id = str(kwargs.get("turn_id") or "")
         session_id = str(kwargs.get("session_id") or "")
         if not turn_id or not session_id:
@@ -67,6 +69,10 @@ class ExecutionObserver:
                 "parent_execution_id": parent_id, "platform": platform,
                 "state": "observed", "phase": "turn", "tool_name": "", "sequence": 1,
             }
+            if input_refs and not parent_id and platform not in {'cron', 'background_review'}:
+                # The caller supplies only a source-checked root input. A child
+                # has a narrower assignment; its parent's request is not it.
+                payload['input_refs'] = input_refs
             self._records[turn_id] = payload
             self._current_sessions[turn_id] = session_id
             while len(self._records) > 2048:
@@ -92,6 +98,82 @@ class ExecutionObserver:
                 self._children.popitem(last=False)
 
     @staticmethod
+    def _body_output_limit(kwargs):
+        """Read final wire fields, not the agent's optional pre-transport cap.
+
+        No request body is copied or retained. An observed omission means the
+        provider chooses the limit; it does not attest an unlimited response.
+        Missing/truncated payloads cannot establish that omission.
+        """
+        unknown = {'output_limit_kind': 'unknown'}
+        if kwargs.get('api_mode') not in {'chat_completions', 'anthropic_messages', 'codex_responses'}:
+            return unknown
+        request = kwargs.get('request')
+        if not isinstance(request, dict) or request.get('_truncated') or request.get('_truncated_items'):
+            return unknown
+        body = request.get('body')
+        if not isinstance(body, dict) or body.get('_truncated') or body.get('_truncated_items'):
+            return unknown
+        extra = body.get('extra_body', {})
+        if not isinstance(extra, dict) or extra.get('_truncated') or extra.get('_truncated_items'):
+            return unknown
+        values = [part[key] for part in (body, extra)
+                  for key in ('max_tokens', 'max_completion_tokens', 'max_output_tokens') if key in part]
+        if not values:
+            return {'output_limit_kind': 'provider_default'}
+        if (all(type(value) is int and 0 < value <= 2147483647 for value in values)
+                and len(set(values)) == 1):
+            return {'output_limit_kind': 'request', 'max_tokens': values[0]}
+        return unknown
+
+    @staticmethod
+    def request_metadata(result, **kwargs):
+        """Use Hermes' existing trace to carry three scalars past sanitization.
+
+        This observes Colony's returned request without changing provider
+        fields or retaining the request. A later request rewrite invalidates
+        the marker because only the final trace entry is consumed.
+        """
+        request_id = kwargs.get('api_request_id')
+        if not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            return result
+        policy = ExecutionObserver._body_output_limit({
+            'request': {'body': result.get('request')}, 'api_mode': kwargs.get('api_mode')})
+        if policy['output_limit_kind'] == 'unknown':
+            return result
+        marker = {'request_id': request_id, 'output_limit_kind': policy['output_limit_kind'],
+                  'max_tokens': policy.get('max_tokens')}
+        return {**result, 'name': _OUTPUT_LIMIT_TRACE + json.dumps(marker, separators=(',', ':'))}
+
+    @staticmethod
+    def output_limit_metadata(kwargs):
+        policy = ExecutionObserver._body_output_limit(kwargs)
+        if policy['output_limit_kind'] != 'unknown':
+            return policy
+        request = kwargs.get('request')
+        # An available, complete body with invalid fields remains unknown.
+        if isinstance(request, dict) and not request.get('_truncated'):
+            body = request.get('body')
+            if isinstance(body, dict) and not body.get('_truncated') and not body.get('_truncated_items'):
+                return policy
+        trace = kwargs.get('middleware_trace')
+        name = trace[-1].get('name') if isinstance(trace, list) and trace and isinstance(trace[-1], dict) else None
+        if not isinstance(name, str) or not name.startswith(_OUTPUT_LIMIT_TRACE) or len(name) > 512:
+            return policy
+        try:
+            marker = json.loads(name[len(_OUTPUT_LIMIT_TRACE):])
+        except (TypeError, ValueError):
+            return policy
+        if not isinstance(marker, dict) or marker.get('request_id') != kwargs.get('api_request_id'):
+            return policy
+        kind, cap = marker.get('output_limit_kind'), marker.get('max_tokens')
+        if kind == 'provider_default' and cap is None:
+            return {'output_limit_kind': kind}
+        if kind == 'request' and type(cap) is int and 0 < cap <= 2147483647:
+            return {'output_limit_kind': kind, 'max_tokens': cap}
+        return policy
+
+    @staticmethod
     def runtime_metadata(event, kwargs):
         """Whitelist callback metadata, never request/response content or URLs."""
         result = {'event': event}
@@ -100,10 +182,12 @@ class ExecutionObserver:
             value = kwargs.get(source)
             if isinstance(value, str) and value and len(value) <= 256 and not any(ord(c) < 32 for c in value):
                 result[target] = value
-        for key in ('api_call_count', 'retry_count', 'approx_input_tokens', 'max_tokens', 'tool_count'):
+        for key in ('api_call_count', 'retry_count', 'approx_input_tokens', 'tool_count'):
             value = kwargs.get(key)
             if type(value) is int and 0 <= value <= 2147483647:
                 result[key] = value
+        if event == 'start':
+            result.update(ExecutionObserver.output_limit_metadata(kwargs))
         for key in ('started_at', 'ended_at'):
             value = kwargs.get(key)
             if type(value) in (int, float) and math.isfinite(value) and value > 0:

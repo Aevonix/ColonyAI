@@ -18,15 +18,15 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.1.3 restores automatic recollection for authenticated native tasks
-whose human input was captured by an enrolled host. Recall uses that input's
-validated contact and session; it does not assume that every local task belongs
-to the owner. Shared work keeps available parent executions alongside children
-by fetching older active ancestors before applying the existing context budget.
-The setup guide covers installation
-from published packages and optional native task dispatch. These changes repair
-observed integration failures; useful continuity still depends on the model
-applying the supplied evidence correctly.
+Version 1.1.4 keeps complete short source passages when a query's time is
+uncertain, and adds attributed experience episodes through the existing source
+ledger. Corrections retain their report history and distinguish event time from
+report time. Exact whole-message text episodes use one extraction pass; they
+remain unverified reports. Shared work can include a scoped excerpt of a root
+task's admitted request, with source correction and erasure tracking. Forecast
+observations and local log reviews use the existing native execution path.
+These changes repair observed integration failures; useful continuity still
+depends on the model applying the supplied evidence correctly.
 
 Version 1.1.0 added [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
 Authenticated integrations can retain an original PDF and reopen extracted text
@@ -60,7 +60,7 @@ parent and recognition uncertainty through recall, correction, erasure and
 recovery. Capture remains a deployment choice; Colony does not start a microphone
 or assume that recognized words are correct.
 Automatic persistent opinions are experimental and off by default. When explicitly
-enabled, they require current reviewed decisions, procedures or substantive events.
+enabled, they require current admitted decisions, procedures or substantive events.
 Facts, preferences, relationships and questions without such premises skip opinion
 generation. History and owner correction remain inspectable while disabled.
 The [audio source guide](docs/SOURCE-AUDIO.md), [memory guide](docs/MEMORY-QUALITY.md)
@@ -85,7 +85,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.3" "colony-hermes==1.1.3"
+python -m pip install "colonyai[hermes]==1.1.4" "colony-hermes==1.1.4"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 

@@ -23,11 +23,18 @@ class ExecutionRuntimeObservation(BaseModel):
     runtime_kind: Literal['turn', 'cron', 'kanban_worker', 'delegated_child', 'unknown'] = 'unknown'
     approx_input_tokens: int | None = Field(default=None, ge=0, le=2147483647)
     max_tokens: int | None = Field(default=None, ge=0, le=2147483647)
+    output_limit_kind: Literal['request', 'provider_default', 'unknown'] = 'unknown'
     tool_count: int | None = Field(default=None, ge=0, le=2147483647)
     api_call_count: int | None = Field(default=None, ge=0, le=2147483647)
     retry_count: int | None = Field(default=None, ge=0, le=2147483647)
     started_at: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     ended_at: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
+class ExecutionInputReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_id: str = Field(min_length=1, max_length=256)
+    input_message_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
 class ExecutionObservation(BaseModel):
@@ -43,6 +50,8 @@ class ExecutionObservation(BaseModel):
     tool_name: str = Field(default="", max_length=128, pattern=r"^[a-zA-Z0-9_.:-]*$")
     sequence: int = Field(ge=1, le=2147483647)
     runtime: ExecutionRuntimeObservation | None = None
+    # Exact already-admitted human inputs, never native task wrappers or titles.
+    input_refs: list[ExecutionInputReference] | None = Field(default=None, min_length=1, max_length=64)
 
 
 def authorized_viewer(request: Request, contact_id: str, *, scope: str) -> tuple[str, bool]:
@@ -67,14 +76,15 @@ def observe(body: ExecutionObservation, request: Request):
 
 @router.get("")
 async def active(request: Request, contact_id: str, session_id: str = "", limit: int = Query(20, ge=1, le=100),
-                 projection: Literal['full', 'request'] = 'full'):
+                 projection: Literal['full', 'request'] = 'full', input_context: bool = False):
     person, owner = authorized_viewer(request, contact_id, scope="context:read")
     if projection == 'request' and not owner:
         raise HTTPException(403, detail='owner_work_context_required')
     if projection == 'request':
         limit = min(limit, 8)
     view = registry().view(contact_id=person, owner=owner, session_id=session_id, limit=limit,
-                           include_ancestors=projection == 'request')
+                           include_ancestors=projection == 'request',
+                           include_inputs=projection == 'full' or input_context)
     view = await with_queue_work(view, owner=owner, limit=limit)
     if projection == 'request':
         from colony_sidecar.turns.executions import request_work_context

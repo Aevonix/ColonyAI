@@ -245,6 +245,24 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
     return retained
 
 
+def inputs_unannotated(ledger, refs):
+    """Check exact input membership, including retained withdrawn annotations.
+
+    Callers separately validate source ownership. This small current read also
+    serves the existing native freshness round trip; it adds no revision store.
+    """
+    membership = {}
+    for ref in refs:
+        membership.setdefault(ref['source_id'], set()).add(ref['input_message_hash'])
+    if not membership:
+        return True
+    with closing(ledger._connect()) as conn:
+        rows = conn.execute('SELECT target_source_id,target_message_hashes_json '
+            'FROM source_annotations WHERE target_source_id IN ('
+            + ','.join('?' for _ in membership) + ')', list(membership))
+        return not any(membership[row[0]].intersection(json.loads(row[1])) for row in rows)
+
+
 def current_candidates(ledger, candidates, *, contact_id, session_id):
     """Do not publish stale evidence after a correction changes during ranking."""
     required = [ref for row in candidates for ref in row.get('_annotation_source_refs', [])]

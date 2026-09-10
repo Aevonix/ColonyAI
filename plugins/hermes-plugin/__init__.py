@@ -2418,8 +2418,7 @@ def register(ctx: Any) -> None:
         if scope.valid_participant and not review:
             work_coordinator.bind_turn(**kwargs)
             local_work.bind_selected(scope, work_coordinator, kwargs)
-        if execution_observer is not None:
-            execution_observer.start(scope, review_parent=parent if review else None, **kwargs)
+        execution_inputs = None
         if supplied_input is not None and check_supplied_input(scope):
             watermark, _ = turn_outbox.erasure_state(scope.contact_id)
             inherited = supplied_input.context(watermark)
@@ -2429,6 +2428,10 @@ def register(ctx: Any) -> None:
             if inherited:
                 existing = native_context.get('context', '') if isinstance(native_context, dict) else (native_context or '')
                 native_context = {'context': '\n\n'.join(filter(None, (existing, inherited)))}
+            execution_inputs, _ = supplied_input.parents()
+        if execution_observer is not None:
+            execution_observer.start(scope, review_parent=parent if review else None,
+                                     input_refs=execution_inputs, **kwargs)
         return native_context
 
     def post_llm_call(**kwargs: Any) -> None:
@@ -2639,20 +2642,21 @@ def register(ctx: Any) -> None:
     def reconcile_request(request, **kwargs):
         from .request_capabilities import describe
         if native_drafts is not None and native_drafts.worker:
-            return {'request': describe(request)}
+            result = {'request': describe(request)}
+            return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
         _TRANSPORT_SCOPES.bind_current_session(**kwargs)
         scope = _TRANSPORT_SCOPES.for_execution(
             session_id=str(kwargs.get('session_id') or ''),
             task_id=str(kwargs.get('task_id') or ''),
             turn_id=str(kwargs.get('turn_id') or ''))
-        result = request_memory(request, scope)
+        request, operational = request_work.prepare(request, scope,
+            api_mode=str(kwargs.get('api_mode') or ''))
+        result = request_memory(request, scope, operational=operational)
         if not check_supplied_input(scope, result):
             result['request'] = input_provenance.withheld_request(result['request'])
             result['reason'] = 'source_input_unavailable'
         result['request'] = describe(result['request'])
-        result['request'] = request_work(
-            result['request'], scope, api_mode=str(kwargs.get('api_mode') or ''))
-        return result
+        return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
 
     def commitment_work_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}

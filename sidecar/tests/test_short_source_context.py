@@ -20,7 +20,13 @@ TEXT = ' '.join((ROWS, COLUMNS, CONDITION, 'This applies to this note only.'))
 
 
 @pytest.mark.asyncio
-async def test_ordinary_source_to_fresh_context_keeps_rows_columns_and_completion_condition(source_app, tmp_path, monkeypatch):
+@pytest.mark.parametrize('query,unresolved', [
+    ('transfer note format', False),
+    ('Recall the transfer note format before opening any files.', True),
+    ('What was the transfer note format last month?', True),
+])
+async def test_ordinary_source_to_fresh_context_keeps_rows_columns_and_completion_condition(
+        source_app, tmp_path, monkeypatch, query, unresolved):
     projection = SourceClaimProjection(TurnIdempotencyLedger(tmp_path/'turn-idempotency.db'))
     model = Model({TEXT: claim(COLUMNS, 'separate Source evidence and Observed result columns',
         subject='note', predicate='columns', memory_kind='decision')})
@@ -28,7 +34,7 @@ async def test_ordinary_source_to_fresh_context_keeps_rows_columns_and_completio
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
         await ingest(client, 'new-layout', TEXT, contact='person')
         assert await projection.process_one(model)
-        rows = candidates(projection, query='transfer note format')
+        rows = candidates(projection, query=query)
         row, = rows
         assert row['content'] == TEXT and row['ranking_text'] == TEXT
         assert row['epistemic_state'] == 'quotation'
@@ -36,16 +42,20 @@ async def test_ordinary_source_to_fresh_context_keeps_rows_columns_and_completio
         assert row['source_message_hash']
         assert row['source_anchors'] == [{'source_id': 'new-layout'}]
         assert row['source_history_anchors'] == [row['history_anchor']]
+        if unresolved:
+            assert row['validity_status'] == 'query_time_unresolved'
         selected, body = pack_memory_context(rows)
         assert selected == rows and all(part in body for part in (ROWS, COLUMNS, CONDITION))
         response = await client.post('/v1/host/context/assemble', json={
             'identity': {'host_id': 'test-host'},
             'context': {'contact_id': 'person', 'session_id': 'fresh-voice-session'},
-            'incoming_message': {'role': 'user', 'content': 'transfer note format'},
+            'incoming_message': {'role': 'user', 'content': query},
             'include_initiatives': False})
         assert response.status_code == 200
         memory = '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'colony-memory')
         assert memory.count(TEXT) == 1
+        if unresolved:
+            assert 'query_time_unresolved' in memory
         assert not candidates(projection, query='transfer note', contact='another-person', session='session-a')
         # A small budget may offer an opening anchor, never just the first clause.
         bounded, short = pack_memory_context(rows, max_chars=len(body)-1)

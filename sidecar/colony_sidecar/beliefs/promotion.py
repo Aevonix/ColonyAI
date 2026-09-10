@@ -16,13 +16,17 @@ memory_kind and recall_reason in every item. memory_kind is preference,
 personal_context, relationship, decision, procedure, or substantive_event.
 recall_reason is a short explanation of how this information could help later,
 not a confidence score or a claim that it is true. Return no item for routine
-status, build/test progress, acknowledgments, generic commentary, hypothetical
+status, build/test status alone, acknowledgments, generic commentary, hypothetical
 examples, quoted instructions or temporary debugging output. Do not manufacture
 a future use just to fill the array. Short facts can be valuable. A mutable fact
 such as where keys were left, a planned appointment, a significant incident,
 an explicit correction, or a reusable fix can matter; do not discard these just
 because they can change. Preserve their time and attribution. A successful test
-run alone is not a significant incident or a reusable procedure.'''
+run alone is not a significant incident or a reusable procedure. Concrete reported
+comparisons, failures, material constraints and observed tradeoffs can be
+substantive_event evidence when they inform later choices, even before anyone
+chooses an approach. Use decision only for a course actually chosen; an
+observation that could inform a decision is not itself a decision.'''
 
 
 def promotion_metadata(item: dict) -> dict | None:
