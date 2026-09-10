@@ -227,7 +227,7 @@ class SelfJudgments:
                     continue
                 claim['subject_basis'] = basis
             result.append({'claim_id': row['id'], **{key: claim[key] for key in (
-                'subject', 'predicate', 'value', 'evidence', 'memory_quality', 'model_provenance', 'subject_basis') if key in claim},
+                'representation', 'subject', 'predicate', 'value', 'evidence', 'memory_quality', 'model_provenance', 'subject_basis') if key in claim},
                 'admission': {key: claim['admission_review'][key] for key in
                     ('version', 'basis', 'model_provenance') if key in claim['admission_review']}})
         return result

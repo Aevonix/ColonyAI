@@ -575,7 +575,7 @@ class SourceClaimProjection:
                             "status": "legacy_precision_unknown" if c.get("event_at") else "unknown"}),
                         "reported_at": c["observed_at"], "validity_basis": c["validity_basis"],
                         "operation": c["operation"], "prior_claim_id": c.get("prior_claim_id"),
-                        **{k: c[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality', 'subject_basis') if k in c}}
+                        **{k: c[k] for k in ('representation', 'evidence_basis', 'epistemic_state', 'source_modality', 'subject_basis') if k in c}}
                        for c in group]
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
             source_refs = [(c['turn_id'], c['message_hash']) for c in group]

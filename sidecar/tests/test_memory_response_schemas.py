@@ -21,7 +21,7 @@ def validator(module):
 def test_claim_schema_preserves_procedure_and_empty_output_but_not_unquoted_content():
     check = validator(source_claims)
     check.validate([])
-    wire = {k: v for k, v in procedure().items() if k != 'value'}
+    wire = {k: v for k, v in procedure().items() if k != 'value'} | {'representation': 'procedure'}
     check.validate([wire])
     fabricated = {**wire, 'subject': 'invented device'}
     check.validate([fabricated])  # Schema validity cannot establish source grounding.
@@ -37,7 +37,7 @@ def test_claim_schema_preserves_procedure_and_empty_output_but_not_unquoted_cont
 def test_short_source_schema_retains_trailing_time_and_reporter_context():
     message = 'According to the keeper, the green timer is on the lower rack today.'
     schema = source_claims.claim_response_schema(message)['schema']
-    item = {'subject': 'green timer', 'predicate': 'location', 'value': 'lower rack',
+    item = {'representation': 'assertion', 'subject': 'green timer', 'predicate': 'location', 'value': 'lower rack',
             'evidence': message, 'operation': 'assert', 'prior_claim_id': None,
             'valid_from_text': 'today', 'valid_to_text': None, 'event_at_text': None,
             'memory_kind': 'personal_context', 'recall_reason': 'Find the reported timer location when needed.'}

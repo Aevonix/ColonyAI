@@ -183,7 +183,7 @@ def read(ledger, *, contact_id, session_id, source_id, source_version,
                 {key: c.get(key) for key in ('id', 'turn_id', 'role', 'subject', 'predicate', 'value', 'evidence',
                     'observed_at', 'recorded_at', 'valid_from', 'valid_to', 'event_at', 'event_time',
                     'validity_basis', 'operation', 'prior_claim_id', 'superseded_by', 'retracted_by')}
-                | {key: c[key] for key in ('epistemic_state', 'source_modality', 'evidence_basis') if key in c}
+                | {key: c[key] for key in ('representation', 'epistemic_state', 'source_modality', 'evidence_basis') if key in c}
                 for c in selected]}, ensure_ascii=False)
             hashes = {identifier: [c['message_hash'] for c in selected if c['turn_id'] == identifier]
                       for identifier in ids}

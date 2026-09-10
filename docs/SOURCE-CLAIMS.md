@@ -122,6 +122,32 @@ The memory-provider wrapper now distinguishes persistent state from source evide
 
 ## Operation and qualification
 
+The experimental v8 extractor represents substantive experiences and comparisons
+as quoted episodes. The processor selects one exact passage and explains its
+future use; it does not synthesize subject/value fields for the episode. The
+existing admission review checks the passage against the complete source, and
+the existing source table retains it with a content-derived record identity.
+`Reported episode` is a record label, not a person or world-model entity. The
+passage preserves units, conditions, attribution and uncertainty within the
+existing 500-character limit. An episode's event time stays unknown in the
+projection; dates remain in its quote, and the source report time remains
+separate. No model-generated date is required to retain an exact experience.
+Consequently, structured event-date filters do not select these episodes, even
+when their quotations contain dates; source-history reading retains those dates.
+Material that cannot fit with its essential context
+stays available as source history.
+
+Structured facts and procedures keep their existing representation and temporal
+conflict handling. Episodes are independent reports: sharing a topic does not
+automatically overwrite an earlier report or resolve contradictions. Source
+correction, attribution invalidation and erasure still withdraw dependent views.
+An ordinary later correction sentence is another reported episode, not an
+automatic retraction. Use the existing explicit source-annotation path when
+the earlier episode needs a correction attached to it; removing that annotation
+does not make the original unqualified episode eligible again.
+There is no new database, worker or model call. This representation is undergoing
+behavioral qualification and does not enable automatic opinions.
+
 `GET /v1/host/memory/sources/claims/status?contact_id=...` uses the existing request scope and reports recent job states, attempts, model/version, errors and claim counts. Unavailable extraction leaves quotations usable; it does not block ordinary turn ingestion or the next conversation.
 
 `sidecar/tests/test_source_claim_projection.py` exercises actual source ingestion, SQLite transactions, source FTS, projection and context assembly. Controlled extractor outputs make correction, conflict, valid-time, erasure, lease and model-swap checks reproducible. The router check verifies that disabled escalation makes only one provider call.
