@@ -30,6 +30,10 @@ retry. Colony continues to preserve attributed episodes, correction history and
 scoped root-task context. Useful continuity still depends on the model applying
 the supplied evidence correctly.
 
+Accepted native drafts stay held until their source association is acknowledged.
+A delayed or lost response reuses the same card, then restores its normal retry
+limit after the association succeeds.
+
 Version 1.1.0 added [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
 Authenticated integrations can retain an original PDF and reopen extracted text
 with exact page, source and correction references. Extraction is bounded and
