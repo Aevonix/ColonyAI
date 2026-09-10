@@ -142,6 +142,93 @@ def test_ordinary_cli_turn_remains_excluded_without_supplied_input(handoff):
         assert db.execute('SELECT COUNT(*) FROM turn_sources').fetchone()[0] == 2
 
 
+@pytest.mark.parametrize('failure', ['timeout', 'remote_protocol', 'local_protocol', 'status', 'changed_source',
+                                   'http_502', 'http_503', 'http_504', 'http_403', 'http_409', 'http_422'])
+def test_only_typed_initial_transport_failure_can_request_a_fresh_task(handoff, monkeypatch, failure):
+    import httpx
+    h = handoff
+    get = h.module.ColonyClient.get
+    attempts = []
+    def fail_once(client, path, **kwargs):
+        if path == '/v1/host/memory/sources/erasures' and not attempts:
+            attempts.append(path)
+            if failure == 'timeout':
+                raise httpx.ReadTimeout('Controlled initial freshness timeout')
+            if failure in ('remote_protocol', 'local_protocol'):
+                error = httpx.RemoteProtocolError if failure == 'remote_protocol' else httpx.LocalProtocolError
+                raise error('Controlled freshness protocol failure')
+            if failure == 'status':
+                return httpx.Response(401, request=httpx.Request('GET', 'http://fixture'+path))
+            if failure.startswith('http_'):
+                return httpx.Response(int(failure[5:]), request=httpx.Request('GET', 'http://fixture'+path))
+            h.ledger.erase_sources(contact_id='owner', turn_ids=['earlier'])
+        return get(client, path, **kwargs)
+    monkeypatch.setattr(h.module.ColonyClient, 'get', fail_once)
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        blocked = h.start()
+        assert blocked['request']['tools'] == []
+        assert supplied.failure['admitted'] is False
+        retryable = failure in ('timeout', 'remote_protocol', 'http_502', 'http_503', 'http_504')
+        assert supplied.failure['retryable'] is retryable
+        expected = ('source_freshness_unavailable' if retryable else
+                    'source_input_erased' if failure == 'changed_source' else 'source_input_unavailable')
+        assert supplied.failure['reason'] == expected
+        assert ('temporarily unavailable' in json.dumps(blocked['request'])) is retryable
+        # A successful subsequent check does not reopen the partially initialized task.
+        effects = []
+        assert json.loads(call(h.ctx, 'terminal', session='native', task='task', turn='turn',
+            dispatch=lambda args: effects.append(args)))['reason'] == 'source_input_unavailable'
+        assert not effects and supplied.memory_contact('native') == ''
+        h.finish()
+        assert supplied.result is None
+    assert h.outbox.snapshot() == []
+
+
+@pytest.mark.parametrize('failure', ['ReadTimeout', 'RemoteProtocolError', 'http_503'])
+def test_failure_after_any_admission_never_permits_replay(handoff, monkeypatch, failure):
+    import httpx
+    h = handoff
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        h.start()
+        def fail_later(*args, **kwargs):
+            if failure == 'http_503':
+                return httpx.Response(503, request=httpx.Request('POST', 'http://fixture/v1/host/memory/sources/erasures'))
+            raise getattr(httpx, failure)('Controlled later transport failure')
+        monkeypatch.setattr(h.module.ColonyClient, 'post', fail_later)
+        result = h.ctx.middleware['llm_request']({'messages': [], 'tools': [{}]},
+            session_id='native', task_id='task', turn_id='turn')
+        assert result['request']['tools'] == []
+        assert supplied.failure == {'reason': 'source_freshness_unavailable', 'admitted': True, 'retryable': False}
+
+
+def test_expired_initial_budget_after_local_read_stays_transient(handoff, monkeypatch):
+    import time
+    h = handoff
+    erasure_state = h.module.TurnOutbox.erasure_state
+    delayed = []
+    def checked_then_delayed(outbox, *args, **kwargs):
+        result = erasure_state(outbox, *args, **kwargs)
+        if kwargs.get('deadline_monotonic') is not None and not delayed:
+            delayed.append(True)
+            # The read completed, but scheduling consumed the remaining
+            # initial verification budget before the next request can start.
+            time.sleep(.35)
+        return result
+    monkeypatch.setattr(h.module.TurnOutbox, 'erasure_state', checked_then_delayed)
+    with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=h.parents, source_refs=h.refs) as supplied:
+        blocked = h.start()
+        assert len(delayed) == 1 and blocked['request']['tools'] == []
+        assert 'temporarily unavailable' in json.dumps(blocked['request'])
+        assert supplied.failure == {'reason': 'source_freshness_unavailable', 'admitted': False, 'retryable': True}
+        # A later successful check cannot reopen this failed native task.
+        h.finish()
+        assert supplied.result is None and supplied.memory_contact('native') == ''
+    assert h.outbox.snapshot() == []
+
+
 @pytest.mark.parametrize('entry', ['pre_api_request', 'llm_request'])
 def test_native_compression_rotation_preserves_input_memory_and_root_result(handoff, monkeypatch, entry):
     h = handoff

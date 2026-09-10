@@ -35,6 +35,16 @@ The optional `modelPool` provides more than three named bindings, independently
 of machines or parameter count. `functionRoles` chooses ordered candidates and
 requirements. Names express deployment roles, not hardware identifiers.
 
+Optional `taskRoles` maps a supported task name to an existing function role.
+For example, `"taskRoles": {"source_claim_extraction": "reasoning"}` sends source
+memory formation through reasoning while ToM, appraisals and compression retain
+their existing selection. Capability hints, outer extraction budgets and actual
+dispatch use the same selector. An explicit per-call `function_role` takes
+priority. Omission or an empty map preserves existing behavior; unknown tasks or
+roles reject the configuration. Supported task names are declared in
+`colony_sidecar/router/functions.py` as `TASK_ROLES`. Routing status reports
+the overrides as `task_roles`; each active request keeps its selected snapshot.
+
 ```json
 {
   "provider": "local",
@@ -215,7 +225,8 @@ request alias can work even when absent from the server's listing. Only an
 actual failed completion affects availability. A missing listing therefore
 remains an observation failure without disabling working inference.
 
-Source assertions now request `extraction`, image descriptions request `vision`,
+Source assertions default to `extraction`, with an optional task-role override;
+image descriptions request `vision`,
 and project plans request `planning`. Existing named task hints map compression
 and ToM extraction to `extraction`, working-state thinking to `reasoning`, skill
 distillation to `judging`, and tool drafts to `coding`. Other router calls default

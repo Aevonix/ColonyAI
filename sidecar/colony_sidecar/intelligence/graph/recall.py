@@ -243,6 +243,7 @@ def fuse_candidates(
     limit: int,
     strength_ranking: bool = False,
     confidence_weighting: bool = True,
+    additional: tuple[list[dict[str, Any]], ...] = (),
 ) -> list[dict[str, Any]]:
     """Fuse independent ranks, never incomparable Lucene/cosine raw scores.
 
@@ -253,7 +254,7 @@ def fuse_candidates(
     rows: dict[str, dict[str, Any]] = {}
     ranks: dict[str, float] = {}
     dense = sorted(dense, key=lambda row: row.get("relevance", 0), reverse=True)
-    for candidates in (dense, lexical):
+    for candidates in (dense, lexical, *additional):
         seen = set()
         for rank, row in enumerate(candidates, 1):
             mid = str(row.get("id") or "")

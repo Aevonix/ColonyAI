@@ -247,6 +247,86 @@ def test_partial_feed_never_certifies_freshness_and_makes_bounded_progress(runti
     assert rt.outbox.erasure_watermark('owner') == 1
 
 
+@pytest.mark.parametrize('source_state', ['current', 'invalidated', 'erased', 'malformed'])
+def test_four_full_erasure_pages_resume_only_unadmitted_current_input(runtime, monkeypatch, source_state):
+    rt = runtime
+    provenance = importlib.import_module(rt.module.__package__ + '.input_provenance')
+    # Exercise the page limit independently of CI disk speed. All four pages
+    # are validated and persisted by the real durable outbox; only transport
+    # and the request boundary's local deadline clock are controlled.
+    import time
+    clock = SimpleNamespace(monotonic=lambda: 1000.0, time=time.time, sleep=time.sleep)
+    monkeypatch.setattr(rt.module, 'time', clock)
+    monkeypatch.setattr(importlib.import_module(rt.module.__package__ + '.client'), 'time', clock)
+    client_module = importlib.import_module(rt.module.__package__ + '.client')
+    original = {'role': 'user', 'content': 'Continue the source-bound task.'}
+    rt.ledger.record_source('original-input', contact_id='owner', session_id='voice',
+                            messages=[original], derive_claims=False)
+    parent = {'source_id': 'original-input',
+              'input_message_hash': client_module.source_message_hash('voice', original)}
+    ref = rt.ledger.source_references(['fixture-source'], contact_id='owner', session_id='native')[0]
+    events = [{'sequence': index, 'turn_id': f'old-source-{index}', 'session_id': 'earlier',
+               'message_hashes': ['b' * 64]} for index in range(1, 1002)]
+    if source_state == 'erased':
+        events[249]['turn_id'] = parent['source_id']
+    calls = []
+    def post(path, **kwargs):
+        assert path == '/v1/host/memory/sources/erasures'
+        assert 0 < kwargs['timeout'] <= .25
+        after = kwargs['json']['after']
+        page_events = events[after:after + 250]
+        through = page_events[-1]['sequence'] if page_events else after
+        calls.append((after, len(page_events)))
+        page = {'contact_id': 'owner', 'head': 1001, 'through': through,
+                'events': page_events, 'complete': through == 1001,
+                'sources_current': not (source_state == 'invalidated' and through >= 1000)}
+        if source_state == 'malformed' and through >= 1000:
+            page.pop('head')
+        return httpx.Response(200, json=page, request=httpx.Request('POST', 'http://fixture' + path))
+    def start(session, outbox):
+        scope = SimpleNamespace(contact_id='owner', session_id=session, task_id=session,
+                                turn_id=session, valid_participant=True)
+        boundary = rt.module.RequestMemory(SimpleNamespace(post=post), outbox)
+        message = {'role': 'user', 'content': 'Continue the source-bound task.'}
+        boundary.observe(scope, [message], user_message=message['content'])
+        boundary.observe_host_input(scope, [message], message['content'],
+                                    text='Exact source handles.', sources=[ref], watermark=0)
+        return scope, boundary, {'messages': [message]}
+    scope, boundary, request = start('native', rt.outbox)
+    with provenance.supplied_input(contact_id='owner', session_id='native',
+            input_refs=[parent], source_refs=[ref]) as supplied:
+        supplied.bind(scope)
+        result = boundary(request, scope)
+        assert result['reason'] == 'source_erasure_unavailable'
+        assert calls == [(0, 250), (250, 250), (500, 250), (750, 250)]
+        watermark, rules = rt.outbox.erasure_state('owner')
+        assert watermark == 1000 and len(rules) == 1000
+        assert result['freshness_retryable'] is (source_state in ('current', 'erased'))
+        assert not supplied.allowed(scope, fresh=False, rules=rules,
+                                    freshness_retryable=result['freshness_retryable'])
+        assert supplied.failure['retryable'] is (source_state == 'current')
+        assert supplied.failure['admitted'] is False
+        assert supplied.memory_contact('native') == '' and supplied.result is None
+    if source_state != 'current':
+        return
+    # Recreate both request state and the outbox reader as a fresh process
+    # would. The retry starts at the durable watermark, never page zero, and
+    # only the newly bound scope can become usable after the fifth page.
+    restored = type(rt.outbox)(rt.outbox.path)
+    scope, boundary, request = start('retry', restored)
+    with provenance.supplied_input(contact_id='owner', session_id='retry',
+            input_refs=[parent], source_refs=[ref]) as retry:
+        retry.bind(scope)
+        result = boundary(request, scope)
+        assert calls[-1] == (1000, 1) and len(calls) == 5
+        assert result['reason'] == 'source_erasure_checked' and not result['freshness_retryable']
+        watermark, rules = restored.erasure_state('owner')
+        assert watermark == 1001 and len(rules) == 1001
+        assert retry.allowed(scope, fresh=True, rules=rules)
+        assert retry.memory_contact('retry') == 'owner' and retry.failure is None
+    assert supplied.memory_contact('native') == '' and supplied.result is None
+
+
 def test_responses_and_detached_tagged_packet_are_filtered(runtime):
     rt = runtime
     rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])

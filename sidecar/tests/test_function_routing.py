@@ -262,6 +262,58 @@ async def test_inflight_fallback_keeps_old_snapshot_next_call_reloads(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_task_override_reloads_only_selected_work_and_keeps_inflight_snapshot(tmp_path):
+    started, release = threading.Event(), threading.Event()
+    with endpoint(started=started, release=release) as (first, a), endpoint() as (second, b):
+        original = config(first, second, timeoutSeconds=10)
+        path = tmp_path / 'config.json'; path.write_text(json.dumps(original))
+        r = router(original, path)
+        context = {'task': 'source_claim_extraction'}
+        messages = [{'role': 'user', 'content': 'A neutral source record.'}]
+        old = r.routing_status()['config_revision']
+        held = asyncio.create_task(r.complete(messages, context=context))
+        assert await asyncio.to_thread(started.wait, 2)
+        changed = deepcopy(original)
+        changed['taskRoles'] = {'source_claim_extraction': 'reasoning'}
+        path.write_text(json.dumps(changed))
+        try:
+            assert r.function_config(context=context).model_id == 'openai/strong-neutral'
+            assert r.function_deadline_seconds(context=context) == 180
+            later = await r.complete(messages, context=context)
+        finally:
+            release.set()
+        earlier = await held
+        assert earlier.function_role == 'extraction' and earlier.config_revision == old
+        assert later.function_role == 'reasoning' and later.config_revision != old
+        for task in ('tom_affect_extraction', 'tom_belief_extraction', 'context_compression'):
+            result = await r.complete(messages, context={'task': task})
+            assert result.function_role == 'extraction' and result.content == 'fast-neutral'
+        explicit = {**context, 'function_role': 'extraction'}
+        assert r.function_config(context=explicit).model_id == 'openai/fast-neutral'
+        assert r.function_deadline_seconds(context=explicit) == 3
+        assert (await r.complete(messages, context=explicit)).function_role == 'extraction'
+        assert r.routing_status()['task_roles'] == changed['taskRoles']
+        path.write_text(json.dumps({**changed, 'taskRoles': {'typo_task': 'reasoning'}}))
+        assert (await r.complete(messages, context=context)).config_revision == later.config_revision
+        assert r.routing_status()['reload_error'] == 'ValueError'
+        assert len(a) == 5 and len(b) == 2
+
+
+@pytest.mark.parametrize('mapping', [None, [], {'unknown_task': 'reasoning'},
+    {'source_claim_extraction': 'unknown_role'}, {'source_claim_extraction': []}])
+def test_invalid_task_maps_preserve_selected_router(mapping):
+    cfg = config('http://127.0.0.1:1/v1', 'http://127.0.0.1:2/v1')
+    r = router(cfg)
+    before = r._snapshot
+    with pytest.raises(ValueError, match='taskRoles'):
+        r.configure({**cfg, 'taskRoles': mapping})
+    assert r._snapshot is before
+    r.configure({**cfg, 'taskRoles': {}})
+    assert r.function_config(context={'task': 'source_claim_extraction'}).model_id == 'openai/fast-neutral'
+    assert r.function_deadline_seconds(context={'task': 'source_claim_extraction'}) == 3
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('failure', ['timeout', 'connection'])
 async def test_timeout_and_connection_failover_are_bounded(failure):
     with endpoint(delay=.2) as (first, a), endpoint() as (second, b):

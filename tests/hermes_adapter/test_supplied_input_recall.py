@@ -67,9 +67,15 @@ automatic_ref=ledger.source_references(['automatic-record'],contact_id='owner',s
 parents=[{'source_id':'original-input','input_message_hash':source_message_hash(
  'voice-input',{'role':'user','content':original})}]
 wire=[];generation=[];mode='supplied';scenario=sys.argv[4]
+initial_failure_pending=scenario in ('initial_timeout','initial_remote_protocol','initial_http_503')
 def respond(request):
- global mode
+ global mode, initial_failure_pending
  if request.url.host=='fixture':
+  if initial_failure_pending and request.url.path=='/v1/host/memory/sources/erasures':
+   initial_failure_pending=False
+   if scenario=='initial_http_503':return httpx.Response(503,json={'error':'Temporarily unavailable'})
+   error=httpx.RemoteProtocolError if scenario=='initial_remote_protocol' else httpx.ReadTimeout
+   raise error('Controlled initial freshness transport failure',request=request)
   response=api.request(request.method,request.url.path,params=request.url.params,
    headers=dict(request.headers),content=request.content)
   wire.append({'path':request.url.path,'status':response.status_code,
@@ -143,6 +149,10 @@ def respond(request):
     result=json.loads(tool_rows[0]['content'])
     assert 'SYNCHRONOUSLY' in result['note'] and result['results'][0]['status']=='completed',result
    message={'role':'assistant','content':'Disconnect external power before cleaning the lamp.'};finish='stop'
+ elif mode=='initial_timeout':
+  assert 'Source verification is temporarily unavailable' in text,body
+  assert record not in text and original not in text and body.get('tools',[])==[]
+  message={'role':'assistant','content':'Source verification is temporarily unavailable.'};finish='stop'
  elif mode=='unbound':
   assert record not in text and automatic_record not in text and '[colony-recall-v1 ' not in text,body
   message={'role':'assistant','content':'No recalled record is available.'};finish='stop'
@@ -191,6 +201,17 @@ def agent():
   platform='cli',max_iterations=5,enabled_toolsets=['colony','delegation'])
  value.save_trajectories=False
  return value
+if scenario in ('initial_timeout','initial_remote_protocol','initial_http_503'):
+ mode='initial_timeout';blocked=agent()
+ with supplied_input(contact_id='owner',session_id=blocked.session_id,input_refs=parents,source_refs=[ref]) as supplied:
+  blocked.run_conversation('Perform the admitted lamp maintenance task.',persist_user_message=original)
+  assert supplied.failure=={'reason':'source_freshness_unavailable','admitted':False,'retryable':True}
+  assert supplied.result is None and supplied.memory_contact(blocked.session_id)==''
+ assert len(generation)==1 and not [row for row in wire if row['path']=='/v1/host/context/assemble']
+ assert TurnOutbox(home/'outbox.db').snapshot()==[]
+ blocked.close();mode='supplied';generation.clear();wire.clear()
+ # A fresh task must rebuild native admission, inherited context and automatic
+ # recall. The failed scope itself remains unusable and is never reopened.
 parent=agent();initial_session=parent.session_id
 with supplied_input(contact_id='owner',session_id=parent.session_id,input_refs=parents,source_refs=[ref]) as supplied:
  with patch.object(parent._memory_manager,'prefetch_all',wraps=parent._memory_manager.prefetch_all) as automatic:
@@ -242,7 +263,7 @@ print(json.dumps({'native_parent_automatic_recall':True,'no_gateway_sender':True
 '''
 
 
-@pytest.mark.parametrize('scenario', ['normal', 'erase_during', 'rotate'])
+@pytest.mark.parametrize('scenario', ['normal', 'erase_during', 'rotate', 'initial_timeout', 'initial_remote_protocol', 'initial_http_503'])
 def test_supplied_native_input_reaches_automatic_recall_and_delegated_source_reader(artifacts, tmp_path, scenario):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified Hermes release for native request qualification')

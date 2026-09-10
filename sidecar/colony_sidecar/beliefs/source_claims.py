@@ -525,12 +525,12 @@ def local_tier(router, tier=None):
     return tier if local else None
 
 
-def _role_timeout_seconds(router, role):
+def _role_timeout_seconds(router, role, *, task=None):
     if getattr(router, 'supports_function_routing', False) is not True:
         return 20
     read_deadline = getattr(router, 'function_deadline_seconds', None)
     if callable(read_deadline):
-        deadline = read_deadline(context={'function_role': role})
+        deadline = read_deadline(context={'task': task} if task else {'function_role': role})
         if isinstance(deadline, (int, float)) and not isinstance(deadline, bool) and 0 < deadline <= 600:
             # Allow dispatch/validation overhead without clipping the role's
             # configured total budget. This also bounds a concurrent reload.
@@ -540,7 +540,7 @@ def _role_timeout_seconds(router, role):
 
 def extraction_timeout_seconds(router):
     """Capture the extraction bound; the router owns candidate deadlines."""
-    return _role_timeout_seconds(router, 'extraction')
+    return _role_timeout_seconds(router, 'extraction', task='source_claim_extraction')
 
 
 def projection_timeout_seconds(router):
@@ -634,7 +634,7 @@ async def _extract_claims(router, source: dict, message: dict, prior: list[dict]
     response = await asyncio.wait_for(router.complete(
         messages=[{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-        force_tier=tier, context={"task": "source_claim_extraction", "function_role": "extraction", "max_output_tokens": EXTRACTION_MAX_OUTPUT_TOKENS,
+        force_tier=tier, context={"task": "source_claim_extraction", "max_output_tokens": EXTRACTION_MAX_OUTPUT_TOKENS,
                                   "allow_fallback": functions, "response_schema": claim_response_schema(content,
                                       audio_segments=message.get('_audio_segments'), prior=prior)}),
         timeout=extraction_timeout_seconds(router))

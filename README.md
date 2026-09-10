@@ -18,15 +18,25 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
-Version 1.1.4 keeps complete short source passages when a query's time is
-uncertain, and adds attributed experience episodes through the existing source
-ledger. Corrections retain their report history and distinguish event time from
-report time. Exact whole-message text episodes use one extraction pass; they
-remain unverified reports. Shared work can include a scoped excerpt of a root
-task's admitted request, with source correction and erasure tracking. Forecast
-observations and local log reviews use the existing native execution path.
-These changes repair observed integration failures; useful continuity still
-depends on the model applying the supplied evidence correctly.
+Version 1.1.5 lets a deployment select a model role for an individual cognitive
+task. Memory formation can use deliberate reasoning while other extraction keeps
+its current processor. Capability checks, deadlines and dispatch use the same
+selection, and running calls retain their original configuration.
+
+Native source handoffs distinguish a temporary verification outage before
+admission from unavailable or erased input. A host can make one fresh attempt
+within its original task deadline; an admitted task is never eligible for that
+retry. Colony continues to preserve attributed episodes, correction history and
+scoped root-task context. Useful continuity still depends on the model applying
+the supplied evidence correctly.
+
+Accepted native drafts stay held until their source association is acknowledged.
+A delayed or lost response reuses the same card, then restores its normal retry
+limit after the association succeeds.
+
+Media descriptions participate independently in recall ranking, so a long list
+of text matches cannot exclude images before relevance is assessed. Selected
+descriptions retain the source and asset references needed to open the original.
 
 Version 1.1.0 added [page-addressed PDF sources](docs/SOURCE-DOCUMENTS.md).
 Authenticated integrations can retain an original PDF and reopen extracted text
@@ -85,7 +95,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.4" "colony-hermes==1.1.4"
+python -m pip install "colonyai[hermes]==1.1.5" "colony-hermes==1.1.5"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 

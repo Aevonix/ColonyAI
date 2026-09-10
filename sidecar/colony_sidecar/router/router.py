@@ -338,31 +338,32 @@ class LLMRouter:
 
     def function_config(self, *, context=None):
         """Capability hint for the existing context gate; dispatch rechecks DNS."""
-        from .functions import TASK_ROLES, candidates
+        from .functions import select_role, candidates
         self._reload()
         ctx = context or {}
-        role = ctx.get('function_role') or TASK_ROLES.get(ctx.get('task'), 'reasoning')
-        if self._snapshot is None or role not in self._snapshot.roles:
+        snapshot = self._snapshot
+        role = select_role(snapshot, ctx)
+        if snapshot is None or role not in snapshot.roles:
             return None
-        eligible = candidates(self._snapshot, role, ctx, has_images=False, has_tools=bool(ctx.get('tools')))
+        eligible = candidates(snapshot, role, ctx, has_images=False, has_tools=bool(ctx.get('tools')))
         if not eligible:
             raise ValueError('No eligible local model for function ' + role)
         return eligible[0].config
 
     def function_deadline_seconds(self, *, context=None):
         """Configured total role budget for bounded background callers."""
-        from .functions import TASK_ROLES
+        from .functions import select_role
         self._reload()
         ctx = context or {}
-        role = ctx.get('function_role') or TASK_ROLES.get(ctx.get('task'), 'reasoning')
         snapshot = self._snapshot
+        role = select_role(snapshot, ctx)
         if snapshot is None or role not in snapshot.roles:
             return None
         return snapshot.roles[role].deadline_seconds
 
     async def _call_function(self, snapshot, messages, context, tools, force_tier, stream, request_id):
-        from .functions import TASK_ROLES, candidates
-        role_name = context.get('function_role') or TASK_ROLES.get(context.get('task'), 'reasoning')
+        from .functions import select_role, candidates
+        role_name = select_role(snapshot, context)
         if force_tier == ModelTier.VISION:
             role_name = 'vision'
         if role_name not in snapshot.roles:

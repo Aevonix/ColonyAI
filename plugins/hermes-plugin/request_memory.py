@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from httpx import HTTPStatusError, NetworkError, RemoteProtocolError, TimeoutException
 
 from .client import source_message_hash
 
@@ -452,13 +453,14 @@ class RequestMemory:
             parents_valid = False
         deadline = time.monotonic() + .25
         watermark, rules, fresh = 0, [], False
+        freshness_retryable = False
         try:
             if contact and parents_valid:
                 watermark, rules = self.outbox.erasure_state(contact, deadline_monotonic=deadline)
                 for _ in range(4):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        break
+                        raise TimeoutError('source_freshness_verification_deadline')
                     if source_refs:
                         response = self.client.post('/v1/host/memory/sources/erasures',
                             json={'contact_id': contact, 'after': watermark,
@@ -480,7 +482,15 @@ class RequestMemory:
                         break
                     if fresh:
                         break
+                else:
+                    # Retain the bounded progress. A fresh, unadmitted task
+                    # can continue from the persisted cursor on its one retry.
+                    freshness_retryable = (page.get('complete') is False
+                                           and int(page['through']) < int(page['head']))
         except Exception as error:
+            freshness_retryable = (
+                isinstance(error, (TimeoutError, TimeoutException, NetworkError, RemoteProtocolError))
+                or (isinstance(error, HTTPStatusError) and error.response.status_code in {502, 503, 504}))
             logger.warning('request memory freshness unavailable (%s)', type(error).__name__)
         if fresh:
             # Only explicitly opened images pay this small metadata read. A
@@ -595,4 +605,5 @@ class RequestMemory:
                     self._supplied[observed_key].update(supplied)
                     self._requests_seen.add(observed_key)
         return {'request': filtered, 'source': 'colony',
+                'freshness_retryable': freshness_retryable and not fresh,
                 'reason': 'source_erasure_checked' if fresh else 'source_erasure_unavailable'}
