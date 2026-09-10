@@ -133,7 +133,23 @@ def _json(value):
 
 def _topic_words(value):
     # Model labels often use underscores; these are separators, not one word.
-    return set(re.findall(r'[^\W_]{3,}', value.casefold()))
+    words = set(re.findall(r'[^\W_]{3,}', value.casefold()))
+    # Keep the original terms and add common English plural variants on both
+    # sides of the relevance check. A topic about "drawings" must remain
+    # available to a query about a "drawing". This is lexical matching, not
+    # a language detector or permission/identity normalization.
+    for word in tuple(words):
+        if not word.isascii() or not word.isalpha() or len(word) < 5:
+            continue
+        if word.endswith(('ss', 'us', 'is')):
+            continue
+        if word.endswith(('ches', 'shes', 'sses', 'xes', 'zes')):
+            words.add(word[:-2])
+        elif word.endswith('ies'):
+            words.update((word[:-3] + 'y', word[:-1]))
+        elif word.endswith('s'):
+            words.add(word[:-1])
+    return words
 
 
 def initialize(conn):
