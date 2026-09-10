@@ -7,12 +7,16 @@ human input, including host tasks with no channel sender. The memory provider
 uses the existing source validation and session binding before selecting that
 contact. This adds no owner fallback for unchecked supplied input. Channel
 senders must still match, and source erasure invalidates dependent recall before
-another request. Existing explicit owner-system configuration is unchanged.
+another request. Authenticated compression rotations preserve the root input
+and final handoff while child completions remain separate. Existing explicit
+owner-system configuration is unchanged.
 
 Shared work fetches available active ancestors before projecting current native
 executions under the existing eight-record and 4,000-character limits. Parents
 stay with their children even when newer siblings fill the initial selection.
-Optional historical reports follow active work. Omitted records remain explicit;
+Only the current execution family precedes the active sources, which alternate
+before optional history. Bursts of recent siblings do not displace every other
+work source. Omitted records remain explicit;
 execution ancestry does not establish that two tasks have the same purpose.
 
 The installation guide uses the matched published packages, documents Hermes'
