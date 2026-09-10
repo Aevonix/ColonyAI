@@ -165,7 +165,7 @@ measurements return `diagnostics: null`; an older attempt's counts are not reuse
 The record lives on the existing job row, follows its lease, is replaced by the
 next finished attempt and is removed with source erasure.
 
-New claim jobs use `source-claims-v4`: after the existing quote, subject, value
+New claim jobs use `source-claims-v7`: after the existing quote, subject, value
 and date checks, one batched `source_claim_review` request uses the configured
 `judging` role to assess whether each proposal preserves the source's relation,
 attribution, negation, modality and memory category. Exact required proposal
@@ -174,6 +174,23 @@ still rejects missing, duplicate or invalid decisions, including on bindings
 that do not declare strict JSON schema support. There is no review call for an
 empty validated proposal set. Useful reports, temporary knowledge, standing
 conditional preferences and actual reusable procedures remain eligible.
+
+An explicit correction or change can reuse a supplied prior assertion's exact
+subject and predicate when its current quotation refers back to that subject.
+The current value must still occur in the current quotation, and independent
+admission review must accept the reference. The stored `subject_basis_claim_id`
+points directly to the original, literally grounded subject claim, including
+across consecutive corrections. Commit rechecks both the current prior and that
+original source; a missing or changed dependency cannot become a new assertion.
+An unresolved change time remains ineligible for this exception.
+
+Recall labels the ancestor quotation `subject_identity_only`: any old value in
+it is not evidence for the current value. Both source identities accompany the
+current assertion. Annotation makes an invalidated basis ineligible; erasure or
+changed attribution removes dependent claims and any dependent judgment prose,
+while preserving separately retained raw corrections. Preferences read the same
+eligible claims. A later assertion that quotes its own full subject needs no
+inherited subject dependency. Existing historical rows are not rewritten.
 
 Review is the default admission path for new nonempty proposals. A local
 installation can assign extraction and judging to the same model; older local

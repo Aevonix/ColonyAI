@@ -46,11 +46,57 @@ def erase_removed(conn, turn_id, session_id, retained):
     rows = conn.execute('SELECT id,message_hash FROM source_claims WHERE turn_id=?', (turn_id,)).fetchall()
     for row in rows:
         if row["message_hash"] not in hashes:
+            # Inherited subjects point directly to their original grounded
+            # claim, so erasure needs one hop and never removes raw corrections.
+            conn.execute("DELETE FROM source_claims WHERE json_extract(data_json,'$.subject_basis_claim_id')=?", (row['id'],))
             conn.execute('DELETE FROM source_claims WHERE id=?', (row["id"],))
     if not retained:
         conn.execute('DELETE FROM source_claim_jobs WHERE turn_id=?', (turn_id,))
     # Supersession/retraction links on surviving claims retain IDs, not erased
     # values. Deleting a correction must never silently revive its old value.
+
+
+def subject_basis(conn, claim, *, contact_id):
+    """Return a retained quotation solely as evidence of subject identity.
+
+    A root's value may be retracted or superseded while its literal subject
+    remains grounded. Annotation, erasure or changed attribution revokes it.
+    Only one fully grounded ancestor is allowed, not a recursive claim chain.
+    """
+    identifier = claim.get('subject_basis_claim_id')
+    if not identifier:
+        return None
+    from colony_sidecar.turns.idempotency import source_message_hash, canonical_turn_digest
+    from colony_sidecar.turns.audio import claim_message
+    row = conn.execute('''SELECT c.*,s.session_id,s.messages_json FROM source_claims c
+        JOIN turn_sources s ON s.turn_id=c.turn_id JOIN source_claim_jobs j ON j.turn_id=c.turn_id
+        WHERE c.id=? AND s.contact_id=? AND s.scope='person' AND j.status='complete'
+        AND NOT EXISTS (SELECT 1 FROM source_attribution_invalidations i WHERE i.source_id=s.turn_id)
+        AND NOT EXISTS (SELECT 1 FROM source_projection_erasures e WHERE e.turn_id=s.turn_id)
+        AND NOT EXISTS (SELECT 1 FROM source_annotations a,json_each(a.target_message_hashes_json) h
+                        WHERE a.target_source_id=s.turn_id AND h.value=c.message_hash)''',
+        (identifier, contact_id)).fetchone()
+    if row is None:
+        return None
+    data = json.loads(row['data_json'])
+    messages = json.loads(row['messages_json'])
+    message = next((claim_message(m) for m in messages
+        if source_message_hash(row['session_id'], m) == row['message_hash']), None)
+    if (data.get('subject_basis_claim_id') or message is None or message.get('role') != 'user'
+            or data.get('subject') != claim.get('subject') or row['subject_key'] != claim['subject_key']
+            or row['predicate'] != claim['predicate'] or data['evidence'] not in message.get('content', '')
+            or data.get('admission_review', {}).get('version') != 'source-claim-review-v1'
+            or data.get('admission_review', {}).get('basis') != 'model_judgment_unverified'):
+        return None
+    # Reuse the original literal-grounding rule, without inferring an alias.
+    from .source_claims import literal_subject
+    if not literal_subject(data['subject'], data['evidence']):
+        return None
+    return {'claim_id': row['id'], 'turn_id': row['turn_id'], 'message_hash': row['message_hash'],
+            'source_version': canonical_turn_digest(messages),
+            'disposition': 'subject_identity_only', 'value_use': 'not_evidence_for_current_value',
+            **{k: data[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality') if k in data},
+            'subject': data['subject'], 'predicate': row['predicate'], 'evidence': data['evidence']}
 
 
 class SourceClaimProjection:
@@ -111,6 +157,11 @@ class SourceClaimProjection:
             if row["message_hash"] not in membership[turn]:
                 continue
             data = json.loads(row["data_json"])
+            if data.get('subject_basis_claim_id'):
+                basis = subject_basis(conn, data, contact_id=contact_id)
+                if basis is None:
+                    continue
+                data['subject_basis'] = basis
             data.update({key: row[key] for key in ("id", "turn_id", "message_hash", "subject_key", "predicate",
                         "valid_from", "valid_to", "superseded_by", "retracted_by")})
             data.update(observed_at=row["occurred_at"], recorded_at=row["ingested_at"])
@@ -175,10 +226,27 @@ class SourceClaimProjection:
                         evidence_basis={**basis, 'source_message_hash': message_hash,
                             'source_version_at_formation': canonical_turn_digest(current_messages)})
                 basis = [source["turn_id"], message_hash, claim["subject_key"], claim["predicate"], claim["value"], claim["evidence"]]
+                if claim.get('subject_basis_claim_id'):
+                    basis.append(claim['subject_basis_claim_id'])
                 cid = "claim:" + hashlib.sha256(json.dumps(basis, ensure_ascii=False).encode()).hexdigest()
                 if conn.execute('SELECT 1 FROM source_claims WHERE id=?', (cid,)).fetchone():
                     continue
                 old = prior.get(claim.get("prior_claim_id"))
+                if claim.get('subject_basis_claim_id'):
+                    # Re-read current status even when another candidate in
+                    # this same batch already corrected the supplied prior.
+                    live = self._rows(conn, current['contact_id'], current['session_id'],
+                                      ids=[claim.get('prior_claim_id')])
+                    old = live[0] if live else None
+                    if (old is None or old['subject'] != claim['subject']
+                            or old['subject_key'] != claim['subject_key'] or old['predicate'] != claim['predicate']
+                            or old['superseded_by'] or old['retracted_by']
+                            or claim['operation'] not in {'correct', 'change'}
+                            or claim.get('admission_review', {}).get('version') != 'source-claim-review-v1'
+                            or claim.get('admission_review', {}).get('basis') != 'model_judgment_unverified'
+                            or claim['subject_basis_claim_id'] != (old.get('subject_basis_claim_id') or old['id'])
+                            or subject_basis(conn, claim, contact_id=current['contact_id']) is None):
+                        continue  # A missing dependency cannot become assert.
                 if old and (old["subject_key"] != claim["subject_key"] or old["predicate"] != claim["predicate"]
                             or old["superseded_by"] or old["retracted_by"]):
                     old = None
@@ -314,10 +382,15 @@ class SourceClaimProjection:
                 if any(claim['message_hash'] in json.loads(r[0]) for r in annotations):
                     continue
                 source = conn.execute('SELECT session_id,messages_json FROM turn_sources WHERE turn_id=?', (claim['turn_id'],)).fetchone()
-                result.append({**claim, 'session_id': source['session_id'], 'sources': [{
+                refs = [{
                     'source_id': claim['turn_id'], 'source_contact_id': contact_id,
                     'source_version': canonical_turn_digest(json.loads(source['messages_json'])),
-                    'message_hash': claim['message_hash']}]})
+                    'message_hash': claim['message_hash']}]
+                if claim.get('subject_basis'):
+                    basis = claim['subject_basis']
+                    refs.append({'source_id': basis['turn_id'], 'source_contact_id': contact_id,
+                                 'source_version': basis['source_version'], 'message_hash': basis['message_hash']})
+                result.append({**claim, 'session_id': source['session_id'], 'sources': refs})
         return result
 
     def prepare_context(self, beliefs, source_hits, *, contact_id, session_id, time_query: MemoryTimeQuery):
@@ -475,16 +548,19 @@ class SourceClaimProjection:
                             "status": "legacy_precision_unknown" if c.get("event_at") else "unknown"}),
                         "reported_at": c["observed_at"], "validity_basis": c["validity_basis"],
                         "operation": c["operation"], "prior_claim_id": c.get("prior_claim_id"),
-                        **{k: c[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality') if k in c}}
+                        **{k: c[k] for k in ('evidence_basis', 'epistemic_state', 'source_modality', 'subject_basis') if k in c}}
                        for c in group]
             status = "unresolved_conflict" if conflict else ("temporal_history" if len(values) > 1 else "source_assertion")
+            source_refs = [(c['turn_id'], c['message_hash']) for c in group]
+            source_refs.extend((c['subject_basis']['turn_id'], c['subject_basis']['message_hash'])
+                               for c in group if c.get('subject_basis'))
             identifier = hashlib.sha256(json.dumps([contact_id, key, [c["id"] for c in group]]).encode()).hexdigest()
             bundle = {"id": "assertions:" + identifier, "kind": "source_quote",
                             "history_anchor": {"source_id": group[0]['turn_id'], "claim_id": group[0]['id']},
-                            "source_turn_ids": list(dict.fromkeys(c['turn_id'] for c in group)),
+                            "source_turn_ids": list(dict.fromkeys(turn for turn, _ in source_refs)),
                             "_source_message_hashes": {turn: list(dict.fromkeys(
-                                c['message_hash'] for c in group if c['turn_id'] == turn))
-                                for turn in dict.fromkeys(c['turn_id'] for c in group)},
+                                message for source, message in source_refs if source == turn))
+                                for turn, _ in source_refs},
                             "source_uri": "turn:" + group[0]["turn_id"], "claim_status": status,
                             "epistemic_state": ('derived_unverified' if any(c.get('evidence_basis') for c in group) else status),
                             **({'source_modality': 'audio_transcript'} if any(c.get('evidence_basis') for c in group) else {}),

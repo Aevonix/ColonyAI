@@ -220,8 +220,14 @@ class SelfJudgments:
         result = []
         for row in rows:
             claim = json.loads(row['data_json'])
+            if claim.get('subject_basis_claim_id'):
+                from colony_sidecar.beliefs.source_projection import subject_basis
+                basis = subject_basis(conn, claim, contact_id=self.owner_id)
+                if basis is None:
+                    continue
+                claim['subject_basis'] = basis
             result.append({'claim_id': row['id'], **{key: claim[key] for key in (
-                'subject', 'predicate', 'value', 'evidence', 'memory_quality', 'model_provenance') if key in claim},
+                'subject', 'predicate', 'value', 'evidence', 'memory_quality', 'model_provenance', 'subject_basis') if key in claim},
                 'admission': {key: claim['admission_review'][key] for key in
                     ('version', 'basis', 'model_provenance') if key in claim['admission_review']}})
         return result
@@ -626,6 +632,16 @@ class SelfJudgments:
                     ids = source.get('premise_claim_ids') or [p['claim_id'] for p in source.get('admitted_premises', [])]
                     if ids:
                         ref['premise_claim_ids'] = ids
+            # Inherited subject quotations are retained dependencies even
+            # though their old values are not premises of the new judgment.
+            for ref in stored['support'] + stored['contrary']:
+                for premise in self._premises(conn, ref['turn_id'], ref['message_hash']):
+                    if premise['claim_id'] not in ref.get('premise_claim_ids', []):
+                        continue
+                    basis = premise.get('subject_basis')
+                    if basis:
+                        refs.append({k: basis[k] for k in ('turn_id', 'message_hash')})
+            refs = list({_json(ref): ref for ref in refs}.values())
             cur = conn.execute('''INSERT INTO self_judgment_revisions
                 (owner_id,topic,payload_json,dependency_json,supersedes,processor_json,created_at,status,source_turn_id,version)
                 VALUES (?,?,?,?,?,?,?,'current',?,?)''', (self.owner_id, result['topic'], _json(stored), _json(refs),
