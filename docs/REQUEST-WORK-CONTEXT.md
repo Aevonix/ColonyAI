@@ -15,7 +15,44 @@ configured worker labels and a retained report digest when available. It omits
 task questions, draft text, transcript content and local report paths. The
 response is bounded to 4,000 characters and states when records or sources are
 omitted or unavailable. It is a partial observation, not a complete process
-inventory or proof of an external effect.
+inventory or proof of an external effect. Session, parent execution, worker
+attempt and native task/run identifiers remain joinable; claim tokens and locks
+are never added to the request projection.
+
+The full API and request response include `work_sources`: each reader's status,
+returned record counts, known totals, truncation and read timestamp when known.
+Request responses also report how many rows from each source fit the excerpt.
+Active and recent terminal counts are reported separately. If a reader lacks
+a recent total, the coverage gives the returned recent count as a lower bound.
+The prompt names source coverage and takes records round-robin across readers,
+so a backlog of accepted drafts cannot consume all slots before another session
+or cron is considered. A row that cannot fit is omitted without preventing
+shorter later rows from appearing. Read availability does not verify process
+liveness. Counts can overlap because an accepted initiative and a native board
+can describe the same undertaking; do not sum them into a unique task count.
+
+| Reader | Observed boundary |
+| --- | --- |
+| `execution` | Registered, nonterminal native turns, including bound children; expired observations have unknown liveness |
+| `native_kanban` | Explicitly selected boards or the current native board, with per-board availability |
+| `local_work` | Canonical accepted local drafts and bound internal reviews, with native associations |
+| `worker_work` | Claimed/running jobs in the attached canonical queue; an unattached queue is unavailable, not idle |
+| `native_cron` | The explicitly bound profile's native execution ledger |
+| `reported_worker` | Configured local status files, including unverified terminal reports; no configured reader is `not_observed` |
+
+Independent ledger reads run concurrently with 200 ms read deadlines. A failed
+reader becomes unavailable while other observations remain usable.
+The multi-board reader uses a 150 ms internal budget during this fan-in, leaving
+time for its partial result to return before the outer deadline. A slow later
+board therefore need not discard already observed faster boards. Failed reader
+results retain empty active and recent rows so turn-start formatting preserves
+the other sources. These are separate snapshots, not one atomic snapshot across
+databases. Cancelling the
+await does not kill an underlying read-only thread. Selected readers retain
+their existing bounded SQLite reads. Other profiles, unregistered processes and
+independent direct-delivery receipts are outside this inventory. `complete`
+remains false. Full API reads can request up to 100 records per reader; they
+remain bounded and disclose omissions.
 
 One request-only block, delimited by `colony-work-request-v1`, supersedes the
 turn-start snapshot. A later call replaces that block instead of accumulating
@@ -30,6 +67,31 @@ participants, background review and cron transport scopes do not receive this
 owner projection. The server independently checks the existing owner authority;
 the projection is not a new authority grant. A selected local worker running
 through an explicitly attested CLI keeps that existing scope.
+
+Child completion also consumes native `subagent_stop`. Hermes can skip a
+bounded `on_session_end` callback while another session invokes it; its
+caller-thread child-stop hook supplies the finalized child status. The observer
+closes only an exact previously bound child and preserves prior terminal
+states. Unrecognized statuses become `ended`, not successful completion. A
+missing observation or unavailable service still becomes unknown on expiry.
+
+Hermes can also skip `pre_llm_call` when another session is still invoking that
+same callback. The Colony memory provider's existing synchronous `on_turn_start`
+now retains a transient copy of the clean native text input and transport context.
+The supported request middleware binds it to one exact session/task/turn and
+can run the missed initialization before recall, work and tool authority are
+used. It resolves the original sender through the same contact endpoint; model
+arguments and recalled prose cannot supply the sender or clean input. A per-turn
+initialization claim prevents duplicate observers from resetting read receipts.
+Conflicting identities poison that exact scope rather than changing the speaker.
+
+This recovery is limited to a matching plain-text native input. Without the
+memory-provider callback, a matching native transport, or a supported input
+shape, missing binding remains unavailable. Derived host inputs, native draft
+workers, delegated children and background reviews keep their existing explicit
+provenance/parent rules; this recovery cannot promote them to an owner turn.
+It introduces no persistent input store and does not disable native hook
+timeouts. Other observational hooks remain best-effort.
 
 The native integration fixture runs one turn through three model requests and
 two native file reads. A concurrent HTTP writer completes an existing neutral

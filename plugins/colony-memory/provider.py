@@ -2346,6 +2346,11 @@ class ColonyMemoryProvider(_MemoryProviderABC):
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
         """Called at the start of each turn."""
+        try:
+            from colony_hermes.native_input import capture
+            capture(message, session_id=self._session_id, platform=self._platform)
+        except ImportError:
+            pass  # Standalone memory-provider deployment has no general adapter.
         self._turn_number = int(turn_number or 0)
         with self._handle_cache_lock:
             self._handle_negative_cache.clear()

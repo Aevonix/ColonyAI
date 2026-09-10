@@ -261,7 +261,8 @@ try:
  report_handler.request_memory.observe(scope,messages,user_message=prompt)
  assert report_handler(**hook)['reason']=='verified_request_lineage_missing'
  # A failed freshness check also cannot certify an empty reference set.
- with patch.object(report_handler.client,'get',side_effect=httpx.ReadTimeout('Fixture unavailable feed')):
+ with patch.object(report_handler.client,'get',side_effect=httpx.ReadTimeout('Fixture unavailable feed')), \
+      patch.object(report_handler.client,'post',side_effect=httpx.ReadTimeout('Fixture unavailable feed')):
   report_handler.request_memory({'messages':[]},scope)
  assert report_handler(**hook)['reason']=='verified_request_lineage_missing'
  # A fresh request with no supplied sources is distinct from missing lineage.

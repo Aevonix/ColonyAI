@@ -68,20 +68,42 @@ async def with_queue_work(view, *, owner, limit=8):
     from colony_sidecar.turns.hermes_work import cron_view
     from colony_sidecar.turns.local_work import local_work_view
     from colony_sidecar.turns.hermes_kanban import kanban_view
-    # Independent native ledgers share the request's existing short deadline.
-    view['native_cron'], view['local_work'], view['native_kanban'] = await asyncio.gather(
-        asyncio.to_thread(cron_view, limit=limit), asyncio.to_thread(local_work_view, limit=limit),
-        asyncio.to_thread(kanban_view, limit=limit))
     from colony_sidecar.turns.reported_workers import reported_worker_view
-    reported = await asyncio.to_thread(reported_worker_view, limit=limit)
+    from colony_sidecar.api.routers import host
+    from colony_sidecar.turns.executions import work_source_coverage
+    import time
+
+    queue = getattr(host._task_queue, 'queue', host._task_queue)
+
+    async def read(reader, *, asynchronous=False, **reader_kwargs):
+        # These are independent read-only snapshots. One unavailable ledger
+        # must not hide work observed by all the other readers. Cancellation of
+        # a thread await does not stop its read; native readers bound SQLite work.
+        try:
+            operation = reader(limit=limit, **reader_kwargs) if asynchronous else asyncio.to_thread(reader, limit=limit, **reader_kwargs)
+            value = await asyncio.wait_for(operation, timeout=.2)
+            if value is None:
+                return None
+            return {**value, 'observed_at': time.time()}
+        except Exception:
+            return {'items': [], 'recent': [], 'available': False, 'unavailable': True,
+                    'reason': 'work_source_unavailable', 'observed_at': time.time()}
+
+    async def queue_view():
+        if queue is None or not callable(getattr(queue, 'current_work', None)):
+            return {'items': [], 'available': False, 'unavailable': True,
+                    'reason': 'queue_not_attached', 'source': 'canonical_task_queue'}
+        return await read(queue.current_work, asynchronous=True)
+
+    # All sources share the existing request budget, rather than each taking
+    # another sequential budget after the native ledgers finish.
+    view['native_cron'], view['local_work'], view['native_kanban'], reported, view['worker_work'] = await asyncio.gather(
+        # Leave executor/return slack for the multi-board reader to retain
+        # faster boards when its own partial-read budget is exhausted.
+        read(cron_view), read(local_work_view), read(kanban_view, read_budget=.15),
+        read(reported_worker_view), queue_view())
     if reported is not None:
         view['reported_worker'] = reported
-    from colony_sidecar.api.routers import host
-    queue = getattr(host._task_queue, 'queue', host._task_queue)
-    if queue is not None and callable(getattr(queue, 'current_work', None)):
-        try:
-            view['worker_work'] = await queue.current_work(limit=limit)
-            view['coverage'] = 'registered Hermes turns and canonical Colony claimed/running jobs'
-        except Exception:
-            view['worker_work'] = {'items': [], 'unavailable': True, 'source': 'canonical_task_queue'}
+    view['work_sources'] = work_source_coverage(view)
+    view['coverage'] = 'registered Hermes turns and selected work ledgers; see work_sources for read coverage'
     return view

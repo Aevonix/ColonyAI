@@ -105,8 +105,36 @@ class ExecutionObserver:
         state = "interrupted" if kwargs.get("interrupted") else "failed" if kwargs.get("failed") else "completed" if kwargs.get("completed") else "ended"
         self.update("ended", state=state, **kwargs)
 
+    def child_end(self, **kwargs):
+        # Hermes may skip a bounded on_session_end callback while another
+        # session is invoking it. Native subagent_stop runs on the caller
+        # thread after the child result is final, before its durable return.
+        # Resolve only a previously bound child; the hook grants no identity.
+        child_session = str(kwargs.get("child_session_id") or "")
+        parent_session = str(kwargs.get("parent_session_id") or "")
+        if not child_session or not parent_session:
+            return
+        with self._lock:
+            candidates = [record for turn, record in self._records.items()
+                if record["platform"] == "subagent" and record["state"] == "observed"
+                and self._current_sessions.get(turn) == child_session]
+            if len(candidates) != 1:
+                return
+            child = candidates[0]
+            parent = next((record for record in self._records.values()
+                           if record["execution_id"] == child["parent_execution_id"]), None)
+            if parent is None or parent_session not in {
+                    parent["session_id"], self._current_sessions.get(parent["turn_id"])}:
+                return
+            status = str(kwargs.get("child_status") or "")
+            state = {"completed": "completed", "interrupted": "interrupted",
+                     "failed": "failed", "error": "failed"}.get(status, "ended")
+            turn_id = child["turn_id"]
+        self.update("ended", state=state, turn_id=turn_id, session_id=child_session)
+
     def register(self, ctx):
         ctx.register_hook("subagent_start", self.child)
+        ctx.register_hook("subagent_stop", self.child_end)
         ctx.register_hook("pre_api_request", lambda **kw: self.update("model", **kw))
         ctx.register_hook("post_api_request", lambda **kw: self.update("between_calls", **kw))
         ctx.register_hook("post_tool_call", lambda **kw: self.update("between_calls", **kw))

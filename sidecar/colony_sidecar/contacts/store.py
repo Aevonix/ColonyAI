@@ -408,14 +408,22 @@ class SQLiteContactStore(ContactStore):
         return Contact.from_row(dict(row))
 
     async def resolve_messaging_handle(self, gateway: str, address: str) -> Optional[Contact]:
-        """Resolve an inbound messaging sender to a LIVE contact, treating a phone number as ONE
-        identity across all phone-bearing gateways (a number is the same person whether it arrives
-        as sms/rcs/imessage/signal/whatsapp). Both sides are normalized. This is the resolution path
-        for /contacts/resolve — distinct from find_by_handle (exact, soft-deleted-inclusive, dedup)."""
+        """Resolve a live sender, preferring a verified exact transport handle.
+
+        An explicit channel correction can split previously shared phone
+        attribution. Cross-gateway phone inference must not undo that decision.
+        Without an exact verified handle, retain the unambiguous normalized
+        phone/email fallback. This does not grant a contact any authority.
+        """
         db = self._require_db()
         g = (gateway or "").strip().lower()
         if g == "rcs":  # D1: RCS canonicalizes to the shared phone identity (no separate gateway)
             g = "sms"
+        normalized = (_normalize_email(address) if g == 'email' else
+                      _normalize_phone(address) if g in ('sms', 'imessage', 'signal') else address)
+        exact = await self.resolve_verified_handles(g, [normalized])
+        if exact is not None:
+            return exact
         if g == "email":
             sql = ("SELECT c.* FROM contacts c JOIN contact_handles h ON h.contact_id = c.contact_id "
                    "WHERE h.gateway = 'email' AND lower(h.address) = ? AND c.deleted_at IS NULL LIMIT 1")

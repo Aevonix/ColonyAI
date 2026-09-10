@@ -73,24 +73,60 @@ def _request_texts(value):
                 yield from _request_texts(value[key])
 
 
-def _read_receipt(row, receipts):
-    if row.get('role') != 'tool' and row.get('type') != 'function_call_output':
+def _read_value(row):
+    if row.get('type') == 'function_call_output':
+        return row.get('output')
+    if row.get('role') == 'tool' or row.get('type') == 'tool_result':
+        return row.get('content')
+    return None
+
+
+def _read_text(value):
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return value[0].get('text')
+    return value
+
+
+def _image_url(part):
+    """Normalize supported native wire parts, never resolve paths or URLs."""
+    if not isinstance(part, dict):
         return None
-    receipt = receipts.get(row.get('tool_call_id') or row.get('call_id'))
-    value = row.get('output') if row.get('type') == 'function_call_output' else row.get('content')
-    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict):
-        value = value[0].get('text')
-    return receipt if receipt and value == receipt['text'] else None
+    if part.get('type') == 'image_url' and isinstance(part.get('image_url'), dict):
+        return part['image_url'].get('url')
+    if part.get('type') == 'input_image':
+        return part.get('image_url')
+    source = part.get('source')
+    if (part.get('type') == 'image' and isinstance(source, dict) and source.get('type') == 'base64'
+            and isinstance(source.get('media_type'), str) and isinstance(source.get('data'), str)):
+        return 'data:' + source['media_type'] + ';base64,' + source['data']
+    return None
+
+
+def _read_receipt(row, receipts):
+    receipt = receipts.get(row.get('tool_call_id') or row.get('call_id') or row.get('tool_use_id'))
+    value = _read_value(row)
+    if not receipt or _read_text(value) != receipt['text']:
+        return None
+    if receipt.get('image_url_hash'):
+        image = _image_url(value[1]) if isinstance(value, list) and len(value) == 2 else None
+        return receipt if isinstance(image, str) and hashlib.sha256(image.encode()).hexdigest() == receipt['image_url_hash'] else None
+    return receipt if not isinstance(value, list) or len(value) == 1 else None
+
+
+def _read_rows(request):
+    for name in ('messages', 'input'):
+        for row in request.get(name, []) if isinstance(request.get(name), list) else []:
+            if not isinstance(row, dict):
+                continue
+            yield row
+            if row.get('role') == 'user' and isinstance(row.get('content'), list):
+                yield from (part for part in row['content']
+                            if isinstance(part, dict) and part.get('type') == 'tool_result')
 
 
 def _historical_source_read(row):
-    if row.get('role') != 'tool' and row.get('type') != 'function_call_output':
-        return False
-    value = row.get('output') if row.get('type') == 'function_call_output' else row.get('content')
-    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict):
-        value = value[0].get('text')
     try:
-        payload = json.loads(value)
+        payload = json.loads(_read_text(_read_value(row)))
         return isinstance(payload, dict) and payload.get('colony_source_read_v1') is True
     except (TypeError, ValueError):
         return False
@@ -196,6 +232,17 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
         return value
 
     result = dict(request)
+    def opened_source(row):
+        receipt = _read_receipt(row, read_receipts or {})
+        if not receipt and not _historical_source_read(row):
+            return None
+        row = dict(row)
+        if (not receipt or not fresh or receipt['watermark'] != watermark
+                or receipt.get('image_url_hash') and not receipt.get('image_current')):
+            field = 'output' if row.get('type') == 'function_call_output' else 'content'
+            row[field] = '[Opened source withheld; read again after source freshness is restored.]'
+        return row
+
     for key in ('messages', 'input'):
         messages = request.get(key)
         if isinstance(messages, str):
@@ -206,22 +253,30 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             continue
         # During a brief sidecar outage keep the current turn and its tool
         # results, but never replay historical evidence with unknown freshness.
+        # Anthropic wraps tool results in user rows. They are not a new input
+        # boundary: dropping their preceding tool-use row breaks the request.
         latest_user = max((i for i, row in enumerate(messages)
-                           if isinstance(row, dict) and row.get('role') == 'user'), default=len(messages))
+                           if isinstance(row, dict) and row.get('role') == 'user'
+                           and not (isinstance(row.get('content'), list) and row['content']
+                               and all(isinstance(part, dict) and part.get('type') == 'tool_result'
+                                       for part in row['content']))), default=len(messages))
         retained = []
         for i, original in enumerate(messages):
             if not isinstance(original, dict):
                 continue
             row = dict(original)
-            receipt = _read_receipt(row, read_receipts or {})
-            if receipt or _historical_source_read(row):
+            opened = opened_source(row)
+            if opened is not None:
                 # Only the exact output registered by our native source-read
                 # handler is eligible. Quoted markers inside its JSON are data.
-                if not receipt or not fresh or receipt['watermark'] != watermark:
-                    field = 'output' if row.get('type') == 'function_call_output' else 'content'
-                    row[field] = '[Opened source withheld; read again after memory freshness is restored.]'
-                retained.append(row)
+                retained.append(opened)
                 continue
+            if row.get('role') == 'user' and isinstance(row.get('content'), list):
+                # Anthropic transports tool results inside user content. Their
+                # original pixels need the same exact receipt/freshness check.
+                row['content'] = [opened_source(part) or part
+                    if isinstance(part, dict) and part.get('type') == 'tool_result' else part
+                    for part in row['content']]
             if row.get('role') in ('system', 'developer'):
                 if 'content' in row:
                     row['content'] = instruction_content(row['content'])
@@ -312,7 +367,7 @@ class RequestMemory:
             self._aliases[key] = aliases, current, request_input, packets
             self._host_inputs[key] = {'text': text, 'sources': copy.deepcopy(sources), 'watermark': watermark}
 
-    def register_source_read(self, scope, tool_call_id, text, result):
+    def register_source_read(self, scope, tool_call_id, text, result, *, image_url=None):
         """Register authentic output; it counts as supplied only at dispatch."""
         key = (scope.contact_id, scope.task_id, scope.turn_id)
         with self._lock:
@@ -321,6 +376,11 @@ class RequestMemory:
             self._read_receipts[key][tool_call_id] = {
                 'text': text, 'watermark': result['watermark'],
                 'sources': copy.deepcopy(result['source_refs'])}
+            if image_url is not None:
+                self._read_receipts[key][tool_call_id].update(
+                    image_url_hash=hashlib.sha256(image_url.encode()).hexdigest(),
+                    image_read={key: result[key] for key in ('source_id', 'source_version', 'read_revision')}
+                               | {'asset_hash': result['image']['asset_hash']})
             return True
 
     def supplied_snapshot(self, scope):
@@ -358,28 +418,83 @@ class RequestMemory:
             read_receipts = copy.deepcopy(self._read_receipts.get(observed_key, {}))
             host_input = copy.deepcopy(self._host_inputs.get(observed_key))
         current_content = current.get('api_content', current.get('content')) if current else None
+        # Only native-observed recall and authenticated read receipts can
+        # nominate parents. User-authored markers cannot select other people's
+        # records or keep evidence current. Validate their current ownership in
+        # the same round trip as erasure freshness, not by changing source IDs.
+        source_refs = {}
+        try:
+            current_packet = _native_packet(current)
+            if current_packet:
+                meta = json.loads(_STAMP.match(current_packet.group()).group(1))
+                for ref in meta.get('sources', []):
+                    source_refs[(ref['source_id'], ref['source_version'])] = ref
+            if host_input:
+                for ref in host_input['sources']:
+                    source_refs[(ref['source_id'], ref['source_version'])] = ref
+            for row in _read_rows(request):
+                receipt = _read_receipt(row, read_receipts)
+                if receipt:
+                    for ref in receipt['sources']:
+                        source_refs[(ref['source_id'], ref['source_version'])] = ref
+            parents_valid = len(source_refs) <= 512
+        except (KeyError, TypeError, ValueError, AttributeError):
+            parents_valid = False
         deadline = time.monotonic() + .25
         watermark, rules, fresh = 0, [], False
         try:
-            if contact:
+            if contact and parents_valid:
                 watermark, rules = self.outbox.erasure_state(contact, deadline_monotonic=deadline)
                 for _ in range(4):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break
-                    response = self.client.get("/v1/host/memory/sources/erasures",
-                        params={'contact_id': contact, 'after': watermark},
-                        timeout=remaining, _deadline_monotonic=deadline)
+                    if source_refs:
+                        response = self.client.post('/v1/host/memory/sources/erasures',
+                            json={'contact_id': contact, 'after': watermark,
+                                  'session_id': scope.session_id, 'source_refs': list(source_refs.values())},
+                            timeout=remaining, _deadline_monotonic=deadline)
+                    else:
+                        response = self.client.get("/v1/host/memory/sources/erasures",
+                            params={'contact_id': contact, 'after': watermark},
+                            timeout=remaining, _deadline_monotonic=deadline)
                     response.raise_for_status()
                     page = response.json()
                     self.outbox.apply_erasure_page(contact, page, deadline_monotonic=deadline)
                     watermark, rules = self.outbox.erasure_state(contact, deadline_monotonic=deadline)
                     fresh = (page.get('complete') is True
-                             and int(page['head']) == int(page['through']) <= watermark)
+                             and int(page['head']) == int(page['through']) <= watermark
+                             and (not source_refs or page.get('sources_current') is True))
+                    if source_refs and page.get('sources_current') is not True:
+                        break
                     if fresh:
                         break
         except Exception as error:
             logger.warning('request memory freshness unavailable (%s)', type(error).__name__)
+        if fresh:
+            # Only explicitly opened images pay this small metadata read. A
+            # later correction need not erase a source to change its meaning.
+            # Do not download pixels again or change the turn's recall policy.
+            for row in _read_rows(request):
+                receipt = _read_receipt(row, read_receipts)
+                if not receipt or not receipt.get('image_read') or receipt.get('image_current'):
+                    continue
+                try:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError('source_image_verification_deadline')
+                    response = self.client.post('/v1/host/memory/read', timeout=remaining,
+                        _deadline_monotonic=deadline, json={'identity': {'host_id': 'hermes'},
+                            'person_id': contact, 'session_id': scope.session_id,
+                            'source_view': 'image', **receipt['image_read']})
+                    response.raise_for_status()
+                    checked = response.json()['source']
+                    receipt['image_current'] = (checked.get('read_revision') == receipt['image_read']['read_revision']
+                        and checked.get('watermark') == watermark and checked.get('source_refs') == receipt['sources']
+                        and checked.get('view') == 'image' and checked.get('image_bytes_included') is False
+                        and checked.get('image', {}).get('asset_hash') == receipt['image_read']['asset_hash'])
+                except Exception:
+                    receipt['image_current'] = False
         if watermark and not observed:
             # A missing/evicted pre-turn observation cannot certify enriched
             # historical api_content. Its transcript must not fail open.
@@ -408,12 +523,11 @@ class RequestMemory:
                         and any(host_input['text'] in value for value in actual_texts)):
                     for ref in host_input['sources']:
                         supplied[(ref['source_id'], ref['source_version'])] = ref
-            for name in ('messages', 'input'):
-                for row in filtered.get(name, []) if isinstance(filtered.get(name), list) else []:
-                    receipt = _read_receipt(row, read_receipts) if isinstance(row, dict) else None
-                    if receipt and receipt['watermark'] == watermark:
-                        for ref in receipt['sources']:
-                            supplied[(ref['source_id'], ref['source_version'])] = ref
+            for row in _read_rows(filtered):
+                receipt = _read_receipt(row, read_receipts)
+                if receipt and receipt['watermark'] == watermark:
+                    for ref in receipt['sources']:
+                        supplied[(ref['source_id'], ref['source_version'])] = ref
             for block in packets:
                 if not any(block in text for text in actual_texts):
                     continue

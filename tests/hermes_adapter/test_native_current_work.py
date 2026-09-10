@@ -63,7 +63,7 @@ print(json.dumps({'native_fire':True,'same_execution_id':True,'native_terminal':
 
 
 CHILD = r'''
-import json, os, queue, socket, sys, time
+import json, os, queue, socket, sys, time, threading
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock, patch
@@ -80,6 +80,7 @@ socket.socket.connect=no_network; socket.create_connection=no_network
 from colony_sidecar.turns.executions import registry
 import colony_hermes
 calls=[]
+parent_ending=threading.Event(); child_ended=threading.Event()
 class Reply:
     status_code=200
     def __init__(self,value): self.value=value
@@ -88,6 +89,14 @@ class Reply:
 def post(self,path,**kw):
     if path=='/v1/host/executions/observe':
         value=kw['json']; calls.append(value)
+        if value['state']=='completed' and value['platform']=='subagent':
+            child_ended.set()
+        if value['state']=='completed' and ':fixture-parent:' in value['turn_id']:
+            # Hold the actual bounded parent hook while the child finishes.
+            # Hermes skips a concurrent invocation of this same callback.
+            # Its caller-thread subagent_stop must close the exact child.
+            parent_ending.set()
+            assert child_ended.wait(5), 'Child terminal observation was lost during overlapping hooks'
         return Reply(registry().observe(value,principal_id='native-host',contact_id=value['contact_id']))
     return Reply({})
 def get(self,path,**kw):
@@ -122,7 +131,13 @@ def make_agent(platform='cli'):
     return agent
 parent_client=MagicMock(); child_client=MagicMock()
 parent_client.chat.completions.create.side_effect=[reply('',tool('delegate_task',{'goal':'Read the neutral fixture '+str(fixture)})),reply('PARENT_DISPATCHED_CHILD'),reply('PARENT_ACCEPTED_CHILD')]
-child_client.chat.completions.create.side_effect=[reply('',tool('read_file',{'path':str(fixture)})),reply('CHILD_READ_NEUTRAL_FILE')]
+child_responses=iter([reply('',tool('read_file',{'path':str(fixture)})),reply('CHILD_READ_NEUTRAL_FILE')])
+def child_reply(**kwargs):
+    response=next(child_responses)
+    if response.choices[0].message.content:
+        assert parent_ending.wait(5), 'Parent did not reach its native finalization hook'
+    return response
+child_client.chat.completions.create.side_effect=child_reply
 with patch(OPENAI_TARGET,side_effect=[parent_client,child_client]), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=defs), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
     parent=make_agent()
     outcome=parent.run_conversation('Delegate the neutral local read.',task_id='fixture-parent')
@@ -154,6 +169,7 @@ with patch(OPENAI_TARGET,side_effect=[parent_client,child_client]), patch(TOOLS_
     assert resumed['final_response']=='PARENT_ACCEPTED_CHILD', resumed
     parent.close()
 children=[row for row in calls if row['platform']=='subagent']
+assert parent_ending.is_set() and child_ended.is_set(), calls
 assert children and children[-1]['state']=='completed', calls
 assert all(row['contact_id']=='fixture-owner' for row in children)
 assert children[0]['parent_execution_id'] and any(row['execution_id']==children[0]['parent_execution_id'] for row in calls)

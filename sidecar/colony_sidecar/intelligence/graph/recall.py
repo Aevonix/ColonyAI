@@ -35,7 +35,7 @@ def source_candidates(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for rank, hit in enumerate(hits, 1):
         turn = str(hit["turn_id"])
         digest = hashlib.sha256(json.dumps(
-            [turn, hit["role"], hit["content"]], ensure_ascii=False,
+            [turn, hit.get("source_message_hash"), hit["role"], hit["content"]], ensure_ascii=False,
             separators=(",", ":")).encode()).hexdigest()
         rows.append({
             "id": "source-excerpt:" + digest,

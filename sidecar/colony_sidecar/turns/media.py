@@ -185,18 +185,37 @@ class SourceMedia:
         return [row for row in rows if row['message_hash'] in {
             source_message_hash(row['session_id'], message) for message in json.loads(row['messages_json'])}]
 
-    def read(self, asset_hash, *, contact_id, session_id):
+    def read(self, asset_hash, *, contact_id, session_id, image_source=None, metadata_only=False):
         if not re.fullmatch('[0-9a-f]{64}', asset_hash):
             raise KeyError('unknown asset')
         # Serialize ownership check and file open with erasure. No static route.
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
-            if not self._owned(conn, asset_hash, contact_id, session_id):
+            owners = self._owned(conn, asset_hash, contact_id, session_id)
+            if image_source is not None:
+                from .idempotency import canonical_turn_digest
+                owners = [owner for owner in owners if owner['turn_id'] == image_source['source_id']
+                          and canonical_turn_digest(json.loads(owner['messages_json'])) == image_source['source_version']]
+            if not owners:
                 raise KeyError('unknown asset')
             row = conn.execute('SELECT * FROM source_media WHERE asset_hash=?', (asset_hash,)).fetchone()
             if row is None or row['status'] == 'orphan':
                 raise KeyError('unknown asset')
-            data = self.store._original_path(asset_hash, row['mime_type']).read_bytes()
+            path = self.store._original_path(asset_hash, row['mime_type'])
+            if image_source is not None:
+                if (row['mime_type'] not in {'image/png', 'image/jpeg', 'image/webp'}
+                        or not 0 < row['size_bytes'] <= MAX_IMAGE_BYTES):
+                    raise ValueError('source_image_unavailable')
+                if metadata_only:
+                    if not path.is_file():
+                        raise FileNotFoundError('source_image_unavailable')
+                    return None, row['mime_type']
+                with path.open('rb') as stream:
+                    data = stream.read(MAX_IMAGE_BYTES + 1)
+                if len(data) > MAX_IMAGE_BYTES:
+                    raise ValueError('source_image_exceeds_limit')
+            else:
+                data = path.read_bytes()
             if hashlib.sha256(data).hexdigest() != asset_hash:
                 raise ValueError('asset integrity mismatch')
             return data, row['mime_type']

@@ -104,6 +104,14 @@ rerank must score every submitted candidate; partial or malformed output keeps
 the original ordering with an unavailable status instead of mixing incompatible
 scores. Selection remains bounded by the common item and character budgets.
 
+Lexical hits are hydrated against the owning canonical message before receiving
+its message hash, modality and uncertainty. A typed message in a mixed text/audio
+checkpoint does not inherit a different message's transcript label. Equal rendered
+text from distinct messages retains both message identities through candidate
+fusion and correction expansion. An index excerpt absent from the current source
+is omitted; retrieval does not make a stale projection authoritative. This is a
+lineage guarantee, not independent verification of the quoted words.
+
 A procedure extracted from part of a message recalls that complete current
 message as one quoted evidence unit, including unclaimed conditions. Ranking
 and character packing cannot select its separate property fragments. If the
