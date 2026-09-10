@@ -257,3 +257,48 @@ async def test_successive_partial_corrections_require_history_and_keep_read_depe
     current_after, = json.loads(context(projection)[0]['content'])['assertions']
     assert current_after['subject_basis']['disposition'] == 'episode_history_incomplete'
     assert 'missing or withdrawn revisions cannot be reconstructed' in current_after['subject_basis']['value_use']
+
+
+@pytest.mark.asyncio
+async def test_later_episode_correction_finds_current_revision_through_original_topic(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
+    projection = SourceClaimProjection(ledger)
+    await record(ledger, projection, 'original', REPORT, episode(REPORT))
+    await record(ledger, projection, 'count-correction', CORRECTION,
+        episode(CORRECTION) | {'operation': 'correct', 'match_prior': True})
+    duration = 'I misspoke: the pressure sensor bench run lasted three hours.'
+    hits = ledger.search_sources(duration, contact_id='contact-a', session_id='later', limit=10)
+    assert [hit['turn_id'] for hit in hits] == ['original']
+    # The current revision has no lexical match. The original record supplies
+    # the topic, but only the retained current handle may be corrected.
+    processor = await record(ledger, projection, 'duration-correction', duration,
+        episode(duration) | {'operation': 'correct', 'match_prior': True})
+    prior, = processor.calls[0][0]['prior_assertions']
+    stored = {row['turn_id']: row for row in claims(ledger)}
+    assert prior['id'] == stored['count-correction']['id']
+    assert prior['evidence'] == CORRECTION
+    assert prior['subject_basis']['evidence'] == REPORT
+    assert prior['subject_basis']['disposition'] == 'prior_episode_report'
+    assert stored['duration-correction']['prior_claim_id'] == prior['id']
+    current, = json.loads(context(projection)[0]['content'])['assertions']
+    assert current['subject_basis']['disposition'] == 'episode_history_incomplete'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('removal', ['erase-current', 'erase-root', 'reattribute-current'])
+async def test_episode_topic_lookup_cannot_resurrect_an_unavailable_current_revision(tmp_path, removal):
+    ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
+    projection = SourceClaimProjection(ledger)
+    await record(ledger, projection, 'original', REPORT, episode(REPORT))
+    await record(ledger, projection, 'count-correction', CORRECTION,
+        episode(CORRECTION) | {'operation': 'correct', 'match_prior': True})
+    if removal == 'reattribute-current':
+        from colony_sidecar.turns.source_attribution import correct
+        correct(ledger, operation_id='move-revision', performed_by='operator',
+            old_contact_id='contact-a', contact_id='contact-b', source_ids=['count-correction'],
+            evidence_refs=['operator:correction'])
+    else:
+        ledger.erase_sources(contact_id='contact-a',
+            turn_ids=['original' if removal == 'erase-root' else 'count-correction'])
+    assert projection.prior({'turn_id': 'later', 'contact_id': 'contact-a', 'session_id': 'later'},
+        {'role': 'user', 'content': 'I misspoke: the pressure sensor bench run lasted three hours.'}) == []

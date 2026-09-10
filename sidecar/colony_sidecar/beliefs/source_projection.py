@@ -217,13 +217,32 @@ class SourceClaimProjection:
 
     def prior(self, source, message, limit=16):
         words = set(norm_value(message.get("content", "")).split())
+
+        def relevance(row):
+            # A partial correction can omit every topic word in the original
+            # report. Its retained, scoped basis still identifies that episode.
+            basis = row.get('subject_basis', {}) if row.get('representation') == 'episode' else {}
+            evidence = row['evidence'] + ' ' + basis.get('evidence', '')
+            return len(words & set(norm_value(evidence).split())), row['recorded_at']
+
         hits = self.ledger.search_sources(message.get("content", ""), contact_id=source["contact_id"],
                                           session_id=source["session_id"], limit=10)
         turn_ids = [hit["turn_id"] for hit in hits if hit["turn_id"] != source["turn_id"]]
         with closing(self.ledger._connect()) as conn:
             rows = self._rows(conn, source["contact_id"], source["session_id"], turn_ids=turn_ids or None)
-        rows = [row for row in rows if not row["superseded_by"] and not row["retracted_by"]]
-        rows.sort(key=lambda row: (len(words & set(norm_value(row["evidence"]).split())), row["recorded_at"]), reverse=True)
+            # Relevance can find a retracted report without finding its latest
+            # count-only correction. Offer the existing current episode, never
+            # the stale handle. The normal row reader rechecks source scope,
+            # attribution and retained basis; no erased history is reconstructed.
+            keys = list(dict.fromkeys((row['subject_key'], row['predicate'])
+                for row in sorted(rows, key=relevance, reverse=True)
+                if row.get('representation') == 'episode'))[:limit]
+            for key in keys:
+                rows.extend(self._rows(conn, source['contact_id'], source['session_id'],
+                    key=key, limit=limit))
+        rows = list({row['id']: row for row in rows
+                     if not row['superseded_by'] and not row['retracted_by']}.values())
+        rows.sort(key=relevance, reverse=True)
         return rows[:limit]
 
     def commit(self, source, message, claims, *, model, lease_token=None):

@@ -146,6 +146,11 @@ must preserve that gap rather than reconstruct it from older text. Cumulative
 interpretation remains a reader responsibility; this projection does not claim
 to materialize or validate it. An unavailable predecessor is labelled
 `incomplete_revision_chain` even when pagination has returned every retained row.
+When lexical retrieval finds only an earlier report, prior-episode selection
+looks up its current retained revision through the existing episode identity.
+The original quotation supplies topic context, not a stale correction handle.
+Lookup remains within the contact's visible sources and existing candidate
+limits; erasing or reattributing a revision cannot revive a retracted report.
 `Reported episode` is a record label, not a person or world-model entity. The
 passage preserves units, conditions, attribution and uncertainty within the
 existing 500-character limit. An episode may supply an exact event-date expression
