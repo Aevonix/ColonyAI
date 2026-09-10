@@ -59,6 +59,45 @@ its addresses with the router's existing local-network rules. A LAN hostname
 can therefore serve extraction as well as the initial chat probe. Runtime calls
 continue to resolve and check that configured host when its address changes.
 
+## WhatsApp read receipts for a selected profile
+
+For an existing Hermes home, preview and then apply the supported channel
+preference without initializing an identity, attaching Colony, probing a model
+or restarting a service:
+
+```bash
+colony init --hermes-home "$HOME/.hermes-orion" \
+  --preferences-only --whatsapp-read-receipts on --preview
+colony init --hermes-home "$HOME/.hermes-orion" \
+  --preferences-only --whatsapp-read-receipts on
+```
+
+Use `off` to disable receipts. Omitting the option preserves the existing
+setting. Preference-only mode requires an existing `config.yaml` and rejects
+instance/setup options. It does not require a Colony instance manifest.
+`--hermes-home`, then `HERMES_HOME`, then `~/.hermes` selects the profile in this
+mode. The preview lists changed setting paths without displaying other config
+values. Applying uses the existing atomic writer and retains the exact previous
+config in a private `.config.yaml.colony-backup-*` file; repeating an unchanged
+choice adds no backup.
+
+The preference is qualified against Hermes 0.21.1 at the commit above. It writes
+native `send_read_receipts` settings in the profile's existing layout, including
+existing alternate spellings that could override each other. Channel enablement,
+sender/group policy, credentials and unrelated extras are retained. A profile
+without explicit WhatsApp channel selection or existing connection settings is
+rejected: adding preference-only extras can otherwise implicitly enable a stock
+Hermes channel. Select `enabled: true` or `enabled: false` explicitly in that
+profile's WhatsApp config first. An explicitly disabled channel stays disabled.
+The option also works during ordinary init when that channel selection already
+exists; ordinary init still performs its documented setup checks.
+
+Use the selected gateway's normal reconnect/restart procedure to load the new
+setting. This command changes config only. Native receipts apply to accepted
+incoming messages and remain subject to WhatsApp account privacy behavior;
+they do not retroactively mark a backlog as read. Read receipts do not imply
+online status. Custom bridges may expose their own presence configuration.
+
 ## What the local profile enables
 
 Ordinary native turns enter the durable outbox and canonical source ledger.

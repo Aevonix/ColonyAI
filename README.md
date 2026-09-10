@@ -18,6 +18,10 @@ skill updates extend that core. These
 paths have executable qualifications; model quality and each deployment's
 configuration still determine their results.
 
+Version 1.0.34 adds a [profile read-receipt preference](docs/LOCAL-HERMES-SETUP.md#whatsapp-read-receipts-for-a-selected-profile)
+with a config-only preview and apply path. It preserves channel selection and
+does not imply online presence.
+
 Version 1.0.33 lets an authenticated host carry already captured human input
 into a native task through exact source references. Derived task instructions
 do not become duplicate human testimony; assistant replies retain the original

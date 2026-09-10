@@ -97,6 +97,17 @@ def args(tmp_path, monkeypatch):
         model='fixture-model', adapter_wheel=str(artifact(tmp_path)), port=8877, start=False)
 
 
+def test_new_instance_can_keep_channel_disabled_with_receipts_preselected(args):
+    home = Path(args.hermes_home)
+    home.mkdir(mode=0o700)
+    (home/'config.yaml').write_text('whatsapp: {enabled: false}\n')
+    args.whatsapp_read_receipts = 'on'
+    assert setup.run_init(None, args) == 0
+    config = yaml.safe_load((home/'config.yaml').read_text())
+    assert config['whatsapp'] == {'enabled': False, 'send_read_receipts': True}
+    assert config['plugins']['colony']['enabled_message_tools'] == []
+
+
 def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args, tmp_path, monkeypatch):
     home = Path(args.hermes_home)
     assert setup.run_init(None, args) == 0

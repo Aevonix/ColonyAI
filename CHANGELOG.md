@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.34 - profile read-receipt preference
+
+`colony init --preferences-only --whatsapp-read-receipts on|off` updates an
+existing Hermes profile through the existing config writer. `--preview` lists
+the changed setting paths without writing. This path does not create an
+identity, attach an adapter, contact a model or restart a service. Ordinary init
+also accepts the option; omission preserves the previous behavior.
+
+Native config readback qualifies alternate YAML layouts, current channel
+selection and the adapter's read-receipt environment. Unconfigured channel
+selection is rejected before a preference could implicitly enable WhatsApp.
+Read receipts and online presence remain separate capabilities. No adapter or
+server runtime behavior changes; both packages remain version-aligned.
+See the [profile guide](docs/LOCAL-HERMES-SETUP.md#whatsapp-read-receipts-for-a-selected-profile).
+
 ## v1.0.33 - retain replies to supplied input on excluded platforms
 
 An authenticated host's validated supplied-input task now retains its
