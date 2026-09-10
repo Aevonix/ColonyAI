@@ -23,6 +23,17 @@ from colony_sidecar.api.middleware import ApiKeyMiddleware
 from colony_sidecar.api.routers import host, executions
 from colony_sidecar.turns import get_turn_idempotency_ledger
 from colony_hermes.client import source_message_hash
+# This fixture qualifies source admission and native recall, not the latency
+# of cold in-process ASGI/SQLite work on a shared CI runner. Keep only the
+# adapter's local deadline clocks deterministic; native scheduling, wall
+# timestamps, and the dedicated deadline tests retain their real clocks.
+import time
+from types import SimpleNamespace
+import colony_hermes.client as client_module
+import colony_hermes.request_memory as request_memory_module
+import colony_hermes.request_work as request_work_module
+clock=SimpleNamespace(monotonic=lambda:1000.0,time=time.time,sleep=time.sleep)
+client_module.time=request_memory_module.time=request_work_module.time=clock
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 secret='neutral-native-recall-fixture-key'
@@ -67,7 +78,10 @@ def respond(request):
  if request.url.host!='model.fixture':raise AssertionError(str(request.url))
  if request.method=='GET' and request.url.path=='/v1/models':
   return httpx.Response(200,json={'data':[{'id':'fixture-model','context_length':32768}]})
- assert request.method=='POST' and request.url.path=='/v1/chat/completions'
+ if request.method=='POST' and request.url.path=='/api/show':
+  # Hermes optionally probes Ollama metadata on custom endpoints.
+  return httpx.Response(404,json={'error':'This fixture uses OpenAI-compatible metadata.'})
+ assert request.method=='POST' and request.url.path=='/v1/chat/completions', (request.method,str(request.url))
  body=json.loads(request.content);generation.append(body)
  text=json.dumps(body['messages']);step=len(generation)
  if mode=='supplied':
