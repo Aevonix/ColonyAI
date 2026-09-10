@@ -20,7 +20,7 @@ def current_work_query(query):
         return False
     text = re.sub(r"^\s*\[[^\]\n]{1,512}\]\s*", "", query).strip().lower()
     if re.search(r"\b(yesterday|histor(?:y|ical)|previous(?:ly)?|earlier|before|then|"
-                 r"last (?:time|week|month|year)|used to|compar(?:e|ing|ison)|"
+                 r"last (?:time|week|month|year)|used to|compar(?:ed?|ing|ison)|versus|"
                  r"how (?:to|do|can|should)|procedure|playbook|recipe|steps|"
                  r"(?:give|provide|explain|show|need|include|use|follow|recall) (?:the |your |me )?instructions)\b", text):
         return False

@@ -87,6 +87,24 @@ async def test_unknown_or_mixed_original_request_is_not_classified(tmp_path, pai
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('comparison', [
+    'What are you doing right now compared with Monday?',
+    'What are you doing right now versus Monday?',
+])
+@pytest.mark.parametrize('comparison_in', ['original', 'incoming'])
+async def test_comparison_requests_preserve_status_evidence(tmp_path, comparison, comparison_in):
+    ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
+    seed(ledger, request=comparison if comparison_in == 'original' else CURRENT)
+    rows = prepared(ledger)
+    if comparison_in == 'original':
+        assert not any(row.get('_current_work_status_reply') for row in rows)
+    _, text = await RecallSelector().select_context(
+        comparison if comparison_in == 'incoming' else CURRENT,
+        [], rows, current_work_available=True)
+    assert STATUS in text
+
+
+@pytest.mark.asyncio
 async def test_exact_lineage_is_required_and_scope_is_unchanged(tmp_path):
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     seed(ledger)
