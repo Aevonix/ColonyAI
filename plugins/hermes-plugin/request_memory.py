@@ -13,7 +13,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from httpx import NetworkError, TimeoutException
+from httpx import NetworkError, RemoteProtocolError, TimeoutException
 
 from .client import source_message_hash
 
@@ -482,8 +482,13 @@ class RequestMemory:
                         break
                     if fresh:
                         break
+                else:
+                    # Retain the bounded progress. A fresh, unadmitted task
+                    # can continue from the persisted cursor on its one retry.
+                    freshness_retryable = (page.get('complete') is False
+                                           and int(page['through']) < int(page['head']))
         except Exception as error:
-            freshness_retryable = isinstance(error, (TimeoutError, TimeoutException, NetworkError))
+            freshness_retryable = isinstance(error, (TimeoutError, TimeoutException, NetworkError, RemoteProtocolError))
             logger.warning('request memory freshness unavailable (%s)', type(error).__name__)
         if fresh:
             # Only explicitly opened images pay this small metadata read. A
