@@ -191,6 +191,31 @@ def test_multiple_inputs_are_partial_and_any_erased_parent_withholds_excerpt(sto
     assert store.view(contact_id='owner', owner=True)['items'][0]['request_input'] == {'status': 'source_unavailable_or_changed'}
 
 
+@pytest.mark.parametrize('same_source', [False, True])
+def test_annotation_of_later_input_condition_withholds_first_excerpt(store, same_source):
+    condition = 'Only inspect the first section.'
+    if same_source:
+        messages = [{'role': 'user', 'content': 'Inspect the maintenance table.'},
+                    {'role': 'user', 'content': condition}]
+        store.ledger.record_source('combined', contact_id='owner', session_id='text',
+                                  messages=messages, derive_claims=False)
+        refs = [{'source_id': 'combined', 'input_message_hash': source_message_hash('text', message)}
+                for message in messages]
+    else:
+        refs = admitted(store) + admitted(store, name='condition', text=condition)
+    bind(store, refs)
+    before = store.view(contact_id='owner', owner=True)['items'][0]['request_input']
+    assert before['status'] == 'admitted_input_excerpt' and before['partial']
+    ref = store.ledger.source_references([refs[-1]['source_id']], contact_id='owner', session_id='later')[0]
+    store.ledger.append_source_annotation(contact_id='owner', session_id='later',
+        annotation_id='withdraw-condition', **ref, excerpt=condition,
+        correction='Withdraw this inspection until the table is replaced.', author_principal='host')
+    assert store.ledger.erasure_watermark('owner') == before['_provenance']['watermark']
+    view = store.view(contact_id='owner', owner=True)
+    assert view['items'][0]['request_input'] == {'status': 'annotated_input_requires_source_read'}
+    assert before['excerpt'] not in request_work_context(view)['text']
+
+
 def test_long_purpose_cannot_displace_active_queue_fairness_or_execution_family(store):
     refs = admitted(store, text='Inspect this equipment. ' + 'long detail ' * 400)
     parent = bind(store, refs)

@@ -37,9 +37,12 @@ def input_excerpt(ledger, *, contact_id, session_id, refs, max_chars=240):
     if len(matches) != 1:
         raise ValueError('source_input_unavailable')
     text = source_text(matches[0].get('content'))
+    membership = {}
+    for ref in refs:
+        membership.setdefault(ref['source_id'], []).append(ref['input_message_hash'])
     candidate = {'id': 'execution-input:' + selected['source_id'], 'kind': 'source_quote',
-        'source_turn_ids': [selected['source_id']], 'content': text,
-        '_source_message_hashes': {selected['source_id']: [selected['input_message_hash']]}}
+        'source_turn_ids': list(membership), 'content': text,
+        '_source_message_hashes': membership}
     current = current_candidates(ledger, expand(ledger, [candidate],
         contact_id=contact_id, session_id=session_id), contact_id=contact_id, session_id=session_id)
     if len(current) != 1 or ledger.erasure_watermark(contact_id) != watermark:
