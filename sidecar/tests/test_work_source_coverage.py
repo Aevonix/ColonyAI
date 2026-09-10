@@ -27,6 +27,9 @@ def projected(result):
 
 def test_busy_local_source_cannot_starve_sessions_cron_and_workers():
     view = records('session')
+    # A current execution participates in active-reader fairness. Expired
+    # observations are historical and follow actual terminal outcomes.
+    view['items'][0]['liveness'] = 'recently_observed'
     view.update({source: records(source, 12 if source == 'local_work' else 1)
                  for source in ('local_work', 'native_kanban', 'reported_worker', 'worker_work', 'native_cron')})
     result = request_work_context(view)

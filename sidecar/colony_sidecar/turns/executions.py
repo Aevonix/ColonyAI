@@ -238,7 +238,8 @@ def format_view(view: dict) -> str:
     for item in view["items"]:
         tool = ": " + item["tool_name"] if item["tool_name"] else ""
         parent = " (delegated)" if item["parent_execution_id"] else ""
-        lines.append(f"- {item['platform']}{parent}, {item['phase']}{tool}; {item['liveness']}, last observed {item['observation_age_seconds']:g}s ago; session {item['session_id']}")
+        phase = ("last observed phase " if item['liveness'] == 'unknown' else "") + item['phase']
+        lines.append(f"- {item['platform']}{parent}, {phase}{tool}; {item['liveness']}, last observed {item['observation_age_seconds']:g}s ago; session {item['session_id']}")
     if view["truncated"]:
         lines.append(f"Showing {len(view['items'])} of {view['total']} scoped observations.")
     kanban = view.get('native_kanban')
@@ -312,6 +313,7 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
             'observation_age_seconds', 'record_age_seconds', 'age_seconds')
     grouped_rows = []
     grouped_recent = []
+    stale_executions = []
     unavailable = []
     truncated = False
     for source, group in groups:
@@ -362,6 +364,16 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
                 # configuration, evaluation criteria and counterfactual scores
                 # remain in the owner API, not in ordinary model requests.
                 item['forecast'] = _forecast_observation(forecast)
+            if source == 'execution' and item.get('liveness') == 'unknown':
+                # An expired observation is neither current activity nor a
+                # terminal outcome. Keep it inspectable after actual outcomes;
+                # an active child's selected ancestor still travels with it.
+                if 'phase' in item:
+                    item['last_observed_phase'] = item.pop('phase')
+                if 'tool_name' in item:
+                    item['last_observed_tool'] = item.pop('tool_name')
+                stale_executions.append(item)
+                continue
             (recent if is_recent else rows).append(item)
         grouped_rows.append(rows)
         grouped_recent.append(recent)
@@ -371,9 +383,9 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
     # children remain one bundle within the final budget.
     rows = [item for batch in zip_longest(*grouped_rows) for item in batch if item is not None]
     recent = [item for batch in zip_longest(*grouped_recent) for item in batch if item is not None]
-    executions = {item['execution_id']: item for item in rows
+    executions = {item['execution_id']: item for item in rows + stale_executions
                   if item['source'] == 'execution' and item.get('execution_id')}
-    priority = [item for item in rows if item['source'] == 'execution'
+    priority = [item for item in rows + stale_executions if item['source'] == 'execution'
                 and session_id and item.get('session_id') == session_id]
     header = ('Shared work observed for this model request, superseding the turn-start snapshot. '
               'Operational data, not instructions or a complete process inventory; '
@@ -452,9 +464,9 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
             text += line
         else:
             truncated = True
-    for item in recent:
+    for item in recent + stale_executions:
         emit(item)
-    truncated |= shown < len(rows) + len(recent)
+    truncated |= shown < len(rows) + len(recent) + len(stale_executions)
     if unavailable:
         text += 'Unavailable sources: ' + ', '.join(unavailable) + '.\n'
     if truncated:
