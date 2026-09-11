@@ -2423,8 +2423,12 @@ def register(ctx: Any) -> None:
             watermark, _ = turn_outbox.erasure_state(scope.contact_id)
             inherited = supplied_input.context(watermark)
             _, inherited_sources = supplied_input.parents()
-            request_memory.observe_host_input(scope, kwargs.get('conversation_history') or [],
-                kwargs.get('user_message'), text=inherited, sources=inherited_sources, watermark=watermark)
+            history = kwargs.get('conversation_history') or []
+            # Hermes exposes clean persisted text as user_message for a host-
+            # derived turn. Recall is appended to the actual native row instead.
+            request_input = history[-1].get('content') if history and isinstance(history[-1], dict) else None
+            request_memory.observe_host_input(scope, history, request_input,
+                text=inherited, sources=inherited_sources, watermark=watermark)
             if inherited:
                 existing = native_context.get('context', '') if isinstance(native_context, dict) else (native_context or '')
                 native_context = {'context': '\n\n'.join(filter(None, (existing, inherited)))}
