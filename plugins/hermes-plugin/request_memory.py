@@ -133,6 +133,13 @@ def _historical_source_read(row):
         return False
 
 
+def _user_input(row):
+    return (isinstance(row, dict) and row.get('role') == 'user'
+            and not (isinstance(row.get('content'), list) and row['content']
+                and all(isinstance(part, dict) and part.get('type') == 'tool_result'
+                        for part in row['content'])))
+
+
 def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None,
                    read_receipts=None):
     """Keep current-turn recall and remove exact evidence, preserving tool structure.
@@ -148,6 +155,28 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
     def erased(content):
         return any(source_message_hash(session, {'role': role, 'content': content}) in hashes
                    for session, hashes in origins.items() for role in ('user', 'assistant'))
+
+    def erased_origin(row):
+        # A whole historical turn can contain derived tool arguments, results
+        # and reasoning absent from its canonical user/assistant source. Bind
+        # removal to an exact source hash with its actual speaker, not to a
+        # value mentioned inside a tool or a semantic guess about its topic.
+        role = row.get('role')
+        if role not in ('user', 'assistant') or 'content' not in row:
+            return False
+        value = row['content']
+        original = aliases.get(_content_key(value), value) if aliases else value
+        candidates = [original]
+        if isinstance(original, str):
+            candidates.append(_PACKET.sub('', _MEMORY.sub('', original)))
+        elif isinstance(original, list):
+            texts = [part['text'] for part in original if isinstance(part, dict)
+                     and part.get('type') in ('text', 'input_text', 'output_text')
+                     and isinstance(part.get('text'), str)]
+            if len(texts) == 1:
+                candidates.extend((texts[0], _PACKET.sub('', _MEMORY.sub('', texts[0]))))
+        return any(source_message_hash(session, {'role': role, 'content': value}) in hashes
+                   for value in candidates for session, hashes in origins.items())
 
     def packet(match, keep_packet, native_context):
         block = match.group()
@@ -257,16 +286,29 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
         # results, but never replay historical evidence with unknown freshness.
         # Anthropic wraps tool results in user rows. They are not a new input
         # boundary: dropping their preceding tool-use row breaks the request.
-        latest_user = max((i for i, row in enumerate(messages)
-                           if isinstance(row, dict) and row.get('role') == 'user'
-                           and not (isinstance(row.get('content'), list) and row['content']
-                               and all(isinstance(part, dict) and part.get('type') == 'tool_result'
-                                       for part in row['content']))), default=len(messages))
+        user_indices = [i for i, row in enumerate(messages) if _user_input(row)]
+        latest_user = max(user_indices, default=len(messages))
+        # Native max-iteration summaries append their own user-shaped nudge.
+        # The authenticated, observed input still starts the active turn.
+        current_user = max((i for i in user_indices if current_content is not None
+                            and messages[i].get('content') == current_content), default=latest_user)
+        withheld = set()
+        if fresh and origins:
+            for start, end in zip(user_indices, [*user_indices[1:], len(messages)]):
+                if start >= current_user:
+                    break
+                end = min(end, current_user)
+                if any(erased_origin(row) for row in messages[start:end] if isinstance(row, dict)):
+                    withheld.update(range(start, end))
         retained = []
         for i, original in enumerate(messages):
             if not isinstance(original, dict):
                 continue
             row = dict(original)
+            if i in withheld and row.get('role') not in ('system', 'developer'):
+                if _user_input(row):
+                    retained.append({'role': 'user', 'content': _ERASED})
+                continue
             opened = opened_source(row)
             if opened is not None:
                 # Only the exact output registered by our native source-read
@@ -284,17 +326,17 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
                     row['content'] = instruction_content(row['content'])
                 retained.append(row)
                 continue
-            if not fresh and i < latest_user and row.get('role') not in ('system', 'developer'):
+            if not fresh and i < current_user and row.get('role') not in ('system', 'developer'):
                 continue
             if 'content' in row:
-                current = (i == latest_user and current_content is not None
+                current = (i == current_user and current_content is not None
                            and row['content'] == current_content)
                 # Recollection is a turn-local projection. An unchanged source
                 # erasure watermark does not make old relationship, opinion or
                 # work guidance current after a correction. Preserve dialogue;
                 # only the latest user turn retains automatic recall.
                 row['content'] = content(row['content'], current=current,
-                                         keep_packet=i == latest_user)
+                                         keep_packet=i == current_user)
             if 'output' in row:  # Responses API function output
                 row['output'] = content(row['output'])
             retained.append(row)
@@ -330,15 +372,18 @@ def _restore_current_suffix(request, tail, current):
             continue
         split = [{'role': 'user', 'content': value} for value in tail[:-1]]
         split.append({'role': 'user', 'content': enriched})
-        return {**request, key: [*rows[:index], *split, *rows[index+1:]]}, (key, index, len(split), rows[index])
+        return {**request, key: [*rows[:index], *split, *rows[index+1:]]}, (key, len(rows)-index-1, len(split), rows[index])
     return request, None
 
 
 def _recombine_current_suffix(request, repair):
     if repair is None:
         return request
-    key, index, count, original = repair
+    key, following, count, original = repair
     rows = request[key]
+    # Historical tool turns may have been withheld before this suffix. Its
+    # own user rows and the current tool tail retain their relative positions.
+    index = len(rows) - following - count
     combined = {**original, 'content': '\n\n'.join(row['content'] for row in rows[index:index+count]
         if row['content'])}
     return {**request, key: [*rows[:index], combined, *rows[index+count:]]}

@@ -73,6 +73,13 @@ assert fact in injected
 db=SessionDB(home/'fixture-state.db')
 db.create_session('original', 'cli')
 db.append_message('original','user', fact, api_content=compose_user_api_content(fact, recalled, 'Neutral plugin clock note'))
+# Neutral reproduction of a real historical cutoff calculation: the tool
+# arguments and result are derived context, not canonical message hashes.
+cutoff_command = "date -u; echo \"---\"; date -u -j -f '%Y-%m-%d %H:%M:%S' '2026-09-18 17:15:00' +%s; echo \"---\"; echo $(( 1789751700 - 1789092491 ))"
+cutoff_result = json.dumps({'output': 'Fri Sep 11 02:08:22 UTC 2026\n---\n1789751700\n---\n659209', 'exit_code': 0, 'error': None})
+db.append_message('original','assistant','', tool_calls=[{'id':'historical-cutoff','type':'function',
+    'function':{'name':'terminal','arguments':json.dumps({'command':cutoff_command})}}])
+db.append_message('original','tool',cutoff_result,tool_call_id='historical-cutoff',tool_name='terminal')
 db.append_message('original','assistant','Stored neutral response')
 db.append_message('original','user','What is my orchard badge?', api_content=injected)
 db.append_message('original','assistant','Here is the recalled badge.')
@@ -91,9 +98,11 @@ responses=[
     NS(choices=[NS(message=NS(content='RETOLD_OK',tool_calls=None),finish_reason='stop')],model='fixture/model',usage=None),
 ]
 if summary_mode:
-    responses.insert(1, NS(choices=[NS(message=NS(content='',tool_calls=[
+    tool_response = NS(choices=[NS(message=NS(content='',tool_calls=[
         NS(id='neutral-lookup',type='function',function=NS(name='colony_get_facts',arguments='{}'))]),
-        finish_reason='tool_calls')],model='fixture/model',usage=None))
+        finish_reason='tool_calls')],model='fixture/model',usage=None)
+    responses.insert(1, tool_response)
+    responses.insert(-1, tool_response)
 client.chat.completions.create.side_effect=responses
 with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=[]), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
     agent=AIAgent(api_key='fixture',base_url='http://127.0.0.1:1/v1',provider='openai',
@@ -176,6 +185,10 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     assert len(physical)==(2 if summary_mode else 1), physical
     assert len(memory_checks)-checks_before==len(physical), 'One erasure check per actual provider attempt'
     assert all(fact not in json.dumps(call.kwargs) for call in physical), physical
+    assert all('1789751700' not in json.dumps(call.kwargs)
+               and '2026-09-18 17:15:00' not in json.dumps(call.kwargs)
+               and 'historical-cutoff' not in json.dumps(call.kwargs)
+               for call in physical), physical
     if summary_mode:
         from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
         assert any(row.get('content')==MAX_ITERATIONS_SUMMARY_REQUEST
@@ -184,11 +197,17 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     assert fact not in json.dumps(sent), sent
     assert 'Continue after forgetting.' in json.dumps(sent)
     assert 'What is my orchard badge?' in json.dumps(sent)
+    calls_before=client.chat.completions.create.call_count
     retold=agent.run_conversation(fact, conversation_history=db.get_messages_as_conversation('original'), task_id='erasure-retelling')
-    assert retold['final_response']=='RETOLD_OK'
-    sent=client.chat.completions.create.call_args_list[-1].kwargs['messages']
-    assert sum(fact in str(row.get('content','')) for row in sent) == 1, sent
-    assert fact in next(row['content'] for row in reversed(sent) if row.get('role')=='user'), sent
+    assert ('RETOLD_OK' in retold['final_response'] if summary_mode
+            else retold['final_response']=='RETOLD_OK'), retold
+    retelling_calls=client.chat.completions.create.call_args_list[calls_before:]
+    assert len(retelling_calls)==(2 if summary_mode else 1), retelling_calls
+    for call in retelling_calls:
+        sent=call.kwargs['messages']
+        assert sum(fact in str(row.get('content','')) for row in sent) == 1, sent
+        assert any(row.get('role')=='user' and str(row.get('content','')).startswith(fact)
+                   for row in sent), sent
     agent.close()
 assert any(path.endswith('/memory/sources/erasures') and code==200 for path,code in wire), wire
 assert fact in json.dumps(db.get_messages_as_conversation('original'))
