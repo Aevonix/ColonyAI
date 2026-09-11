@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from httpx import HTTPStatusError, NetworkError, RemoteProtocolError, TimeoutException
 
 from .client import source_message_hash
@@ -393,6 +394,17 @@ def _recombine_current_suffix(request, repair):
     return {**request, key: [*rows[:index], combined, *rows[index+count:]]}
 
 
+@dataclass(frozen=True)
+class _ReviewParentObservation:
+    observer: object
+    contact_id: str
+    session_id: str
+    turn_id: str
+    aliases: dict
+    packets: set
+    read_receipts: dict
+
+
 class RequestMemory:
     """One bounded feed reconciliation per actual native model request."""
 
@@ -434,14 +446,53 @@ class RequestMemory:
             self._read_receipts[key] = {}
             self._requests_seen.discard(key)
             self._host_inputs.pop(key, None)
-            self._aliases.move_to_end(key)
-            while len(self._aliases) > 32:
-                evicted, _ = self._aliases.popitem(last=False)
-                self._supplied.pop(evicted, None)
-                self._requests_seen.discard(evicted)
-                self._read_receipts.pop(evicted, None)
-                self._host_inputs.pop(evicted, None)
-                self._plain_user_tails.pop(evicted, None)
+            self._trim_observations(key)
+
+    def _trim_observations(self, key):
+        self._aliases.move_to_end(key)
+        while len(self._aliases) > 32:
+            evicted, _ = self._aliases.popitem(last=False)
+            self._supplied.pop(evicted, None)
+            self._requests_seen.discard(evicted)
+            self._read_receipts.pop(evicted, None)
+            self._host_inputs.pop(evicted, None)
+            self._plain_user_tails.pop(evicted, None)
+
+    def snapshot_review_parent(self, scope):
+        """Copy native observations before parent cleanup, without attesting freshness."""
+        if scope is None or not scope.valid_participant or scope.platform == 'background_review':
+            return None
+        key = (scope.contact_id, scope.task_id, scope.turn_id)
+        with self._lock:
+            if key not in self._aliases:
+                return None
+            aliases, current, _, packets = self._aliases[key]
+            aliases, packets = copy.deepcopy(aliases), set(packets)
+            if current is not None and current.get('api_content'):
+                aliases[_content_key(current['api_content'])] = copy.deepcopy(current.get('content'))
+            packet = _native_packet(current)
+            if packet is not None:
+                packets.add(packet.group())
+            return _ReviewParentObservation(self, scope.contact_id, scope.session_id, scope.turn_id,
+                aliases, packets, copy.deepcopy(self._read_receipts.get(key, {})))
+
+    def observe_review(self, scope, snapshot):
+        """Carry exact parent observations into a detached turn, never its current input."""
+        if (not isinstance(snapshot, _ReviewParentObservation) or snapshot.observer is not self
+                or scope is None or not scope.valid_participant or scope.platform != 'background_review'
+                or scope.contact_id != snapshot.contact_id or scope.session_id != snapshot.session_id
+                or not scope.task_id or not scope.turn_id or scope.turn_id == snapshot.turn_id):
+            return False
+        key = (scope.contact_id, scope.task_id, scope.turn_id)
+        with self._lock:
+            self._aliases[key] = copy.deepcopy(snapshot.aliases), None, None, set(snapshot.packets)
+            self._supplied[key] = {}
+            self._read_receipts[key] = copy.deepcopy(snapshot.read_receipts)
+            self._requests_seen.discard(key)
+            self._host_inputs.pop(key, None)
+            self._plain_user_tails[key] = []
+            self._trim_observations(key)
+        return True
 
     def observe_host_input(self, scope, messages, request_input, *, text, sources, watermark):
         """Record typed host provenance, not marker text parsed from a quotation.

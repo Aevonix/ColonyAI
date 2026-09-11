@@ -10,12 +10,15 @@ from test_native_current_work import environment
 
 PROBE = r'''
 import hashlib,json,os,socket,sys,threading,time
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock,patch
 sys.path.insert(0,sys.argv[1])
 guest=sys.argv[2]=='guest'
 failed_read=sys.argv[2]=='owner_failed_read'
+supplied_review=sys.argv[2]=='owner_supplied'
+erased_history=sys.argv[2]=='owner_erased_history'
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 (home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
@@ -27,6 +30,7 @@ def no_network(*a,**kw): raise AssertionError('Controlled review must stay offli
 socket.socket.connect=no_network; socket.create_connection=no_network
 import colony_hermes
 observations=[]
+erasure_events=[]
 class Reply:
     status_code=200
     def __init__(self,value): self.value=value
@@ -37,6 +41,9 @@ def post(self,path,**kw):
     return Reply({})
 def get(self,path,**kw):
     if path=='/v1/host/contacts/resolve': return Reply({'contact_id':'fixture-guest'})
+    if (supplied_review or erased_history) and path=='/v1/host/memory/sources/erasures':
+        return Reply({'contact_id':'fixture-owner','head':len(erasure_events),
+            'through':len(erasure_events),'events':erasure_events,'complete':True})
     raise RuntimeError('No central source service in this isolated qualification')
 colony_hermes.ColonyClient.post=post; colony_hermes.ColonyClient.get=get
 from hermes_cli.plugins import get_plugin_manager
@@ -69,7 +76,7 @@ def delayed_builder(*a,**kw):
     entered.set()
     assert release.wait(10), 'Review release deadline'
     return real_builder(*a,**kw)
-with patch(OPENAI_TARGET,side_effect=[parent_client,review_client]), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=defs), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}), patch.object(background_review,'build_cache_parity_fork',side_effect=delayed_builder):
+with ExitStack() as inputs, patch(OPENAI_TARGET,side_effect=[parent_client,review_client]), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=defs), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}), patch.object(background_review,'build_cache_parity_fork',side_effect=delayed_builder):
     parent=AIAgent(api_key='fixture-key',base_url='http://127.0.0.1:1/v1',provider='openai',
         model='fixture/model',max_iterations=4,quiet_mode=True,skip_context_files=True,
         skip_memory=True,platform='sms' if guest else 'cli',enabled_toolsets=['file','skills'])
@@ -78,7 +85,19 @@ with patch(OPENAI_TARGET,side_effect=[parent_client,review_client]), patch(TOOLS
     parent._use_prompt_caching=False; parent.compression_enabled=False; parent.save_trajectories=False
     parent._skill_nudge_interval=1
     parent._emit_auxiliary_failure=lambda *args:errors.append([str(arg) for arg in args])
-    result=parent.run_conversation('Read the neutral fixture.',task_id='fixture-parent')
+    if supplied_review:
+        from colony_hermes.input_provenance import supplied_input
+        supplied=inputs.enter_context(supplied_input(contact_id='fixture-owner',session_id=parent.session_id,
+            input_refs=[{'source_id':'fixture-input','input_message_hash':'a'*64}]))
+    history=[]
+    forgotten='Synthetic preference: use the green drawer.'
+    derived='Derived private draft details.'
+    if erased_history:
+        history=[{'role':'user','content':forgotten,
+            'api_content':forgotten+'\nExternal plugin contextual suffix.'},
+            {'role':'assistant','content':derived}]
+    result=parent.run_conversation('Read the neutral fixture.',task_id='fixture-parent',
+        conversation_history=history)
     assert result['final_response']=='PARENT_FINISHED',result
     parent_results=[message for message in parent_client.chat.completions.create.call_args_list[-1].kwargs['messages']
                     if message.get('role')=='tool' and message.get('tool_call_id')=='call-read_file']
@@ -86,6 +105,13 @@ with patch(OPENAI_TARGET,side_effect=[parent_client,review_client]), patch(TOOLS
     if not guest:
         assert bool(json.loads(parent_results[0]['content']).get('error'))==failed_read
     assert entered.wait(10), 'Native post-turn review never spawned'
+    if erased_history:
+        assert forgotten in str(parent_client.chat.completions.create.call_args_list)
+        assert derived in str(parent_client.chat.completions.create.call_args_list)
+        from colony_hermes.client import source_message_hash
+        erasure_events.append({'sequence':1,'turn_id':'erased-original',
+            'session_id':parent.session_id,
+            'message_hashes':[source_message_hash(parent.session_id,{'role':'user','content':forgotten})]})
     if guest:
         # A new attested owner turn takes over this same session after the
         # native fork captured the guest's ContextVars. It must remain guest.
@@ -99,6 +125,16 @@ with patch(OPENAI_TARGET,side_effect=[parent_client,review_client]), patch(TOOLS
         time.sleep(.02)
     assert reviews,{'observations':observations,'errors':errors,'review_calls':review_client.chat.completions.create.call_count}
     assert review_client.chat.completions.create.call_count==2
+    if erased_history:
+        for call in review_client.chat.completions.create.call_args_list:
+            visible=json.dumps(call.kwargs['messages'])
+            assert forgotten not in visible and derived not in visible,visible
+            assert 'External plugin contextual suffix.' not in visible,visible
+            assert 'Read the neutral fixture.' in visible,visible
+    if supplied_review:
+        assert supplied.failure is None, supplied.failure
+        assert {row['turn_id'] for row in reviews} <= {key[2] for key in supplied._bound}
+        assert 'source input for this task is no longer available' not in str(review_client.chat.completions.create.call_args_list)
     returned=' '.join(str(m.get('content')) for m in review_client.chat.completions.create.call_args_list[-1].kwargs['messages'] if m.get('role')=='tool')
     expected='fixture-guest' if guest else 'fixture-owner'
     assert all(row['contact_id']==expected for row in reviews),reviews
@@ -147,7 +183,11 @@ with patch(OPENAI_TARGET,side_effect=[parent_client,review_client]), patch(TOOLS
         assert any(row['action']=='rollback' for row in skill_ledger.list_entries(limit=50))
     rows=colony_hermes.TurnOutbox(str(home/'outbox.db')).snapshot()
     assert len(rows)==1,rows
-    assert rows[0]['payload']['user_message']=='Read the neutral fixture.'
+    if supplied_review:
+        assert 'user_message' not in rows[0]['payload']
+        assert rows[0]['payload']['assistant_input_refs']==[{'source_id':'fixture-input','input_message_hash':'a'*64}]
+    else:
+        assert rows[0]['payload']['user_message']=='Read the neutral fixture.'
     assert rows[0]['payload']['contact_id']==expected
     parent.close()
 print(json.dumps({'native_automatic_review':True,'guest':guest,'failed_read':failed_read,
@@ -155,7 +195,7 @@ print(json.dumps({'native_automatic_review':True,'guest':guest,'failed_read':fai
 '''
 
 
-@pytest.mark.parametrize('participant',['owner','owner_failed_read','guest'])
+@pytest.mark.parametrize('participant',['owner','owner_failed_read','guest','owner_supplied','owner_erased_history'])
 def test_native_post_turn_review_keeps_exact_scope_and_native_skill_history(artifacts,tmp_path,participant):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual post-turn review')
