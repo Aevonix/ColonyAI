@@ -961,6 +961,7 @@ def compatible_scopes(method: str, path: str) -> frozenset[str]:
     if (method.upper(), path) in WORK_READ_SURFACE_V1 or (method.upper(), path) in {
         ("POST", "/v1/host/learning/correction"),
         ("POST", "/v1/host/response-guard/check"),
+        ("GET", "/v1/host/contacts/resolve"),
     }:
         return _API_ACCESS_COMPATIBILITY
     return _NO_COMPATIBILITY_SCOPES
@@ -1105,6 +1106,7 @@ def required_scope(method: str, path: str) -> str:
             return "charter:approval-decide"
         return "api:access"
     exact = {
+        ("GET", "/v1/host/contacts/resolve"): "turns:resolve-sender",
         ("GET", "/v1/host/admin/auth/status"): "auth:admin",
         ("GET", "/v1/host/contact-policy"): "contacts:policy-read",
         ("POST", "/v1/host/response-guard/check"): "response-guard:check",

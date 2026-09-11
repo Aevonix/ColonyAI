@@ -545,11 +545,13 @@ async def test_turn_contact_is_validated_before_idempotent_ingestion(tmp_path, g
 
 
 @pytest.mark.asyncio
-async def test_sender_resolving_adapter_discards_initial_contact_claim(tmp_path, graph):
+async def test_sender_resolving_adapter_cannot_inherit_viewer_without_contact_store(tmp_path, graph):
     keyring = tmp_path / "keys.json"
-    _write_keyring(keyring, [_principal(scopes=[
+    principal = _principal(scopes=[
         "turns:write", "turns:resolve-sender"
-    ])])
+    ])
+    principal['turn_ingress_platforms'] = ['example-chat']
+    _write_keyring(keyring, [principal])
     app = _app(keyring)
     payload = _turn_payload("body-claim", "sender-turn")
     payload["sender"] = {
@@ -563,10 +565,10 @@ async def test_sender_resolving_adapter_discards_initial_contact_claim(tmp_path,
             json=payload,
         )
 
-    assert response.status_code == 200
-    # No contacts store is wired in this focused test, so the resolver cannot
-    # map the sender further. The untrusted body claim is still gone.
-    assert graph.turn_calls[0]["contact_id"] == "contact-owner"
+    assert response.status_code == 503
+    # Unavailable identity resolution cannot turn an unknown sender into the
+    # credential's default viewer or run ordinary conversation effects.
+    assert graph.turn_calls == []
 
 
 @pytest.mark.asyncio
@@ -930,8 +932,8 @@ async def test_resolved_sender_in_static_grant_needs_no_dynamic_platform_grant(
     from apsimo.events import journal as event_journal
 
     class Contacts:
-        async def resolve_messaging_handle(self, platform, user_id):
-            assert (platform, user_id) == ("voice", "owner-voice-handle")
+        async def resolve_verified_handles(self, platform, user_ids):
+            assert (platform, user_ids) == ("voice", ["owner-voice-handle"])
             return SimpleNamespace(contact_id="contact-owner")
 
         async def record_interaction(self, _contact_id):

@@ -138,7 +138,7 @@ def authority_changes():
   fails(lambda:sources.capture(replace(scope(),platform=platform)),'ordinary authenticated')
  with supplied_input(contact_id=owner,session_id=scope().session_id,input_refs=src['input_refs'],source_refs=src['source_refs']):
   fails(lambda:sources.capture(scope()),'ordinary authenticated')
- fails(lambda:sources.capture(scope(sender='+15550002')),'configured owner')
+ fails(lambda:sources.capture(scope(sender='+15550002')),'binding is unavailable')
  fails(lambda:sources.capture(replace(scope(),authority_lane='guest')),'ordinary authenticated')
  local=sources.capture(scope('cli','',session='local',turn='local-turn'))
  assert local['principal']=='hermes:cli'
@@ -147,8 +147,9 @@ def authority_changes():
  fails(lambda:sources.resolve_owner({**src,'principal':'hermes:cli'},require_task_grant=False),'origin is invalid')
  asyncio.run(contacts.correct_handle_identity(operation_id='identity-change',performed_by='fixture-owner',
   gateway='sms',address='+15550001',expected_contact_id=owner,contact_id=guest,evidence_refs=['fixture:correction']))
- fails(lambda:sources.resolve_owner(src,require_task_grant=False),'configured owner')
- fails(lambda:sources.capture(scope()),'configured owner')
+ # The scoped resolver withholds the other person's identity after reassignment.
+ fails(lambda:sources.resolve_owner(src,require_task_grant=False),'binding is unavailable')
+ fails(lambda:sources.capture(scope()),'binding is unavailable')
  assert sources.resolve_owner(local,require_task_grant=False)==owner
 
 def joined_child_is_not_direct_input():

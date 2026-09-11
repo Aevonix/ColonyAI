@@ -65,11 +65,11 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/apsimo/venv"
 source "$HOME/.local/share/apsimo/venv/bin/activate"
-python -m pip install "apsimo[hermes]==1.3.0" "apsimo-hermes[native-memory]==1.3.0"
+python -m pip install "apsimo[hermes]==1.3.1" "apsimo-hermes[native-memory]==1.3.1"
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
-The wizard lists existing Hermes profiles, selects one home, asks for your name, agent name, model, values, timezone and quiet hours, and
+The wizard lists existing Hermes profiles, selects one home, asks for your name, optional owner messaging accounts, agent name, model, values, timezone and quiet hours, and
 creates private state outside Git. It preserves existing identity, channels and
 model settings. Replacing an incumbent memory provider is an explicit choice.
 It attaches the canonical installed adapter when its bytes match, or installs

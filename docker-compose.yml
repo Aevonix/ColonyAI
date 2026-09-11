@@ -24,7 +24,7 @@ services:
 
   # Retain this existing service key and state volume across the rename.
   colony:
-    image: ghcr.io/aevonix/apsimo:v1.3.0
+    image: ghcr.io/aevonix/apsimo:v1.3.1
     build:
       context: ./sidecar
       dockerfile: Dockerfile

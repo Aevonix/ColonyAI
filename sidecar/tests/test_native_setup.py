@@ -1,5 +1,6 @@
 """Guided native init preserves profiles and creates one private scoped instance."""
 import json
+import asyncio
 import os
 import socket
 from pathlib import Path
@@ -150,6 +151,98 @@ def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args
     before = (home/'config.yaml').read_bytes(), (state/'api-keyring.json').read_bytes()
     assert setup.run_init(None, args) == 0
     assert before == ((home/'config.yaml').read_bytes(), (state/'api-keyring.json').read_bytes())
+
+
+def test_enrolled_owner_accounts_resolve_through_the_generated_scoped_api(args, monkeypatch):
+    from fastapi import FastAPI
+    from apsimo.api.middleware import ApiKeyMiddleware
+    from apsimo.api.routers import host
+    from apsimo.contacts.config import ContactsConfig
+    from apsimo.contacts.store import SQLiteContactStore
+
+    home = Path(args.hermes_home)
+    home.mkdir(mode=0o700)
+    channels = {'telegram': {'enabled': True, 'allowed_users': ['123456789']}}
+    (home/'config.yaml').write_text(yaml.safe_dump(channels))
+    args.owner_handle = ['telegram=123456789', 'sms=+1 (202) 555-0198', 'telegram=123456789']
+    assert setup.run_init(None, args) == 0
+    state = home/'apsimo'
+    config = yaml.safe_load((home/'config.yaml').read_text())
+    assert config['telegram'] == channels['telegram']
+    assert config['plugins']['apsimo']['attested_system_platforms'] == ['cli']
+    principal = json.loads((state/'api-keyring.json').read_text())['principals'][0]
+    assert principal['turn_ingress_platforms'] == ['cli', 'sms', 'telegram']
+    assert 'turns:resolve-sender' in principal['scopes']
+    assert principal['allow_unscoped_api'] is False
+    assert 'api:access' not in principal['scopes']
+    owner_id = principal['viewer_person_id']
+
+    async def exercise():
+        store = SQLiteContactStore(ContactsConfig(sqlite_path=str(state/'contacts.db')))
+        await store.connect()
+        monkeypatch.setattr(host, '_contacts_store', store)
+        try:
+            handles = await store.get_handles(owner_id)
+            assert len(handles) == 2 and all(row.verified and row.source == 'wizard' for row in handles)
+            guest = await store.create(display_name='Other person')
+            await store.add_handle(guest.contact_id, 'telegram', '987654321', verified=True)
+            await store.add_handle(owner_id, 'telegram', '111111111', verified=False)
+            before = (await store.list(), await store.get_handles(owner_id))
+            app = FastAPI()
+            app.add_middleware(ApiKeyMiddleware, keyring_path=str(state/'api-keyring.json'))
+            app.include_router(host.router)
+            headers = {'Authorization': 'Bearer ' + principal['credentials'][0]['secret']}
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://setup') as client:
+                for gateway, address, create, status in [
+                    ('telegram', '123456789', False, 200),
+                    ('telegram', '123456789', True, 200),  # Memory provider's existing read call.
+                    ('sms', '+1 (202) 555-0198', True, 200),
+                    ('telegram', 'unknown', True, 404),
+                    ('telegram', '987654321', False, 404),
+                    ('telegram', '111111111', False, 404),
+                    ('telegram', '+12025550198', False, 404),  # No inferred cross-channel authority.
+                    ('whatsapp', '123456789', False, 403),
+                ]:
+                    response = await client.get('/v1/host/contacts/resolve', headers=headers,
+                        params={'gateway': gateway, 'address': address, 'create': str(create).lower()})
+                    assert response.status_code == status, response.text
+                    if status == 200:
+                        assert response.json()['contact_id'] == owner_id
+                denied = await client.get('/v1/host/contacts/resolve',
+                    params={'gateway': 'telegram', 'address': '123456789'})
+                assert denied.status_code == 401
+            assert before == (await store.list(), await store.get_handles(owner_id))
+        finally:
+            await store.close()
+    asyncio.run(exercise())
+
+    retained = ((state/'api-keyring.json').read_bytes(), (home/'config.yaml').read_bytes(),
+                (state/'contacts.db').read_bytes())
+    assert setup.run_init(None, args) == 1  # Enrollment arguments are never silently ignored on rerun.
+    assert retained == ((state/'api-keyring.json').read_bytes(), (home/'config.yaml').read_bytes(),
+                        (state/'contacts.db').read_bytes())
+    args.owner_handle = None
+    assert setup.run_init(None, args) == 0
+    assert retained == ((state/'api-keyring.json').read_bytes(), (home/'config.yaml').read_bytes(),
+                        (state/'contacts.db').read_bytes())
+
+
+@pytest.mark.parametrize('handle', ['telegram', '=123', 'telegram=', 'sms=letters',
+    'cli=owner', 'telegram=abc\n123', 'telegram=' + 'x' * 513])
+def test_bad_owner_enrollment_stops_before_probe_or_state(args, handle, monkeypatch):
+    args.owner_handle = [handle]
+    probe = Mock(side_effect=AssertionError('Invalid enrollment must precede model probing'))
+    monkeypatch.setattr(setup_hermes, '_verify_local_endpoint', probe)
+    assert setup.run_init(None, args) == 1
+    probe.assert_not_called()
+    assert not Path(args.hermes_home).exists()
+
+
+def test_guided_owner_enrollment_uses_the_same_normalized_bindings():
+    answers = iter(['email=Owner@Example.org', 'rcs=+1 (202) 555-0198', ''])
+    handles, platforms = setup_hermes._owner_handles(SimpleNamespace(), lambda *a: next(answers), False)
+    assert handles == [('email', 'owner@example.org'), ('sms', '+12025550198')]
+    assert platforms == ['email', 'rcs']
 
 
 def test_writable_ancestor_stops_before_endpoint_probe_or_attachment(args, tmp_path, monkeypatch, capsys):

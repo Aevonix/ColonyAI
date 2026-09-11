@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.3.1 - enrolled owner accounts and scoped turn clocks
+
+Fresh guided setup can enroll exact owner messaging accounts with repeatable
+`--owner-handle CHANNEL=SENDER_ID` options. The private contact store holds the
+verified bindings; Hermes continues to own channel configuration and delivery.
+Existing instances retain their identity and reject changed enrollment flags.
+
+Sender lookup now accepts the existing scoped transport permission without
+requiring broad API access. Restricted static transports validate an enrolled
+sender before storing a turn, so failed resolution cannot fall back to the owner.
+Existing broad callers and explicitly attested dynamic transports retain their
+separate contracts. Integration checks exercise the generated credential, real
+SQLite contacts and both source-ingestion API versions. They do not establish
+physical channel delivery or general conversational quality.
+
+The memory provider labels its clock as belonging to its original user turn.
+Replayed clock notes and earlier tool observations remain historical; retained
+conversation history is unchanged. Native two-turn checks qualify composition
+and persistence. Improved model answers require a separate behavioral trial.
+
 ## v1.3.0 - Apsimo interfaces and compatible attachment
 
 The public platform uses Apsimo package, command and native adapter names.

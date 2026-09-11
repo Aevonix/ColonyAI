@@ -13,7 +13,7 @@ with Hermes, but the commands below keep an existing Hermes installation intact:
 ```bash
 python3 -m venv "$HOME/.local/share/apsimo/venv"
 source "$HOME/.local/share/apsimo/venv/bin/activate"
-python -m pip install "apsimo[hermes]==1.3.0" "apsimo-hermes[native-memory]==1.3.0"
+python -m pip install "apsimo[hermes]==1.3.1" "apsimo-hermes[native-memory]==1.3.1"
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -26,7 +26,7 @@ A separate Hermes environment needs its own native core dependencies. It does
 not need Apsimo's CLI dependency `typer` or a preinstalled Apsimo adapter; setup
 can attach the private adapter directly from the Apsimo environment.
 
-The wizard asks for your name, the agent's name, the model API root and model,
+The wizard asks for your name, optional owner messaging accounts, the agent's name, the model API root and model,
 whether to enable accepted local drafts, whether to enable general native tasks
 (default no), then whether to start Apsimo. An API
 key is prompted without echo. For unattended
@@ -149,7 +149,7 @@ their old draft job is paused. An older instance without a planning role or comp
 adapter needs explicit configuration or an adapter upgrade first.
 
 Graph/vector retrieval, embedding downloads and consequential background workers
-are disabled in this profile. Install `apsimo[graph,vectors]==1.3.0` only when
+are disabled in this profile. Install `apsimo[graph,vectors]==1.3.1` only when
 adding those services intentionally. Model quality still determines extraction and
 reasoning quality. Lexical retrieval does not promise semantic recall of every
 paraphrase. This setup is a growing local base, not a claim that every autonomous
@@ -215,9 +215,31 @@ planning role.
 
 A real owner contact is created, with a generated exact-person API credential.
 The server has no global legacy bearer key. The native local CLI is explicitly
-bound to the owner; unrecognized real-channel senders do not inherit that
-identity. The wizard does not enroll messaging handles, remote users or devices.
-Add those through their authenticated transport integration and scoped grants.
+bound to the owner. During creation you can also enroll your messaging accounts:
+
+```bash
+apsimo init --hermes-python /path/to/hermes/.venv/bin/python \
+  --hermes-home "$HOME/.hermes-orion" \
+  --owner-handle telegram=123456789
+```
+
+Use the exact sender ID reported by the authenticated Hermes channel, not a
+display name, group ID or another person's account. Repeat `--owner-handle` for
+each account, or enter them in guided setup. Enrollment is a local owner decision,
+not a claim accepted from a conversation. The existing private contact database
+stores verified bindings; the credential remains restricted to that owner and
+the enrolled transports. An unknown, unverified or other-person account does
+not inherit the owner identity, and read resolution does not create contacts.
+Enrolled phone and email handles use the contact store's existing normalization;
+RCS handles share SMS storage, while transport admission remains explicit.
+
+Hermes still owns channel credentials, sender admission and delivery. Enrollment
+does not enable a channel, alter its allowlist, send a message or connect a device.
+It is available when creating an Apsimo instance, including attaching to an
+existing Hermes home. Rerunning setup preserves identity and credentials;
+passing enrollment flags to an existing Apsimo instance returns an explicit error
+instead of silently changing its owner. Other people and hardware require their
+authenticated transport integration and scoped grants.
 Native owner tools remain available; consequential effects remain subject to
 the existing application consent rules. Public guest context needs the existing
 scoped projection contract and is not enabled by this local profile.
@@ -252,7 +274,7 @@ Update both Apsimo distributions in the environment that runs Apsimo, selecting
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "apsimo[hermes]==1.3.0" "apsimo-hermes[native-memory]==1.3.0"
+python -m pip install --upgrade "apsimo[hermes]==1.3.1" "apsimo-hermes[native-memory]==1.3.1"
 apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 

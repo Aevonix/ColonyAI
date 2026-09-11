@@ -3907,6 +3907,26 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             "host_reconciliation": "pending_until_each_host_connects"}
 
 
+async def _resolve_scoped_sender_contact(authority, gateway: str, address: str):
+    """Read one verified handle within the credential's existing grants."""
+    platform = gateway.strip().lower()
+    if (not authority.authenticated or not authority.has_scope('turns:resolve-sender')
+            or platform not in authority.turn_ingress_platforms):
+        raise HTTPException(status_code=403, detail='Sender resolution is outside this transport grant')
+    if _contacts_store is None:
+        raise HTTPException(status_code=503, detail='Contact store not initialized')
+    from apsimo.contacts.identity_links import normalized_handle
+    try:
+        normalized_gateway, normalized_address = normalized_handle(platform, address)
+        contact = await _contacts_store.resolve_verified_handles(
+            normalized_gateway, [normalized_address])
+    except ValueError:
+        raise HTTPException(status_code=400, detail='Invalid sender handle') from None
+    if contact is None or contact.contact_id not in authority.person_ids:
+        raise HTTPException(status_code=404, detail='No enrolled contact for that handle')
+    return contact
+
+
 async def _ingest_turn_idempotently(
     body: TurnSyncRequest,
     request: Request | None = None,
@@ -3918,9 +3938,23 @@ async def _ingest_turn_idempotently(
     effects run. This is the server's final defense even when a host retries or
     two host integrations accidentally submit the same envelope.
     """
+    resolved_sender_contact_id = None
+    authority = request_authority(request)
+    if (body.sender is not None and not authority.legacy and authority.authenticated
+            and authority.has_scope('turns:resolve-sender')
+            and not (authority.allow_unscoped_api and authority.has_scope('api:access'))
+            and body.sender.platform.strip().lower() not in authority.attested_contact_platforms):
+        # Static transport enrollment cannot inherit the viewer on a failed
+        # lookup, or take the general resolver's canonical-ID/name fallbacks.
+        # Validate before checkpoints, reservations or any source write.
+        contact = await _resolve_scoped_sender_contact(
+            authority, body.sender.platform, body.sender.user_id)
+        resolved_sender_contact_id = contact.contact_id
+        body.context.contact_id = contact.contact_id
     turn_id = (body.context.turn_id or "").strip()
     if not turn_id:
-        return await _process_turn_sync(body, request=request), "unkeyed"
+        return await _process_turn_sync(body, request=request,
+            resolved_sender_contact_id=resolved_sender_contact_id), "unkeyed"
     if len(turn_id) > 256:
         raise HTTPException(
             status_code=422,
@@ -4010,7 +4044,8 @@ async def _ingest_turn_idempotently(
         ), "in_progress"
 
     try:
-        result = await _process_turn_sync(body, request=request)
+        result = await _process_turn_sync(body, request=request,
+            resolved_sender_contact_id=resolved_sender_contact_id)
     except BaseException as exc:
         ledger.mark_ambiguous(turn_id, digest, exc)
         raise
@@ -4177,6 +4212,8 @@ async def turns_sync_v2(
 async def _process_turn_sync(
     body: TurnSyncRequest,
     request: Request | None = None,
+    *,
+    resolved_sender_contact_id: str | None = None,
 ) -> TurnSyncResponse:
     # Keep direct blocks for canonical source storage. All existing text-only
     # cognition consumers receive only explicit text, never repr(base64/URLs).
@@ -4221,7 +4258,11 @@ async def _process_turn_sync(
         from apsimo.identity.participants import (
             SYSTEM_CONTACT_ID, ParticipantResolver, is_machine_turn,
         )
-        if body.sender is not None and _contacts_store is not None:
+        if resolved_sender_contact_id is not None:
+            body.context.contact_id = resolved_sender_contact_id
+            _resolution_method = "verified_handle"
+            _resolved_human_sender = True
+        elif body.sender is not None and _contacts_store is not None:
             _res = await ParticipantResolver(_contacts_store).resolve(
                 platform=body.sender.platform,
                 user_id=body.sender.user_id,
@@ -6282,7 +6323,7 @@ async def capture_introduction(body: ContactIntroRequest) -> ContactIntroRespons
 
 
 @router.get("/contacts/resolve", response_model=ContactResponse)
-async def resolve_contact_by_handle(gateway: str, address: str, create: bool = False) -> ContactResponse:
+async def resolve_contact_by_handle(gateway: str, address: str, request: Request, create: bool = False) -> ContactResponse:
     """Resolve a contact from a messaging handle (v0.21.2).
 
     Registered BEFORE /contacts/{contact_id} so it isn't shadowed by the
@@ -6298,6 +6339,14 @@ async def resolve_contact_by_handle(gateway: str, address: str, create: bool = F
     if _contacts_store is None:
         raise HTTPException(status_code=404, detail="Contact store not initialized")
     try:
+        authority = request_authority(request)
+        if not authority.legacy and not (
+                authority.allow_unscoped_api and authority.has_scope('api:access')):
+            # Fresh native profiles resolve only explicitly enrolled accounts.
+            # The memory provider's legacy create=true hint cannot provision a
+            # contact or expand the credential's person/transport grants here.
+            contact = await _resolve_scoped_sender_contact(authority, gateway, address)
+            return ContactResponse(**contact.to_dict())
         # Normalized, cross-gateway phone-identity resolution (a number is one contact regardless of
         # the transport it arrived on). find_by_handle stays exact-match for dedup callers.
         contact = await _contacts_store.resolve_messaging_handle(gateway, address)

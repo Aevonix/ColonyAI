@@ -53,6 +53,7 @@ def main() -> None:
     # Backward compatibility
     init_p.add_argument("--host-framework", choices=["openclaw", "hermes", "claude-code", "codex", "crush", "standalone"], help="Host framework (deprecated: use --agent-harness or --mcp-harnesses)")
     init_p.add_argument("--contact-name", help="Contact name for this user")
+    init_p.add_argument("--owner-handle", action="append", metavar="CHANNEL=SENDER_ID", help="Enroll your exact Hermes sender ID when creating a private instance; repeat for each account")
     init_p.add_argument("--bind", default="127.0.0.1", help="Sidecar bind address (0.0.0.0 for all interfaces)")
     init_p.add_argument("--port", type=int, default=7777, help="Sidecar port")
     init_p.add_argument("--tier", type=int, choices=range(0, 8), metavar="TIER", help="Embedding tier (0-7)")

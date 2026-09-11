@@ -1,6 +1,6 @@
 ---
 name: apsimo
-version: 1.3.0
+version: 1.3.1
 description: Apsimo context sidecar for Hermes with exact per-turn participant binding, scoped P8 guest projection, and read-only general-plugin coexistence.
 author: Aevonix
 ---
