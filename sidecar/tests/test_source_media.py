@@ -1,5 +1,6 @@
 """Real source/image storage, scope, erasure and one shared recall packet."""
 import base64
+from contextlib import closing
 import hashlib
 import io
 import json
@@ -43,6 +44,68 @@ class Vision:
         assert kwargs['messages'][-1]['content'][0]['image_url']['url'].startswith('data:image/png;base64,')
         if self.before: self.before()
         return SimpleNamespace(content='A red rectangle is on the left and a blue circle on the right, on white.', model_id='fixture-vision-a')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('content,finish_reason,reason', [
+    ('word ' * 161, 'stop', 'description_word_limit'),
+    ('x' * 2401, 'stop', 'description_character_limit'),
+    (None, 'stop', 'missing_final_answer'),
+    ('A partial caption.', 'length', 'incomplete_final_answer'),
+])
+async def test_rejected_caption_retains_disposition_and_returned_model_only(
+        tmp_path, monkeypatch, content, finish_reason, reason):
+    ledger = TurnIdempotencyLedger(tmp_path / 'ledger.db')
+    media = SourceMedia(ledger)
+    ledger.record_source('image', contact_id='person', session_id='s', messages=[message()])
+
+    class RejectedVision(Vision):
+        async def complete(self, **kwargs):
+            return SimpleNamespace(content=content, model_id='returned-vision', function_role='vision',
+                config_revision='routing-revision', model_revision='weights-revision',
+                raw=SimpleNamespace(choices=[SimpleNamespace(finish_reason=finish_reason,
+                    message=SimpleNamespace(content=content, reasoning_content='not source evidence'))]))
+
+    assert await media.process_one(RejectedVision())
+    with closing(ledger._connect()) as db:
+        row = dict(db.execute('SELECT * FROM source_media').fetchone())
+        assert row['status'] == 'pending' and row['error'] == reason
+        assert row['description'] is None and row['model'] == 'returned-vision'
+        assert json.loads(row['model_provenance_json']) == {
+            'function_role': 'vision', 'config_revision': 'routing-revision',
+            'weight_revision': 'weights-revision', 'model_id': 'returned-vision'}
+        assert db.execute('SELECT count(*) FROM source_media_search').fetchone()[0] == 0
+        assert 'not source evidence' not in json.dumps(row)
+    assert media.read(hashlib.sha256(image_bytes()).hexdigest(), contact_id='person', session_id='later')[0] == image_bytes()
+    # The existing retry becomes eligible and can complete with its own model
+    # provenance. No new job or manual admission of the rejected text is used.
+    from colony_sidecar.turns import media as media_module
+    now = media_module.time.time()
+    monkeypatch.setattr(media_module.time, 'time', lambda: now + 901)
+    assert await media.process_one(Vision())
+    with closing(ledger._connect()) as db:
+        row = dict(db.execute('SELECT * FROM source_media').fetchone())
+        assert row['status'] == 'complete' and row['error'] is None
+        assert row['model'] == 'fixture-vision-a' and row['attempts'] == 2
+    assert media.search('blue circle', contact_id='person', session_id='later')
+
+
+@pytest.mark.asyncio
+async def test_caption_transport_exception_does_not_persist_arbitrary_details(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path / 'ledger.db')
+    media = SourceMedia(ledger)
+    ledger.record_source('image', contact_id='person', session_id='s', messages=[message()])
+
+    class BrokenVision(Vision):
+        async def complete(self, **kwargs):
+            raise ValueError('provider included private image text in this exception')
+
+    assert await media.process_one(BrokenVision())
+    with closing(ledger._connect()) as db:
+        row = dict(db.execute('SELECT * FROM source_media').fetchone())
+        assert row['error'] == 'ValueError' and row['model'] is None
+        assert json.loads(row['model_provenance_json']) == {}
+        assert 'private image text' not in json.dumps(row)
 
 
 @pytest.mark.asyncio
