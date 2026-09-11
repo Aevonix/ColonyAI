@@ -29,7 +29,8 @@ def video_runtime(runtime):
     rt.opened = {**rt.ref, 'view': 'video', 'read_revision': 'a' * 64,
         'content': 'Attributed selected clip at requested 1000 ms. One frame only.',
         'source_refs': [rt.ref], 'watermark': 0, 'complete': True,
-        'video': {**rt.selector, 'actual_ms': 1020.0, 'frame_pts': 51, 'time_base': '1/50',
+        'video': {**rt.selector, 'actual_ms': 1020.0, 'frame_pts': 151, 'time_base': '1/50',
+            'origin_pts': 100, 'origin_time_base': '1/50',
             'stream_index': 0, 'decoder': 'PyAV', 'decoder_version': '18.1.0',
             'selection': 'first_frame_at_or_after', 'timestamp_origin': 'first_decoded_frame',
             'source_width': 20, 'source_height': 10, 'width': 20, 'height': 10,
@@ -95,7 +96,8 @@ def test_exact_frame_and_clip_are_distinct_and_metadata_recheck_never_decodes(vi
     rt = video_runtime; wire = request(rt, shape); before = copy.deepcopy(wire)
     metadata = json.loads(rt.result['content'][0]['text'])
     assert metadata['video']['asset_hash'] == rt.asset != metadata['image']['asset_hash'] == rt.frame
-    assert metadata['video']['actual_ms'] == 1020 and rt.encoded not in rt.result['content'][0]['text']
+    assert metadata['video']['actual_ms'] == 1020 and metadata['video']['origin_pts'] == 100
+    assert metadata['video']['frame_pts'] == 151 and rt.encoded not in rt.result['content'][0]['text']
     assert rt.calls[0]['timeout'] == 20
     assert rt.encoded in json.dumps(rt.middleware(wire, rt.scope)['request'])
     assert rt.decode_calls == 1 and len(rt.calls) == 2

@@ -83,7 +83,9 @@ def handle(args, scope, client, request_memory, context):
                     or type(actual_ms) not in (int, float) or not math.isfinite(actual_ms)
                     or not args['requested_ms'] <= actual_ms <= 30000
                     or type(video.get('frame_pts')) is not int
+                    or type(video.get('origin_pts')) is not int
                     or not re.fullmatch(r'[1-9][0-9]*/[1-9][0-9]*', time_base)
+                    or not re.fullmatch(r'[1-9][0-9]*/[1-9][0-9]*', str(video.get('origin_time_base', '')))
                     or type(video.get('stream_index')) is not int or video['stream_index'] < 0
                     or video.get('decoder') != 'PyAV'
                     or not isinstance(video.get('decoder_version'), str) or not 1 <= len(video['decoder_version']) <= 64
