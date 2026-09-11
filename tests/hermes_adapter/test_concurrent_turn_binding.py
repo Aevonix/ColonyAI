@@ -15,6 +15,8 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0,sys.argv[1]); sys.path.insert(1,sys.argv[2])
 if sys.argv[3]: sys.path.append(sys.argv[3])
 second_person=sys.argv[4]
+native=sys.argv[5]
+if native: sys.path.insert(2,native)
 import uvicorn
 from fastapi import FastAPI, Response
 from colony_sidecar.api.authority import RequestAuthority
@@ -75,7 +77,7 @@ socket.socket.connect=local_only
     'owner_contact_id':owner,'url':base,'turn_writer_platforms':[],'execution_registry_enabled':True}},
     'memory':{'provider':'colony-memory','config':{'contact_id':owner,'url':base}}}))
 import colony_hermes
-first_hook=threading.Event(); release=threading.Event()
+first_hook=threading.Event(); second_queued=threading.Event(); release=threading.Event()
 original_get=colony_hermes.ColonyClient.get
 def get(self,path,**kwargs):
     if (path=='/v1/host/contacts/resolve' and kwargs.get('params',{}).get('address')=='+15550007160'
@@ -85,8 +87,21 @@ def get(self,path,**kwargs):
     return original_get(self,path,**kwargs)
 colony_hermes.ColonyClient.get=get
 from hermes_cli.plugins import get_plugin_manager
-get_plugin_manager().discover_and_load()
-assert get_plugin_manager()._plugins['colony'].enabled
+if native:
+    import hermes_cli.plugins
+    assert Path(hermes_cli.plugins.__file__).resolve().is_relative_to(Path(native).resolve())
+plugin_manager=get_plugin_manager()
+plugin_manager.discover_and_load()
+assert plugin_manager._plugins['colony'].enabled
+# Observe real admission behind the running callback, then let both turns
+# proceed. Waiting for the second whole turn here would make a circular wait
+# under Hermes's healthy-overlap serialization.
+condition=plugin_manager._hook_timeout_running_cond
+original_wait=condition.wait
+def observe_wait(timeout=None):
+    if threading.current_thread() is second and first_hook.is_set() and not release.is_set():
+        second_queued.set()
+    return original_wait(timeout)
 from plugins.memory import load_memory_provider
 from agent.memory_manager import MemoryManager
 from gateway.session_context import set_session_vars,clear_session_vars
@@ -114,9 +129,8 @@ def run(index):
         errors.append(repr(error))
     finally:
         clear_session_vars(tokens)
-        if index==1: release.set()
 try:
-    with patch(openai_target,side_effect=clients),patch(tools_target+'.get_tool_definitions',return_value=definitions),patch(tools_target+'.check_toolset_requirements',return_value={}):
+    with patch.object(condition,'wait',side_effect=observe_wait),patch(openai_target,side_effect=clients),patch(tools_target+'.get_tool_definitions',return_value=definitions),patch(tools_target+'.check_toolset_requirements',return_value={}):
         for index in range(2):
             agent=AIAgent(api_key='fixture',base_url='http://127.0.0.1:1/v1',provider='openai',model='fixture/model',
                 quiet_mode=True,skip_context_files=True,skip_memory=True,platform='sms',enabled_toolsets=['file'],
@@ -130,7 +144,9 @@ try:
         first=threading.Thread(target=run,args=(0,)); first.start()
         assert first_hook.wait(10),'first native pre_llm_call did not enter resolver'
         second=threading.Thread(target=run,args=(1,)); second.start()
-        second.join(20); release.set(); first.join(20)
+        assert second_queued.wait(10),'second native turn did not queue behind the held callback'
+        release.set()
+        second.join(20); first.join(20)
         assert not first.is_alive() and not second.is_alive() and not errors,errors
     summary=[]
     for index in range(2):
@@ -162,12 +178,13 @@ finally:
 
 @pytest.mark.parametrize('second_person',['owner','guest','unavailable'])
 def test_actual_overlapping_native_starts_preserve_recall_authorized_tools_and_work(artifacts,tmp_path,second_person):
-    if importlib.util.find_spec('hermes_cli') is None:
+    native=os.environ.get('COLONY_TEST_HERMES_PATH','')
+    if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual concurrent turn qualification')
     env={key:os.environ[key] for key in ('PATH','HOME','TMPDIR','LANG') if key in os.environ}
     env.update(HERMES_HOME=str(tmp_path/'profile'),COLONY_STATE_DIR=str(tmp_path/'colony'),
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
         COLONY_GENERAL_PLUGIN_ACTIVE='1',COLONY_MEMORY_WORKER_TOOLS='0',COLONY_MEMORY_TURN_WRITER='disabled',
         COLONY_GUARD_CHAT_MODE='off',COLONY_OWNER_CONTACT_ID='owner',COLONY_SKIP_DOTENV='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
-    result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),second_person,cwd=tmp_path,env=env)
+    result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),second_person,native,cwd=tmp_path,env=env)
     assert '"actual_native": true' in result.stdout

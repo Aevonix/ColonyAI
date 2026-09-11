@@ -13,6 +13,7 @@ import asyncio, json, os, socket, sys, threading, time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
+if sys.argv[2]: sys.path.insert(1,sys.argv[2])
 home = Path(os.environ['HERMES_HOME'])
 (home/'scripts').mkdir(parents=True)
 (home/'config.yaml').write_text('{}')
@@ -22,6 +23,9 @@ def no_network(*a, **k): raise AssertionError('Cron qualification must remain lo
 socket.socket.connect = no_network
 socket.create_connection = no_network
 from cron.jobs import create_job, update_job
+if sys.argv[2]:
+    import cron.jobs
+    assert Path(cron.jobs.__file__).resolve().is_relative_to(Path(sys.argv[2]).resolve())
 from cron.scheduler import tick
 job = create_job(prompt=None, schedule='every 1h', name='Neutral script qualification',
     repeat=1, deliver='local', script='neutral.py', no_agent=True)
@@ -69,6 +73,8 @@ from types import SimpleNamespace as NS
 from unittest.mock import MagicMock, patch
 sys.path.insert(0,sys.argv[1])
 sys.path.insert(1,sys.argv[2])
+native=sys.argv[3]
+if native: sys.path.insert(2,native)
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 (home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
@@ -80,7 +86,7 @@ socket.socket.connect=no_network; socket.create_connection=no_network
 from colony_sidecar.turns.executions import registry
 import colony_hermes
 calls=[]
-parent_ending=threading.Event(); child_ended=threading.Event()
+parent_ending=threading.Event(); child_queued=threading.Event(); child_ended=threading.Event()
 class Reply:
     status_code=200
     def __init__(self,value): self.value=value
@@ -92,11 +98,11 @@ def post(self,path,**kw):
         if value['state']=='completed' and value['platform']=='subagent':
             child_ended.set()
         if value['state']=='completed' and ':fixture-parent:' in value['turn_id']:
-            # Hold the actual bounded parent hook while the child finishes.
-            # Hermes skips a concurrent invocation of this same callback.
-            # Its caller-thread subagent_stop must close the exact child.
+            # Hold the actual bounded parent hook until the child reaches the
+            # same callback's admission queue. Release it before waiting for
+            # child completion: a healthy serialized callback needs its turn.
             parent_ending.set()
-            assert child_ended.wait(5), 'Child terminal observation was lost during overlapping hooks'
+            assert child_queued.wait(10), 'Child finalization did not overlap the parent hook'
         return Reply(registry().observe(value,principal_id='native-host',contact_id=value['contact_id']))
     return Reply({})
 def get(self,path,**kw):
@@ -104,8 +110,18 @@ def get(self,path,**kw):
     raise RuntimeError('No central service configured')
 colony_hermes.ColonyClient.post=post; colony_hermes.ColonyClient.get=get
 from hermes_cli.plugins import get_plugin_manager
-get_plugin_manager().discover_and_load()
-assert get_plugin_manager()._plugins['colony'].enabled
+if native:
+    import hermes_cli.plugins
+    assert Path(hermes_cli.plugins.__file__).resolve().is_relative_to(Path(native).resolve())
+plugin_manager=get_plugin_manager()
+plugin_manager.discover_and_load()
+assert plugin_manager._plugins['colony'].enabled
+condition=plugin_manager._hook_timeout_running_cond
+original_wait=condition.wait
+def observe_wait(timeout=None):
+    if parent_ending.is_set() and not child_ended.is_set():
+        child_queued.set()
+    return original_wait(timeout)
 assert Path(colony_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 from run_agent import AIAgent
 import run_agent
@@ -138,7 +154,7 @@ def child_reply(**kwargs):
         assert parent_ending.wait(5), 'Parent did not reach its native finalization hook'
     return response
 child_client.chat.completions.create.side_effect=child_reply
-with patch(OPENAI_TARGET,side_effect=[parent_client,child_client]), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=defs), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
+with patch.object(condition,'wait',side_effect=observe_wait), patch(OPENAI_TARGET,side_effect=[parent_client,child_client]), patch(TOOLS_TARGET + '.get_tool_definitions',return_value=defs), patch(TOOLS_TARGET + '.check_toolset_requirements',return_value={}):
     parent=make_agent()
     outcome=parent.run_conversation('Delegate the neutral local read.',task_id='fixture-parent')
     assert outcome['final_response']=='PARENT_DISPATCHED_CHILD', outcome
@@ -169,7 +185,7 @@ with patch(OPENAI_TARGET,side_effect=[parent_client,child_client]), patch(TOOLS_
     assert resumed['final_response']=='PARENT_ACCEPTED_CHILD', resumed
     parent.close()
 children=[row for row in calls if row['platform']=='subagent']
-assert parent_ending.is_set() and child_ended.is_set(), calls
+assert parent_ending.is_set() and child_queued.is_set() and child_ended.is_set(), calls
 assert children and children[-1]['state']=='completed', calls
 assert all(row['contact_id']=='fixture-owner' for row in children)
 assert children[0]['parent_execution_id'] and any(row['execution_id']==children[0]['parent_execution_id'] for row in calls)
@@ -202,15 +218,17 @@ def environment(tmp_path):
 
 
 def test_actual_native_no_agent_cron_fire_reaches_owner_current_work(tmp_path):
-    if importlib.util.find_spec('hermes_cli') is None:
+    native=os.environ.get('COLONY_TEST_HERMES_PATH','')
+    if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual native firing')
-    result=run_python('-I','-c',CRON,Path(__file__).resolve().parents[2]/'sidecar',cwd=tmp_path,env=environment(tmp_path))
+    result=run_python('-I','-c',CRON,Path(__file__).resolve().parents[2]/'sidecar',native,cwd=tmp_path,env=environment(tmp_path))
     assert json.loads(result.stdout.splitlines()[-1])['native_fire']
 
 
 def test_actual_native_delegated_return_and_inherited_scope(artifacts,tmp_path):
-    if importlib.util.find_spec('hermes_cli') is None:
+    native=os.environ.get('COLONY_TEST_HERMES_PATH','')
+    if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual child execution')
     _,_,_,installed=artifacts
-    result=run_python('-I','-c',CHILD,installed,Path(__file__).resolve().parents[2]/'sidecar',cwd=tmp_path,env=environment(tmp_path))
+    result=run_python('-I','-c',CHILD,installed,Path(__file__).resolve().parents[2]/'sidecar',native,cwd=tmp_path,env=environment(tmp_path))
     assert json.loads(result.stdout.splitlines()[-1])['native_delegation_return']
