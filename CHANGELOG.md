@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.1.14 - connected CLI recollection and retained-turn delivery
+
+An explicitly attested native CLI turn can now pass its resolved identity to
+the memory provider while the broad default-owner fallback remains disabled.
+The lookup requires the current native profile, session, task and turn; a
+finished turn or unrelated session cannot reuse retained scope. Existing
+sender and supplied-input checks continue to govern other paths.
+
+When erasure removes part of a turn, a safe retained replacement now triggers
+the existing bounded delivery drain. Original receipts remain erased, and
+complete erasure remains a no-op. Failed delivery retains recoverable work.
+
+Rejected image captions retain specific final-answer or length dispositions
+and the returned model provenance when available. Caption limits, retry timing
+and original-image access are unchanged. Historical generic errors cannot be
+diagnosed retrospectively.
+
+Controlled native and canonical-store tests qualify these connections.
+Ordinary useful recollection, visual interpretation and truthful answers still
+require deployment observation. No Hermes core patch or new worker is added.
+
 ## v1.1.13 - forgotten history excluded from native summaries
 
 Hermes can build an extra final-summary request from retained history after a
