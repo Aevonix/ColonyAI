@@ -32,12 +32,19 @@ unresolved recipient activity during the interval. Disconnection, intake gaps,
 missing media, erased activity and account ambiguity leave absence unknown.
 A late reply alone does not establish that no earlier reply existed.
 
+An unresolved forecast is censored if the wait is cancelled, expires, receives
+a dispatched follow-up, or its parent work closes. The retained stop is neither
+a miss nor evidence about the recipient. Existing callbacks or an exact wait
+read observe this change; no timer is added. Already observed reply outcomes
+remain historical evidence when the task is stopped later.
+
 ## Inspection and recovery
 
 The owner's existing temporal-wait view includes a compact `reply_forecast`
 status: `pending`, `reply_observed_in_time`, `no_reply_with_coverage`,
 `deadline_elapsed_unobserved`, `retrospective_unscored`, `source_unavailable`,
-or `no_prospective_forecast`. `suggestion_enabled` is always false. Existing
+`cancelled`, `expired`, `intervened`, or `no_prospective_forecast`.
+`suggestion_enabled` is always false. Existing
 follow-up eligibility and sender behavior do not consume these scores.
 
 Canonical-settlement and receipt-read retries reconcile the exact inbound

@@ -117,6 +117,8 @@ def evidence_current(prediction, observation=None):
         person = c['recipient_id'] if facts['kind'] == 'reply' else owner
         if not _current(ledger, observation['evidence_refs'], observation['source_versions'], person):
             return False
+        if facts['kind'] == 'wait_stopped':
+            return observation['status'] == 'censored'
         with closing(comms.read_connection()) as db:
             ingress = TransportIngress(db)
             if facts['kind'] == 'reply':
@@ -187,6 +189,44 @@ def observe_dispatch(waits, row, *, producer, receipt, created):
         shareability='owner_private', conditions=c)
 
 
+def _stop_pending(store, ledger, commitments, prediction, latest, owner, now):
+    """Retain an observed stop without interpreting it as a recipient failure.
+
+    Only unresolved forecasts reach this check. A later owner cancellation or
+    follow-up does not invalidate an already observed historical reply outcome.
+    """
+    from colony_sidecar.commitments.store import OPEN_STATUSES
+    c = prediction.detail['conditions']
+    with closing(commitments._connect()) as db:
+        row = db.execute('SELECT state,revision,payload FROM temporal_followups WHERE wait_id=?',
+                         (c['wait_id'],)).fetchone()
+    if row is None:
+        return True
+    wait = json.loads(row['payload'])
+    parent = commitments.get(c['commitment_id'])
+    if row['state'] == 'cancelled' or not parent or parent['status'] not in OPEN_STATUSES:
+        state, reason = 'cancelled', 'cancelled'
+    elif wait.get('followup_receipt_ref'):
+        state, reason = 'intervened', 'intervened'
+    elif row['state'] == 'expired' or wait['expires_at'] <= now:
+        state, reason = 'expired', 'unavailable'
+    else:
+        return False
+    facts = {'method':METHOD, 'kind':'wait_stopped', 'state':state, 'reason':reason,
+             'wait_revision':row['revision'], 'observed_at':now,
+             'resolution_ref':wait.get('resolution_ref'),
+             'followup_receipt_ref':wait.get('followup_receipt_ref')}
+    versions, facts = _retain(ledger, _fid(c['wait_id'])+':stopped', owner, facts, now,
+                             c['parent_sources'], c['parent_session_id'])
+    store.record_forecast_outcome(forecast_id=prediction.detail['forecast_id'],
+        receipt_ref=next(iter(versions)), evidence_refs=versions, source_versions=versions,
+        source_kind='work_receipt', observed_at=facts['observed_at'], recorded_at=now,
+        subject_person_id=owner, viewer_scope=owner, shareability='owner_private',
+        status='censored', value=None, reason=facts['reason'],
+        previous_revision=latest['revision'] if latest else 0)
+    return True
+
+
 def reconcile(wait_id):
     parts = _parts()
     if parts is None:
@@ -200,10 +240,12 @@ def reconcile(wait_id):
     if not evidence_current(prediction):
         return
     latest = history['outcomes'][-1] if history['outcomes'] else None
-    if latest and latest['status'] == 'observed':
+    if latest and latest['status'] in {'observed', 'censored'}:
         return
     c = prediction.detail['conditions']
     now = time.time()
+    if _stop_pending(store, ledger, commitments, prediction, latest, owner, now):
+        return
     with closing(comms.read_connection()) as db:
         ingress = TransportIngress(db)
         matches = comms.match_reply(contact_id=c['recipient_id'], outbound_ref=c['provider_external_ref'],
