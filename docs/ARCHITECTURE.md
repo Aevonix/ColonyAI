@@ -106,6 +106,21 @@ plugin or successful health request does not prove the integration is active.
 Unknown or incompatible installations receive an actionable compatibility
 result, not silent core patching.
 
+Prefer supported runtime interfaces, but do not preserve a core-read-only rule
+by accumulating dependencies on private internals. A small upstream-tracking
+compatibility branch is appropriate when a missing interface prevents required
+behavior and the branch removes more maintenance work than it creates. Keep its
+delta limited to that interface, document the workarounds it replaces and the
+upstream base, and exercise the affected behavior and recovery on upgrades.
+Propose the interface upstream when practical; retire the downstream delta when
+upstream provides an adequate contract. This is an engineering decision within
+the existing release process, not another approval service.
+
+Keep cognition and deployment identity outside that branch. Declare any runtime
+requirement explicitly: an installer must not silently substitute a fork for an
+existing Hermes installation. A compatibility branch does not become the default
+merely because it is available.
+
 The packaged installer selects one home, preserves unrelated configuration and
 uses the native general-plugin and memory-provider registrations. It can install
 an optional user service through systemd or launchd. Existing gateways are not
