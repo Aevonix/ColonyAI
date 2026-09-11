@@ -113,9 +113,10 @@ The first command extracts the neutral corpus; the second reuses that exact
 prepared state. The fixture, extraction declarations and observed embedding
 identity are checked before reuse. The harness refuses an existing unmarked
 state directory, never loads deployment credentials, and omits endpoints and
-API keys from result artifacts. Its two smoke tests use a controlled local HTTP
-model and real SQLite/Lance to check transport, resume and assessment behavior;
-their results are not semantic-quality evidence.
+API keys from result artifacts. Its transport smoke test uses a controlled local
+HTTP model and real SQLite/Lance to check transport and resume behavior; focused
+tests also check assessment and capture replay. These are not semantic-quality
+measurements.
 
 The frozen fixture SHA-256 is
 `00d30ffd6829013445c766ba2244d55142247e99f7b4e68714c1c022ea8dcdff`.
@@ -124,3 +125,44 @@ All names, places, source text and example access phrases are synthetic.
 private infrastructure configuration. Use a new directory for another model or
 fixture. These previously inspected holdout questions are now a regression set;
 a future claim of generalization needs a fresh held-out set.
+
+## Reusing selection observations offline
+
+New local output files include a `replay` object on each query/arm and caption
+result. It records the full preselection beliefs and quotations, their order,
+selection parameters, the four selector environment values, safe calibration
+metadata and its original fingerprint, actual reranker requests and returned
+index/score rows, and the selected typed rows. `selection_sources` identifies the
+benchmark, selector and packer source bytes by SHA-256. The existing rendered
+context and assessment remain beside the capture. Historical
+`reference-results.json` is unchanged and does not contain these observations.
+
+The capture contains no configured endpoint, key, arbitrary environment or
+exception body. A provider failure records only its exception class; a cancelled
+provider records `cancelled`, which alone does not distinguish the selector's
+timeout from other cancellation. A returned result is not automatically valid:
+the selected rows retain the selector's scored/unavailable outcome. These files
+contain the supplied source text and belong in the operator's local results,
+not automatically in a public reference file.
+
+An offline consumer restores the recorded inputs and parameters, injects the
+recorded scores into the actual `RecallSelector`, and compares selected rows,
+rendered context and `assessment.assess` with the retained result. It must verify
+the exact query, ordered document text and `top_k` for every request **after**
+selection. An assertion raised inside the callback can be caught by the
+selector's normal fail-open path and is insufficient to reject an invalid
+replay. `replay_observation` in `test_harness.py` demonstrates this check without
+calling a model. It also demonstrates reproducing the recorded calibration
+equality decision using safe metadata after omitting the endpoint, rather than
+claiming that the original endpoint can be reconstructed.
+
+Changing the record cap also changes the selector's rerank bound: five, eight and
+twelve records can submit up to 20, 32 and 48 documents. A capture of 20 scores
+cannot qualify a request for 48. Reject changed or additional documents rather
+than assigning missing scores or silently using fallback. Applying only the
+packer to a fixed ranked list can compare character use at different record
+caps, but is a packing-only experiment. A wider selector comparison needs the
+additional actual observations and explicit treatment of any changed batching.
+The 6,000-character budget is unchanged. Existing expected-source labels measure
+coverage, validity, forbidden evidence, abstention and conflicts; extra eligible
+sources need separate relevance assessment before they can be called junk.
