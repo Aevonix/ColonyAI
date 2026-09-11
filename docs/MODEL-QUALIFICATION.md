@@ -20,6 +20,23 @@ Every case declares its consumer boundary. `role_completion` cases test direct r
 
 The initial direct cases check a grounded answer with an unknown value, and structured extraction that retains time and conditional constraints. The cognition cases run actual source formation and semantic admission review, reopen the isolated ledger, then prepare and pack recollection in a later session. They separately grade useful formation, junk/fiction promotion, source grounding, correction, and canonical lineage. Raw source recall cannot hide a failure to form useful memory. These exercise lexical recollection, not embeddings, native injection or a generated native answer.
 
+Four additional direct cases cover specific text decisions:
+
+| Case | What its independent oracle checks | What it does not establish |
+| --- | --- | --- |
+| `reasoning.task-evidence` | Exact task/generation evidence; acceptance, execution, stopping and terminal outcomes; unknown delivery and process cleanup | Real task execution, stopping or process cleanup |
+| `planning.dependencies-and-consent` | Earliest dependency/resource schedule, critical path, withheld publication and a separately conditional consent outcome | A general scheduler, long-horizon planning or production deployment |
+| `judging.consequential-claims` | Supported, contradicted and unsupported claims, including untrusted claimed authority | General factual accuracy or the quality of the production memory admission judge |
+| `coding.integer-boundary` | A Python boolean/integer validation defect, selection among fixed repairs, and type/range examples | Generated code execution, repository editing, tool use or an entire coding harness |
+
+Select them explicitly; the default remains `chat,extraction`:
+
+```sh
+colony models evaluate interactive --config /private/model-config.json --roles reasoning,planning,judging,coding --output /private/results/structured-01
+```
+
+Each case makes one existing-router completion call, with a 60-second case deadline, 1,024 requested output tokens and a 16 KiB result bound. Four cases declare at most 240 seconds in total, excluding setup and report writing; configured role deadlines can be shorter. No fallback is requested. These limits measure fitness for that declared recipe, not a model's unlimited-time capability. Eight completion calls across two bindings form one small paired comparison; hidden SDK retries are not counted as separate suite attempts. Freeze both runs' source, case/oracle identities and role budgets before observing results, preserve first attempts and compare individual checks. A timeout is a deadline failure, not evidence that another model reasons better.
+
 These are narrow checks, not a broad intelligence benchmark. Independent expected fields are frozen separately from model input. Cases and supporting consumers can add artifact, ledger, input-exposure and answer checks without supplying those oracles to the model. An evaluation model judge is not required; the existing memory admission judge remains part of the consumer being tested.
 
 Memory checks report unexercised behavior as unknown: absent promoted claims do not demonstrate their grounding, and junk sources skipped after an earlier processing failure do not demonstrate useful abstention. An observed junk promotion fails even if another source was skipped. A case without junk inputs omits that inapplicable check.
