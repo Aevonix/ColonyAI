@@ -188,6 +188,10 @@ for native package installations and service bindings.
   Attested completion summaries can also become retained assistant evidence for
   later recall, with supplied source dependencies and erasure. They remain
   unverified machine reports, not owner facts or proof of an external effect.
+- **Measured model consumers.** Opt-in `colony models inspect`, `evaluate` and
+  `compare` record bounded results without changing deployed bindings. Direct
+  completion and actual memory-consumer cases stay separate, with failed and
+  interrupted attempts retained. [Model qualification](docs/MODEL-QUALIFICATION.md)
 - **Replaceable search indexes.** Optional Lance indexes record embedding
   identity and rebuild into a separate generation. Interrupted rebuilds resume;
   incompatible or unknown vectors are not compared. Canonical evidence remains

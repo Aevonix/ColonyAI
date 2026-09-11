@@ -21,6 +21,8 @@ def main() -> None:
     )
     parser.add_argument("--instance", help="Private Colony state directory (otherwise use selected Hermes profile binding)")
     sub = parser.add_subparsers(dest="command")
+    from colony_sidecar.qualification.cli import add_parser as add_model_parser
+    add_model_parser(sub)
 
     # --- init ---
     init_p = sub.add_parser("init", help="Initialize Colony identity and setup")
@@ -294,6 +296,15 @@ def main() -> None:
     if args.instance:
         os.environ["COLONY_INSTANCE_SELECTED"] = "1"
         os.environ["COLONY_STATE_DIR"] = str(Path(args.instance).expanduser().resolve())
+
+    if args.command == "models":
+        from colony_sidecar.qualification.cli import run
+        try:
+            code = run(args)
+        except (ValueError, OSError, KeyError) as exc:
+            print(f"Model qualification failed: {type(exc).__name__}", file=sys.stderr)
+            raise SystemExit(2) from None
+        raise SystemExit(code)
 
     if args.command == "init":
         # Run setup wizard
