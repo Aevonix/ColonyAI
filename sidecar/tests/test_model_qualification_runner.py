@@ -1,6 +1,7 @@
 """Actual runner/filesystem semantics; controlled existing-router consumers only."""
 import asyncio
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from colony_sidecar.qualification.cases import role_completion, json_fields
-from colony_sidecar.qualification.records import CaseSpec, read, write_once
+from colony_sidecar.qualification.records import CaseSpec, encode, read, write_once
 from colony_sidecar.qualification.runner import evaluate
 from colony_sidecar.qualification.report import summarize, compare
 
@@ -225,4 +226,127 @@ async def test_actual_memory_consumer_result_keeps_supporting_judge_distinct(tmp
         roles={o.get('role') for o in row['observations'] if o['boundary']=='router_complete'}
         assert roles == {'extraction','judging'}
         assert any(o.get('selected_binding') == 'fixed-judge' for o in row['observations'])
+        for observation in row['observations']:
+            if observation['boundary'] != 'router_complete':
+                continue
+            assert observation['candidate_binding'] == observation['requested_binding'] == 'candidate'
+            assert observation['requested_binding_semantics'] == 'qualification_candidate'
+            assert observation['qualification_role'] == 'extraction'
+            assert observation['binding_purpose'] == ('target' if observation['role'] == 'extraction' else 'supporting')
+            if observation['binding_purpose'] == 'supporting':
+                assert observation['selected_binding'] == 'fixed-judge'
         assert row['effects']['native_request_and_answer'] == 'not_exercised'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('supported', [True, False], ids=['copied-value', 'rejected-value'])
+async def test_actual_memory_rejected_completion_is_retained_without_changing_grade(tmp_path, supported):
+    from colony_sidecar.qualification.memory_cases import CASES, CONSUMERS, EVALUATORS, memory_outcomes
+    from test_model_qualification_memory import Processor
+
+    class CapturedProcessor(Processor):
+        def __init__(self):
+            super().__init__()
+            self.responses = []
+
+        async def complete(self, messages, **kwargs):
+            response = await super().complete(messages, **kwargs)
+            if response.function_role == 'extraction':
+                claims = json.loads(response.content)
+                if claims and not supported:
+                    claims[0]['value'] = 'invented coffee'
+                    response.content = json.dumps(claims)
+            self.responses.append(response)
+            return response
+
+    case, processor = CASES[0], CapturedProcessor()
+    await evaluate(tmp_path/'run', RECIPE, [case], CONSUMERS, EVALUATORS, lambda _: processor)
+    row = result(tmp_path/'run', case.id)
+    # The existing real consumer and evaluator retain their original verdicts.
+    assert row['checks'] == memory_outcomes({'output': row['output'], 'effects': row['effects']}, case.oracle)
+    assert row['checks']['useful_conditional_preference_formed'] is supported
+    assert row['outcome'] == row['primary_outcome'] == ('pass' if supported else 'fail')
+    assert row['checks']['useful_content_recollected'] is True
+    observations = [o for o in row['observations'] if o['boundary'] == 'router_complete']
+    assert len(observations) == len(processor.responses)
+    for observation, response in zip(observations, processor.responses):
+        evidence = observation['completion_evidence']
+        assert evidence['text'] == response.content
+        assert evidence['sha256'] == hashlib.sha256(encode(response.content)).hexdigest()
+        assert evidence['hash_encoding'] == 'records.encode'
+        assert evidence['truncated'] is False
+    if not supported:
+        assert row['output']['claims'] == []
+        assert json.loads(observations[0]['completion_evidence']['text'])[0]['value'] == 'invented coffee'
+        first_job = next(job for job in row['output']['jobs'] if job['turn_id'] == case.inputs['turns'][0]['id'])
+        assert first_job['diagnostics']['rejection_counts'] == {'value_not_grounded': 1}
+
+
+@pytest.mark.asyncio
+async def test_completion_text_has_aggregate_case_and_run_bound_without_truncating_consumer(tmp_path):
+    oversized = 'é😀"\\\n' * 1000
+    router = Router(oversized)
+    async def consume(inputs, context):
+        for _ in range(3):
+            response = await context.router.complete(inputs['messages'], context={'function_role': 'chat'})
+            assert response.content == oversized
+        return {'output': {'location': 'shelf'}}
+
+    cases = [replace(CASE, id=name, max_output_bytes=256) for name in ('first', 'second')]
+    await run(tmp_path/'run', router, cases, {'complete': consume})
+    manifest = read(tmp_path/'run'/'run.json')
+    assert manifest['completion_evidence']['case_text_json_bytes'] == {'first': 256, 'second': 256}
+    assert manifest['completion_evidence']['run_text_json_bytes'] == 512
+    total = 0
+    for case in cases:
+        row = result(tmp_path/'run', case.id)
+        assert row['outcome'] == row['primary_outcome'] == 'pass'
+        evidence = [o['completion_evidence'] for o in row['observations']]
+        retained = sum(item['retained_json_bytes'] for item in evidence)
+        assert retained <= 256
+        total += retained
+        assert evidence[0]['text'] and oversized.startswith(evidence[0]['text'])
+        assert evidence[-1]['text'] in ('', None)
+        for item in evidence:
+            assert item['truncated'] is True
+            assert item['original_json_bytes'] == len(encode(oversized))
+            assert item['sha256'] == hashlib.sha256(encode(oversized)).hexdigest()
+            assert item['retained_json_bytes'] == (len(encode(item['text'])) if item['text'] is not None else 0)
+    assert total <= manifest['completion_evidence']['run_text_json_bytes']
+
+
+@pytest.mark.asyncio
+async def test_existing_router_failure_preserves_only_known_nonsecret_causes(tmp_path):
+    from colony_sidecar.qualification.runner import router_for
+    from test_function_routing import endpoint, config
+
+    with endpoint(content=lambda _: '') as (url, calls):
+        selected = router_for(config(url, url), 'interactive', [CASE])
+        await run(tmp_path/'run', selected)
+    row = result(tmp_path/'run')
+    observation = row['observations'][0]
+    assert len(calls) == 1
+    assert row['outcome'] == 'error'
+    assert observation['error_type'] == 'RuntimeError'
+    assert observation['router_failure'] == {'source': 'router_message_allowlist',
+        'role': 'chat', 'attempt_reasons': ['missing_final_answer']}
+    assert url not in json.dumps(row)
+    assert 'completion_evidence' not in observation
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('message', [
+    'credential at https://private.invalid/token',
+    'No eligible local model completed function chat; attempts=https://private.invalid/token',
+    'No eligible local model completed function chat; attempts=UnknownSecretType',
+])
+async def test_arbitrary_exception_message_is_never_exported(tmp_path, message):
+    class FailedRouter(Router):
+        async def complete(self, messages, **kwargs):
+            raise RuntimeError(message)
+    await run(tmp_path/'run', FailedRouter())
+    row = result(tmp_path/'run')
+    assert row['outcome'] == 'error'
+    assert row['observations'][0]['error_type'] == 'RuntimeError'
+    assert 'router_failure' not in row['observations'][0]
+    assert message not in json.dumps(row)

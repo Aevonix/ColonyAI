@@ -7,11 +7,38 @@ import importlib.metadata
 import inspect
 import hashlib
 from pathlib import Path
+import re
 import tempfile
 import time
 import uuid
 
 from .records import SCHEMA, digest, encode, read, write_once
+
+
+MAX_COMPLETION_TEXT_BYTES = 65536
+_ROUTER_FAILURE = re.compile(
+    r'No eligible local model completed function (chat|reasoning|planning|extraction|judging|vision|coding); attempts=([a-zA-Z_,]*)')
+_KNOWN_ATTEMPT_REASONS = {'RequestBudgetExceeded', 'EndpointCoolingDown',
+    'missing_final_answer', 'incomplete_final_answer', 'TimeoutError', 'ConnectionError',
+    'OSError', 'APIConnectionError', 'APITimeoutError', 'APIStatusError', 'RateLimitError',
+    'InternalServerError', 'ServiceUnavailableError', 'BadRequestError',
+    'AuthenticationError', 'PermissionDeniedError', 'NotFoundError', 'ContextWindowExceededError'}
+
+
+def completion_text_budget(case):
+    return min(case.max_output_bytes, MAX_COMPLETION_TEXT_BYTES)
+
+
+def router_failure(exc):
+    """Decode only the existing router's fixed, nonsecret failure vocabulary."""
+    if type(exc) is not RuntimeError or len(exc.args) != 1 or not isinstance(exc.args[0], str):
+        return None
+    if len(exc.args[0]) > 1024 or not (match := _ROUTER_FAILURE.fullmatch(exc.args[0])):
+        return None
+    reasons = match[2].split(',') if match[2] else []
+    if len(reasons) > 32 or any(reason not in _KNOWN_ATTEMPT_REASONS for reason in reasons):
+        return None
+    return {'source': 'router_message_allowlist', 'role': match[1], 'attempt_reasons': reasons}
 
 
 def now():
@@ -24,9 +51,40 @@ def value(obj, key, default=None):
 
 class ObservedRouter:
     """Observe the existing consumer call, not a new inference transport."""
-    def __init__(self, router, observations, requested_binding):
+    def __init__(self, router, observations, requested_binding, *, qualification_role=None,
+                 completion_budget_bytes=MAX_COMPLETION_TEXT_BYTES):
         self._router, self._observations = router, observations
         self._requested_binding = requested_binding
+        self._qualification_role = qualification_role
+        self._completion_bytes_left = completion_budget_bytes
+
+    def _completion_evidence(self, response):
+        """Bound final consumer-visible text, never serialize the raw SDK envelope.
+
+        Charge serialized JSON text bytes across the case, including escaping.
+        The original response remains untouched even when evidence is truncated.
+        """
+        text = value(response, 'content')
+        if not isinstance(text, str):
+            return {'status': 'no_text_content'}
+        raw = encode(text)
+        limit = self._completion_bytes_left
+        prefix = text
+        if len(raw) > limit:
+            low, high = 0, len(text)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if len(encode(text[:middle])) <= limit:
+                    low = middle
+                else:
+                    high = middle - 1
+            prefix = text[:low]
+        retained = len(encode(prefix)) if len(encode(prefix)) <= limit else 0
+        self._completion_bytes_left -= retained
+        return {'status': 'captured', 'text': prefix if retained else None,
+                'sha256': hashlib.sha256(raw).hexdigest(), 'hash_encoding': 'records.encode',
+                'original_json_bytes': len(raw), 'retained_json_bytes': retained,
+                'truncated': retained < len(raw)}
 
     def __getattr__(self, name):
         return getattr(self._router, name)
@@ -35,7 +93,11 @@ class ObservedRouter:
         started = time.monotonic()
         observation = {'boundary': 'router_complete', 'input_sha256': digest(messages),
                        'role': (kwargs.get('context') or {}).get('function_role'),
+                       # Retain the legacy arm label; it was never a support-role override.
                        'requested_binding': self._requested_binding, 'selected_binding': None,
+                       'requested_binding_semantics': 'qualification_candidate',
+                       'candidate_binding': self._requested_binding,
+                       'qualification_role': self._qualification_role,
                        'configured_model': None, 'returned_model': None,
                        'weight_revision': None, 'usage': None, 'prior_attempts': None}
         self._observations.append(observation)
@@ -53,18 +115,26 @@ class ObservedRouter:
                 weight_revision=value(response, 'model_revision') or None,
                 config_revision=value(response, 'config_revision') or None,
                 request_id=value(response, 'request_id') or None,
-                prior_attempts=value(response, 'prior_attempts'), outcome='returned')
+                prior_attempts=value(response, 'prior_attempts'), outcome='returned',
+                completion_evidence=self._completion_evidence(response))
             return response
         except BaseException as exc:
             observation.update(outcome='error', error_type=type(exc).__name__)
+            if failure := router_failure(exc):
+                observation['router_failure'] = failure
             raise
         finally:
+            role = observation.get('role')
+            observation['binding_purpose'] = ('unknown' if not role or not self._qualification_role
+                else 'target' if role == self._qualification_role else 'supporting')
             observation['elapsed_ms'] = round((time.monotonic() - started) * 1000, 3)
 
 
 class RunContext:
-    def __init__(self, router, state_dir, observations, binding=None):
-        self.router = ObservedRouter(router, observations, binding)
+    def __init__(self, router, state_dir, observations, binding=None, *, qualification_role=None,
+                 completion_budget_bytes=MAX_COMPLETION_TEXT_BYTES):
+        self.router = ObservedRouter(router, observations, binding,
+            qualification_role=qualification_role, completion_budget_bytes=completion_budget_bytes)
         self.state_dir = Path(state_dir)
         self.observations = observations
 
@@ -149,6 +219,9 @@ async def evaluate(directory, recipe, cases, consumers, evaluators, router_facto
         else:
             manifest = {'schema': SCHEMA, 'id': uuid.uuid4().hex, 'created_at': now(),
                         'recipe': recipe, 'cases': records, 'suite_version': suite_version,
+                        'completion_evidence': {'source': 'returned_response.content',
+                            'case_text_json_bytes': {case.id: completion_text_budget(case) for case in cases},
+                            'run_text_json_bytes': sum(completion_text_budget(case) for case in cases)},
                         'implementation': implementation, 'evaluator_identities': evaluator_identities, **identity}
             write_once(manifest_path, manifest)
         for case, record in zip(cases, records):
@@ -190,7 +263,8 @@ async def evaluate(directory, recipe, cases, consumers, evaluators, router_facto
                         state = temporary.name
                         router = router_factory(case)
                         consumer, evaluator = consumers[case.consumer], evaluators[case.evaluator]
-                        context = RunContext(router, state, result['observations'], recipe['binding'])
+                        context = RunContext(router, state, result['observations'], recipe['binding'],
+                            qualification_role=case.role, completion_budget_bytes=completion_text_budget(case))
                         phase = 'consumer'
                         observed = await consumer(deepcopy(case.inputs), context)
                         if not isinstance(observed, dict) or 'output' not in observed:
