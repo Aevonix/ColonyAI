@@ -1775,6 +1775,12 @@ class ColonyClient:
             if checkpoint_messages is not None:
                 payload["checkpoint_messages"] = list(checkpoint_messages)
 
+            video_source = any(isinstance(message, dict) and isinstance(message.get('content'), list)
+                and any(isinstance(block, dict) and block.get('type') == 'input_video' for block in message['content'])
+                for message in [payload.get('user_message'), payload.get('assistant_message'),
+                                *(payload.get('checkpoint_messages') or [])])
+            if video_source and not turn_id:
+                return False  # Legacy sync cannot attest original video retention.
             if turn_id:
                 document_source = any(isinstance(message, dict) and isinstance(message.get('content'), list)
                     and any(isinstance(block, dict) and block.get('type') == 'input_document' for block in message['content'])
@@ -1782,10 +1788,6 @@ class ColonyClient:
                                     *(payload.get('checkpoint_messages') or [])])
                 audio_source = any(isinstance(message, dict) and isinstance(message.get('content'), list)
                     and any(isinstance(block, dict) and block.get('type') == 'input_audio' for block in message['content'])
-                    for message in [payload.get('user_message'), payload.get('assistant_message'),
-                                    *(payload.get('checkpoint_messages') or [])])
-                video_source = any(isinstance(message, dict) and isinstance(message.get('content'), list)
-                    and any(isinstance(block, dict) and block.get('type') == 'input_video' for block in message['content'])
                     for message in [payload.get('user_message'), payload.get('assistant_message'),
                                     *(payload.get('checkpoint_messages') or [])])
                 # Mixed sources must also require a video-aware receiver.

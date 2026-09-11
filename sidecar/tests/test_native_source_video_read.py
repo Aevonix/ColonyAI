@@ -168,3 +168,20 @@ def test_video_source_protocol_never_retries_generic_predecessor_route(video_run
     except Exception:
         pass
     assert calls == ['/v2/host/turns/source-media/video/clip%3A1']
+
+
+@pytest.mark.parametrize('checkpoint', [False, True])
+def test_video_without_stable_turn_id_is_not_sent_to_legacy_sync(video_runtime, checkpoint):
+    rt = video_runtime
+    module = importlib.import_module(rt.module.__package__ + '.client')
+    client = module.ColonyClient('http://fixture'); calls = []
+    def legacy_acceptance(path, **kwargs):
+        calls.append(path)
+        return httpx.Response(200, json={'accepted': True}, request=httpx.Request('POST', 'http://fixture'+path))
+    client.post = client.put = client.get = legacy_acceptance
+    content = [{'type': 'input_video', 'input_video': {'mime_type': 'video/mp4', 'data': 'bmV1dHJhbA=='}}]
+    extra = {'checkpoint_messages': [{'role': 'user', 'content': content}]} if checkpoint else {'user_message': content}
+    assert client.sync_turn(session_id='later', contact_id='owner', **extra) is False
+    assert calls == []
+    assert client.sync_turn(session_id='later', contact_id='owner', user_message='Legacy text still works') is True
+    assert calls == ['/v1/host/turns/sync']
