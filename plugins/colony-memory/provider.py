@@ -722,7 +722,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         self._cached_participant: str = ""
         self._cached_contact: str = ""
         self._stale_cache_misses = 0
-        self._temporal_cache = (0.0, "")  # (monotonic ts, block)
+        self._temporal_cache = (0.0, "")  # (monotonic ts, contact clock block without turn gap)
         self._temporal_cache_contact = ""  # contact the cached block was fetched for
         self._handle_cache: dict[str, tuple] = {}  # "platform:sender" -> (monotonic ts, contact_id)
         self._handle_cache_lock = threading.Lock()
@@ -1102,14 +1102,19 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         _tre.DOTALL,
     )
 
-    def _local_temporal_block(self):
-        now = _tdt.now().astimezone()
-        lines = [f"Now: {now.strftime('%A %Y-%m-%d %H:%M %Z')} (host clock; sidecar temporal brief unavailable)."]
+    def _with_turn_gap(self, block):
+        """Conversation timing belongs to this turn, not the contact clock cache."""
         gap = self._prev_turn_gap_secs
         if gap is not None and gap > 0:
-            lines.append(f"Previous message in this conversation: {_humanize_secs(gap)} ago.")
+            block += f"\nGap before current turn: {_humanize_secs(gap)}."
+        return block
+
+    def _local_temporal_block(self, *, include_turn_gap=True):
+        now = _tdt.now().astimezone()
+        lines = [f"Now: {now.strftime('%A %Y-%m-%d %H:%M %Z')} (host clock; sidecar temporal brief unavailable)."]
         lines.append("^ This is the authoritative CURRENT date/time — this is NOW. Ignore any 'Conversation started' date in your system prompt.")
-        return "## Current Time [priority 100]\n" + "\n".join(lines)
+        block = "## Current Time [priority 100]\n" + "\n".join(lines)
+        return self._with_turn_gap(block) if include_turn_gap else block
 
     @staticmethod
     def _prefetch_turn_contact_enabled() -> bool:
@@ -1282,7 +1287,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         if cached and (_ttime.monotonic() - ts) < self._TEMPORAL_TTL_SECS and (
                 not self._prefetch_turn_contact_enabled()
                 or contact_id == self._temporal_cache_contact):
-            return cached
+            return self._with_turn_gap(cached)
         block = ""
         try:
             with httpx.Client(timeout=2.5) as client:
@@ -1295,17 +1300,14 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 data = resp.json()
             body = data.get("body", "")
             if body:
-                gap = self._prev_turn_gap_secs
-                if gap is not None and gap > 0:
-                    body += f"\nPrevious message in this conversation: {_humanize_secs(gap)} ago."
                 block = f"## {data.get('title', 'Current Time')} [priority 100]\n{body}"
         except Exception as exc:
             logger.debug("Colony temporal brief fetch failed: %s", exc)
         if not block:
-            block = self._local_temporal_block()
+            block = self._local_temporal_block(include_turn_gap=False)
         self._temporal_cache = (_ttime.monotonic(), block)
         self._temporal_cache_contact = contact_id
-        return block
+        return self._with_turn_gap(block)
 
     def _with_fresh_temporal_sync(
         self, context, *, contact_id: Optional[str] = None,
@@ -2359,6 +2361,16 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         **kwargs,
     ) -> None:
         """Handle session rotation (/resume, /branch, /reset, /new, compression)."""
+        # Native compression preserves a conversation, including in-place
+        # compaction. Resume/branch can also supply a parent ID but select a
+        # different conversation whose previous-message time is not known here.
+        compression_continuation = (
+            kwargs.get("reason") == "compression" and self._session_id
+            and parent_session_id == self._session_id)
+        if (reset or kwargs.get("rewound")
+                or (new_session_id != self._session_id and not compression_continuation)):
+            self._last_turn_started_at = 0.0
+            self._prev_turn_gap_secs = None
         if reset:
             with self._cache_lock:
                 self._cached_context = ""

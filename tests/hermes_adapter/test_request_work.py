@@ -132,6 +132,9 @@ def work_block(request):
 def answer(**kwargs):
     requests.append(copy.deepcopy(kwargs)); index=len(requests)
     block=work_block(kwargs)
+    refreshes=[row for row in wire if row[1]=='/v1/host/executions'
+               and row[2].get('projection')=='request']
+    assert f'Current request session: {json.dumps(refreshes[-1][2]["session_id"])}.' in block, block
     full_reads=[row for row in wire if row[1]=='/v1/host/context/assemble']
     assert len(full_reads)==1 and full_reads[0][3]==200, wire
     assert fact in json.dumps(kwargs['messages']), kwargs['messages']
