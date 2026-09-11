@@ -1,38 +1,39 @@
 ---
-name: colony
-version: 0.3.0
-description: Colony context sidecar for Hermes with exact per-turn participant binding, scoped P8 guest projection, and read-only general-plugin coexistence.
+name: apsimo
+version: 1.3.0
+description: Apsimo context sidecar for Hermes with exact per-turn participant binding, scoped P8 guest projection, and read-only general-plugin coexistence.
 author: Aevonix
 ---
 
-# Colony memory provider
+# Apsimo memory provider
 
-Use Colony as Hermes' intelligence/context sidecar without patching Hermes
+Use Apsimo as Hermes' intelligence/context sidecar without patching Hermes
 core. This integration does not own or replace the host's custom voice, phone, or
 intercom turn path.
 
 ## Required posture
 
 ```bash
-COLONY_PREFETCH_QUERY_CHECK=1
-COLONY_PREFETCH_TURN_CONTACT=1
-COLONY_MCP_CONTACT_ID=replace-with-exact-owner-contact-id
-COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY=owner_system
+APSIMO_PREFETCH_QUERY_CHECK=1
+APSIMO_PREFETCH_TURN_CONTACT=1
+APSIMO_MCP_CONTACT_ID=replace-with-exact-owner-contact-id
+APSIMO_MEMORY_DEFAULT_CONTEXT_AUTHORITY=none
 ```
 
-The default contact is permitted only for explicit non-channel owner/system
-lanes. Every real channel resolves its sender independently; a miss yields no
-Colony context or write.
+Bind owner CLI context through the general adapter's explicit
+`attested_system_platforms: [cli]` configuration. Every real channel resolves
+its sender independently; a miss yields no Apsimo context or write. Existing
+`COLONY_*` environment names remain supported.
 
 Guest context requires a `context:read` scoped channel principal, exact
 server-resolved contact grant, and P8 scoped projection. The provider preflights
 `/v1/host/context/projection-readiness`, sends
 `projection_policy=scoped_viewer_required`, and verifies the response viewer.
-If any step fails, use no Colony context. Never substitute owner context.
+If any step fails, use no Apsimo context. Never substitute owner context.
 
 ## Model tools
 
-When the general Colony plugin is active, the only model-visible provider tools
+When the general Apsimo plugin is active, the only model-visible provider tools
 are:
 
 - `colony_check_commitments`

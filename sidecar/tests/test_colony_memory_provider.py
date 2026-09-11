@@ -1,4 +1,4 @@
-"""Unit harness for the colony-memory Hermes provider (plugins/colony-memory).
+"""Unit harness for the Apsimo memory provider and its legacy aliases.
 
 The provider previously had no test coverage at all; this loads it straight
 from the plugin directory (it is a standalone module, no Hermes install
@@ -29,7 +29,7 @@ import types
 import pytest
 
 _PROVIDER_PATH = (pathlib.Path(__file__).resolve().parents[2]
-                  / "plugins" / "colony-memory" / "provider.py")
+                  / "plugins" / "apsimo-memory" / "provider.py")
 
 
 def _load_provider_module():
@@ -153,8 +153,8 @@ def test_native_setup_settings_survive_restart_and_profiles_stay_separate(
         (home / ".handoff_brief.md").write_text(f"Private thread {index}")
         writer.save_config({"url": f"http://profile-{index}.test", "contact_id": f"person-{index}",
                             "api_key": "must-not-be-saved"}, str(home))
-        assert "must-not-be-saved" not in (home / "colony-memory.json").read_text()
-        assert (home / "colony-memory.json").stat().st_mode & 0o777 == 0o600
+        assert "must-not-be-saved" not in (home / "apsimo-memory.json").read_text()
+        assert (home / "apsimo-memory.json").stat().st_mode & 0o777 == 0o600
         active = home
         provider = provider_mod.ColonyMemoryProvider()
         provider.initialize(f"session-{index}", hermes_home=str(home))
@@ -199,7 +199,7 @@ def test_invalid_saved_profile_does_not_fall_back_to_another_instance(
         provider_mod, monkeypatch, tmp_path):
     monkeypatch.setattr(provider_mod, "_active_hermes_home", lambda: tmp_path)
     (tmp_path / "colony-memory.json").write_text('{"url": "private-broken-value"')
-    with pytest.raises(ValueError, match="invalid Colony memory configuration") as error:
+    with pytest.raises(ValueError, match="invalid Apsimo memory configuration") as error:
         provider_mod.ColonyMemoryProvider()
     assert "private-broken-value" not in str(error.value)
 
@@ -369,7 +369,7 @@ def test_general_plugin_reduces_memory_provider_to_read_context_tools(
     approval = json.loads(provider._tool_colony_approve_initiative({
         "initiative_id": "initiative-1",
     }))
-    assert dispatched["error"] == "Colony tool is not available in this mode"
+    assert dispatched["error"] == "Apsimo tool is not available in this mode"
     assert direct["error"] == "colony worker tools are disabled"
     assert approval["error"] == "initiative approval is operator-only"
     assert fake.requests == []
@@ -463,7 +463,7 @@ def test_general_plugin_handoff_never_advertises_hidden_memory_write_tool(
     visible = {schema["name"] for schema in provider.get_tool_schemas()}
 
     assert "Follow up on the open deployment thread." in block
-    assert "canonical Colony turn writer" in block
+    assert "canonical Apsimo turn writer" in block
     assert "colony_write_memory" not in block
     assert set(re.findall(r"\bcolony_[a-z_]+\b", block)) <= visible
 
@@ -1086,3 +1086,88 @@ def test_canonical_projection_never_weakens_exact_guest_boundary(provider_mod, c
         projection, contact_id="cid-guest", require_scoped=True)
     assert not provider_mod.ColonyMemoryProvider._projection_attestation_valid(
         {**projection, **change}, contact_id="cid-guest", require_scoped=True)
+
+
+def test_canonical_class_and_legacy_class_are_one_implementation(provider_mod, monkeypatch):
+    assert provider_mod.ColonyMemoryProvider is provider_mod.ApsimoMemoryProvider
+    fake = _FakeHttpx()
+    provider = _make_provider(provider_mod, fake, monkeypatch)
+    assert provider.name == 'apsimo'
+    assert provider.get_diagnostics()['provider'] == 'apsimo'
+    assert fake.requests == []
+
+
+def test_existing_native_settings_keep_their_file_and_new_settings_use_canonical_name(
+        provider_mod, monkeypatch, tmp_path):
+    monkeypatch.setattr(provider_mod, '_active_hermes_home', lambda: tmp_path)
+    legacy = tmp_path / 'colony-memory.json'
+    legacy.write_text(json.dumps({'url': 'http://legacy.test', 'contact_id': 'legacy-person'}))
+    provider = provider_mod.ApsimoMemoryProvider()
+    assert provider.sidecar_url == 'http://legacy.test'
+    provider.save_config({'timezone': 'UTC', 'api_key': 'must-not-be-saved'}, str(tmp_path))
+    assert not (tmp_path / 'apsimo-memory.json').exists()
+    assert json.loads(legacy.read_text()) == {
+        'url': 'http://legacy.test', 'contact_id': 'legacy-person', 'timezone': 'UTC'}
+    before = legacy.read_bytes()
+    canonical = tmp_path / 'apsimo-memory.json'
+    canonical.write_text(json.dumps({'url': 'http://canonical.test', 'contact_id': 'current-person'}))
+    selected = provider_mod.ApsimoMemoryProvider()
+    assert selected.sidecar_url == 'http://canonical.test'
+    selected.save_config({'timezone': 'UTC'}, str(tmp_path))
+    assert legacy.read_bytes() == before
+    assert json.loads(canonical.read_text())['contact_id'] == 'current-person'
+
+
+@pytest.mark.parametrize('plugin,provider', [('apsimo', 'apsimo-memory'), ('colony', 'colony-memory'),
+                                           ('apsimo', 'colony-memory'), ('colony', 'apsimo-memory')])
+def test_general_writer_ownership_recognizes_both_selected_names(provider_mod, tmp_path, plugin, provider):
+    config = {'plugins': {'enabled': [plugin]}, 'memory': {'provider': provider}}
+    (tmp_path / 'config.yaml').write_text(json.dumps(config))
+    assert provider_mod.general_plugin_memory_ownership(tmp_path) is True
+    config['plugins']['disabled'] = ['colony' if plugin == 'apsimo' else 'apsimo']
+    (tmp_path / 'config.yaml').write_text(json.dumps(config))
+    assert provider_mod.general_plugin_memory_ownership(tmp_path) is False
+
+
+def test_environment_aliases_are_pure_and_conflicts_do_not_print_values(provider_mod, monkeypatch):
+    monkeypatch.delenv('COLONY_MEMORY_WORKER_TOOLS', raising=False)
+    monkeypatch.setenv('APSIMO_MEMORY_WORKER_TOOLS', '1')
+    before = dict(provider_mod.os.environ)
+    assert provider_mod._env_true('COLONY_MEMORY_WORKER_TOOLS') is True
+    assert dict(provider_mod.os.environ) == before
+    monkeypatch.setenv('COLONY_API_KEY', 'legacy-disposable-secret')
+    monkeypatch.setenv('APSIMO_API_KEY', 'canonical-disposable-secret')
+    with pytest.raises(ValueError, match='Conflicting environment names') as error:
+        provider_mod._env('COLONY_API_KEY')
+    assert 'disposable-secret' not in str(error.value)
+
+
+def test_profile_aliases_override_inherited_names_without_mutating_environment(
+        provider_mod, monkeypatch, tmp_path):
+    pytest.importorskip('hermes_cli.config')
+    monkeypatch.setenv('COLONY_API_KEY', 'inherited-disposable-key')
+    monkeypatch.setenv('APSIMO_API_KEY', 'other-inherited-key')
+    profile = tmp_path / 'profile'
+    profile.mkdir()
+    (profile / '.env').write_text('APSIMO_API_KEY=profile-disposable-key\n')
+    before = dict(provider_mod.os.environ)
+    assert provider_mod._profile_env('COLONY_API_KEY', profile) == 'profile-disposable-key'
+    assert provider_mod._profile_env('APSIMO_API_KEY', profile) == 'profile-disposable-key'
+    assert dict(provider_mod.os.environ) == before
+    (profile / '.env').write_text('COLONY_API_KEY=legacy-profile-key\n')
+    assert provider_mod._profile_env('COLONY_API_KEY', profile) == 'legacy-profile-key'
+    assert dict(provider_mod.os.environ) == before
+
+
+def test_native_setup_updates_existing_secret_name_without_adding_an_alias(
+        provider_mod, monkeypatch, tmp_path):
+    pytest.importorskip('hermes_cli.config')
+    monkeypatch.setattr(provider_mod, '_active_hermes_home', lambda: tmp_path)
+    (tmp_path / '.env').write_text('COLONY_API_KEY=existing-disposable-key\n')
+    provider = provider_mod.ApsimoMemoryProvider()
+    secret = next(row for row in provider.get_config_schema() if row['key'] == 'api_key')
+    assert secret['env_var'] == 'COLONY_API_KEY'
+    (tmp_path / '.env').write_text('APSIMO_API_KEY=current-disposable-key\n')
+    provider = provider_mod.ApsimoMemoryProvider()
+    secret = next(row for row in provider.get_config_schema() if row['key'] == 'api_key')
+    assert secret['env_var'] == 'APSIMO_API_KEY'

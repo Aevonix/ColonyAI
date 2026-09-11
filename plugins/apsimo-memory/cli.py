@@ -1,10 +1,10 @@
-"""CLI commands for the Colony memory provider.
+"""CLI commands for the Apsimo memory provider.
 
 Exposes:
-  hermes colony-memory status     → Health + capabilities
-  hermes colony-memory goals      → List active goals
-  hermes colony-memory context    → Fetch current context assembly
-  hermes colony-memory sync       → Force a turn sync
+  hermes apsimo-memory status     → Health + capabilities
+  hermes apsimo-memory goals      → List active goals
+  hermes apsimo-memory context    → Fetch current context assembly
+  hermes apsimo-memory sync       → Force a turn sync
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Optional
 import httpx
 import typer
 
-app = typer.Typer(help="Colony cognitive infrastructure commands")
+app = typer.Typer(help="Apsimo cognitive infrastructure commands")
 
 
 def _native_call(command, **kwargs) -> None:
@@ -35,18 +35,18 @@ def register_cli(subparser) -> None:
     the same handlers with explicit values, not Typer's option descriptors.
     """
     commands = subparser.add_subparsers(dest="colony_command", required=True)
-    health = commands.add_parser("status", help="Check Colony sidecar health")
+    health = commands.add_parser("status", help="Check Apsimo sidecar health")
     health.add_argument("--url", "-u")
     health.set_defaults(func=lambda args: _native_call(status, url=args.url))
 
-    goal_list = commands.add_parser("goals", help="List Colony goals")
+    goal_list = commands.add_parser("goals", help="List Apsimo goals")
     goal_list.add_argument("--url", "-u")
     goal_list.add_argument("--status", "-s", default="active")
     goal_list.set_defaults(
         func=lambda args: _native_call(goals, status_filter=args.status, url=args.url)
     )
 
-    recall = commands.add_parser("context", help="Fetch Colony context")
+    recall = commands.add_parser("context", help="Fetch Apsimo context")
     recall.add_argument("--url", "-u")
     recall.add_argument("--query", "-q", default="")
     recall.add_argument("--contact", "-c")
@@ -56,7 +56,7 @@ def register_cli(subparser) -> None:
         )
     )
 
-    turn = commands.add_parser("sync", help="Sync one turn to Colony")
+    turn = commands.add_parser("sync", help="Sync one turn to Apsimo")
     turn.add_argument("--url")
     turn.add_argument("--user", "-u", required=True)
     turn.add_argument("--assistant", "-a", required=True)
@@ -72,17 +72,17 @@ def register_cli(subparser) -> None:
 def _connection(url=None, contact_id=None):
     # Native CLI discovery imports only this module. Resolve the same selected
     # profile configuration as the provider when a command actually runs.
-    from .provider import ColonyMemoryProvider
-    provider = ColonyMemoryProvider()
+    from .provider import ApsimoMemoryProvider
+    provider = ApsimoMemoryProvider()
     return (url or provider.sidecar_url, contact_id or provider._contact_id,
             provider._headers())
 
 
 @app.command()
 def status(
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="Colony sidecar URL"),
+    url: Optional[str] = typer.Option(None, "--url", "-u", help="Apsimo sidecar URL"),
 ) -> None:
-    """Check Colony sidecar health and capabilities."""
+    """Check Apsimo sidecar health and capabilities."""
     sidecar, _, headers = _connection(url)
     try:
         resp = httpx.get(f"{sidecar}/v1/host/health", headers=headers, timeout=5)
@@ -90,7 +90,7 @@ def status(
         data = resp.json()
         typer.echo(json.dumps(data, indent=2))
     except httpx.HTTPError as exc:
-        typer.echo(f"Colony sidecar unreachable: {exc}", err=True)
+        typer.echo(f"Apsimo sidecar unreachable: {exc}", err=True)
         raise typer.Exit(code=1)
 
 
@@ -99,7 +99,7 @@ def goals(
     status_filter: str = typer.Option("active", "--status", "-s", help="Filter: active|completed|blocked|all"),
     url: Optional[str] = typer.Option(None, "--url", "-u"),
 ) -> None:
-    """List Colony goals."""
+    """List Apsimo goals."""
     sidecar, _, headers = _connection(url)
     try:
         resp = httpx.get(
@@ -122,7 +122,7 @@ def context(
     contact_id: Optional[str] = typer.Option(None, "--contact", "-c"),
     url: Optional[str] = typer.Option(None, "--url", "-u"),
 ) -> None:
-    """Fetch Colony cognitive context for a contact."""
+    """Fetch Apsimo cognitive context for a contact."""
     sidecar, cid, headers = _connection(url, contact_id)
     try:
         resp = httpx.post(
@@ -153,7 +153,7 @@ def sync(
     contact_id: Optional[str] = typer.Option(None, "--contact", "-c"),
     url: Optional[str] = typer.Option(None, "--url"),
 ) -> None:
-    """Force a turn sync to Colony."""
+    """Force a turn sync to Apsimo."""
     sidecar, cid, headers = _connection(url, contact_id)
     if not user or not assistant:
         typer.echo("--user and --assistant are required", err=True)

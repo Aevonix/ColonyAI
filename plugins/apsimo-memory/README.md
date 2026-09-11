@@ -1,40 +1,46 @@
-# Colony memory provider for Hermes
+# Apsimo memory provider for Hermes
 
-This provider mounts Colony as a context sidecar without changing Hermes core.
-It binds every real-channel turn to the transport sender resolved by Colony and
+This provider mounts Apsimo as a context sidecar without changing Hermes core.
+It binds every real-channel turn to the transport sender resolved by Apsimo and
 keeps the host's custom voice/phone/intercom path independent.
 
 ## Configuration
 
 ```yaml
 memory:
-  provider: colony-memory
+  provider: apsimo-memory
   config:
     url: http://127.0.0.1:7777
-    api_key: ${COLONY_API_KEY}
+    api_key: ${APSIMO_API_KEY}
     contact_id: replace-with-exact-owner-contact-id
     turn_writer: auto # auto | enabled | disabled
 ```
 
 Native `hermes memory setup` saves non-secret fields in the selected profile's
-`colony-memory.json` and credentials through Hermes's private environment.
+`apsimo-memory.json` and credentials through Hermes's private environment.
+Existing profiles keep their `colony-memory.json` file and established credential
+key. If an `apsimo-memory.json` file is explicitly present, it is the selected
+configuration. Legacy `memory.provider: colony-memory`, `COLONY_*` values,
+`colony_memory` imports and `ColonyMemoryProvider` callers remain compatibility
+aliases for the same implementation. Explicit conflicting environment aliases
+are configuration errors; resolving them does not create another memory store.
 Those fields override legacy `memory.config` values. Explicit constructor
 configuration is supported for embedded callers. Handoff files are read only
 from that same profile. Set `timezone` in provider configuration or
-`COLONY_AGENT_TIMEZONE` in its environment; absent either, local clock context
-uses UTC and does not inspect another Colony instance's state directory.
+`APSIMO_AGENT_TIMEZONE` in its environment; absent either, local clock context
+uses UTC and does not inspect another Apsimo instance's state directory.
 
 Required environment posture:
 
 ```bash
-COLONY_PREFETCH_QUERY_CHECK=1
-COLONY_PREFETCH_TURN_CONTACT=1
-COLONY_MCP_CONTACT_ID=replace-with-exact-owner-contact-id
-COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY=none
+APSIMO_PREFETCH_QUERY_CHECK=1
+APSIMO_PREFETCH_TURN_CONTACT=1
+APSIMO_MCP_CONTACT_ID=replace-with-exact-owner-contact-id
+APSIMO_MEMORY_DEFAULT_CONTEXT_AUTHORITY=none
 ```
 
 The two prefetch flags are mandatory; explicitly disabling either prevents the
-provider from starting. On Hermes 0.21.1, the general Colony plugin's explicit
+provider from starting. On Hermes 0.21.1, the general Apsimo plugin's explicit
 `attested_system_platforms: [cli]` binding supplies the configured owner to
 ordinary CLI recollection through the exact active native turn. This does not
 require a supplied-input wrapper or provider-wide owner fallback. The provider
@@ -59,7 +65,7 @@ For a guest turn the provider:
 5. verifies the same attestation on the response.
 
 Failure, timeout, malformed posture, P8-off, or a viewer mismatch yields no
-Colony content. Guest time is local-clock-only. The old quote-based reply
+Apsimo content. Guest time is local-clock-only. The old quote-based reply
 timeline lookup is disabled until a transport-attested scoped reply endpoint
 exists. Direct legacy read-tool endpoints are owner/system-only; guests use the
 scoped assembled context instead.
@@ -67,12 +73,12 @@ scoped assembled context instead.
 The server returns 503 before any legacy-global producer runs when a scoped
 guest requests context without P8. Exact scoped owner and temporary legacy
 migration credentials retain explicit compatibility carve-outs. The currently
-wired deployment canary is `COLONY_RECIPIENT_SIMULATOR_MODE=shadow`; `live` is
+wired deployment canary is `APSIMO_RECIPIENT_SIMULATOR_MODE=shadow`; `live` is
 reserved by the protocol but is not wired by the present shared integration.
 
 ## General-plugin coexistence
 
-With `COLONY_GENERAL_PLUGIN_ACTIVE=1`, this provider is read/context-only. Its
+With `APSIMO_GENERAL_PLUGIN_ACTIVE=1`, this provider is read/context-only. Its
 model-visible catalog is exactly:
 
 - `colony_check_commitments`

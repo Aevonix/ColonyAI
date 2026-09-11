@@ -1,11 +1,21 @@
-"""Colony memory provider plugin for Hermes."""
-from .provider import ColonyMemoryProvider
+"""Apsimo memory provider plugin for Hermes."""
+# Hermes also loads installed providers under a synthetic source namespace.
+# Reuse the canonical class only when it is this exact source. A selected
+# standalone profile must not silently import a different installed version.
+from importlib.util import find_spec
+from pathlib import Path
 
-__all__ = ["ColonyMemoryProvider"]
+_canonical = find_spec("apsimo_memory")
+if _canonical is not None and _canonical.origin and Path(_canonical.origin).resolve() == Path(__file__).resolve():
+    from apsimo_memory.provider import ApsimoMemoryProvider, ColonyMemoryProvider
+else:
+    from .provider import ApsimoMemoryProvider, ColonyMemoryProvider
+
+__all__ = ["ApsimoMemoryProvider", "ColonyMemoryProvider"]
 
 
 def register(ctx):
-    """Register the Colony memory provider + a pre_llm_call lifecycle hook.
+    """Register the Apsimo memory provider + a pre_llm_call lifecycle hook.
 
     The hook lives HERE (a Hermes plugin), not in Hermes core, so it survives
     Hermes updates — Hermes core lives under hermes-agent/ and is replaced on
@@ -23,11 +33,11 @@ def register(ctx):
     - inject the authoritative current date/time so the agent never anchors on the
       (cached, stale) session-start date in long-running sessions
     """
-    provider = ColonyMemoryProvider()
+    provider = ApsimoMemoryProvider()
     ctx.register_memory_provider(provider)
 
     def _pre_llm_call(**kwargs):
-        # 1) Resolve the real Colony contact from the message sender (cached per
+        # 1) Resolve the real Apsimo contact from the message sender (cached per
         #    sender inside the provider) so per-contact memory engages.
         try:
             provider.resolve_contact(
