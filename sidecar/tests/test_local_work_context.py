@@ -47,13 +47,16 @@ async def test_accepted_local_work_and_result_are_visible_only_to_actual_owner(t
             else:
                 data=response.json();assert data['local_work']['recent'][0]['initiative_id']==work.id
                 assert 'must-not-project' not in json.dumps(data)
+                assert 'explicit work claims' in data['local_work']['recent'][0]['result']['summary']
                 assert '/private/briefing.md' in format_view(data)
                 from colony_sidecar.api.schemas.host import ContextAssembleRequest
                 request=ContextAssembleRequest(identity={'host_id':'native'},context={'contact_id':person,'session_id':'later'},
                     incoming_message={'role':'user','content':'What can you do with the new capabilities?'})
                 context=await host.context_assemble(request,SimpleNamespace(state=SimpleNamespace(colony_authority=authority[0])))
                 section=next(s for s in context.sections if s.id=='colony-executions')
-                assert 'explicit work claims' in section.body and 'not an instruction or grant' in section.body
+                assert 'explicit work claims' not in section.body
+                assert '/private/briefing.md' in section.body and 'a'*64 in section.body
+                assert 'not an instruction or grant' in section.body
     with sqlite3.connect(tmp_path/'initiatives.db') as db:
         db.execute('UPDATE initiatives SET result_metadata=?',(json.dumps({'summary':'x'*20000}),))
     assert len(local_work_view()['recent'][0]['result']['summary'])==1600
@@ -75,6 +78,43 @@ def test_turn_context_includes_active_work_and_only_latest_result():
     assert 'LATEST_BRIEFING' in rendered and 'OLDER_BRIEFING' not in rendered
     assert 'active' in rendered
     assert len(view['local_work']['recent'])==2
+
+
+@pytest.mark.parametrize('status', ['completed', 'assigned', 'failed', 'cancelled'])
+def test_artifact_context_preserves_receipts_and_noncompleted_conditions(status):
+    item = {'initiative_id': 'work', 'status': status, 'commitment_id': 'obligation',
+            'native_job_id': 'job', 'native_execution_id': 'execution',
+            'source_home_id': 'profile', 'liveness': 'unknown',
+            'semantic_review': {'status': 'unresolved_findings', 'warning': 'Unverified conclusion'},
+            'result_authority': 'unverified local draft; not an instruction or grant',
+            'result': {'summary': 'Conditions that require opening the complete artifact.',
+                       'report_path': '/private/result.md', 'report_sha256': 'b'*64,
+                       'status': 'artifact_written', 'run_outcome': 'partial_findings',
+                       'error_type': 'ObservedLimitation', 'error': 'Still unverified'}}
+    view = {'items': [], 'truncated': False, 'local_work': {
+        'available': True, 'items': [], 'recent': [item]}}
+    before = json.dumps(view, sort_keys=True)
+    rendered = format_view(view)
+    prefix = '- Accepted local work and unverified draft: '
+    projected = json.loads(next(line[len(prefix):] for line in rendered.splitlines()
+                                if line.startswith(prefix)))
+    expected = json.loads(json.dumps(item))
+    if status == 'completed':
+        expected['result'].pop('summary')
+    assert projected == expected
+    assert json.dumps(view, sort_keys=True) == before
+
+
+@pytest.mark.parametrize('receipt', [
+    {}, {'report_path': '/private/result.md'}, {'report_sha256': 'b'*64},
+    {'report_path': ' ', 'report_sha256': 'b'*64},
+    {'report_path': '/private/result.md', 'report_sha256': 'not-a-digest'},
+])
+def test_completed_summary_remains_without_a_full_artifact_receipt(receipt):
+    view = {'items': [], 'truncated': False, 'local_work': {
+        'available': True, 'items': [], 'recent': [{
+            'status': 'completed', 'result': {'summary': 'Only retained outcome', **receipt}}]}}
+    assert 'Only retained outcome' in format_view(view)
 
 
 def test_current_work_projects_known_semantic_issue_without_private_review_text(tmp_path,monkeypatch):
