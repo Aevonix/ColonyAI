@@ -30,12 +30,20 @@ Required environment posture:
 COLONY_PREFETCH_QUERY_CHECK=1
 COLONY_PREFETCH_TURN_CONTACT=1
 COLONY_MCP_CONTACT_ID=replace-with-exact-owner-contact-id
-COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY=owner_system
+COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY=none
 ```
 
 The two prefetch flags are mandatory; explicitly disabling either prevents the
-provider from starting. `owner_system` permits fallback only when there is no
-real channel sender/chat and the lane is CLI, internal, system, owner, API,
+provider from starting. On Hermes 0.21.1, the general Colony plugin's explicit
+`attested_system_platforms: [cli]` binding supplies the configured owner to
+ordinary CLI recollection through the exact active native turn. This does not
+require a supplied-input wrapper or provider-wide owner fallback. The provider
+still requires the server's matching viewer attestation. Finished turns,
+unbound turns and child turns cannot borrow this CLI binding.
+
+Standalone deployments can explicitly select `owner_system`. It permits
+fallback only when there is no real channel sender/chat and the lane is CLI,
+internal, system, owner, API,
 worker, or cron. RCS, SMS, WhatsApp, and other real channels never use the
 provider-wide default.
 

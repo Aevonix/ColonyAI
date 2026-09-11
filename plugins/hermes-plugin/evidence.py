@@ -77,8 +77,7 @@ def checkpoint(
     # The local commit is the checkpoint guarantee. Oversize, full queue or
     # failed storage raises before Hermes compresses; no text is truncated.
     receipt = outbox.enqueue(turn_id, payload)
-    state = receipt["state"]
-    if state == "pending":
+    if receipt["state"] == "pending" or receipt.get("survivor_state") == "pending":
         client = ColonyClient(url=url, api_key=api_key)
         try:
             outbox.drain(
@@ -87,9 +86,13 @@ def checkpoint(
                 ),
                 limit=16, timeout_seconds=0.25,
             )
-            state = outbox.enqueue(turn_id, payload)["state"]
+            receipt = outbox.enqueue(turn_id, payload)
         except Exception:
             # The ordinary general-adapter drain or a later checkpoint replays
             # this committed row. Pending does not mean centrally recallable.
-            state = "pending"
-    return {"state": state, "messages": len(evidence), "turn_id": turn_id}
+            pass
+    result = {"state": receipt["state"], "messages": len(evidence), "turn_id": turn_id}
+    for key in ("survivor_turn_id", "survivor_state"):
+        if key in receipt:
+            result[key] = receipt[key]
+    return result

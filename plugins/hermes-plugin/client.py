@@ -1166,11 +1166,13 @@ class TurnOutbox:
             erasures = connection.execute("SELECT rules_json FROM turn_erasures WHERE contact_id=?", (str(payload.get("contact_id") or ""),)).fetchone()
             retained = redact_source_payload(payload, json.loads(erasures[0])) if erasures else dict(payload)
             if retained != dict(payload):
+                receipt = {"turn_id": stable_id, "state": "erased", "attempts": 0}
                 if retained is not None:
-                    self._insert_redacted(connection, retained, now)
+                    receipt["survivor_turn_id"] = retained["turn_id"]
+                    receipt["survivor_state"] = self._insert_redacted(connection, retained, now)
                 connection.commit()
                 self._fsync_storage()
-                return {"turn_id": stable_id, "state": "erased", "attempts": 0}
+                return receipt
             row = connection.execute(
                 "SELECT envelope_sha256, payload_json, state, attempts FROM turn_outbox WHERE turn_id = ?",
                 (stable_id,),
@@ -1230,15 +1232,16 @@ class TurnOutbox:
             "attempts": 0,
         }
 
-    def _insert_redacted(self, connection: sqlite3.Connection, payload: dict[str, Any], now: float) -> None:
+    def _insert_redacted(self, connection: sqlite3.Connection, payload: dict[str, Any], now: float) -> str:
         encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(encoded.encode()).hexdigest()
-        existing = connection.execute("SELECT envelope_sha256 FROM turn_outbox WHERE turn_id=?", (payload["turn_id"],)).fetchone()
+        existing = connection.execute("SELECT envelope_sha256,state FROM turn_outbox WHERE turn_id=?", (payload["turn_id"],)).fetchone()
         if existing is not None and existing[0] != digest:
             raise TurnOutboxConflict("redacted source ID already has different evidence")
         if existing is None and connection.execute("SELECT count(*) FROM turn_outbox WHERE state='pending'").fetchone()[0] >= self.max_pending:
             raise TurnOutboxFull("durable turn outbox is full")
         connection.execute("INSERT OR IGNORE INTO turn_outbox(turn_id,envelope_sha256,payload_json,state,created_at,updated_at) VALUES(?,?,?,'pending',?,?)", (payload["turn_id"], digest, encoded, now, now))
+        return existing["state"] if existing is not None else "pending"
 
     def erasure_watermark(self, contact_id: str, *, deadline_monotonic: float | None = None) -> int:
         connection = self._connect(deadline_monotonic=deadline_monotonic)

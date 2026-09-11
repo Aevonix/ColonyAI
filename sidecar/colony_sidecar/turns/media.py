@@ -26,6 +26,22 @@ DESCRIPTION_PROMPT = (
 )
 
 
+def description_text(response):
+    """Validate a final caption without persisting rejected model output."""
+    text = final_text(response)
+    if len(text) > 2400:
+        raise ValueError('description_character_limit')
+    if len(text.split()) > 160:
+        raise ValueError('description_word_limit')
+    return text
+
+
+_DESCRIPTION_ERRORS = frozenset({
+    'missing_final_answer', 'incomplete_final_answer',
+    'description_character_limit', 'description_word_limit',
+})
+
+
 def initialize(conn):
     conn.execute('''CREATE TABLE IF NOT EXISTS source_media (
         asset_hash TEXT PRIMARY KEY,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,
@@ -306,8 +322,10 @@ class SourceMedia:
             if not row or not conn.execute('SELECT 1 FROM source_media_links WHERE asset_hash=?', (job['asset_hash'],)).fetchone():
                 return False
             if error:
-                conn.execute("UPDATE source_media SET status='pending',error=?,next_attempt=?,lease_until=0 WHERE asset_hash=?",
-                             (error, time.time() + min(900, 15 * 2 ** min(job['attempts'], 6)), job['asset_hash']))
+                conn.execute("""UPDATE source_media SET status='pending',error=?,next_attempt=?,lease_until=0,
+                    model=?,description_version=?,model_provenance_json=? WHERE asset_hash=?""",
+                    (error, time.time() + min(900, 15 * 2 ** min(job['attempts'], 6)), model,
+                     DESCRIPTION_VERSION, json.dumps(model_provenance or {}), job['asset_hash']))
             else:
                 conn.execute("UPDATE source_media SET status='complete',description=?,model=?,description_version=?,model_provenance_json=?,error=NULL,lease_until=0 WHERE asset_hash=?",
                              (description, model, DESCRIPTION_VERSION, json.dumps(model_provenance or {}), job['asset_hash']))
@@ -375,6 +393,7 @@ class SourceMedia:
         if job['mime_type'] == 'application/pdf':
             await self.process_document(job)
             return True
+        model, provenance = None, {}
         try:
             from colony_sidecar.beliefs.source_claims import local_tier
             from colony_sidecar.router.tiers import ModelTier
@@ -393,18 +412,21 @@ class SourceMedia:
                     'url': 'data:' + job['mime_type'] + ';base64,' + base64.b64encode(data).decode()}}]}],
                 force_tier=tier, context={'task': 'source_image_description', 'function_role': 'vision',
                     'max_output_tokens': 1600, 'allow_fallback': functions}), 40 if functions else 20)
-            text = final_text(response)
-            if len(text) > 2400 or len(text.split()) > 160:
-                raise ValueError('invalid image description')
-            self.finish(job, description=text, model=response.model_id, model_provenance={
+            model = response.model_id
+            provenance = {
                 'function_role': getattr(response, 'function_role', '') or 'vision',
                 'config_revision': getattr(response, 'config_revision', '') or 'unknown',
                 'weight_revision': getattr(response, 'model_revision', '') or 'unknown',
-                'model_id': response.model_id})
+                'model_id': model}
+            text = description_text(response)
+            self.finish(job, description=text, model=model, model_provenance=provenance)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self.finish(job, error=type(exc).__name__)
+            # Only our bounded final-answer codes are durable. Transport and
+            # decoder exception messages may contain source text or URLs.
+            reason = str(exc) if isinstance(exc, ValueError) and str(exc) in _DESCRIPTION_ERRORS else type(exc).__name__
+            self.finish(job, error=reason, model=model, model_provenance=provenance)
         return True
 
     def status(self, contact_id):

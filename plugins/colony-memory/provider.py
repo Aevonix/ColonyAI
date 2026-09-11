@@ -1188,6 +1188,14 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 return ""
         if supplied_contact is not None:
             return supplied_contact
+        if effective == "cli":
+            try:
+                from colony_hermes.native_scope import attested_cli_contact
+                native_contact = attested_cli_contact(session_id or self._session_id)
+            except ImportError:
+                native_contact = None  # Standalone providers retain their existing policy.
+            if native_contact and native_contact == self._contact_id:
+                return native_contact
         try:
             cid = self._turn_contact()
         except Exception as exc:

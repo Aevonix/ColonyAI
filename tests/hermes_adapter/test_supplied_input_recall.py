@@ -42,13 +42,18 @@ keyring.write_text(json.dumps({'version':1,'principals':[{
  'principal':'native-fixture','status':'active','viewer_person_id':'owner','person_ids':['owner'],
  'scopes':['context:read','memory:read','turns:write'],'audiences':['viewer'],
  'credentials':[{'id':'one','secret':secret,'status':'active'}]}]}));keyring.chmod(0o600)
+# SuppliedInput must match an independently authenticated native scope. Keep
+# the CLI attestation explicit for supplied turns; use an unattested API turn
+# below to prove the completed source scope cannot leak into another caller.
+# CLI with attestation disabled is qualified in test_native_cli_memory.py.
 (home/'config.yaml').write_text(json.dumps({
  'model':{'provider':'custom','default':'fixture-model','base_url':'http://model.fixture/v1'},
  'auxiliary':{'title_generation':{'enabled':False}},
  'agent':{'max_turns':5},'toolsets':['colony','delegation'],
  'memory':{'provider':'colony-memory','config':{'contact_id':'owner','url':'http://fixture','api_key':secret}},
  'plugins':{'enabled':['colony'],'colony':{'owner_contact_id':'owner','url':'http://fixture',
-  'api_key':secret,'turn_outbox_path':str(home/'outbox.db'),'execution_registry_enabled':True}}}))
+  'api_key':secret,'attested_system_platforms':['cli'],
+  'turn_outbox_path':str(home/'outbox.db'),'execution_registry_enabled':True}}}))
 app=FastAPI();app.add_middleware(ApiKeyMiddleware,keyring_path=str(keyring))
 app.include_router(host.router);app.include_router(host.v2_router);app.include_router(executions.router)
 api=TestClient(app)
@@ -197,10 +202,10 @@ get_plugin_manager().discover_and_load()
 from run_agent import AIAgent
 from colony_hermes.input_provenance import supplied_input, transport_input
 from colony_hermes import TurnOutbox
-def agent():
+def agent(platform='cli'):
  value=AIAgent(api_key='fixture',base_url='http://model.fixture/v1',provider='custom',
   model='fixture-model',quiet_mode=True,skip_context_files=True,skip_memory=False,
-  platform='cli',max_iterations=5,enabled_toolsets=['colony','delegation'])
+  platform=platform,max_iterations=5,enabled_toolsets=['colony','delegation'])
  value.save_trajectories=False
  return value
 if scenario in ('initial_timeout','initial_remote_protocol','initial_http_503'):
@@ -268,7 +273,7 @@ assembly_count=len(assemblies)
 rows=TurnOutbox(home/'outbox.db').snapshot()
 assert len(rows)==2 and all(row['state']=='delivered' for row in rows),rows
 assert all(row['payload']['assistant_input_refs']==parents for row in rows),rows
-mode='unbound';plain=agent()
+mode='unbound';plain=agent(platform='api_server')
 plain.run_conversation('What does the lamp maintenance record require?')
 plain.close()
 assert len([row for row in wire if row['path']=='/v1/host/context/assemble'])==assembly_count
@@ -282,7 +287,7 @@ assert len([row for row in wire if row['path']=='/v1/host/context/assemble'])==a
 assert len(generation)==6
 print(json.dumps({'native_parent_automatic_recall':True,'no_gateway_sender':True,
  'no_default_owner_fallback':True,'native_delegated_source_access':True,
- 'native_child_prefetch_enabled':False,'unbound_cli_no_recall':True,
+ 'native_child_prefetch_enabled':False,'unattested_platform_no_recall':True,
  'erased_input_no_recall':True,'inference_transport':'controlled','external_requests':0}))
 '''
 
