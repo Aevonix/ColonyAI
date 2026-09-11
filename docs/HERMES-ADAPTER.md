@@ -254,6 +254,11 @@ as voice adapters that do not use the Hermes envelope. Unknown envelope formats
 are unchanged. The native request test exercises the actual upstream wrapper,
 so a framing change requires renewed qualification rather than a core patch.
 
+For an authenticated host task, the native request may contain a task wrapper
+while `persist_user_message` stores the original person's text. The adapter binds
+the actual current native row before Hermes appends context. This preserves the
+same evidence framing and source lineage when the two input forms differ.
+
 System/developer instructions and Responses instructions may document the generic
 `<memory-context>` fence. That markup alone is not a recalled packet there, even
 when the example omits a closing tag. Exact forgotten source copies and explicit

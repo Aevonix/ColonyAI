@@ -51,7 +51,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.7" "colony-hermes==1.1.7"
+python -m pip install "colonyai[hermes]==1.1.8" "colony-hermes==1.1.8"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -116,6 +116,9 @@ for native package installations and service bindings.
   Hermes scheduler. Prepared follow-ups require deployment-owned authority and a
   qualified delivery path. Prospective task forecasts learn from measured outcomes.
   [Forecasts and waiting](docs/TEMPORAL-FORECASTS.md)
+  [Declared reply forecasts](docs/EXPECTED-REPLY-FORECASTS.md) observe exact
+  durable replies against a registered horizon. Their initial probability is an
+  uncalibrated baseline; they do not choose or send follow-ups.
 - **Automatic recollection.** The native memory provider requests context for
   the current participant, session and question before inference. A durable
   outbox captures ordinary turns; retry does not create another source.

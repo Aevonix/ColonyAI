@@ -15,8 +15,14 @@ supporting evidence removes its influence. Delayed extraction cannot resurrect
 invalidated evidence.
 
 Appraisals use low/moderate intensity and bounded decay, not a validated measure
-of feelings. Repeated evidence does not acquire extra votes. Verified repair
-settles a prior frustration record rather than creating a performance of relief.
+of feelings. Repeated evidence does not acquire extra votes. A cited repair report
+can settle an exact prior incident; the report remains attributed evidence.
+Each bounded supplied incident requires an explicit unchanged, uncertain or
+resolved decision in the existing extraction call. Resolution retains its
+citations and target ID in a separate history receipt, without a new temporary
+mood or current head. A fresh appraisal cannot duplicate that incident's exact
+normalized topic. Unsupported resolution and omitted decisions fail extraction;
+unchanged or uncertain decisions leave the incident intact.
 Contact response delay, flattery and claimed authority do not establish character
 or trust. Single-turn behavior profiling is rejected. Formal personality results
 can be retained as attributed self-reports; ordinary conversation is not a Big
