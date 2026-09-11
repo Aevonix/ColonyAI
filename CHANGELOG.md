@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.1.17 - diagnosable model qualification and faithful memory grading
+
+Explicit model evaluations retain bounded final completion text, its hash and
+truncation state. This makes rejected memory proposals inspectable without
+adding raw-generation logs to production memory. Candidate and supporting-role
+calls are distinguished, and known router failure categories can be retained
+without copying arbitrary exception messages or SDK envelopes.
+
+Memory checks distinguish unexercised inputs from successful abstention and
+match independently specified complete subject/relation/value alternatives.
+A faithful value need not repeat a noun already represented by its relation;
+wrong subjects, relations and contaminated values cannot pass merely by
+containing the expected phrase. Source evidence, conditions, correction history
+and later-session lineage remain separate requirements.
+
+The changed cases and evaluator have new identities. Earlier first results keep
+their original grades and cannot be presented as model gains under the new
+rubric. These changes improve diagnosis and measurement; they do not change
+production extraction, model routing, native behavior or role selection.
+
 ## v1.1.16 - bounded model consumer qualification
 
 The opt-in `colony models inspect`, `evaluate` and `compare` commands inspect
