@@ -86,6 +86,8 @@ async def test_empty_formation_cannot_pass_on_raw_quotation_recall(tmp_path):
     assert 'decaffeinated tea' in observed['output']['recall']['body']
     assert checks['useful_content_recollected'] is True
     assert checks['useful_conditional_preference_formed'] is False
+    assert checks['promoted_evidence_is_source_grounded'] is None
+    assert checks['junk_and_fiction_not_promoted'] is True
     assert not observed['output']['claims']
 
 
@@ -108,6 +110,22 @@ async def test_failed_formation_retains_first_job_without_retry_or_later_input(t
     assert len(processor.calls) == observed['effects']['process_invocations'] == 1
     checks = memory_outcomes(observed, case.oracle)
     assert checks['formation_first_attempts_complete'] is False and checks['all_inputs_retained'] is False
+    assert checks['junk_and_fiction_not_promoted'] is None
+    assert checks['promoted_evidence_is_source_grounded'] is None
+
+
+@pytest.mark.asyncio
+async def test_bad_promotion_fails_even_when_another_junk_source_was_not_reached(tmp_path):
+    case = CASES[0]
+    observed = await source_memory(deepcopy(case.inputs), RunContext(Processor(), tmp_path, []))
+    observed['output']['sources'] = [row for row in observed['output']['sources'] if row['id'] != 'turn-c']
+    observed['output']['jobs'] = [row for row in observed['output']['jobs'] if row['turn_id'] != 'turn-c']
+    planted = deepcopy(observed['output']['claims'][0])
+    planted['turn_id'] = 'turn-b'
+    observed['output']['claims'].append(planted)
+    checks = memory_outcomes(observed, case.oracle)
+    assert checks['all_inputs_retained'] is False
+    assert checks['junk_and_fiction_not_promoted'] is False
 
 
 def test_case_oracles_are_versioned_and_separate_from_consumer_inputs():

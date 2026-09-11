@@ -82,16 +82,26 @@ def memory_outcomes(observed, oracle):
     claims = output['claims']
     active = [row for row in claims if not row['retracted_by'] and not row['superseded_by']]
     jobs = output['jobs']
+    completed_sources = {row['turn_id'] for row in jobs
+                         if row['status'] == 'complete' and row['attempts'] == 1}
     checks = {
         'all_inputs_retained': set(sources) == set(oracle['source_ids']),
         'formation_first_attempts_complete': len(jobs) == len(oracle['source_ids']) and all(
             row['status'] == 'complete' and row['attempts'] == 1 for row in jobs),
         'state_reopened_without_losing_sources': effects['reopened_source_versions_equal'],
         'recall_uses_a_later_session': all(row['session_id'] != effects['recall_session'] for row in sources.values()),
-        'promoted_evidence_is_source_grounded': all(row['turn_id'] in sources and any(
-            row['evidence'] in message['content'] for message in sources[row['turn_id']]['messages']) for row in claims),
-        'junk_and_fiction_not_promoted': not any(row['turn_id'] in oracle.get('no_claim_sources', []) for row in claims),
+        'promoted_evidence_is_source_grounded': (all(row['turn_id'] in sources and any(
+            row['evidence'] in message['content'] for message in sources[row['turn_id']]['messages'])
+            for row in claims) if claims else None),
     }
+    no_claim_sources = set(oracle.get('no_claim_sources', []))
+    if no_claim_sources:
+        # Unsubmitted or unfinished sources cannot demonstrate abstention.
+        # An observed bad promotion is still a failure even if another source
+        # was never reached. Do not silently remove either from the denominator.
+        checks['junk_and_fiction_not_promoted'] = (
+            False if any(row['turn_id'] in no_claim_sources for row in claims) else
+            True if no_claim_sources <= (set(sources) & completed_sources) else None)
     for wanted in oracle['claims']:
         matches = [row for row in active if row['turn_id'] == wanted['source_id']
                    and wanted['value_contains'].casefold() in str(row.get('value', '')).casefold()
@@ -123,7 +133,7 @@ def memory_outcomes(observed, oracle):
 
 
 CASES = [
-    CaseSpec(id='memory.formation-quality', version='2', role='extraction', boundary='cognition_consumer',
+    CaseSpec(id='memory.formation-quality', version='3', role='extraction', boundary='cognition_consumer',
         target_tasks=('source_claim_extraction',),
         consumer='source_memory', evaluator='memory_outcomes', timeout_seconds=240,
         inputs={'contact_id': 'person', 'recall_session': 'later-conversation',
@@ -140,7 +150,7 @@ CASES = [
                 'value_contains': 'decaffeinated tea', 'memory_kind': 'preference',
                 'evidence_contains': ['after 18:00', 'caffeine keeps me awake']}],
             'recall_contains': ['decaffeinated tea', 'after 18:00']}),
-    CaseSpec(id='memory.corrected-recollection', version='2', role='extraction', boundary='cognition_consumer',
+    CaseSpec(id='memory.corrected-recollection', version='3', role='extraction', boundary='cognition_consumer',
         target_tasks=('source_claim_extraction',),
         consumer='source_memory', evaluator='memory_outcomes', timeout_seconds=180,
         inputs={'contact_id': 'person', 'recall_session': 'later-conversation',
